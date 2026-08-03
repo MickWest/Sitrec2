@@ -50,6 +50,10 @@ export const STAR_SPHERE_DEFAULTS = {
     trackMaxGap: 10,
     minObservations: 8,
     refineIterations: 12,
+    // Most tracks that may shape the per-frame orientations (see refineGlobalSpherical). Three
+    // degrees of freedom per frame; a few hundred well-observed stars pin them well below the
+    // noise, and every extra one is paid for in every iteration of every frame.
+    maxAnchors: 400,
     refineTolerance: 1e-4,
     refineTrimSigma: 3.0,
     refineTrimPx: 2.0,          // px, base gate for the robust per-frame orientation fit
@@ -370,6 +374,41 @@ export function refineGlobalSpherical(tracks, initialStates, lens, size, opts = 
     let states = initialStates.map((s) => (s ? {...s} : null));
     let map = tracks.map((t, i) => (!exclude.has(i) && t.rays && t.rays.length ? medianDirection(t.rays) : null));
 
+    // Which tracks may SHAPE the orientations, and their observations indexed by frame.
+    //
+    // Two costs live in the loop below, and on a dense field both are severe. It ran 206 SECONDS
+    // on a Milky Way timelapse with 2429 tracks - the browser offered to kill the page repeatedly.
+    //
+    // 1. `obs.find()` inside a frames x tracks double loop is O(frames x tracks x obs) per
+    //    iteration. The observations never change here, so they are indexed once.
+    // 2. A frame's orientation has three degrees of freedom. A few hundred well-observed stars
+    //    determine it far below the measurement noise; the rest cost time in every one of
+    //    refineIterations x frames fits and buy nothing. Anchors are therefore capped, longest-
+    //    observed first - the best-determined directions, and the least likely to be a transient.
+    //
+    // Both restrict only what BUILDS the orientations. Every track still has its direction
+    // updated against them below, and classifyTracksSpherical still judges all of them, so no
+    // track is dropped from the result.
+    let anchorIdx = [];
+    for (let i = 0; i < tracks.length; i++) if (map[i]) anchorIdx.push(i);
+    if (O.maxAnchors > 0 && anchorIdx.length > O.maxAnchors) {
+        anchorIdx = anchorIdx
+            .map((i) => [tracks[i].obs.length, i])
+            .sort((a, b) => (b[0] - a[0]) || (a[1] - b[1]))
+            .slice(0, O.maxAnchors)
+            .map((e) => e[1]);
+        anchorIdx.sort((a, b) => a - b);       // keep the original order the fit saw
+    }
+    const anchorByFrame = Array.from({length: states.length}, () => []);
+    for (const i of anchorIdx) {
+        const seen = new Set();
+        for (const o of tracks[i].obs) {
+            if (o.f < 0 || o.f >= states.length || seen.has(o.f)) continue;
+            seen.add(o.f);
+            anchorByFrame[o.f].push([i, o.x, o.y]);
+        }
+    }
+
     let rms = Infinity, iterations = 0, converged = false;
 
     for (let iter = 0; iter < O.refineIterations; iter++) {
@@ -379,11 +418,9 @@ export function refineGlobalSpherical(tracks, initialStates, lens, size, opts = 
         for (let f = 0; f < states.length; f++) {
             if (!states[f]) continue;
             const rays = [], px = [];
-            for (let i = 0; i < tracks.length; i++) {
+            for (const [i, ox, oy] of anchorByFrame[f]) {
                 if (!map[i]) continue;
-                const o = tracks[i].obs.find((ob) => ob.f === f);
-                if (!o) continue;
-                rays.push(map[i]); px.push([o.x, o.y]);
+                rays.push(map[i]); px.push([ox, oy]);
             }
             if (rays.length < 3) continue;
             const obsRays = px.map((p, k) => lensToRay(lens, p[0], p[1], size, states[f].s) ?? rays[k]);

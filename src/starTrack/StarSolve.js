@@ -38,6 +38,10 @@ export const STAR_SOLVE_DEFAULTS = {
 
     // Global refinement.
     refineIterations: 40,
+    // Most anchors the map may be built from, brightest first (see `anchors` in solveStarField).
+    // A per-frame similarity has four parameters; a few hundred well-measured stars pin it far
+    // below the noise, and the rest only cost time in every refinement iteration.
+    maxAnchors: 400,
     refineTolerance: 1e-4,      // stop when the RMS residual improves by less than this (px)
     refineTrimSigma: 4.0,       // outlier gate during refinement, in sigmas of the MEASURED noise
     // Temporal smoothness of the per-frame ROTATION, as a multiple of the median per-frame
@@ -459,6 +463,27 @@ export function refineGlobal(tracks, initialTransforms, opts = {}) {
     // happened to fall inside it.
     let trim = O.refineTrimSigma * Math.max(O.noiseFloor, 1.0);
 
+    // Observations indexed BY FRAME, once.
+    //
+    // The inner loop below wants "every observation in frame f", and used to get it by scanning
+    // every track and running obs.find() on each - O(frames x tracks x obs) per iteration, and
+    // there are up to refineIterations of them. On a 160-frame clip with 2573 tracks that is
+    // ~8 million find-steps per iteration and ~300 million over the refinement, which is what
+    // made the browser offer to kill the page. The observations never change during refinement
+    // (only `stars` and `transforms` do), so this is built once and reused.
+    //
+    // Order is preserved exactly - tracks ascending, and the FIRST observation a track has in a
+    // given frame, which is what find() returned - so the refinement is unchanged, only faster.
+    const byFrame = Array.from({length: nFrames}, () => []);
+    for (let i = 0; i < tracks.length; i++) {
+        const seen = new Set();
+        for (const o of tracks[i].obs) {
+            if (o.f < 0 || o.f >= nFrames || seen.has(o.f)) continue;
+            seen.add(o.f);
+            byFrame[o.f].push([i, o.x, o.y]);
+        }
+    }
+
     for (let iter = 0; iter < O.refineIterations; iter++) {
         iterations = iter + 1;
 
@@ -466,12 +491,10 @@ export function refineGlobal(tracks, initialTransforms, opts = {}) {
         const frameFits = new Array(nFrames).fill(null);
         for (let f = 0; f < nFrames; f++) {
             const P = [], Q = [];
-            for (let i = 0; i < tracks.length; i++) {
+            for (const [i, ox, oy] of byFrame[f]) {
                 if (!stars[i]) continue;
-                const o = tracks[i].obs.find((ob) => ob.f === f);
-                if (!o) continue;
                 P.push(stars[i]);
-                Q.push([o.x, o.y]);
+                Q.push([ox, oy]);
             }
             const fit = fitSimilarity(P, Q, {...O, inlierThreshold: trim});
             if (fit) frameFits[f] = {fit, P, Q};
@@ -1179,7 +1202,12 @@ function mergeAndVerify(tracks, classified, transforms, O) {
  */
 export function solveStarField(perFrame, cumulative, opts = {}) {
     const O = {...STAR_SOLVE_DEFAULTS, ...opts};
+    // Stage timings, printed once per solve. This is a minute-scale operation on a dense field and
+    // guessing at where the time goes has already cost two wrong optimisations.
+    const T0 = Date.now(); let tPrev = T0; const timing = [];
+    const stamp = (name) => { const now = Date.now(); timing.push(`${name} ${now - tPrev}ms`); tPrev = now; };
     let tracks = buildTracklets(perFrame, cumulative, O);
+    stamp(`buildTracklets#1(${tracks.length})`);
     if (!tracks.length) {
         // Same shape as every other return, so callers need one code path rather than two.
         return {
@@ -1198,11 +1226,37 @@ export function solveStarField(perFrame, cumulative, opts = {}) {
     // position is fitted almost exactly by construction, so it constrains nothing and only adds
     // noise. Everything is still CLASSIFIED against the finished map; this restricts what is
     // allowed to build it.
-    const anchors = (list) => list.filter((t) => t.obs.length >= O.minObservations);
+    // ...and, on a dense field, only the BRIGHTEST that qualify.
+    //
+    // A per-frame similarity has four parameters. A few hundred well-observed anchors determine it
+    // to well under the measurement noise, and every anchor past that buys a vanishing improvement
+    // while costing time in each of the refinement's iterations - of which there are up to
+    // refineIterations, in each of three refineGlobal calls. On a rich Milky Way frame the
+    // detector returns thousands of tracks and the whole map build ran for minutes, long enough
+    // for the browser to offer to kill the page several times over.
+    //
+    // Brightest-first because bright stars are the best-measured: their centroids are the most
+    // precise, and they are the least likely to be a noise blob that briefly cleared threshold.
+    // This restricts only what BUILDS the map - every track is still placed in the finished map
+    // and classified against it, exactly as with the observation-count filter above - so no star
+    // is lost from the result, and on a sparse field where the cap does not bite nothing changes
+    // at all.
+    const anchors = (list) => {
+        const ok = list.filter((t) => t.obs.length >= O.minObservations);
+        if (!(O.maxAnchors > 0) || ok.length <= O.maxAnchors) return ok;
+        return ok
+            .map((t, i) => [instrumentalMagnitude(t).magnitude ?? Infinity, i, t])
+            // Ascending magnitude is brightest-first; the index breaks ties so the order is
+            // deterministic rather than dependent on the sort's stability.
+            .sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]))
+            .slice(0, O.maxAnchors)
+            .map((e) => e[2]);
+    };
 
     let solveSet = anchors(tracks);
     if (solveSet.length < 3) solveSet = tracks;
     const first = refineGlobal(solveSet, cumulative, O);
+    stamp("refineGlobal#1");
 
     // Rebuild the tracklets against the refined transforms before believing any of them.
     //
@@ -1213,12 +1267,15 @@ export function solveStarField(perFrame, cumulative, opts = {}) {
     // Re-associating in a drift-free frame removes the cause rather than trying to filter the
     // symptom.
     tracks = buildTracklets(perFrame, first.transforms, O);
+    stamp("buildTracklets#2");
     let solveSet2 = anchors(tracks);
     if (solveSet2.length < 3) solveSet2 = tracks;
     let refined = refineGlobal(solveSet2, first.transforms, O);
+    stamp("refineGlobal#2");
     // Place every track - including the short ones - in the map the anchors define.
     let allStars = tracks.map((t) => starPosition(t, refined.transforms));
     let classified = classifyTracks(tracks, refined.transforms, allStars, O);
+    stamp("classify#1");
 
     // Rejoin the pieces of any star that association could not keep whole - a dropout longer
     // than trackMaxGap, or a blend handover - BEFORE the star-only refinement, so a rejoined
@@ -1226,6 +1283,7 @@ export function solveStarField(perFrame, cumulative, opts = {}) {
     // fragments. Classification is redone on the merged list, and any merge falsified by its
     // own result is undone (see mergeAndVerify).
     const firstMerge = mergeAndVerify(tracks, classified, refined.transforms, O);
+    stamp("merge#1");
     if (firstMerge) {
         tracks = firstMerge.tracks;
         allStars = firstMerge.stars;
@@ -1240,6 +1298,7 @@ export function solveStarField(perFrame, cumulative, opts = {}) {
     if (starTracks.length >= 3) {
         refined = refineGlobal(starTracks, refined.transforms, O);
     }
+    stamp(`refineGlobal#3(${starTracks.length})`);
 
     // One FINAL association against the settled transforms, and a final merge and classification
     // on what it produces.
@@ -1250,15 +1309,19 @@ export function solveStarField(perFrame, cumulative, opts = {}) {
     // the object's two halves ended up 2.6 px apart at a seam and still in different tracks. The
     // transforms are settled now, so this costs one tracklet build and no further refinement.
     tracks = buildTracklets(perFrame, refined.transforms, O);
+    stamp("buildTracklets#3");
     allStars = tracks.map((t) => starPosition(t, refined.transforms));
     classified = classifyTracks(tracks, refined.transforms, allStars, O);
+    stamp("classify#2");
     const finalMerge = mergeAndVerify(tracks, classified, refined.transforms, O);
+    stamp("merge#2");
     if (finalMerge) {
         tracks = finalMerge.tracks;
         allStars = finalMerge.stars;
         classified = finalMerge.classified;
     }
     refined = {...refined, stars: allStars};
+    console.log(`[StarTrack] solveStarField ${Date.now() - T0}ms total | ${timing.join(" | ")}`);
 
     return {
         tracks,

@@ -1104,8 +1104,12 @@ export async function runStarTracker() {
                 // Awaited, and handed a yield: the scans inside take tens of seconds on a
                 // well-populated clip and this is the UI thread. Without it the page stops
                 // answering for the duration - long enough that even tooling times out.
+                const tLens = Date.now();
+                updateProgress({percent: 96, status: "Fitting camera lens"});
+                await yieldToBrowser();
                 const cal = await calibrateLens(solved.tracks, solved.transforms.length,
                     [videoW, videoH], {onYield: yieldToBrowser});
+                console.log(`[StarTrack] calibrateLens ${Date.now() - tLens}ms`);
                 if (cal.accepted) {
                     const lens = cal.lens;
                     const size = [videoW, videoH];
@@ -1123,8 +1127,13 @@ export async function runStarTracker() {
                         if (c.klass === "cameraFixed") artifacts.add(c.index);
                     }
 
+                    const tSph = Date.now();
+                    updateProgress({percent: 97, status: "Solving sky rotation"});
+                    await yieldToBrowser();
                     let refined = refineGlobalSpherical(solved.tracks, states, lens, size,
                         {exclude: artifacts});
+                    console.log(`[StarTrack] refineGlobalSpherical#1 ${Date.now() - tSph}ms `
+                        + `(${solved.tracks.length} tracks)`);
                     const classifyOpts = {
                         minObservations: ctx.minObservations,
                         driftSignificance: ctx.driftSignificance,
@@ -1141,8 +1150,12 @@ export async function runStarTracker() {
                     for (const s of sph) if (s.klass !== "star") notSky.add(s.index);
                     const skyCount = solved.tracks.length - notSky.size;
                     if (skyCount >= 8) {
+                        const tSph2 = Date.now();
+                        updateProgress({percent: 98, status: "Re-solving on stars only"});
+                        await yieldToBrowser();
                         refined = refineGlobalSpherical(solved.tracks, refined.states, lens, size,
                             {exclude: notSky});
+                        console.log(`[StarTrack] refineGlobalSpherical#2 ${Date.now() - tSph2}ms`);
                         sph = classifyTracksSpherical(solved.tracks, refined.states, lens, size,
                             {...classifyOpts, exclude: notSky});
                     }
