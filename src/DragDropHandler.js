@@ -46,6 +46,9 @@ class CDragDropHandler {
         // drags from the OS or another window never do. Used to silently
         // ignore such drags instead of trying to import them as files/URLs.
         this.internalDragActive = false;
+        // Names already handed to a pasted image whose import has not registered
+        // with FileManager yet. See renameGenericPastedFile().
+        this.reservedPastedNames = new Set();
     }
 
     /**
@@ -223,8 +226,80 @@ class CDragDropHandler {
         return tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable;
     }
 
+    /**
+     * Pull any files off a paste. Browsers normally populate clipboardData.files,
+     * but some paths only fill clipboardData.items, so check both.
+     * @param {DataTransfer|null} clipboardData
+     * @returns {File[]} The pasted files, with generic clipboard names replaced
+     */
+    getPastedFiles(clipboardData) {
+        if (!clipboardData) {
+            return [];
+        }
+
+        let files = [...(clipboardData.files ?? [])];
+        if (files.length === 0 && clipboardData.items) {
+            files = [...clipboardData.items]
+                .filter(item => item.kind === 'file')
+                .map(item => item.getAsFile())
+                .filter(file => file !== null);
+        }
+
+        return files.map(file => this.renameGenericPastedFile(file));
+    }
+
+    /**
+     * A pasted image is handed to us as "image.<ext>" — uninformative in the file
+     * list, and a collision in FileManager.list (keyed by filename) the moment a
+     * second one is pasted, which would silently replace the first. Give those a
+     * unique name; anything with a real name (a file copied in Finder, say) keeps it.
+     * @param {File} file
+     * @returns {File} The original file, or a renamed copy
+     */
+    renameGenericPastedFile(file) {
+        if (file.name && !/^image\.[a-z0-9]+$/i.test(file.name)) {
+            return file;
+        }
+        const ext = (file.name?.split('.').pop() || file.type?.split('/').pop() || 'png').toLowerCase();
+
+        // FileManager.exists() alone is not enough to pick a free name: an import
+        // does not register until well after this returns (it awaits the sniffer,
+        // then the Video/Overlay dialog at human speed). So two images in one
+        // paste, or a second paste made before the first dialog is answered, would
+        // both see "pasted-image-1" as free and the later one would overwrite the
+        // earlier. Reserve each name as it is handed out.
+        //
+        // Reservations are never released, so a cancelled import leaves its number
+        // used and the next paste skips it. That is only cosmetic, and it is the
+        // safe direction to err in — a reservation can only push us to a higher
+        // number, never hand out one that is already in flight.
+        let n = 1;
+        let name = `pasted-image-${n}.${ext}`;
+        while (FileManager.exists(name) || this.reservedPastedNames.has(name)) {
+            n++;
+            name = `pasted-image-${n}.${ext}`;
+        }
+        this.reservedPastedNames.add(name);
+        return new File([file], name, {type: file.type});
+    }
+
     onPaste(e) {
         if (this.isEditablePasteTarget(e.target)) {
+            return;
+        }
+
+        // Files before text. Copying an image in a browser puts the decoded bytes
+        // straight on the clipboard, so pasting imports images that a dragged URL
+        // cannot — the URL path has to fetch them, and most hosts send no CORS
+        // header. Chrome puts a text/html <img src> on the clipboard alongside the
+        // bytes, so testing for text first would take the wrong branch.
+        const files = this.getPastedFiles(e.clipboardData);
+        if (files.length > 0) {
+            e.preventDefault();
+            for (const file of files) {
+                console.log("LOADING PASTED FILE:" + file.name);
+                this.uploadDroppedFile(file);
+            }
             return;
         }
 
