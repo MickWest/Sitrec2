@@ -137,6 +137,7 @@ const params = {
     showRejected: false,
     showStarNames: true,
     showDuringAnalysis: true,
+    useMask: true,
     chartTracks: true,
     status: "not run",
 };
@@ -1127,6 +1128,20 @@ export async function runStarTracker() {
         let videoW = 0, videoH = 0;
         const rejectCounts = {};
         const rejectSamples = [];
+
+        // The shared video mask, when the user wants it respected. Resolved ONCE for the run: it
+        // is a user artefact that should not change mid-pass, and refreshing its pixels per frame
+        // would cost a full getImageData on every one.
+        //
+        // Note what this does and does not do. Detections inside masked regions are DISCARDED
+        // after detection, which keeps foliage out of the tracks, the solve and identification.
+        // It does not stop the detector looking there, so masked pixels still contribute to the
+        // local background estimate near the mask boundary. Detecting less would mean pushing the
+        // mask down into detectSources, which is a bigger change for a smaller gain.
+        const maskNode = params.useMask ? NodeMan.get("videoMask", false) : null;
+        if (maskNode?.maskCanvas) maskNode.updateMaskImageData();
+        const maskUsable = !!(maskNode?.maskCanvas && maskNode.maskImageData);
+
         const lastFrame = still ? frame0 : frame1;
         // The frame the run actually reached. Reported as the result's frame1 so the overlay and
         // the pose lookup, which both map a global frame to an index via frame0, describe the
@@ -1193,13 +1208,35 @@ export async function runStarTracker() {
                     kept.push(s);
                 }
             }
-            perFrame.push(kept);
+
+            // Drop what the mask excludes, tallied like any other rejection so the accounting
+            // stays honest - a star missing because it is under the mask should be answerable.
+            //
+            // Detections are in the ANALYSED decode space, which is not necessarily the space the
+            // mask was painted in: a 4K clip may be decoded at a capped resolution while the mask
+            // canvas is video-sized. Scale into the mask canvas rather than assuming one grid.
+            let accepted = kept;
+            if (maskUsable && px.W && px.H) {
+                const msx = maskNode.maskCanvas.width / px.W;
+                const msy = maskNode.maskCanvas.height / px.H;
+                accepted = [];
+                for (const s of kept) {
+                    if (maskNode.isPointMasked(s.x * msx, s.y * msy)) {
+                        rejectCounts.masked = (rejectCounts.masked || 0) + 1;
+                    } else {
+                        accepted.push(s);
+                    }
+                }
+            }
+            perFrame.push(accepted);
 
             // Live preview. `kept` is handed over by reference rather than copied: the array is
             // freshly built each iteration and only read by the draw, so a copy per frame would
             // be pure waste on a pass that already has thousands of frames to get through.
             if (params.showDuringAnalysis && ensureOverlay()) {
-                liveDetections = {frame: f, sources: kept, W: px.W, H: px.H};
+                // What SURVIVED, not what was detected: showing masked detections would make the
+                // mask look like it was not working while it was.
+                liveDetections = {frame: f, sources: accepted, W: px.W, H: px.H};
                 setRenderOne();
             }
         }
@@ -2190,6 +2227,11 @@ export function setupStarTrackerMenu() {
         .name("Full Analysis");
     folder.add(params, "status").name("Status").listen().disable();
 
+    folder.add(params, "useMask").name("Use mask")
+        .tooltip("Ignore detections that fall inside the video mask, painted under Video > "
+            + "Masking. Foliage, rooftops and OSD graphics detect as hundreds of bright blobs "
+            + "that the solver would otherwise treat as stars. Masked detections are counted as "
+            + "rejections, so nothing goes missing silently.");
     folder.add(params, "fitLens").name("Fit lens from stars")
         .tooltip("Fit the camera lens from the star field and judge motion on the sphere instead "
             + "of with a flat 2D model. On a wide-angle clip the flat model is biased at the frame "
