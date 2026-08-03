@@ -328,6 +328,15 @@ async function solveOverLanes(lanes, plan, tracks, initialStates, lens, size, op
         for (let i = 0; i < nTracks; i++) { sse += sseByTrack[i]; count += cntByTrack[i]; }
 
         const next = count ? Math.sqrt(sse / count) : Infinity;
+        // Reported AFTER the cost exists, unlike the phase notifications above which fire on
+        // entry. This is the quantity the solve is minimising, so it is the only honest thing to
+        // show a user watching a global optimisation converge - there is no "N of M frames done"
+        // to report when every frame is being solved at once.
+        // The step and the tolerance travel WITH the cost, because together they are the stopping
+        // test: the loop ends when the step falls below the tolerance. A caller showing progress
+        // can then say whether the solve is about to finish rather than merely that it is running.
+        onProgress({iteration: iterations, iterations: O.refineIterations, phase: "cost",
+            rms: next, step: Math.abs(rms - next), tolerance: O.refineTolerance});
         if (Math.abs(rms - next) < O.refineTolerance) { rms = next; converged = true; break; }
         rms = next;
     }

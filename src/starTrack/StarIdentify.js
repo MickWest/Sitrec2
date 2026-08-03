@@ -43,10 +43,18 @@ export const STAR_IDENTIFY_DEFAULTS = {
     // that form quads, but verification wants every star the video could plausibly have seen.
     verifyMagLimit: 7.0,
 
-    // How many of the brightest image stars may form quads, and how many nearest neighbours
-    // each draws its quad partners from. Bounded because quad count grows as C(k,3) per star.
+    // How many image stars may form quads, and how many nearest neighbours each draws its quad
+    // partners from. Bounded because quad count grows as C(k,3) per star.
     imageQuadStars: 25,
     imageNeighbors: 7,
+
+    // Quad anchors are held to a tighter standard than mere detection: they must look like POINT
+    // SOURCES. Extent is capped relative to THIS image's median detection, so the bar carries
+    // across sensors and focal lengths instead of encoding one camera's pixel scale; elongation
+    // is capped below the detector's own admission limit, so an anchor must be rounder than
+    // merely acceptable. See the anchor selection in solveFieldInner for what this is for.
+    quadMaxExtentMedians: 1.75,
+    quadMaxElongation: 2.0,
 
     // Code-space match tolerance (L-infinity, per axis). Code coordinates live in roughly the
     // unit square, and the noise of a code coordinate is the astrometric noise over the quad's
@@ -522,22 +530,28 @@ function invertSim(T) {
  * @param {Array} indexes - quad index tiers from {@link buildQuadIndex}, tried in order
  * @param {object} [opts] - overrides of STAR_IDENTIFY_DEFAULTS. `debug: true` additionally
  *   attaches a `diag` record of the solve's internals to the result (see newDiag).
- * @returns {{ok: boolean, reason?: string} | {ok: true, matches, centerRaDeg, centerDecDeg,
- *   fovDeg, rollDeg, pxPerDeg, mirrored, nImage, matchedFraction, rmsPx}}
+ *   `onYield` is awaited periodically through the hypothesis search so a caller can keep the
+ *   page responsive; omit it and the search runs straight through as one burst.
+ *   `onCandidate({points, mirrored, matched, nImage, fraction})` is called for each hypothesis
+ *   that survives verification, with `points` the four quad stars in image coordinates.
+ * @returns {Promise<{ok: boolean, reason?: string} | {ok: true, matches, centerRaDeg,
+ *   centerDecDeg, fovDeg, rollDeg, pxPerDeg, mirrored, nImage, matchedFraction, rmsPx}>}
  */
-export function solveField(imageStars, catalog, indexes, opts = {}) {
+export async function solveField(imageStars, catalog, indexes, opts = {}) {
     DIAG = opts.debug ? newDiag() : null;
     try {
-        const out = solveFieldInner(imageStars, catalog, indexes, opts);
+        const out = await solveFieldInner(imageStars, catalog, indexes, opts);
         if (DIAG) out.diag = DIAG;
         return out;
     } finally {
         // Cleared even when the solve throws, so a later run can never inherit a stale recorder.
+        // DIAG is module-scoped and this function now spans awaits, so two solves running at once
+        // would share it - the caller is responsible for not starting a second while one runs.
         DIAG = null;
     }
 }
 
-function solveFieldInner(imageStars, catalog, indexes, opts) {
+async function solveFieldInner(imageStars, catalog, indexes, opts) {
     const O = {...STAR_IDENTIFY_DEFAULTS, ...opts};
     const nImage = imageStars.length;
     if (nImage < 5) return {ok: false, reason: "too few stars to identify"};
@@ -584,11 +598,39 @@ function solveFieldInner(imageStars, catalog, indexes, opts) {
     const medianNeighbors = sortedCounts[sortedCounts.length >> 1] ?? 0;
     const clutterMax = Math.max(4, 4 * medianNeighbors);
 
-    // The brightest sky-like image stars, each with its nearest bright neighbours, form the
-    // image quads - the same generator the catalog index used, so the two populations overlap.
+    // The image quads are built from the best POINT SOURCES, not the brightest detections.
+    //
+    // Measured on a twilight photo with a treeline (4032x3024, 1047 detections): taking the 25
+    // brightest by flux put 24 of them in the foliage, and every surviving quad was anchored in
+    // a tree. Lit leaves are bright because a clump is LARGE, and integrated flux rewards
+    // exactly that, while a star is compact with a high peak. On that image, ranking by peakSNR
+    // alone leaves 12 of 25 anchors in the trees; restricting to compact detections alone leaves
+    // 19; doing both leaves 1. Both halves are therefore kept.
+    //
+    // This is a SEPARATE defence from the density test above, which that image defeats: the sky
+    // was itself densely detected (median 14 neighbours), so the foliage at ~50 never reached
+    // the 4x-median bar and nothing was excluded at all.
+    //
+    // `snr`, `extent` and `elongation` are optional. Callers that do not measure them - the
+    // headless tests, anything feeding bare {x, y, mag} - fall back to ranking by magnitude and
+    // to admitting every shape, which is exactly the previous behaviour.
+    const extents = imageStars.map((s) => s.extent).filter((v) => Number.isFinite(v));
+    const maxExtent = extents.length
+        ? O.quadMaxExtentMedians * [...extents].sort((a, b) => a - b)[extents.length >> 1]
+        : Infinity;
+    const pointLike = (s) =>
+        (!Number.isFinite(s.extent) || s.extent <= maxExtent)
+        && (!Number.isFinite(s.elongation) || s.elongation <= O.quadMaxElongation);
+    // Ascending sort throughout, so magnitude (smaller is brighter) and negated SNR agree on
+    // "best first" without a second code path.
+    const measuredSnr = imageStars.some((s) => Number.isFinite(s.snr));
+    const rankOf = measuredSnr
+        ? (s) => (Number.isFinite(s.snr) ? -s.snr : Infinity)
+        : (s) => (s.mag ?? 0);
+
     const brightIdx = imageStars
-        .map((s, i) => [s.mag ?? 0, i])
-        .filter(([, i]) => neighborCounts[i] <= clutterMax)
+        .map((s, i) => [rankOf(s), i])
+        .filter(([, i]) => neighborCounts[i] <= clutterMax && pointLike(imageStars[i]))
         .sort((p, q) => p[0] - q[0])
         .slice(0, O.imageQuadStars)
         .map((p) => p[1]);
@@ -655,6 +697,12 @@ function solveFieldInner(imageStars, catalog, indexes, opts) {
                 tried++;
                 if (tierDiag) tierDiag.tried++;
 
+                // Breathe every so often, so a caller showing progress can actually paint it.
+                // Batched rather than per-hypothesis: most hypotheses are rejected within a few
+                // microseconds by the cheap gates below, and awaiting on each would cost more
+                // than the search itself.
+                if (O.onYield && tried % 32 === 0) await O.onYield();
+
                 // Hypothesis: similarity from image px (in this parity) to the tangent plane
                 // about the catalog quad's anchor star.
                 const catStars = [0, 1, 2, 3].map((j) => index.quads[h * 4 + j]);
@@ -698,6 +746,20 @@ function solveFieldInner(imageStars, catalog, indexes, opts) {
                     catalog, deep, deepVec, tolPx, width, centerPx, bounds, O);
                 if (!cand) continue;
                 if (tierDiag) tierDiag.candidates++;
+                // A quad that got this far passed the code lookup, the scale prior, the
+                // four-point agreement gate AND full-field verification - so it is worth
+                // showing. `fraction` is how much of the field this hypothesis explains, which
+                // is the honest measure of how good it is: a wrong quad can fit its own four
+                // points perfectly and still explain nothing else.
+                if (O.onCandidate) {
+                    O.onCandidate({
+                        points: iq.quad.map((q) => [bpts[q][0], bpts[q][1]]),
+                        mirrored: iq.mirrored,
+                        matched: cand.matches.length,
+                        nImage,
+                        fraction: nImage ? cand.matches.length / nImage : 0,
+                    });
+                }
                 candidates.push(cand);
                 if (cand.matches.length >= O.earlyExitFraction * nImage) break;
             }

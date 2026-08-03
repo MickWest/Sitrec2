@@ -529,6 +529,11 @@ export async function calibrateLens(tracks, nFrames, size, opts = {}) {
     // clip, so the caller can hand in a yield (StarTrackerUI passes yieldToBrowser) to keep the
     // page answering between stages. Defaults to a no-op, which is what the tests want.
     const breathe = O.onYield ?? (async () => {});
+    // Optional running commentary for a caller showing progress. The interesting thing this stage
+    // computes is WHERE THE OPTICAL AXIS IS - on cropped footage it can be hundreds of pixels from
+    // the frame centre - so every emission carries the axis currently believed in, plus how well
+    // it explains the correspondences. Reporting only; nothing here changes the fit.
+    const report = O.onProgress ?? (() => {});
 
     const base = chooseBaseline(tracks, nFrames, O.minPairs, {...O, size});
     if (!base || base.A.length < O.minPairs) {
@@ -549,6 +554,8 @@ export async function calibrateLens(tracks, nFrames, size, opts = {}) {
     // scoreLens skips pairs whose ray or reprojection is undefined and reports `n` for the rest,
     // so within/n could read 0.75 for a lens that explained 15 of 100 pairs and evaluated 20.
     diag.centredWithin = scan.best.within / Math.max(1, A.length);
+    report({stage: "centred", principal: [size[0] / 2, size[1] / 2], size,
+        rms: scan.best.rms, within: scan.best.within, pairs: A.length});
     if (diag.centredWithin < O.principalSearchWithinFrac) {
         await breathe();
         const seeds = scanPrincipal(A, B, size, O);
@@ -560,6 +567,8 @@ export async function calibrateLens(tracks, nFrames, size, opts = {}) {
             await breathe();
             const full = scanLens(A, B, size, {...O, principal: seed.principal});
             if (!full.best) continue;
+            report({stage: "searching", principal: seed.principal, size,
+                rms: full.best.rms, within: full.best.within, pairs: A.length});
             if (!bestFull || full.best.within > bestFull.best.within
                 || (full.best.within === bestFull.best.within
                     && full.best.rms < bestFull.best.rms)) {
@@ -592,6 +601,9 @@ export async function calibrateLens(tracks, nFrames, size, opts = {}) {
         refined.lens.principal[1] - size[1] / 2];
     diag.principalClamped = !!refined.principalClamped;
     diag.rms = refined.rms;
+    report({stage: "refined", principal: refined.lens.principal, size,
+        focalPx: refined.lens.focalPx, type: refined.lens.type,
+        rms: refined.rms, pairs: A.length});
     diag.within = refined.within;
     diag.of = refined.n;
 

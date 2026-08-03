@@ -100,9 +100,9 @@ function mapToSky(pairs) {
 }
 
 /** Solve, then score every label against the arbiter. */
-function solveAndAudit(stars) {
+async function solveAndAudit(stars) {
     const index = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[0]);
-    const solved = solveField(stars, catalog, [index], uiOpts(stars));
+    const solved = await solveField(stars, catalog, [index], uiOpts(stars));
     if (!solved.ok) return {solved};
 
     const pairs = [];
@@ -150,8 +150,8 @@ describe("identifying the real rotating-starfield clip", () => {
         expect(map.tracks.every((t) => Array.isArray(t.ref) && t.ref.length === 3)).toBe(true);
     });
 
-    test("the shipping configuration names stars, and the names are RIGHT", () => {
-        const a = solveAndAudit(starSet(false));
+    test("the shipping configuration names stars, and the names are RIGHT", async () => {
+        const a = await solveAndAudit(starSet(false));
         expect(a.solved.ok).toBe(true);
 
         // Head of Ursa Major / Canes Venatici, as every solve of this clip has agreed.
@@ -168,11 +168,11 @@ describe("identifying the real rotating-starfield clip", () => {
         expect(a.right / a.pairs.length).toBeGreaterThan(0.85);
     });
 
-    test("the spherical map is accurate to about 0.15 deg, not the 0.42 deg once reported", () => {
+    test("the spherical map is accurate to about 0.15 deg, not the 0.42 deg once reported", async () => {
         // The number that matters for any future catalogue-tied refinement, and the one the
         // earlier planar-similarity measurement got wrong by a factor of three. Inliers only:
         // the handful of misidentified labels are the identifier's error, not the map's.
-        const a = solveAndAudit(starSet(false));
+        const a = await solveAndAudit(starSet(false));
         const inliers = a.errors.filter((e) => e < 1);
         const rms = Math.sqrt(inliers.reduce((s, e) => s + e * e, 0) / inliers.length);
         expect(inliers.length).toBeGreaterThanOrEqual(0.9 * a.errors.length);
@@ -182,7 +182,7 @@ describe("identifying the real rotating-starfield clip", () => {
         expect(rms).toBeLessThan(0.42);
     });
 
-    test("the improved star set is not yet safe to identify from", () => {
+    test("the improved star set is not yet safe to identify from", async () => {
         // The 62 extra tracks are the frame-edge stars the lens fit recovered, and naming them
         // is the open goal. With the tangent-units guard fixed they no longer break the solve -
         // it succeeds on the wide tier - but the labels it puts on the EDGE are wrong often
@@ -191,13 +191,13 @@ describe("identifying the real rotating-starfield clip", () => {
         // labels come good, this test fails and the input choice can be revisited.
         const index = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[0]);
         const stars = starSet(true);
-        const solved = solveField(stars, catalog, [index], uiOpts(stars));
+        const solved = await solveField(stars, catalog, [index], uiOpts(stars));
         // On the NARROW tier the improved set still cannot hold consensus...
         expect(solved.ok).toBe(false);
         // ...which is why identifyStars would fall through to the wide tier, where it does
         // solve - but at a per-label quality this suite does not yet accept.
         const wide = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[2]);
-        const wideSolved = solveField(stars, catalog, [wide], uiOpts(stars));
+        const wideSolved = await solveField(stars, catalog, [wide], uiOpts(stars));
         expect(wideSolved.ok).toBe(true);
         expect(wideSolved.matches.length).toBeGreaterThan(80);
     });

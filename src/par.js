@@ -27,11 +27,20 @@ const parDefaults = {
         globalThis.__sitrecWakeRenderLoop?.();
     },
 
+    // While set, playback cannot be resumed. Held by analyses that drive par.frame themselves
+    // (Star Tracker's detect pass steps the video frame by frame), where a stray play - from the
+    // transport bar, a keyboard shortcut, or a script - would fight the analysis for the frame
+    // counter and quietly corrupt the pass. Pausing is always allowed; only resuming is blocked.
+    pausedLock: false,
+
     get paused() {
         return this._paused;
     },
     set paused(value) {
         const nextPaused = Boolean(value);
+        if (this.pausedLock && !nextPaused) {
+            return;
+        }
         const wasPaused = this._paused;
         this._paused = nextPaused;
 

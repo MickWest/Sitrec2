@@ -46,6 +46,56 @@ let aborted = false;
 // part of ctx.stale() - staleness means the run's answer is worthless and must be discarded,
 // whereas this run's answer is simply drawn from a shorter clip than was asked for.
 let enough = false;
+// Live preview during the detect pass: the accepted detections of the frame just measured, in
+// that run's analysed-video pixels, as {frame, sources, W, H}. Null whenever no run is scanning.
+//
+// Held separately from `result` rather than being folded into it, because at this point in a run
+// nothing has been solved - there is no map, no classification and no magnitude tiering - and a
+// re-analysis still has the PREVIOUS result sitting in `result`, describing a different pass.
+let liveDetections = null;
+// The best verified quads from the last identification, in reference-chart coordinates, as
+// {points, mirrored, matched, nImage, fraction}. Kept AFTER the search finishes rather than
+// cleared with it: on a good map identification takes under a tenth of a second, so anything
+// shown only during the search is invisible - the evidence has to outlive the search to be worth
+// drawing at all. Replaced when the next identify starts, and dropped with the solve on Clear.
+let liveQuads = [];
+// Kept by QUALITY, not recency: these persist, so they are a summary of what the solve found
+// rather than a view of it working, and the five that explain the most of the field are the
+// five worth leaving on screen.
+const MAX_LIVE_QUADS = 5;
+// The solve stage currently running, for the stages that are ONE GLOBAL OPTIMISATION over the
+// whole clip rather than a walk through frames. Those have no "frame N of M" to report - every
+// frame is being solved at once - so what is shown instead is the thing each stage is actually
+// computing: for the lens, where it currently believes the optical axis is; for the spherical
+// solve, the residual it is minimising, falling per iteration.
+//   {kind: "lens", principal, size, rms, within, pairs, focalPx, type, stage}
+//   {kind: "sphere", title, iteration, iterations, phase, rms, history: number[]}
+let liveStage = null;
+
+/**
+ * Record one spherical-refinement progress report for the overlay.
+ *
+ * The residual history is kept per PASS, not across the whole run: pass 2 re-solves on the stars
+ * alone and starts from a different cost, so carrying pass 1's trace into it would draw a jump
+ * that means nothing. A new title starts a new trace.
+ */
+function noteSphereProgress(title, p) {
+    if (!params.showDuringAnalysis) return;
+    const same = liveStage?.kind === "sphere" && liveStage.title === title;
+    // The FIRST cost of this pass, kept so the display can show how far it has come. Per pass,
+    // not per run: pass 2 re-solves on the stars alone and starts from a different cost, so
+    // carrying pass 1's starting point into it would describe a distance never travelled.
+    const first = same && Number.isFinite(liveStage.first) ? liveStage.first
+        : (Number.isFinite(p.rms) ? p.rms : undefined);
+    // Only the cost phase carries an rms; the phase notifications fire on entry, before the
+    // iteration has produced one.
+    liveStage = {kind: "sphere", title, iteration: p.iteration, iterations: p.iterations,
+        phase: p.phase, first,
+        rms: Number.isFinite(p.rms) ? p.rms : (same ? liveStage.rms : undefined),
+        step: Number.isFinite(p.step) ? p.step : (same ? liveStage.step : undefined),
+        tolerance: p.tolerance ?? (same ? liveStage.tolerance : undefined)};
+    setRenderOne();
+}
 // Measured pixel-scale parameters from "Detect Star Size", applied to subsequent analyses.
 // Null means the hand-tuned defaults, which were measured on the reference footage.
 let calibration = null;
@@ -86,6 +136,7 @@ const params = {
     showClusters: true,
     showRejected: false,
     showStarNames: true,
+    showDuringAnalysis: true,
     chartTracks: true,
     status: "not run",
 };
@@ -245,7 +296,7 @@ function dropCalibrationForOtherVideo(videoData) {
  * changed during the decode wait, a newer calibration superseded this one, or there was nothing
  * to run against - true otherwise, including when the measurement itself failed (a failed
  * calibration keeps the previous parameters precisely so analysis remains runnable, so it must
- * not read as "stop"). The chained Measure/Analyze/Identify/Sync button gates on this; a false
+ * not read as "stop"). The chained Full Analysis button gates on this; a false
  * that went unchecked would let a click's analysis and camera sync land on a video the user
  * swapped in AFTER clicking.
  */
@@ -726,6 +777,36 @@ function detachStarTrackCamera() {
  * (quad hashing; see StarIdentify). On success each confirmed star gains a name, and the
  * overlay and chart label them.
  */
+/**
+ * Point-source measurements for one track, medianed over its own detections.
+ *
+ * `peakSNR` is how far the blob's PEAK stands above the local noise, which is what separates a
+ * star from lit foliage: a leaf clump is bright because it is large, so it carries a big
+ * integrated flux with an unremarkable peak. `extent` and `elongation` say whether the blob is
+ * the compact round shape a point source makes.
+ *
+ * Returns an empty object when the detector records are unavailable, so the caller simply omits
+ * the fields and the solver falls back to ranking by brightness.
+ */
+function pointSourceStats(track) {
+    const snr = [], extent = [], elongation = [];
+    for (const o of track?.obs ?? []) {
+        const s = o.src;
+        if (!s) continue;
+        if (Number.isFinite(s.peakSNR)) snr.push(s.peakSNR);
+        if (Number.isFinite(s.width) && Number.isFinite(s.height)) {
+            extent.push(Math.max(s.width, s.height));
+        }
+        if (Number.isFinite(s.elongation)) elongation.push(s.elongation);
+    }
+    const median = (a) => (a.length ? [...a].sort((x, y) => x - y)[a.length >> 1] : undefined);
+    const out = {};
+    if (snr.length) out.snr = median(snr);
+    if (extent.length) out.extent = median(extent);
+    if (elongation.length) out.elongation = median(elongation);
+    return out;
+}
+
 export async function identifyStars() {
     if (!result) {
         params.status = "run Analyze first";
@@ -733,6 +814,7 @@ export async function identifyStars() {
     }
     const myResult = result;
     const generation = myResult.generation;
+    liveQuads = [];
     // Freshness includes the VIDEO's identity: replacing the video in the same view does not
     // change the result object or the generation, and an identification of the old sky must
     // not attach to (or report status over) the new one.
@@ -777,7 +859,13 @@ export async function identifyStars() {
                 && Number.isFinite(c.magnitude)
                 && c.n >= minIdentifyObs
                 && !myResult.disabledStars?.has(c.index))
-            .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index}));
+            .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index,
+                // How much this track looks like a POINT SOURCE, for choosing quad anchors.
+                // Read off the detector's own records rather than recomputed, and medianed over
+                // the track's detections so one bad frame cannot decide it. Without these the
+                // solver ranks anchors by brightness, which on a twilight photo means the
+                // treeline - lit foliage is bright because a clump is large.
+                ...pointSourceStats(myResult.solved.tracks[c.index])}));
 
         // When the source carries optics metadata, the plate scale is KNOWN - the strongest
         // prune a blind solver can be handed - and the field of view says which index tier to
@@ -826,13 +914,23 @@ export async function identifyStars() {
                 if (s.y > by1) by1 = s.y;
             }
             const boundsPad = 12;
-            solved = solveField(stars, catalog, [quadIndexes[tier]], {
+            solved = await solveField(stars, catalog, [quadIndexes[tier]], {
                 ...(myResult.videoW ? {
                     center: [(bx0 + bx1) / 2, (by0 + by1) / 2],
                     width: Math.max(bx1 - bx0, by1 - by0),
                     bounds: [bx0 - boundsPad, by0 - boundsPad, bx1 + boundsPad, by1 + boundsPad],
                 } : {}),
                 ...(scalePrior ? {scalePrior} : {}),
+                ...(params.showDuringAnalysis ? {
+                    onYield: yieldToBrowser,
+                    onCandidate: (q) => {
+                        // Best-last, so the strongest quad paints on top of the others.
+                        liveQuads.push(q);
+                        liveQuads.sort((a, b) => a.fraction - b.fraction);
+                        if (liveQuads.length > MAX_LIVE_QUADS) liveQuads.shift();
+                        setRenderOne();
+                    },
+                } : {}),
             });
             if (!fresh()) return;
             if (solved.ok) break;
@@ -875,6 +973,12 @@ export async function identifyStars() {
         // Only while this run still owns the state - a failure surfacing after a sitch change
         // must not write over the new sitch's status.
         if (fresh()) params.status = `identify failed: ${e?.message ?? e}`;
+    } finally {
+        // Deliberately NOT cleared: the quads stay on screen as the visible evidence for the
+        // identification. Nothing misleading survives a failure either, since onCandidate only
+        // ever fires for a hypothesis that passed verification - a failed solve verified none,
+        // so there is nothing in the list to leave behind.
+        setRenderOne();
     }
 }
 
@@ -989,18 +1093,36 @@ export async function runStarTracker() {
     // Established before the progress UI, which offers "Enough" only for a real multi-frame pass.
     const still = videoData instanceof CVideoImageData;
 
-    initProgress({
-        title: "Star Tracker",
-        filename: `Analyzing frames ${frame0}-${frame1}`,
-        showAbort: true,
-        onAbort: () => { aborted = true; },
-        // Only worth offering when there is more than one frame to stop short of.
-        showEnough: !still && total > 1,
-        onEnough: () => { enough = true; },
-        enoughLabel: "Enough (solve what we have)",
-    });
+    const wasPaused = par.paused;
+    // The previous identification's quads describe the previous solve. A new analysis replaces
+    // the map they were drawn against, so they go now rather than lingering over fresh results.
+    liveQuads = [];
+    // Set once the analysis has produced a result, so the finally can tell "finished" (park on the
+    // first analysed frame, which is what the overlay now describes) from "aborted or failed"
+    // (put the user back where they were, since nothing was produced to look at).
+    let completed = false;
 
     try {
+        // The detect pass steps par.frame itself, one analysed frame at a time. If normal playback
+        // is running it advances the same counter, so the two interleave and frames get measured
+        // out of order or skipped. Pause it, and hold the lock so nothing can resume mid-pass.
+        //
+        // Taken INSIDE the try, together with everything else that must be undone: acquiring the
+        // lock before it would leave playback locked forever if the setup below threw.
+        par.paused = true;
+        par.pausedLock = true;
+
+        initProgress({
+            title: "Star Tracker",
+            filename: `Analyzing frames ${frame0}-${frame1}`,
+            showAbort: true,
+            onAbort: () => { aborted = true; },
+            // Only worth offering when there is more than one frame to stop short of.
+            showEnough: !still && total > 1,
+            onEnough: () => { enough = true; },
+            enoughLabel: "Enough (solve what we have)",
+        });
+
         const perFrame = [];
         let videoW = 0, videoH = 0;
         const rejectCounts = {};
@@ -1072,7 +1194,25 @@ export async function runStarTracker() {
                 }
             }
             perFrame.push(kept);
+
+            // Live preview. `kept` is handed over by reference rather than copied: the array is
+            // freshly built each iteration and only read by the draw, so a copy per frame would
+            // be pure waste on a pass that already has thousands of frames to get through.
+            if (params.showDuringAnalysis && ensureOverlay()) {
+                liveDetections = {frame: f, sources: kept, W: px.W, H: px.H};
+                setRenderOne();
+            }
         }
+
+        // Scanning is over, so the per-frame preview stops owning the overlay - the solve stages
+        // below have their own displays, and the draw order prefers this one. Cleared here rather
+        // than in the finally, which only runs once the whole analysis has finished.
+        //
+        // Wiping the canvas as well as the state is the point: dropping the state alone stops it
+        // being REDRAWN but leaves the last frame's circles painted, so they sit there through
+        // stages they have nothing to do with, looking like live output.
+        liveDetections = null;
+        clearOverlayCanvas();
 
         if (ctx.stale()) {
             params.status = aborted ? "aborted" : "cancelled (video changed)";
@@ -1132,7 +1272,12 @@ export async function runStarTracker() {
                 updateProgress({percent: 96, status: "Fitting camera lens"});
                 await yieldToBrowser();
                 const cal = await calibrateLens(solved.tracks, solved.transforms.length,
-                    [videoW, videoH], {onYield: yieldToBrowser});
+                    [videoW, videoH], {
+                        onYield: yieldToBrowser,
+                        ...(params.showDuringAnalysis ? {
+                            onProgress: (p) => { liveStage = {kind: "lens", ...p}; setRenderOne(); },
+                        } : {}),
+                    });
                 console.log(`[StarTrack] calibrateLens ${Date.now() - tLens}ms`);
                 if (cal.accepted) {
                     const lens = cal.lens;
@@ -1162,10 +1307,13 @@ export async function runStarTracker() {
                         {
                             exclude: artifacts,
                             shouldAbort: () => ctx.stale(),
-                            onProgress: ({iteration, iterations}) => updateProgress({
-                                percent: 96.5 + 1.5 * (iteration - 1) / iterations,
-                                status: `Solving sky rotation: pass 1, iteration ${iteration}`,
-                            }),
+                            onProgress: (p) => {
+                                updateProgress({
+                                    percent: 96.5 + 1.5 * (p.iteration - 1) / p.iterations,
+                                    status: `Solving sky rotation: pass 1, iteration ${p.iteration}`,
+                                });
+                                noteSphereProgress("Solving sky rotation (pass 1)", p);
+                            },
                         });
                     if (!refined) {
                         params.status = aborted ? "aborted" : "cancelled (video changed)";
@@ -1197,10 +1345,13 @@ export async function runStarTracker() {
                             lens, size, {
                                 exclude: notSky,
                                 shouldAbort: () => ctx.stale(),
-                                onProgress: ({iteration, iterations}) => updateProgress({
-                                    percent: 98 + 1.0 * (iteration - 1) / iterations,
-                                    status: `Re-solving on stars only: iteration ${iteration}`,
-                                }),
+                                onProgress: (p) => {
+                                    updateProgress({
+                                        percent: 98 + 1.0 * (p.iteration - 1) / p.iterations,
+                                        status: `Re-solving on stars only: iteration ${p.iteration}`,
+                                    });
+                                    noteSphereProgress("Re-solving on stars only", p);
+                                },
                             });
                         if (!re) {
                             params.status = aborted ? "aborted" : "cancelled (video changed)";
@@ -1314,11 +1465,26 @@ export async function runStarTracker() {
                 // them with a full pass needs to know that without going back to the console.
                 + (result.stoppedEarly ? ` (stopped early, ${analysedLast - frame0 + 1}/${total} frames)` : "");
         ensureOverlay();
+        completed = true;
         return result;
     } finally {
         running = false;
+        // Hand the overlay back to the finished result (or to nothing). Cleared before the final
+        // render below, or the preview's last frame would sit on screen over the real answer.
+        liveDetections = null;
+        liveStage = null;
         hideProgress();
-        if (Globals.loadGeneration === generation) par.frame = savedFrame;
+        // Release before touching par.paused, or the lock refuses our own restore.
+        par.pausedLock = false;
+        if (Globals.loadGeneration === generation) {
+            // Park on the first analysed frame rather than wherever the user was: that frame is
+            // the start of what was just measured, and the overlay is drawn for it. An abort
+            // produced nothing to look at, so that case goes back where it came from.
+            par.frame = completed ? frame0 : savedFrame;
+        }
+        // Stay paused after a completed run. Restoring "was playing" would immediately run the
+        // video away from the frame we just parked on, which is the opposite of useful.
+        if (!completed) par.paused = wasPaused;
         setRenderOne();
     }
 }
@@ -1415,7 +1581,12 @@ function ensureOverlay() {
         const original = view.renderCanvas.bind(view);
         view.renderCanvas = (frame) => {
             original(frame);
-            if (result) drawStarTrackerOverlay();
+            // While a run is scanning, the live preview OWNS the overlay. `result` may still hold
+            // the previous analysis, and letting it paint here would fight the preview frame by
+            // frame - two different passes' circles alternating on screen.
+            if (liveDetections) drawLiveDetections();
+            else if (liveStage) drawLiveStage();
+            else if (result) drawStarTrackerOverlay();
         };
     }
     return true;
@@ -1427,7 +1598,17 @@ const COLORS = {
     cameraFixed: "#ffc400",
     incoherent: "#8a8a8a",
     cluster: "#ff9500",
+    // Transient views of the solver working, deliberately unlike any classification colour: none
+    // of these is a verdict about anything on screen.
+    quad: "#4db8ff",
+    lens: "#ff5edb",
+    sphere: "#7cf6ff",
 };
+
+// One light colour per drawn quad, so five overlapping four-star shapes can be told apart - they
+// share stars and cross each other, and in a single colour they read as one tangle. Green and red
+// are avoided throughout: those mean "star" and "moving" everywhere else on this overlay.
+const QUAD_COLORS = ["#7cf6ff", "#ffd866", "#ff9ecd", "#b8a6ff", "#ffb38a"];
 
 // How many star circles are drawn at full strength. A dense field solves thousands of stars - 882
 // on the Milky Way timelapse this was tuned against - and at full weight the overlay becomes a
@@ -1464,6 +1645,173 @@ function brightMagnitudeCutoff() {
  * stay put through a frame where a star was missed - which is the whole point of having solved the
  * camera motion. Radius comes from the measured magnitude.
  */
+/**
+ * Draw the raw detections of the frame currently being measured, during a run.
+ *
+ * Deliberately plain, and deliberately different from the finished overlay: nothing has been
+ * solved yet, so there is no classification, no magnitude tiering, no name and no click target.
+ * Every accepted blob draws the same small ring, which is an honest picture of what the detector
+ * is handing the solver - and makes a bad threshold or blob-size setting obvious while the pass
+ * is still running, rather than after minutes of waiting.
+ *
+ * Circles come from THIS frame's detections, so a star missed on one frame simply is not circled
+ * on it. That is the opposite of the finished overlay, which places circles from the solved map
+ * precisely so they stay put through a missed frame.
+ */
+function drawLiveDetections() {
+    const view = videoView();
+    if (!view || !overlay || !overlayCtx || !liveDetections) return;
+
+    const rect = view.div.getBoundingClientRect();
+    if (overlay.width !== rect.width || overlay.height !== rect.height) {
+        overlay.width = rect.width;
+        overlay.height = rect.height;
+    }
+    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    // Nothing here is clickable - there are no solved stars to toggle yet - so any hits left over
+    // from a previous result must not stay live under the preview.
+    overlayStarHits = [];
+
+    // The detections belong to one frame. The render loop paints frames the scan has already moved
+    // past, so drawing them on any other frame would show last frame's circles against this one.
+    if (Math.round(par.frame) !== liveDetections.frame) return;
+
+    // Same rescale as the finished overlay: the analysis works in the DECODED pixel space, which
+    // is a user setting and may differ from the view's current decode size.
+    const rsx = liveDetections.W ? view.videoWidth / liveDetections.W : 1;
+    const rsy = liveDetections.H ? view.videoHeight / liveDetections.H : 1;
+
+    overlayCtx.strokeStyle = COLORS.star;
+    overlayCtx.lineWidth = 1.2;
+    overlayCtx.globalAlpha = 0.85;
+    overlayCtx.setLineDash([]);
+    for (const s of liveDetections.sources) {
+        const [px, py] = view.videoToCanvasCoords(s.x * rsx, s.y * rsy);
+        if (px < -20 || py < -20 || px > overlay.width + 20 || py > overlay.height + 20) continue;
+        overlayCtx.beginPath();
+        overlayCtx.arc(px, py, 7, 0, Math.PI * 2);
+        overlayCtx.stroke();
+    }
+    overlayCtx.globalAlpha = 1;
+
+    overlayCtx.fillStyle = COLORS.star;
+    overlayCtx.font = "bold 13px sans-serif";
+    overlayCtx.fillText(`${liveDetections.sources.length} detected`, 10, 20);
+}
+
+/**
+ * Draw what the current whole-clip solve stage is computing.
+ *
+ * These stages have no per-frame progress to report - the lens fit and the spherical refinement
+ * each solve over the entire clip at once - so a bar would be inventing a granularity that does
+ * not exist. What is drawn instead is the stage's own working state.
+ */
+/**
+ * Wipe the overlay now, rather than waiting for something to redraw it.
+ *
+ * The draw paths only run when they have something to draw, so dropping their state stops the
+ * REDRAW but leaves whatever was last painted on screen - stale circles outliving the stage that
+ * produced them. Whoever clears the state clears the canvas.
+ */
+function clearOverlayCanvas() {
+    if (overlay && overlayCtx) overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    overlayStarHits = [];
+}
+
+function drawLiveStage() {
+    const view = videoView();
+    if (!view || !overlay || !overlayCtx || !liveStage) return;
+
+    const rect = view.div.getBoundingClientRect();
+    if (overlay.width !== rect.width || overlay.height !== rect.height) {
+        overlay.width = rect.width;
+        overlay.height = rect.height;
+    }
+    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    overlayStarHits = [];
+    overlayCtx.setLineDash([]);
+
+    if (liveStage.kind === "lens") {
+        // The optical axis, in the analysed frame's pixels. On cropped footage this walks a long
+        // way from the frame centre, which is the whole reason the stage exists - so the crosshair
+        // is drawn against a marker at the centre, making the offset the visible quantity.
+        const [w, h] = liveStage.size || [0, 0];
+        const rsx = w ? view.videoWidth / w : 1;
+        const rsy = h ? view.videoHeight / h : 1;
+        const [cx, cy] = view.videoToCanvasCoords((w / 2) * rsx, (h / 2) * rsy);
+        const [ax, ay] = view.videoToCanvasCoords(liveStage.principal[0] * rsx,
+            liveStage.principal[1] * rsy);
+
+        overlayCtx.strokeStyle = "#8899aa";
+        overlayCtx.lineWidth = 1;
+        overlayCtx.setLineDash([3, 3]);
+        overlayCtx.beginPath();
+        overlayCtx.moveTo(cx, cy);
+        overlayCtx.lineTo(ax, ay);
+        overlayCtx.stroke();
+        overlayCtx.setLineDash([]);
+
+        // Settled draws solid and bright; a candidate mid-search draws lighter, so the moment the
+        // search stops wandering and commits is visible without reading the text.
+        const settled = liveStage.stage === "refined";
+        overlayCtx.strokeStyle = COLORS.lens;
+        overlayCtx.globalAlpha = settled ? 1 : 0.6;
+        overlayCtx.lineWidth = settled ? 2.5 : 1.5;
+        const r = settled ? 22 : 15;
+        overlayCtx.beginPath();
+        overlayCtx.arc(ax, ay, r, 0, Math.PI * 2);
+        overlayCtx.moveTo(ax - r * 1.6, ay);
+        overlayCtx.lineTo(ax + r * 1.6, ay);
+        overlayCtx.moveTo(ax, ay - r * 1.6);
+        overlayCtx.lineTo(ax, ay + r * 1.6);
+        overlayCtx.stroke();
+        overlayCtx.globalAlpha = 1;
+
+        const dx = Math.round(liveStage.principal[0] - w / 2);
+        const dy = Math.round(liveStage.principal[1] - h / 2);
+        const bits = [`optical axis ${dx >= 0 ? "+" : ""}${dx}, ${dy >= 0 ? "+" : ""}${dy} px from centre`];
+        if (Number.isFinite(liveStage.rms)) bits.push(`rms ${liveStage.rms.toFixed(2)}`);
+        if (liveStage.within !== undefined && liveStage.pairs) {
+            bits.push(`${liveStage.within}/${liveStage.pairs} pairs`);
+        }
+        if (liveStage.focalPx) bits.push(`f ${Math.round(liveStage.focalPx)} px`);
+        overlayCtx.fillStyle = COLORS.lens;
+        overlayCtx.font = "bold 13px sans-serif";
+        overlayCtx.fillText(settled ? "lens fitted" : "fitting camera lens", 10, 20);
+        overlayCtx.font = "12px sans-serif";
+        overlayCtx.fillText(bits.join("  -  "), 10, 38);
+        return;
+    }
+
+    if (liveStage.kind === "sphere") {
+        // Numbers, not a chart. A residual trace over 4-12 points with no axes says only "it went
+        // down", which the iteration counter already implies - the question a viewer actually has
+        // is "is this nearly finished, or stuck?", and that is answered by the STOPPING TEST: the
+        // loop ends when the per-iteration step falls below the tolerance. So the step and the
+        // tolerance are shown side by side, and how far the residual has come from where it began.
+        overlayCtx.fillStyle = COLORS.sphere;
+        overlayCtx.font = "bold 13px sans-serif";
+        overlayCtx.fillText(liveStage.title, 10, 20);
+        overlayCtx.font = "12px sans-serif";
+        overlayCtx.fillText([`iteration ${liveStage.iteration}/${liveStage.iterations}`,
+            liveStage.phase ? `phase: ${liveStage.phase}` : null,
+        ].filter(Boolean).join("  -  "), 10, 38);
+
+        if (Number.isFinite(liveStage.rms)) {
+            const from = Number.isFinite(liveStage.first) && liveStage.first !== liveStage.rms
+                ? ` (from ${liveStage.first.toFixed(3)})` : "";
+            overlayCtx.fillText(`residual ${liveStage.rms.toFixed(4)} px${from}`, 10, 56);
+        }
+        if (Number.isFinite(liveStage.step) && Number.isFinite(liveStage.tolerance)) {
+            const done = liveStage.step < liveStage.tolerance;
+            overlayCtx.fillStyle = done ? COLORS.star : COLORS.sphere;
+            overlayCtx.fillText(
+                `step ${liveStage.step.toExponential(1)} `
+                + `${done ? "<" : "vs"} ${liveStage.tolerance.toExponential(0)} to stop`, 10, 74);
+        }
+    }
+}
+
 export function drawStarTrackerOverlay() {
     if (!result) return;
     const view = videoView();
@@ -1589,11 +1937,22 @@ export function drawStarTrackerOverlay() {
             ? (magMax - c.magnitude) / (magMax - magMin) : 0.5;
         const radius = 6 + t01 * 18;
 
+        // A star the catalog gave a PROPER name - Pollux, Deneb - is always drawn at full
+        // strength however faint it measured. The name is the whole point of annotating it, and
+        // a label at quarter opacity over video is unreadable. Bayer designations and HIP
+        // numbers do not qualify: those are catalog identifiers rather than names, and nearly
+        // every match has one, so honouring them would defeat the tiering entirely.
+        const identifiedStar = c.klass === "star" && result.identify
+            ? result.identify.identified.get(c.index)
+            : null;
+        const properlyNamed = !!identifiedStar?.named;
+
         // Everything below the brightest BRIGHT_CIRCLES draws as a thin, faint ring. An
         // UNMEASURED magnitude counts as faint - a star with no photometry cannot claim to be in
         // the top hundred. Only stars are demoted: movers are the point of the analysis and there
         // are few of them, and the rejected classes are off by default anyway.
         const faint = c.klass === "star"
+            && !properlyNamed
             && !(Number.isFinite(c.magnitude) && c.magnitude <= brightCutoff);
 
         // Stars are clickable: register the circle as drawn, and dim a toggled-off star - still
@@ -1624,14 +1983,11 @@ export function drawStarTrackerOverlay() {
 
         // Identified stars carry their catalog names. A star with a PROPER name reads a
         // touch larger and in white; Bayer and HIP-number fallbacks stay quiet.
-        if (c.klass === "star" && params.showStarNames && result.identify) {
-            const id = result.identify.identified.get(c.index);
-            if (id) {
-                overlayCtx.setLineDash([]);
-                overlayCtx.fillStyle = id.named ? "#fff" : "#9fdcb0";
-                overlayCtx.font = id.named ? "12px sans-serif" : "11px sans-serif";
-                overlayCtx.fillText(id.label, px + radius + 4, py + 4);
-            }
+        if (params.showStarNames && identifiedStar) {
+            overlayCtx.setLineDash([]);
+            overlayCtx.fillStyle = properlyNamed ? "#fff" : "#9fdcb0";
+            overlayCtx.font = properlyNamed ? "12px sans-serif" : "11px sans-serif";
+            overlayCtx.fillText(identifiedStar.label, px + radius + 4, py + 4);
         }
         if (alpha !== 1) overlayCtx.globalAlpha = 1;
     }
@@ -1671,6 +2027,62 @@ export function drawStarTrackerOverlay() {
                 px + radius + 6, py + 4);
         }
     }
+
+    // Quads the blind solve has verified, while it is still searching. Drawn last so they sit
+    // over the star circles, and in the 2D chart placement because identification works on that
+    // chart - the same reason the clusters above do.
+    //
+    // Line weight is the fraction of the whole field the hypothesis explains, which is the
+    // honest measure of quality here: any accepted quad fits its own four points well, so
+    // thickness by quad residual would draw every candidate the same. A wrong quad explains a
+    // handful of stars and stays hairline; the winning one explains most of the field and is
+    // unmistakable.
+    if (liveQuads.length) {
+        liveQuads.forEach((q, qi) => {
+            const pts = q.points.map(([qx, qy]) => {
+                // The solver codes each quad in both parities, and a mirrored hit carries
+                // negated y. Undo that before drawing, or half the quads land reflected about
+                // the chart's x-axis, nowhere near their stars.
+                const [vx, vy] = applyTransform(T, qx, q.mirrored ? -qy : qy);
+                return toCanvas(vx, vy);
+            });
+            if (pts.some(([px, py]) => !Number.isFinite(px) || !Number.isFinite(py))) return;
+
+            // Indexed from the END, so the strongest quad keeps the same colour whether one
+            // survived or five did - the list is sorted worst-first and a short list would
+            // otherwise re-colour everything.
+            overlayCtx.strokeStyle =
+                QUAD_COLORS[(liveQuads.length - 1 - qi) % QUAD_COLORS.length];
+            overlayCtx.lineWidth = 0.8 + 5 * Math.min(1, Math.max(0, q.fraction));
+            overlayCtx.globalAlpha = 0.55 + 0.45 * Math.min(1, Math.max(0, q.fraction));
+            overlayCtx.setLineDash([]);
+            // The quad as a closed shape through its four stars, plus both diagonals - the code
+            // is built from the two most separated of them, and the diagonals make which pair
+            // that is readable at a glance.
+            overlayCtx.beginPath();
+            for (let j = 0; j < 4; j++) {
+                const [ax, ay] = pts[j];
+                const [bx2, by2] = pts[(j + 1) % 4];
+                overlayCtx.moveTo(ax, ay);
+                overlayCtx.lineTo(bx2, by2);
+            }
+            overlayCtx.moveTo(pts[0][0], pts[0][1]);
+            overlayCtx.lineTo(pts[2][0], pts[2][1]);
+            overlayCtx.moveTo(pts[1][0], pts[1][1]);
+            overlayCtx.lineTo(pts[3][0], pts[3][1]);
+            overlayCtx.stroke();
+            overlayCtx.globalAlpha = 1;
+        });
+        // What the strongest quad actually explains, so the number the thickness encodes is
+        // legible and not merely suggestive.
+        const best = liveQuads[liveQuads.length - 1];
+        overlayCtx.fillStyle = QUAD_COLORS[0];
+        overlayCtx.font = "bold 13px sans-serif";
+        overlayCtx.fillText(`${liveQuads.length} best matching quad`
+            + `${liveQuads.length > 1 ? "s" : ""} - `
+            + `strongest explains ${best.matched}/${best.nImage} stars`, 10, 20);
+    }
+
     overlayCtx.setLineDash([]);
 }
 
@@ -1690,6 +2102,9 @@ export function resetStarTracker() {
     result = null;
     Globals.starTrackerResult = undefined;
     overlayStarHits = [];
+    // The quads are evidence for a solve that no longer exists, and they are placed through its
+    // transforms - keeping them would draw the old identification over whatever comes next.
+    liveQuads = [];
     params.status = "not run";
     // The Camera menu's Lens folder described THAT solve's optics; with the solve gone it would
     // be stating a measurement nothing in the app still holds.
@@ -1772,7 +2187,7 @@ export function setupStarTrackerMenu() {
     folder = guiMenus.video.addFolder("Star Tracker").close();
 
     folder.add({all: () => { runFullStarTracker(); }}, "all")
-        .name("Measure/Analyze/Identify/Sync");
+        .name("Full Analysis");
     folder.add(params, "status").name("Status").listen().disable();
 
     folder.add(params, "fitLens").name("Fit lens from stars")
@@ -1786,6 +2201,11 @@ export function setupStarTrackerMenu() {
     folder.add(params, "showClusters").name("Show light clusters").onChange(setRenderOne);
     folder.add(params, "showStarNames").name("Show star names").onChange(setRenderOne);
     folder.add(params, "showRejected").name("Show rejected").onChange(setRenderOne);
+    folder.add(params, "showDuringAnalysis").name("Display during analysis")
+        .tooltip("While an analysis is scanning, circle each frame's detections as they are "
+            + "found. Nothing is solved yet at that point, so these are raw detections - every "
+            + "one drawn the same, with no classification or names - which is what makes a bad "
+            + "detect threshold or blob size obvious without waiting for the run to finish.");
     folder.add(params, "chartTracks").name("Chart: object tracks");
 
     const tweaks = folder.addFolder("Star Tracker Tweaks").close();
@@ -1814,7 +2234,7 @@ export function setupStarTrackerMenu() {
     tweaks.add(params, "driftMinSigmas", 2, 40, 1).name("Moving: min drift (sigma)");
 
     tweaks.add({run: async () => { await runStarTracker(); setRenderOne(); }}, "run")
-        .name("Analyze In/Out range");
+        .name("Find Candidate Stars");
     tweaks.add({identify: () => { identifyStars(); }}, "identify")
         .name("Identify Stars (catalog)");
     tweaks.add({sync: () => { syncCameraToStarTrack(); }}, "sync")

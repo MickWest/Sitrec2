@@ -224,14 +224,14 @@ describe("StarIdentify robust refit", () => {
 });
 
 describe("StarIdentify blind solve", () => {
-    test("a wide field around Orion is identified, with the right pointing and scale", () => {
+    test("a wide field around Orion is identified, with the right pointing and scale", async () => {
         const field = {raDeg: 84, decDeg: 2, rollDeg: 25, pxPerDeg: 51, W: 1276, H: 720,
             magLimit: 5.5};
         const truth = projectField(field);
         expect(truth.length).toBeGreaterThan(12);
         const stars = degrade(truth, {seed: 7, W: field.W, H: field.H});
 
-        const result = solveField(stars, catalog, [index], {center: [field.W / 2, field.H / 2]});
+        const result = await solveField(stars, catalog, [index], {center: [field.W / 2, field.H / 2]});
         expect(result.ok).toBe(true);
         // Pointing within half a degree, plate scale within two percent.
         const dRa = Math.abs(result.centerRaDeg - field.raDeg)
@@ -260,21 +260,21 @@ describe("StarIdentify blind solve", () => {
         }
     });
 
-    test("a narrower southern field around Crux is identified too", () => {
+    test("a narrower southern field around Crux is identified too", async () => {
         const field = {raDeg: 190, decDeg: -60, rollDeg: -40, pxPerDeg: 100, W: 1276, H: 720,
             magLimit: 6.3};
         const truth = projectField(field);
         expect(truth.length).toBeGreaterThan(10);
         const stars = degrade(truth, {seed: 11, W: field.W, H: field.H});
 
-        const result = solveField(stars, catalog, [index], {center: [field.W / 2, field.H / 2]});
+        const result = await solveField(stars, catalog, [index], {center: [field.W / 2, field.H / 2]});
         expect(result.ok).toBe(true);
         expect(Math.abs(result.centerDecDeg - field.decDeg)).toBeLessThan(0.5);
         const {right} = scoreSolve(result, stars);
         expect(right).toBeGreaterThanOrEqual(0.7 * result.matches.length);
     });
 
-    test("an image far deeper than the verification catalog still identifies", () => {
+    test("an image far deeper than the verification catalog still identifies", async () => {
         // A 12-megapixel astrophoto detects hundreds of stars, most fainter than the mag-7
         // verification pool can show. A consensus fraction measured against the RAW image
         // count is then unreachable by any correct solve - the evidence is matching most of
@@ -286,7 +286,7 @@ describe("StarIdentify blind solve", () => {
         expect(truth.length).toBeGreaterThan(120);
         const stars = degrade(truth, {seed: 21, W: field.W, H: field.H});
 
-        const result = solveField(stars, catalog, [index], {center: [field.W / 2, field.H / 2]});
+        const result = await solveField(stars, catalog, [index], {center: [field.W / 2, field.H / 2]});
         expect(result.ok).toBe(true);
         expect(Math.abs(result.centerDecDeg - field.decDeg)).toBeLessThan(0.5);
         // The deep rematch reaches well past the verification pool's depth.
@@ -295,7 +295,7 @@ describe("StarIdentify blind solve", () => {
         expect(right).toBeGreaterThanOrEqual(0.8 * result.matches.length);
     });
 
-    test("a letterboxed strip identifies: off-frame catalog stars do not count against it", () => {
+    test("a letterboxed strip identifies: off-frame catalog stars do not count against it", async () => {
         // The in-field gate is a circle around the centre; a 1276x400 strip sees only a slice
         // of that circle, and stars projecting OFF the frame can match nothing - counted, they
         // inflate the consensus denominator and consume the brightest-N pool until a valid
@@ -306,7 +306,7 @@ describe("StarIdentify blind solve", () => {
         expect(truth.length).toBeGreaterThan(60);
         const stars = degrade(truth, {seed: 23, W: field.W, H: field.H});
 
-        const result = solveField(stars, catalog, [index], {
+        const result = await solveField(stars, catalog, [index], {
             center: [field.W / 2, field.H / 2],
             bounds: [0, 0, field.W, field.H],
         });
@@ -326,7 +326,7 @@ describe("StarIdentify blind solve", () => {
         expect(scalePriorFromFov(0, 100, 100)).toBeUndefined();
     });
 
-    test("bright terrestrial clutter cannot hijack the quad stars", () => {
+    test("bright terrestrial clutter cannot hijack the quad stars", async () => {
         // The real failure this encodes: a lit tree in the corner of a twilight photo detects
         // as dozens of blobs BRIGHTER than any star, so the brightest-N quad set was all
         // foliage and no hypothesis could be right. Clutter is texture - many detections
@@ -343,13 +343,13 @@ describe("StarIdentify blind solve", () => {
             stars.push({x: 30 + rng() * 150, y: 560 + rng() * 130,
                 mag: -13 + rng() * 3, hip: -1});
         }
-        const result = solveField(stars, catalog, [index], {center: [field.W / 2, field.H / 2]});
+        const result = await solveField(stars, catalog, [index], {center: [field.W / 2, field.H / 2]});
         expect(result.ok).toBe(true);
         const {right} = scoreSolve(result, stars);
         expect(right).toBeGreaterThanOrEqual(0.8 * result.matches.length);
     });
 
-    test("a phone-lens wide field solves - verification is exact at any field of view", () => {
+    test("a phone-lens wide field solves - verification is exact at any field of view", async () => {
         // A 24mm-equivalent phone frame spans ~67 degrees. A pinhole camera is exactly
         // "gnomonic about the optical axis plus a similarity", so once verification re-centres
         // its tangent point on the image centre the model has NO field-size error - and even
@@ -364,7 +364,7 @@ describe("StarIdentify blind solve", () => {
         const scalePrior = (Math.PI / 180) / field.pxPerDeg;
 
         for (const idx of [index, buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[2])]) {
-            const result = solveField(stars, catalog, [idx],
+            const result = await solveField(stars, catalog, [idx],
                 {center: [field.W / 2, field.H / 2], scalePrior});
             expect(result.ok).toBe(true);
             expect(Math.abs(result.centerDecDeg - field.decDeg)).toBeLessThan(1.5);
@@ -373,7 +373,7 @@ describe("StarIdentify blind solve", () => {
         }
     });
 
-    test("a field wider than 77 degrees solves - tangent units are not radians", () => {
+    test("a field wider than 77 degrees solves - tangent units are not radians", async () => {
         // The guard in projectAndMatch bounds the implied field, and the quantity it bounds is
         // GNOMONIC TANGENT UNITS per pixel, not radians: half a frame spans tan(fov/2). Treating
         // them as interchangeable made `width * scale * 0.75 > 1.2` reject every centred
@@ -392,7 +392,7 @@ describe("StarIdentify blind solve", () => {
         const stars = degrade(truth, {seed: 17, W: field.W, H: field.H});
 
         const wide = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[2]);
-        const result = solveField(stars, catalog, [wide], {center: [field.W / 2, field.H / 2]});
+        const result = await solveField(stars, catalog, [wide], {center: [field.W / 2, field.H / 2]});
         expect(result.ok).toBe(true);
         expect(Math.abs(result.centerDecDeg - field.decDeg)).toBeLessThan(2);
         const {right} = scoreSolve(result, stars);
@@ -407,16 +407,16 @@ describe("StarIdentify blind solve", () => {
         expect(spanTangent * 180 / Math.PI).toBeGreaterThan(130);   // the old, linear reading
     });
 
-    test("points that are not a sky refuse to solve rather than inventing a field", () => {
+    test("points that are not a sky refuse to solve rather than inventing a field", async () => {
         const rng = mulberry32(99);
         const stars = Array.from({length: 30}, () => ({
             x: 10 + rng() * 1256, y: 10 + rng() * 700, mag: 3 + rng() * 4,
         }));
-        const result = solveField(stars, catalog, [index]);
+        const result = await solveField(stars, catalog, [index]);
         expect(result.ok).toBe(false);
     });
 
-    test("a DENSE random field refuses too - the strong-count path is not an escape hatch", () => {
+    test("a DENSE random field refuses too - the strong-count path is not an escape hatch", async () => {
         // The strong-count acceptance (25 matches at the 0.35 floor) exists for warped wide
         // mosaics of REAL sky. A hundred random points offer far more raw material for
         // coincidental matches than thirty; this pins that they still cannot reach a
@@ -426,12 +426,12 @@ describe("StarIdentify blind solve", () => {
         const stars = Array.from({length: 100}, () => ({
             x: 10 + rng() * 1700, y: 10 + rng() * 1450, mag: 3 + rng() * 5,
         }));
-        const result = solveField(stars, catalog, [index], {maxHypotheses: 800});
+        const result = await solveField(stars, catalog, [index], {maxHypotheses: 800});
         expect(result.ok).toBe(false);
     });
 
-    test("too few stars refuses honestly", () => {
-        const result = solveField([{x: 1, y: 1}, {x: 2, y: 2}], catalog, [index]);
+    test("too few stars refuses honestly", async () => {
+        const result = await solveField([{x: 1, y: 1}, {x: 2, y: 2}], catalog, [index]);
         expect(result.ok).toBe(false);
     });
 });
@@ -482,8 +482,8 @@ describe("StarIdentify wide-mosaic acceptance", () => {
         };
     })();
 
-    test("a warped wide mosaic is accepted on the strong absolute count", () => {
-        const result = solveField(MOSAIC, catalog, [index], opts);
+    test("a warped wide mosaic is accepted on the strong absolute count", async () => {
+        const result = await solveField(MOSAIC, catalog, [index], opts);
         expect(result.ok).toBe(true);
         // Head of Draco, as every solve of this clip has agreed.
         expect(Math.abs(result.centerRaDeg / 15 - 18.23)).toBeLessThan(0.4);
@@ -495,10 +495,10 @@ describe("StarIdentify wide-mosaic acceptance", () => {
         expect(result.matches.length).toBeLessThan(0.5 * result.nImage);
     });
 
-    test("without the strong-count path this map is refused (the old behavior)", () => {
+    test("without the strong-count path this map is refused (the old behavior)", async () => {
         // maxHypotheses trimmed to keep the deliberate failure cheap; the live failure ran the
         // full 3000 and failed identically.
-        const result = solveField(MOSAIC, catalog, [index],
+        const result = await solveField(MOSAIC, catalog, [index],
             {...opts, strongMatchCount: Infinity, maxHypotheses: 600});
         expect(result.ok).toBe(false);
     });
