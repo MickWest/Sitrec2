@@ -39,9 +39,14 @@ export const STAR_SOLVE_DEFAULTS = {
     // Global refinement.
     refineIterations: 40,
     // Most anchors the map may be built from, brightest first (see `anchors` in solveStarField).
-    // A per-frame similarity has four parameters; a few hundred well-measured stars pin it far
-    // below the noise, and the rest only cost time in every refinement iteration.
-    maxAnchors: 400,
+    // OFF by default, and that is a measured choice rather than an oversight: indexing the
+    // observations by frame (see refineGlobal) already took the three 2D refinements on a
+    // 2443-track clip to about two seconds combined, so a cap buys nothing here - while capping
+    // DID cost identification, taking the named-star count on that clip from 102 to 67, because
+    // identifyStars reads the chart this map produces and a thinner map is a worse chart. The
+    // knob stays for a caller that needs it; the spherical solve, where the time actually is,
+    // sets its own.
+    maxAnchors: 0,
     refineTolerance: 1e-4,      // stop when the RMS residual improves by less than this (px)
     refineTrimSigma: 4.0,       // outlier gate during refinement, in sigmas of the MEASURED noise
     // Temporal smoothness of the per-frame ROTATION, as a multiple of the median per-frame
