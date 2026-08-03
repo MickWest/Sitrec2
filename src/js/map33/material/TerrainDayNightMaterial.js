@@ -1,6 +1,10 @@
 import {Color, ShaderMaterial, UniformsLib, UniformsUtils, Vector3} from "three";
 import {sharedUniforms} from "./SharedUniforms";
 import {Globals} from "../../../Globals";
+import {
+    addTerrestrialRefractionUniforms,
+    TERRESTRIAL_REFRACTION_VERTEX_GLSL,
+} from "../../../atmosphere/terrestrialRefraction";
 
 /**
  * Creates a custom shader material for terrain tiles that combines:
@@ -42,6 +46,8 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
     for (const k of Object.keys(sharedUniforms)) {
         mergedUniforms[k] = sharedUniforms[k];
     }
+    // Shared by reference, so one per-view update reaches every terrain tile.
+    addTerrestrialRefractionUniforms({uniforms: mergedUniforms});
     const material = new ShaderMaterial({
         uniforms: mergedUniforms,
         side: doubleSided ? 2 : 0, // 2 = DoubleSide, 0 = FrontSide
@@ -56,6 +62,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             #include <common>
             #include <fog_pars_vertex>
             #include <shadowmap_pars_vertex>
+            ${TERRESTRIAL_REFRACTION_VERTEX_GLSL}
 
             void main() {
                 vUv = uv;
@@ -68,6 +75,11 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 
                 // Calculate position for depth
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                // Terrestrial refraction — apparent position only. vWorldPosition
+                // and vNormal above are computed from the model matrix directly
+                // and stay physical, so day/night lighting, local terrain shading
+                // and the shadow receiver coordinates below are unaffected.
+                mvPosition.xyz = applyTerrestrialRefraction_chunk(mvPosition.xyz);
                 vPosition = projectionMatrix * mvPosition;
                 #include <fog_vertex>
                 // shadowmap_pars_vertex expects transformed/transformedNormal

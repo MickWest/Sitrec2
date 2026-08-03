@@ -507,9 +507,21 @@ export const serializeMethods = {
             "aFrame",
             "bFrame",
             "ignores",
+            // Master switch and its two halves. refractionEnabled and
+            // terrestrialRefraction are DERIVED from these (see
+            // atmosphere/refractionSettings.js) but are still saved, both as the
+            // flags every consumer reads and so a sitch written by an older
+            // build still loads with the right behaviour.
+            "refraction",
+            "refractionSky",
+            "refractionTerrain",
             "refractionEnabled",
             "refractionPressure",
             "refractionTemp",
+            "terrestrialRefraction",
+            "terrestrialLapseRate",
+            "terrestrialRefractionOverrideK",
+            "terrestrialRefractionK",
         ]
 
         const globalsNeeded = [

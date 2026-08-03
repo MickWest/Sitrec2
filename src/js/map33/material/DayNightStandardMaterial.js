@@ -1,8 +1,12 @@
 import {MeshStandardMaterial, ShaderChunk, Vector3} from "three";
 import {sharedUniforms} from "./SharedUniforms";
 import {Globals} from "../../../Globals";
+import {
+    addTerrestrialRefractionUniforms,
+    patchTerrestrialRefractionVertexShader,
+} from "../../../atmosphere/terrestrialRefraction";
 
-const CACHE_KEY = "DayNightStandardMaterial.v7stableshadow";
+const CACHE_KEY = "DayNightStandardMaterial.v8terrestrialrefraction";
 
 // MeshStandardMaterial subclass that uses the PBR pipeline for textures,
 // vertex colors, and normal-based shading from the scene's sun directional
@@ -41,6 +45,13 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
 
     _onBeforeCompile(shader) {
         Object.assign(shader.uniforms, this._dayNightUniforms);
+        // Terrestrial refraction of the solid scene. TilesDayNightPlugin swaps
+        // every streamed tile's material for this class, so patching here is
+        // what covers Google Photorealistic tiles and Cesium OSM buildings —
+        // including tiles that stream in later. It rewrites gl_Position only;
+        // uTerrK defaults to 0, which makes the shader arithmetic identical to
+        // the unpatched form.
+        addTerrestrialRefractionUniforms(shader);
 
         // --- Vertex shader: pass world position and barycentric coords ---
         // V5 shadows: Three's stock <shadowmap_vertex> chunk poisons
@@ -108,6 +119,13 @@ ${vertexInjection}`
 ${vertexInjection}`
             );
         }
+
+        // Applied last so it sees the finished vertex shader. Safe to compose
+        // with the injection above: that only fills varyings from `transformed`
+        // and modelMatrix, while this rewrites gl_Position and leaves
+        // mvPosition — and therefore vWorldPositionDN, the normals and the
+        // shadow receiver coordinates — physical.
+        shader.vertexShader = patchTerrestrialRefractionVertexShader(shader.vertexShader);
 
         // --- Fragment shader: darken night side and use Sitrec shadow coords ---
         shader.fragmentShader = shader.fragmentShader.replace(

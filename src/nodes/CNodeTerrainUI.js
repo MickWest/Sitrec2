@@ -16,6 +16,8 @@ import {showHider} from "../KeyBoardHandler";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import * as LAYER from "../LayerMasks";
 import {BufferGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshPhongMaterial} from "three";
+import {installTerrestrialRefractionOnMaterial} from "../atmosphere/terrestrialRefraction";
+import {setupRefractionGUI} from "../atmosphere/refractionSettings";
 import {
     defaultSourcesEnabled,
     filterSourcesForServerless,
@@ -875,6 +877,13 @@ export class CNodeTerrainUI extends CNode {
                 this.applyUseEllipsoid(v);
             });
 
+        // View > Atmospheric Refraction — master switch plus both halves. Built
+        // in one place because either owning node can be absent; see
+        // atmosphere/refractionSettings.js. Deliberately outside the
+        // 3D-buildings block above: refraction lofts plain terrain and the sea
+        // too, so it must not need a Google/Cesium key to reach.
+        setupRefractionGUI();
+
         console.log("CNodeTerrainUI: calling setMapType for initial map type " + this.mapType);
         // setMapType is async because it loads the capabilities
         this.setMapType(this.mapType).then(() => {
@@ -1294,6 +1303,10 @@ export class CNodeTerrainUI extends CNode {
             shininess: 70,
             side: DoubleSide,
         });
+        // Stock material, so the generic project_vertex injector covers it —
+        // the sea surface has to be lofted with the land it meets, or the
+        // shoreline splits.
+        installTerrestrialRefractionOnMaterial(this.oceanSurfaceMaterial);
 
         this.oceanSurfaceGroup = new Group();
         this.oceanSurfaceGroup.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
