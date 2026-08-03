@@ -35,7 +35,7 @@ import {resolveURLForFetch} from "./SitrecObjectResolver";
 import {CNodeVelocityFromMotion} from "./nodes/CNodeVelocityFromMotion";
 import {CNodeTrackFromVelocity} from "./nodes/CNodeTrackFromVelocity";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
-import {startMaskGroundPick} from "./SkyMaskTool";
+import {startMaskGroundPick, applyQuadTreeGroundMask} from "./SkyMaskTool";
 import {
     applyVideoEffectsToCanvas,
     ensureOpenCVAndAnalyzer,
@@ -2428,6 +2428,15 @@ function createMaskingFolder(parentFolder) {
             maskEnabledController.setValue(true);
             editMaskController.setValue(true);
         },
+        maskGroundAuto: () => {
+            const result = applyQuadTreeGroundMask();
+            if (result.error) { console.warn("Mask Ground (auto):", result.error); return; }
+            const d = result.diagnostics;
+            console.log(`[SkyMask] quadtree: ${d.skyLeaves}/${d.leaves} leaves sky, `
+                + `split tolerance ${d.splitTolerance.toFixed(2)}, `
+                + `ground ${(d.groundFraction * 100).toFixed(0)}% of frame`);
+            maskEnabledController.setValue(true);
+        },
         maskGround: () => {
             startMaskGroundPick((result) => {
                 if (!result || result.error) {
@@ -2491,7 +2500,12 @@ function createMaskingFolder(parentFolder) {
     maskFolder.add(maskParams, 'clearMask').name("Clear Mask").perm()
         .tooltip("Clear all mask data");
 
-    maskFolder.add(maskParams, 'maskGround').name("Mask Ground").perm()
+    maskFolder.add(maskParams, 'maskGroundAuto').name("Mask Ground (auto)").perm()
+        .tooltip("Classify the frame into sky and ground with no clicks, by splitting it into "
+            + "blocks and keeping only what a large uniform block can describe. Rejects anything "
+            + "it cannot - losing a little sky costs a few stars, keeping a treetop costs false "
+            + "detections. Adds to the mask; use Clear Mask to reset.");
+    maskFolder.add(maskParams, 'maskGround').name("Mask Ground (click sky, then ground)").perm()
         .tooltip("Click the sky, then click the ground, and everything that is not sky is added to "
             + "the mask. Two clicks rather than one because the second lets Sitrec MEASURE which "
             + "feature separates sky from ground in this clip instead of assuming one. Check the "

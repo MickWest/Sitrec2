@@ -11,7 +11,7 @@
 import {NodeMan, setRenderOne} from "./Globals";
 import {ViewMan} from "./CViewManager";
 import {mouseToCanvas} from "./ViewUtils";
-import {growSkyFromSeeds, SKY_MASK_DEFAULTS} from "./SkyMask";
+import {growSkyFromSeeds, quadTreeGroundMask, SKY_MASK_DEFAULTS} from "./SkyMask";
 import {getFlowAlignRotation} from "./FlowAlignment";
 import {par} from "./par";
 
@@ -121,6 +121,16 @@ export function startMaskGroundPick(onDone) {
  *
  * @returns {{ok: true, diagnostics: object}|{error: string}}
  */
+/**
+ * Mask the ground with no seeds at all, classifying by quadtree.
+ *
+ * Shares every step with the seeded path except which segmenter runs, so the working resolution,
+ * the scaling up to the mask canvas, and the undoable additive edit all behave identically.
+ */
+export function applyQuadTreeGroundMask(opts = {}) {
+    return applyGroundMask(null, [], {...opts, method: "quadtree"});
+}
+
 export function applyGroundMask(skySeeds, groundSeeds = [], opts = {}) {
     const view = ViewMan.get("video", false);
     const mask = NodeMan.get("videoMask", false);
@@ -144,7 +154,9 @@ export function applyGroundMask(skySeeds, groundSeeds = [], opts = {}) {
     const sx = W / img.width, sy = H / img.height;
     const toWork = (pts) => pts.map(([x, y]) => [x * sx, y * sy]);
 
-    const out = growSkyFromSeeds(rgba, W, H, toWork(skySeeds), toWork(groundSeeds), O);
+    const out = O.method === "quadtree"
+        ? quadTreeGroundMask(rgba, W, H, O)
+        : growSkyFromSeeds(rgba, W, H, toWork(skySeeds), toWork(groundSeeds), O);
     if (out.error) return out;
 
     // Paint the ground at working resolution into a small canvas, then let the 2D context scale it

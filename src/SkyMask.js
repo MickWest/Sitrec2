@@ -63,9 +63,256 @@ export const SKY_MASK_DEFAULTS = {
     // Below it the gate was too tight and nothing grew, which must read as a failure rather than
     // as "everything is ground".
     minSkyFraction: 0.02,
+
+    // --- quadtree classifier -------------------------------------------------------------------
+    // Smallest block that may be called sky, in working pixels. A block smaller than this only
+    // became small because its surroundings needed splitting, which is the signature of detail
+    // rather than of open sky - and it is how the smooth dark interior of a tree is rejected.
+    minSkyLeaf: 16,
+    // Largest block accepted without splitting. Without a ceiling a whole quadrant of a dim frame
+    // can pass as uniform, taking the treeline with it.
+    maxSkyLeaf: 32,
+    // A block is uniform when its spread is within this multiple of the frame's own quiet level,
+    // taken as the low quartile of the texture field. Read off the image because "how much does a
+    // patch vary" has no absolute scale across sensors and exposures.
+    splitToleranceFactor: 3,
+    minSplitTolerance: 0.5,
+    // How much of a block may be dead and still let it count as sky. Keeps blocks straddling a
+    // vignette edge out, without rejecting a block clipped by the frame border.
+    maxDeadFraction: 0.1,
+    // Neighbour voting after classification. A block that disagrees with this fraction of its
+    // live neighbours is flipped to match them; two passes let a correction spread one block
+    // further without smearing the boundary away.
+    adjacencyPasses: 2,
+    // Deliberately unequal. Half the live neighbours being ground is enough to pull a block down;
+    // promoting one back to sky takes 85%. Missing ground costs hundreds of foliage detections in
+    // the solve, losing sky costs a few stars out of thousands.
+    toGroundMajority: 0.5,
+    toSkyMajority: 0.85,
+    // Grow the finished ground by this many blocks. Boundary blocks are mixtures of both classes,
+    // and a mixture should be excluded - so the edge is pushed into the sky rather than into the
+    // trees, for the same asymmetry.
+    groundGrowCells: 1,
     // A seed window this many working pixels across is sampled to characterise each class.
     seedRadius: 6,
 };
+
+/**
+ * Classify sky by QUADTREE, with no connectivity anywhere in it.
+ *
+ * Every failure the seeded region-growing route produced was a connectivity failure rather than a
+ * classification one: a fill seeded in a vignette's dead surround inverted sky and ground; a fill
+ * that could not cross a brightness ramp abandoned a good sky's darker corner; a gate tight enough
+ * to seal foliage sealed everything; and a lace of leaf edges let the fill leak into tree
+ * interiors. Judging each leaf on its own pixels removes all four at once - nothing has to reach
+ * anything.
+ *
+ * It also suits what the mask is FOR. The mask does not have to be exact; it has to leave enough
+ * clean sky to detect stars in, and keep foliage out. Those costs are wildly asymmetric - throwing
+ * away good sky costs a few stars out of thousands, keeping a treetop costs false detections that
+ * corrupt the solve - so the classifier is free to reject anything it is unsure of. Region growing
+ * could not be that liberal, because over-rejecting there severs the sky and cascades.
+ *
+ * THE HEURISTIC: sky is whatever a LARGE uniform block can describe. A cell is subdivided while it
+ * is heterogeneous and still big enough to split; foliage therefore forces subdivision down to the
+ * limit while open sky stops early. A leaf's size is then a measure of how busy its neighbourhood
+ * was, which is what tells a smooth patch of sky from the smooth dark interior of a tree - the
+ * interior only exists as a leaf because everything around it had to be split apart. No fill can
+ * make that distinction, because the interior is genuinely smooth and genuinely enclosed.
+ *
+ * @param {Float32Array} smooth - luma, point sources already suppressed
+ * @param {Float32Array} texture - local texture of that image
+ * @param {Uint8Array} dead - 1 where the pixel carries no signal at all
+ * @param {number} W
+ * @param {number} H
+ * @param {object} O - resolved options
+ * @returns {{ground: Uint8Array, leaves: number, skyLeaves: number, splitTolerance: number}}
+ */
+export function quadTreeGround(smooth, texture, dead, W, H, O) {
+    const ground = new Uint8Array(W * H).fill(1);   // reject by default; sky must be earned
+
+    // The split threshold is read off the image rather than fixed, because "how much does a patch
+    // vary" has no absolute scale across sensors and exposures. The low quartile of the texture
+    // field is a robust stand-in for the quiet parts of THIS frame - the sky, if there is any.
+    const sample = [];
+    for (let i = 0; i < W * H; i += 7) if (!dead[i]) sample.push(texture[i]);
+    sample.sort((a, b) => a - b);
+    const quiet = sample.length ? sample[Math.floor(0.25 * sample.length)] : 0;
+    const splitTolerance = Math.max(O.minSplitTolerance, O.splitToleranceFactor * quiet);
+
+    let leaves = 0, skyLeaves = 0;
+
+    // Measured on the TEXTURE field, not on brightness.
+    //
+    // The spread of absolute brightness across a block is dominated by the scene's smooth
+    // gradients - light glow rising toward a horizon, vignetting, airglow - and a block spanning a
+    // steep part of a ramp fails a uniformity test while being perfectly clean sky. That produced
+    // a checkerboard: sky rejected in bands wherever the glow was changing fastest. Texture is a
+    // local 3x3 spread, so a smooth ramp barely registers in it and only real structure does,
+    // which is what "can a large uniform block describe this?" is actually asking.
+    //
+    // The statistic is the block's 90th-percentile texture rather than its mean: a treetop
+    // occupying a fifth of an otherwise clear block must condemn the block, and a mean would
+    // dilute it away.
+    const stats = (x0, y0, size) => {
+        const vals = [];
+        let deadN = 0;
+        const x1 = Math.min(W, x0 + size), y1 = Math.min(H, y0 + size);
+        for (let y = y0; y < y1; y++) {
+            for (let x = x0; x < x1; x++) {
+                const i = y * W + x;
+                if (dead[i]) { deadN++; continue; }
+                vals.push(texture[i]);
+            }
+        }
+        if (!vals.length) return {n: 0, deadN, spread: 0};
+        vals.sort((a, b) => a - b);
+        return {n: vals.length, deadN, spread: vals[Math.floor(0.9 * (vals.length - 1))]};
+    };
+
+    const markSky = (x0, y0, size) => {
+        const x1 = Math.min(W, x0 + size), y1 = Math.min(H, y0 + size);
+        for (let y = y0; y < y1; y++) {
+            for (let x = x0; x < x1; x++) {
+                const i = y * W + x;
+                // A dead pixel is never sky however uniform its block: it is outside the
+                // instrument's field, and no star can be recorded there.
+                if (!dead[i]) ground[i] = 0;
+            }
+        }
+    };
+
+    const visit = (x0, y0, size) => {
+        if (x0 >= W || y0 >= H) return;
+        const st = stats(x0, y0, size);
+        if (!st.n) { leaves++; return; }              // wholly dead: stays rejected
+
+        const uniform = st.spread <= splitTolerance;
+        if (uniform && size <= O.maxSkyLeaf) {
+            // Uniform, and small enough that its uniformity is a real measurement rather than an
+            // artefact of averaging a whole quadrant. A block that also had to be MOSTLY live
+            // counts as sky - a block straddling the edge of a vignette is not.
+            leaves++;
+            if (size >= O.minSkyLeaf && st.deadN <= O.maxDeadFraction * (size * size)) {
+                skyLeaves++;
+                markSky(x0, y0, size);
+            }
+            return;
+        }
+        if (size <= O.minSkyLeaf) { leaves++; return; }   // detail limit: too busy to be sky
+
+        const h = size >> 1;
+        visit(x0, y0, h);
+        visit(x0 + h, y0, h);
+        visit(x0, y0 + h, h);
+        visit(x0 + h, y0 + h, h);
+    };
+
+    // Start from a power-of-two block covering the frame, so subdivision is exact halving.
+    let root = 1;
+    while (root < Math.max(W, H)) root <<= 1;
+    visit(0, 0, root);
+
+    // ADJACENCY. Each block has so far been judged entirely on its own pixels, which is what made
+    // this robust where a flood fill was not - but it also means a block can disagree with
+    // everything around it, and in practice such a block is usually wrong. Sky over a grainier
+    // corner of the sensor rejects in isolated specks; a gap between branches passes as sky in the
+    // middle of a tree. Neither is plausible as a real region.
+    //
+    // So neighbours now vote, on a grid at block resolution. Note this is a SOFT prior and not a
+    // return to connectivity: a block that genuinely differs from its surroundings survives a
+    // clear majority against it, and nothing can be severed from a seed, because there is no seed.
+    // That is the distinction that matters - the fill failed because one bad decision could cut
+    // off a whole region, whereas here one bad block is simply outvoted.
+    const gw = Math.ceil(W / O.minSkyLeaf), gh = Math.ceil(H / O.minSkyLeaf);
+    let cell = new Uint8Array(gw * gh);
+    const cellDead = new Uint8Array(gw * gh);
+    for (let cy = 0; cy < gh; cy++) {
+        for (let cx = 0; cx < gw; cx++) {
+            let sky = 0, n = 0, deadN = 0;
+            for (let y = cy * O.minSkyLeaf; y < Math.min(H, (cy + 1) * O.minSkyLeaf); y++) {
+                for (let x = cx * O.minSkyLeaf; x < Math.min(W, (cx + 1) * O.minSkyLeaf); x++) {
+                    const i = y * W + x;
+                    if (dead[i]) { deadN++; continue; }
+                    n++;
+                    if (!ground[i]) sky++;
+                }
+            }
+            cell[cy * gw + cx] = n && sky * 2 > n ? 1 : 0;
+            cellDead[cy * gw + cx] = n === 0 ? 1 : 0;
+        }
+    }
+
+    for (let pass = 0; pass < O.adjacencyPasses; pass++) {
+        const next = new Uint8Array(cell);
+        for (let cy = 0; cy < gh; cy++) {
+            for (let cx = 0; cx < gw; cx++) {
+                const c = cy * gw + cx;
+                if (cellDead[c]) continue;      // dead blocks are not up for a vote
+                let sky = 0, tot = 0;
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (!dx && !dy) continue;
+                        const nx = cx + dx, ny = cy + dy;
+                        if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+                        const q = ny * gw + nx;
+                        if (cellDead[q]) continue;
+                        tot++;
+                        if (cell[q]) sky++;
+                    }
+                }
+                if (!tot) continue;
+                // ASYMMETRIC on purpose. Missing ground is far more costly than losing sky: a
+                // treetop left unmasked puts hundreds of foliage detections into the solve, while
+                // an over-masked patch of sky costs a few stars out of thousands. So a block falls
+                // to ground on a weak signal and is promoted back to sky only on a strong one.
+                if (cell[c] && sky <= (1 - O.toGroundMajority) * tot) next[c] = 0;
+                else if (!cell[c] && sky >= O.toSkyMajority * tot) next[c] = 1;
+            }
+        }
+        cell = next;
+    }
+
+    // Grow the ground into its boundary blocks, which are mixtures of sky and not-sky. A mixture
+    // has to go somewhere, and it goes to ground - the same asymmetry as the voting above.
+    for (let g = 0; g < O.groundGrowCells; g++) {
+        const next = new Uint8Array(cell);
+        for (let cy = 0; cy < gh; cy++) {
+            for (let cx = 0; cx < gw; cx++) {
+                const c = cy * gw + cx;
+                if (!cell[c] || cellDead[c]) continue;      // already ground, or not in play
+                let touchesGround = false;
+                for (let dy = -1; dy <= 1 && !touchesGround; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const nx = cx + dx, ny = cy + dy;
+                        if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+                        const q = ny * gw + nx;
+                        // A dead neighbour is not ground evidence - the frame edge and a vignette
+                        // rim would otherwise eat a ring of good sky.
+                        if (!cellDead[q] && !cell[q]) { touchesGround = true; break; }
+                    }
+                }
+                if (touchesGround) next[c] = 0;
+            }
+        }
+        cell = next;
+    }
+
+    // Write the voted classification back, leaving dead pixels rejected whatever their block says.
+    for (let cy = 0; cy < gh; cy++) {
+        for (let cx = 0; cx < gw; cx++) {
+            const isSky = cell[cy * gw + cx];
+            for (let y = cy * O.minSkyLeaf; y < Math.min(H, (cy + 1) * O.minSkyLeaf); y++) {
+                for (let x = cx * O.minSkyLeaf; x < Math.min(W, (cx + 1) * O.minSkyLeaf); x++) {
+                    const i = y * W + x;
+                    ground[i] = (isSky && !dead[i]) ? 0 : 1;
+                }
+            }
+        }
+    }
+
+    return {ground, leaves, skyLeaves, splitTolerance};
+}
 
 /** Median of a copy; small arrays, called per pixel, so no allocation cleverness is worth it. */
 function medianOf(values) {
@@ -223,6 +470,60 @@ function dropSmallComponents(flag, W, H, minCells) {
         }
         if (cells.length < minCells) for (const c of cells) flag[c] = 0;
     }
+}
+
+/**
+ * Classify the frame into sky and ground by quadtree, without seeds.
+ *
+ * The seeded path exists because automatic methods have to guess WHICH region is sky. This one
+ * does not need to guess, because it never asks: it judges every block on its own uniformity, and
+ * the dead-pixel test keeps a vignette's surround out regardless. Where the seeded path needed the
+ * user to break a tie, this one simply rejects whatever it cannot describe with a large uniform
+ * block - which is the right default when losing sky is cheap and keeping foliage is not.
+ *
+ * @param {Uint8ClampedArray} rgba - working-resolution pixels, W*H*4
+ * @param {number} W
+ * @param {number} H
+ * @param {object} [opts] - overrides of SKY_MASK_DEFAULTS
+ * @returns {{ground: Uint8Array, diagnostics: object}|{error: string, diagnostics?: object}}
+ */
+export function quadTreeGroundMask(rgba, W, H, opts = {}) {
+    const O = {...SKY_MASK_DEFAULTS, ...opts};
+    const {luma, texture} = skyFeatures(rgba, W, H, O);
+
+    const dead = new Uint8Array(W * H);
+    let deadCells = 0;
+    for (let i = 0; i < W * H; i++) {
+        if (luma[i] <= O.deadLuma && texture[i] <= O.deadTexture) { dead[i] = 1; deadCells++; }
+    }
+
+    const out = quadTreeGround(luma, texture, dead, W, H, O);
+
+    let groundCells = 0;
+    for (let i = 0; i < W * H; i++) if (out.ground[i]) groundCells++;
+    const live = W * H - deadCells;
+    const skyCells = live - (groundCells - deadCells);
+
+    const diagnostics = {
+        method: "quadtree",
+        leaves: out.leaves,
+        skyLeaves: out.skyLeaves,
+        splitTolerance: out.splitTolerance,
+        deadFraction: deadCells / (W * H),
+        groundFraction: groundCells / (W * H),
+        workWidth: W,
+        workHeight: H,
+    };
+
+    // Finding almost no sky is a failure to report, not a mask of the whole frame.
+    if (live > 0 && skyCells < O.minSkyFraction * live) {
+        return {
+            error: `found almost no sky worth keeping (${(100 * skyCells / live).toFixed(1)}% of `
+                + `the live frame). The image may be too busy to segment this way - mask by hand.`,
+            diagnostics,
+        };
+    }
+    return {ground: out.ground, diagnostics};
 }
 
 /**
