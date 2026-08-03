@@ -958,13 +958,64 @@ with a training-set dependency, which is a different kind of commitment from a 6
 method and would have to be weighed against Sitrec's deployment modes (including a fully offline
 serverless/desktop build).
 
+### Prototype measurements on two real clips
+
+The assumptions above were tested before any of this was written, on two Sitrec clips that differ
+about as much as night footage can. The results changed the design, so they are recorded here
+rather than left as folklore.
+
+**Clip A — 4032 × 3024 twilight photograph, sunlit foliage against a bright sky.** Local standard
+deviation of luma, computed on an image downsampled to 512 px wide, is strongly *bimodal*:
+p25 0.35, p50 0.49, p75 0.82, then p90 **13.55** — a sixteenfold jump, with a wide band of safe
+thresholds between the two populations. A first prototype of "threshold the texture, flood-fill sky
+from the top row" nevertheless failed twice:
+
+- **Every star was masked.** Downsampling blurs a point source but does not remove it, and the
+  residual bump clears any threshold low enough to catch foliage. A 3 × 3 **median** at the working
+  scale fixes this, and is the right operator precisely because a star is an *outlier* at that
+  scale. This is the night-specific step absent from the daylight literature.
+- **The dark interiors of trees were left unmasked.** Foliage edges form a lace, not a wall, so the
+  sky fill leaked through the gaps into the smooth dark interior. A morphological **closing** of the
+  textured region before the fill seals it.
+
+With both, the masked fraction of the bottom sixth of the frame went 0.52 → **0.96**, and of the
+clear mid-sky bands 0.03 → **0.00**.
+
+**Clip B — native 1280 × 720 image-intensifier video (possibly with a SWIR component).** This clip
+falsifies two assumptions that Clip A supports, and neither failure was the one anticipated:
+
+- **The vignette is the smoothest region in the frame.** An image intensifier images a circular
+  active area onto black. Measured: outside the circle, luma 0 and texture **0.00**; inside the sky,
+  luma 61.4 and texture 0.63. Under "low texture is sky" the dead surround is *more* sky-like than
+  the sky. Worse, **76%** of the top row is that surround, so a top-seeded fill floods the annulus,
+  and the circle's edge — a strong gradient, hence "textured" — then *seals the real sky off from
+  the seed*. Sky and ground inverse: the star field is classified as ground and masked. The
+  "sky is the region connected to the top border" assumption fails outright for any vignetted
+  optic — image intensifiers, telescopes, boresight cameras.
+- **Texture does not separate sky from ground at all here.** Sky 0.63 against below-horizon 0.71,
+  where Clip A had a sixteenfold gap. This is a low-contrast infrared scene whose "ground" is dark
+  sea rather than sunlit leaves. What *does* separate them is **brightness** — 61.4 against 30.3 —
+  which is the cue the maritime sea/sky horizon-detection literature is built on, a distinct body of
+  work from the terrestrial sky segmentation cited above.
+
+The design consequences are therefore: a **valid-region (vignette) detection step must precede any
+sky reasoning**, and must be prevented from seeding it; a single texture cue is insufficient across
+Sitrec's input range, so brightness/horizon-step evidence is needed alongside it; and a clip like B
+is a **decline** case for a texture-only method — the honest output is a refusal, not an invented
+horizon.
+
 ### Relationship
 
 **Match / Diverge / Extend** — none apply; nothing is implemented.
 **Planned.** If it is built, the honest positioning is: a re-implementation of Shen & Wang for the
 night-sky case, whose novel content (if any) would be in the *use* — gating quad anchors, and
-supplying an altitude coordinate for a refraction model — rather than in the segmentation itself. The
-per-column single-border assumption is the specific thing to test first on real clips.
+supplying an altitude coordinate for a refraction model — rather than in the segmentation itself.
+The measurements above sharpen that. The per-column single-border assumption is not the first thing
+to fail; the *top-border seeding* assumption is, and it fails on an entire class of optics rather
+than on an unusual scene. Two candidate contributions, both modest and both contingent on the stage
+actually being built and evaluated: point-source suppression as a prerequisite for gradient- or
+texture-based sky segmentation in star fields, and cue selection between texture and brightness
+driven by a measured bimodality test rather than fixed for the domain.
 
 ---
 
