@@ -56,6 +56,13 @@ export const SKY_MASK_DEFAULTS = {
     // separates "outside the instrument" from "a dark part of the picture".
     deadLuma: 8,
     deadTexture: 0.15,
+    // Set internally on the one retry with the cue that was not chosen; also lets a caller pin
+    // the cue. Its presence is what stops the retry recursing further.
+    forceFeature: null,
+    // The grown sky must reach at least this fraction of the live (non-dead) frame to be believed.
+    // Below it the gate was too tight and nothing grew, which must read as a failure rather than
+    // as "everything is ground".
+    minSkyFraction: 0.02,
     // A seed window this many working pixels across is sampled to characterise each class.
     seedRadius: 6,
 };
@@ -275,9 +282,11 @@ export function growSkyFromSeeds(rgba, W, H, skySeeds, groundSeeds = [], opts = 
 
     // With both classes sampled the cue is measured. With only sky, texture is the default: it is
     // the cue that survives a scene lit differently from the sky, which is the commoner failure.
-    const choice = groundStats
-        ? chooseFeature(skyStats, groundStats)
-        : {feature: "texture", lumaScore: null, textureScore: null};
+    const choice = O.forceFeature
+        ? {feature: O.forceFeature, lumaScore: null, textureScore: null}
+        : groundStats
+            ? chooseFeature(skyStats, groundStats)
+            : {feature: "texture", lumaScore: null, textureScore: null};
     const field = choice.feature === "luma" ? luma : texture;
     const ref = skyStats[choice.feature];
 
@@ -411,7 +420,32 @@ export function growSkyFromSeeds(rgba, W, H, skySeeds, groundSeeds = [], opts = 
         workHeight: H,
     };
 
+    // Growing (almost) nothing is a failure, not a mask of everything. The separation test below
+    // needs both regions to exist, so without this an empty sky region skips the test entirely and
+    // returns a confident 100%-masked frame - which is how a retry that grew nothing at all
+    // reported success. A seed the user placed on sky must yield some sky.
+    if (skyN < O.minSkyFraction * (W * H - deadCells)) {
+        return {
+            error: `grew almost no sky from that seed on ${choice.feature} - the gate is too tight `
+                + `for this frame. Try a seed in a more typical patch of sky, or mask by hand.`,
+            diagnostics,
+        };
+    }
+
     if (gN && skyN && regionSeparation < O.requiredSeparation) {
+        // Try the OTHER cue before giving up. The seed windows can only measure separation
+        // LOCALLY, and a cue that wins there can still be the wrong one for the whole frame -
+        // measured on a wide night landscape with light glow along the horizon, where brightness
+        // won between the two seed windows but the glow is brighter than the upper sky, so the
+        // classes overlap. Texture is untroubled by that: smooth sky against textured trees.
+        // Recursion costs one more pass at the working width, which is cheap whatever the source
+        // resolution, and the forced flag makes it terminate after exactly one retry.
+        if (!O.forceFeature && groundStats) {
+            const other = choice.feature === "luma" ? "texture" : "luma";
+            const retry = growSkyFromSeeds(rgba, W, H, skySeeds, groundSeeds,
+                {...O, forceFeature: other});
+            if (!retry.error) return retry;
+        }
         return {
             error: `this frame does not separate on ${choice.feature}: the sky varies as much `
                 + `across the frame as it differs from the ground `
