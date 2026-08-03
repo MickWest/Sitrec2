@@ -35,6 +35,7 @@ import {resolveURLForFetch} from "./SitrecObjectResolver";
 import {CNodeVelocityFromMotion} from "./nodes/CNodeVelocityFromMotion";
 import {CNodeTrackFromVelocity} from "./nodes/CNodeTrackFromVelocity";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
+import {startMaskGroundPick} from "./SkyMaskTool";
 import {
     applyVideoEffectsToCanvas,
     ensureOpenCVAndAnalyzer,
@@ -2427,6 +2428,23 @@ function createMaskingFolder(parentFolder) {
             maskEnabledController.setValue(true);
             editMaskController.setValue(true);
         },
+        maskGround: () => {
+            startMaskGroundPick((result) => {
+                if (!result || result.error) {
+                    if (result?.error && result.error !== "cancelled") {
+                        console.warn("Mask Ground:", result.error);
+                    }
+                    return;
+                }
+                const d = result.diagnostics;
+                console.log(`[SkyMask] separated on ${d.feature} `
+                    + `(luma ${d.lumaScore?.toFixed?.(2) ?? "-"}, `
+                    + `texture ${d.textureScore?.toFixed?.(2) ?? "-"}), `
+                    + `ground ${(d.groundFraction * 100).toFixed(0)}% of frame`);
+                // A fresh mask is only useful visible, exactly as the auto-mask buttons assume.
+                maskEnabledController.setValue(true);
+            });
+        },
     };
 
     // [property, default, sideEffect(analyzer)] — numeric / boolean fields that
@@ -2473,6 +2491,14 @@ function createMaskingFolder(parentFolder) {
     maskFolder.add(maskParams, 'clearMask').name("Clear Mask").perm()
         .tooltip("Clear all mask data");
 
+    maskFolder.add(maskParams, 'maskGround').name("Mask Ground").perm()
+        .tooltip("Click the sky, then click the ground, and everything that is not sky is added to "
+            + "the mask. Two clicks rather than one because the second lets Sitrec MEASURE which "
+            + "feature separates sky from ground in this clip instead of assuming one. Check the "
+            + "result before relying on it: footage through a vignetted optic - a night-vision "
+            + "tube or a telescope - can over-mask, because the brightness falls off across the "
+            + "sky by more than the sky differs from the ground. Adds to the mask; use Clear Mask "
+            + "to reset, or paint by hand with Edit Mask.");
     maskFolder.add(maskParams, 'autoMask').name("Auto Mask OSD").perm()
         .tooltip("Add a mask of static text-coloured pixels over the frame window (adds to the mask; use Clear Mask to reset)");
 
