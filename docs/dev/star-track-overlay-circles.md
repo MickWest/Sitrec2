@@ -1,64 +1,79 @@
-# Star Track: the overlay circles are still placed by the flat 2D model
+# Star Track: where the spherical solve is used, and where the flat 2D model still is
 
-Status: **open, one attempt made and reverted, and the obvious explanations have been checked and
-ruled out.** This was section 7 of the worker handoff, which is otherwise done — see the last
-section for what landed there, since it changes what tooling is available for investigating this.
+Status: **the overlay circles are FIXED.** Two deliberate 2D holdouts remain, listed at the end.
+This file began as section 7 of the worker handoff; the worker migration is done and recorded
+below because its measurements are the reason the rest of this is reproducible.
 
-## The symptom
+## The overlay circles (fixed)
 
-`drawOverlay` (`StarTrackerUI.js`, the `applyTransform(T, rx, ry)` line) places every circle by
-mapping the 2D reference-chart position through the per-frame 2D similarity — the very model whose
-frame-edge bias the spherical solve exists to correct.
+The symptom: on the cropped clip (`?custom=99999999/Cropped Starlink Timelapse/20260802_212450.js`),
+whose fitted optical axis sits at x=941 of 1280, stars on the LEFT drifted out of their green
+circles while those on the RIGHT stayed centred. User-reported, and the asymmetry matched the axis
+position exactly.
 
-On the cropped clip (`?custom=99999999/Cropped Starlink Timelapse/20260802_212450.js`), whose
-optical axis sits at x=953 of 1280, stars on the LEFT (up to 953 px off axis) visibly drift out of
-their circles while those on the RIGHT (~330 px off axis) stay centred. User-reported, and the
-asymmetry matches the axis position exactly.
+The cause was that `drawStarTrackerOverlay` placed every circle with `applyTransform(T, rx, ry)` —
+the per-frame **2D similarity** from the 2D chain. That is four degrees of freedom: one rotation,
+one uniform scale, one shift. It moves the whole field of circles rigidly and cannot bend. A wide
+lens bends: theta(rho) is nonlinear (this clip fits theta = rho(1 - 0.31 rho^2 + 0.10 rho^4)), so
+one sky rotation moves an edge star a different number of PIXELS than a centre star. A similarity
+has one scale for the whole image, so it can only be right at one radius and its error grows
+outward from the optical axis.
 
-## What has been ruled out
+Measured at frame 84 over 231 observed stars, median pixel error against the actual detections:
 
-An attempt to fix it by projecting `t.ref` through `lensInfo.states[i]` with `refToFrame` put
-circles far outside the video frame and was REVERTED. The reason is not yet known, but two
-plausible explanations have been checked and are WRONG:
+| distance from optical axis | 0–200 | 200–400 | 400–600 | 600–800 | 800–1000 |
+| --- | --- | --- | --- | --- | --- |
+| placed by the 2D similarity | 0.30 | 0.39 | 3.10 | 7.42 | 11.35 |
+| placed on the sphere | 0.17 | 0.19 | 0.23 | 0.17 | 0.33 |
 
-- **"`t.ref` holds pre-refinement directions."** It does not. `refineGlobalSpherical` writes the
-  refined directions back, and there is now a test pinning that write-back
-  (`tests/StarSphereSolveParallel.test.js`, "including the ref write-back").
-- **"The frame indexing is off by the window start."** It is not.
-  `i = round(par.frame) - result.frame0` matches both `transforms[i]` and `states[i]`.
+Worst case 23.7 px against 0.89 px, on circles of radius 6–24 px — so out at the edge the old
+placement missed by a full circle width. Adding degrees of freedom does not rescue a planar model:
+a homography (8 dof) measured 11.4 px against the similarity's 11.7, because `K R K^-1` models
+perspective and radial compression is not a projective map.
 
-## Where to start
+**The fix** places stars from their own settled direction through that frame's solved orientation,
+`refToFrame(states[i], lens, t.ref, [videoW, videoH])`, whenever the lens was fitted, keeping the
+2D chart as the fallback for runs where it was not. Movers hop on the sphere instead —
+`framePixelToFrame(states[o.f], states[i], ...)` on the nearest observation — because a mover's
+`ref` is one settled direction and using it would pin the marker still, which is exactly the
+motion the red circle exists to show. After the fix: all 882 stars placed spherically, none
+skipped, median error 0.21 px and worst 1.0 px.
 
-Do not re-derive from the whole overlay. Take a SINGLE known track, at a late frame, and compare
-three numbers: its detected pixel position, `applyTransform(T, rx, ry)`, and
-`refToFrame(states[i], lens, t.ref, size)`. Whichever of the last two is wrong, and by how much and
-in what direction, is the answer. That the projection failed "far outside the frame" suggests a
-frame-of-reference or gauge difference rather than a small bias, so look there first.
+**A note for whoever reads the git history.** An earlier attempt at this was reverted because it
+put circles far outside the frame, and the reason was recorded as unknown. It was not the
+approach: that exact projection lands sub-pixel on every star. It must have been an
+implementation slip — the likely candidates being the wrong `size` (it has to be the ANALYSED
+decode size, `result.videoW/H`, not the view or source size, or `lensScaleFor` rescales
+everything about the principal point), or passing `lensInfo.chart[i]`, a 2D gnomonic position,
+where a 3-vector direction was wanted.
 
-Note the gauge: `refineGlobalSpherical` re-pins the first solved frame to the identity after every
-iteration, so the map's coordinates are "frame 0's camera frame" — not the reference chart's, and
-not the sky's.
+## Still on the 2D model, deliberately
+
+- **Star identification.** `identifyStars` consumes the 2D reference chart and is calibrated
+  against the star set that chart produced. Handing it the ~60 recovered edge stars broke its
+  match consensus — measured: identify succeeded before and failed after. Migrating it to the
+  spherical map is real work, and `gnomonicChart` exists for when someone does it.
+- **Light clusters.** A cluster's motion model lives in reference-chart coordinates and there is
+  no chart-to-direction map to carry it onto the sphere; the chart is a chain of similarities, not
+  a projection of one. The inherited edge error is small against a ring whose radius is the
+  formation's own extent (>= 20 px), so it is a real limitation but not a visible one.
 
 ## Reference material
 
 - Clips: the cropped one above, and `?custom=99999999/Rotating Starfield issue/20260801_233530.js`
-  (uncropped, 118 frames — the regression case that must not change).
-- Fixtures: `tests/fixtures/croppedStarlinkClip.json` (baseline correspondences plus a known
-  optical axis), `tests/fixtures/rotatingStarfieldMap.json`,
+  (uncropped, 118 frames — the regression case that must not change; gives 231 star / 5 moving).
+- Fixtures: `tests/fixtures/croppedStarlinkClip.json`, `tests/fixtures/rotatingStarfieldMap.json`,
   `tests/fixtures/rotatingStarfieldPairs.txt`.
 - Wider star-track context and the identification work: `docs/dev/star-identify-edge-stars.md`.
 
-## The worker migration, which is done
-
-Recorded here because it changes how this clip behaves under investigation: the analysis no longer
-blocks the page, so `sitrec_eval` answers during a run instead of timing out.
+## The worker migration
 
 `refineGlobalSpherical` was ~121 s of a ~150 s run on the cropped clip. It now runs across a worker
 pool (`StarSphereSolvePool.js`, `src/workers/StarSphereWorker.js`):
 
 | stage | before | after |
 | --- | --- | --- |
-| `refineGlobalSpherical#1` | 66.0 s | 5.0 s |
+| `refineGlobalSpherical#1` | 66.0 s | 4.8 s |
 | `refineGlobalSpherical#2` | 55.0 s | 5.3 s |
 | whole analysis, wall clock | 159 s | ~75 s |
 | page responsive during the solve | no | yes |

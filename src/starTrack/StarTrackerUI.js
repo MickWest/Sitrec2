@@ -25,6 +25,7 @@ import {
     attachRays, classifyTracksSpherical, gnomonicChart, statesFromChain2D,
 } from "./StarSolveSphere";
 import {refineGlobalSphericalAsync} from "./StarSphereSolvePool";
+import {framePixelToFrame, refToFrame} from "./StarSphere";
 import {LENS_PRESETS, lensFOV, serializeLens} from "../CameraLens";
 import {
     STAR_IDENTIFY_DEFAULTS,
@@ -1402,6 +1403,34 @@ const COLORS = {
     cluster: "#ff9500",
 };
 
+// How many star circles are drawn at full strength. A dense field solves thousands of stars - 882
+// on the Milky Way timelapse this was tuned against - and at full weight the overlay becomes a
+// wall of green that hides the footage it is annotating. The rest are still drawn, because "why is
+// that star not circled" has to stay answerable by looking, just quietly enough to see through.
+const BRIGHT_CIRCLES = 100;
+
+let brightCutoffFor = null, brightCutoffMag = Infinity;
+
+/**
+ * The magnitude at which a star stops being drawn at full strength: the BRIGHT_CIRCLES'th
+ * brightest, or Infinity when there are few enough to show them all.
+ *
+ * Cached against the result object's identity rather than recomputed per frame - this is a render
+ * loop, and the sort plus its temporary array would otherwise run at frame rate for an answer that
+ * only changes when a new analysis replaces the old one.
+ */
+function brightMagnitudeCutoff() {
+    if (brightCutoffFor === result) return brightCutoffMag;
+    const mags = [];
+    for (const c of result.solved.classified) {
+        if (c.klass === "star" && Number.isFinite(c.magnitude)) mags.push(c.magnitude);
+    }
+    mags.sort((a, b) => a - b);          // astronomical convention: SMALLER is brighter
+    brightCutoffMag = mags.length > BRIGHT_CIRCLES ? mags[BRIGHT_CIRCLES - 1] : Infinity;
+    brightCutoffFor = result;
+    return brightCutoffMag;
+}
+
 /**
  * Draw the classification over the video for the current frame.
  *
@@ -1444,6 +1473,34 @@ export function drawStarTrackerOverlay() {
     const rsy = result.videoH ? view.videoHeight / result.videoH : 1;
     const toCanvas = (vx, vy) => view.videoToCanvasCoords(vx * rsx, vy * rsy);
 
+    // WHERE A CIRCLE GOES, and why there are two answers.
+    //
+    // The 2D similarity `T` has four degrees of freedom - one rotation, one uniform scale, one
+    // shift - so it moves the whole field of circles RIGIDLY. It cannot bend, and a wide lens
+    // bends: theta(rho) is nonlinear, so one sky rotation moves an edge star a different number
+    // of PIXELS than a centre star. A similarity has one scale for the whole image, so it can
+    // only be right at one radius and its error grows outward from the optical axis. Measured on
+    // the cropped Starlink clip at frame 84, median error against the actual detections:
+    //
+    //     distance from optical axis    0-200   200-400   400-600   600-800   800-1000
+    //     placed by the 2D similarity    0.30      0.39      3.10      7.42      11.35   px
+    //     placed on the sphere           0.17      0.19      0.23      0.17       0.33   px
+    //
+    // with a worst case of 23.7 px against 0.89 px. Circle radii are 6-24 px, so out at the edge
+    // the 2D model misses by a full circle width - the reported symptom, and asymmetric on a
+    // cropped clip because the optical axis is not the frame centre. Adding degrees of freedom
+    // does not rescue it: a homography measured 11.4 px against the similarity's 11.7, because
+    // K R K^-1 models perspective and radial compression is not a projective map.
+    //
+    // So stars are placed from their own settled DIRECTION through that frame's solved
+    // ORIENTATION whenever the lens was fitted, and the 2D chart remains the fallback for runs
+    // where it was not. Star IDENTIFICATION is deliberately NOT moved with them - it consumes
+    // the 2D chart and is calibrated against the star set that chart produced.
+    const lensInfo = result.lensInfo;
+    const sphStates = lensInfo && lensInfo.states;
+    const sphState = sphStates ? sphStates[i] : null;
+    const sphSize = [result.videoW, result.videoH];
+
     let magMin = Infinity, magMax = -Infinity;
     for (const c of result.solved.classified) {
         if (!Number.isFinite(c.magnitude)) continue;
@@ -1455,6 +1512,8 @@ export function drawStarTrackerOverlay() {
     // arbitrary range here instead would put that one real magnitude OUTSIDE it, drive the
     // radius negative, and abort the whole overlay when arc() throws.
 
+    const brightCutoff = brightMagnitudeCutoff();
+
     for (const c of result.solved.classified) {
         if (!c.position) continue;
         if (c.klass === "short") continue;
@@ -1462,7 +1521,13 @@ export function drawStarTrackerOverlay() {
         if (c.klass === "moving" && !params.showMoving) continue;
         if ((c.klass === "incoherent" || c.klass === "cameraFixed") && !params.showRejected) continue;
 
+        const track = result.solved.tracks[c.index];
         let rx = c.position[0], ry = c.position[1];
+        // `point` is the spherical placement; `noImage` distinguishes "the lens says this ray
+        // falls outside what the camera can see in this frame", which must skip the circle, from
+        // "there was nothing to project", which falls back to the 2D chart.
+        let point = null, noImage = false;
+
         if (c.klass === "moving") {
             // Only while the track is actually following the object: the nearest-observation
             // mapping below would happily carry its position to every OTHER frame too, pinning
@@ -1470,11 +1535,24 @@ export function drawStarTrackerOverlay() {
             if (i < c.first || i > c.last) continue;
             // A mover has no fixed map position, so show it where it actually was in the nearest
             // frame it was seen, brought into this frame through the solved transform.
-            const t = result.solved.tracks[c.index];
-            const o = t.obs.reduce((a, b) => (Math.abs(b.f - i) < Math.abs(a.f - i) ? b : a));
+            const o = track.obs.reduce((a, b) => (Math.abs(b.f - i) < Math.abs(a.f - i) ? b : a));
             rx = o.rx; ry = o.ry;
+            // On the sphere the same hop is pixel -> ray in the frame it was SEEN -> pixel in
+            // this one. A mover's `ref` is a single settled direction and using it would pin the
+            // marker still, which is exactly the motion the red circle exists to show.
+            if (sphState && sphStates[o.f]) {
+                point = framePixelToFrame(sphStates[o.f], sphState, lensInfo.lens, o.x, o.y, sphSize);
+                noImage = !point;
+            }
+        } else if (sphState && track && track.ref) {
+            point = refToFrame(sphState, lensInfo.lens, track.ref, sphSize);
+            noImage = !point;
         }
-        const [vx, vy] = applyTransform(T, rx, ry);
+
+        // Skipping is the honest answer to "this star has no image in this frame". The 2D model
+        // always returned a point, which is how a circle ends up drawn where the star cannot be.
+        if (noImage) continue;
+        const [vx, vy] = point || applyTransform(T, rx, ry);
         // Display-space mapping, not videoToCanvasCoordsOriginal: that one expects ORIGINAL
         // source coordinates, and on a 4K clip decoded at a capped resolution it compresses
         // every circle toward the top-left, parting them from their stars.
@@ -1485,18 +1563,29 @@ export function drawStarTrackerOverlay() {
             ? (magMax - c.magnitude) / (magMax - magMin) : 0.5;
         const radius = 6 + t01 * 18;
 
-        // Stars are clickable: register the circle as drawn, and dim a toggled-off star to 30% -
-        // still visible enough to click back on, clearly out of the working set. Movers draw at
-        // half strength so the circle and its label mark the object without painting over it.
+        // Everything below the brightest BRIGHT_CIRCLES draws as a thin, faint ring. An
+        // UNMEASURED magnitude counts as faint - a star with no photometry cannot claim to be in
+        // the top hundred. Only stars are demoted: movers are the point of the analysis and there
+        // are few of them, and the rejected classes are off by default anyway.
+        const faint = c.klass === "star"
+            && !(Number.isFinite(c.magnitude) && c.magnitude <= brightCutoff);
+
+        // Stars are clickable: register the circle as drawn, and dim a toggled-off star - still
+        // visible enough to click back on, clearly out of the working set. The disabled and faint
+        // states are multiplied rather than merged so BOTH stay readable: a faint star still
+        // visibly changes when it is toggled off. Movers draw at half strength so the circle and
+        // its label mark the object without painting over it.
         const disabled = c.klass === "star" && result.disabledStars?.has(c.index);
         if (c.klass === "star") overlayStarHits.push({x: px, y: py, r: radius, index: c.index});
-        const alpha = disabled ? 0.3 : c.klass === "moving" ? 0.5 : 1;
+        const alpha = disabled
+            ? (faint ? 0.15 : 0.3)
+            : (faint ? 0.25 : c.klass === "moving" ? 0.5 : 1);
         if (alpha !== 1) overlayCtx.globalAlpha = alpha;
 
         overlayCtx.beginPath();
         overlayCtx.arc(px, py, radius, 0, Math.PI * 2);
         overlayCtx.strokeStyle = COLORS[c.klass] || "#888";
-        overlayCtx.lineWidth = c.klass === "moving" ? 3 : 1.8;
+        overlayCtx.lineWidth = c.klass === "moving" ? 3 : faint ? 1 : 1.8;
         overlayCtx.setLineDash(c.klass === "incoherent" ? [4, 4] : []);
         overlayCtx.stroke();
 
@@ -1528,6 +1617,11 @@ export function drawStarTrackerOverlay() {
         for (const cl of result.clusters) {
             if (i < cl.first - 3 || i > cl.last + 3) continue;
             const [rx, ry] = cl.at(Math.min(Math.max(i, cl.first), cl.last));
+            // Still the 2D placement, deliberately. A cluster's motion model lives in
+            // reference-chart coordinates, and there is no chart-to-direction map to carry it
+            // onto the sphere - the chart is a chain of similarities, not a projection of one.
+            // The edge error it inherits is small against a ring whose radius is the formation's
+            // own extent (>= 20 px), so this is a real limitation but not a visible one.
             const [vx, vy] = applyTransform(T, rx, ry);
             const [px, py] = toCanvas(vx, vy);
             if (px < -80 || py < -80 || px > overlay.width + 80 || py > overlay.height + 80) continue;
