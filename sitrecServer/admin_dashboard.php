@@ -22,7 +22,10 @@ $EXPAND_LIMIT = 200;
 
 $AI_RATE_LIMIT_DIR = sys_get_temp_dir() . '/sitrec_ratelimit/';
 $TILE_USAGE_DIR = sys_get_temp_dir() . '/sitrec_tile_usage/';
-$AI_LOG_FILE = sys_get_temp_dir() . '/sitrec_ai_requests.json';
+
+// $AI_LOG_FILE comes from the same file the writers use. Held in one place because a reader
+// pointed at a path the writers no longer use shows an empty dashboard rather than an error.
+require_once __DIR__ . '/ai_log.php';
 
 function loadAIUsageData($dir) {
     $data = [];

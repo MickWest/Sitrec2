@@ -64,6 +64,22 @@ export const SKY_MASK_DEFAULTS = {
     // as "everything is ground".
     minSkyFraction: 0.02,
 
+    // --- local-darkness refinement (see refineGroundByLocalDarkness) -----------------------------
+    // Radius of the local sky-background window, as a fraction of the working width. Big enough
+    // that stars and grain average out, small enough to follow the horizon glow rather than
+    // straddle it.
+    refineRadiusFrac: 0.08,
+    // How many multiples of the sky's own mean absolute deviation a pixel must fall below its
+    // local background to count as silhouette, and an absolute floor in luma units for the
+    // clean frames where that deviation approaches zero.
+    refineK: 2.5,
+    refineMinDrop: 4,
+    // Minimum claimed-sky pixels in a window before its average is trusted as a background.
+    refineMinWindowSky: 20,
+    // Dilation applied after the flood, in working pixels, to swallow the blended sky/tree
+    // fringe along every branch.
+    refineDilate: 1,
+
     // --- quadtree classifier -------------------------------------------------------------------
     // Smallest block that may be called sky, in working pixels. A block smaller than this only
     // became small because its surroundings needed splitting, which is the signature of detail
@@ -410,6 +426,138 @@ function chooseFeature(skyStats, groundStats) {
     const t = score(skyStats.texture, groundStats.texture);
     const l = score(skyStats.luma, groundStats.luma);
     return {feature: l > t ? "luma" : "texture", lumaScore: l, textureScore: t};
+}
+
+/**
+ * Separable box filter returning SUMS (not means) over a (2r+1) square, via running totals.
+ * Kept as sums so a caller can divide one blurred field by another and get a mean restricted
+ * to a subset of pixels - which is exactly what the local sky background needs.
+ */
+function boxSums(src, W, H, r) {
+    const tmp = new Float32Array(W * H);
+    const out = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) {
+        const row = y * W;
+        let acc = 0;
+        for (let x = 0; x <= Math.min(r, W - 1); x++) acc += src[row + x];
+        for (let x = 0; x < W; x++) {
+            tmp[row + x] = acc;
+            const add = x + r + 1, sub = x - r;
+            if (add < W) acc += src[row + add];
+            if (sub >= 0) acc -= src[row + sub];
+        }
+    }
+    for (let x = 0; x < W; x++) {
+        let acc = 0;
+        for (let y = 0; y <= Math.min(r, H - 1); y++) acc += tmp[y * W + x];
+        for (let y = 0; y < H; y++) {
+            out[y * W + x] = acc;
+            const add = y + r + 1, sub = y - r;
+            if (add < H) acc += tmp[add * W + x];
+            if (sub >= 0) acc -= tmp[sub * W + x];
+        }
+    }
+    return out;
+}
+
+/**
+ * Grow a known-good ground region into whatever is LOCALLY dark next to it.
+ *
+ * This exists because of a specific, measured division of labour. A vision model can say which
+ * side of a frame is ground - the semantic question - but places the boundary itself several
+ * percent of the frame out, so a tree's canopy is routinely left on the sky side of its
+ * polygon. The image knows where that edge is; the model does not.
+ *
+ * The cue is darkness measured against a LOCAL sky background, and the word local is doing all
+ * the work. A global brightness threshold is what defeated growSkyFromSeeds on these frames:
+ * the sky runs from a near-black zenith to a bright light-pollution glow at the horizon, a
+ * range wider than the gap between sky and trees, so no single level separates them. A
+ * background averaged over a window - and averaged over CLAIMED SKY PIXELS ONLY, so the trees
+ * cannot drag it down - follows that gradient, and the silhouette is then a large local drop
+ * anywhere in the frame.
+ *
+ * Growth is by connectivity from the existing ground, not a global sweep of every dark pixel.
+ * The features being recovered (a canopy attached to its trunk, a ridge attached to the
+ * bottom of the frame) are all joined to ground the model already identified, and requiring
+ * that join is what stops a genuinely dark PATCH OF SKY from being masked on its own.
+ *
+ * @param rgba   working-resolution pixels
+ * @param ground Uint8Array, 1 = already known ground. Not mutated.
+ * @returns {{ground: Uint8Array, diagnostics: object}}
+ */
+export function refineGroundByLocalDarkness(rgba, W, H, ground, opts = {}) {
+    const O = {...SKY_MASK_DEFAULTS, ...opts};
+    const n = W * H;
+    const {luma} = skyFeatures(rgba, W, H, O);
+
+    const sky = new Float32Array(n);
+    const skyLuma = new Float32Array(n);
+    let skyCount = 0, skySum = 0;
+    for (let i = 0; i < n; i++) {
+        if (!ground[i]) {
+            sky[i] = 1;
+            skyLuma[i] = luma[i];
+            skyCount++;
+            skySum += luma[i];
+        }
+    }
+    if (skyCount < n * O.minSkyFraction) {
+        return {ground, diagnostics: {refined: 0, reason: "almost no sky claimed"}};
+    }
+    const globalSkyMean = skySum / skyCount;
+
+    const r = Math.max(4, Math.round(W * O.refineRadiusFrac));
+    const sumLuma = boxSums(skyLuma, W, H, r);
+    const sumSky = boxSums(sky, W, H, r);
+
+    // Local mean sky brightness. Where a window holds too little sky to average - deep inside
+    // a large ground region - the value is unused anyway, since only sky pixels are tested.
+    const bg = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+        bg[i] = sumSky[i] >= O.refineMinWindowSky ? sumLuma[i] / sumSky[i] : globalSkyMean;
+    }
+
+    // Noise scale: mean absolute deviation of the sky from its own local background. Using the
+    // sky's own scatter keeps the threshold scale-free, so a grainy high-ISO frame earns a
+    // wider gate instead of having its noise called foliage.
+    let mad = 0;
+    for (let i = 0; i < n; i++) if (sky[i]) mad += Math.abs(luma[i] - bg[i]);
+    mad /= skyCount;
+    const drop = Math.max(O.refineK * mad, O.refineMinDrop);
+
+    // BFS out of the known ground into dark sky pixels. An explicit stack rather than
+    // recursion: at working resolution a treeline can be tens of thousands of pixels.
+    const out = Uint8Array.from(ground);
+    const stack = new Int32Array(n);
+    let top = 0;
+    for (let i = 0; i < n; i++) if (out[i]) stack[top++] = i;
+
+    let refined = 0;
+    while (top > 0) {
+        const i = stack[--top];
+        const x = i % W, y = (i - x) / W;
+        for (let d = 0; d < 4; d++) {
+            const xx = x + (d === 0 ? -1 : d === 1 ? 1 : 0);
+            const yy = y + (d === 2 ? -1 : d === 3 ? 1 : 0);
+            if (xx < 0 || xx >= W || yy < 0 || yy >= H) continue;
+            const j = yy * W + xx;
+            if (out[j]) continue;
+            if (luma[j] > bg[j] - drop) continue;
+            out[j] = 1;
+            refined++;
+            stack[top++] = j;
+        }
+    }
+
+    // One dilation. A silhouette's edge pixels are a blend of tree and sky, so they sit above
+    // the threshold and survive as a one-pixel fringe of "sky" tracing every branch - which is
+    // the worst possible sky to keep, being exactly where a false detection would land.
+    const grown = O.refineDilate > 0 ? dilate(out, W, H, O.refineDilate) : out;
+
+    return {
+        ground: grown,
+        diagnostics: {refined, drop, mad, backgroundRadius: r, skyFractionClaimed: skyCount / n},
+    };
 }
 
 function dilate(src, W, H, r) {

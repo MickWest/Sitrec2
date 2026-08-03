@@ -1742,6 +1742,19 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
     makeImageVideo(filename, img, deleteAfterUsing = false, imageFileID = undefined, importMetadata = undefined, pauseTimelineOnLoad = false, restoreIndex = undefined) {
 
+        // A mask belongs to the picture it was drawn on. Cleared HERE, before the new image is
+        // installed, because initMask() carries an existing mask forward by SCALING it into the
+        // new canvas - so one left behind does not merely linger, it is stretched onto a picture
+        // whose horizon is somewhere else entirely.
+        //
+        // In makeImageVideo rather than at the import call sites because there are several of
+        // those (drag-drop, the file menu, the parse pipeline) and they all arrive here. The two
+        // guards are what separate "the user loaded a new picture" from "a saved sitch is being
+        // rebuilt", which must keep the mask that was saved with it.
+        if (!Globals.deserializing && restoreIndex === undefined) {
+            NodeMan.get("videoMask", false)?.clearMask();
+        }
+
         this.fileName = filename;
         setFilenameOverlaySource(this.fileName);
         this.imageFileID = imageFileID ?? null;

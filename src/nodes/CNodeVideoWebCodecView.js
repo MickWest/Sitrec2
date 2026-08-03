@@ -8,7 +8,7 @@
  */
 import {CNodeVideoView} from "./CNodeVideoView";
 import {par} from "../par";
-import {FileManager, Globals} from "../Globals";
+import {FileManager, Globals, NodeMan} from "../Globals";
 
 import {SITREC_APP} from "../configUtils";
 import {CVideoMp4Data, detectVideoContainer} from "../CVideoMp4Data";
@@ -139,7 +139,15 @@ export class CNodeVideoWebCodecView extends CNodeVideoView {
 
     async uploadFile(file, autoAdd = false) {
         const hasExistingVideo = this.videoData !== null && this.videoData !== undefined;
-        
+
+        // Same reasoning as the image path in CNodeVideoView.makeImageVideo: a mask belongs to
+        // the footage it was drawn on, and initMask() would otherwise scale it onto the new
+        // clip. uploadFile is only reached from a user import; the deserializing guard is there
+        // because a restore must keep the mask that was saved with the sitch.
+        if (!Globals.deserializing) {
+            NodeMan.get("videoMask", false)?.clearMask();
+        }
+
         if (hasExistingVideo && !autoAdd) {
             if (this.alwaysReplace) {
                 this.disposeAllVideos();

@@ -36,6 +36,9 @@ import {CNodeVelocityFromMotion} from "./nodes/CNodeVelocityFromMotion";
 import {CNodeTrackFromVelocity} from "./nodes/CNodeTrackFromVelocity";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {startMaskGroundPick, applyQuadTreeGroundMask} from "./SkyMaskTool";
+import {maskGroundWithAI} from "./SkyMaskAI";
+import {BRUSH_MAX_AT_720} from "./nodes/CNodeMaskOverlay";
+import {showError} from "./showError";
 import {
     applyVideoEffectsToCanvas,
     ensureOpenCVAndAnalyzer,
@@ -2397,8 +2400,15 @@ export function addMotionAnalysisMenu() {
 // ensureMaskingAnalyzer(), which creates the analyzer + mask overlay on demand.
 // Because it lives outside createParamSliders/paramControllers, it survives
 // Start/Stop Analysis and is present whenever a video is loaded.
+const AI_MASK_BUTTON_NAME = "[ADMIN] Mask Ground with AI";
+
 function createMaskingFolder(parentFolder) {
     const maskFolder = parentFolder.addFolder("Masking").close().perm();
+
+    // Assigned below, after the params object the button lives on exists. Held here so the
+    // handler can rename the button while the (slow, async) AI call is in flight.
+    let aiMaskController = null;
+    let aiMaskBusy = false;
 
     // Live read-through accessors so the controls work before an analyzer exists.
     // Action buttons + the editMask flag + the colour object live as plain props;
@@ -2436,6 +2446,50 @@ function createMaskingFolder(parentFolder) {
                 + `split tolerance ${d.splitTolerance.toFixed(2)}, `
                 + `ground ${(d.groundFraction * 100).toFixed(0)}% of frame`);
             maskEnabledController.setValue(true);
+        },
+        // Safety band added along the AI's outline, as a fraction of the frame's shorter side.
+        // Not a fudge for a bad outline - it is where the model's residual error is made to
+        // land on the harmless side, since enclosed foliage ruins a frame and over-masked sky
+        // costs a few stars out of thousands.
+        aiMaskMargin: 0.01,
+        maskGroundAI: async () => {
+            // One press at a time, and the label says so - the call takes seconds and costs
+            // money, and lil-gui gives a button no other way to show that it is working.
+            if (aiMaskBusy) return;
+            aiMaskBusy = true;
+            aiMaskController?.name("Asking the AI…");
+            try {
+                const result = await maskGroundWithAI(maskParams.aiMaskMargin);
+                if (result.error) {
+                    // Surfaced rather than logged: unlike the local buttons this one can fail
+                    // for reasons the user can act on - no model selected, a text-only model,
+                    // a provider outage - and a silent no-op after a paid call is worse than
+                    // a dialog. What the AI SAID is included when it got that far, since on
+                    // this path the first question is always whether it read the scene right.
+                    let message = "Mask Ground with AI: " + result.error;
+                    if (result.notes) {
+                        message += `\n\nThe AI described the frame as: "${result.notes}"`;
+                    }
+                    showError(message);
+                    return;
+                }
+                const points = result.polygons.reduce((n, p) => n + p.length, 0);
+                const d = result.diagnostics;
+                console.log(`[SkyMask] AI outline — ${result.polygons.length} `
+                    + `${result.region} polygon(s), ${points} points, frame ${result.frame}: `
+                    + `"${result.notes}"`);
+                console.log(`[SkyMask] ground ${(result.outlineGroundFraction * 100).toFixed(0)}% `
+                    + `from the outline, ${(result.groundFraction * 100).toFixed(0)}% after `
+                    + `refinement (+${d.refined} cells, drop ${d.drop?.toFixed?.(1)} luma, `
+                    + `sky MAD ${d.mad?.toFixed?.(1)})`);
+                maskEnabledController.setValue(true);
+                // Shown straight away: a rough outline is EXPECTED to need tidying, and the
+                // whole point of it being rough is that the user finishes it by hand.
+                editMaskController.setValue(true);
+            } finally {
+                aiMaskBusy = false;
+                aiMaskController?.name(AI_MASK_BUTTON_NAME);
+            }
         },
         maskGround: () => {
             startMaskGroundPick((result) => {
@@ -2491,11 +2545,28 @@ function createMaskingFolder(parentFolder) {
         .tooltip("Enable/disable mask filtering");
 
     const editMaskController = maskFolder.add(maskParams, 'editMask').name("Edit Mask").perm()
-        .onChange((v) => { const a = ensureMaskingAnalyzer(); if (a) a.setMaskEditing(v); })
+        .onChange((v) => {
+            const a = ensureMaskingAnalyzer();
+            if (a) a.setMaskEditing(v);
+            syncBrushSliderMax();
+        })
         .tooltip("Click and drag to paint mask (Alt/Option to erase)");
 
-    maskFolder.add(maskParams, 'brushSize', 5, 50, 1).name("Brush Size").perm()
-        .tooltip("Mask brush size in pixels");
+    const brushSizeController = maskFolder.add(maskParams, 'brushSize', 5, BRUSH_MAX_AT_720, 1)
+        .name("Brush Size").perm()
+        .tooltip("Mask brush size, in video pixels. The maximum scales with the video's "
+            + "resolution against a 720-line reference, so the brush covers the same fraction "
+            + "of the picture whatever the source. [ and ] resize it while painting.");
+
+    // The slider's ceiling has to track the overlay's, or the two disagree in a damaging
+    // direction: ] can take the brush past a fixed slider max, and then merely touching the
+    // slider would clamp the value back down. Re-read on entering Edit Mask, which is both when
+    // the brush starts to matter and after any video swap that changed the resolution.
+    function syncBrushSliderMax() {
+        const overlay = ensureMaskingAnalyzer()?.maskOverlayNode;
+        if (!overlay) return;
+        brushSizeController.max(overlay.maxBrushSize()).updateDisplay();
+    }
 
     maskFolder.add(maskParams, 'clearMask').name("Clear Mask").perm()
         .tooltip("Clear all mask data");
@@ -2513,6 +2584,24 @@ function createMaskingFolder(parentFolder) {
             + "tube or a telescope - can over-mask, because the brightness falls off across the "
             + "sky by more than the sky differs from the ground. Adds to the mask; use Clear Mask "
             + "to reset, or paint by hand with Edit Mask.");
+    if (isAdmin()) {
+        // Experimental, and admin-only because each press spends money on a provider API.
+        // The gate that enforces that is in sitrecServer/aimask.php; this only hides the
+        // button from everyone it would fail for.
+        aiMaskController = maskFolder.add(maskParams, 'maskGroundAI').name(AI_MASK_BUTTON_NAME).perm()
+            .tooltip("EXPERIMENTAL. Sends the current frame to your selected AI model (Settings > "
+                + "AI Model) and asks it to outline the sky. Everything on the other side of "
+                + "that outline is masked. The result is deliberately ROUGH - it will be a few "
+                + "pixels off the real skyline, so Edit Mask is switched on for you to tidy it. "
+                + "Unlike the other two buttons this one measures nothing about the image, so it "
+                + "works on frames they refuse - a bright horizon glow does not confuse it. "
+                + "Needs a model that can see images: Claude, GPT-5 or Gemini. Adds to the mask; "
+                + "use Clear Mask to reset.");
+        maskFolder.add(maskParams, 'aiMaskMargin', 0, 0.05, 0.002).name("[ADMIN] AI Margin").perm()
+            .tooltip("Safety band added along the AI's outline, as a fraction of the frame's "
+                + "shorter side. Raise it if trees are left outside the mask, lower it to keep "
+                + "more sky. Applies to the next press.");
+    }
     maskFolder.add(maskParams, 'autoMask').name("Auto Mask OSD").perm()
         .tooltip("Add a mask of static text-coloured pixels over the frame window (adds to the mask; use Clear Mask to reset)");
 

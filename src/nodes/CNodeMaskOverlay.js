@@ -32,6 +32,10 @@ import {par} from "../par";
  *    an OSD auto-mask and a detected ground region coexist; nothing silently replaces the
  *    user's own work.
  */
+// Brush ceiling on a 720-line frame, in video pixels. Every other resolution scales from this
+// reference (see maxBrushSize) so the brush covers the same fraction of the picture.
+export const BRUSH_MAX_AT_720 = 100;
+
 export class CNodeMaskOverlay extends CNodeActiveOverlay {
     constructor(v) {
         super(v);
@@ -464,12 +468,30 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         setRenderOne(true);
     }
     
+    /**
+     * Largest the brush may grow, in VIDEO pixels.
+     *
+     * Scaled against a 720-line reference because brushSize is measured in the source's own
+     * pixels, so a fixed ceiling means something different on every clip: 100 px is a broad
+     * stroke on 720p and a dot on a 4032-wide stills camera, where painting out a treeline by
+     * hand would take hundreds of passes. Tying it to the frame height keeps the brush the same
+     * FRACTION of the picture whatever the resolution - which is what the hand expects, since
+     * the user is looking at the video scaled to fit a view either way.
+     */
+    maxBrushSize() {
+        const height = this.overlayView?.videoHeight;
+        const scale = height > 0 ? height / 720 : 1;
+        return Math.max(BRUSH_MAX_AT_720, Math.round(BRUSH_MAX_AT_720 * scale));
+    }
+
     handleBrushSizeKeys() {
         const now = performance.now();
         const delay = 50;
         if (now - this.lastBrushAdjustTime < delay) return;
 
-
+        // Step grows with the brush so the ends of the range are reachable in a similar number
+        // of presses - on a 4K frame the ceiling is thousands of pixels, and a linear step
+        // would need hundreds of them.
         let step = 1+(Math.sqrt(this.brushSize)/2);
 
         let changed = false;
@@ -478,7 +500,7 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
             changed = true;
         }
         if (isKeyCodeHeld('BracketRight')) {
-            this.brushSize = Math.min(100, this.brushSize + step);
+            this.brushSize = Math.min(this.maxBrushSize(), this.brushSize + step);
             changed = true;
         }
         if (changed) {
