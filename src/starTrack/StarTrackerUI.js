@@ -22,8 +22,9 @@ import {STAR_SOLVE_DEFAULTS, solveStarField} from "./StarSolve";
 import {STAR_CLUSTER_DEFAULTS, groupMovingClusters} from "./StarCluster";
 import {calibrateLens} from "./StarCalibrate";
 import {
-    attachRays, classifyTracksSpherical, gnomonicChart, refineGlobalSpherical, statesFromChain2D,
+    attachRays, classifyTracksSpherical, gnomonicChart, statesFromChain2D,
 } from "./StarSolveSphere";
+import {refineGlobalSphericalAsync} from "./StarSphereSolvePool";
 import {LENS_PRESETS, lensFOV, serializeLens} from "../CameraLens";
 import {
     STAR_IDENTIFY_DEFAULTS,
@@ -1127,13 +1128,29 @@ export async function runStarTracker() {
                         if (c.klass === "cameraFixed") artifacts.add(c.index);
                     }
 
+                    // Off the UI thread and across a worker pool. On a dense field this stage
+                    // used to be ~121 s of a ~150 s run, synchronous, with the page unresponsive
+                    // throughout - Chrome offered to kill it repeatedly. The pool returns the
+                    // same numbers, not merely close ones; see StarSphereSolvePool.js.
                     const tSph = Date.now();
-                    updateProgress({percent: 97, status: "Solving sky rotation"});
+                    updateProgress({percent: 96.5, status: "Solving sky rotation"});
                     await yieldToBrowser();
-                    let refined = refineGlobalSpherical(solved.tracks, states, lens, size,
-                        {exclude: artifacts});
+                    let refined = await refineGlobalSphericalAsync(solved.tracks, states, lens, size,
+                        {
+                            exclude: artifacts,
+                            shouldAbort: () => ctx.stale(),
+                            onProgress: ({iteration, iterations}) => updateProgress({
+                                percent: 96.5 + 1.5 * (iteration - 1) / iterations,
+                                status: `Solving sky rotation: pass 1, iteration ${iteration}`,
+                            }),
+                        });
+                    if (!refined) {
+                        params.status = aborted ? "aborted" : "cancelled (video changed)";
+                        return null;
+                    }
                     console.log(`[StarTrack] refineGlobalSpherical#1 ${Date.now() - tSph}ms `
-                        + `(${solved.tracks.length} tracks)`);
+                        + `(${solved.tracks.length} tracks, ${refined.iterations} iterations, `
+                        + `converged=${refined.converged})`);
                     const classifyOpts = {
                         minObservations: ctx.minObservations,
                         driftSignificance: ctx.driftSignificance,
@@ -1153,9 +1170,22 @@ export async function runStarTracker() {
                         const tSph2 = Date.now();
                         updateProgress({percent: 98, status: "Re-solving on stars only"});
                         await yieldToBrowser();
-                        refined = refineGlobalSpherical(solved.tracks, refined.states, lens, size,
-                            {exclude: notSky});
-                        console.log(`[StarTrack] refineGlobalSpherical#2 ${Date.now() - tSph2}ms`);
+                        const re = await refineGlobalSphericalAsync(solved.tracks, refined.states,
+                            lens, size, {
+                                exclude: notSky,
+                                shouldAbort: () => ctx.stale(),
+                                onProgress: ({iteration, iterations}) => updateProgress({
+                                    percent: 98 + 1.0 * (iteration - 1) / iterations,
+                                    status: `Re-solving on stars only: iteration ${iteration}`,
+                                }),
+                            });
+                        if (!re) {
+                            params.status = aborted ? "aborted" : "cancelled (video changed)";
+                            return null;
+                        }
+                        refined = re;
+                        console.log(`[StarTrack] refineGlobalSpherical#2 ${Date.now() - tSph2}ms `
+                            + `(${refined.iterations} iterations, converged=${refined.converged})`);
                         sph = classifyTracksSpherical(solved.tracks, refined.states, lens, size,
                             {...classifyOpts, exclude: notSky});
                     }

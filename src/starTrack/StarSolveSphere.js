@@ -348,49 +348,117 @@ export function gnomonicChart(directions, focalPx) {
 
 // ---------------------------------------------------------------------------------------------
 // Global refinement
+//
+// SPLIT INTO PHASE KERNELS, and the split is structural rather than tidiness. Measured at the
+// scale that motivated it - 2441 tracks over 160 frames, 358k observations, a forced 12-iteration
+// solve - the time goes:
+//
+//     per-frame orientation fit    65-76%     independent across FRAMES
+//     per-track direction update   12-19%     independent across TRACKS
+//     per-track residual sum       10-16%     independent across TRACKS
+//     gauge re-pin                 <0.1%
+//
+// The two halves parallelise on DIFFERENT axes, and both have to. Parallelising the orientation
+// fit alone - the obvious choice, since it is the single biggest term - caps the speedup at
+// 1/(0.30 + 0.70/8) = 2.6x on eight cores, because the per-track third of the work stays serial.
+// All three together reach the core count.
+//
+// So the kernels below each take a CHUNK of frames or a CHUNK of tracks, and the synchronous
+// solve in this file and the worker pool in StarSphereSolvePool.js drive the SAME kernels over
+// the SAME flattened inputs. That is the only reason the two paths can be trusted to agree bit
+// for bit rather than merely closely, which the rendered-pixel regression tests require.
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Solve every frame's ORIENTATION and every star's DIRECTION against one shared map.
+ * Observations flattened into typed arrays, in track order and then observation order.
  *
- * Alternating, exactly as refineGlobal does, because both halves still have closed forms:
- *   - with directions held, each frame's rotation is Wahba plus a pixel-domain refinement;
- *   - with rotations held, each star's direction is the mean of its back-rotated rays.
- *
- * GAUGE. The solution is defined only up to a global rotation - turning the whole map and
- * counter-turning every frame changes nothing observable - so frame 0 is re-pinned to the
- * identity after every round, which makes the map's coordinates "frame 0's camera frame". This
- * is the same null direction refineGlobal fixes, expressed on SO(3).
+ * Both paths read this rather than the track objects. It is what makes the worker transfer cheap
+ * - one structured clone of four buffers instead of a graph of 358k small objects - and it is
+ * also simply faster to walk, which the synchronous path gets for free.
  */
-export function refineGlobalSpherical(tracks, initialStates, lens, size, opts = {}) {
-    const O = {...STAR_SPHERE_DEFAULTS, ...opts};
-    // Tracks the caller knows do not belong to the sky - camera-fixed artifacts, and on a second
-    // pass the movers - must not shape the orientations used to judge them. The 2D solver makes
-    // the same move for the same measured reason: a hot pixel holds its PIXEL position while the
-    // sky sweeps past, so it is a large, perfectly coherent contaminant at exactly the place
-    // robust fitting copes with worst, since trimming assumes outliers disagree with each other
-    // and these agree emphatically.
-    const exclude = opts.exclude instanceof Set ? opts.exclude : new Set();
-    let states = initialStates.map((s) => (s ? {...s} : null));
-    let map = tracks.map((t, i) => (!exclude.has(i) && t.rays && t.rays.length ? medianDirection(t.rays) : null));
+export function packObservations(tracks) {
+    let m = 0;
+    for (const t of tracks) m += t.obs.length;
+    const off = new Int32Array(tracks.length + 1);
+    const f = new Int32Array(m), x = new Float64Array(m), y = new Float64Array(m);
+    let k = 0;
+    for (let i = 0; i < tracks.length; i++) {
+        off[i] = k;
+        for (const o of tracks[i].obs) { f[k] = o.f; x[k] = o.x; y[k] = o.y; k++; }
+    }
+    off[tracks.length] = k;
+    return {n: tracks.length, off, f, x, y};
+}
 
-    // Which tracks may SHAPE the orientations, and their observations indexed by frame.
-    //
-    // Two costs live in the loop below, and on a dense field both are severe. It ran 206 SECONDS
-    // on a Milky Way timelapse with 2429 tracks - the browser offered to kill the page repeatedly.
-    //
-    // 1. `obs.find()` inside a frames x tracks double loop is O(frames x tracks x obs) per
-    //    iteration. The observations never change here, so they are indexed once.
-    // 2. A frame's orientation has three degrees of freedom. A few hundred well-observed stars
-    //    determine it far below the measurement noise; the rest cost time in every one of
-    //    refineIterations x frames fits and buy nothing. Anchors are therefore capped, longest-
-    //    observed first - the best-determined directions, and the least likely to be a transient.
-    //
-    // Both restrict only what BUILDS the orientations. Every track still has its direction
-    // updated against them below, and classifyTracksSpherical still judges all of them, so no
-    // track is dropped from the result.
+/** A direction map as one Float64Array of triples, with NaN standing in for "no direction". */
+export function packMap(directions) {
+    const out = new Float64Array(directions.length * 3).fill(NaN);
+    for (let i = 0; i < directions.length; i++) {
+        const d = directions[i];
+        if (!d) continue;
+        out[i * 3] = d[0]; out[i * 3 + 1] = d[1]; out[i * 3 + 2] = d[2];
+    }
+    return out;
+}
+
+/** The inverse of packMap: back to the `Array<number[]|null>` shape callers and tests expect. */
+export function unpackMap(map, n) {
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+        const b = i * 3;
+        out[i] = Number.isNaN(map[b]) ? null : [map[b], map[b + 1], map[b + 2]];
+    }
+    return out;
+}
+
+/** Per-frame camera states as three plain arrays, which is all the kernels read of them. */
+export function packStates(states) {
+    const n = states.length;
+    const q = new Float64Array(n * 4), s = new Float64Array(n), valid = new Uint8Array(n);
+    for (let f = 0; f < n; f++) {
+        const st = states[f];
+        if (!st) continue;
+        valid[f] = 1; s[f] = st.s;
+        q[f * 4] = st.q[0]; q[f * 4 + 1] = st.q[1]; q[f * 4 + 2] = st.q[2]; q[f * 4 + 3] = st.q[3];
+    }
+    return {q, s, valid};
+}
+
+/** Rebuild the `{q, s}` objects the kernels pass to frameToRef / refToFrame. */
+export function unpackStates(packed) {
+    const n = packed.valid.length;
+    const out = new Array(n);
+    for (let f = 0; f < n; f++) {
+        out[f] = packed.valid[f]
+            ? {q: [packed.q[f * 4], packed.q[f * 4 + 1], packed.q[f * 4 + 2], packed.q[f * 4 + 3]],
+               s: packed.s[f]}
+            : null;
+    }
+    return out;
+}
+
+/**
+ * Which tracks may SHAPE the orientations, and their observations indexed by frame.
+ *
+ * Two costs live in the refinement loop, and on a dense field both are severe. It ran 206 SECONDS
+ * on a Milky Way timelapse with 2429 tracks - the browser offered to kill the page repeatedly.
+ *
+ * 1. `obs.find()` inside a frames x tracks double loop is O(frames x tracks x obs) per iteration.
+ *    The observations never change during a solve, so they are indexed once, here.
+ * 2. A frame's orientation has three degrees of freedom. A few hundred well-observed stars
+ *    determine it far below the measurement noise; the rest cost time in every one of
+ *    refineIterations x frames fits and buy nothing. Anchors are therefore capped, longest-
+ *    observed first - the best-determined directions, and the least likely to be a transient.
+ *
+ * Both restrict only what BUILDS the orientations. Every track still has its direction updated
+ * against them, and classifyTracksSpherical still judges all of them, so no track is dropped.
+ *
+ * Row order within a frame is ascending track index, and it is preserved by the flattening
+ * because the fit sees the anchors in that order.
+ */
+export function packAnchors(tracks, map, nFrames, O) {
     let anchorIdx = [];
-    for (let i = 0; i < tracks.length; i++) if (map[i]) anchorIdx.push(i);
+    for (let i = 0; i < tracks.length; i++) if (!Number.isNaN(map[i * 3])) anchorIdx.push(i);
     if (O.maxAnchors > 0 && anchorIdx.length > O.maxAnchors) {
         anchorIdx = anchorIdx
             .map((i) => [tracks[i].obs.length, i])
@@ -399,15 +467,311 @@ export function refineGlobalSpherical(tracks, initialStates, lens, size, opts = 
             .map((e) => e[1]);
         anchorIdx.sort((a, b) => a - b);       // keep the original order the fit saw
     }
-    const anchorByFrame = Array.from({length: states.length}, () => []);
+    const rows = Array.from({length: nFrames}, () => []);
     for (const i of anchorIdx) {
         const seen = new Set();
         for (const o of tracks[i].obs) {
-            if (o.f < 0 || o.f >= states.length || seen.has(o.f)) continue;
+            if (o.f < 0 || o.f >= nFrames || seen.has(o.f)) continue;
             seen.add(o.f);
-            anchorByFrame[o.f].push([i, o.x, o.y]);
+            rows[o.f].push([i, o.x, o.y]);
         }
     }
+    let m = 0;
+    for (const r of rows) m += r.length;
+    const off = new Int32Array(nFrames + 1);
+    const t = new Int32Array(m), x = new Float64Array(m), y = new Float64Array(m);
+    let k = 0;
+    for (let f = 0; f < nFrames; f++) {
+        off[f] = k;
+        for (const [i, ox, oy] of rows[f]) { t[k] = i; x[k] = ox; y[k] = oy; k++; }
+    }
+    off[nFrames] = k;
+    return {off, t, x, y};
+}
+
+/**
+ * ONE frame's robust orientation, given the map. The per-frame kernel.
+ *
+ * Reads nothing but this frame's own anchor row and the shared map, and writes nothing - which
+ * is what makes the frames splittable across workers with no ordering effect at all.
+ *
+ * @returns {{q: number[], inliers: number}|null} null when the frame has too few anchors to fit,
+ *   in which case the caller must leave its existing state alone.
+ */
+export function fitFrameOrientation(q0, s, anchors, lo, hi, map, lens, size, O) {
+    const rays = [], px = [];
+    for (let k = lo; k < hi; k++) {
+        const b = anchors.t[k] * 3;
+        if (Number.isNaN(map[b])) continue;
+        rays.push([map[b], map[b + 1], map[b + 2]]);
+        px.push([anchors.x[k], anchors.y[k]]);
+    }
+    if (rays.length < 3) return null;
+    const obsRays = px.map((p, k) => lensToRay(lens, p[0], p[1], size, s) ?? rays[k]);
+
+    // ROBUST, not plain least squares. Fitting every track equally lets a mover or an artifact
+    // pull the orientation that is then used to decide whether it moved - which is circular, and
+    // is why the 2D path re-solves on stars alone. Trimming here is the first line of that
+    // defence; `exclude` is the second.
+    let w = new Array(rays.length).fill(1);
+    let q = q0;
+    let kept = rays.length;
+    for (let round = 0; round < 3; round++) {
+        const seed = fitRotationWahba(rays, obsRays, w);
+        if (seed) q = qAlign(seed, q);
+        q = refineRotationPixels(q, lens, rays, px, size, {s, weights: w});
+        const st = {q, s};
+        const err = rays.map((r, k) => {
+            const p = refToFrame(st, lens, r, size);
+            return p ? Math.hypot(p[0] - px[k][0], p[1] - px[k][1]) : Infinity;
+        });
+        // Anneal from generous to tight, as fitSimilarity does.
+        const gate = O.refineTrimPx * (round === 0 ? 4 : round === 1 ? 2 : 1);
+        const nw = err.map((e) => (e < gate ? 1 : 0));
+        const count = nw.reduce((a, b) => a + b, 0);
+        if (count < 3) break;                 // keep the previous consensus
+        const same = nw.every((v, k) => v === w[k]);
+        w = nw; kept = count;
+        if (same) break;
+    }
+    return {q, inliers: kept};
+}
+
+/**
+ * ONE track's direction from the settled states, and its residual sum against that direction.
+ * The per-track kernel.
+ *
+ * The direction update and the cost are FUSED: the cost needs exactly the direction just
+ * computed, so splitting them into two passes would mean shipping the map back out and in again
+ * for no arithmetic benefit.
+ */
+export function solveTrackDirection(obs, lo, hi, states, lens, size) {
+    const rays = [];
+    for (let k = lo; k < hi; k++) {
+        const st = states[obs.f[k]];
+        if (!st) continue;
+        const r = frameToRef(st, lens, obs.x[k], obs.y[k], size);
+        if (r) rays.push(r);
+    }
+    const dir = rays.length ? meanDirection(rays) : null;
+    if (!dir) return {dir: null, sse: 0, count: 0};
+    let sse = 0, count = 0;
+    for (let k = lo; k < hi; k++) {
+        const st = states[obs.f[k]];
+        if (!st) continue;
+        const p = refToFrame(st, lens, dir, size);
+        if (!p) continue;
+        sse += (p[0] - obs.x[k]) ** 2 + (p[1] - obs.y[k]) ** 2;
+        count++;
+    }
+    return {dir, sse, count};
+}
+
+/** A track's ROBUST central direction from the settled states - the fallback for the final ref. */
+export function trackMedianDirection(obs, lo, hi, states, lens, size) {
+    const rays = [];
+    for (let k = lo; k < hi; k++) {
+        const st = states[obs.f[k]];
+        if (!st) continue;
+        const r = frameToRef(st, lens, obs.x[k], obs.y[k], size);
+        if (r) rays.push(r);
+    }
+    return rays.length ? medianDirection(rays) : null;
+}
+
+/**
+ * The direction update and cost for a contiguous RANGE of tracks.
+ *
+ * Returns the cost PER TRACK rather than as a running total, so the caller can add the partials
+ * in track index order whatever range it happened to hand out. See the note on accumulation order
+ * in refineGlobalSpherical.
+ */
+export function updateMapChunk(obs, excludeMask, lo, hi, states, lens, size) {
+    const dirs = new Float64Array((hi - lo) * 3).fill(NaN);
+    const sse = new Float64Array(hi - lo);
+    const count = new Int32Array(hi - lo);
+    for (let ti = lo; ti < hi; ti++) {
+        // Excluded tracks stay out of the map for the whole solve, not just its first round;
+        // recomputing them would quietly readmit them to the next iteration's fit.
+        if (excludeMask[ti]) continue;
+        const r = solveTrackDirection(obs, obs.off[ti], obs.off[ti + 1], states, lens, size);
+        if (!r.dir) continue;
+        const b = (ti - lo) * 3;
+        dirs[b] = r.dir[0]; dirs[b + 1] = r.dir[1]; dirs[b + 2] = r.dir[2];
+        sse[ti - lo] = r.sse; count[ti - lo] = r.count;
+    }
+    return {dirs, sse, count};
+}
+
+/**
+ * The settled reference direction for a contiguous RANGE of tracks.
+ *
+ * Excluded tracks still need one - they are classified like everything else, they just did not
+ * get a vote on the orientations - so theirs is computed from the settled states without having
+ * influenced them, and with a MEDIAN rather than the mean the map uses.
+ */
+export function finalRefsChunk(obs, lo, hi, map, states, lens, size) {
+    const out = new Float64Array((hi - lo) * 3).fill(NaN);
+    for (let ti = lo; ti < hi; ti++) {
+        const b = ti * 3, o = (ti - lo) * 3;
+        if (!Number.isNaN(map[b])) {
+            out[o] = map[b]; out[o + 1] = map[b + 1]; out[o + 2] = map[b + 2];
+            continue;
+        }
+        const d = trackMedianDirection(obs, obs.off[ti], obs.off[ti + 1], states, lens, size);
+        if (d) { out[o] = d[0]; out[o + 1] = d[1]; out[o + 2] = d[2]; }
+    }
+    return out;
+}
+
+/**
+ * GAUGE: pin the first solved frame to the identity.
+ *
+ * The solution is defined only up to a global rotation - turning the whole map and counter-turning
+ * every frame changes nothing observable - so this is applied after every round, which makes the
+ * map's coordinates "frame 0's camera frame". Same null direction refineGlobal fixes, on SO(3).
+ *
+ * Cheap enough (one quaternion rotation per track) that it stays on the calling thread even in
+ * the parallel path; it measured under 0.1% of the solve.
+ */
+export function applyGauge(map, states) {
+    const first = states.find((s) => s);
+    if (!first) return {map, states};
+    const inv = qConj(first.q);
+    const out = new Float64Array(map.length);
+    for (let i = 0; i < map.length; i += 3) {
+        if (Number.isNaN(map[i])) { out[i] = out[i + 1] = out[i + 2] = NaN; continue; }
+        const d = qRotate(first.q, [map[i], map[i + 1], map[i + 2]]);
+        out[i] = d[0]; out[i + 1] = d[1]; out[i + 2] = d[2];
+    }
+    return {map: out, states: states.map((s) => (s ? {...s, q: qMul(s.q, inv)} : null))};
+}
+
+/**
+ * The chunk-answering half of the parallel solve, with no transport in it.
+ *
+ * StarSphereWorker.js is a postMessage shim over this; the in-process lanes the pool falls back
+ * to, and that the tests drive, call it directly. One implementation, two transports - so a test
+ * that runs without a Worker is still testing the code the workers run, and the two cannot drift.
+ *
+ * Stateful in the way the protocol is: `init` is the static data for a whole solve, `round` is the
+ * map and states for one phase, and `chunk` answers a [lo, hi) range from those.
+ */
+export function createChunkResponder() {
+    let job = null;
+    let round = null;
+
+    return {
+        init(p) { job = p; round = null; },
+
+        round(p) {
+            round = {
+                map: p.map,
+                states: unpackStates({q: p.statesQ, s: p.statesS, valid: p.statesValid}),
+                statesQ: p.statesQ, statesS: p.statesS, statesValid: p.statesValid,
+            };
+        },
+
+        chunk(msg) {
+            if (!job || !round) throw new Error("star sphere chunk before init/round");
+            const {type, lo, hi} = msg;
+
+            if (type === "orient") {
+                const n = hi - lo;
+                const q = new Float64Array(n * 4);
+                const inliers = new Int32Array(n);
+                const ok = new Uint8Array(n);
+                for (let f = lo; f < hi; f++) {
+                    if (!round.statesValid[f]) continue;
+                    const b4 = f * 4;
+                    const fit = fitFrameOrientation(
+                        [round.statesQ[b4], round.statesQ[b4 + 1], round.statesQ[b4 + 2], round.statesQ[b4 + 3]],
+                        round.statesS[f], job.anchors, job.anchors.off[f], job.anchors.off[f + 1],
+                        round.map, job.lens, job.size, job.kernelOpts);
+                    if (!fit) continue;           // too few anchors: the caller keeps its state
+                    const o4 = (f - lo) * 4;
+                    q[o4] = fit.q[0]; q[o4 + 1] = fit.q[1]; q[o4 + 2] = fit.q[2]; q[o4 + 3] = fit.q[3];
+                    inliers[f - lo] = fit.inliers;
+                    ok[f - lo] = 1;
+                }
+                return {type, lo, hi, q, inliers, ok, transfer: [q.buffer, inliers.buffer, ok.buffer]};
+            }
+
+            if (type === "tracks") {
+                const r = updateMapChunk(job.obs, job.excludeMask, lo, hi, round.states,
+                    job.lens, job.size);
+                return {type, lo, hi, ...r, transfer: [r.dirs.buffer, r.sse.buffer, r.count.buffer]};
+            }
+
+            if (type === "refs") {
+                const dirs = finalRefsChunk(job.obs, lo, hi, round.map, round.states,
+                    job.lens, job.size);
+                return {type, lo, hi, dirs, transfer: [dirs.buffer]};
+            }
+
+            throw new Error(`star sphere: unknown chunk type "${type}"`);
+        },
+    };
+}
+
+/**
+ * The once-per-solve setup: the seed map, the anchor pool, and the flattened observations.
+ *
+ * Shared by the synchronous solve and the worker pool so that both start from bit-identical
+ * inputs, and so the pool has one small object to ship to every worker.
+ */
+export function planGlobalSpherical(tracks, nFrames, opts = {}) {
+    const O = {...STAR_SPHERE_DEFAULTS, ...opts};
+    // Tracks the caller knows do not belong to the sky - camera-fixed artifacts, and on a second
+    // pass the movers - must not shape the orientations used to judge them. The 2D solver makes
+    // the same move for the same measured reason: a hot pixel holds its PIXEL position while the
+    // sky sweeps past, so it is a large, perfectly coherent contaminant at exactly the place
+    // robust fitting copes with worst, since trimming assumes outliers disagree with each other
+    // and these agree emphatically.
+    const exclude = opts.exclude instanceof Set ? opts.exclude : new Set();
+    const excludeMask = new Uint8Array(tracks.length);
+    for (const i of exclude) if (i >= 0 && i < tracks.length) excludeMask[i] = 1;
+
+    const map = packMap(tracks.map((t, i) => (
+        !excludeMask[i] && t.rays && t.rays.length ? medianDirection(t.rays) : null)));
+
+    return {
+        O,
+        // Only the numeric knobs the kernels read, so the plan stays structured-cloneable.
+        kernelOpts: {refineTrimPx: O.refineTrimPx},
+        nTracks: tracks.length,
+        nFrames,
+        map,
+        excludeMask,
+        obs: packObservations(tracks),
+        anchors: packAnchors(tracks, map, nFrames, O),
+    };
+}
+
+/**
+ * Solve every frame's ORIENTATION and every star's DIRECTION against one shared map.
+ *
+ * Alternating, exactly as refineGlobal does, because both halves still have closed forms:
+ *   - with directions held, each frame's rotation is Wahba plus a pixel-domain refinement;
+ *   - with rotations held, each star's direction is the mean of its back-rotated rays.
+ *
+ * This is the SYNCHRONOUS path, and it stays the default export the tests call directly. It is
+ * also the fallback whenever workers are unavailable. refineGlobalSphericalAsync in
+ * StarSphereSolvePool.js runs the same kernels over the same plan across a pool.
+ *
+ * COST ACCUMULATION ORDER. The cost is summed per TRACK, and the track partials are then added in
+ * track index order - not as one flat running total over every observation, which is what this
+ * function did before the split. Floating-point addition is not associative, so the two differ in
+ * the last bits, and the flat order is simply unreachable once tracks are spread across workers.
+ * Fixing the order here, in both paths, is what makes the pool's answer identical to this one for
+ * ANY worker count rather than merely close. The perturbation is ~1e-16 relative against a
+ * convergence gate of 1e-4 on an rms of order 1 px, so it cannot reach a decision.
+ */
+export function refineGlobalSpherical(tracks, initialStates, lens, size, opts = {}) {
+    const plan = planGlobalSpherical(tracks, initialStates.length, opts);
+    const {O, kernelOpts, nTracks, nFrames, obs, anchors, excludeMask} = plan;
+    let map = plan.map;
+    let states = initialStates.map((s) => (s ? {...s} : null));
 
     let rms = Infinity, iterations = 0, converged = false;
 
@@ -415,100 +779,32 @@ export function refineGlobalSpherical(tracks, initialStates, lens, size, opts = 
         iterations = iter + 1;
 
         // --- orientations, given the map ---
-        for (let f = 0; f < states.length; f++) {
+        for (let f = 0; f < nFrames; f++) {
             if (!states[f]) continue;
-            const rays = [], px = [];
-            for (const [i, ox, oy] of anchorByFrame[f]) {
-                if (!map[i]) continue;
-                rays.push(map[i]); px.push([ox, oy]);
-            }
-            if (rays.length < 3) continue;
-            const obsRays = px.map((p, k) => lensToRay(lens, p[0], p[1], size, states[f].s) ?? rays[k]);
-
-            // ROBUST, not plain least squares. Fitting every track equally lets a mover or an
-            // artifact pull the orientation that is then used to decide whether it moved - which
-            // is circular, and is why the 2D path re-solves on stars alone. Trimming here is the
-            // first line of that defence; `exclude` is the second.
-            let w = new Array(rays.length).fill(1);
-            let q = states[f].q;
-            let kept = rays.length;
-            for (let round = 0; round < 3; round++) {
-                const seed = fitRotationWahba(rays, obsRays, w);
-                if (seed) q = qAlign(seed, q);
-                q = refineRotationPixels(q, lens, rays, px, size, {s: states[f].s, weights: w});
-                const st = {q, s: states[f].s};
-                const err = rays.map((r, k) => {
-                    const p = refToFrame(st, lens, r, size);
-                    return p ? Math.hypot(p[0] - px[k][0], p[1] - px[k][1]) : Infinity;
-                });
-                // Anneal from generous to tight, as fitSimilarity does.
-                const gate = O.refineTrimPx * (round === 0 ? 4 : round === 1 ? 2 : 1);
-                const nw = err.map((e) => (e < gate ? 1 : 0));
-                const count = nw.reduce((a, b) => a + b, 0);
-                if (count < 3) break;                 // keep the previous consensus
-                const same = nw.every((v, k) => v === w[k]);
-                w = nw; kept = count;
-                if (same) break;
-            }
-            states[f] = {...states[f], q, inliers: kept};
+            const fit = fitFrameOrientation(states[f].q, states[f].s, anchors,
+                anchors.off[f], anchors.off[f + 1], map, lens, size, kernelOpts);
+            if (fit) states[f] = {...states[f], q: fit.q, inliers: fit.inliers};
         }
 
         // --- gauge: pin the first solved frame to the identity ---
-        const first = states.find((s) => s);
-        if (first) {
-            const inv = qConj(first.q);
-            map = map.map((d) => (d ? qRotate(first.q, d) : null));
-            states = states.map((s) => (s ? {...s, q: qMul(s.q, inv)} : null));
-        }
+        ({map, states} = applyGauge(map, states));
 
-        // --- map, given the orientations ---
-        // Excluded tracks stay out of the map for the whole solve, not just its first round;
-        // recomputing them here would quietly readmit them to the next iteration's fit.
-        map = tracks.map((t, ti) => {
-            if (exclude.has(ti)) return null;
-            const rays = [];
-            for (const o of t.obs) {
-                const st = states[o.f];
-                if (!st) continue;
-                const r = frameToRef(st, lens, o.x, o.y, size);
-                if (r) rays.push(r);
-            }
-            return rays.length ? meanDirection(rays) : null;
-        });
-
-        // --- cost, in detector pixels ---
+        // --- map and cost, given the orientations ---
+        const chunk = updateMapChunk(obs, excludeMask, 0, nTracks, states, lens, size);
+        map = chunk.dirs;
         let sse = 0, count = 0;
-        for (let i = 0; i < tracks.length; i++) {
-            if (!map[i]) continue;
-            for (const o of tracks[i].obs) {
-                const st = states[o.f];
-                if (!st) continue;
-                const p = refToFrame(st, lens, map[i], size);
-                if (!p) continue;
-                sse += (p[0] - o.x) ** 2 + (p[1] - o.y) ** 2;
-                count++;
-            }
-        }
+        for (let i = 0; i < nTracks; i++) { sse += chunk.sse[i]; count += chunk.count[i]; }
+
         const next = count ? Math.sqrt(sse / count) : Infinity;
         if (Math.abs(rms - next) < O.refineTolerance) { rms = next; converged = true; break; }
         rms = next;
     }
 
-    // Attach the settled reference direction to each track. Excluded tracks still need one -
-    // they are classified like everything else, they just did not get a vote on the orientations
-    // - so theirs is computed from the settled states without having influenced them.
-    for (let i = 0; i < tracks.length; i++) {
-        if (map[i]) { tracks[i].ref = map[i]; continue; }
-        const rays = [];
-        for (const o of tracks[i].obs) {
-            const st = states[o.f];
-            if (!st) continue;
-            const r = frameToRef(st, lens, o.x, o.y, size);
-            if (r) rays.push(r);
-        }
-        tracks[i].ref = rays.length ? medianDirection(rays) : null;
-    }
-    return {states, map, rms, iterations, converged};
+    // Attach the settled reference direction to each track.
+    const refs = unpackMap(finalRefsChunk(obs, 0, nTracks, map, states, lens, size), nTracks);
+    for (let i = 0; i < nTracks; i++) tracks[i].ref = refs[i];
+
+    return {states, map: unpackMap(map, nTracks), rms, iterations, converged, refs};
 }
 
 // ---------------------------------------------------------------------------------------------
