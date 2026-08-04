@@ -13,6 +13,45 @@ const MCP_PORT_MAX = 9799;
 const KEEPALIVE_ALARM_NAME = "sitrec-bridge-keepalive";
 const KEEPALIVE_ALARM_PERIOD_MIN = 0.5; // 30 seconds, minimum Chrome allows
 const FALLBACK_PRUNE_DELAY_MS = 750;
+// While the worker is awake and a Sitrec tab is open, look for servers far more often than the
+// 30-second alarm floor. Bridges now release and re-acquire ports on demand, so a port can appear
+// at any moment and a 30-second discovery lag would show up as a failed first tool call.
+const FAST_RESCAN_MS = 4000;
+
+// -- Persistent diagnostics -------------------------------------------------
+// The service worker console is wiped every time Chrome kills the worker — which is exactly the
+// event worth investigating. chrome.storage.local survives, so the log lives there and is readable
+// later through the sitrec_diagnostics tool.
+
+const WORKER_STARTED_AT = Date.now();
+const DIAG_KEY = "sitrecBridgeDiagLog";
+const DIAG_MAX = 300;
+let diagQueue = Promise.resolve();
+
+function diag(event, fields = {}) {
+    const entry = {t: Date.now(), ts: new Date().toISOString(), event, ...fields};
+    console.log(`[SitrecBridge:diag] ${event}`, fields);
+    diagQueue = diagQueue.then(async () => {
+        try {
+            const stored = await chrome.storage.local.get(DIAG_KEY);
+            const log = Array.isArray(stored[DIAG_KEY]) ? stored[DIAG_KEY] : [];
+            log.push(entry);
+            await chrome.storage.local.set({[DIAG_KEY]: log.slice(-DIAG_MAX)});
+        } catch {
+            // Storage failures must never break the bridge.
+        }
+    });
+}
+
+async function readDiagLog(limit = 100) {
+    try {
+        const stored = await chrome.storage.local.get(DIAG_KEY);
+        const log = Array.isArray(stored[DIAG_KEY]) ? stored[DIAG_KEY] : [];
+        return log.slice(-Math.max(1, limit));
+    } catch (e) {
+        return [{event: "diag-read-failed", error: e.message}];
+    }
+}
 
 // Connection state, keyed by port number.
 //   { ws, pairedOrigin, serverPid, sourceVersion, port, cwd, startedAt, lastSeenAt, localComputeCapabilities }
@@ -27,6 +66,7 @@ let commandHistory = [];
 const MAX_HISTORY = 8;
 let preferredFallbackPort = null;
 let fallbackPruneTimer = null;
+let lastScanSignature = null;
 
 // -- URL helpers ------------------------------------------------------------
 
@@ -139,6 +179,7 @@ async function connectToPort(port) {
         sourceVersion: null,
         cwd: null,
         startedAt: null,
+        connectedAt: Date.now(),
         lastSeenAt: Date.now(),
         localComputeCapabilities: null,
         port,
@@ -171,8 +212,18 @@ async function connectToPort(port) {
                 conn.localComputeCapabilities = msg.localComputeCapabilities || null;
                 conn.lastSeenAt = Date.now();
                 console.log(`[SitrecBridge:${port}] Connected — pairedOrigin=${conn.pairedOrigin || "(fallback)"} pid=${conn.serverPid}`);
+                diag("connected", {port, pid: conn.serverPid, pairedOrigin: conn.pairedOrigin, cwd: conn.cwd});
                 if (!conn.pairedOrigin) scheduleFallbackPrune();
                 updatePopupState();
+                return;
+            }
+
+            // The server's application-level keepalive. Receiving this message is what resets the
+            // MV3 idle timer — a WebSocket protocol ping frame is answered by Chrome's network
+            // stack and never wakes this script. Replying keeps the timer reset at both ends.
+            if (msg.type === "server-ping") {
+                conn.lastSeenAt = Date.now();
+                try { ws.send(JSON.stringify({type: "server-pong", t: msg.t})); } catch {}
                 return;
             }
 
@@ -201,6 +252,9 @@ async function connectToPort(port) {
         // the live connection and trigger an infinite reconnect loop.
         if (connections.get(port)?.ws === ws) {
             console.log(`[SitrecBridge:${port}] Disconnected`);
+            // connectedAt, not startedAt: how long THIS socket lasted is the number that reveals
+            // service-worker churn. startedAt is the server process's birthday.
+            diag("disconnected", {port, pid: conn.serverPid, connectionAliveMs: Date.now() - conn.connectedAt});
             connections.delete(port);
             if (preferredFallbackPort === port) preferredFallbackPort = null;
             updatePopupState();
@@ -222,9 +276,14 @@ async function scanForServers() {
     }
     await Promise.all(probes);
     scheduleFallbackPrune();
-    const found = [...connections.keys()];
-    console.log(`[SitrecBridge] scan complete — connected ports: ${found.join(",") || "(none)"}`);
-    updatePopupState();
+
+    // The fast rescan runs every few seconds, so only speak up when the picture actually changes.
+    const found = [...connections.keys()].sort((a, b) => a - b).join(",");
+    if (found !== lastScanSignature) {
+        lastScanSignature = found;
+        console.log(`[SitrecBridge] scan complete — connected ports: ${found || "(none)"}`);
+        updatePopupState();
+    }
 }
 
 function fallbackRank(conn) {
@@ -243,7 +302,7 @@ function pruneFallbackConnections() {
         (conn.ws.readyState === WebSocket.OPEN || conn.ws.readyState === WebSocket.CONNECTING)
     );
 
-    if (fallbackConns.length <= 1) return;
+    if (fallbackConns.length === 0) return;
 
     fallbackConns.sort((a, b) => {
         const byRank = fallbackRank(b) - fallbackRank(a);
@@ -251,9 +310,32 @@ function pruneFallbackConnections() {
     });
 
     const keep = fallbackConns[0];
+    const changed = preferredFallbackPort !== keep.port;
     preferredFallbackPort = keep.port;
 
-    console.log(`[SitrecBridge] Active host-fallback connection is :${keep.port}; ${fallbackConns.length - 1} duplicate fallback connection(s) kept idle`);
+    // Tell every fallback server whether it is the one we route to. A server that is NOT the
+    // active fallback is free to release its port back to the pool; the active one must keep its
+    // port, because the Sitrec page discovers Local Compute by scanning the range directly, with
+    // no MCP call involved. Exactly one bridge is always told active:true, so the range is never
+    // left empty.
+    for (const conn of fallbackConns) {
+        announceRole(conn, conn.port === keep.port);
+    }
+
+    if (fallbackConns.length > 1) {
+        console.log(`[SitrecBridge] Active host-fallback connection is :${keep.port}; ${fallbackConns.length - 1} duplicate fallback connection(s) kept idle`);
+    }
+    if (changed) diag("active-fallback", {port: keep.port, pid: keep.serverPid, of: fallbackConns.length});
+}
+
+function announceRole(conn, active) {
+    if (conn.announcedActive === active) return;
+    conn.announcedActive = active;
+    try {
+        conn.ws.send(JSON.stringify({type: "role", active}));
+    } catch {
+        conn.announcedActive = null; // retry on the next prune
+    }
 }
 
 function scheduleFallbackPrune() {
@@ -455,6 +537,33 @@ async function handleServerMessage(port, msg) {
         const tabs = await findAllSitrecTabs();
         sendToServer(port, { id, result: tabs });
         trackCommandEnd(true);
+        return;
+    }
+
+    // Diagnostics: hand back the persisted worker log plus the live connection picture. Answered
+    // without touching a tab, so it still works when no Sitrec page is loaded.
+    if (action === "sitrec_diag_log") {
+        sendToServer(port, {
+            id,
+            result: {
+                installedVersion: chrome.runtime.getManifest().version,
+                workerStartedAt: WORKER_STARTED_AT,
+                workerAliveMs: Date.now() - WORKER_STARTED_AT,
+                connections: [...connections.values()].map((c) => ({
+                    port: c.port,
+                    serverPid: c.serverPid,
+                    pairedOrigin: c.pairedOrigin,
+                    cwd: c.cwd,
+                    active: c.port === preferredFallbackPort,
+                    readyState: c.ws?.readyState ?? null,
+                })),
+                knownTabs: [...knownSitrecTabs.entries()].map(([tabId, info]) => ({
+                    tabId, url: info.url, buildDir: info.buildDir || null,
+                })),
+                commandHistory,
+                events: await readDiagLog(params?.limit ?? 100),
+            },
+        });
         return;
     }
 
@@ -747,6 +856,12 @@ chrome.runtime.onConnect.addListener((port) => {
             const info = knownSitrecTabs.get(tabId);
             if (msg.buildDir) info.buildDir = msg.buildDir;
         }
+        // The heartbeat's job is simply to arrive — an incoming port message is what resets
+        // Chrome's 30-second suspend timer. Re-registering the tab costs nothing and repairs the
+        // known-tab map if this message is the first thing a restarted worker hears.
+        if (msg.type === "heartbeat" && tabId && url) {
+            rememberTab(tabId, url);
+        }
     });
 
     scanForServers();
@@ -775,6 +890,28 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         }
     }
 });
+
+// -- Keep-Alive: fast rescan while awake ------------------------------------
+// The alarm can only fire every 30 seconds, which is Chrome's floor. That is the right cadence for
+// waking a dead worker, but far too slow for noticing a bridge that has just re-acquired a port.
+// While the worker is alive, poll much more often. This interval dies with the worker, which is
+// fine — the alarm brings it back.
+
+let fastRescanTimer = null;
+
+function startFastRescan() {
+    if (fastRescanTimer) return;
+    fastRescanTimer = setInterval(async () => {
+        if (knownSitrecTabs.size === 0) return;
+        const before = connections.size;
+        await scanForServers();
+        if (connections.size !== before) {
+            diag("rescan-change", {before, after: connections.size});
+        }
+    }, FAST_RESCAN_MS);
+}
+
+startFastRescan();
 
 // -- Popup communication ----------------------------------------------------
 
@@ -899,6 +1036,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // -- Initialize -------------------------------------------------------------
 
 (async function init() {
+    // Every one of these lines is a worker restart. A burst of them in the log is the signature of
+    // the service worker being repeatedly killed and revived — the thing that used to make the
+    // bridge feel like it needed constant reconnecting.
+    diag("worker-start", {version: chrome.runtime.getManifest().version});
     await refreshKnownTabs();
     if (knownSitrecTabs.size > 0) {
         await scanForServers();

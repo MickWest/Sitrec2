@@ -37,8 +37,18 @@ import {randomBytes} from "crypto";
 import {fileURLToPath} from "url";
 import {dirname, join} from "path";
 import {createServer} from "http";
-import {idleTimeoutIsExplicit, parseIdleTimeout, rankTakeoverCandidates, shouldIdleExit} from "./lifecycle.js";
+import {
+    DEFAULT_IDLE_RELEASE_MS,
+    DEFAULT_UNUSED_RELEASE_MS,
+    idleTimeoutIsExplicit,
+    isAnchorBridge,
+    parseIdleTimeout,
+    rankTakeoverCandidates,
+    shouldIdleExit,
+    shouldReleasePort,
+} from "./lifecycle.js";
 import {normalizeTabArgs} from "./tab-target.js";
+import * as diag from "./diagnostics.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -49,6 +59,7 @@ const SITREC_CWD = process.cwd(); // Used to auto-match this MCP session to the 
 const STARTED_AT = Date.now();
 const CONTROL_STATUS_PATH = "/__sitrec_bridge/status";
 const CONTROL_SHUTDOWN_PATH = "/__sitrec_bridge/shutdown";
+const CONTROL_RELEASE_PATH = "/__sitrec_bridge/release";
 const CONTROL_TOKEN = randomBytes(24).toString("hex");
 
 // Origin this server is paired to (e.g., "http://localhost:8081"). Set by
@@ -67,8 +78,19 @@ const IDLE_TIMEOUT_EXPLICIT = idleTimeoutIsExplicit(process.env.SITREC_BRIDGE_ID
 const FALLBACK_PORT_MIN = parseInt(process.env.SITREC_BRIDGE_FALLBACK_PORT_MIN || "9780", 10);
 const FALLBACK_PORT_MAX = parseInt(process.env.SITREC_BRIDGE_FALLBACK_PORT_MAX || "9799", 10);
 
+// How long a bridge keeps a port it is not using. See shouldReleasePort — a released port is
+// re-acquired on demand, so these are "step aside", not "give up".
+const UNUSED_RELEASE_MS = Number(process.env.SITREC_BRIDGE_UNUSED_RELEASE_MS) >= 0
+    ? Number(process.env.SITREC_BRIDGE_UNUSED_RELEASE_MS)
+    : DEFAULT_UNUSED_RELEASE_MS;
+const IDLE_RELEASE_MS = Number(process.env.SITREC_BRIDGE_IDLE_RELEASE_MS) >= 0
+    ? Number(process.env.SITREC_BRIDGE_IDLE_RELEASE_MS)
+    : DEFAULT_IDLE_RELEASE_MS;
+const RELEASE_CHECK_INTERVAL_MS = 30000;
+
 // Protocol version — bump when the wire format changes.
-const PROTOCOL_VERSION = 4;
+// 5: added JSON-level keepalive (server-ping), role announcements, and port release/re-acquire.
+const PROTOCOL_VERSION = 5;
 
 // Load the agent guide once at startup
 let agentGuide = "";
@@ -94,13 +116,22 @@ function log(...args) {
 let wsServer = null;  // WebSocket server reference, set in startServer
 let httpServer = null; // HTTP server backing the WebSocket server
 const localComputeJobs = new Map(); // id -> {proc, ws, stderr, finalSent}
+const localComputeSockets = new Set(); // live Local Compute client sockets
 let shuttingDown = false;
 let lastMcpActivityAt = STARTED_AT;
+
+// Has this bridge ever actually relayed something to the browser? The single most useful signal
+// for telling a working session apart from a pre-warm/daemon that will never touch Sitrec.
+let everUsed = false;
+// Did the extension name us as the fallback bridge it is talking to? Set by its `role` message.
+let isActiveFallback = false;
+let lastRelayAt = STARTED_AT;
 
 function shutdownGracefully(reason) {
     if (shuttingDown) return;
     shuttingDown = true;
     log(`Shutting down: ${reason}`);
+    diag.record("shutdown", {reason, everUsed, boundPort, uptimeMs: Date.now() - STARTED_AT});
 
     if (wsServer) {
         wsServer.close();
@@ -174,6 +205,28 @@ function isParentAlive() {
         return e?.code === "EPERM";
     }
 }
+// What kind of process started us? `claude` in a terminal, a `claude bg-spare` pre-warm, a
+// `claude --remote-control` instance, and a `codex app-server` daemon all look identical from
+// inside the bridge, but they have wildly different lifetimes — and knowing which one is holding a
+// port is the single fact that made the port-leak diagnosis possible. Captured once, best-effort.
+let PARENT_COMMAND = null;
+
+function captureParentCommand() {
+    if (process.platform === "win32" || !(process.ppid > 1)) return;
+    try {
+        const ps = spawn("ps", ["-o", "command=", "-p", String(process.ppid)], {stdio: ["ignore", "pipe", "ignore"]});
+        let out = "";
+        ps.stdout.on("data", (chunk) => { out += chunk.toString(); });
+        ps.on("close", () => {
+            PARENT_COMMAND = out.trim().slice(0, 300) || null;
+            diag.setContext({parentCommand: PARENT_COMMAND});
+        });
+        ps.on("error", () => {});
+    } catch {
+        // Never worth failing startup over.
+    }
+}
+
 setInterval(() => {
     if (process.stdin.destroyed || process.stdin.readableEnded) {
         shutdownGracefully("stdin destroyed (orphan detected)");
@@ -241,10 +294,17 @@ function startServer(port) {
                     protocolVersion: PROTOCOL_VERSION,
                     pid: process.pid,
                     parentPid: process.ppid,
+                    parentCommand: PARENT_COMMAND,
                     startedAt: STARTED_AT,
                     lastMcpActivityAt,
+                    lastRelayAt,
                     pairedOrigin: PAIRED_ORIGIN,
                     busy: isBridgeBusy(),
+                    bound: boundPort !== null,
+                    everUsed,
+                    isActiveFallback,
+                    extensionConnected: !!(extensionSocket && extensionSocket.readyState === WebSocket.OPEN),
+                    localComputeClients: localComputeSockets.size,
                     boundPort,
                     controlToken: CONTROL_TOKEN,
                 });
@@ -258,6 +318,35 @@ function startServer(port) {
                 }
                 sendControlJson(res, 202, {ok: true});
                 setImmediate(() => shutdownGracefully("superseded after fallback port exhaustion"));
+                return;
+            }
+
+            // Yield the port WITHOUT dying. This is what a peer asks for when the range is full:
+            // the loser steps aside and re-acquires a port the next time it has work, instead of
+            // losing its bridge for the rest of the session.
+            if (req.method === "POST" && req.url === CONTROL_RELEASE_PATH) {
+                if (!isLoopbackRequest(req) || req.headers["x-sitrec-bridge-token"] !== CONTROL_TOKEN) {
+                    sendControlJson(res, 403, {error: "Forbidden"});
+                    return;
+                }
+                // Refuse anything shouldReleasePort would refuse. rankTakeoverCandidates already
+                // filters these out, but a peer must not be able to force what our own release
+                // check would decline — releasePort() force-closes the extension and Local Compute
+                // sockets, so the pins have to hold on both paths.
+                if (isBridgeBusy()) {
+                    sendControlJson(res, 409, {ok: false, error: "Bridge is busy"});
+                    return;
+                }
+                if (isActiveFallback) {
+                    sendControlJson(res, 409, {ok: false, error: "Bridge is the extension's active fallback"});
+                    return;
+                }
+                if (localComputeSockets.size > 0) {
+                    sendControlJson(res, 409, {ok: false, error: "Bridge has Local Compute clients attached"});
+                    return;
+                }
+                sendControlJson(res, 202, {ok: true});
+                setImmediate(() => releasePort("port yielded to a peer that needs one"));
                 return;
             }
 
@@ -298,6 +387,8 @@ function startServer(port) {
             boundPort = server.address()?.port ?? port;
             log(`Listening on ws://${WS_HOST}:${boundPort}` +
                 (PAIRED_ORIGIN ? ` (paired to ${PAIRED_ORIGIN})` : ` (host fallback)`));
+            diag.setContext({port: boundPort});
+            diag.record("port-bind", {port: boundPort, paired: PAIRED_ORIGIN});
             resolve();
         });
 
@@ -359,6 +450,135 @@ function startServer(port) {
     });
 }
 
+// ── Port lease ──────────────────────────────────────────────────────────────
+// A port is borrowed, not owned. releasePort() gives it back while the process keeps running;
+// ensureBound() takes one again the moment there is work. See shouldReleasePort in lifecycle.js.
+
+let acquiring = null;   // in-flight ensureBound promise, so concurrent tool calls share one attempt
+
+function releasePort(reason) {
+    if (boundPort === null || shuttingDown) return false;
+
+    const port = boundPort;
+    log(`Releasing port ${port}: ${reason}`);
+    diag.record("port-release", {port, reason, everUsed, idleMs: Date.now() - lastRelayAt});
+
+    // Drop the extension first so it stops treating this port as live, then tear the listener
+    // down. Local Compute clients are pinned by shouldReleasePort, so there should be none — but
+    // close any stragglers rather than leaking sockets on a half-closed server.
+    if (extensionSocket) {
+        try { extensionSocket.close(); } catch {}
+        extensionSocket = null;
+    }
+    for (const socket of localComputeSockets) {
+        try { socket.close(); } catch {}
+    }
+    localComputeSockets.clear();
+
+    if (keepaliveTimer) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+    }
+
+    // wss.close() only stops new connections; sockets already established would keep the
+    // underlying listener's handle alive and make the port un-rebindable.
+    if (wsServer) {
+        for (const client of wsServer.clients) {
+            try { client.terminate(); } catch {}
+        }
+        try { wsServer.close(); } catch {}
+        wsServer = null;
+    }
+    if (httpServer) {
+        try { httpServer.close(); } catch {}
+        try { httpServer.closeAllConnections?.(); } catch {}
+        httpServer = null;
+    }
+
+    boundPort = null;
+    isActiveFallback = false;
+    diag.setContext({port: null});
+    return true;
+}
+
+/**
+ * Make sure we hold a port, acquiring one if we let ours go. Called before anything that needs the
+ * browser. Concurrent callers share a single acquisition.
+ */
+function ensureBound() {
+    if (boundPort !== null) return Promise.resolve(boundPort);
+    if (acquiring) return acquiring;
+
+    acquiring = (async () => {
+        diag.record("port-reacquire-start");
+        await start();
+        diag.record("port-reacquire-done", {port: boundPort});
+        return boundPort;
+    })().finally(() => {
+        acquiring = null;
+    });
+
+    return acquiring;
+}
+
+/**
+ * Wait for the extension to notice a freshly-acquired port. It rescans every few seconds while a
+ * Sitrec tab is open, so this is normally sub-second; the wait exists so the first call after a
+ * re-acquire succeeds instead of reporting "extension not connected".
+ */
+function waitForExtension(timeoutMs = 8000) {
+    if (extensionSocket && extensionSocket.readyState === WebSocket.OPEN) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+        const deadline = Date.now() + timeoutMs;
+        const poll = setInterval(() => {
+            if (extensionSocket && extensionSocket.readyState === WebSocket.OPEN) {
+                clearInterval(poll);
+                resolve(true);
+            } else if (Date.now() >= deadline) {
+                clearInterval(poll);
+                resolve(false);
+            }
+        }, 150);
+        poll.unref?.();
+    });
+}
+
+/** Am I the oldest bound fallback bridge, and so obliged to keep my port? */
+async function checkIsAnchor() {
+    const ports = [];
+    for (let port = FALLBACK_PORT_MIN; port <= FALLBACK_PORT_MAX; port++) ports.push(port);
+    const statuses = (await Promise.all(ports.map(getBridgeControlStatus))).filter(Boolean);
+    return isAnchorBridge(statuses, process.pid);
+}
+
+async function releaseCheck() {
+    if (shuttingDown || boundPort === null || PAIRED_ORIGIN) return;
+
+    // Cheap tests first — only pay for the peer scan when everything else says "release".
+    const provisional = shouldReleasePort({
+        bound: true,
+        paired: !!PAIRED_ORIGIN,
+        busy: isBridgeBusy(),
+        everUsed,
+        isActiveFallback,
+        isAnchor: false,
+        hasLocalComputeClients: localComputeSockets.size > 0,
+        msSinceActivity: Date.now() - lastRelayAt,
+        unusedReleaseMs: UNUSED_RELEASE_MS,
+        idleReleaseMs: IDLE_RELEASE_MS,
+    });
+    if (!provisional) return;
+
+    if (await checkIsAnchor()) {
+        diag.record("port-release-skipped", {port: boundPort, reason: "anchor bridge — keeps the range non-empty"});
+        return;
+    }
+    if (isBridgeBusy() || boundPort === null) return; // work may have arrived during the scan
+
+    releasePort(everUsed ? "idle since last relay" : "never relayed a call");
+}
+
 function sendLocalCompute(ws, payload) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(payload));
@@ -398,6 +618,8 @@ function setupLocalComputeConnection(ws, hello, req) {
     }
 
     log(`Local Compute client connected${origin ? ` from ${origin}` : ""}`);
+    localComputeSockets.add(ws);
+    diag.record("local-compute-connect", {origin, clients: localComputeSockets.size});
     sendLocalCompute(ws, {
         type: "local-compute-hello",
         protocolVersion: 1,
@@ -443,6 +665,8 @@ function setupLocalComputeConnection(ws, hello, req) {
     });
 
     ws.on("close", () => {
+        localComputeSockets.delete(ws);
+        diag.record("local-compute-disconnect", {clients: localComputeSockets.size});
         for (const [id, job] of [...localComputeJobs]) {
             if (job.ws === ws) {
                 try { job.proc.kill("SIGTERM"); } catch {}
@@ -695,6 +919,7 @@ function setupExtensionConnection(ws, force = false) {
 function finishExtensionSetup(ws) {
     extensionSocket = ws;
     log("Extension connected");
+    diag.record("extension-connect", {port: boundPort});
 
     try {
         const sourceManifest = JSON.parse(readFileSync(join(__dirname, "extension", "manifest.json"), "utf-8"));
@@ -716,7 +941,18 @@ function finishExtensionSetup(ws) {
     clearInterval(keepaliveTimer);
     keepaliveTimer = setInterval(() => {
         if (extensionSocket && extensionSocket.readyState === WebSocket.OPEN) {
+            // A protocol ping frame proves the socket is alive, but Chrome answers it down in the
+            // network stack without ever waking the extension's JavaScript — so it does NOT reset
+            // the MV3 service worker's 30-second idle timer. The worker was therefore dying every
+            // ~30s, taking every WebSocket with it, and the alarm rebuilt the whole thing a moment
+            // later: a permanent reconnect sawtooth, with any tool call landing in the gap failing
+            // as "extension is not connected". An application-level message DOES dispatch a JS
+            // event, which keeps the worker alive. Send both: the frame for liveness, the message
+            // for the timer.
             extensionSocket.ping();
+            try {
+                extensionSocket.send(JSON.stringify({type: "server-ping", t: Date.now()}));
+            } catch {}
         }
     }, KEEPALIVE_INTERVAL_MS);
 
@@ -732,8 +968,11 @@ function finishExtensionSetup(ws) {
             return;
         }
         log("Chrome extension disconnected");
+        diag.record("extension-disconnect", {port: boundPort, pending: pendingRequests.size});
         extensionSocket = null;
+        isActiveFallback = false;
         clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
 
         for (const [id, pending] of pendingRequests) {
             clearTimeout(pending.timer);
@@ -760,9 +999,25 @@ function handleExtensionMessage(raw) {
                     boundPort,
                     cwd: SITREC_CWD,
                     startedAt: STARTED_AT,
+                    everUsed,
                     localComputeCapabilities: localComputeCapabilities(),
                 }));
             }
+            return;
+        }
+
+        // The extension's answer to server-ping. Nothing to do — receiving it is the point.
+        if (msg.type === "server-pong") return;
+
+        // The extension routes to exactly one host-fallback bridge at a time and tells each of us
+        // which. Being the chosen one pins our port: it is the bridge the browser (and Local
+        // Compute) is actually talking to.
+        if (msg.type === "role") {
+            const active = !!msg.active;
+            if (active !== isActiveFallback) {
+                diag.record("role-change", {active, port: boundPort});
+            }
+            isActiveFallback = active;
             return;
         }
 
@@ -777,9 +1032,44 @@ function handleExtensionMessage(raw) {
     }
 }
 
-function sendToExtension(action, params = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+/**
+ * Get this bridge ready to talk to the browser: claim a port if we released ours, and give the
+ * extension a moment to find us. Every path that reaches the extension must go through here —
+ * anything that pokes `extensionSocket` directly will simply fail on a bridge that is between
+ * leases, and will keep failing until some *other* call happens to re-acquire a port.
+ */
+async function ensureRelayReady() {
+    everUsed = true;
+    lastRelayAt = Date.now();
+
+    if (boundPort === null) {
+        await ensureBound();
+        if (boundPort === null) {
+            throw new Error(
+                `No free SitrecBridge port in ${FALLBACK_PORT_MIN}-${FALLBACK_PORT_MAX}. ` +
+                `Every port is held by a busy bridge. Close an unused Claude Code or Codex session, ` +
+                `or run sitrec_diagnostics to see which processes hold them.`
+            );
+        }
+        await waitForExtension();
+    }
+
+    if (!extensionSocket || extensionSocket.readyState !== WebSocket.OPEN) {
+        // The service worker may simply be mid-restart; it rescans within a few seconds.
+        await waitForExtension(5000);
+    }
+}
+
+async function sendToExtension(action, params = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+    await ensureRelayReady();
+    return relayRaw(action, params, timeoutMs);
+}
+
+/** Send on the existing socket. No port acquisition, no "used" bookkeeping. */
+function relayRaw(action, params, timeoutMs) {
     return new Promise((resolve, reject) => {
         if (!extensionSocket || extensionSocket.readyState !== WebSocket.OPEN) {
+            diag.record("relay-no-extension", {action, port: boundPort});
             return reject(new Error(
                 "Chrome extension is not connected. Make sure:\n" +
                 "1. The SitrecBridge extension is installed and enabled\n" +
@@ -790,12 +1080,24 @@ function sendToExtension(action, params = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
         }
 
         const id = ++requestCounter;
+        const startedAt = Date.now();
         const timer = setTimeout(() => {
             pendingRequests.delete(id);
+            diag.record("relay-timeout", {action, port: boundPort, timeoutMs});
             reject(new Error(`Timed out waiting for '${action}' response (${timeoutMs}ms)`));
         }, timeoutMs);
 
-        pendingRequests.set(id, { resolve, reject, timer });
+        pendingRequests.set(id, {
+            resolve: (msg) => {
+                diag.record("relay-ok", {action, ms: Date.now() - startedAt});
+                resolve(msg);
+            },
+            reject: (error) => {
+                diag.record("relay-fail", {action, ms: Date.now() - startedAt, error: error?.message});
+                reject(error);
+            },
+            timer,
+        });
         extensionSocket.send(JSON.stringify({ id, action, params, _cwd: SITREC_CWD }));
     });
 }
@@ -841,13 +1143,32 @@ async function getBridgeControlStatus(port) {
     }
 }
 
-async function requestBridgeShutdown(candidate) {
+/**
+ * Ask a peer for its port.
+ *
+ * Prefer /release: the peer drops its listener and stays alive, so it simply re-acquires a port
+ * next time it has work. Killing it (the old behaviour, and still the fallback for pre-v5 bridges
+ * that have no /release endpoint) permanently destroys that session's bridge — which is one of the
+ * ways "the MCP just stopped working, I had to reconnect" happened.
+ */
+async function requestBridgePort(candidate) {
+    try {
+        const released = await fetchWithTimeout(controlUrl(candidate.port, CONTROL_RELEASE_PATH), {
+            method: "POST",
+            headers: {"X-Sitrec-Bridge-Token": candidate.controlToken},
+        });
+        if (released.status === 202) return "released";
+        if (released.status === 409) return false; // busy — leave it alone
+    } catch {
+        // Fall through to the shutdown path.
+    }
+
     try {
         const response = await fetchWithTimeout(controlUrl(candidate.port, CONTROL_SHUTDOWN_PATH), {
             method: "POST",
             headers: {"X-Sitrec-Bridge-Token": candidate.controlToken},
         });
-        return response.status === 202;
+        return response.status === 202 ? "shutdown" : false;
     } catch {
         return false;
     }
@@ -860,7 +1181,15 @@ async function reclaimFallbackPort(occupiedPorts) {
     for (const candidate of candidates) {
         log(`Fallback ports full; reclaiming port ${candidate.port} from idle bridge ` +
             `PID ${candidate.pid} (last MCP activity ${new Date(candidate.lastMcpActivityAt).toISOString()}).`);
-        if (!await requestBridgeShutdown(candidate)) continue;
+        const how = await requestBridgePort(candidate);
+        diag.record("reclaim-attempt", {
+            port: candidate.port,
+            victimPid: candidate.pid,
+            victimEverUsed: !!candidate.everUsed,
+            victimParent: candidate.parentCommand || null,
+            outcome: how || "refused",
+        });
+        if (!how) continue;
 
         const deadline = Date.now() + 2000;
         while (Date.now() < deadline) {
@@ -917,8 +1246,13 @@ async function start() {
         return;
     }
 
-    log(`No free port in ${FALLBACK_PORT_MIN}-${FALLBACK_PORT_MAX} for host fallback MCP. Aborting.`);
-    process.exit(1);
+    // Staying alive unbound beats exiting. Exiting here left the session with a dead MCP server
+    // for the rest of its life — the user's only recovery was a manual reconnect. Unbound, we
+    // simply try again on the next call that needs the browser, by which time a quiet peer has
+    // very likely released one.
+    log(`No free port in ${FALLBACK_PORT_MIN}-${FALLBACK_PORT_MAX} right now. ` +
+        `Staying alive without one; will retry when a tool call needs the browser.`);
+    diag.record("port-acquire-failed", {min: FALLBACK_PORT_MIN, max: FALLBACK_PORT_MAX});
 }
 
 // ── MCP Tool Definitions ────────────────────────────────────────────────────
@@ -949,6 +1283,28 @@ const TOOLS = [
             "Get the connection status of SitrecBridge — whether the extension is connected " +
             "and whether Sitrec is loaded and ready in the browser.",
         inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
+        name: "sitrec_diagnostics",
+        description:
+            "Diagnose SitrecBridge connection problems. Returns this server's port-lease state, a " +
+            "scan of every bridge process on ports 9780-9799 (which parent process holds each port, " +
+            "whether it has ever relayed a call), this process's recent event trail, and — unless " +
+            "disabled — the extension's service-worker event log, which survives worker restarts. " +
+            "Use this when tool calls fail with 'extension is not connected', when ports look " +
+            "exhausted, or to see why a bridge dropped.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                limit: {type: "number", description: "Max event-log entries to return (default 60)."},
+                includeExtension: {
+                    type: "boolean",
+                    description: "Include the extension's persisted log. Default true; set false if the extension is down.",
+                },
+                days: {type: "number", description: "Days of on-disk cross-session log to include (default 1)."},
+            },
+            required: [],
+        },
     },
     {
         name: "sitrec_list_tabs",
@@ -1246,12 +1602,101 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 text: JSON.stringify({
                     pairedOrigin: PAIRED_ORIGIN,
                     boundPort,
+                    bound: boundPort !== null,
                     protocolVersion: PROTOCOL_VERSION,
                     extensionConnected: connected,
                     pendingRequests: pendingRequests.size,
+                    everUsed,
+                    isActiveFallback,
                     lastMcpActivityAt,
                     idleTimeoutMs: IDLE_TIMEOUT_MS,
                     cwd: SITREC_CWD,
+                }, null, 2),
+            }],
+        };
+    }
+
+    // sitrec_diagnostics is answered locally — it has to work when the extension does not.
+    if (name === "sitrec_diagnostics") {
+        const limit = Number(args?.limit) > 0 ? Math.floor(args.limit) : 60;
+        // readLog does one file read per day, so `days` drives a loop. Clamp it: an oversized value
+        // (a typo, or a model picking a big number) would otherwise spin the bridge for effectively
+        // ever — a debugging tool must never be able to hang the thing being debugged. Logs are
+        // pruned after a week anyway, so 30 is already more than exists.
+        const days = Math.min(30, Math.max(1, Math.floor(Number(args?.days) || 1)));
+
+        const ports = [];
+        for (let port = FALLBACK_PORT_MIN; port <= FALLBACK_PORT_MAX; port++) ports.push(port);
+        const peers = (await Promise.all(ports.map(getBridgeControlStatus)))
+            .filter(Boolean)
+            .map((status) => ({
+                port: status.port,
+                pid: status.pid,
+                self: status.pid === process.pid,
+                parentPid: status.parentPid,
+                parentCommand: status.parentCommand || null,
+                pairedOrigin: status.pairedOrigin,
+                everUsed: !!status.everUsed,
+                busy: !!status.busy,
+                isActiveFallback: !!status.isActiveFallback,
+                extensionConnected: !!status.extensionConnected,
+                localComputeClients: status.localComputeClients ?? null,
+                ageMinutes: Math.round((Date.now() - (status.startedAt ?? Date.now())) / 60000),
+                idleMinutes: status.lastRelayAt
+                    ? Math.round((Date.now() - status.lastRelayAt) / 60000)
+                    : null,
+            }));
+
+        // Only ask the extension if we already hold a port and a live socket. Going through
+        // sendToExtension would acquire a port and mark this bridge "used" — a diagnostic must not
+        // change the thing it is measuring.
+        let extensionLog = null;
+        if (args?.includeExtension === false) {
+            extensionLog = {skipped: "includeExtension=false"};
+        } else if (boundPort === null) {
+            extensionLog = {unavailable: "this bridge currently holds no port (released while idle)"};
+        } else if (!extensionSocket || extensionSocket.readyState !== WebSocket.OPEN) {
+            extensionLog = {unavailable: "extension is not connected to this bridge"};
+        } else {
+            try {
+                const response = await relayRaw("sitrec_diag_log", {limit}, 5000);
+                extensionLog = response.result ?? response;
+            } catch (e) {
+                extensionLog = {error: e.message};
+            }
+        }
+
+        return {
+            content: [{
+                type: "text",
+                text: JSON.stringify({
+                    self: {
+                        pid: process.pid,
+                        parentPid: process.ppid,
+                        parentCommand: PARENT_COMMAND,
+                        cwd: SITREC_CWD,
+                        boundPort,
+                        bound: boundPort !== null,
+                        everUsed,
+                        isActiveFallback,
+                        extensionConnected: !!(extensionSocket && extensionSocket.readyState === WebSocket.OPEN),
+                        pendingRequests: pendingRequests.size,
+                        localComputeClients: localComputeSockets.size,
+                        uptimeMinutes: Math.round((Date.now() - STARTED_AT) / 60000),
+                        idleMinutes: Math.round((Date.now() - lastRelayAt) / 60000),
+                        protocolVersion: PROTOCOL_VERSION,
+                    },
+                    portPool: {
+                        range: `${FALLBACK_PORT_MIN}-${FALLBACK_PORT_MAX}`,
+                        held: peers.length,
+                        capacity: FALLBACK_PORT_MAX - FALLBACK_PORT_MIN + 1,
+                        neverUsed: peers.filter((p) => !p.everUsed).length,
+                        peers,
+                    },
+                    logDir: diag.LOG_DIR,
+                    serverEvents: diag.recent(limit),
+                    crossSessionLog: await diag.readLog({limit, days}),
+                    extensionLog,
                 }, null, 2),
             }],
         };
@@ -1279,8 +1724,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
     }
 
-    // sitrec_reload_extension — fire a reload command at the connected extension
+    // sitrec_reload_extension — fire a reload command at the connected extension.
+    // This must acquire a port like any other relay. It is the documented recovery action, so a
+    // bridge that had released its port must not answer "nothing to reload" and leave the user
+    // stuck; that would make the one command meant to fix things the one command that cannot.
     if (name === "sitrec_reload_extension") {
+        try {
+            await ensureRelayReady();
+        } catch (e) {
+            return {content: [{type: "text", text: `Error: ${e.message}`}], isError: true};
+        }
         if (!extensionSocket || extensionSocket.readyState !== WebSocket.OPEN) {
             return {
                 content: [{ type: "text", text: "Extension not connected. Nothing to reload." }],
@@ -1431,7 +1884,18 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 // ── Start ───────────────────────────────────────────────────────────────────
 
 async function main() {
+    diag.setContext({pid: process.pid, ppid: process.ppid, cwd: SITREC_CWD, paired: PAIRED_ORIGIN});
+    diag.record("start", {protocolVersion: PROTOCOL_VERSION, node: process.version});
+    captureParentCommand();
+
     await start();
+
+    if (!PAIRED_ORIGIN) {
+        setInterval(() => {
+            releaseCheck().catch((e) => diag.record("release-check-error", {error: e?.message}));
+        }, RELEASE_CHECK_INTERVAL_MS).unref();
+    }
+
     const transport = new StdioServerTransport();
     transport.onmessage = () => {
         lastMcpActivityAt = Date.now();

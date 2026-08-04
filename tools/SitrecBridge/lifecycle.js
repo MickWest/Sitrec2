@@ -46,16 +46,112 @@ export function shouldIdleExit({idleTimeoutMs, explicit, busy, msSinceActivity, 
     return explicit || !parentAlive;
 }
 
+/** Default grace before a bridge that has NEVER relayed a call gives its port back. */
+export const DEFAULT_UNUSED_RELEASE_MS = 3 * 60 * 1000;
+/** Default grace before a bridge that HAS been used, but has gone quiet, gives its port back. */
+export const DEFAULT_IDLE_RELEASE_MS = 30 * 60 * 1000;
+
+/**
+ * Should a bridge hand its port back to the pool while staying alive?
+ *
+ * The 20-port fallback range is a shared resource, but a port used to be held for the entire life
+ * of the process that grabbed it. That is far too strong a claim: most bridges are started by
+ * processes that will never touch Sitrec at all - `claude bg-spare` pre-warms, `claude
+ * --remote-control` instances, and `codex app-server` daemons that outlive their conversations by
+ * days. Measured on a normal working machine: 7 of 20 ports held, zero tool calls served between
+ * them. The pool then fills, and the only recovery path was to KILL a session's bridge, which is
+ * why the range filling up showed up as "I keep having to reconnect".
+ *
+ * So a port is a lease, not a property. Releasing it is not fatal - the process stays alive and
+ * re-acquires a port on the next call that needs one (see ensureBound). That makes contention
+ * cheap: a quiet bridge steps aside, and steps back in when it has something to do.
+ *
+ * Four things pin a lease:
+ *   - `paired`      a sandbox bridge owns its port by construction; the container forwards it.
+ *   - `busy`        requests are in flight, or Local Compute jobs are running.
+ *   - `isActiveFallback`  the extension picked us as the bridge it actually talks to.
+ *   - `isAnchor`    we are the oldest bound fallback, so releasing would leave the page with no
+ *                   listener at all. Local Compute discovers the bridge by scanning the range from
+ *                   the page, with no MCP call involved, so the range must never go empty while any
+ *                   bridge exists. Anchoring on "oldest" is a deterministic tie-break: exactly one
+ *                   bridge holds, with no negotiation and no race.
+ */
+export function shouldReleasePort({
+    bound,
+    paired,
+    busy,
+    everUsed,
+    isActiveFallback,
+    isAnchor,
+    hasLocalComputeClients,
+    msSinceActivity,
+    unusedReleaseMs = DEFAULT_UNUSED_RELEASE_MS,
+    idleReleaseMs = DEFAULT_IDLE_RELEASE_MS,
+}) {
+    if (!bound) return false;
+    if (paired) return false;
+    if (busy) return false;
+    if (hasLocalComputeClients) return false;
+    if (isActiveFallback) return false;
+    if (isAnchor) return false;
+
+    const grace = everUsed ? idleReleaseMs : unusedReleaseMs;
+    if (!(grace > 0)) return false;
+    return msSinceActivity >= grace;
+}
+
+/**
+ * Which bound host-fallback bridge is the anchor - the one that must keep its port so the range
+ * never goes empty? Oldest wins, with pid as a stable tie-break. Every bridge computes this from
+ * the same /status data, so they all reach the same answer independently.
+ */
+export function isAnchorBridge(statuses, selfPid) {
+    const bound = statuses
+        .filter((status) =>
+            status?.service === "SitrecBridge" &&
+            status.pairedOrigin === null &&
+            status.bound !== false &&
+            Number.isInteger(status.pid)
+        )
+        .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0) || a.pid - b.pid);
+
+    if (bound.length === 0) return true;
+    return bound[0].pid === selfPid;
+}
+
+/**
+ * Which peers may be asked to give up their port?
+ *
+ * The exclusions must match the pins in shouldReleasePort. A voluntary release refuses to drop the
+ * extension the browser is routing through, or a connected Local Compute client - so an involuntary
+ * takeover must not do it either, because releasePort() force-closes both sockets. (An in-flight
+ * Local Compute *job* is already covered by `busy`; this is about an idle client that would simply
+ * be disconnected under it.)
+ *
+ * Excluding them cannot deadlock: a bridge that gets no port now stays alive unbound and tries
+ * again on its next call, which is a perfectly good outcome.
+ *
+ * Pre-v5 bridges report neither field. They stay eligible, which is the old behaviour and correct.
+ */
 export function rankTakeoverCandidates(statuses, parentPid) {
     return statuses
         .filter((status) =>
             status?.service === "SitrecBridge" &&
             status.pairedOrigin === null &&
             !status.busy &&
+            !status.isActiveFallback &&
+            !status.localComputeClients &&
             status.controlToken &&
             Number.isInteger(status.port)
         )
         .sort((a, b) => {
+            // A bridge that has never relayed a single call is the cheapest thing to take a port
+            // from - that is the bg-spare/remote-control/codex population, and taking their port
+            // costs them nothing they were going to use.
+            const aUsed = a.everUsed ? 1 : 0;
+            const bUsed = b.everUsed ? 1 : 0;
+            if (aUsed !== bUsed) return aUsed - bUsed;
+
             const activityDifference =
                 (a.lastMcpActivityAt ?? a.startedAt ?? 0) -
                 (b.lastMcpActivityAt ?? b.startedAt ?? 0);

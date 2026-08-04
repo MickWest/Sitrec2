@@ -15,6 +15,27 @@ A host-side Claude session (no `SITREC_BRIDGE_PAIRED_ORIGIN` set) becomes a **fa
 
 Use `sitrec_status` to see this server's `pairedOrigin`, `boundPort`, and whether the extension is connected. If your tab's origin doesn't match any paired server, an explicit error tells you which origin the server is paired to.
 
+### Ports are leased — a bridge with no port is normal
+A host-fallback bridge **returns its port to the shared 9780–9799 pool when it is not using it**
+(3 minutes if it has never relayed a call, 30 minutes after going quiet), and takes one again
+automatically on the next tool call that needs the browser. So `sitrec_status` reporting
+`bound: false` is not a fault, and neither is a first tool call taking a second or two longer than
+usual while the extension notices the new port. Nothing needs reconnecting for this.
+
+This exists because most bridges are started by processes that never touch Sitrec at all —
+`claude bg-spare` pre-warms, `claude --remote-control` instances, `codex app-server` daemons — and
+each used to hold one of the 20 ports for its entire (sometimes multi-day) life.
+
+### When the bridge misbehaves, run `sitrec_diagnostics`
+It is answered locally and works even when the extension is unreachable. It returns a census of
+every bridge on the port range (pid, **which parent process spawned it**, whether it has ever
+relayed a call, how long it has been idle), this process's event trail, the merged on-disk trail
+across all bridge processes, and the extension's own log — which is stored in `chrome.storage.local`
+and therefore **survives service-worker restarts**, unlike the service worker console.
+
+Repeated `worker-start` entries in `extensionLog` mean Chrome is killing the extension's service
+worker, which is what makes the bridge appear to drop out on its own.
+
 ### Deferred tool discovery
 Some Codex sessions expose only a subset of SitrecBridge tools at first. If `sitrec_eval`, `sitrec_api_call`, or another expected `sitrec_*` tool is missing from the callable namespace, run tool discovery/search for the missing tool name (for example, search `sitrec_bridge sitrec_eval sitrec_api_call`). The bridge may already advertise the tool, but Codex has not lazy-loaded its schema yet.
 

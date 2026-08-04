@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {DEFAULT_IDLE_TIMEOUT_MS, idleTimeoutIsExplicit, parseIdleTimeout, rankTakeoverCandidates, shouldIdleExit} from "../lifecycle.js";
+import {
+    DEFAULT_IDLE_TIMEOUT_MS,
+    idleTimeoutIsExplicit,
+    isAnchorBridge,
+    parseIdleTimeout,
+    rankTakeoverCandidates,
+    shouldIdleExit,
+    shouldReleasePort,
+} from "../lifecycle.js";
 
 test("parseIdleTimeout accepts zero and positive values", () => {
     assert.equal(parseIdleTimeout(undefined), DEFAULT_IDLE_TIMEOUT_MS);
@@ -84,4 +92,113 @@ test("idle exit never fires while work is in flight, or before the timeout", () 
     // A zero/disabled timeout means never.
     assert.equal(shouldIdleExit({idleTimeoutMs: 0, explicit: true, busy: false,
         msSinceActivity: 999999, parentAlive: false}), false);
+});
+
+// ── Port lease ──────────────────────────────────────────────────────────────
+
+const releasable = {
+    bound: true,
+    paired: null,
+    busy: false,
+    everUsed: false,
+    isActiveFallback: false,
+    isAnchor: false,
+    hasLocalComputeClients: false,
+    msSinceActivity: 10 * 60 * 1000,
+};
+
+test("a bridge that has never relayed a call gives its port back", () => {
+    // The measured failure: 7 of 20 ports held by bg-spare / --remote-control / codex app-server
+    // children that had served zero tool calls between them.
+    assert.equal(shouldReleasePort(releasable), true);
+    // ...but not before the grace period is up.
+    assert.equal(shouldReleasePort({...releasable, msSinceActivity: 1000}), false);
+});
+
+test("a used-but-quiet bridge waits far longer than an unused one", () => {
+    const used = {...releasable, everUsed: true, msSinceActivity: 5 * 60 * 1000};
+    assert.equal(shouldReleasePort(used), false);
+    assert.equal(shouldReleasePort({...used, msSinceActivity: 31 * 60 * 1000}), true);
+});
+
+test("work in flight, a paired sandbox, or a Local Compute client all pin the port", () => {
+    assert.equal(shouldReleasePort({...releasable, busy: true}), false);
+    assert.equal(shouldReleasePort({...releasable, paired: "http://localhost:8081"}), false);
+    assert.equal(shouldReleasePort({...releasable, hasLocalComputeClients: true}), false);
+    assert.equal(shouldReleasePort({...releasable, bound: false}), false);
+});
+
+test("the bridge the extension is talking to keeps its port", () => {
+    assert.equal(shouldReleasePort({...releasable, isActiveFallback: true}), false);
+});
+
+test("the anchor keeps its port so the range never goes empty", () => {
+    // Local Compute discovers the bridge by scanning the port range from the page, with no MCP
+    // call involved. If every bridge released, that discovery would find nothing.
+    assert.equal(shouldReleasePort({...releasable, isAnchor: true}), false);
+});
+
+test("exactly one bridge considers itself the anchor", () => {
+    const statuses = [
+        {service: "SitrecBridge", pid: 30, pairedOrigin: null, bound: true, startedAt: 300},
+        {service: "SitrecBridge", pid: 10, pairedOrigin: null, bound: true, startedAt: 100},
+        {service: "SitrecBridge", pid: 20, pairedOrigin: null, bound: true, startedAt: 200},
+    ];
+    assert.equal(isAnchorBridge(statuses, 10), true);
+    assert.equal(isAnchorBridge(statuses, 20), false);
+    assert.equal(isAnchorBridge(statuses, 30), false);
+});
+
+test("anchor selection ignores unbound bridges, paired sandboxes and other services", () => {
+    const statuses = [
+        {service: "SitrecBridge", pid: 10, pairedOrigin: null, bound: false, startedAt: 100},
+        {service: "SitrecBridge", pid: 20, pairedOrigin: "http://localhost:8081", bound: true, startedAt: 150},
+        {service: "SomethingElse", pid: 30, pairedOrigin: null, bound: true, startedAt: 175},
+        {service: "SitrecBridge", pid: 40, pairedOrigin: null, bound: true, startedAt: 200},
+    ];
+    assert.equal(isAnchorBridge(statuses, 40), true);
+    assert.equal(isAnchorBridge(statuses, 10), false);
+});
+
+test("a lone bridge with nothing bound anywhere is the anchor", () => {
+    assert.equal(isAnchorBridge([], 99), true);
+});
+
+test("takeover prefers bridges that have never been used", () => {
+    const base = {
+        service: "SitrecBridge", parentPid: 10, pairedOrigin: null,
+        busy: false, controlToken: "t", startedAt: 100, lastMcpActivityAt: 100,
+    };
+    const statuses = [
+        {...base, port: 9799, everUsed: true, lastMcpActivityAt: 50},
+        {...base, port: 9797, everUsed: false},
+    ];
+    // Never-used first, even though the used one has the older activity timestamp.
+    assert.deepEqual(rankTakeoverCandidates(statuses, 10).map((s) => s.port), [9797, 9799]);
+});
+
+test("takeover never targets a bridge whose port is pinned", () => {
+    // These must match the pins in shouldReleasePort. releasePort() force-closes the extension and
+    // Local Compute sockets, so a peer must not be able to take what a self-check would refuse.
+    const base = {
+        service: "SitrecBridge", parentPid: 10, pairedOrigin: null,
+        busy: false, controlToken: "t", startedAt: 100, lastMcpActivityAt: 100, everUsed: false,
+    };
+    const statuses = [
+        {...base, port: 9799, isActiveFallback: true},
+        {...base, port: 9798, localComputeClients: 1},
+        {...base, port: 9797, busy: true},
+        {...base, port: 9796},
+    ];
+    assert.deepEqual(rankTakeoverCandidates(statuses, 10).map((s) => s.port), [9796]);
+});
+
+test("pre-v5 bridges, which report no pins, stay eligible for takeover", () => {
+    // Old bridges have no isActiveFallback/localComputeClients fields at all. Treating undefined as
+    // "pinned" would make them un-reclaimable and could wedge a full range.
+    const legacy = {
+        service: "SitrecBridge", port: 9799, parentPid: 10, pairedOrigin: null,
+        busy: false, controlToken: "t", startedAt: 100, lastMcpActivityAt: 100,
+    };
+    assert.deepEqual(rankTakeoverCandidates([legacy], 10).map((s) => s.port), [9799]);
 });

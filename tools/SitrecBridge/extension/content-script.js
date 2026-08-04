@@ -74,6 +74,24 @@ let sitrecDetected = false;
 let sitrecBuildDir = null;
 let keepaliveRetryDelay = 1000;
 const MAX_KEEPALIVE_RETRY_DELAY = 30000;
+// Chrome suspends an MV3 service worker after 30 seconds of inactivity. Merely HAVING a port open
+// does not count as activity — only traffic over it does. The port used to carry one metadata
+// message and then fall silent, so the worker died on schedule, taking every MCP WebSocket with
+// it. A message every 20 seconds keeps the worker resident for as long as a Sitrec tab is open.
+const KEEPALIVE_HEARTBEAT_MS = 20000;
+let heartbeatTimer = null;
+
+function startHeartbeat() {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = setInterval(() => {
+        if (!keepalivePort) return;
+        try {
+            keepalivePort.postMessage({ type: "heartbeat" });
+        } catch {
+            // Port died under us; onDisconnect handles reconnection.
+        }
+    }, KEEPALIVE_HEARTBEAT_MS);
+}
 
 function openKeepalivePort() {
     try {
@@ -83,6 +101,7 @@ function openKeepalivePort() {
         if (sitrecBuildDir) {
             keepalivePort.postMessage({ type: "metadata", buildDir: sitrecBuildDir });
         }
+        startHeartbeat();
         keepalivePort.onDisconnect.addListener(() => {
             keepalivePort = null;
             // Service worker may have restarted -- reconnect with backoff

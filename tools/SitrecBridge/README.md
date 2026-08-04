@@ -203,6 +203,7 @@ first when no explicit Python is set, then falls back to `python` or `python3`.
 | Tool | Description |
 |------|-------------|
 | `sitrec_status` | Check bridge connection status |
+| `sitrec_diagnostics` | Diagnose connection/port problems: port-pool census, this bridge's event trail, and the extension's persisted service-worker log |
 | `sitrec_list_tabs` | List all open Sitrec tabs (ID, URL, title) |
 | `sitrec_get_sitch` | Get current situation info (name, frames, FPS, coordinates) |
 | `sitrec_load_sitch` | Load a named sitch (e.g. `gimbal`, `chilean`) |
@@ -242,12 +243,59 @@ Most tools accept an optional `tab` parameter to target a specific Sitrec tab (b
 | `SITREC_LOCAL_COMPUTE_PYTHON` | `python3` | Python executable used for Local Compute installs and jobs |
 | `SITREC_LOCAL_COMPUTE_GRAY_CACHE_MB` | `1024` | Local Compute Motion Analysis grayscale-frame cache memory budget |
 | `SITREC_LOCAL_COMPUTE_GRAY_CACHE_LIMIT` | (unset) | Optional hard frame-count cap for the grayscale cache; overrides the memory-budget cap |
+| `SITREC_BRIDGE_UNUSED_RELEASE_MS` | `180000` (3 min) | How long a bridge that has never relayed a call keeps its port before returning it to the pool |
+| `SITREC_BRIDGE_IDLE_RELEASE_MS` | `1800000` (30 min) | How long a bridge that *has* been used keeps its port after going quiet |
+| `SITREC_BRIDGE_LOG_DIR` | `~/.sitrec-bridge/logs` | Where the JSONL diagnostic trail is written |
 
 The Chrome extension scans ports 9780–9799 for MCP servers and opens a connection to each. Multi-sandbox isolation: `wt sandbox` pairs build port `8080+N` ↔ MCP port `9780+N`, advertising `pairedOrigin: http://localhost:80NN`. The extension routes commands by matching the originating server's `pairedOrigin` to the tab's URL origin.
 
-Host fallback bridges also clean themselves up after the idle timeout. If all fallback ports are nevertheless occupied, a newly launched bridge reclaims the least-recently-used non-busy fallback bridge instead of failing startup. Paired sandbox bridges and bridges with active work are never reclaimed.
+### Ports are leased, not owned
+
+A host-fallback bridge borrows a port rather than keeping one for life. This matters because most
+bridges are started by processes that will never touch Sitrec: `claude bg-spare` pre-warms,
+`claude --remote-control` instances, and `codex app-server` daemons that outlive their conversations
+by days. Measured on a normal working machine, 7 of the 20 ports were held by bridges that had
+served zero tool calls between them.
+
+- A bridge that has never relayed a call gives its port back after `SITREC_BRIDGE_UNUSED_RELEASE_MS`;
+  one that has been used but gone quiet gives it back after `SITREC_BRIDGE_IDLE_RELEASE_MS`.
+- **Releasing is not fatal.** The process stays alive and silently takes a port again on the next
+  tool call that needs the browser. Nothing needs reconnecting.
+- Four things pin a port: an in-flight request, a paired sandbox origin, a connected Local Compute
+  client, and being the bridge the extension has chosen to route through.
+- The oldest bound fallback bridge is the *anchor* and always keeps its port, so the range is never
+  left empty — the Sitrec page discovers Local Compute by scanning the range directly, with no MCP
+  call involved.
+
+If every port is occupied when a bridge starts, it asks the least-useful peer (never-used first) to
+*release* rather than exit, and falls back to asking it to shut down only for pre-v5 bridges that
+have no release endpoint. A bridge that still cannot get a port stays alive without one and retries
+later; it no longer exits, which used to leave the session with a permanently dead MCP server.
 
 ## Troubleshooting
+
+**Start here: `sitrec_diagnostics`.** It answers without needing the extension, and returns
+
+- **`portPool`** — every bridge on 9780–9799: its pid, *which parent process spawned it*
+  (`parentCommand`), whether it has ever relayed a call, how long it has been idle. This is the view
+  that identifies a port leak and names the culprit.
+- **`serverEvents`** — this process's trail: port binds and releases, extension connect/disconnect,
+  relay timings, timeouts.
+- **`crossSessionLog`** — the same trail merged across *all* bridge processes, from
+  `~/.sitrec-bridge/logs/bridge-YYYY-MM-DD.jsonl`. This is what shows a port changing hands.
+- **`extensionLog`** — the extension's own event log, kept in `chrome.storage.local` so it
+  **survives service-worker restarts**. A burst of `worker-start` entries means Chrome is killing
+  the worker repeatedly; that is the signature of the connection dropping on its own.
+
+**Bridge keeps disconnecting / "extension is not connected":**
+- Check `extensionLog` for repeated `worker-start` events. Chrome suspends an MV3 service worker
+  after 30 s of inactivity, and a WebSocket *protocol ping* does not count as activity — Chrome
+  answers it in the network stack without waking the extension's JavaScript. The bridge therefore
+  sends an application-level `server-ping` every 10 s, and the content script sends a port heartbeat
+  every 20 s; either one resets the timer. If you see the worker dying anyway, confirm a Sitrec tab
+  is actually open (the heartbeat comes from the page).
+- After changing any file under `extension/`, reload the extension (`sitrec_reload_extension`, or
+  the Reload button on `chrome://extensions`) — the old worker keeps running otherwise.
 
 **Popup shows "No MCP servers":**
 - Make sure at least one MCP server is running (Claude Code or `node mcp-server.js`)
