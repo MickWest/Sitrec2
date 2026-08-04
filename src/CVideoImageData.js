@@ -1,6 +1,7 @@
 import {CVideoData} from "./CVideoData";
 import {assert} from "./assert";
 import {FileManager} from "./Globals";
+import {residualExifRotation} from "./imageOrientation";
 
 export class CVideoImageData extends CVideoData {
     constructor(v, loadedCallback, errorCallback) {
@@ -20,8 +21,13 @@ export class CVideoImageData extends CVideoData {
         // Cache for rotated image (only created when rotation is applied)
         this.rotatedImage = null;
 
+        // Only the rotation the DECODER did not already do. Browsers apply EXIF
+        // Orientation when decoding a JPEG (image-orientation: from-image has been
+        // the initial value since Chrome 81), so taking the EXIF angle at face
+        // value here turned every portrait phone photo 90 degrees the wrong way
+        // and swapped its width and height. See imageOrientation.js.
         if (this.importMetadata?.image?.rotationDegrees !== undefined) {
-            this.metadataRotation = this.importMetadata.image.rotationDegrees;
+            this.metadataRotation = residualExifRotation(this.img, this.importMetadata.image);
         }
 
         // Defer callback until after constructor returns and assignment completes

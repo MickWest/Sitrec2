@@ -21,9 +21,14 @@
  * decoding, so the pixels we get back are already in display orientation
  * (upright). The EXIF Orientation tag in the same file is therefore
  * redundant for HEIC and must NOT be applied a second time — see the callers,
- * which strip `rotationDegrees` from the imported metadata for HEIC. That is
- * different from JPEG, where `new Image()` does not auto-rotate and the EXIF
- * rotation IS applied downstream by CVideoImageData.
+ * which strip `rotationDegrees` from the imported metadata for HEIC.
+ *
+ * This is NOT a HEIC peculiarity, though it was once described as one. JPEG
+ * behaves the same way now: `new Image()` auto-rotates by EXIF Orientation
+ * (image-orientation: from-image became the initial value in Chrome 81), so
+ * applying the EXIF angle downstream turned portrait photos 90 degrees the
+ * wrong way. CVideoImageData now measures what the decoder did rather than
+ * assuming — see imageOrientation.js.
  */
 
 import {createImageFromArrayBuffer} from "./FileUtils";
