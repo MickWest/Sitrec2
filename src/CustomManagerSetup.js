@@ -27,7 +27,7 @@ import {
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {setupHorizonExtractorMenu} from "./CHorizonExtractor";
 import {setupCameraMotionMenu} from "./CameraMotionFromVideo";
-import {setupStarTrackerMenu} from "./starTrack/StarTrackerUI";
+import {makeStarTrackCameraController, setupStarTrackerMenu} from "./starTrack/StarTrackerUI";
 import {ScenarioManager} from "./CScenarioManager";
 import {setupStreetViewPanoMenu} from "./StreetViewPanoUI";
 import {CustomGraphManager} from "./CCustomGraphManager";
@@ -307,6 +307,15 @@ export const setupMethods = {
                 id: "videoMask",
                 overlayView: "video",
             });
+        }
+
+        // The Star Tracker's camera controller, for exactly the first of those reasons: it
+        // carries the baked per-frame camera track in its own mod, and a node built lazily by
+        // Sync Camera would not exist when the mods are applied, so a saved track could never
+        // come back. Created empty and inert - with no baked track its apply() returns
+        // immediately, and it only appears in the camera dropdowns once it has one.
+        if (Sit.isCustom && NodeMan.exists("lookCamera") && !NodeMan.exists("starTrackCameraController")) {
+            makeStarTrackCameraController("starTrackCameraController");
         }
 
         // Lens-ghost (sun-reflection) simulator overlay on the video. Hidden until the

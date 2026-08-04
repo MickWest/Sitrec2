@@ -553,8 +553,85 @@ function starTrackPose(globalFrame) {
  * relative to whatever pose it found (CNode3D can run a controller chain many times per frame).
  */
 class CNodeControllerStarTrack extends CNodeController {
+    constructor(v) {
+        super(v);
+        // The BAKED pose track: four numbers per analysed frame - the sky position of the
+        // frame's centre, and of a point above it - starting at frame0. See bakeFrom().
+        this.frame0 = v.frame0 ?? 0;
+        this.poseTrack = Array.isArray(v.poseTrack) ? v.poseTrack : null;
+        this.vfovDeg = Number.isFinite(v.vfovDeg) ? v.vfovDeg : null;
+    }
+
+    /**
+     * Freeze the solve's per-frame pose into plain numbers.
+     *
+     * The camera track is baked at sync time rather than recomputed at apply time because it has
+     * to OUTLIVE the solve. `starTrackPose` reads `result.identify.solved.refToSky`, which is a
+     * closure over the plate solution - a function, not data - so the live path cannot be saved
+     * and reloaded whatever is written next to it. Two sky directions per frame can, and they
+     * are the whole of what the controller needs: boresight and roll together.
+     *
+     * Baking also removes a second dependency. Nothing has to be re-derived on load, so a saved
+     * camera track keeps working across changes to the solver, the lens model or the identify
+     * stage - at the price of being frozen, which is the right trade for a recorded result.
+     *
+     * Rounded to 5 decimal places of a degree (~36 milliarcseconds, far finer than the solve),
+     * because full float precision would triple the saved size for digits that are noise.
+     */
+    bakeFrom(r) {
+        const transforms = r?.solved?.transforms;
+        if (!transforms || !transforms.length) return false;
+        const track = [];
+        for (let i = 0; i < transforms.length; i++) {
+            const pose = starTrackPose(r.frame0 + i);
+            if (!pose) return false;
+            track.push(
+                +pose.centre.raDeg.toFixed(5), +pose.centre.decDeg.toFixed(5),
+                +pose.above.raDeg.toFixed(5), +pose.above.decDeg.toFixed(5),
+            );
+        }
+        this.frame0 = r.frame0;
+        this.poseTrack = track;
+        this.vfovDeg = r.videoH ? starTrackVfovDeg(r.identify.solved, r.videoH) : null;
+        return true;
+    }
+
+    /** The baked pose for a frame, holding the nearest one outside the analysed range - which
+     * is how the overlay treats those frames too. */
+    posesAt(globalFrame) {
+        const track = this.poseTrack;
+        if (!track || !track.length) return null;
+        const count = track.length / 4;
+        const i = Math.max(0, Math.min(count - 1, Math.round(globalFrame) - this.frame0)) * 4;
+        return {
+            centre: {raDeg: track[i], decDeg: track[i + 1]},
+            above: {raDeg: track[i + 2], decDeg: track[i + 3]},
+        };
+    }
+
+    modSerialize() {
+        return {
+            ...super.modSerialize(),
+            frame0: this.frame0,
+            poseTrack: this.poseTrack,
+            vfovDeg: this.vfovDeg,
+        };
+    }
+
+    modDeserialize(v) {
+        super.modDeserialize(v);
+        if (Number.isFinite(v.frame0)) this.frame0 = v.frame0;
+        if (Array.isArray(v.poseTrack)) this.poseTrack = v.poseTrack;
+        if (Number.isFinite(v.vfovDeg)) this.vfovDeg = v.vfovDeg;
+        // Put the "Star Track" entries back in the camera dropdowns. The switches restore their
+        // own saved choice through CNodeSwitch's pendingChoice, which waits for the option to be
+        // registered - so this is what lets a sitch saved with the camera synced come back
+        // synced, rather than silently falling to Manual.
+        if (this.poseTrack) attachStarTrackCamera(this);
+    }
+
     apply(f, objectNode) {
-        const pose = starTrackPose(f);
+        const pose = this.posesAt(f);
         if (!pose) return;
         const camera = objectNode.camera;
         const date = GlobalDateTimeNode.frameToDate(f);
@@ -717,42 +794,83 @@ function updateCameraLensMenu(lensInfo, size) {
  * switch to it. The user can switch back to Manual - or anything else - in the Camera menu;
  * the option stays available until the analysis is cleared.
  */
-export function syncCameraToStarTrack() {
-    if (!result?.identify?.solved?.ok) {
-        params.status = "run Analyze and Identify Stars first";
-        return;
-    }
+/**
+ * Build the Star Track camera controller node.
+ *
+ * Exported so CustomManagerSetup can create it up front, which it must: the node carries the
+ * baked camera track in its own mod, and a mod is only ever applied to a node that already
+ * exists. Kept here rather than there so the class stays private to this module.
+ */
+export function makeStarTrackCameraController(id) {
+    return new CNodeControllerStarTrack({id});
+}
+
+/**
+ * Register the Star Track entries in the camera dropdowns from a controller that already holds
+ * a baked track, and select them.
+ *
+ * Shared by Sync Camera and by the controller's own modDeserialize, so a reloaded sitch takes
+ * exactly the path a freshly synced one does - the alternative being a second, load-only copy
+ * of this wiring that would drift from it.
+ *
+ * @param select when false the options are registered but not chosen, leaving the saved switch
+ *               choices to decide - which is what a restore wants, since a sitch saved on
+ *               Manual must come back on Manual even though a track is present.
+ */
+function attachStarTrackCamera(controller, select = false) {
     const lookCamera = NodeMan.get("lookCamera", false);
     const headingSwitch = NodeMan.get("CameraLOSController", false);
-    if (!lookCamera || !headingSwitch) {
-        params.status = "no look camera to sync in this sitch";
-        return;
-    }
+    if (!lookCamera || !headingSwitch) return false;
 
-    let controller = NodeMan.get("starTrackCameraController", false);
-    if (!controller) {
-        controller = new CNodeControllerStarTrack({id: "starTrackCameraController"});
+    // Controllers are attached as INPUTS (addControllerNode -> addInput), so that is where
+    // "already attached" is asked. Attaching twice would run the pose twice per frame.
+    if (!lookCamera.inputs[controller.id]) {
         lookCamera.addControllerNode(controller);
         // Tracking Wobble is attached at setup time; an absolute pose applied BEFORE it would
         // be wobbled, applied after it would wipe the wobble - keep wobble last.
         lookCamera.moveControllerToEnd?.("trackingWobbleController");
     }
     headingSwitch.replaceOption("Star Track", controller);
-    headingSwitch.selectOption("Star Track");
+    if (select) headingSwitch.selectOption("Star Track");
 
-    // The solve knows the zoom too: a constant vertical FOV from the fitted plate scale, so
-    // the rendered sky matches the video's framing, selectable alongside the heading.
+    // The solve knows the zoom too: a constant vertical FOV from the fitted plate scale, so the
+    // rendered sky matches the video's framing, selectable alongside the heading.
     const fovSwitch = NodeMan.get("fovSwitch", false);
-    if (fovSwitch && result.videoH) {
-        const vfovDeg = starTrackVfovDeg(result.identify.solved, result.videoH);
+    if (fovSwitch && Number.isFinite(controller.vfovDeg)) {
         let fovNode = NodeMan.get("starTrackFOV", false);
         if (fovNode) {
-            fovNode.array = new Array(Sit.frames).fill(vfovDeg);
+            fovNode.array = new Array(Sit.frames).fill(controller.vfovDeg);
         } else {
-            fovNode = new CNodeArray({id: "starTrackFOV", array: new Array(Sit.frames).fill(vfovDeg)});
+            fovNode = new CNodeArray({
+                id: "starTrackFOV",
+                array: new Array(Sit.frames).fill(controller.vfovDeg),
+            });
         }
         fovSwitch.replaceOption("Star Track", fovNode);
-        fovSwitch.selectOption("Star Track");
+        if (select) fovSwitch.selectOption("Star Track");
+    }
+    return true;
+}
+
+export function syncCameraToStarTrack() {
+    if (!result?.identify?.solved?.ok) {
+        params.status = "run Analyze and Identify Stars first";
+        return;
+    }
+    const controller = NodeMan.get("starTrackCameraController", false);
+    if (!controller) {
+        params.status = "no star track controller in this sitch";
+        return;
+    }
+    // Bake BEFORE attaching: the controller drives the camera from its baked track, so
+    // attaching one that is still empty would point the camera at nothing.
+    if (!controller.bakeFrom(result)) {
+        params.status = "the solve has no per-frame transforms to sync to";
+        return;
+    }
+    if (!attachStarTrackCamera(controller, true)) {
+        params.status = "no look camera to sync in this sitch";
+        return;
     }
 
     params.status = "camera synced to the star field";

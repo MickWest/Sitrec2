@@ -88,6 +88,7 @@ The Star Tracker folder lives under **Video**.
 | **Show light clusters** | Draw the orange rings |
 | **Show star names** | Label identified stars |
 | **Show rejected** | Also draw the tracks classified `incoherent` or `cameraFixed`. These are things that *were* followed but did not qualify as stars — not blobs the detector threw out earlier |
+| **Use mask** | Discard detections that fall inside the video mask, so trees, rooftops and other lit foreground are never mistaken for stars. On by default, and does nothing unless a mask has been painted — see [Masking out the ground](#masking-out-the-ground) |
 | **Chart: object tracks** | Include moving-object tracks on the star chart exported by *Make Star Chart (PNG)*, rather than stars alone |
 | **Display during analysis** | Show what each stage is working on while it runs — see [Watching it work](#watching-it-work). On by default |
 | **Clear** | Discard the analysis: the overlay, the solve, the fitted lens reported in the Camera menu, and the camera options that Sync added. Your Tweaks settings are left alone |
@@ -108,6 +109,30 @@ Most clips need none of these. They are here for footage the defaults do not sui
 | **Identify Stars (catalog)** | — | Run the catalog match against the last analysis |
 | **Sync Camera to Star Field** | — | Point Sitrec's camera the way the identification says the real one was pointing |
 | **Make Star Chart (PNG)** | — | Export a chart of the solved field |
+
+## Masking out the ground
+
+If the frame contains trees, rooftops, a hillside or anything else lit from below, mask them out
+before analysing. Lit foliage is exactly what the detector is looking for — small, bright and
+stationary — and it is detected in quantity.
+
+Measured on a wide night photograph with a treeline: without a mask it detected about a thousand
+"stars", roughly 40% of them foliage, and identification could not hold a consensus against that
+and failed. With the ground masked it kept 423 detections, none in the trees, and identified
+**221 stars**.
+
+1. Open **Video → Masking** and click **Mask Ground (auto)**.
+2. Check the red overlay covers the foliage, and tidy it by hand with **Edit Mask** if not.
+3. Leave **Use mask** ticked in the Star Tracker folder — it is on by default.
+
+Detections inside the mask are discarded before classification, and are tallied with the other
+rejection reasons, so *Show rejected* and the troubleshooting table below still explain why a
+particular point was not circled. Note the detector still *looks* inside masked regions, so the
+local background near a mask edge is measured from those pixels; that is a small effect, but it
+means a mask is not quite the same as cropping the frame.
+
+See [Masking](Masking.md) for the other ways to build a mask — including masking a burned-in
+timestamp or reticle, which is worth doing for the same reason.
 
 ## Interrupting a long run
 
@@ -229,6 +254,8 @@ The result is the field centre in RA/Dec, the roll angle, and a field of view. R
 
 ## See also
 
+- [Masking](Masking.md) — excluding trees, an OSD or a vignette from the analysis. Usually the
+  single biggest improvement on footage with any foreground in it
 - [Long Exposure](LongExposure.md) — stacking frames, which pairs naturally with star work
 - [Starlink](Starlink.md) — identifying satellites among the movers
 - [Tracks](Tracks.md) — what Sitrec does with a moving object once you have one

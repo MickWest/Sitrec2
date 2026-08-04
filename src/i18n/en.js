@@ -114,6 +114,8 @@ const en = {
                 customModels: "Objects and 3D Models (Planes)",
                 cameraModes: "Camera Modes (Normal & Satellite)",
                 longExposure: "Long Exposure Simulation",
+                masking: "Masking Out Part of the Video",
+                starTracker: "Star Tracker",
                 wind: "Wind",
                 traverseMethods: "Traverse Methods",
                 gimbalRecreate: "Recreating Gimbal Step-by-Step",
@@ -295,6 +297,10 @@ const en = {
             label: "Start Point Track",
             stopLabel: "Stop Point Track",
             tooltip: "Automatically track the object inside the cursor as video plays",
+        },
+        useMask: {
+            label: "Use Mask",
+            tooltip: "Ignore pixels inside the video mask when centring on the object.\nThe centring methods take a weighted average of the pixels in the cursor, so bright masked ground drifting into the cursor pulls the track towards it.\nPaint a mask under Video > Masking. Has no effect if there is no mask.",
         },
         clearFromHere: {
             label: "Clear from Here",

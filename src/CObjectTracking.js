@@ -90,6 +90,11 @@ class ObjectTracker {
 
         this.brightnessThreshold = 128;  // 0-255, used by centerOnBright/centerOnDark methods
 
+        // Skip masked pixels when centring (see calculateWeightedCentroid). Default ON, which
+        // changes nothing for anyone without a mask - and someone who has painted one has
+        // already said those pixels are not to be used.
+        this.useMask = true;
+
         // Used by centerOnColor: target color (Three.js Color) and the maximum
         // RGB Euclidean distance (0..441) a pixel may be from that color and
         // still contribute to the centroid. The weight is (distance - colorDistance),
@@ -588,6 +593,23 @@ class ObjectTracker {
 
         const radiusSquared = radius * radius;
 
+        // The video mask, resolved ONCE per pass rather than per pixel. Masked pixels are
+        // dropped from the centroid entirely, which is the whole point: the centroid is a
+        // weighted average, so a bright patch of masked ground inside the track radius does not
+        // merely add noise, it DRAGS the tracked point towards itself and the tracker walks off
+        // the object into the trees.
+        //
+        // Applied here because this one pass serves all three centroid rules - bright, dark and
+        // colour - so they cannot disagree about what is off-limits.
+        //
+        // Coordinates are rescaled into the mask canvas rather than used directly: the mask is
+        // in VIDEO pixels (invariant 2 in CNodeMaskOverlay) and this image need not be that
+        // size, so indexing it directly would reject the wrong region on any capped decode.
+        const mask = this.useMask ? NodeMan.get("videoMask", false) : null;
+        const maskCanvas = mask?.maskImageData ? mask.maskCanvas : null;
+        const maskScaleX = maskCanvas ? maskCanvas.width / imgWidth : 1;
+        const maskScaleY = maskCanvas ? maskCanvas.height / imgHeight : 1;
+
         for (let roiY = 0; roiY < roiHeight; roiY++) {
             for (let roiX = 0; roiX < roiWidth; roiX++) {
                 const imgX = minX + roiX;
@@ -597,6 +619,8 @@ class ObjectTracker {
                 const dx = imgX - centerX;
                 const dy = imgY - centerY;
                 if (dx * dx + dy * dy > radiusSquared) continue;
+
+                if (maskCanvas && mask.isPointMasked(imgX * maskScaleX, imgY * maskScaleY)) continue;
 
                 const index = (roiY * roiWidth + roiX) * 4;
                 const w = weightFn(data[index], data[index + 1], data[index + 2]);
@@ -2364,6 +2388,21 @@ export function addObjectTrackingMenu() {
             }
         })
         .listen()
+        .perm();
+
+    const maskParams = {
+        get useMask() { return objectTracker?.useMask ?? true; },
+        set useMask(v) {
+            if (objectTracker) {
+                objectTracker.useMask = v;
+                setRenderOne(true);
+            }
+        }
+    };
+
+    trackingFolder.add(maskParams, 'useMask')
+        .name(t("tracking.useMask.label"))
+        .tooltip(t("tracking.useMask.tooltip"))
         .perm();
 
     const brightnessParams = {
