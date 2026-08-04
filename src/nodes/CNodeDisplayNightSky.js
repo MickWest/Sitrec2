@@ -1,5 +1,6 @@
 import {CNode3DGroup} from "./CNode3DGroup";
 import {CNodeAtmosphericOptics} from "./CNodeAtmosphericOptics";
+import {CNodeEclipse} from "./CNodeEclipse";
 import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene, setupNightSkyScene, setupSunSkyScene} from "../LocalFrame";
 import {Color, Group, Matrix4, Ray, Raycaster, Scene, Sphere, Vector3} from "three";
 import {degrees, radians} from "../utils";
@@ -317,7 +318,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         setLayerMaskRecursive(this.flareBandGroup, LAYER.MASK_HELPERS);
 
 
-        if (Sit.showEathShadow === undefined)
+        if (Sit.showEarthShadow === undefined)
             Sit.showEarthShadow = false;
 
 
@@ -1735,6 +1736,12 @@ export function addNightSky(def) {
     // already exists. Master toggle defaults OFF.
     if (!NodeMan.exists("theHalos")) {
         new CNodeAtmosphericOptics({id: "theHalos"});
+    }
+
+    // Solar-eclipse visuals (Moon silhouette, Baily's beads, diamond ring,
+    // corona/prominences). A hard no-op unless the Moon overlaps the Sun.
+    if (!NodeMan.exists("theEclipse")) {
+        new CNodeEclipse({id: "theEclipse"});
     }
 
     return nightSky;

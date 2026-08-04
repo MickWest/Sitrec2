@@ -279,6 +279,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         this._atmosphereSkyColor = new Color(this.background);
         this._atmosphereZenithColor = new Color(this.background);
         this._atmosphereBlueZenith = new Color(0.28, 0.62, 1.0);
+        this._atmosphereBlueZenithScaled = new Color(0.28, 0.62, 1.0);
         this._atmosphereHazeColorSRGB = new Color(this.background);
         this._atmosphereHazeColorLinear = new Color(this.background);
         this._aerialPerspectiveSkyColor = new Color(this.background);
@@ -897,6 +898,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // Without this, the main view can inherit the look-camera observer.
                 nightSkyNode.syncPlanetSpritesToObserver(lookCamera.position, undefined, {storeState: false});
                 NodeMan.get("theHalos", true)?.syncToObserver(lookCamera.position);
+                NodeMan.get("theEclipse", true)?.syncToObserver(lookCamera.position);
                 nightSkyNode.starField.updateStarScales(this);
                 nightSkyNode.updateSatelliteScales(this);
             }
@@ -1234,7 +1236,13 @@ export class CNodeView3D extends CNodeViewCanvas {
         const visT = Math.max(0, Math.min(1, (50 - this.atmosphereVisibilityKm) / 45));
         const blueBoost = 0.35 + 0.25 * visT;
         let skyColor = this.getAtmosphereSkyColor();
-        this._atmosphereZenithColor.copy(skyColor).lerp(this._atmosphereBlueZenith, blueBoost);
+        // The blue-boost target is a fixed daylight zenith blue; during a
+        // solar eclipse it must darken with the sky or the gradient path
+        // stays bright through totality. Factor is exactly 1 otherwise.
+        const eclipseSky = sunNode?.calculateEclipseSkyFactor
+            ? sunNode.calculateEclipseSkyFactor(this.camera.position) : 1;
+        this._atmosphereBlueZenithScaled.copy(this._atmosphereBlueZenith).multiplyScalar(eclipseSky);
+        this._atmosphereZenithColor.copy(skyColor).lerp(this._atmosphereBlueZenithScaled, blueBoost);
 
         const assignColor = (uniform, color) => {
             uniform.value.copy(color);
@@ -3177,6 +3185,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // owned by the NightSkyNode update step.
                 nightSkyNode.syncPlanetSpritesToObserver(this.camera.position, undefined, {storeState: false});
                 NodeMan.get("theHalos", true)?.syncToObserver(this.camera.position);
+                NodeMan.get("theEclipse", true)?.syncToObserver(this.camera.position);
             }
             
             if (Globals.renderDebugFlags.dbg_updateStarScales) {

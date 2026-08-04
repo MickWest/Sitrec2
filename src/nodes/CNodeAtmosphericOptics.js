@@ -43,6 +43,7 @@ import {getCelestialDirection} from "../CelestialMath";
 import {getLocalUpVector} from "../SphericalMath";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {applyRefractionECI, refractionOptsFromUniforms, refractionUniforms} from "../atmosphere/refraction";
+import {getEclipseState} from "../CEclipseCalc";
 import {radians, degrees} from "../utils";
 import * as LAYER from "../LayerMasks";
 import {excludeFromTerrestrialRefraction} from "../atmosphere/terrestrialRefraction";
@@ -263,7 +264,11 @@ export class CNodeAtmosphericOptics extends CNode {
         this.sunPillar = v.sunPillar ?? false;
         this.upperTangentArc = v.upperTangentArc ?? false;
         this.parryArc = v.parryArc ?? false;
-        this.sunGlare = v.sunGlare ?? false;
+        // Sun glare is INDEPENDENT of the halos master toggle ("enabled"):
+        // it's a cosmetic scattered-light aureole, not an ice-crystal optic,
+        // and defaults ON. During a solar eclipse it fades with the remaining
+        // photospheric flux (see _buildSunGlare), vanishing at totality.
+        this.sunGlare = v.sunGlare ?? true;
 
         // Moon halo + moon dogs — render at night (in the night-sky scene).
         this.moonHalo = v.moonHalo ?? false;
@@ -341,7 +346,7 @@ export class CNodeAtmosphericOptics extends CNode {
             addBool("parryArc", "Parry Arc")
                 .tooltip("An approximate suncave arc just above the upper tangent arc, from rare 'Parry-oriented' columns (c-axis horizontal with two side faces also horizontal). A sign of well-aligned crystals.");
             addBool("sunGlare", "Sun Glare")
-                .tooltip("A soft bright aureole of forward-scattered light around the Sun, as seen through thin ice cloud. Cosmetic — not a refraction optic.");
+                .tooltip("A soft bright aureole of forward-scattered light around the Sun. Cosmetic — not a refraction optic, so it works independently of Show Halos. Fades out with the covered Sun during a solar eclipse.");
             addBool("moonHalo", "Moon Halo (22°)")
                 .tooltip("A faint 22° halo around the Moon, drawn on the night sky. The same ice-crystal physics as the Sun's halo, but nearly colorless because moonlight is dim.");
             addBool("moonDogs", "Moon Dogs (Paraselenae)")
@@ -522,6 +527,8 @@ export class CNodeAtmosphericOptics extends CNode {
         this._lastIntensity = -1;
         this._lastRefractionKey = "";
         this._lastHorizonKey = "";
+        this._eclipseLight = 1;
+        this._lastEclipseLight = 1;
 
         // Working basis (world space), set per source (Sun or Moon) each build.
         this._S = new Vector3();   // source (Sun/Moon) direction
@@ -567,10 +574,13 @@ export class CNodeAtmosphericOptics extends CNode {
             this._brockenAttached = true;
         }
 
-        this.sunGroup.visible = this.enabled;
+        // Sun glare runs independently of the halos master toggle — the sun
+        // group stays live for it; everything else still keys off `enabled`.
+        const anySun = this.enabled || this.sunGlare;
+        this.sunGroup.visible = anySun;
         this.moonGroup.visible = this.enabled;
         this.brockenGroup.visible = this.enabled && this.brocken;
-        if (!this.enabled) return;
+        if (!anySun) return;
 
         // Observer — match CNodeSunlight (lookCamera, falling back to mainCamera).
         let camera;
@@ -587,7 +597,7 @@ export class CNodeAtmosphericOptics extends CNode {
         // The Brocken is world-space and observer-anchored, so it is built only
         // here (from the real observer camera) and NOT in renderSky()'s per-camera
         // re-sync — it must not follow whichever camera is currently rendering.
-        if (this.brocken) this._syncBrocken(camera.position);
+        if (this.enabled && this.brocken) this._syncBrocken(camera.position);
     }
 
     _updateHorizonFade(observerPos) {
@@ -625,7 +635,7 @@ export class CNodeAtmosphericOptics extends CNode {
     }
 
     syncToObserver(observerPos, date = GlobalDateTimeNode.dateNow) {
-        if (!this.enabled || !observerPos) return;
+        if ((!this.enabled && !this.sunGlare) || !observerPos) return;
 
         const sunDir = getCelestialDirection("Sun", date, observerPos);
         if (!sunDir) return;
@@ -634,12 +644,19 @@ export class CNodeAtmosphericOptics extends CNode {
         this._updateRefractionState(zenith);
 
         // Only compute the Moon direction when a Moon optic is enabled.
-        const moonDir = (this.moonHalo || this.moonDogs)
+        const moonDir = (this.enabled && (this.moonHalo || this.moonDogs))
             ? getCelestialDirection("Moon", date, observerPos) : null;
+
+        // Solar eclipse: the glare (and in reality all the ice optics) is
+        // forward-scattered PHOTOSPHERIC light, so it fades with the exposed
+        // flux. getEclipseState is a memoized hard no-op (1.0) outside an
+        // eclipse; treated as movement so the glare rebuilds as it changes.
+        this._eclipseLight = getEclipseState(observerPos, date).lightFraction;
 
         const moved = sunDir.distanceToSquared(this._lastSun) > 1e-10
             || zenith.distanceToSquared(this._lastZenith) > 1e-10
             || observerPos.distanceToSquared(this._lastObserver) > 1
+            || Math.abs(this._eclipseLight - this._lastEclipseLight) > 0.001
             || (moonDir ? moonDir.distanceToSquared(this._lastMoon) > 1e-10 : false);
         const refractionKey = this._refractionKey();
         const horizonKey = `${this._horizonSinLo.toFixed(8)}:${this._horizonSinHi.toFixed(8)}`;
@@ -652,11 +669,13 @@ export class CNodeAtmosphericOptics extends CNode {
             this._lastIntensity = this.intensity;
             this._lastRefractionKey = refractionKey;
             this._lastHorizonKey = horizonKey;
+            this._lastEclipseLight = this._eclipseLight;
             this._dirty = false;
         } else if (refractionKey !== this._lastRefractionKey || horizonKey !== this._lastHorizonKey) {
             this._rebuild(sunDir, moonDir, zenith);
             this._lastRefractionKey = refractionKey;
             this._lastHorizonKey = horizonKey;
+            this._lastEclipseLight = this._eclipseLight;
         }
     }
 
@@ -710,16 +729,20 @@ export class CNodeAtmosphericOptics extends CNode {
         if (sunVis > 0.01) {
             this._activeGroup = this.sunGroup;
             this._sourceFade = sunVis;
+            // The glare is independent of the halos master toggle; the
+            // ice-crystal optics all still require `enabled`.
             if (this.sunGlare) this._buildSunGlare();
-            if (this.halo22) this._buildRing(22.0, 20.8, 25.5, HALO22_STOPS, 0.33, 240, 12);
-            if (this.halo46) this._buildRing(46.0, 44.6, 50.0, HALO46_STOPS, 0.20, 280, 12);
-            if (this.upperTangentArc) this._buildTangentArcs();
-            if (this.parryArc) this._buildParryArc();
-            if (this.parhelicCircle) this._buildParhelicCircle();
-            if (this.sunPillar) this._buildSunPillar();
-            if (this.sunDogs) this._buildDogs(SUNDOG_STOPS, 0.9);   // dogs read ≥2× the 22° halo
-            if (this.circumzenithal) this._buildCircumzenithalArc();
-            if (this.circumhorizontal) this._buildCircumhorizontalArc();
+            if (this.enabled) {
+                if (this.halo22) this._buildRing(22.0, 20.8, 25.5, HALO22_STOPS, 0.33, 240, 12);
+                if (this.halo46) this._buildRing(46.0, 44.6, 50.0, HALO46_STOPS, 0.20, 280, 12);
+                if (this.upperTangentArc) this._buildTangentArcs();
+                if (this.parryArc) this._buildParryArc();
+                if (this.parhelicCircle) this._buildParhelicCircle();
+                if (this.sunPillar) this._buildSunPillar();
+                if (this.sunDogs) this._buildDogs(SUNDOG_STOPS, 0.9);   // dogs read ≥2× the 22° halo
+                if (this.circumzenithal) this._buildCircumzenithalArc();
+                if (this.circumhorizontal) this._buildCircumhorizontalArc();
+            }
         }
 
         // ---- Moon optics — night sky scene. -----------------------------
@@ -1198,7 +1221,11 @@ export class CNodeAtmosphericOptics extends CNode {
     // falloff: a tight bright core plus a broad faint aureole, filling the sky
     // inside the 22° halo the way a bright Sun in cirrus actually looks.
     _buildSunGlare() {
-        const base = 0.7 * this.intensity;
+        // Forward-scattered photospheric light: during a solar eclipse it
+        // dims linearly with the remaining (limb-darkened) flux, reaching
+        // zero at totality. _eclipseLight is 1.0 outside an eclipse.
+        const base = 0.7 * this.intensity * (this._eclipseLight ?? 1);
+        if (base <= 0.001) return;
         const rMax = radians(16);
         const tmp = new Vector3();
         this._buildBand(

@@ -37,9 +37,9 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
         this.fromSun = v.fromSun ?? V3(0, -1, 0); // Direction away from Sun (antisolar)
         
         // Sun parameters (all in meters)
-        this.sunRadius = 696000000; // ~696,000 km
+        this.sunRadius = 695700000; // IAU nominal solar radius
         this.earthRadius = Globals.equatorRadius;
-        this.sunEarthDistance = 149597870700; // ~149.6 million km (1 AU)
+        this.sunEarthDistance = 149597870700; // ~149.6 million km (1 AU) — fallback only
         
         // Geometry and line objects
         this.umbraGeometry = null;
@@ -126,10 +126,13 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
         // Constants (all in meters)
         // Earth's radius, used as the size of the object casting the shadow
         const EARTH_RADIUS = Globals.equatorRadius;
-        // Sun's radius, used to calculate its angular size
-        const SUN_RADIUS = 696000000; // meters
-        // Average Earth-Sun distance (1 AU), used to compute the Sun's angular size
-        const EARTH_SUN_DISTANCE = 149600000000; // meters
+        // Sun's radius, used to calculate its angular size (IAU nominal)
+        const SUN_RADIUS = 695700000; // meters
+        // ACTUAL Earth-Sun distance this frame (varies ±1.7% over the year;
+        // the umbra length scales with it), falling back to 1 AU.
+        const EARTH_SUN_DISTANCE = (Globals.sunPos && Globals.sunPos.length() > 1e10)
+            ? Globals.sunPos.length()
+            : 149597870700; // meters
 
         // Input validation: Ensure altitude is non-negative
         // Negative altitudes are physically invalid (below Earth's center)
@@ -137,16 +140,12 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
             throw new Error("Altitude must be non-negative");
         }
 
-        // Calculate the Sun's angular radius (half of angular diameter)
-        // This is the angle subtended by the Sun's radius at Earth's distance
-        // Formula: angular radius = arctan(Sun radius / Earth-Sun distance)
-        // This determines how much the Sun's rays converge or diverge
-        const sunAngularRadius = Math.atan(SUN_RADIUS / EARTH_SUN_DISTANCE);
-
         // Calculate the distance to the umbra's tip (where umbra diameter becomes zero)
-        // The umbra is a converging cone, ending where Earth's shadow fully blocks the Sun
-        // Using similar triangles: distance = Earth's radius / tan(angular radius)
-        const umbraTipDistance = EARTH_RADIUS / Math.tan(sunAngularRadius);
+        // The umbra is a converging cone, ending where Earth fully blocks the Sun.
+        // The cone converges at the rate the Sun's limb closes behind Earth's:
+        // tan(halfAngle) = (Rs - Re) / d, so the tip is at d·Re/(Rs - Re).
+        // (Using the Sun's angular size Rs/d alone overstates convergence ~1%.)
+        const umbraTipDistance = EARTH_RADIUS * EARTH_SUN_DISTANCE / (SUN_RADIUS - EARTH_RADIUS);
 
         // Umbra diameter calculation
         // The umbra is a conical shadow that narrows with distance
@@ -167,9 +166,10 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
         // Penumbra calculation
         // The penumbra is the region where any part of the Sun is obscured, forming a diverging cone
         // At Earth's surface, the penumbra diameter is approximately Earth's diameter
-        // The penumbra's "tip" is a virtual point behind the Sun where the cone would converge
+        // The penumbra's "tip" is a virtual apex sunward of Earth where the cone converges
         // Calculate the penumbra tip distance (negative, indicating divergence)
-        const penumbraTipDistance = -EARTH_RADIUS / Math.tan(sunAngularRadius);
+        // The penumbra diverges at tan(halfAngle) = (Rs + Re) / d.
+        const penumbraTipDistance = -EARTH_RADIUS * EARTH_SUN_DISTANCE / (SUN_RADIUS + EARTH_RADIUS);
         // Penumbra diameter at the given altitude
         // Formula: D_penumbra = 2 * R_earth * (L_penumbra - altitude) / L_penumbra
         // Use absolute value to ensure a positive diameter, as the penumbra grows with distance

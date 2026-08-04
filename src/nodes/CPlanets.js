@@ -653,7 +653,10 @@ export class CPlanets {
         if (scale > 1) scale = 1;
         
         if (planet === "Sun") {
-            const sunAngularDiameter = this._getAngularDiameterRad("Sun", date, observer, 696000000);
+            // IAU nominal solar radius — matches astronomy-engine's eclipse
+            // model and CEclipseCalc.SUN_RADIUS_M, so rendered contacts agree
+            // with the computed eclipse circumstances to well under a second.
+            const sunAngularDiameter = this._getAngularDiameterRad("Sun", date, observer, 695700000);
             scale = 2 * Math.tan(sunAngularDiameter / 2) * this.sunSphereRadius;
         }
         

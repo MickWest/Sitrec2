@@ -22,7 +22,7 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         this.umbraColor = 0xFFD700;      // Gold (umbra)
         this.penumbraColor = 0xFFA500;   // Orange (penumbra)
         
-        this.sunRadius = 696000000;
+        this.sunRadius = 695700000;   // IAU nominal solar radius
         this.moonRadius = 1737400;
         this.sunMoonDistance = 149597870700;
         
@@ -102,24 +102,29 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
 
     calculateShadowRadii(altitude, sunMoonDistance) {
         const MOON_RADIUS = 1737400;
-        const SUN_RADIUS = 696000000;
+        const SUN_RADIUS = 695700000;   // IAU nominal solar radius
 
         if (altitude < 0) {
             throw new Error("Altitude must be non-negative");
         }
 
-        const sunAngularRadius = Math.atan(SUN_RADIUS / sunMoonDistance);
-        
-        const umbraTipDistance = MOON_RADIUS / Math.tan(sunAngularRadius);
-        
+        // The umbra converges at the rate the Sun's limb closes behind the
+        // Moon's: tan(halfAngle) = (Rs - Rm) / d, giving a tip distance of
+        // d·Rm/(Rs - Rm). The previous Rs/d form (the Sun's angular size
+        // alone) put the tip 0.25% short, which made the 2026-08-12 umbra
+        // cross-section ~4 km (5%) too small.
+        const umbraTipDistance = MOON_RADIUS * sunMoonDistance / (SUN_RADIUS - MOON_RADIUS);
+
         let umbraDiameter;
         if (altitude >= umbraTipDistance) {
             umbraDiameter = 0;
         } else {
             umbraDiameter = 2 * MOON_RADIUS * (umbraTipDistance - altitude) / umbraTipDistance;
         }
-        
-        const penumbraTipDistance = -MOON_RADIUS / Math.tan(sunAngularRadius);
+
+        // The penumbra diverges at tan(halfAngle) = (Rs + Rm) / d; its
+        // virtual apex sits sunward of the Moon (negative distance).
+        const penumbraTipDistance = -MOON_RADIUS * sunMoonDistance / (SUN_RADIUS + MOON_RADIUS);
         const penumbraDiameter = Math.abs(2 * MOON_RADIUS * (penumbraTipDistance - altitude) / penumbraTipDistance);
         
         return {
@@ -142,6 +147,7 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         const refRadius = isUmbra ? refShadowData.umbraDiameter / 2 : refShadowData.penumbraDiameter / 2;
         const refCenter = moonCenter.clone().add(shadowDir.clone().multiplyScalar(coneReferenceDistance));
         
+        const rayOrigins = [];
         const rayDirs = [];
         const mslDistances = [];
         for (let i = 0; i < circleSegments; i++) {
@@ -149,12 +155,20 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
             const refPoint = refCenter.clone();
             refPoint.add(perpendicular.clone().multiplyScalar(Math.cos(theta) * refRadius));
             refPoint.add(otherPerpendicular.clone().multiplyScalar(Math.sin(theta) * refRadius));
-            
-            const rayDir = refPoint.clone().sub(moonCenter).normalize();
+
+            // Cone generators graze the Moon's LIMB at this position angle,
+            // not its center — rays from the center add ~a Moon radius of
+            // parallax, 1-2 km of ground-track error at grazing incidence.
+            const limbPoint = moonCenter.clone();
+            limbPoint.add(perpendicular.clone().multiplyScalar(Math.cos(theta) * this.moonRadius));
+            limbPoint.add(otherPerpendicular.clone().multiplyScalar(Math.sin(theta) * this.moonRadius));
+
+            const rayDir = refPoint.clone().sub(limbPoint).normalize();
+            rayOrigins.push(limbPoint);
             rayDirs.push(rayDir);
-            
-            const mslPoint = intersectEllipsoid(moonCenter, rayDir);
-            mslDistances.push(mslPoint ? moonCenter.distanceTo(mslPoint) : Infinity);
+
+            const mslPoint = intersectEllipsoid(limbPoint, rayDir);
+            mslDistances.push(mslPoint ? limbPoint.distanceTo(mslPoint) : Infinity);
         }
         
         for (let seg = 0; seg <= this.numSegments; seg++) {
@@ -162,15 +176,16 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
             const distanceFromMoon = extensionDistance * t;
             
             for (let i = 0; i < circleSegments; i++) {
+                const rayOrigin = rayOrigins[i];
                 const rayDir = rayDirs[i];
                 const mslDist = mslDistances[i];
-                
+
                 let point;
                 if (mslDist < distanceFromMoon) {
-                    const mslPoint = moonCenter.clone().add(rayDir.clone().multiplyScalar(mslDist));
+                    const mslPoint = rayOrigin.clone().add(rayDir.clone().multiplyScalar(mslDist));
                     point = clampAboveGround(mslPoint, 100);
                 } else {
-                    point = moonCenter.clone().add(rayDir.clone().multiplyScalar(distanceFromMoon));
+                    point = rayOrigin.clone().add(rayDir.clone().multiplyScalar(distanceFromMoon));
                 }
                 
                 vertices.push(point.x, point.y, point.z);
@@ -226,7 +241,14 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
             return;
         }
         
-        const shadowDir = Globals.fromSun.clone().normalize();
+        // Shadow axis is the Sun→Moon line, NOT the geocentric antisolar
+        // direction: they differ by the Moon's offset from the geocenter as
+        // seen from the Sun (~9 arcsec at the 2026-08-12 eclipse), which
+        // displaces the umbra ellipse ~15 km along the ground — about a
+        // fifth of that eclipse's umbra width.
+        const shadowDir = Globals.sunPos
+            ? moonCenter.clone().sub(Globals.sunPos).normalize()
+            : Globals.fromSun.clone().normalize();
         
         let coneReferenceDistance;
         // Ellipsoid-correct intersection for the shadow axis with Earth.
@@ -276,8 +298,13 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
                 point.add(perpendicular.clone().multiplyScalar(Math.cos(theta) * umbraRadius));
                 point.add(otherPerpendicular.clone().multiplyScalar(Math.sin(theta) * umbraRadius));
                 
-                const rayDir = point.clone().sub(moonCenter).normalize();
-                const mslPoint = intersectEllipsoid(moonCenter, rayDir);
+                // Ground outline follows the cone generator through the
+                // Moon's limb at this position angle (see buildSegmentedCone).
+                const limbPoint = moonCenter.clone();
+                limbPoint.add(perpendicular.clone().multiplyScalar(Math.cos(theta) * this.moonRadius));
+                limbPoint.add(otherPerpendicular.clone().multiplyScalar(Math.sin(theta) * this.moonRadius));
+                const rayDir = point.clone().sub(limbPoint).normalize();
+                const mslPoint = intersectEllipsoid(limbPoint, rayDir);
                 
                 if (mslPoint) {
                     point = clampAboveGround(mslPoint, 100);
@@ -305,8 +332,13 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
                 point.add(perpendicular.clone().multiplyScalar(Math.cos(theta) * penumbraRadius));
                 point.add(otherPerpendicular.clone().multiplyScalar(Math.sin(theta) * penumbraRadius));
                 
-                const rayDir = point.clone().sub(moonCenter).normalize();
-                const mslPoint = intersectEllipsoid(moonCenter, rayDir);
+                // Ground outline follows the cone generator through the
+                // Moon's limb at this position angle (see buildSegmentedCone).
+                const limbPoint = moonCenter.clone();
+                limbPoint.add(perpendicular.clone().multiplyScalar(Math.cos(theta) * this.moonRadius));
+                limbPoint.add(otherPerpendicular.clone().multiplyScalar(Math.sin(theta) * this.moonRadius));
+                const rayDir = point.clone().sub(limbPoint).normalize();
+                const mslPoint = intersectEllipsoid(limbPoint, rayDir);
                 
                 if (mslPoint) {
                     point = clampAboveGround(mslPoint, 100);

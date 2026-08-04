@@ -3,6 +3,7 @@
 import {CNode} from "./CNode";
 import {GlobalDateTimeNode, Globals, NodeMan} from "../Globals";
 import {getCelestialDirection} from "../CelestialMath";
+import {getEclipseState, isEclipseLightingEnabled, NO_ECLIPSE} from "../CEclipseCalc";
 import {degrees} from "../utils";
 import {altitudeHAE, getLocalUpVector} from "../SphericalMath";
 import {Color, MathUtils, Vector3} from "three";
@@ -24,6 +25,19 @@ export class CNodeSunlight extends CNode {
         this.sunScattering = 0.1;
 
         this.darkeningAngle = 10.0;
+    }
+
+    // Eclipse circumstances used by the lighting. Returns the frozen
+    // NO_ECLIPSE state (obscuration 0, all factors 1 — a hard no-op) unless
+    // the Moon actually overlaps the Sun's disk and the effect is enabled.
+    // getEclipseState memoizes on (time, position), so the several probes per
+    // frame (sun, sky brightness, haze) share one real computation.
+    calculateEclipseLightFactor(position, date) {
+        if (!isEclipseLightingEnabled()) return NO_ECLIPSE;
+        // Callers like calculateSkyBrightness(position) omit the date —
+        // default it here or the eclipse silently no-ops for those paths.
+        if (date === undefined) date = GlobalDateTimeNode.dateNow;
+        return getEclipseState(position, date);
     }
 
     calculateSunAt(position, date) {
@@ -59,6 +73,18 @@ export class CNodeSunlight extends CNode {
             // ambient light is scattered light plus the fixed ambient light
             result.ambientIntensity = (this.sunIntensity * scaleScattering + this.ambientIntensity) * Math.PI;
         }
+
+        // Solar eclipse: attenuate by the remaining photospheric flux. A hard
+        // no-op whenever the Moon is not overlapping the Sun (obscuration 0).
+        // Direct sunlight scales linearly with the limb-darkened flux; the
+        // ambient (scattered skylight) falls more gently and is floored so
+        // totality reads as deep twilight rather than a black scene.
+        const eclipse = this.calculateEclipseLightFactor(position, date);
+        if (eclipse.obscuration > 0) {
+            result.sunIntensity *= eclipse.lightFraction;
+            result.ambientIntensity *= Math.max(Math.pow(eclipse.lightFraction, 0.6), 0.05);
+        }
+        result.eclipseObscuration = eclipse.obscuration;
 
         // calculate the total light in the sky
         // just a ballpark for how visible the stars should be.
@@ -107,6 +133,10 @@ export class CNodeSunlight extends CNode {
             const t = (sun.sunAngle - skyDarkAngle) / (skyBrightAngle - skyDarkAngle);
             skyBrightness = t * t * (3 - 2 * t);
         }
+
+        // Solar eclipse: dim the sky with the remaining photospheric flux.
+        // No-op (factor 1) at obscuration 0.
+        skyBrightness *= this.calculateEclipseSkyFactor(position, date);
         // infoDiv.innerHTML+=`<br>Sky Brightness: ${skyBrightness.toFixed(2)} (angle: ${sun.sunAngle.toFixed(2)})`
         // return the sky brightness
 
@@ -121,6 +151,21 @@ export class CNodeSunlight extends CNode {
         skyBrightness *= atten;
         // infoDiv.innerHTML+=`<br>Sun Total (attenuated): ${skyBrightness.toFixed(2)} (altitude: ${alt.toFixed(2)}) attenuation: ${atten.toFixed(2)}`
         return skyBrightness;
+    }
+
+    // Sky-brightness multiplier for the eclipse: the remaining photospheric
+    // flux perceptually compressed, floored at deep-twilight brightness —
+    // the totality sky keeps a residual glow from the corona and from sunlit
+    // air outside the Moon's shadow. The 0.3 exponent makes the sky LAG the
+    // direct light (skylight scatters in from a wide region, much of it
+    // outside the umbra): stars shouldn't appear until the last minute, and
+    // at 90% obscuration the sky is dimmer but still clearly daytime.
+    // Exactly 1 outside an eclipse. Shared by calculateSkyBrightness and the
+    // sky-gradient path (CNodeView3D.populateAtmosphereRayUniforms).
+    calculateEclipseSkyFactor(position, date) {
+        const eclipse = this.calculateEclipseLightFactor(position, date);
+        if (eclipse.obscuration === 0) return 1;
+        return Math.max(Math.pow(eclipse.lightFraction, 0.3), 0.22);
     }
 
     calculateSkyColor(position, date) {
@@ -178,6 +223,21 @@ export class CNodeSunlight extends CNode {
         } else {
             out.warm.copy(out.cool);
             out.warmStrength = 0;
+        }
+
+        // Deep solar eclipse: the horizon glows warm ALL around — sunlit air
+        // beyond the Moon's shadow, the classic 360° sunset of totality.
+        // Ramps in only once the remaining flux drops to a few percent.
+        const eclipse = this.calculateEclipseLightFactor(position, date);
+        if (eclipse.obscuration > 0) {
+            const deep = 1 - MathUtils.smoothstep(eclipse.lightFraction, 0.005, 0.05);
+            if (deep > 0) {
+                // Noticeably brighter than the eclipsed zenith sky so the
+                // horizon ring reads as a glow, not just haze.
+                const glow = Math.max(sunTotal, 0.28);
+                out.warm.setRGB(1.0 * glow, 0.55 * glow, 0.32 * glow);
+                out.warmStrength = Math.max(out.warmStrength, 0.55 * deep);
+            }
         }
         return out;
     }
