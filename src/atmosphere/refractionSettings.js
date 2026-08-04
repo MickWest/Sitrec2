@@ -73,8 +73,8 @@ let _sceneHookInstalled = null;
 // a node is added, not every frame, so walking the scene every frame would be
 // pure waste. Once every SWEEP_INTERVAL_MS bounds the latency for a newly added
 // object to well under a second while costing nothing measurable; and when
-// refraction is off the sweep does not run at all, so the whole mechanism is
-// free in the default configuration.
+// refraction is switched off the sweep does not run at all, so the whole
+// mechanism costs nothing for anyone who turns it back off.
 const SWEEP_INTERVAL_MS = 500;
 let _lastSweepMs = -1e9;
 

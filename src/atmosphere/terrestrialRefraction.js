@@ -47,11 +47,23 @@
 // implies dT/dh = -13.7 K/km, a strongly superadiabatic sun-warmed LAND surface.
 // A standard 6.5 K/km lapse gives 0.176.
 //
-// Validity: near-horizontal rays with both endpoints in the lower troposphere.
-// Beyond that the constant-k assumption fails, so the bend angle is smoothly
-// saturated at maxBendRad (see terrestrialBendAngle) rather than being allowed
-// to grow without limit — distant geometry then converges on a bend comparable
-// to the astronomical one instead of ballooning off the top of the screen.
+// Validity: the surveying law itself describes near-horizontal rays with both
+// endpoints in the lower troposphere. Three things carry it outside that, in
+// increasing order of how far outside:
+//
+//  1. the bend ANGLE saturates at maxBendRad, so distant geometry converges on
+//     a bend comparable to the astronomical one instead of growing without
+//     limit (see terrestrialBendAngle);
+//  2. k is scaled by the mean air density along the path (pathDensityFactor),
+//     because a ray only curves where there is air to curve it. This is what
+//     makes an ELEVATED observer behave: a camera in space has almost its whole
+//     sight line in vacuum and now lofts almost nothing, while an observer on
+//     the deck is left exactly as before;
+//  3. the LIFT saturates at maxLiftM. Necessary because (1) does not imply it —
+//     lift is d*bend, so a saturated angle still lifts linearly with range.
+//
+// (2) and (3) exist because the bare law lofted the visible limb of the Earth
+// by 15 km, and the far limb by 63 km, for a camera at 237 km.
 
 import {Material, Matrix4, Vector3} from "three";
 import {zenithECEFFromPosition} from "./refraction";
@@ -68,6 +80,18 @@ export const TERRESTRIAL_REFRACTION_DEFAULTS = {
     // astronomical refraction at the horizon — a finite target can never be
     // lifted by more than the whole atmosphere would lift a star.
     maxBendRad: 34 / 60 * Math.PI / 180,
+    // Pressure scale height, metres. k carries P linearly (see the k formula
+    // above), and P falls off with this scale, so it is also the scale over
+    // which the ray's curvature dies away as the path leaves the dense air.
+    scaleHeightM: 8500,
+    // Ceiling on the APPARENT LIFT, metres. Distinct from maxBendRad and not
+    // implied by it: the lift is d*bend, so once the ANGLE saturates the lift
+    // still grows linearly with range — about 9.9 km per 1000 km — and a camera
+    // in space lofted the far limb by 63 km. Three scale heights is far outside
+    // the regime the surveying law describes (a ground observer at the 300 km
+    // horizon lifts by ~1.2 km) so this never bites on real geometry; it is a
+    // guard against the model being asked a question it cannot answer.
+    maxLiftM: 3 * 8500,
 };
 
 // WGS84, matching ./refraction.js. Callers should pass the ACTIVE radii
@@ -86,6 +110,11 @@ export const terrestrialRefractionUniforms = {
     uTerrZenithView: {value: new Vector3(0, 1, 0)},
     uTerrInvR: {value: 1 / WGS84_A},
     uTerrMaxBend: {value: TERRESTRIAL_REFRACTION_DEFAULTS.maxBendRad},
+    // Observer height above the ellipsoid, metres — the shader needs it to know
+    // how much air is actually along the path.
+    uTerrObsAlt: {value: 0.0},
+    uTerrInvH: {value: 1 / TERRESTRIAL_REFRACTION_DEFAULTS.scaleHeightM},
+    uTerrMaxLift: {value: TERRESTRIAL_REFRACTION_DEFAULTS.maxLiftM},
 };
 
 // k from the state of the air. Same P and T the celestial refraction uses, plus
@@ -150,6 +179,75 @@ export function terrestrialLift(d, k, R, maxBendRad = TERRESTRIAL_REFRACTION_DEF
     return d * terrestrialBendAngle(d, k, R, maxBendRad);
 }
 
+// ---------------------------------------------------------------------------
+// Altitude. The surveying law above assumes the ray curves by k/R along its
+// WHOLE length, which is true only while it stays in the surface layer. Lift
+// it out of that layer and most of the path is thin air or none at all: a
+// camera at 237 km has ~99% of its sight line in vacuum, yet the bare law
+// charged the full surface k over all of it and lofted the visible limb by
+// 15 km (the far limb by 63 km).
+//
+// k carries pressure linearly, so the ray's curvature falls off with the
+// pressure scale height. Relative air density at height h:
+//
+//     rho(h)/rho(0) = exp(-h/H)
+//
+// This is a first-order treatment: it takes P's exponential fall-off and holds
+// the temperature and gradient terms of k fixed, so it captures where the air
+// IS but not how its lapse rate varies with height. That is the dominant term
+// by a wide margin, and it is the one that was missing entirely.
+export function atmosphericDensityFactor(hMetres, H = TERRESTRIAL_REFRACTION_DEFAULTS.scaleHeightM) {
+    return Math.exp(-Math.max(0, hMetres) / H);
+}
+
+// Mean relative density along a straight path between two heights — the factor
+// the surveying k must be scaled by so that k*d/(2R) integrates the curvature
+// that is actually there.
+//
+//     mean = (1/(h2-h1)) * integral of exp(-h/H) dh = H*(e^-h1/H - e^-h2/H)/(h2-h1)
+//
+// The limits are the point of it:
+//   both endpoints on the deck  -> 1, so a ground observer is UNCHANGED
+//   observer high, target low   -> H/h_obs, the fraction of the path in air
+//   both endpoints above the air-> ~0, so nothing lofts
+export function pathDensityFactor(hObs, hTarget, H = TERRESTRIAL_REFRACTION_DEFAULTS.scaleHeightM) {
+    const h1 = Math.max(0, hTarget);
+    const h2 = Math.max(0, hObs);
+    const dh = h2 - h1;
+    // Equal heights is the common case (both on the deck), and is also where the
+    // difference quotient is 0/0 — take the limit, which is just the density there.
+    if (Math.abs(dh) < 1e-6) return atmosphericDensityFactor(h1, H);
+    return H * (Math.exp(-h1 / H) - Math.exp(-h2 / H)) / dh;
+}
+
+// Smoothly saturate the lift at a ceiling. Same algebraic sigmoid as the bend
+// angle uses, for the same reasons (no exp, every GLSL version), so the two
+// saturators behave alike and neither introduces a crease.
+export function saturateLift(lift, maxLiftM = TERRESTRIAL_REFRACTION_DEFAULTS.maxLiftM) {
+    if (!maxLiftM || !lift) return lift;
+    const u = lift / maxLiftM;
+    return maxLiftM * u / Math.sqrt(1 + u * u);
+}
+
+// Height above the ellipsoid along the position's own direction — the radial
+// altitude rather than the geodetic one, because it needs no latitude solution.
+// The two agree far more closely than that description suggests: measured
+// against a Bowring closed-form inverse at the two cameras of the default
+// sitch, 0 m at 10 km altitude and 1 m at 242 km. Ample, given the result is
+// only ever fed to exp(-h/H) as an attenuation. Cheap, branch-free, and exact
+// for a sphere.
+//
+// NOT interchangeable with |pos| - equatorRadius, which is wrong by the
+// ellipsoid's radius variation with latitude — 6 km at mid-latitudes, enough to
+// put a 10 km camera at "4 km" and materially change the attenuation.
+export function ellipsoidAltitude(posECEF, a = WGS84_A, b = WGS84_B) {
+    const r = posECEF.length();
+    if (r < 1e-9) return -a;
+    const ux = posECEF.x / r, uy = posECEF.y / r, uz = posECEF.z / r;
+    const surface = 1 / Math.sqrt((ux * ux + uy * uy) / (a * a) + (uz * uz) / (b * b));
+    return r - surface;
+}
+
 const _camPos = new Vector3();
 const _zenith = new Vector3();
 const _viewInverse = new Matrix4();
@@ -169,9 +267,17 @@ export function updateTerrestrialRefractionUniforms(camera, opts = {}) {
     const b = opts.polarRadius ?? WGS84_B;
     terrestrialRefractionUniforms.uTerrMaxBend.value =
         opts.maxBendRad ?? TERRESTRIAL_REFRACTION_DEFAULTS.maxBendRad;
+    const H = opts.scaleHeightM ?? TERRESTRIAL_REFRACTION_DEFAULTS.scaleHeightM;
+    terrestrialRefractionUniforms.uTerrInvH.value = 1 / H;
+    terrestrialRefractionUniforms.uTerrMaxLift.value =
+        opts.maxLiftM ?? TERRESTRIAL_REFRACTION_DEFAULTS.maxLiftM;
 
     camera.updateMatrixWorld();
     _camPos.setFromMatrixPosition(camera.matrixWorld);
+    // Per camera, like the zenith and the radius: Sitrec renders a space view
+    // and a cockpit view of the same scene, and how much air a ray crossed is a
+    // property of the observer, not of the scene.
+    terrestrialRefractionUniforms.uTerrObsAlt.value = ellipsoidAltitude(_camPos, a, b);
     // Geodetic zenith (ellipsoid normal), not the geocentric radial — the same
     // vertical the celestial refraction bends about. Scene coordinates are ECEF.
     zenithECEFFromPosition(_camPos, _zenith, a, b);
@@ -206,15 +312,48 @@ uniform float uTerrK;
 uniform vec3 uTerrZenithView;
 uniform float uTerrInvR;
 uniform float uTerrMaxBend;
+uniform float uTerrObsAlt;
+uniform float uTerrInvH;
+uniform float uTerrMaxLift;
+
+// Mean relative air density along the path — the GPU twin of pathDensityFactor.
+// Keep the two in step: a divergence here is a scene that renders differently
+// from every number the CPU side reports about it.
+float sitrecPathDensity(float hObs, float hTgt) {
+    float h1 = max(hTgt, 0.0);
+    float h2 = max(hObs, 0.0);
+    float dhOverH = (h2 - h1) * uTerrInvH;
+    float e1 = exp(-h1 * uTerrInvH);
+    if (abs(dhOverH) < 1e-6) return e1;          // 0/0 limit: both ends together
+    return (e1 - exp(-h2 * uTerrInvH)) / dhOverH;
+}
 
 vec3 applyTerrestrialRefraction_chunk(vec3 viewPos) {
     if (uTerrK == 0.0) return viewPos;
     float upComponent = dot(viewPos, uTerrZenithView);
     vec3 horizontal = viewPos - upComponent * uTerrZenithView;
     float d = length(horizontal);
-    float u = uTerrK * d * 0.5 * uTerrInvR / uTerrMaxBend;
+
+    // Target height above the ellipsoid. upComponent is its rise above the
+    // observer's tangent PLANE; the ground falls away from that plane by
+    // d^2/(2R) over the range, so add the curvature drop back to recover a
+    // height above the actual surface. An equal-altitude target then lands
+    // back at the observer's own altitude, as it must.
+    float targetAlt = uTerrObsAlt + upComponent + 0.5 * d * d * uTerrInvR;
+
+    // Only the air actually along the path bends the ray.
+    float kEff = uTerrK * sitrecPathDensity(uTerrObsAlt, targetAlt);
+
+    float u = kEff * d * 0.5 * uTerrInvR / uTerrMaxBend;
     float bend = uTerrMaxBend * u * inversesqrt(1.0 + u * u);
-    return viewPos + uTerrZenithView * (d * bend);
+
+    // Saturating the ANGLE does not bound the LIFT — d*bend keeps growing with
+    // range long after bend has flattened out. Bound it too.
+    float lift = d * bend;
+    float v = lift / uTerrMaxLift;
+    lift = uTerrMaxLift * v * inversesqrt(1.0 + v * v);
+
+    return viewPos + uTerrZenithView * lift;
 }
 
 // The one line every hand-written vertex shader needs: swap
@@ -262,6 +401,9 @@ export function addTerrestrialRefractionUniforms(shader) {
     shader.uniforms.uTerrZenithView = terrestrialRefractionUniforms.uTerrZenithView;
     shader.uniforms.uTerrInvR = terrestrialRefractionUniforms.uTerrInvR;
     shader.uniforms.uTerrMaxBend = terrestrialRefractionUniforms.uTerrMaxBend;
+    shader.uniforms.uTerrObsAlt = terrestrialRefractionUniforms.uTerrObsAlt;
+    shader.uniforms.uTerrInvH = terrestrialRefractionUniforms.uTerrInvH;
+    shader.uniforms.uTerrMaxLift = terrestrialRefractionUniforms.uTerrMaxLift;
 }
 
 // Patch a vertex shader that uses Three's stock <project_vertex> chunk.

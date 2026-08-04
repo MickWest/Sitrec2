@@ -20,15 +20,15 @@ function reset(props = {}) {
 
 describe("master switch", () => {
 
-    test("a fresh sitch is off, with both halves armed", () => {
+    test("a fresh sitch is on, with both halves armed", () => {
         reset();
         ensureRefractionSettings();
-        expect(Sit.refraction).toBe(false);
+        expect(Sit.refraction).toBe(true);
         expect(Sit.refractionSky).toBe(true);
         expect(Sit.refractionTerrain).toBe(true);
-        // ...so nothing is actually refracting yet
-        expect(Sit.refractionEnabled).toBe(false);
-        expect(Sit.terrestrialRefraction).toBe(false);
+        // ...so both halves are refracting from the start
+        expect(Sit.refractionEnabled).toBe(true);
+        expect(Sit.terrestrialRefraction).toBe(true);
     });
 
     test("one switch turns on both halves — the point of the coupling", () => {

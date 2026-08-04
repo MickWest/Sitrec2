@@ -10,9 +10,9 @@ This matters in Sitrec because a large class of arguments turns on exactly that 
 *could the observer have seen X from Y?* Answered with refraction off, the answer is wrong by
 a knowable and often decisive amount.
 
-> **Refraction is OFF by default.** Sitrec renders straight-line geometry unless you turn it
-> on. If your analysis involves the horizon, a distant landmark, or anything low in the sky,
-> turn it on before drawing conclusions.
+> **Refraction is ON by default.** Sitrec bends light the way the atmosphere does unless you
+> turn it off. Switch it off only when you deliberately want straight-line geometry — to
+> isolate the size of the effect, or to reproduce a result computed without it.
 
 ---
 
@@ -72,7 +72,7 @@ terrain is drawn on the unrefracted geometry.
 
 | Control | Default | Notes |
 |---|---|---|
-| **Enable Refraction** | off | Master switch. Off means light travels in straight lines |
+| **Enable Refraction** | on | Master switch. Off means light travels in straight lines |
 | **Terrain and Buildings** | on | The terrestrial model |
 | **Sky** | on | The celestial model |
 | **Refraction Pressure (hPa)** | 1010 | Feeds both models |
@@ -81,7 +81,8 @@ terrain is drawn on the unrefracted geometry.
 | **Refraction Coefficient k** | derived | Shows the *k* actually in force. Editable only with Override on |
 | **Override k** | off | Set *k* by hand instead of deriving it |
 
-Both sub-switches default on, so turning on the master switch gives you both models.
+All three default on, so a fresh sitch runs both models. The sub-switches exist to take one
+half back out when you are deliberately isolating an effect.
 
 ---
 

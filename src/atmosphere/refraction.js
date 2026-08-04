@@ -14,7 +14,7 @@
 import {Vector3} from "three";
 
 export const REFRACTION_DEFAULTS = {
-    enabled: false,
+    enabled: true,
     pressureHPa: 1010,
     tempC: 10,
 };

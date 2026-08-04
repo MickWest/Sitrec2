@@ -76,8 +76,12 @@ import {
     installTerrestrialRefractionOnMaterial,
     isTerrestrialRefractionInstalled,
     injectTerrestrialRefractionChunk,
+    atmosphericDensityFactor,
+    pathDensityFactor,
+    saturateLift,
+    ellipsoidAltitude,
 } from "../src/atmosphere/terrestrialRefraction";
-import {MeshBasicMaterial, ShaderLib} from "three";
+import {MeshBasicMaterial, PerspectiveCamera, ShaderLib, Vector3} from "three";
 import {readFileSync} from "fs";
 import path from "path";
 
@@ -230,6 +234,208 @@ describe("saturation", () => {
             expect(bend).toBeGreaterThanOrEqual(prev);
             prev = bend;
         }
+    });
+});
+
+// A ray only curves where there is air. Without this the surveying law charged
+// the full surface k over a sight line that is almost entirely vacuum, and a
+// camera at 237 km lofted the visible limb of the Earth by 15 km.
+describe("altitude: only the air along the path bends the ray", () => {
+
+    const H = TERRESTRIAL_REFRACTION_DEFAULTS.scaleHeightM;
+
+    test("density is 1 at sea level and 1/e one scale height up", () => {
+        expect(atmosphericDensityFactor(0, H)).toBe(1);
+        expect(atmosphericDensityFactor(H, H)).toBeCloseTo(Math.E ** -1, 12);
+    });
+
+    test("below sea level counts as sea level, never as denser-than-surface", () => {
+        expect(atmosphericDensityFactor(-500, H)).toBe(1);
+        expect(pathDensityFactor(-500, -200, H)).toBe(1);
+    });
+
+    // THE load-bearing case. Everything Sitrec is actually used for — an
+    // observer on the deck looking at terrain on the deck — must come out of
+    // this layer completely untouched, or the change is a regression dressed
+    // up as a fix.
+    test("a ground observer looking at the ground is EXACTLY unchanged", () => {
+        expect(pathDensityFactor(0, 0, H)).toBe(1);
+    });
+
+    test("equal heights give the density at that height, not 0/0", () => {
+        for (const h of [0, 1, 500, 8500, 40000]) {
+            expect(pathDensityFactor(h, h, H)).toBeCloseTo(atmosphericDensityFactor(h, H), 12);
+        }
+        // and approaching equality is continuous, not a cliff
+        expect(pathDensityFactor(5000 + 1e-9, 5000, H))
+            .toBeCloseTo(atmosphericDensityFactor(5000, H), 9);
+    });
+
+    test("the path is the same path in either direction", () => {
+        expect(pathDensityFactor(9000, 0, H)).toBeCloseTo(pathDensityFactor(0, 9000, H), 12);
+    });
+
+    test("a higher observer always crosses thinner air", () => {
+        let prev = Infinity;
+        for (const h of [0, 1000, 4000, 10000, 30000, 100000, 237300]) {
+            const f = pathDensityFactor(h, 0, H);
+            expect(f).toBeLessThan(prev);
+            expect(f).toBeGreaterThan(0);
+            expect(f).toBeLessThanOrEqual(1);
+            prev = f;
+        }
+    });
+
+    test("far above the atmosphere the factor is H/h — the fraction in air", () => {
+        // e^-h/H has died, so the integral is all of H over all of h
+        expect(pathDensityFactor(237300, 0, H)).toBeCloseTo(H / 237300, 9);
+        expect(pathDensityFactor(237300, 0, H)).toBeCloseTo(0.03582, 5);
+    });
+
+    test("a 4 km observer keeps most of it — this is the look view", () => {
+        expect(pathDensityFactor(4000, 0, H)).toBeCloseTo(0.79765, 5);
+    });
+
+    test("a path entirely above the air bends essentially nothing", () => {
+        expect(pathDensityFactor(200000, 100000, H)).toBeLessThan(1e-4);
+    });
+});
+
+describe("the lift is bounded, not just the angle", () => {
+
+    const maxLift = TERRESTRIAL_REFRACTION_DEFAULTS.maxLiftM;
+
+    test("real geometry is untouched by the ceiling", () => {
+        // a ground observer at its 300 km horizon lifts by ~1.2 km, far below
+        const lift = terrestrialLift(300000, 0.1755, R);
+        expect(lift).toBeGreaterThan(1000);
+        expect(saturateLift(lift, maxLift) / lift).toBeGreaterThan(0.998);
+    });
+
+    test("never exceeds the ceiling however absurd the range", () => {
+        for (const d of [1e6, 1e7, 1e9, 1e12]) {
+            expect(saturateLift(terrestrialLift(d, 0.1755, R), maxLift)).toBeLessThan(maxLift);
+        }
+    });
+
+    test("is monotonic and smooth — a hard clamp would crease the terrain", () => {
+        let prev = -1;
+        for (let d = 1e5; d <= 1e7; d *= 1.5) {
+            const l = saturateLift(terrestrialLift(d, 0.1755, R), maxLift);
+            expect(l).toBeGreaterThan(prev);
+            prev = l;
+        }
+    });
+
+    test("a saturated ANGLE still lifts linearly — which is why this exists", () => {
+        // the bug: bend has flattened at maxBendRad, yet lift = d*bend keeps climbing
+        const near = terrestrialLift(3e6, 0.1755, R);
+        const far = terrestrialLift(6e6, 0.1755, R);
+        expect(far / near).toBeGreaterThan(1.9);
+        expect(far).toBeGreaterThan(50000);
+    });
+});
+
+describe("the regression this fixes: a camera in space", () => {
+
+    const H = TERRESTRIAL_REFRACTION_DEFAULTS.scaleHeightM;
+    const maxLift = TERRESTRIAL_REFRACTION_DEFAULTS.maxLiftM;
+    const k = 0.17552;              // standard air, -6.5 K/km
+    const obsAlt = 237300;          // the default sitch's main camera
+    const limb = 1693000;           // horizontal range to the visible limb from there
+
+    // Reproduces applyTerrestrialRefraction_chunk on the CPU.
+    const liftWithAltitude = (d, hObs, hTgt) =>
+        saturateLift(terrestrialLift(d, k * pathDensityFactor(hObs, hTgt, H), R), maxLift);
+
+    test("the bare law lofted the visible limb by 15 km", () => {
+        expect(terrestrialLift(limb, k, R)).toBeGreaterThan(15000);
+    });
+
+    test("accounting for the air drops that by more than 10x", () => {
+        const fixed = liftWithAltitude(limb, obsAlt, 0);
+        expect(fixed).toBeLessThan(1500);
+        expect(terrestrialLift(limb, k, R) / fixed).toBeGreaterThan(10);
+    });
+
+    test("the deck is not paying for it — the density layer is exactly transparent", () => {
+        // A ground-to-ground path crosses full-density air by definition, so the
+        // attenuation is identically 1 and k is handed through untouched.
+        expect(k * pathDensityFactor(0, 0, H)).toBe(k);
+    });
+
+    test("...and the lift ceiling perturbs a ground sight line negligibly", () => {
+        // The ceiling is a guard, not free: it does shave a little even well
+        // below itself. At the far end of what a ground observer can see it is
+        // ~0.1% — 1.3 m in 1200 — which is orders of magnitude under the spread
+        // in k itself (0 to >0.5 across the lapse rates this file describes).
+        for (const d of [1000, 20600, 100000, 300000]) {
+            const rel = 1 - liftWithAltitude(d, 0, 0) / terrestrialLift(d, k, R);
+            expect(rel).toBeGreaterThanOrEqual(0);
+            expect(rel).toBeLessThan(2e-3);
+        }
+        expect(1 - liftWithAltitude(20600, 0, 0) / terrestrialLift(20600, k, R)).toBeLessThan(1e-7);
+    });
+});
+
+describe("observer altitude reaches the shader", () => {
+
+    test("ellipsoidAltitude is zero on the surface at both extremes", () => {
+        expect(ellipsoidAltitude(new Vector3(WGS84_A, 0, 0), WGS84_A, WGS84_B)).toBeCloseTo(0, 6);
+        expect(ellipsoidAltitude(new Vector3(0, 0, WGS84_B), WGS84_A, WGS84_B)).toBeCloseTo(0, 6);
+    });
+
+    test("and reads back a height put in", () => {
+        expect(ellipsoidAltitude(new Vector3(WGS84_A + 237300, 0, 0), WGS84_A, WGS84_B))
+            .toBeCloseTo(237300, 6);
+    });
+
+    test("a sphere makes it exactly the radial height", () => {
+        expect(ellipsoidAltitude(new Vector3(0, R + 1234, 0), R, R)).toBeCloseTo(1234, 6);
+    });
+
+    // The radial altitude is not the geodetic one, so pin how far apart they are
+    // rather than leaving it to a comment. Reference: Bowring's closed-form
+    // inverse. Metres, at altitudes spanning a cockpit to low orbit.
+    test("agrees with a geodetic solution to within a metre", () => {
+        const a = WGS84_A, b = WGS84_B;
+        const e2 = (a * a - b * b) / (a * a), ep2 = (a * a - b * b) / (b * b);
+        const geodeticHeight = (p) => {
+            const P = Math.hypot(p.x, p.y);
+            const th = Math.atan2(p.z * a, P * b);
+            const lat = Math.atan2(p.z + ep2 * b * Math.sin(th) ** 3,
+                                   P - e2 * a * Math.cos(th) ** 3);
+            const N = a / Math.sqrt(1 - e2 * Math.sin(lat) ** 2);
+            return Math.abs(Math.cos(lat)) > 0.3
+                ? P / Math.cos(lat) - N
+                : p.z / Math.sin(lat) - N * (1 - e2);
+        };
+        for (const latDeg of [0, 29, 32, 55.6, 80, 89.9]) {
+            for (const h of [0, 4000, 10000, 242000]) {
+                const lat = latDeg * Math.PI / 180;
+                const N = a / Math.sqrt(1 - e2 * Math.sin(lat) ** 2);
+                const p = new Vector3(
+                    (N + h) * Math.cos(lat), 0, (N * (1 - e2) + h) * Math.sin(lat));
+                expect(Math.abs(ellipsoidAltitude(p, a, b) - geodeticHeight(p))).toBeLessThan(1.5);
+            }
+        }
+    });
+
+    test("the uniform update publishes it, per camera", () => {
+        const cam = new PerspectiveCamera(30, 1, 1, 1e9);
+        cam.position.set(WGS84_A + 237300, 0, 0);
+        cam.updateMatrixWorld();
+        updateTerrestrialRefractionUniforms(cam, {
+            enabled: true, k: 0.1755, equatorRadius: WGS84_A, polarRadius: WGS84_B,
+        });
+        expect(terrestrialRefractionUniforms.uTerrObsAlt.value).toBeCloseTo(237300, 3);
+
+        cam.position.set(WGS84_A + 4000, 0, 0);
+        cam.updateMatrixWorld();
+        updateTerrestrialRefractionUniforms(cam, {
+            enabled: true, k: 0.1755, equatorRadius: WGS84_A, polarRadius: WGS84_B,
+        });
+        expect(terrestrialRefractionUniforms.uTerrObsAlt.value).toBeCloseTo(4000, 3);
     });
 });
 
