@@ -44,19 +44,21 @@ In Sitrec the screen is divided into windows called "Views". Typically, this wil
 - Main View: the "god's eye view" looking down at the world
 - Look View: the simulated view through the camera set to match the video
 - Video View: the original video.
-- Overlay Views: Various overlays, things like compasses, or simulated HUDs, like the ATFLIR, 
+- Overlay Views: Various overlays, things like compasses, or simulated camera HUDs.
 - Graph views: various graphs showing things like the speed and altitude of the proposed target object. 
 - Editor views: things like spline editors used to make a custom curve for something like Azimuth or Bank Angle.
-- Simulator views: Thinks like the simulated SA page in the Gimbal Sims. 
+- Simulator views: things like the simulated aircraft displays in the Gimbal sitches.
 
 You can modify a view in various ways:
 
 - Double-Click on a view to hide all the other views and make this one full-screen. 
-- Under the Show/Hide->Views menu, you can toggle individual views on and off.
-- Click and drag a view to move it on screen. You may have to hold down the shift key for this to work, as some views use the mouse for camera navigation. 
-- Click and drag the corners or sides of a view to resize it. Again, you may have to hold down the shift key.
+- Under the **Show → Views** menu, you can toggle individual views on and off.
+- **Hold the `Q` key** and drag a view to move it on screen.
+- **Hold `Q`** and drag the corners or sides of a view to resize it.
 
-All these modification to the views will be saved when you "Export Custom/Mod"
+`Q` is what separates "I am editing the layout" from "I am flying the camera" — without it, dragging inside a 3D view navigates the camera instead. Holding it highlights the edges of every movable view, and moves and resizes snap to their neighbours.
+
+These layout changes are stored with the sitch when you save it (**File → Save**, **Save As**, or **Save Local** — see [Saving and Loading Sitches](SavingAndLoading.md)).
  
 # Time and Date User Interface
 
@@ -64,13 +66,14 @@ Sitrec is simulating a period of time. This time has a start time and a duration
 
 ## Frame Number/Time
 
-A video has a total number of frames, and a specific number for frames per second (fps). A frame number can also be expressed as a time since the start of the video. The slider at the bottom of the screen represents the the frame. You can modify this in various ways:
+A video has a total number of frames, and a specific number for frames per second (fps). A frame number can also be expressed as a time since the start of the video. The slider at the bottom of the screen represents the frame. You can modify this in various ways:
 
 - Drag the large slider
 - Drag the "Time (sec)" or "Frame in Video" sliders in the "Time" menu (or adjust the sliders as described earlier)
 - Hold the Left or Right arrows to advance time forwards or backwards at the normal rate.
 - Hold the Up and Down arrows to advance time at 10x speed
-- Tap < or > (the , and . keys) to single step on frame backwards or forwards. 
+- Tap `,` or `.` to single-step one frame backwards or forwards (hold to repeat).
+- Tap `<` or `>` (Shift+`,` / Shift+`.`) to jump to the previous or next **keyframe**, where a tool has published them. If nothing has, these do nothing rather than falling back to single-stepping.
 - On a video view, right drag in the window to scrub time
 
 ## Start Time and Now Time
@@ -83,7 +86,7 @@ Now Time is the time at the current frame in the video. Essentially it's the sta
 
 The Time menu shows both the start time and the now time at the top (yellow text). When the Frame Time is set to zero they will both be the same. 
 
-The sliders for Year, Month, Day, etc. show the Now Time. This is because when you want to sync the simulation and the video, you will adjust the frame time until there's something distinctive on screen (such as two objects lining up), and then you will adjust the Start Time of the video so that the even happens at the right time in the simulation. This is conceptually simpler if you are editing the Now Time, because that's the point in time that's being displayed (the Start Time is automatically adjusted)
+The sliders for Year, Month, Day, etc. show the Now Time. This is because when you want to sync the simulation and the video, you will adjust the frame time until there's something distinctive on screen (such as two objects lining up), and then you will adjust the Start Time of the video so that the event happens at the right time in the simulation. This is conceptually simpler if you are editing the Now Time, because that's the point in time that's being displayed (the Start Time is automatically adjusted)
 
 The look view displays the Now Time in UTC format and in the user-selected time zone. 
 
@@ -105,8 +108,15 @@ You can also set a default using "Snapshot camera".
 
 # Changing the Terrain
 
-Under the Terrain menu you can change "Map Type". The standard Metabunk installation defaults to "ESRI World Imagery" (satellite), but you can also choose MapBox satellite imagery or a street map view (the exact list depends on the installation's configuration). The Settings EOX, Wireframe, and RGB Test are not particularly useful, but EOX can be used as an alternative satellite source - or if you just want a different satellite view time.  
+The Terrain menu has two separate dropdowns that are easy to confuse:
 
-There are more terrain editing options in the [Custom Sitch Tool](CustomSitchTool.md)
+- **Map Type** — the *imagery* painted onto the ground. The standard Metabunk installation defaults to "ESRI World Imagery" (satellite). The full list depends on the installation's configuration and typically includes MapBox, several ESRI layers (World Imagery, Hillshade, Topo, Shaded Relief), USGS layers, Open Streetmap, MapTiler, EOX, and day-by-day satellite mosaics (Black Marble city lights, MODIS and VIIRS true colour).
+- **Elevation Type** — the *shape* of the ground: the digital elevation model. This is a different setting from Map Type, and it is the one that determines terrain heights, ground-level readouts and anything that intersects the ground. The default is AWS Terrarium; a National Map 3DEP source is available for the US.
+
+Changing Map Type changes only what you see. Changing Elevation Type changes measurements.
+
+Under Google Photorealistic 3D Tiles the situation changes again: the basemap is suppressed and the visible ground is the tile mesh, which includes buildings and trees and is a different surface from the elevation model. See [GIS, Geodesy and Altitude](GIS.md) for what that means for altitudes.
+
+There are more terrain editing options in the [Custom Sitch Tool](CustomSitchTool.md), and elevation-source configuration is covered in [Custom Terrain Sources](dev/CustomTerrainSources.md).
 
 

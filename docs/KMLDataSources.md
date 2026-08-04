@@ -352,14 +352,22 @@ This is the single most important thing to get right.
   render time. Exports mirror this: `CNodeTrack.exportTrackKML` and `exportMISBCompliantCSV`
   convert HAE-referenced frames back to MSL before writing.
 
-> **Known limitation (datum):** the track path does **not** yet read `<altitudeMode>` per segment,
-> and the true vertical datum is sometimes encoded only in the filename
-> (`-EGM96` = geoid, `-press_alt_uncorrected` = barometric, neither of which is HAE despite the
-> `<altitudeMode>absolute</altitudeMode>` tag). An ADS-B Exchange ground segment at `alt=0`
-> (`clampToGround`) is likewise read as `0 HAE`. Correcting these moves a track vertically, so it
-> is **deferred to a version-gated step** (so it never changes the geometry of an existing save).
-> Until then, altitudes are imported as written. See `docs/GIS.md` and
-> `docs/plans/KMLGenericIngestionPlan.md`.
+> **Known limitation (datum):** every KML altitude is treated as **MSL**, and the geoid
+> undulation is added on the way to HAE — regardless of what the file's `<altitudeMode>` says,
+> because the track path does not yet read it per segment. That is the right assumption for a
+> genuinely orthometric export and the wrong one for a **barometric** one.
+>
+> The true datum is often encoded only in the filename: `-EGM96` is geoid-referenced (correct),
+> while `-press_alt_uncorrected` is raw pressure altitude at 1013.25 hPa. A pressure-altitude
+> KML therefore gets a geoid correction applied to a number that was never sea-level referenced
+> at all — and the underlying pressure error (up to a few thousand feet at cruise) is untouched.
+> **Sitrec cannot detect this; no setting will fix it after import.** Re-export from ADS-B
+> Exchange using the *Geometric altitude (EGM96)* option instead.
+>
+> An ADS-B Exchange ground segment at `alt=0` (`clampToGround`) is likewise read as a literal
+> zero. Honouring `<altitudeMode>` properly would move existing tracks vertically, so it is
+> **deferred to a version-gated step** that will not change the geometry of an existing save.
+> See [GIS, Geodesy and Altitude](GIS.md).
 
 ### Time
 
@@ -432,8 +440,8 @@ into tracks:
   standard timed-path encoding and is supported.
 
 Also note the **altitude datum** limitation described above: novel files import with correct
-horizontal geometry but altitude is taken verbatim (HAE-assumed) until the version-gated datum work
-lands.
+horizontal geometry, and their altitudes are treated as MSL and geoid-corrected — which is wrong
+for a barometric export, and cannot be detected automatically.
 
 ---
 

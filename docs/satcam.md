@@ -83,7 +83,7 @@ In normal mode, dragging left always pans toward west regardless of camera roll.
 Satellite mode constructs a local reference frame at the camera position:
 - **X axis** = local east
 - **Y axis** = local north
-- **Z axis** = local up (away from Earth center)
+- **Z axis** = local up — the true ellipsoid normal at that point, not the direction away from the Earth's centre. The two differ by up to 11.6 arc-minutes at mid-latitudes.
 
 ### Quaternion Composition
 

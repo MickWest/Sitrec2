@@ -10,18 +10,62 @@ My goal here is to create a tool to effectively analyze UAP/UFO cases, and to sh
 
 ### User Documentation
 
+The same list is in the app under **Help → Documentation**, grouped the same way. It is
+defined once, in [`src/docsRegistry.js`](src/docsRegistry.js), which also feeds the in-app AI
+assistant — so if you add a doc, add it there.
+
+**Start here**
+
+- [Getting Started - What Sitrec is, and building your first sitch](docs/CustomSitchTool.md)
+- [Doing Defensible Analysis - How to reach a conclusion that holds up, and how to write it up](docs/DefensibleAnalysis.md)
 - [The Sitrec User Interface - How the menus work](docs/UserInterface.md)
-- [The Custom Sitch Tool - Drag and Drop Sitches](docs/CustomSitchTool.md)
-- [Local Custom Sitches - JSON-based sitch definitions for advanced setups](docs/LocalCustomSitches.md)
+- [Keyboard Shortcuts](docs/KeyboardShortcuts.md)
+- [Glossary - sitch, traverse, LOS, HAE, MISB, and the rest](docs/Glossary.md)
+- [What's New](docs/WhatsNew.md)
+
+**Data and tracks**
+
 - [Loading and Filtering Tracks - Formats, importing, filtering, and display](docs/Tracks.md)
-- [Wind in Sitrec - Wind menu, atmospheric data sources, streamlines](docs/Wind.md)
+- [Where to Get Flight Data - ADS-B Exchange, FlightRadar24, FlightAware and friends](docs/KMLDataSources.md)
 - [Saving and Loading Sitches - Server saves and local folder workflow](docs/SavingAndLoading.md)
 - [Custom Models and 3D Objects - Add your own planes](docs/CustomModels.md)
+- [Reference Objects](docs/ObjectReferences.md)
+
+**The world**
+
+- [GIS, Geodesy, and Altitude - Datums, coordinate systems, and how to spot a datum error](docs/GIS.md)
+- [Terrain and Elevation - Map vs elevation sources, and which surface a ground query hits](docs/Terrain.md)
+- [Atmospheric Refraction - Horizons, and why distant things look higher than they are](docs/Refraction.md)
+- [Wind in Sitrec - Wind menu, atmospheric data sources, streamlines](docs/Wind.md)
+- [Haze and Aerial Perspective](docs/AtmosphericAerialPerspective.md)
+
+**Video tools**
+
+- [Rendering and Exporting Video](docs/Video.md)
+- [Masking Out Part of the Video](docs/Masking.md)
+- [Star Tracker - Identify the stars, and measure the field of view](docs/StarTracker.md)
+- [Point Track and Stabilization](docs/PointTrack.md)
+- [Long Exposure Simulation](docs/LongExposure.md)
+- [Lens Ghosts and Reflections](docs/LensGhost.md)
+
+**Analysis**
+
+- [Traverse Methods - How LOS + physical assumptions resolve target positions per frame](docs/TraverseMethods.md)
+- [Traverse Analysis and the Verdict - The Analyze button, the gallery, and what it licenses](docs/TraverseAnalysis.md)
 - [Camera Modes - Normal (Az/El) and Satellite (quaternion) view modes](docs/satcam.md)
-- [Recreating Gimbal - Walkthrough: build a Gimbal sitch from scratch via drag-and-drop](docs/gimbal-recreate.md)
 - [Recreating Starlink Situations - Horizon Flares](docs/Starlink.md)
-- [GIS, Geodesy, and Altitude - Understanding altitude datums and coordinate systems](docs/GIS.md)
-- [What's New](docs/WhatsNew.md)
+
+**Worked examples**
+
+- [Recreating Gimbal - Walkthrough: build a Gimbal sitch from scratch via drag-and-drop](docs/gimbal-recreate.md)
+- [Nimitz / Tic Tac - Handling sources that disagree](docs/Nimitz.md)
+- [Football and Cable Cam](docs/Football.md)
+
+**Advanced**
+
+- [Local Custom Sitches - JSON-based sitch definitions for advanced setups](docs/LocalCustomSitches.md)
+- [Scripted Camera Moves](docs/ScriptedVideo.md)
+- [What's New (Details)](docs/WhatsNew-Details.md)
 
 
 ### Technical Documentation (for coders and webmasters)
@@ -33,7 +77,6 @@ My goal here is to create a tool to effectively analyze UAP/UFO cases, and to sh
 - [Settings Manager Architecture - Server/cookie fallback and sanitization](docs/dev/SettingsManager.md)
 - [Dynamic GUI Mirroring - API for mirrored GUI controls](docs/dev/dynamic-gui-mirroring.md)
 - [MISB Timing & Sync - Per-frame KLV/video alignment in TS-sourced files](docs/dev/misb-timing.md)
-- [Traverse Methods - How LOS + physical assumptions resolve target positions per frame](docs/TraverseMethods.md)
 - [Wind Internals - Data flow, file formats, and atmospheric data sources](docs/Wind-Internals.md)
 
 

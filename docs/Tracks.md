@@ -93,11 +93,11 @@ A flexible format for **position tracks**, with auto-detected columns. Header na
 
 | Data | Recognized column headers |
 |------|---------------------------|
-| **Time** (required) | `DATETIMEUTC`, `UTC`, `DATETIME`, `DATE_TIME`, `TIMESTAMP`, `TIME`, `DATE`, `DTG`, `DT`, or `FRAME` (a frame number) |
+| **Time** (required) | `DATETIMEUTC`, `DATETIME_UTC`, `DATE_TIME_UTC`, `DATETIME UTC`, `UTC`, `DATETIME`, `DATE_TIME`, `TIMESTAMP`, `TIME`, `DATE`, `DTG`, `DT`, or `FRAME` (a frame number) |
 | **Latitude / Longitude** | `LAT` / `LATITUDE` / `TPLAT` / `LATITUDEDEGS`, and `LON` / `LONG` / `LONGITUDE` / `TPLON` / `LONGITUDEDEGS` |
-| **Grid** (instead of lat/lon) | `MGRS` / `GRID` / `GRIDREF` (military grid), or `REGGRID` / `GRID56` (Maidenhead / ham-radio locators) |
-| **Altitude** | `ALTITUDE` / `ALT` / `TPHAE` / `alt_m` (metres), `ALTITUDE (FT)` / `ALT (FT)` (feet), `ALTITUDEKM` (km), or `AGL` / `ALT (m/agl)` (above ground level) |
-| **Identification** | `AIRCRAFT` / `AIRCRAFTSPECIFICTYPE`, `CALLSIGN` / `TAILNUMBER` |
+| **Grid** (instead of lat/lon) | `MGRS` / `GRID` / `GRIDREF` / `GRID_REF` (military grid), or `REGGRID` / `REG_GRID` / `GRID56` / `GRID_56` (Maidenhead / ham-radio locators) |
+| **Altitude** | `ALTITUDE` / `ALT` / `ALTITUDE (m)*` / `TPHAE` / `alt_m` (metres), `ALTITUDE (FT)` / `ALT (FT)` / `ALTITUDE(FT)` / `ALT(FT)` (feet), `ALTITUDEKM` (km), or `AGL` / `ALT (m/agl)` (above ground level) |
+| **Identification** | `AIRCRAFT` / `AIRCRAFTSPECIFICTYPE`, `CALLSIGN` / `TAILNUMBER` / `BALLOON_CALLSIGN` |
 | **Multiple tracks** | `TRACK_ID` / `THRESHERID` / `STAGENUMBER` (one track per distinct ID) |
 | **Speed** | `SPEED_KTS` (knots; stored as airspeed) |
 
@@ -359,13 +359,42 @@ Contrails simulate the visual appearance of condensation trails behind aircraft,
 
 | Control | Range | Description |
 |---------|-------|-------------|
-| **Alt offset** | -1000 to +1000 m | Manual altitude adjustment |
-| **Alt Lock** | -1 to 100,000 ft | Force a fixed altitude (-1 = off) |
-| **Alt Lock AGL** | on/off | When locked, use altitude above ground level instead of MSL |
+| **Alt offset** | -1000 to +1000 m | Manual altitude adjustment, applied in the source's own datum |
+| **Alt Lock** | -1 to 100,000 ft | Force a fixed altitude (-1 = off). Shown in your display units; stored in metres |
+| **Alt Lock AGL** | on/off | On: the lock is height above the ground below. **Off: the lock is HAE** (height above the WGS84 ellipsoid), *not* MSL |
+
+> **The altitude lock is HAE, not MSL.** Locking an object to "10,000 ft" with *Alt Lock AGL*
+> off puts it at 10,000 ft above the ellipsoid, which in Los Angeles is about 10,115 ft above
+> sea level. In the continental US the difference is 20–40 m almost everywhere; see
+> [GIS, Geodesy and Altitude](GIS.md) for the value at your location.
+
+> **An Alt offset applied by eye is not a fix.** If a track sits underground, the offset that
+> makes it look right also invalidates every altitude, altitude-difference and vertical-speed
+> number you take from it afterwards. Diagnose the datum first — the signature table in
+> [GIS.md](GIS.md) tells you which mistake you are looking at. If you do end up using an
+> offset, record its value and why.
 
 ## Filtering Bad Data
 
 ADS-B and other track data sources sometimes contain **spurious data points** — sudden position jumps caused by reception errors, multipath interference, or encoding issues. Sitrec includes a g-force filter that detects and removes these bad points.
+
+> **This filter encodes a physical assumption, and in a UAP investigation that assumption is
+> the thing you are testing.**
+>
+> The filter's premise is that acceleration above *Max G* must be measurement error. That is
+> a safe premise for airliner ADS-B and a loaded one for an anomaly report: if the question is
+> "did this object manoeuvre impossibly?", switching the filter on answers it for you, in the
+> shape of a data-quality fix.
+>
+> Sitrec will also *offer* to do it. When a track loads with a maximum g above the threshold,
+> a dialog appears — *"Bad points in track data 'X'. Max g-force: Ng. Enable Bad Data Filter?"*
+> — and clicking yes silently removes the points that prompted the question. (Tracks that look
+> like rockets are exempted from the prompt automatically, and under regression or MCP
+> automation the filter is **enabled without asking**, so scripted runs are always filtered.)
+>
+> **Work with it off first.** If you then enable it, report the threshold you used, how many
+> points it removed, and what the result looks like with it off — that comparison is the
+> evidence, not either run on its own.
 
 ### How the G-Force Filter Works
 
@@ -415,6 +444,26 @@ The smoothing-method dropdown shows these option keys directly:
 | **Catmull Intervals** | Number of control points for spline fitting |
 | **Edge Fit Order** | Polynomial order used for the edge fit at the ends of the track |
 | **Edge Fit Window** | Window size for the edge fit |
+
+### What smoothing costs you
+
+Smoothing is a low-pass filter on position, and the quantity it removes first is
+**acceleration** — which is usually the quantity a UAP analysis exists to measure. A wider
+window does not just tidy the picture; it drives peak g downwards, roughly as the square of
+the window length.
+
+This matters directly, because the traverse analysis grades candidates on maximum kinematic
+acceleration and its tier boundaries are stated in g (see
+[Traverse Methods](TraverseMethods.md)). Smoothing a track can therefore move a candidate
+across a threshold without anything about the underlying data having changed.
+
+It cuts both ways. Smoothing the *camera* track changes the line-of-sight directions, and so
+changes every fit computed from them.
+
+**The rule: run the analysis on the raw track first, then on the smoothed one, and report
+both.** Any g-figure, turn-rate or "impossible manoeuvre" claim taken from a smoothed track
+alone is a statement about the filter, not about the object. Always state the method and the
+window alongside the number.
 
 ## Altitude Handling
 

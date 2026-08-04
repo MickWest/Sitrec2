@@ -112,7 +112,7 @@ When you turn **Separate** off again, Local Wind Source snaps back to whatever T
 
 ### Altitude (ft)
 
-The altitude (feet, MSL) at which the wind field is sampled when building streamlines and arrows. The slider ranges from 0 to 60 000 ft. Drag-scrubbing this slider re-fetches GFS pressure levels (cached, so re-visits are instant) and rebuilds the streamlines.
+The altitude (feet, HAE — height above the WGS84 ellipsoid, not MSL) at which the wind field is sampled when building streamlines and arrows. The slider ranges from 0 to 60 000 ft. Drag-scrubbing this slider re-fetches GFS pressure levels (cached, so re-visits are instant) and rebuilds the streamlines.
 
 ![Altitude maps to GFS pressure levels](wind-images/altitude-stack.svg)
 

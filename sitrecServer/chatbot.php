@@ -254,11 +254,27 @@ function getHelpDocContent($docName, $availableDocs) {
     
     $content = file_get_contents($docPath);
     $content = preg_replace('/<!--[\s\S]*?-->/', '', $content);
-    
-    if (strlen($content) > 20000) {
-        $content = substr($content, 0, 20000) . "\n\n[Content truncated - showing first 20000 characters]";
+
+    // Keep AI_DOC_CHAR_LIMIT in src/docsRegistry.js in step with this. The appended
+    // notice below tells the model it was truncated, so it can flag an incomplete
+    // answer rather than confidently answering from a fragment — but it still cannot
+    // see the missing content, so keeping docs under the limit is the real fix.
+    // tests/docsRegistry.test.js fails the build if an AI-facing doc grows past it.
+    // The old 20000 hid two thirds of TraverseMethods.md, including everything about
+    // the Analyze button and the verdict, with no notice at all.
+    // Cut on a character boundary where mbstring is available: a naive byte-wise substr
+    // can split a multibyte UTF-8 sequence, and the resulting invalid string makes the
+    // json_encode of this response fail outright rather than merely truncating oddly.
+    $limit = 60000;
+    if (strlen($content) > $limit) {
+        $content = function_exists('mb_substr')
+            ? mb_substr($content, 0, $limit, 'UTF-8')
+            : substr($content, 0, $limit);
+        $content = $content
+            . "\n\n[Content truncated - showing first $limit characters of this document."
+            . " Tell the user that your answer may be incomplete and point them at the full document.]";
     }
-    
+
     return ['content' => $content];
 }
 

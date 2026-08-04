@@ -46,7 +46,7 @@ Sitrec supports two model file formats:
 - **GLB** (.glb) — Binary glTF format. Includes geometry, materials, and textures in a single file. This is the primary format for authored models (aircraft, drones, etc.). Created via Blender or other 3D tools.
 - **PLY** (.ply) — Polygon File Format. Sitrec handles three types of PLY content:
   - **Mesh PLY** (contains faces): Rendered as a standard lit mesh. Vertex colors are used if present.
-  - **Gaussian Splat PLY** (contains `splatScale` and `splatRotation` attributes): Rendered using instanced elliptical Gaussian splatting with back-to-front sorting. This is the format produced by 3D Gaussian Splatting tools.
+  - **Gaussian Splat PLY** (header contains `scale_0…scale_2` and `rot_0…rot_3` properties): Rendered using instanced elliptical Gaussian splatting with back-to-front sorting. This is the format produced by 3D Gaussian Splatting tools.
   - **Point Cloud PLY** (vertices only, no faces or splat attributes): Rendered as a point cloud with size attenuation.
 
 Both formats can be dragged and dropped into the Model Inspector or any moddable sitch.

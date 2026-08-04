@@ -16,13 +16,46 @@ cable-cam keyframes, and the pitch overlay.
 
 ## One-click replication
 
-**Physics → Scenarios → Football → "Load England-Norway Goal Kick (WC 2026)"** sets up
-the whole incident: Hard Rock Stadium terrain, pitch frame aligned to the
-satellite imagery (heading 96°), match date/time (for correct sun), the kick
-(35 m/s, 42°, 300 rpm backspin from the Norway goal area), the spidercam
-racing downfield from behind the goal, the wire strike (~23 m up, just short
-of halfway, tens of meters from the camera), the drop in front of the
-benches, the pitch overlay, and the look camera riding the cable cam.
+**Physics → Scenarios → Football → "Load England-Norway Goal Kick (WC 2026)"** builds a
+reconstruction of the incident: Hard Rock Stadium terrain, the pitch frame (long axis on a
+compass heading of 121.4°, re-fitted against the 3D building tiles — an earlier 111° came
+from a low-zoom satellite strip), match date and time so the sun is right, the kick
+(35 m/s at 38° elevation, 300 rpm backspin, from the Norway goal area), the spidercam racing
+downfield from behind the goal, the wire strike (~23 m up, just short of halfway, tens of
+metres from the camera), the drop in front of the benches, the pitch overlay, and the look
+camera riding the cable cam.
+
+### What this reconstruction is, and what it is not
+
+**The scenario is partly fitted to the claim it is being used to examine.** The published
+facts — stadium, date, time, pitch dimensions — are fixed. But the dolly position, the exact
+kick spot and the camera-1 gantry were never published, and the values shipped here are
+*estimates chosen to reproduce the described flight*. The spidercam motion was matched
+frame-by-frame against the broadcast clip; the kick heading was tuned.
+
+That is a normal and legitimate way to build a reconstruction, but it has a consequence that
+must be stated whenever the output is shown: **a scenario tuned to reproduce a described
+flight will reproduce that flight.** Doing so is not evidence that the flight happened that
+way. What the reconstruction *can* do is test whether the described flight is geometrically
+and physically possible with a real ball, real drag and a real wire in a real stadium — and
+show you what would have to be true for it to work.
+
+### The underlying dispute
+
+The incident is contested, and the scenario does not settle it. At 45+2' in the 2026 World
+Cup quarter-final (Norway 1–2 England, Hard Rock Stadium, 2026-07-11), Ørjan Nyland's goal
+kick appeared to clip a Spidercam suspension wire and drop near-vertically in front of the
+benches near halfway; Elliot Anderson collected it and the move ended with England's
+equaliser.
+
+- **FIFA's position:** the ball's 500 Hz IMU recorded no contact spike, and the camera
+  "neither shakes nor moves".
+- **Norway's position**, supported by a widely circulated BBC optical 3D replay: the flight
+  path shows a kink consistent with a wire strike.
+
+Both of those are claims about *evidence Sitrec does not have*. If you publish anything built
+on this scenario, say which of the two you are testing, which parameters you changed, and
+which remained estimates.
 
 ## Manual setup
 

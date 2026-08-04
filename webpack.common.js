@@ -20,6 +20,43 @@ if (result.error) {
     throw result.error;
 }
 
+// Rewrite inter-document links from .md to .html for the generated doc pages.
+// Handles a trailing anchor: [x](Foo.md#bar) -> [x](Foo.html#bar). The previous pattern
+// required a literal ".md)" and so silently left every anchored link pointing at the raw
+// markdown file, which the browser shows as plain text instead of opening the page.
+function rewriteMdLinks(text) {
+    return text.replace(
+        /(\[.*?\]\((?:\.\/)?(?:docs\/)?)([^)#]*?)\.md(#[^)]*)?\)/g,
+        (_m, prefix, name, anchor) => `${prefix}${name}.html${anchor || ''})`
+    );
+}
+
+// markdown-it emits bare <h1>..<h6> with no id, so a link like Foo.md#some-heading rewrites
+// to a valid page but a fragment with nothing to jump to. Add GitHub-style slug ids after
+// rendering, so intra- and inter-document anchors actually land on their section.
+function addHeadingIds(html) {
+    const used = new Map();
+    return html.replace(/<h([1-6])>([\s\S]*?)<\/h\1>/g, (match, level, inner) => {
+        const text = inner
+            .replace(/<[^>]*>/g, '')                           // strip inline markup
+            // Decode the entities markdown-it emits, so "What's New" slugs to
+            // "whats-new" (what an author would write) and not "what39s-new".
+            .replace(/&#39;|&apos;/g, "'")
+            .replace(/&quot;/g, '"')
+            .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+            .replace(/&amp;/g, '&');
+        let slug = text.toLowerCase().trim()
+            .replace(/[^\w\s-]/g, '')                          // drop punctuation
+            .replace(/\s+/g, '-');
+        if (!slug) return match;
+        // GitHub disambiguates repeats with -1, -2, ...
+        const n = used.get(slug) || 0;
+        used.set(slug, n + 1);
+        if (n > 0) slug = `${slug}-${n}`;
+        return `<h${level} id="${slug}">${inner}</h${level}>`;
+    });
+}
+
 function getVersionNumber() {
     const gitTag = process.env.VERSION ||
         child_process.execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
@@ -211,8 +248,8 @@ module.exports = (env = {}) => ({
                                     prevContent = markdownContent;
                                     markdownContent = markdownContent.replace(/<!--[\s\S]*?-->/g, '');
                                 } while (markdownContent !== prevContent);
-                                markdownContent = markdownContent.replace(/(\[.*?\]\((?:\.\/)?(?:docs\/)?)(.*?)(\.md\))/g, '$1$2.html)');
-                                const bodyContent = md.render(markdownContent);
+                                markdownContent = rewriteMdLinks(markdownContent);
+                                const bodyContent = addHeadingIds(md.render(markdownContent));
                                 
                                 // Extract title from first H1 or use filename
                                 const titleMatch = markdownContent.match(/^#\s+(.+)$/m);
@@ -254,8 +291,8 @@ ${bodyContent}
                         let readmeContent = await fs.promises.readFile(rootReadme, 'utf-8');
                         // Remove image links to github.com
                         readmeContent = readmeContent.replace(/!\[.*?\]\(https?:\/\/github\.com\/[^\)]+\)\s*\n?/g, '');
-                        readmeContent = readmeContent.replace(/(\[.*?\]\((?:\.\/)?(?:docs\/)?)(.*?)(\.md\))/g, '$1$2.html)');
-                        const bodyContent = md.render(readmeContent);
+                        readmeContent = rewriteMdLinks(readmeContent);
+                        const bodyContent = addHeadingIds(md.render(readmeContent));
                         
                         // Extract title from first H1 or use "README"
                         const titleMatch = readmeContent.match(/^#\s+(.+)$/m);

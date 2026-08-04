@@ -1,44 +1,99 @@
 # Getting Started with Sitrec
 
-Sitrec recreates a real-world situation (a "sitch") in an interactive 3D view, so you can line it up against a video or photo — terrain, sky, aircraft, satellites, the Sun, and stars, all at the right **place** and **time**. It was originally built to analyze US Navy UAP videos.
+Sitrec recreates a real-world situation (a **"sitch"**) in an interactive 3D view, so you can line it up against a video or photo — terrain, sky, aircraft, satellites, the Sun, and stars, all at the right **place** and **time**. It was originally built to analyze US Navy UAP videos.
 
-You build a sitch by importing your own data — a flight track, a video, satellite data, and so on — with the **Custom Sitch** tool. Just use **File → Import File**, or simply **drag and drop** the data into the browser window. This is the normal, recommended way to create a sitch.
+## What Sitrec does, and what it cannot do
 
-> Two older approaches — hand-coding a sitch in JavaScript, or writing a custom JSON file — are deprecated legacy methods and are not covered here. Drag-and-drop is what you want.
+Read this before anything else, because everything else follows from it.
 
-Before going further, it's a good idea to read the [User Interface](UserInterface.md) guide, so you're comfortable opening menus, dragging sliders, and navigating the 3D **Main View** (the big "god's-eye" view of the world). 
+**A camera tells you the *direction* to an object. It never tells you the distance.** A light in the sky could be a drone 200 m away or an airliner 40 km away, and in the footage they can look identical. No amount of processing extracts a distance from a single fixed viewpoint — the information simply is not there.
 
+So Sitrec does not work out what the object was. What it does is let you **test explanations**: put a plane, a satellite, a balloon or a lantern in the sky at the right place and the right time, and see whether it lands on your line of sight, moves the way the video shows, and looks right.
+
+That framing matters, because it changes what a good result looks like. "The reconstruction matches the video" is not a finding on its own — for one camera, *many* very different objects will match. The finding is in what matches, what doesn't, and what each explanation would require to be true.
+
+(The one thing that *does* pin down distance is **parallax** — the observer moving sideways relative to the object, so the geometry changes. A camera on a moving aircraft can give you this. A phone on a tripod cannot.)
+
+## The four things you need
+
+Whatever your footage, you are trying to pin down four things — the **DTLD**:
+
+| | |
+|---|---|
+| **D**ate | Which day. Wrong day, wrong sky |
+| **T**ime | To the second if you want to match a satellite; to the minute for aircraft |
+| **L**ocation | Where the camera was |
+| **D**irection | Where it was pointing, and how zoomed in |
+
+Often one or two are missing, and part of the work is using the others to recover them. If you have none of them, Sitrec cannot help you.
+
+## Start by watching one
+
+Before building anything, load a finished sitch and just watch it. This is the fastest way to understand what the views are:
+
+1. **File → Open** (in the **Server** section) brings up the sitch browser. Choose the **Featured** category — these are hand-picked, complete scenarios. You do not need an account to browse and open these; you only need one to *save* your own.
+2. Load one and press **spacebar** to play it. Or click straight through to the [Aguadilla case](https://www.metabunk.org/sitrec/?sitch=agua).
+3. Drag inside the **Main View** to look around. Drag the slider at the bottom to scrub through time.
+
+You are looking at, typically: the **Main View** (the god's-eye 3D view), the **Look View** (what the camera sees, simulated), the **Video View** (the actual footage), and some graphs.
+
+Now read the [User Interface](UserInterface.md) guide so you are comfortable with menus, views, and the time controls — in particular, hold **`Q`** to move or resize a view.
 
 Here's an informal video demonstrating many of the concepts described here:
 <https://www.youtube.com/watch?v=EMjTDRKbK5U>
 
+## Which of these are you?
 
-## See it in action first (optional)
+To build your own, start a blank sitch: **File → New Sitch → Custom** (or go straight to
+`?sitch=custom`). Then follow whichever of these describes your situation:
 
-Before building your own, it helps to load a finished example and just watch it:
+### A. "I filmed it myself, from the ground"
 
-1. From the **File** menu, choose **Open** (in the **Server** section) to bring up the sitch browser, then select the **Featured** category in the sidebar — these are hand-picked, complete scenarios.
-2. Load one, then press the **spacebar** (or drag the large slider at the bottom of the screen) to play it through.
-3. Drag inside the **Main View** with the mouse to look around.
+The most common case, and the one with the least data. You have a video or photo, you know
+roughly where you were standing and roughly when.
+
+You will not be dragging in a track — you will be *placing* the camera by hand. The full
+walkthrough for this is **[Recreating a Sighting](Starlink.md#recreating-a-starlink-situation)**:
+set the date and time, set the camera location by street address with **Lookup**, point the
+camera, add the video, then test explanations. It is written around Starlink flares but steps
+1 and 3 apply to any ground-based sighting.
+
+Then come back here for [Adding and Syncing Video](#adding-and-syncing-video).
+
+### B. "It was filmed from an aircraft, and I have the flight track"
+
+Drag the track in and Sitrec will put the camera on it. Continue at
+[A Single Simple Track](#a-single-simple-track) below.
+
+### C. "I have video with metadata embedded in it"
+
+Military or drone footage that records where the camera was and where it was pointing. This is
+the richest case — the geometry is largely given to you rather than guessed. Continue at
+[Complex Tracks and Video](#complex-tracks-and-video).
+
+---
 
 ## Custom Sitch Basics
 
-A Sitch is generally a recreation of a video involving a UAP (an unidentified object). As such there are some fundamental components
+A sitch is generally a recreation of a video involving a UAP (an unidentified object). As such there are some fundamental components
 
 - The Camera Position
 - The Camera Heading
 - The Camera's field of view
-- Other known object in the scene
+- Other known objects in the scene
 - A potential UAP
 
-The position of the camera, and the other known objects, is defined by a track. A track is just a list of positions at known times, sometimes with other data embedded in the same track, like where the camera is heading. 
+The position of the camera, and the other known objects, is defined by a **track** — just a list of positions at known times, sometimes with other data embedded in the same track, like where the camera is pointing.
+
+> **Don't have a track?** That is fine and normal — see route **A** above. A fixed camera on
+> the ground is set by hand, under **Camera → Location**, and needs no track at all.
 
 To get a track into Sitrec, just import it (again, either via the "import" option on the file menu, or by dragging and dropping it directly into the browser window). The currently supported track formats are:
 
-- KML or KMZ formatted ADS-B tracks. These are typically files exported from a flight tracking service such as FlightRadar24, Planefinder.net, FlightAware.com, or ADSB Exchange. 
-- DJI drone data in CSV format. This has to be extracted from the encrypted data file using an online service. 
-- CSV files. These currently need the relevant columns with headers matching the default MISB field names
-- MISB KLV files. This is MISB data, typically embedded in a .TS video file. To import this into Sitrec, you need to convert it to KLV format, for example with ffmpeg (e.g. ffmpeg -i truck.ts  -map 0:1 -c copy -f data output.klv ). These files can vary in format. 
+- **KML or KMZ formatted ADS-B tracks.** *ADS-B* is the position signal airliners broadcast continuously; flight-tracking sites record it and let you export a flight as a KML file. These are typically exported from FlightRadar24, Planefinder.net, FlightAware.com, or ADSB Exchange — see [Where to Get Flight Data](KMLDataSources.md) for which export button to press on each, and which altitude option to choose.
+- **DJI drone data in CSV format.** This has to be extracted from the encrypted data file using an online service.
+- **CSV files.** These currently need the relevant columns with headers matching the default MISB field names — see the Generic CSV section of [Tracks](Tracks.md) for the exact headers.
+- **MISB KLV files.** *MISB* is a military standard for metadata recorded alongside video: where the camera was, where it was pointing, and its zoom. *KLV* is the binary container that metadata travels in, usually embedded in a `.TS` video file. To import it into Sitrec you need to extract it, for example with ffmpeg (`ffmpeg -i truck.ts -map 0:1 -c copy -f data output.klv`). These files vary in format.
 
 There are other ways a track can be created, for example from a file listing speed and bank angles of a plane over time. These are not currently supported in the Custom Sitch Tool as they generally require custom code. 
 
@@ -68,7 +123,15 @@ You can adjust the camera heading using the PTZ controls. These default to absol
 
 Changing the PTZ mode to "Relative Heading" (check the box) means that the heading is relative to the ground track of the jet. This allows you to simulate looking forward (Pan = 0°), or to the pilot's left or right. 
 
-In the above image you will see red lines. These are _lines of sight_ and essentially show where the plane's camera is looking. There's also a blue line, which is the _Traverse_ of the lines of sight. There are various ways of calculating a Traverse (described in detail in [Traverse Methods](TraverseMethods.md)); the default is "Target Object" (the traverse follows the target track); other options include "Constant Air Speed", "Constant Altitude", etc. More on Traverses later. 
+In the above image you will see red lines. These are _lines of sight_ (LOS) — the straight rays from the camera through the object, showing where the plane's camera is looking.
+
+There's also a blue line, the **Traverse**. This is where the object would have been, *if* you accept one particular assumption.
+
+That "if" is the whole point, and it is worth being clear about it now. The red rays are measurements: the camera really did point that way. The blue line is not a measurement — it is a **hypothesis**. Because a camera gives direction and not distance, infinitely many paths fit those same red rays, and a traverse picks one of them by adding an assumption: that the object held a constant altitude, or a constant speed, or drifted with the wind, or was on the ground. Change the assumption and the blue line moves, while still fitting every red ray perfectly.
+
+So the blue line lying exactly along the red rays tells you nothing by itself — it always will. What tells you something is *which* assumptions produce a plausible object and which produce an absurd one.
+
+There are various ways of calculating a Traverse (described in detail in [Traverse Methods](TraverseMethods.md), which lists what each one assumes and what it does not establish); the default is "Target Object" (the traverse follows the target track); other options include "Constant Air Speed", "Constant Altitude", etc. More on Traverses later — and see [Doing Defensible Analysis](DefensibleAnalysis.md) before drawing conclusions from one. 
 
 In addition, there is the Traverse Object, which defaults to a cube. You can change this in the Objects menu. For example if you wanted to simulate a plane flying 1NM to the pilot's left, you could change:
 
