@@ -66,6 +66,7 @@ import {
     REFRACTION_DEFAULTS,
 } from "../atmosphere/refraction";
 import {setupRefractionGUI} from "../atmosphere/refractionSettings";
+import {excludeFromTerrestrialRefraction} from "../atmosphere/terrestrialRefraction";
 import {CPlanets} from "./CPlanets";
 import {CSatellite} from "./CSatellite";
 import {EventManager} from "../CEventManager";
@@ -571,6 +572,19 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         this.satelliteGroup = new Group();
         GlobalScene.add(this.satelliteGroup)
+        // Satellites and their diagnostic geometry stay OUT of the terrestrial
+        // warp. The dots are already refracted on the CPU into ecefApparent
+        // (CSatellite.applyRefractionFromObserver) — warping them again would
+        // add ~19' at 500 km on top of the ~30' already applied. Their tracks,
+        // ground tracks and flare arrows are analytical constructions rather
+        // than light arriving from a surface, and at these ranges the
+        // terrestrial correction is well under an arcminute, so excluding the
+        // whole subtree costs nothing real and needs no per-child policy.
+        excludeFromTerrestrialRefraction(this.satelliteGroup);
+        // Flare-analysis arrows and the globe flare bands are the same case.
+        excludeFromTerrestrialRefraction(this.sunArrowGroup);
+        excludeFromTerrestrialRefraction(this.flareRegionGroup);
+        excludeFromTerrestrialRefraction(this.flareBandGroup);
 
         // a sub-group for the satellite tracks
         this.satelliteTrackGroup = new Group();
@@ -805,6 +819,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this[flagName] = Sit[flagName] ?? false;
         this[groupName] = new CNode3DGroup({id: groupName});
         this[groupName].show(this[flagName]);
+        // Celestial arrows point at directions that are ALREADY refracted by the
+        // Saemundsson path (see the arrow-direction update below), so the
+        // terrestrial warp must not touch them a second time.
+        excludeFromTerrestrialRefraction(this[groupName].group ?? this[groupName]);
 
         this[obName] = new CNodeLabeledArrow({
             id: obName,

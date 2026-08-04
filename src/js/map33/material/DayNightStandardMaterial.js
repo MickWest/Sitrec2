@@ -125,7 +125,7 @@ ${vertexInjection}`
         // and modelMatrix, while this rewrites gl_Position and leaves
         // mvPosition — and therefore vWorldPositionDN, the normals and the
         // shadow receiver coordinates — physical.
-        shader.vertexShader = patchTerrestrialRefractionVertexShader(shader.vertexShader);
+        shader.vertexShader = patchTerrestrialRefractionVertexShader(shader.vertexShader).vertexShader;
 
         // --- Fragment shader: darken night side and use Sitrec shadow coords ---
         shader.fragmentShader = shader.fragmentShader.replace(

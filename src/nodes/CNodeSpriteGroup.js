@@ -6,6 +6,7 @@ import * as LAYER from "../LayerMasks";
 import {SITREC_APP} from "../configUtils";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {t} from "../i18n";
+import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
 export class CNodeSpriteGroup extends CNode3DGroup {
 
@@ -42,7 +43,7 @@ constructor(v) {
             vColor.rgb *= localSun; // Scale color by the local sun intensity
             vPosition = modelViewMatrix * vec4(position, 1.0);
             gl_PointSize = magnify * size * (cameraFocalLength / -vPosition.z); // Adjust 300.0 as needed
-            gl_Position = projectionMatrix * vPosition;
+            gl_Position = applyTerrestrialRefraction_clip(vPosition);
             vDepth = gl_Position.w;
         }
     `;
@@ -96,6 +97,7 @@ constructor(v) {
         depthTest: true,
         depthWrite: true,
     });
+    installTerrestrialRefractionOnShaderMaterial(this.material);
 
     this.visible = v.visible ?? false;
 

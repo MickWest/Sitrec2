@@ -45,6 +45,7 @@ import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {applyRefractionECI, refractionOptsFromUniforms, refractionUniforms} from "../atmosphere/refraction";
 import {radians, degrees} from "../utils";
 import * as LAYER from "../LayerMasks";
+import {excludeFromTerrestrialRefraction} from "../atmosphere/terrestrialRefraction";
 
 // Radius of the celestial sphere used for the Sun/Moon/star sprites. Matches
 // CPlanets/CStarField sphereRadius. With the camera at the origin the exact
@@ -557,6 +558,12 @@ export class CNodeAtmosphericOptics extends CNode {
         }
         if (!this._brockenAttached && GlobalScene !== undefined) {
             GlobalScene.add(this.brockenGroup);
+            // The Brocken spectre / glory is an analytical construction placed
+            // at observer + direction * distance, 50-5000 m out. The terrestrial
+            // bend there is 0.17' at k=0.13 and 0.67' at k=0.5 — below the width
+            // of the effect itself — so it is left geometric rather than given a
+            // bespoke shader patch it would barely use.
+            excludeFromTerrestrialRefraction(this.brockenGroup);
             this._brockenAttached = true;
         }
 

@@ -28,6 +28,7 @@ import seedrandom from "seedrandom";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {par} from "../par";
 import {t} from "../i18n";
+import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
 let rng;
 
@@ -258,7 +259,11 @@ export class CNodeSynthClouds extends CNode3DGroup {
                     vec4 worldPos = modelMatrix * vec4(instanceOffset, 1.0);
                     vWorldPosition = worldPos.xyz;
                     
+                    vec4 mvAnchor = modelViewMatrix * vec4(instanceOffset, 1.0);
                     vec4 mvPosition = modelViewMatrix * vec4(vertexPosition, 1.0);
+                    // Loft the whole billboard by its anchor's displacement so the
+                    // quad stays square, rather than warping each corner separately.
+                    mvPosition.xyz += applyTerrestrialRefraction_chunk(mvAnchor.xyz) - mvAnchor.xyz;
                     gl_Position = projectionMatrix * mvPosition;
                     vDepth = gl_Position.w;
                 }
@@ -320,6 +325,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             depthTest: true,
             side: DoubleSide,
         });
+        installTerrestrialRefractionOnShaderMaterial(cloudMaterial);
         
         this.cloudMesh = new Mesh(this.cloudGeometry, cloudMaterial);
         this.cloudMesh.layers.mask = LAYER.MASK_WORLD;

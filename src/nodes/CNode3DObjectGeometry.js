@@ -540,7 +540,7 @@ export const gradientVertexShader = `
         vGradientD = dot(worldPos.xyz - gradientCenter, gradientDir);
 
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        vPosition = projectionMatrix * mvPosition;
+        vPosition = applyTerrestrialRefraction_clip(mvPosition);
         gl_Position = vPosition;
     }
 `;

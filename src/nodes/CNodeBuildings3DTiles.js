@@ -23,6 +23,7 @@ import {ECEFToLLAVD_radii, RLLAToECEF_radii} from "../LLA-ECEF-ENU";
 import {getLocalUpVector} from "../SphericalMath";
 import {getPointBelow} from "../threeExt";
 import {undoManager as UndoManager} from "../UndoManager";
+import {excludeFromTerrestrialRefraction} from "../atmosphere/terrestrialRefraction";
 
 const DEG2RAD = Math.PI / 180;
 
@@ -403,6 +404,9 @@ export class CNodeBuildings3DTiles extends CNode {
         this.group = new Group();
         this.group.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
         GlobalScene.add(this.group);
+        // Tile materials are swapped to DayNightStandardMaterial (already patched)
+        // by TilesDayNightPlugin as they stream in; thousands of meshes, so prune.
+        excludeFromTerrestrialRefraction(this.group);
 
         this._perView = {}; // keyed by view id
         this._initialized = false;

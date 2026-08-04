@@ -6,6 +6,7 @@ import {NodeMan} from "../Globals";
 import {CNodeGUIValue} from "./CNodeGUIValue";
 import {CNodeGUIColor} from "./CNodeGUIColor";
 import {par} from "../par";
+import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
 export class CNode3DLight extends CNode3D {
     constructor(v) {
@@ -44,7 +45,7 @@ export class CNode3DLight extends CNode3D {
         
         void main() {
             vUv = uv;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            gl_Position = applyTerrestrialRefraction_clip(modelViewMatrix * vec4(position, 1.0));
             vDepth = gl_Position.w;
         }
     `,
@@ -95,6 +96,7 @@ export class CNode3DLight extends CNode3D {
             depthWrite: false,
             blending: AdditiveBlending
         });
+        installTerrestrialRefractionOnShaderMaterial(material);
 
         // check for strobes
         if (this.light.userData !== undefined && this.light.userData.strobeEvery) {

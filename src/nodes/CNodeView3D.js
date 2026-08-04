@@ -29,12 +29,7 @@ import {
     Sit
 } from "../Globals";
 import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame";
-import {
-    TERRESTRIAL_REFRACTION_VERTEX_GLSL,
-    terrestrialOptsFrom,
-    terrestrialRefractionUniforms,
-    updateTerrestrialRefractionUniforms,
-} from "../atmosphere/terrestrialRefraction";
+import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 import {DRAG} from "../mouseMoveView";
 import {GPUMemoryMonitor} from "../GPUMemoryMonitor";
 import {
@@ -977,7 +972,6 @@ export class CNodeView3D extends CNodeViewCanvas {
             _restoreShadowScopeXR = this._enterShadowRenderScope();
         }
         try {
-            this._updateTerrestrialRefraction(this.xrCamera);
             this.renderer.render(GlobalScene, this.xrCamera);
         } finally {
             if (_restoreShadowScopeXR) _restoreShadowScopeXR();
@@ -2485,7 +2479,6 @@ export class CNodeView3D extends CNodeViewCanvas {
                             sharedUniforms.cameraFocalLength.value = focalLength;
                         }
 
-                        this._updateTerrestrialRefraction();
                         this.renderer.render(GlobalScene, this.camera);
                     }
                 } finally {
@@ -3083,12 +3076,10 @@ export class CNodeView3D extends CNodeViewCanvas {
             this.aerialPerspectiveDepthMaterial = new ShaderMaterial({
                 uniforms: {
                     distanceScale: {value: 200000.0},
-                    ...terrestrialRefractionUniforms,
                 },
                 vertexShader: /* glsl */`
                     uniform float distanceScale;
                     varying float vDistanceNorm;
-                    ${TERRESTRIAL_REFRACTION_VERTEX_GLSL}
 
                     void main() {
                         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
@@ -3096,7 +3087,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         // light actually travelled — but the silhouette has to
                         // land where the colour pass draws it.
                         vDistanceNorm = clamp(length(mvPosition.xyz) / distanceScale, 0.0, 1.0);
-                        gl_Position = projectionMatrix * vec4(applyTerrestrialRefraction_chunk(mvPosition.xyz), 1.0);
+                        gl_Position = applyTerrestrialRefraction_clip(mvPosition);
                     }
                 `,
                 fragmentShader: /* glsl */`
@@ -3107,18 +3098,10 @@ export class CNodeView3D extends CNodeViewCanvas {
                     }
                 `,
             });
+            installTerrestrialRefractionOnShaderMaterial(this.aerialPerspectiveDepthMaterial);
         }
 
         return this.aerialPerspectiveDepthTarget;
-    }
-
-    // Refraction of the solid scene is observer-relative, and Sitrec renders
-    // several views with different cameras out of the same GlobalScene, so the
-    // shared uniforms have to be re-pointed at THIS view's camera immediately
-    // before each of its renders. A handful of vector ops — no per-object work.
-    _updateTerrestrialRefraction(camera) {
-        updateTerrestrialRefractionUniforms(camera ?? this.camera,
-            terrestrialOptsFrom(Sit, Globals));
     }
 
     renderAerialPerspectiveDepth(width, height, distanceScale) {
@@ -3135,9 +3118,6 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.renderer.setClearColor(0xffffff, 1);
         this.renderer.clear(true, true, true);
         try {
-            // Must use the SAME apparent mapping as the colour pass, or the haze
-            // silhouette separates from the geometry it is meant to veil.
-            this._updateTerrestrialRefraction();
             this.renderer.render(GlobalScene, this.camera);
         } finally {
             GlobalScene.overrideMaterial = previousOverride;
