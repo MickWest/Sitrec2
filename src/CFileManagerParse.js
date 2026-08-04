@@ -759,7 +759,11 @@ export const parseMethods = {
                     return true;
                 }
             } else {
-                if (!(parsedFile instanceof CTrackFile)) {
+                // Drop the header row — but only when the CSV was parsed into an
+                // array of rows. An OMM satellite CSV passes through as raw text
+                // for CTLEData, and slice(1) on a string eats the first character
+                // of "OBJECT_NAME", which silently costs every satellite its name.
+                if (!(parsedFile instanceof CTrackFile) && Array.isArray(parsedFile)) {
                     parsedFile = parsedFile.slice(1);
                 }
             }
