@@ -16,9 +16,15 @@
 // consumer reads. They are now DERIVED from the master and their checkbox, so
 // nothing downstream had to change.
 
-import {guiMenus, setRenderOne, Sit} from "../Globals";
+import {Globals, guiMenus, setRenderOne, Sit} from "../Globals";
+import {GlobalScene} from "../LocalFrame";
 import {REFRACTION_DEFAULTS} from "./refraction";
-import {resolveTerrestrialK, TERRESTRIAL_REFRACTION_DEFAULTS} from "./terrestrialRefraction";
+import {
+    resolveTerrestrialK,
+    TERRESTRIAL_REFRACTION_DEFAULTS,
+    terrestrialOptsFrom,
+    updateTerrestrialRefractionUniforms,
+} from "./terrestrialRefraction";
 
 let lapseRateController = null;
 let terrestrialKController = null;
@@ -46,6 +52,32 @@ export function ensureRefractionSettings() {
         Sit.terrestrialRefractionK = TERRESTRIAL_REFRACTION_DEFAULTS.k;
     }
     applyRefractionMaster();
+    installTerrestrialRefractionSceneHook(GlobalScene);
+}
+
+// The terrestrial bend is observer-relative, so the shared uniforms have to be
+// re-pointed at whichever camera is about to draw. Doing that per render-call-site
+// is a losing game: GlobalScene is also rendered by the aerial-perspective depth
+// prepass, the long-exposure occlusion mask, video export, scripted video, XR,
+// and — six times, with six different cameras — by CubeCamera.update() for
+// environment-mapped CNode3DObjects. Miss one and it renders with a stale or
+// flatly wrong bend axis.
+//
+// Three calls scene.onBeforeRender after it has updated the scene and camera
+// matrices and resolved the XR camera, but before it builds the render list, so
+// one chained hook covers every one of those paths with the right camera.
+let _sceneHookInstalled = null;
+
+export function installTerrestrialRefractionSceneHook(scene) {
+    if (!scene || _sceneHookInstalled === scene) return;
+    const previous = scene.onBeforeRender;
+    scene.onBeforeRender = function (renderer, sceneArg, camera, renderTarget) {
+        if (typeof previous === "function") {
+            previous.call(this, renderer, sceneArg, camera, renderTarget);
+        }
+        updateTerrestrialRefractionUniforms(camera, terrestrialOptsFrom(Sit, Globals));
+    };
+    _sceneHookInstalled = scene;
 }
 
 // Fold the master into the two flags the rest of the app reads.

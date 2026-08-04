@@ -42,6 +42,7 @@ import {LoadingManager} from "../CLoadingManager";
 import {resolveURLForFetch} from "../SitrecObjectResolver";
 import {t} from "../i18n";
 import {eventMethods} from "./CNodeGroundOverlayEvents";
+import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
 export class CNodeGroundOverlay extends CNode3DGroup {
     constructor(v) {
@@ -122,7 +123,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
                 varying float vDepth;
                 void main() {
                     vUv = uv;
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    gl_Position = applyTerrestrialRefraction_clip(modelViewMatrix * vec4(position, 1.0));
                     vDepth = gl_Position.w;
                 }
             `,
@@ -158,6 +159,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             depthWrite: false,
             wireframe: this.wireframe,
         });
+        installTerrestrialRefractionOnShaderMaterial(this.overlayMaterial);
     }
     
     /**

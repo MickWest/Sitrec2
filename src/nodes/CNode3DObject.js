@@ -99,6 +99,7 @@ import {
     materialTypes,
 } from "./CNode3DObjectGeometry";
 import {reflectionMethods} from "./CNode3DObjectReflection";
+import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
 // Map old/renamed model file paths to their current equivalents.
 // Used to remap file paths in loadedFiles and model name references in serialized sitches.
@@ -1689,6 +1690,10 @@ export class CNode3DObject extends CNode3DGroup {
                 fragmentShader: gradientFragmentShader,
                 fog: false,
             });
+            // gradientVertexShader calls applyTerrestrialRefraction_clip, so it
+            // needs the chunk and uniforms — the shader lives in
+            // CNode3DObjectGeometry but the material is built here.
+            installTerrestrialRefractionOnShaderMaterial(this.material);
         } else if (materialType === "checkerboard") {
             this.disposeCubeCamera();
             const checkerTexture = createCheckerboardTexture(

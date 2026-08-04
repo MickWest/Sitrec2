@@ -4,6 +4,7 @@ import {sharedUniforms} from "./js/map33/material/SharedUniforms";
 import {DRACOLoader} from "three/addons/loaders/DRACOLoader.js";
 import {GLTFLoader} from "three/addons/loaders/GLTFLoader.js";
 import {PLYLoader} from "three/addons/loaders/PLYLoader.js";
+import {installTerrestrialRefractionOnShaderMaterial} from "./atmosphere/terrestrialRefraction";
 import {
     AddEquation,
     Box3,
@@ -377,7 +378,7 @@ function createPLYPointCloudMaterial(geometry, filename) {
             float projectedSize = worldSize * viewportHeight * projectionMatrix[1][1] / max(-mvPosition.z, 0.0001);
 
             gl_PointSize = clamp(projectedSize, minPointSize, maxPointSize);
-            gl_Position = projectionMatrix * mvPosition;
+            gl_Position = applyTerrestrialRefraction_clip(mvPosition);
             vDepth = gl_Position.w;
 
             vOpacity = splatOpacity;
@@ -445,6 +446,7 @@ function createPLYPointCloudMaterial(geometry, filename) {
         depthWrite: true,
         blending: NormalBlending,
     });
+    installTerrestrialRefractionOnShaderMaterial(material);
 
     material.userData ??= {};
     material.userData.sitrecPLYPointCloud = true;
@@ -599,6 +601,7 @@ function createGaussianSplatMaterial(filename) {
             // Keep the splat center camera-relative in shader code so we avoid
             // losing precision when models are positioned in ECEF-scale coordinates.
             vec4 viewCenter = vec4(viewOrigin + modelViewLinear * splatCenter, 1.0);
+            viewCenter.xyz = applyTerrestrialRefraction_chunk(viewCenter.xyz);
 
             if (viewCenter.z > 0.0) {
                 gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
@@ -742,6 +745,7 @@ function createGaussianSplatMaterial(filename) {
         blendDstAlpha: OneMinusSrcAlphaFactor,
         side: DoubleSide,
     });
+    installTerrestrialRefractionOnShaderMaterial(material);
 
     material.userData ??= {};
     material.userData.sitrecGaussianSplat = true;

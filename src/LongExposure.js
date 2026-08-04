@@ -53,11 +53,7 @@ import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {Quaternion, Vector3} from "three";
 import {nudgeParams, defaultNudgeParams, nudgeQuaternion} from "./nodes/CNodeControllerCameraNudge";
 import {applyRefractionECI, refractionOptsFromUniforms, refractionUniforms} from "./atmosphere/refraction";
-import {
-    installTerrestrialRefractionOnMaterial,
-    terrestrialOptsFrom,
-    updateTerrestrialRefractionUniforms,
-} from "./atmosphere/terrestrialRefraction";
+import {installTerrestrialRefractionOnMaterial} from "./atmosphere/terrestrialRefraction";
 import {applyAnnualAberration, raDec2Celestial} from "./CelestialMath";
 import {CNode3DLight} from "./nodes/CNode3DLight";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
@@ -837,10 +833,6 @@ async function renderLongExposure(mgr) {
             camera.quaternion.copy(qBase);
             camera.updateMatrix();
             camera.updateMatrixWorld(true);
-            // Re-point the shared uniforms at THIS pose — the bend is about the
-            // observer's zenith expressed in view space, and qBase is not the
-            // orientation the live view was last rendered with.
-            updateTerrestrialRefractionUniforms(camera, terrestrialOptsFrom(Sit, Globals));
             GlobalScene.overrideMaterial = override;
             renderer.setRenderTarget(rt);
             renderer.setClearColor(0x000000, 1);

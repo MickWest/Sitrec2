@@ -53,7 +53,7 @@
 // to grow without limit — distant geometry then converges on a bend comparable
 // to the astronomical one instead of ballooning off the top of the screen.
 
-import {Matrix4, Vector3} from "three";
+import {Material, Matrix4, Vector3} from "three";
 import {zenithECEFFromPosition} from "./refraction";
 
 export const TERRESTRIAL_REFRACTION_DEFAULTS = {
@@ -193,7 +193,15 @@ export function updateTerrestrialRefractionUniforms(camera, opts = {}) {
 // scene coordinates are ECEF, ~6.4e6 m, where a float32 resolves about half a
 // metre. A 4 m lift added in world space would be quantised into nothing. In
 // view space the values are camera-relative and the lift survives.
+// Marks the chunk as already present. Guarding on the FUNCTION NAME instead
+// would be wrong: a shader that *calls* applyTerrestrialRefraction_chunk (the
+// synth-cloud billboards do) would look like it already had the definition, and
+// injection would silently skip — leaving "no matching overloaded function
+// found" and a mesh that never draws.
+const CHUNK_MARKER = "SITREC_TERRESTRIAL_REFRACTION_CHUNK";
+
 export const TERRESTRIAL_REFRACTION_VERTEX_GLSL = /* glsl */`
+// ${CHUNK_MARKER}
 uniform float uTerrK;
 uniform vec3 uTerrZenithView;
 uniform float uTerrInvR;
@@ -208,7 +216,45 @@ vec3 applyTerrestrialRefraction_chunk(vec3 viewPos) {
     float bend = uTerrMaxBend * u * inversesqrt(1.0 + u * u);
     return viewPos + uTerrZenithView * (d * bend);
 }
+
+// The one line every hand-written vertex shader needs: swap
+//     gl_Position = projectionMatrix * mvPosition;
+// for
+//     gl_Position = applyTerrestrialRefraction_clip(mvPosition);
+// Anything derived from gl_Position afterwards — manual log depth, a vDepth
+// varying — then picks up the apparent depth for free, which is what keeps
+// colour and fragment depth agreeing.
+vec4 applyTerrestrialRefraction_clip(vec4 mvPosition) {
+    return projectionMatrix * vec4(applyTerrestrialRefraction_chunk(mvPosition.xyz), mvPosition.w);
+}
 `;
+
+// Insert the chunk into a hand-written vertex shader. Idempotent.
+export function injectTerrestrialRefractionChunk(vertexShader) {
+    if (vertexShader.includes(CHUNK_MARKER)) return vertexShader;
+    return vertexShader.replace("void main() {",
+        TERRESTRIAL_REFRACTION_VERTEX_GLSL + "\nvoid main() {");
+}
+
+// For Sitrec's own hand-written ShaderMaterials. Wires the shared uniforms in
+// (by reference, mutating in place so anyone holding the uniforms object keeps
+// working) and injects the chunk:
+//
+//     const m = new ShaderMaterial({uniforms, vertexShader, ...});
+//     installTerrestrialRefractionOnShaderMaterial(m);
+//
+// The shader itself still opts in by calling applyTerrestrialRefraction_clip
+// where it builds gl_Position — deliberately explicit, because these shaders
+// each compute their view position differently and a textual rewrite of
+// arbitrary source is exactly the kind of thing that breaks quietly.
+export function installTerrestrialRefractionOnShaderMaterial(material) {
+    if (!material || _installed.has(material)) return;
+    if (!material.uniforms) material.uniforms = {};
+    addTerrestrialRefractionUniforms({uniforms: material.uniforms});
+    material.vertexShader = injectTerrestrialRefractionChunk(material.vertexShader);
+    _installed.add(material);
+    material.needsUpdate = true;
+}
 
 // Point a shader's uniform slots at the shared objects.
 export function addTerrestrialRefractionUniforms(shader) {
@@ -225,30 +271,130 @@ export function addTerrestrialRefractionUniforms(shader) {
 // bends light — it does not move the land. That also keeps the shadow map (a
 // separate depth-material pass that never sees this patch) consistent with the
 // geometry it is shadowing.
+//
+// Returns {vertexShader, matched}. `matched` false means this shader builds its
+// clip position some other way and is NOT warped — the caller must not treat
+// that as success, or a custom shader ends up silently and permanently
+// geometric while everything around it lofts.
+// Three's own vertex shaders build their clip position in three different ways,
+// so there are three patterns. Everything in ShaderLib except sprite, vsm and
+// background goes through <project_vertex>; sprites billboard around the object
+// origin; fat lines (Line2/LineSegments2) extrude a quad from two endpoints.
+//
+// In the two bespoke cases the PHYSICAL view position is kept and restored
+// before <clipping_planes_vertex> and <fog_vertex>, so those stay geometric like
+// every stock material's. Only gl_Position — and the log-depth derived from it —
+// becomes apparent.
+const SPRITE_ANCHOR = "vec4 mvPosition = modelViewMatrix[ 3 ];";
+const FATLINE_ENDPOINTS = "vec4 end = modelViewMatrix * vec4( instanceEnd, 1.0 );";
+const FATLINE_APPROX_MV = "vec4 mvPosition = ( position.y < 0.5 ) ? start : end; // this is an approximation";
+
 export function patchTerrestrialRefractionVertexShader(vertexShader) {
-    if (vertexShader.includes("applyTerrestrialRefraction_chunk")) return vertexShader;
-    return vertexShader
-        .replace("void main() {", TERRESTRIAL_REFRACTION_VERTEX_GLSL + "\nvoid main() {")
-        .replace(
+    if (vertexShader.includes(CHUNK_MARKER)) {
+        return {vertexShader, matched: true};
+    }
+
+    let out = vertexShader;
+    let matched = false;
+
+    // (a) stock <project_vertex>: meshes, LineBasic/LineDashed, points, depth
+    if (out.includes("#include <project_vertex>")) {
+        out = out.replace(
             "#include <project_vertex>",
-            "#include <project_vertex>\n\tgl_Position = projectionMatrix * vec4(applyTerrestrialRefraction_chunk(mvPosition.xyz), 1.0);",
+            "#include <project_vertex>\n\tgl_Position = applyTerrestrialRefraction_clip(mvPosition);",
         );
+        matched = true;
+    }
+
+    // (b) sprites: loft the billboard's anchor, then build the quad around it
+    if (out.includes(SPRITE_ANCHOR)) {
+        out = out.replace(SPRITE_ANCHOR,
+            SPRITE_ANCHOR
+            + "\n\tvec4 sitrecPhysicalMV = mvPosition;"
+            + "\n\tmvPosition.xyz = applyTerrestrialRefraction_chunk(mvPosition.xyz);");
+        // restore after log depth has consumed the apparent gl_Position
+        out = out.replace("#include <clipping_planes_vertex>",
+            "\tmvPosition = sitrecPhysicalMV;\n\t#include <clipping_planes_vertex>");
+        matched = true;
+    }
+
+    // (c) fat lines: both endpoints, before everything downstream derives from
+    // them — clip positions, NDC, extrusion basis, endcaps and trimSegment.
+    // Dash phase keys off instanceDistanceStart/End and so stays physical.
+    if (out.includes(FATLINE_ENDPOINTS)) {
+        out = out.replace(FATLINE_ENDPOINTS,
+            FATLINE_ENDPOINTS
+            + "\n\t\t\tvec4 sitrecPhysicalStart = start;"
+            + "\n\t\t\tvec4 sitrecPhysicalEnd = end;"
+            + "\n\t\t\tstart.xyz = applyTerrestrialRefraction_chunk(start.xyz);"
+            + "\n\t\t\tend.xyz = applyTerrestrialRefraction_chunk(end.xyz);");
+        out = out.replace(FATLINE_APPROX_MV,
+            "vec4 mvPosition = ( position.y < 0.5 ) ? sitrecPhysicalStart : sitrecPhysicalEnd;");
+        matched = true;
+    }
+
+    if (!matched) return {vertexShader, matched: false};
+    return {matched: true, vertexShader: injectTerrestrialRefractionChunk(out)};
 }
 
 // Install on a stock Three material (MeshPhongMaterial, MeshBasicMaterial, …).
 // Idempotent, and chains any existing onBeforeCompile rather than replacing it.
-const INSTALLED = "sitrecTerrestrialRefraction";
+//
+// Installation state lives in a WeakSet, NOT in userData: Material.copy()
+// JSON-copies userData but does not copy an instance's onBeforeCompile, so a
+// clone of a patched material would inherit the marker without the patch and be
+// skipped forever. Materials are cloned in CNode3DObject and CNodeDisplayATFLIR.
+const _installed = new WeakSet();
+const _warnedUnmatched = new WeakSet();
+const TERRESTRIAL_PROGRAM_KEY = "sitrecTerrestrialRefraction.v1";
 
 export function installTerrestrialRefractionOnMaterial(material) {
-    if (!material) return;
-    if (!material.userData) material.userData = {};
-    if (material.userData[INSTALLED]) return;
+    if (!material || _installed.has(material)) return;
+
     const prev = material.onBeforeCompile;
-    material.onBeforeCompile = (shader, renderer) => {
-        if (typeof prev === "function") prev(shader, renderer);
+
+    // Three's DEFAULT customProgramCacheKey returns this.onBeforeCompile
+    // .toString(), which is how two otherwise-identical materials that carry
+    // different onBeforeCompile patches (e.g. patchMaterialForLinearOutput) get
+    // different programs. Wrapping onBeforeCompile would make every patched
+    // material report the SAME key and silently share a program. Capture the
+    // pre-wrap identity now; call through instead for materials that define
+    // their own key, since theirs may depend on mutable state.
+    const ownsCacheKey = material.customProgramCacheKey !== _defaultCacheKey;
+    const prevCacheKeyFn = ownsCacheKey ? material.customProgramCacheKey : null;
+    const frozenDefaultKey = ownsCacheKey ? null : String(prev ?? "");
+
+    // A normal function, not an arrow: Three invokes onBeforeCompile with the
+    // material as `this`, and chained callbacks rely on it —
+    // StableShadowReceiver's reads this.userData through getPendingStableUniforms.
+    material.onBeforeCompile = function (shader, renderer) {
+        if (typeof prev === "function") prev.call(this, shader, renderer);
         addTerrestrialRefractionUniforms(shader);
-        shader.vertexShader = patchTerrestrialRefractionVertexShader(shader.vertexShader);
+        const result = patchTerrestrialRefractionVertexShader(shader.vertexShader);
+        if (result.matched) {
+            shader.vertexShader = result.vertexShader;
+        } else if (!_warnedUnmatched.has(this)) {
+            _warnedUnmatched.add(this);
+            console.warn("Terrestrial refraction: no supported clip-position pattern in "
+                + `${this.type}${this.name ? " '" + this.name + "'" : ""} (${this.uuid}) — `
+                + "it will render at its geometric position while the rest of the scene lofts.");
+        }
     };
-    material.userData[INSTALLED] = true;
+
+    material.customProgramCacheKey = function () {
+        const base = prevCacheKeyFn ? prevCacheKeyFn.call(this) : frozenDefaultKey;
+        return `${base}.${TERRESTRIAL_PROGRAM_KEY}`;
+    };
+
+    _installed.add(material);
     material.needsUpdate = true;
+}
+
+// Captured once so installTerrestrialRefractionOnMaterial can tell "this
+// material uses Three's default cache key" from "it defines its own".
+const _defaultCacheKey = Material.prototype.customProgramCacheKey;
+
+// Exposed for tests: is this specific material instance patched?
+export function isTerrestrialRefractionInstalled(material) {
+    return _installed.has(material);
 }

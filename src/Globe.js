@@ -17,6 +17,7 @@ import {earthCenterECEF} from "./SphericalMath";
 import {SITREC_APP} from "./configUtils";
 import {sharedUniforms} from "./js/map33/material/SharedUniforms";
 import {showError} from "./showError";
+import {installTerrestrialRefractionOnShaderMaterial} from "./atmosphere/terrestrialRefraction";
 
 export function createSphere(radius, radius1, segments) {
     const dayMap = new TextureLoader().load(SITREC_APP+'data/images/2_no_clouds_4k.jpg');
@@ -137,8 +138,8 @@ export function createSphereDayNight(radius, radius1, segments) {
         void main() {
             vUv = uv;
             vNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
-            vPosition = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            vPosition = applyTerrestrialRefraction_clip(modelViewMatrix * vec4(position, 1.0));
+            gl_Position = vPosition;
          }
     `,
         fragmentShader: `
@@ -207,6 +208,7 @@ export function createSphereDayNight(radius, radius1, segments) {
     `
 
     });
+    installTerrestrialRefractionOnShaderMaterial(globeMaterial);
 
     // // make a wireframe material
     // const wireframeMaterial = new MeshPhongMaterial({

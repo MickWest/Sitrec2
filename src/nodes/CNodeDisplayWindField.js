@@ -29,6 +29,7 @@ import {
 } from "./WindHelpers";
 import {isTrackSourceKey, trackDataIdFromSourceKey} from "./WindSources";
 import {MISB} from "../MISBUtils";
+import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
 // Re-export so existing importers that reach into CNodeDisplayWindField keep working.
 export {
@@ -202,6 +203,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             depthTest: false,
             depthWrite: false,
         });
+        installTerrestrialRefractionOnShaderMaterial(this.material);
 
         // visible in main view only (not look view)
         this.group.layers.mask = LAYER.MASK_MAIN;
@@ -2625,7 +2627,7 @@ const VERT = /* glsl */ `
 
         vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
         vCamDist  = length(mvPos.xyz);
-        gl_Position = projectionMatrix * mvPos;
+        gl_Position = applyTerrestrialRefraction_clip(mvPos);
         vDepth = gl_Position.w;
 
         // back-face detection: dot(surface normal, view direction)
