@@ -9,6 +9,23 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.115.0 (2026-08-04)
+
+### New Features
+- **Solar eclipses** (Lighting → Solar Eclipse): set the time and place to an eclipse and Sitrec now shows you one. The Moon's black bite crosses the Sun, the last sliver of sunlight breaks up into Baily's beads and flares as the diamond ring, and at totality the pearly corona with its streamers and the pink-red prominences on the limb come out. The light goes with it: sunlight and sky dim as the Sun is covered, deep twilight arrives in the final moments and stars come out, and the horizon glows warm all the way round — the sunlit air beyond the shadow, which is what people actually describe seeing. An annular eclipse is treated as its own event rather than a weak total one: no corona, no prominences and no diamond ring, ever, because the ring of Sun left over stays blinding, and the beads appear only at the two moments the Moon's edge is tangent to the Sun's from inside. Separate switches for the corona, prominences, beads and diamond ring, and for the lighting effect, plus an intensity slider. It does nothing at all — and costs nothing — whenever the Moon is not actually in front of the Sun.
+- **Show Moon Center** (Show → Celestial): draws a green crosshair on the Moon's apparent centre in the look view — where the disk is really drawn, after the atmosphere has lifted it, rather than where straight-line geometry puts it. That is about a minute of arc with the Moon 45 degrees up, and most of a lunar diameter at the horizon, so with the Moon low the two are nowhere near each other. Useful when lining the Moon up against a landmark in footage. Off by default, and saved with the sitch.
+
+### Improvements
+- **Sun glare no longer needs the halos switched on, and is on by default** (Lighting → Atmospheric Optics (Halos) → *Sun Glare*): the soft bright aureole around the Sun is scattered light, not an ice-crystal effect, so it was sitting behind the wrong switch. **Daytime sitches you already have will look slightly different** — a softer, brighter Sun; untick *Sun Glare* for the old look. During an eclipse it now fades as the Sun is covered and is gone at totality.
+
+### Bug Fixes
+- Fixed the Moon's shadow being drawn in the wrong place on the ground and too small (Show → Celestial → *Show Moon's Shadow*). The cone was aimed along the Earth-to-Sun line rather than the Sun-to-Moon line, which shifted the shadow about 15 km — a fifth of its own width for the August 2026 eclipse — and it narrowed slightly too fast, leaving the shadow about 5% too small. The edges of the cone now leave the Moon's edge rather than its centre.
+- Fixed Earth's shadow being drawn the same length all year round (Show → Celestial → *Show Earth's Shadow*). The Earth-Sun distance varies by about 1.7% over the year and the shadow's length varies with it, but a fixed average was being used. The cone's taper was also about 1% too steep.
+- Fixed a sitch that asks for Earth's shadow to be shown opening with it hidden anyway — a misspelling threw the setting away every time.
+- Fixed the Sun being drawn a shade too large. It now uses the modern standard figure for the Sun's radius, the same one the eclipse timings are worked out from, so the disks are drawn touching at the moment the calculated contact times say they do.
+
+---
+
 ## Version 2.114.0 (2026-08-04)
 
 ### New Features

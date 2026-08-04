@@ -10,6 +10,9 @@ import {Ray, Raycaster, Sphere, Vector3} from "three";
 import {calculateAltitude} from "../threeExt";
 import {getHUDColor} from "../HUDColor";
 
+// Full extent of the Moon-centre crosshair, in canvas pixels.
+const MOON_CENTER_CROSSHAIR_PX = 20;
+
 const registeredLabels = new Set();
 
 export function registerLabel3D(label) {
@@ -48,7 +51,75 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         }).name(this.overlayView.id + " Only label planets").tooltip("When checked, suppress star labels but always show planet names").listen();
         this.addSimpleSerial("onlyLabelPlanets");
 
+        // Only on the look view, and named without the view prefix the two
+        // controls above carry, because there is exactly one of it — the look
+        // view is where the Moon is measured against footage.
+        this.showMoonCenter = false;
+        if (this.overlayView.id === "lookView") {
+            gui.add(this, "showMoonCenter").onChange(() => {
+                setRenderOne(true);
+            }).name("Show Moon Center")
+                .tooltip("Draw a green crosshair on the Moon's APPARENT centre — refracted, so it marks where the disk is actually drawn. Near the horizon that is most of a lunar diameter above the geometric position.")
+                .listen();
+            this.addSimpleSerial("showMoonCenter");
+        }
+    }
 
+    // The camera the celestial sphere is actually projected with. Position is
+    // the ORIGIN because sphere coordinates are directions on a huge radius,
+    // and zoom is reset so project() returns unscaled NDC — this.zoom applies
+    // the full visual zoom (FOV + pixel-shader magnification) afterwards.
+    // See CNodeView.js:418 for that split.
+    buildSkyCamera() {
+        const camera = this.camera.clone();
+        if (this.camera.renderedFOV) {
+            camera.fov = this.camera.renderedFOV;
+        }
+        camera.zoom = 1;
+        camera.position.set(0, 0, 0);
+        camera.aspect = this.widthPx / this.heightPx;
+        this.applyCameraOffset(camera);
+        camera.updateMatrix();
+        camera.matrixWorld.copy(camera.matrix);
+        camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+        camera.updateProjectionMatrix();
+        return camera;
+    }
+
+    // A 20 px green crosshair on the Moon's apparent centre.
+    //
+    // planetSprites["Moon"].equatorial is the REFRACTED centre — CPlanets
+    // computes it with applyRefractionECI precisely so overlay labels track the
+    // visible disk, and re-syncs it per view so it reflects the rendering
+    // view's observer. The mesh itself sits at the geometric position and is
+    // bent per-vertex in the shader, so the geometric centre would miss the
+    // drawn disk by the full refraction — about a lunar diameter at the horizon.
+    drawMoonCenter() {
+        const moon = this.nightSky?.planets?.planetSprites?.["Moon"];
+        if (!moon?.equatorial) return;
+
+        const pos = moon.equatorial.clone();
+        pos.applyMatrix4(this.nightSky.celestialSphere.matrix);
+        pos.project(this.buildSkyCamera());
+        // Behind the camera projects to plausible-looking x/y, so gate on z.
+        if (pos.z <= -1 || pos.z >= 1) return;
+
+        const zoomedX = pos.x * this.zoom - this._panShiftX;
+        const zoomedY = pos.y * this.zoom + this._panShiftY;
+        const x = (zoomedX + 1) * this.widthPx / 2;
+        const y = (-zoomedY + 1) * this.heightPx / 2;
+
+        const arm = MOON_CENTER_CROSSHAIR_PX / 2;
+        this.ctx.save();
+        this.ctx.strokeStyle = "#00ff00";
+        this.ctx.lineWidth = 1;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x - arm, y);
+        this.ctx.lineTo(x + arm, y);
+        this.ctx.moveTo(x, y - arm);
+        this.ctx.lineTo(x, y + arm);
+        this.ctx.stroke();
+        this.ctx.restore();
     }
 
     get showSatelliteNames() {
@@ -87,6 +158,10 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
         this.renderLabels3D(frame);
 
+        // Before the star/satellite early-out: the crosshair is its own toggle
+        // and must not depend on either of those being on.
+        if (this.showMoonCenter) this.drawMoonCenter();
+
         const showSatelliteNames = this.showSatelliteNames;
         if (!this.showStarNames && !showSatelliteNames) return
 
@@ -109,22 +184,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         }
 
         if (this.showStarNames) {
-            const starCamera = this.camera.clone();
-            if (this.camera.renderedFOV) {
-                starCamera.fov = this.camera.renderedFOV;
-            }
-            // Reset inherited camera.zoom so pos.project() returns unscaled NDC.
-            // The final this.zoom multiply captures the full visual zoom (FOV +
-            // pixel-shader magnification). See CNodeView.js:418 for the split.
-            starCamera.zoom = 1;
-            starCamera.position.set(0, 0, 0);
-            starCamera.aspect = this.widthPx / this.heightPx;
-            this.applyCameraOffset(starCamera);
-            starCamera.updateMatrix();
-            starCamera.matrixWorld.copy(starCamera.matrix);
-            starCamera.matrixWorldInverse.copy(starCamera.matrixWorld).invert();
-            starCamera.updateProjectionMatrix();
-            this.renderStarNames(starCamera, earthSphere, actualCameraPosition, date, starAlpha);
+            this.renderStarNames(this.buildSkyCamera(), earthSphere, actualCameraPosition, date, starAlpha);
         }
 
         if (showSatelliteNames) {
