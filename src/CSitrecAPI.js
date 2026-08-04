@@ -21,8 +21,11 @@ import {showError} from "./showError";
 import GUI from "./js/lil-gui.esm";
 import {Vector3} from "three";
 import {ModelFiles, CNode3DObject} from "./nodes/CNode3DObject";
-import {LLAToECEF} from "./LLA-ECEF-ENU";
-import {getLocalUpVector} from "./SphericalMath";
+import {LLAToECEF, ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
+import {getLocalUpVector, altitudeHAE} from "./SphericalMath";
+import {Raycaster} from "three";
+import {raycastLocalGround} from "./raycastGround";
+import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {par} from "./par";
 import {ViewMan} from "./CViewManager";
 import {areControlsHidden, toggleControlsVisibility} from "./PageStructure";
@@ -101,6 +104,46 @@ class CSitrecAPI {
                     const lla = camera._LLA;
                     camera.setLLA(lla[0], lla[1], v.alt);
                     return { success: true, newAltitude: v.alt };
+                }
+            },
+
+            getGroundAltitude: {
+                doc: "Ground altitude at a lat/lon, taken from the Google 3D building tiles where"
+                    + " they cover the point and the terrain elevation map elsewhere. Prefer this to"
+                    + " a photograph's EXIF altitude, which cannot be trusted: some cameras write"
+                    + " height above the ELLIPSOID while labelling it 'above sea level', so the same"
+                    + " number means two things ~40 m apart depending on the camera.",
+                params: {
+                    lat: "Latitude in degrees (float, optional — defaults to the camera's)",
+                    lon: "Longitude in degrees (float, optional — defaults to the camera's)"
+                },
+                fn: (v) => this.groundAltitudeAt(v?.lat, v?.lon)
+            },
+
+            setCameraToEyeLevel: {
+                doc: "Put the camera at eye height above the ground at its current lat/lon, using"
+                    + " the 3D tile surface where available. This is how to place an observer for a"
+                    + " photograph taken from the ground or a low structure — it needs only the GPS"
+                    + " position, which is reliable, and never the GPS altitude, which is not.",
+                params: {
+                    eyeHeight: "Metres above the ground (float, optional, default 1.6 — standing eye height)"
+                },
+                fn: (v) => {
+                    const camera = NodeMan.get("fixedCameraPosition", false);
+                    if (!camera) return {success: false, error: "fixedCameraPosition node not found"};
+                    const eye = Number.isFinite(v?.eyeHeight) ? v.eyeHeight : 1.6;
+                    const lla = camera._LLA;
+                    const ground = this.groundAltitudeAt(lla[0], lla[1]);
+                    if (!ground.success) return ground;
+                    // setLLA takes MSL, which is what groundAltitudeAt reports as altMSL.
+                    const altMSL = ground.altMSL + eye;
+                    camera.setLLA(lla[0], lla[1], altMSL);
+                    setRenderOne(true);
+                    return {
+                        success: true, lat: lla[0], lon: lla[1],
+                        groundAltMSL: ground.altMSL, groundAltHAE: ground.altHAE,
+                        eyeHeight: eye, altMSL, source: ground.source,
+                    };
                 }
             },
 
@@ -1862,6 +1905,47 @@ class CSitrecAPI {
         }
 
         this._menuDocCache = null;
+    }
+
+    // Ground altitude under a lat/lon, preferring the 3D tile surface.
+    //
+    // Straight down from 100 km: that clears the tallest tile geometry and any
+    // terrain, and the ray runs along the ellipsoid normal so it lands on the
+    // point directly beneath rather than a slanted neighbour. raycastLocalGround
+    // tests the Google tiles FIRST and only falls back to the elevation map where
+    // they miss — which matters, because a 30 m elevation grid smooths cliffs and
+    // buildings away exactly where an observer is most likely to be standing.
+    groundAltitudeAt(lat, lon) {
+        const camNode = NodeMan.get("fixedCameraPosition", false);
+        if (lat === undefined || lon === undefined) {
+            if (!camNode) return {success: false, error: "no lat/lon given and no camera to take one from"};
+            const lla = camNode._LLA;
+            lat = lat ?? lla[0];
+            lon = lon ?? lla[1];
+        }
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+            return {success: false, error: "lat/lon must be finite numbers"};
+        }
+
+        const high = LLAToECEF(lat, lon, 100000);
+        const down = getLocalUpVector(high).negate();
+        const raycaster = new Raycaster(high, down, 0, 200000);
+        // The tiles sit on the main/look layers, and raycastLocalGround widens the
+        // mask to the camera's — so hand it a camera or the tiles are skipped.
+        const camera = ViewMan.get("lookView", false)?.camera
+            ?? ViewMan.get("mainView", false)?.camera;
+        const hit = raycastLocalGround(raycaster, camera);
+        if (!hit) return {success: false, error: "no ground found under that position"};
+
+        const altHAE = altitudeHAE(hit.point);
+        const geoid = meanSeaLevelOffset(lat, lon);
+        return {
+            success: true, lat, lon,
+            altHAE, altMSL: altHAE - geoid, geoidOffset: geoid,
+            // isTerrain is false only for the bare-ellipsoid fallback, i.e. nothing
+            // was actually hit — worth reporting rather than passing off as ground.
+            source: hit.isTerrain ? "tiles-or-terrain" : "ellipsoid-fallback",
+        };
     }
 
     _extractControllerDoc(controller) {
