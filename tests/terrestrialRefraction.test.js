@@ -2,6 +2,65 @@
 //
 // The numbers here are the Copenhagen → Turning Torso case that motivated the
 // feature: a 20.574 km sight line across the Øresund, measured in Sitrec.
+//
+// ---------------------------------------------------------------------------
+// REGRESSION MATRIX for this feature, from an adversarial review. Several of
+// these cannot be unit tests — they are here because this is the file anyone
+// changing the feature will open, and because the ones NOT yet covered are the
+// ones most likely to break quietly.
+//
+// Covered here:
+//   [x] Two otherwise-identical stock materials, one carrying another
+//       onBeforeCompile patch (patchMaterialForLinearOutput), keep DISTINCT
+//       program cache keys after installation. Three's default key is
+//       onBeforeCompile.toString(), so wrapping it collapses that distinction
+//       and materials silently share a program.
+//   [x] A CLONE of a patched material installs independently. Material.copy()
+//       JSON-copies userData but not onBeforeCompile, so install state must not
+//       live in userData.
+//   [x] A chained callback still receives the material as `this`.
+//   [x] A shader that CALLS the chunk still gets the DEFINITION injected —
+//       guard on the marker, never on the function name.
+//   [x] Three's real sprite and LineMaterial sources still contain the anchors
+//       the patcher matches, so a Three upgrade fails here rather than silently
+//       leaving every LOS line geometric.
+//
+// Covered by `npm run test-fast` (pixel baselines, refraction default-off):
+//   [x] Every baseline stays at 0 px with the feature disabled, including
+//       scenes with sprites, Line2, glTF models and helpers. This is the check
+//       that caught a shader failing to LINK — invisible to unit tests and to a
+//       green build, because it breaks before uTerrK == 0 can matter.
+//
+// NOT yet covered — check these by hand until they are:
+//   [ ] Stable-shadow receiver installed BEFORE and AFTER terrestrial
+//       installation: both orders must compile with both patches present.
+//   [ ] Serialize/restore a patched material; verify it ends up installed
+//       exactly once.
+//   [ ] Two simultaneous views with different cameras, plus a CubeCamera
+//       environment map, all get camera-correct bend axes. Structurally handled
+//       by the GlobalScene.onBeforeRender hook, but unverified.
+//   [ ] Shadows, groundBelow, AGL, LOS traversal and terrain raycasts stay
+//       geometric. True by construction (the warp is clip-position only) but
+//       not asserted anywhere.
+//   [ ] Line2 screen width and dash phase unchanged at 0.7 render scale, with
+//       MSAA, and through viewport / scripted-video supersampled export.
+//   [ ] Edge-of-frustum sprites, models and tiles do not pop. Culling and
+//       transparent sorting both happen BEFORE the vertex shader, so a bent
+//       object can be culled while visibly inside the frame.
+//
+// Blocked on work not done (see the commit log for why):
+//   [ ] The long-exposure mask and aerial-distance prepass should exclude
+//       CPU-apparent satellites and helpers, and match the silhouettes of every
+//       geometry type they include. Both still render the whole scene through a
+//       single override material that cannot reproduce Line2, sprite or
+//       instanced transforms.
+//   [ ] Labels, feature markers, track selection, picking and edit handles stay
+//       attached at k=0.13, k=0.5 and at the 34' cap. Needs the CPU apparent-
+//       projection helper and an iterative inverse for picking.
+//
+// Moot: the fallback globe is deliberately geometric — see the comment in
+// Globe.js for the tessellation arithmetic.
+// ---------------------------------------------------------------------------
 
 import {
     TERRESTRIAL_REFRACTION_DEFAULTS,
