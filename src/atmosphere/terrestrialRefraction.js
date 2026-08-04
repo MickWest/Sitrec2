@@ -398,3 +398,62 @@ const _defaultCacheKey = Material.prototype.customProgramCacheKey;
 export function isTerrestrialRefractionInstalled(material) {
     return _installed.has(material);
 }
+
+// Mark a subtree as neither lofted nor an occluder. The sweep does not descend
+// into it at all, so this is also how the big already-handled subtrees (terrain,
+// 3D tiles) are kept out of a per-sweep walk of thousands of meshes.
+export const NO_TERRESTRIAL_REFRACTION = "sitrecNoTerrestrialRefraction";
+
+export function excludeFromTerrestrialRefraction(object3D) {
+    if (!object3D) return;
+    if (!object3D.userData) object3D.userData = {};
+    object3D.userData[NO_TERRESTRIAL_REFRACTION] = true;
+}
+
+const _asMaterials = m => (Array.isArray(m) ? m : [m]);
+
+// Walk the scene, installing the patch on anything not yet covered and tagging
+// solid opaque meshes as occluders.
+//
+// Object3D.traverse() cannot prune — it recurses unconditionally after the
+// callback — so this is an explicit stack. Pruning is the whole point: the
+// terrain and 3D-tile groups hold thousands of meshes whose materials are
+// already patched at creation, and walking them repeatedly would dwarf the
+// cost of everything else here.
+//
+// Returns the number of materials newly installed, so the caller can tell a
+// settled scene from one that is still streaming in.
+export function sweepTerrestrialRefraction(root, occluderBit = -1) {
+    if (!root) return 0;
+    let installedCount = 0;
+    const stack = [root];
+    while (stack.length) {
+        const o = stack.pop();
+        if (o.userData && o.userData[NO_TERRESTRIAL_REFRACTION]) continue;
+
+        const material = o.material;
+        if (material) {
+            let opaque = false;
+            for (const m of _asMaterials(material)) {
+                if (!m) continue;
+                if (!_installed.has(m)) {
+                    installTerrestrialRefractionOnMaterial(m);
+                    installedCount++;
+                }
+                if (!m.transparent) opaque = true;
+            }
+            // Only solid geometry occludes. A Line2 quad, a billboard sprite or
+            // a translucent cloud must not mask a star or clamp haze depth —
+            // and the single override material used by those passes could not
+            // reproduce their vertex transforms anyway.
+            if (occluderBit >= 0 && o.isMesh) {
+                if (opaque) o.layers.enable(occluderBit);
+                else o.layers.disable(occluderBit);
+            }
+        }
+
+        const children = o.children;
+        for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+    }
+    return installedCount;
+}

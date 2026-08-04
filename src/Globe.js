@@ -17,7 +17,6 @@ import {earthCenterECEF} from "./SphericalMath";
 import {SITREC_APP} from "./configUtils";
 import {sharedUniforms} from "./js/map33/material/SharedUniforms";
 import {showError} from "./showError";
-import {installTerrestrialRefractionOnShaderMaterial} from "./atmosphere/terrestrialRefraction";
 
 export function createSphere(radius, radius1, segments) {
     const dayMap = new TextureLoader().load(SITREC_APP+'data/images/2_no_clouds_4k.jpg');
@@ -138,7 +137,20 @@ export function createSphereDayNight(radius, radius1, segments) {
         void main() {
             vUv = uv;
             vNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
-            vPosition = applyTerrestrialRefraction_clip(modelViewMatrix * vec4(position, 1.0));
+            // NOT terrestrially refracted, deliberately. This sphere is 80x80
+            // segments — ~500 km per edge — and a per-vertex warp is linearly
+            // interpolated across it. The midpoint error of that interpolation is
+            // inherently about HALF the bend at the edge scale (~7' here), and it
+            // barely improves with tessellation: 320 segments is 16x the triangles
+            // for 2-7' of remaining error, and reaching 0.25' would need ~2860
+            // segments and 16M triangles. So warping it would be less accurate
+            // than leaving it alone, at a real cost.
+            //
+            // It does not matter: the globe is the ground only when no terrain is
+            // loaded, which is the whole-planet view where a sub-degree bend is
+            // meaningless. Wherever refraction is actually being measured, terrain
+            // and 3D tiles cover the near ground and those ARE lofted.
+            vPosition = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             gl_Position = vPosition;
          }
     `,
@@ -208,7 +220,6 @@ export function createSphereDayNight(radius, radius1, segments) {
     `
 
     });
-    installTerrestrialRefractionOnShaderMaterial(globeMaterial);
 
     // // make a wireframe material
     // const wireframeMaterial = new MeshPhongMaterial({

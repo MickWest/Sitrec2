@@ -21,6 +21,7 @@ import {GlobalScene} from "../LocalFrame";
 import {REFRACTION_DEFAULTS} from "./refraction";
 import {
     resolveTerrestrialK,
+    sweepTerrestrialRefraction,
     TERRESTRIAL_REFRACTION_DEFAULTS,
     terrestrialOptsFrom,
     updateTerrestrialRefractionUniforms,
@@ -68,6 +69,15 @@ export function ensureRefractionSettings() {
 // one chained hook covers every one of those paths with the right camera.
 let _sceneHookInstalled = null;
 
+// Coverage sweep cadence. New materials appear when a model finishes loading or
+// a node is added, not every frame, so walking the scene every frame would be
+// pure waste. Once every SWEEP_INTERVAL_MS bounds the latency for a newly added
+// object to well under a second while costing nothing measurable; and when
+// refraction is off the sweep does not run at all, so the whole mechanism is
+// free in the default configuration.
+const SWEEP_INTERVAL_MS = 500;
+let _lastSweepMs = -1e9;
+
 export function installTerrestrialRefractionSceneHook(scene) {
     if (!scene || _sceneHookInstalled === scene) return;
     const previous = scene.onBeforeRender;
@@ -75,15 +85,29 @@ export function installTerrestrialRefractionSceneHook(scene) {
         if (typeof previous === "function") {
             previous.call(this, renderer, sceneArg, camera, renderTarget);
         }
-        updateTerrestrialRefractionUniforms(camera, terrestrialOptsFrom(Sit, Globals));
+        const opts = terrestrialOptsFrom(Sit, Globals);
+        updateTerrestrialRefractionUniforms(camera, opts);
+
+        if (!opts.enabled) return;
+        const now = performance.now();
+        if (now - _lastSweepMs < SWEEP_INTERVAL_MS) return;
+        _lastSweepMs = now;
+        sweepTerrestrialRefraction(this);
     };
     _sceneHookInstalled = scene;
+}
+
+// Force the next sweep to run immediately rather than waiting out the interval.
+export function resetTerrestrialRefractionSweep() {
+    _lastSweepMs = -1e9;
 }
 
 // Fold the master into the two flags the rest of the app reads.
 export function applyRefractionMaster() {
     Sit.refractionEnabled = !!(Sit.refraction && Sit.refractionSky);
-    Sit.terrestrialRefraction = !!(Sit.refraction && Sit.refractionTerrain);
+    const terrestrial = !!(Sit.refraction && Sit.refractionTerrain);
+    if (!terrestrial && Sit.terrestrialRefraction) resetTerrestrialRefractionSweep();
+    Sit.terrestrialRefraction = terrestrial;
 }
 
 // Grey out whichever of the two ways to set k is not in force, so the folder can
