@@ -79,12 +79,32 @@ export const STAR_IDENTIFY_DEFAULTS = {
     // clip is stitched by per-frame similarities, and over a 20-degree span the gnomonic scale
     // variation those similarities cannot express warps the mosaic by tens of pixels at the
     // edges - capping the within-tolerance fraction near one half however correct the solve is.
-    // Absolute count is the honest evidence measure there: the chance of N image stars landing
-    // within tolerance of projected catalog stars under one converged similarity is vanishing
-    // long before N reaches 25 (astrometry.net accepts on absolute odds for the same reason).
     // So a solve also passes with strongMatchCount matches at the reduced fraction floor.
+    //
+    // An absolute count is NOT evidence by itself, though - that depends entirely on how dense
+    // the projected catalog is. Measured on a 671-frame pan (123 image stars, 1220 px mosaic,
+    // 6.1 px tolerance): a bogus 96-degree hypothesis projected 3,495 catalog stars into the
+    // bounds, which puts a catalog star within tolerance of ~30 image stars by pure chance,
+    // and the greedy matcher duly "matched" 44 - while the correct 15.6-degree solve, whose
+    // sparse projection offers ~1.4 chance matches, earned 43 and lost the field to it by one.
+    // Hence the chance gate below, which is the density-aware half of astrometry.net's
+    // absolute-odds acceptance: a match count is only evidence in the amount it EXCEEDS what
+    // coincidence would produce against this hypothesis' own projection.
     strongMatchCount: 25,
-    strongMatchFraction: 0.35,
+    // 0.30, not the 0.35 it shipped with: on that same clip the correct solve tops out at 34%
+    // matched (the longer integration detects real stars fainter than anything the projection
+    // pools offer, and they all sit in the denominator), so 0.35 rejected it by 0.05 matches.
+    // The chance gate now does the discriminating; this floor only rules out a model that
+    // explains a corner of the map and nothing else.
+    strongMatchFraction: 0.30,
+    // The chance gate: accept only when matches >= expected + max(chanceMarginMin,
+    // chanceSigmas * sqrt(expected)), where `expected` is the chance-match count computed in
+    // projectAndMatch from the projection the matches actually came from. The sigma term is
+    // deliberately generous (4, not 3): thousands of hypotheses each get a shot at this gate,
+    // so a per-test tail probability that looks safe in isolation is not safe across a sweep.
+    // Both reference clips clear it with an order of magnitude to spare.
+    chanceMarginMin: 5,
+    chanceSigmas: 4,
     maxHypotheses: 3000,
     // Stop early once a hypothesis explains this fraction of the image stars.
     earlyExitFraction: 0.85,
@@ -796,8 +816,11 @@ async function solveFieldInner(imageStars, catalog, indexes, opts) {
  * refiner's rematch - the same projection, the same gate - so a pairing can never survive
  * refinement with a residual the verification tolerance would have rejected.
  *
- * @returns {{matches: Array, centre: number[]}|null} null when the geometry is not a camera
- *   field at all (implausible scale, or nothing in view)
+ * @returns {{matches: Array, centre: number[], nProjected: number, expected: number}|null}
+ *   null when the geometry is not a camera field at all (implausible scale, or nothing in
+ *   view). `expected` is the chance-match count for THIS projection at THIS tolerance; it
+ *   travels with the matches, exactly as nProjected does, so every later gate judges the
+ *   evidence against the density it was actually collected at.
  */
 function projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, width, centerPx,
     bounds, catalog, maxProjected) {
@@ -869,7 +892,14 @@ function projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, 
             matches.push({image: i, cat: proj[bj][2], dPx: Math.sqrt(bd)});
         }
     }
-    return {matches, centre, nProjected: proj.length};
+    // How many of these matches COINCIDENCE alone would produce: with the projected catalog
+    // this dense and the tolerance this wide, each image star has a chance hit probability of
+    // 1 - exp(-density * pi * tol^2). The match count is only evidence in the amount it
+    // EXCEEDS this.
+    const area = Math.max(1, (bx1 - bx0) * (by1 - by0));
+    const pChance = 1 - Math.exp(-proj.length * Math.PI * t2 / area);
+    const expected = imageStars.length * pChance;
+    return {matches, centre, nProjected: proj.length, expected};
 }
 
 /** The consensus a match set must reach: a fraction of what COULD have matched. An image far
@@ -881,10 +911,21 @@ function consensusNeeded(nImage, nProjected, fraction) {
     return fraction * Math.min(nImage, nProjected);
 }
 
-/** Final acceptance: the full narrow-field fraction, OR the strong absolute count at the
- * reduced fraction floor (see strongMatchCount in the defaults - wide similarity-stitched
- * mosaics cap the reachable fraction near one half regardless of correctness). */
-function consensusMet(O, nImage, nMatches, nProjected) {
+/** The density-aware half of acceptance: does the match count EXCEED what coincidence would
+ * produce against the projection these matches came from? `expected` must be the figure
+ * projectAndMatch computed alongside the matches - pairing a match set with another
+ * projection's expectation is a gate judging arithmetic that never happened. */
+function chanceOK(O, nMatches, expected) {
+    const e = expected ?? 0;
+    return nMatches >= e + Math.max(O.chanceMarginMin, O.chanceSigmas * Math.sqrt(e));
+}
+
+/** Final acceptance: beat coincidence (chanceOK - no fraction can stand in for it, see the
+ * defaults), AND carry the full narrow-field fraction OR the strong absolute count at the
+ * reduced fraction floor (see strongMatchCount - wide similarity-stitched mosaics cap the
+ * reachable fraction near one half regardless of correctness). */
+function consensusMet(O, nImage, nMatches, nProjected, expected) {
+    if (!chanceOK(O, nMatches, expected)) return false;
     if (nMatches >= consensusNeeded(nImage, nProjected, O.minMatchFraction)) return true;
     return nMatches >= O.strongMatchCount
         && nMatches >= consensusNeeded(nImage, nProjected, O.strongMatchFraction);
@@ -894,15 +935,16 @@ function consensusMet(O, nImage, nMatches, nProjected) {
  * passed or not, because the interesting failure is the one that misses by a star or two - and
  * the denominator (min of the image count and what the catalog could even show) is the term
  * that moves when the caller changes the input star set. */
-function consensusDetail(O, nImage, nMatches, nProjected) {
+function consensusDetail(O, nImage, nMatches, nProjected, expected) {
     const denom = Math.min(nImage, nProjected);
     return {
-        nMatches, nImage, nProjected, denom,
+        nMatches, nImage, nProjected, denom, expected,
         fraction: denom ? nMatches / denom : 0,
         needNarrow: consensusNeeded(nImage, nProjected, O.minMatchFraction),
         needStrong: consensusNeeded(nImage, nProjected, O.strongMatchFraction),
         strongCount: O.strongMatchCount,
-        met: consensusMet(O, nImage, nMatches, nProjected),
+        chanceOK: chanceOK(O, nMatches, expected),
+        met: consensusMet(O, nImage, nMatches, nProjected, expected),
     };
 }
 
@@ -938,6 +980,10 @@ function verifyHypothesis(imageStars, mirrored, T, c0, b0, P, catQ, catalog, dee
     const {matches} = pm;
     diagMax("provisionalMatches", matches.length);
     if (matches.length < O.minMatches) { diagCount("rej.minMatches"); return null; }
+    if (!chanceOK(O, matches.length, pm.expected)) {
+        diagCount("rej.provisionalChance");
+        return null;
+    }
     if (matches.length < consensusNeeded(imageStars.length, pm.nProjected, O.provisionalMatchFraction)) {
         diagCount("rej.provisionalFraction");
         return null;
@@ -945,7 +991,8 @@ function verifyHypothesis(imageStars, mirrored, T, c0, b0, P, catQ, catalog, dee
     // nProjected travels WITH the matches. It is the denominator every consensus test divides
     // by, so a match set and a projection count from different projections is a gate judging
     // arithmetic that never happened.
-    return {matches, mirrored, T: T1, c0: c1, b0: b1, nProjected: pm.nProjected};
+    return {matches, mirrored, T: T1, c0: c1, b0: b1, nProjected: pm.nProjected,
+        expected: pm.expected};
 }
 
 /**
@@ -984,12 +1031,13 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
     // really held and so demanded more matches than the evidence could ever supply: conservative,
     // but conservative by accident, and it made the diagnostics quote a figure that was fiction.
     let nProjected = best.nProjected ?? matches.length;
+    let expected = best.expected ?? 0;
 
     // One record per finalist: what refinement did to it, and the acceptance arithmetic it was
     // finally judged on. "refinement lost the match consensus" is the same sentence whether the
     // rematch collapsed, a round rolled back, or the match set never moved and the DENOMINATOR
     // grew - and those want completely different fixes.
-    const fin = DIAG && {provisional: matches.length, rounds: [], nProjected};
+    const fin = DIAG && {provisional: matches.length, rounds: [], nProjected, expected};
     if (fin) DIAG.finalists.push(fin);
 
     for (let round = 0; round < O.refineRounds; round++) {
@@ -997,7 +1045,7 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
         // pair the NEW transform with the OLD matches and residuals - the exact stale mixture
         // this loop exists to prevent - so every failure path restores the last triple that
         // was verified together.
-        const prev = {T, c0, b0, matches, nProjected};
+        const prev = {T, c0, b0, matches, nProjected, expected};
 
         // 1. Re-centre the tangent point on the image centre, under the current model.
         const cPlane = applySim(T, centerPx[0], mirrored ? -centerPx[1] : centerPx[1]);
@@ -1031,31 +1079,33 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
         const pm = projectAndMatch(imageStars, mirrored, T, c0, b0, allIdx, allVec, tolPx,
             width, centerPx, bounds, catalog, maxProjected);
         if (!pm || pm.matches.length < O.minMatches
-            || !consensusMet(O, imageStars.length, pm.matches.length, pm.nProjected)) {
+            || !consensusMet(O, imageStars.length, pm.matches.length, pm.nProjected, pm.expected)) {
             if (fin) {
                 fin.rounds.push({round, rolledBack: !pm ? "projectNull" : "rematchBelowGates",
                     ...(pm ? consensusDetail(O, imageStars.length, pm.matches.length,
-                        pm.nProjected) : {})});
+                        pm.nProjected, pm.expected) : {})});
             }
-            ({T, c0, b0, matches, nProjected} = prev);
+            ({T, c0, b0, matches, nProjected, expected} = prev);
             break;
         }
         if (fin) {
             fin.rounds.push({round, committed: pm.matches.length,
-                ...consensusDetail(O, imageStars.length, pm.matches.length, pm.nProjected)});
+                ...consensusDetail(O, imageStars.length, pm.matches.length, pm.nProjected,
+                    pm.expected)});
         }
         matches = pm.matches;
         nProjected = pm.nProjected;
+        expected = pm.expected;
     }
 
     // Refinement only ever rematches with the verification gate, but hold the acceptance
     // criteria at the end regardless - a solve that degrades below them must not ship.
     if (fin) {
         Object.assign(fin, {final: matches.length, nProjected},
-            consensusDetail(O, imageStars.length, matches.length, nProjected));
+            consensusDetail(O, imageStars.length, matches.length, nProjected, expected));
     }
     if (matches.length < O.minMatches
-        || !consensusMet(O, imageStars.length, matches.length, nProjected)) {
+        || !consensusMet(O, imageStars.length, matches.length, nProjected, expected)) {
         return {ok: false, reason: "refinement lost the match consensus"};
     }
 
