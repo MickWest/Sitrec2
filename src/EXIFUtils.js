@@ -7,6 +7,7 @@ import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {intersectSurface} from "./threeExt";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 import {atan, degrees, m2f, radians} from "./utils";
+import {applyExifUtcOffset, pickExifUtcOffset} from "./exifCaptureTime";
 
 let exifrPromise;
 
@@ -398,6 +399,15 @@ function applyImportedImageCaptureDateTime(metadata, filename = "", options = {}
     // Dropped image's embedded EXIF date establishes the slider reset target.
     GlobalDateTimeNode.establishDateTimeDefaults();
 
+    // Whether the instant is known or inferred is worth saying: with no
+    // OffsetTime tag the time is only as good as the assumption that the
+    // photograph was taken in this computer's timezone.
+    if (logResult && metadata?.capture?.utcOffset === undefined) {
+        console.log(`[EXIF] ${filename}: no OffsetTime tag — capture time assumed to be in `
+            + `this computer's timezone (${Intl.DateTimeFormat().resolvedOptions().timeZone}). `
+            + `If the photo was taken elsewhere, set the time by hand.`);
+    }
+
     if (render) {
         setRenderOne(true);
     }
@@ -679,6 +689,12 @@ export async function extractJPEGImportMetadata(arrayBuffer, filename = "") {
     }
 
     const captureDate = pickValue(raw, ["DateTimeOriginal", "CreateDate", "ModifyDate"]);
+    // EXIF timestamps carry no zone, so exifr reads them as wall-clock on THIS
+    // machine. OffsetTimeOriginal is the zone the camera recorded; without it a
+    // Berlin photo opened on a US machine lands nine hours out. See
+    // exifCaptureTime.js.
+    const utcOffset = pickExifUtcOffset(raw);
+    const captureInstant = applyExifUtcOffset(captureDate?.value, utcOffset);
     const orientation = await exifr.orientation(arrayBuffer).catch(() => undefined);
     const signedAltitude = altitudeSource?.value !== undefined
         ? (altitudeRefSource?.value === 1 ? -altitudeSource.value : altitudeSource.value)
@@ -693,8 +709,13 @@ export async function extractJPEGImportMetadata(arrayBuffer, filename = "") {
             serialNumber: raw?.SerialNumber,
         },
         capture: {
-            date: captureDate?.value,
+            date: captureInstant,
             dateSource: captureDate?.key,
+            // Present only when the camera recorded a zone. Absent means the date
+            // is a guess made in the viewer's timezone — which callers may want
+            // to say out loud rather than present as fact.
+            utcOffset,
+            utcOffsetSource: utcOffset !== undefined ? "EXIF" : undefined,
             exposureTime: raw?.ExposureTime,
             shutterSpeedValue: raw?.ShutterSpeedValue,
             apertureValue: raw?.ApertureValue,
