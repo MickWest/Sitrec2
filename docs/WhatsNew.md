@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.116.3 (2026-08-05)
+
+### New Features
+- **Auto detect threshold** (Video → Star Tracker → Star Tracker Tweaks): off by default; when switched on, each run measures from the footage itself how faint a point of light must be to count as a star, instead of trusting the slider. A few frames spread across the clip are sampled at a very permissive setting, and the threshold is set where the count of detections stops collapsing — above the noise, but never so low that real stars are destroyed at the detection stage, which nothing later can undo. The *Detect threshold (sigma)* slider shows what was chosen; when the frames are too sparse to read, your own setting stands.
+
+### Improvements
+- **Star identification covers sparse, medium-wide views that fell between its search bands** (Video → Star Tracker): the star catalog is searched in bands — brighter stars over wide fields, fainter stars over narrow ones — and a wide view holding only ten or eleven stars could fall between two bands, with no pattern to match in either. A new middle band closes the gap: it solved a time-lapse with people repeatedly crossing the lens that every previous configuration refused, matched two sparse stretches of another clip that had refused at every band, and lifted a degraded panning capture from one matched stretch to four — with every named star verified correct.
+- **Identification that fails outright now retries with only its most dependable stars** (Video → Star Tracker): one or two marginal detections can choke the matching even when the sky is perfectly recognisable from the reliably tracked stars, so a failed run retries with just the twelve — then eleven — stars tracked most persistently. Because a smaller set is inherently easier to satisfy, an answer found this way is only accepted after it has been re-checked against every star that was tracked, held to the full set's own standards; a rescued result still names every star the answer explains, and the status line says it was rescued.
+- **The Star Tracker status line shows its full text when hovered** (Video → Star Tracker): long messages — failure reasons especially — were cut off at the edge of the row and unreadable. Resting the pointer on the Status row now shows the complete text as a tooltip.
+
+### Bug Fixes
+- Fixed star identification failing at its default detection threshold on footage that solved at nearly every other threshold setting (Video → Star Tracker). Matching works by comparing small patterns of neighbouring stars between the image and the catalog, and the image side was drawing its patterns from slightly too few neighbours — so one or two stray detections, such as real stars just past a band's brightness cut, could push the true partners out of reach until no pattern the catalog knew was ever tried. The image now looks two neighbours deeper, trying all the original patterns first so everything that already solved is untouched. The deeper search also made three inputs that had previously been matched to a confidently wrong patch of sky now refuse, or find the right one.
+
+---
+
 ## Version 2.116.2 (2026-08-05)
 
 ### Improvements
