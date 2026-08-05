@@ -26,6 +26,8 @@ import {
     attachRays, classifyTracksSpherical, gnomonicChart, statesFromChain2D,
 } from "./StarSolveSphere";
 import {refineGlobalSphericalAsync} from "./StarSphereSolvePool";
+import {detectInPool, detectWorkersAvailable, ensureDetectPool, terminateDetectWorkers}
+    from "./StarDetectPool";
 import {framePixelToFrame, refToFrame} from "./StarSphere";
 import {LENS_PRESETS, lensFOV, serializeLens} from "../CameraLens";
 import {
@@ -243,10 +245,15 @@ function videoView() {
  * so a not-yet-decoded frame silently masquerades as a duplicate of its predecessor - which the
  * matcher would read as the camera having stopped. Driving par.frame as well keeps the render loop
  * and this pass asking for the same frame, instead of the decoder thrashing between two.
+ *
+ * drivePlayhead=false decodes WITHOUT moving par.frame. The pipelined pass decodes ahead of the
+ * frames it has finished measuring, and the playhead must stay on the finished frame the preview
+ * is drawn for, not the decode frontier - the caller walks par.frame forward itself, keeping it
+ * within the pipeline depth of the frontier so the render loop's cache window still covers both.
  */
-async function frameImage(view, globalFrame, ctx) {
+async function frameImage(view, globalFrame, ctx, drivePlayhead = true) {
     const vd = view.videoData;
-    par.frame = globalFrame;
+    if (drivePlayhead) par.frame = globalFrame;
     // The frame mapping comes from the SNAPSHOT, not from live state. A view locked to the In
     // point maps the global frame to a source frame by subtracting Sit.aFrame, and reading that
     // live means dragging the In marker mid-run silently re-bases the mapping part-way through -
@@ -267,16 +274,26 @@ async function frameImage(view, globalFrame, ctx) {
     return vd.getImage(f);
 }
 
+// One canvas for every frame readback, not one per frame: the analysis pass calls this hundreds
+// of times, and a fresh canvas each call is pure allocator churn. Safe to share because the
+// draw-and-read below is a single synchronous block - nothing can interleave between the
+// drawImage and the getImageData - and assigning width/height resets the canvas to the same
+// blank state a new one starts in, even when the size is unchanged.
+let pixelCanvas = null;
+let pixelCtx = null;
+
 /** Read one frame's RGBA pixels, or null. Shared by the analysis pass and the calibration. */
-async function framePixels(view, globalFrame, ctx) {
-    const img = await frameImage(view, globalFrame, ctx);
+async function framePixels(view, globalFrame, ctx, drivePlayhead = true) {
+    const img = await frameImage(view, globalFrame, ctx, drivePlayhead);
     if (!img || !img.width) return null;
-    const canvas = document.createElement("canvas");
-    canvas.width = img.width;
-    canvas.height = img.height;
-    const c2d = canvas.getContext("2d", {willReadFrequently: true});
-    c2d.drawImage(img, 0, 0);
-    return {data: c2d.getImageData(0, 0, img.width, img.height).data, W: img.width, H: img.height};
+    if (!pixelCanvas) {
+        pixelCanvas = document.createElement("canvas");
+        pixelCtx = pixelCanvas.getContext("2d", {willReadFrequently: true});
+    }
+    pixelCanvas.width = img.width;
+    pixelCanvas.height = img.height;
+    pixelCtx.drawImage(img, 0, 0);
+    return {data: pixelCtx.getImageData(0, 0, img.width, img.height).data, W: img.width, H: img.height};
 }
 
 /**
@@ -1550,44 +1567,37 @@ export async function runStarTracker() {
         // the pose lookup, which both map a global frame to an index via frame0, describe the
         // clip that was measured rather than the one that was requested.
         let analysedLast = lastFrame;
-        for (let f = frame0; f <= lastFrame; f++) {
-            if (ctx.stale()) {
-                params.status = aborted ? "aborted" : "cancelled (video changed)";
-                return null;
-            }
-            // Tested at the TOP of the loop, and never on the first frame: it must also
-            // short-circuit the `continue` taken when a frame yields no pixels, and a solve
-            // needs at least one measured frame to have anything to say.
-            if (enough && f > frame0) {
-                analysedLast = f - 1;
-                console.log(`Star Tracker: stopped early at frame ${analysedLast} of ${lastFrame}`);
-                break;
-            }
-            const done = f - frame0 + 1;
-            params.status = still ? "detecting (still image)" : `detecting ${done}/${total}`;
-            updateProgress({
-                percent: still ? 40 : (done / total) * 90,
-                status: still ? "Detecting sources in the still image"
-                    : `Detecting sources: ${done}/${total}`,
-            });
 
-            await yieldToBrowser();
-            const px = await framePixels(view, f, ctx);
-            if (!px) { perFrame.push([]); continue; }
-            if (!videoW) { videoW = px.W; videoH = px.H; }
+        // The "too big to be a star" bound scales with SENSOR AREA: the default was
+        // measured on 720p-class footage, and on a 12-megapixel astrophoto the saturated
+        // disk of a first-magnitude star legitimately covers tens of thousands of pixels -
+        // a fixed bound silently deletes exactly the brightest stars in the image.
+        const dynMaxArea = (W, H) => Math.round(STAR_DETECT_DEFAULTS.maxArea
+            * Math.max(1, (W * H) / (1276 * 720)));
+        const detectOpts = (maxArea) => ({
+            threshSigma: ctx.threshSigma,
+            minArea: ctx.minArea,
+            maxArea,
+            ...ctx.calDetect,
+        });
 
-            // The "too big to be a star" bound scales with SENSOR AREA: the default was
-            // measured on 720p-class footage, and on a 12-megapixel astrophoto the saturated
-            // disk of a first-magnitude star legitimately covers tens of thousands of pixels -
-            // a fixed bound silently deletes exactly the brightest stars in the image.
-            const dynMaxArea = Math.round(STAR_DETECT_DEFAULTS.maxArea
-                * Math.max(1, (px.W * px.H) / (1276 * 720)));
-            const {sources} = detectSources(px.data, px.W, px.H, {
-                threshSigma: ctx.threshSigma,
-                minArea: ctx.minArea,
-                maxArea: dynMaxArea,
-                ...ctx.calDetect,
-            });
+        // Everything that happens to a frame AFTER detection, shared by the parallel pass and
+        // the synchronous one so the two cannot disagree. Runs strictly in frame order however
+        // detections complete: perFrame is indexed by frame, and the first-200 cap on
+        // rejectSamples makes even the tally order-sensitive. `det` is null for a frame that
+        // yielded no pixels, else {sources, W, H, maxArea} carrying the settings detection ran
+        // with - rejection must judge with the SAME maxArea the detector used, or the two
+        // disagree about "huge" exactly when frames differ in size.
+        const finalizeFrame = (f, det) => {
+            // The playhead follows the FINISHED frames, not the decode. In the synchronous pass
+            // the two are the same and this re-asserts what frameImage already set; in the
+            // pipelined pass the decode runs ahead, and the video on screen must stay on the
+            // frame the preview circles were measured on - drawing frame N's detections over
+            // frame N+8 of a panning sky visibly misplaces every circle. The decode frontier
+            // stays within the pipeline depth of this, comfortably inside the 30-frame cache
+            // window the render loop maintains around par.frame.
+            par.frame = f;
+            if (!det) { perFrame.push([]); return; }
             // The WHOLE detector record is kept, not a trimmed copy. Stage 3's photometry reads
             // apertureFlux/apertureComplete/apertureContaminated off it, and stripping the object
             // down to positions silently demotes every magnitude to the biased isophotal fallback.
@@ -1596,8 +1606,8 @@ export async function runStarTracker() {
             // rejected, and why, is tallied onto the result - "why is that star not circled"
             // should be answerable by looking.
             const kept = [];
-            for (const s of sources) {
-                const why = rejectReason(s, {minArea: ctx.minArea, maxArea: dynMaxArea});
+            for (const s of det.sources) {
+                const why = rejectReason(s, {minArea: ctx.minArea, maxArea: det.maxArea});
                 if (why) {
                     rejectCounts[why] = (rejectCounts[why] || 0) + 1;
                     if (rejectSamples.length < 200) {
@@ -1619,9 +1629,9 @@ export async function runStarTracker() {
             // mask was painted in: a 4K clip may be decoded at a capped resolution while the mask
             // canvas is video-sized. Scale into the mask canvas rather than assuming one grid.
             let accepted = kept;
-            if (maskUsable && px.W && px.H) {
-                const msx = maskNode.maskCanvas.width / px.W;
-                const msy = maskNode.maskCanvas.height / px.H;
+            if (maskUsable && det.W && det.H) {
+                const msx = maskNode.maskCanvas.width / det.W;
+                const msy = maskNode.maskCanvas.height / det.H;
                 accepted = [];
                 for (const s of kept) {
                     if (maskNode.isPointMasked(s.x * msx, s.y * msy)) {
@@ -1633,16 +1643,208 @@ export async function runStarTracker() {
             }
             perFrame.push(accepted);
 
-            // Live preview. `kept` is handed over by reference rather than copied: the array is
-            // freshly built each iteration and only read by the draw, so a copy per frame would
+            // Live preview. `accepted` is handed over by reference rather than copied: the array
+            // is freshly built each frame and only read by the draw, so a copy per frame would
             // be pure waste on a pass that already has thousands of frames to get through.
             if (params.showDuringAnalysis && ensureOverlay()) {
                 // What SURVIVED, not what was detected: showing masked detections would make the
                 // mask look like it was not working while it was.
-                liveDetections = {frame: f, sources: accepted, W: px.W, H: px.H};
+                liveDetections = {frame: f, sources: accepted, W: det.W, H: det.H};
                 setRenderOne();
             }
+        };
+
+        const tDetect = Date.now();
+        let workerCount = 0;
+
+        if (still || total <= 1 || !detectWorkersAvailable()) {
+            // The synchronous pass: stills and single frames (one real detection, so a pool
+            // would cost more than it saves) and environments with no Worker. Frame by frame,
+            // exactly the shape the analysis always had.
+            for (let f = frame0; f <= lastFrame; f++) {
+                if (ctx.stale()) {
+                    params.status = aborted ? "aborted" : "cancelled (video changed)";
+                    return null;
+                }
+                // Tested at the TOP of the loop, and never on the first frame: it must also
+                // short-circuit the `continue` taken when a frame yields no pixels, and a solve
+                // needs at least one measured frame to have anything to say.
+                if (enough && f > frame0) {
+                    analysedLast = f - 1;
+                    console.log(`Star Tracker: stopped early at frame ${analysedLast} of ${lastFrame}`);
+                    break;
+                }
+                const done = f - frame0 + 1;
+                params.status = still ? "detecting (still image)" : `detecting ${done}/${total}`;
+                updateProgress({
+                    percent: still ? 40 : (done / total) * 90,
+                    status: still ? "Detecting sources in the still image"
+                        : `Detecting sources: ${done}/${total}`,
+                });
+
+                await yieldToBrowser();
+                const px = await framePixels(view, f, ctx);
+                if (!px) { perFrame.push([]); continue; }
+                if (!videoW) { videoW = px.W; videoH = px.H; }
+
+                const maxArea = dynMaxArea(px.W, px.H);
+                const {sources} = detectSources(px.data, px.W, px.H, detectOpts(maxArea));
+                finalizeFrame(f, {sources, W: px.W, H: px.H, maxArea});
+            }
+        } else {
+            // The pipelined pass. Decode stays HERE - the decoder, the canvas readback and
+            // par.frame are all main-thread - and each decoded frame is handed to the worker
+            // pool while the next one decodes, so decode and detection overlap and detection
+            // itself runs across the cores. Nothing about a frame's ANSWER changes: the workers
+            // run the same detectSources on the same bytes, and finalizeFrame runs in strict
+            // frame order however the completions interleave.
+            //
+            // The decode runs AHEAD of the finished detections by at most the pool size plus a
+            // small buffer - enough that no worker ever waits for pixels. The bound matters
+            // twice over: each in-flight frame is a multi-megabyte RGBA buffer, and the
+            // decoder's getImage purges its GOP cache outside a 30-frame window of the frame it
+            // is asked for, so a decode frontier further ahead than that would fight the render
+            // loop over the cache. The pool caps at 8, so the frontier stays well inside both.
+            const results = new Map();   // frame index -> det record, null, or {retry: frame}
+            let nextIdx = 0;             // the next frame index finalizeFrame is owed
+            let dispatched = 0;          // frame indices handed to the pipeline so far
+            let inFlight = 0;
+            let maxInFlight = 1;         // grows once the pool exists and its size is known
+            let workersBroken = false;
+            // The completion gate. A single main flow waits on it, so one waiter at most.
+            let wake = null;
+            const wakeUp = () => { const w = wake; wake = null; if (w) w(); };
+            const waitWake = () => new Promise((r) => { wake = r; });
+
+            const announce = () => {
+                params.status = `detecting ${nextIdx}/${total}`;
+                updateProgress({
+                    percent: (nextIdx / total) * 90,
+                    status: `Detecting sources: ${nextIdx}/${total}`,
+                });
+            };
+
+            // Finalize every frame whose result has arrived, in order. A frame whose worker
+            // failed is re-decoded and detected here on the main thread: its pixel buffer went
+            // to the worker as a TRANSFER, so re-decoding is the recovery - same detector, same
+            // answer, just slower.
+            const settle = async () => {
+                while (nextIdx < dispatched && results.has(nextIdx)) {
+                    let det = results.get(nextIdx);
+                    results.delete(nextIdx);
+                    if (det && det.retry !== undefined) {
+                        const px = await framePixels(view, det.retry, ctx);
+                        if (px) {
+                            const maxArea = dynMaxArea(px.W, px.H);
+                            det = {sources: detectSources(px.data, px.W, px.H,
+                                detectOpts(maxArea)).sources, W: px.W, H: px.H, maxArea};
+                        } else {
+                            det = null;
+                        }
+                    }
+                    finalizeFrame(frame0 + nextIdx, det);
+                    nextIdx++;
+                    announce();
+                }
+            };
+
+            // One real yield before the dispatch loop, so the progress dialog paints before the
+            // first burst of decodes. After that the loop yields naturally: every wait on the
+            // gate below is a macrotask boundary, which is when worker replies arrive and the
+            // browser repaints - a per-frame yield here would put the ~4 ms setTimeout clamp
+            // back into a loop this change exists to unblock.
+            await yieldToBrowser();
+
+            // The playhead moves to the analysed window BEFORE the first decode, then advances
+            // per FINISHED frame in finalizeFrame while the decodes below run ahead of it
+            // without touching it. It cannot be left where the user parked it: the render loop
+            // purges the decoder's cache outside a 30-frame window of par.frame, so a playhead
+            // far from frame0 would evict the very groups the first dispatches are decoding.
+            par.frame = frame0;
+
+            for (let f = frame0; f <= lastFrame; f++) {
+                if (ctx.stale()) {
+                    params.status = aborted ? "aborted" : "cancelled (video changed)";
+                    // In-flight frames are pure waste now - stop burning cores on them.
+                    terminateDetectWorkers();
+                    return null;
+                }
+                // Tested at the TOP of the loop, and never on the first frame, exactly as the
+                // synchronous pass tests it. Frames already handed to the pipeline still finish
+                // in the drain below, so "Enough" keeps everything measured up to the click.
+                if (enough && f > frame0) {
+                    analysedLast = f - 1;
+                    console.log(`Star Tracker: stopped early at frame ${analysedLast} of ${lastFrame}`);
+                    break;
+                }
+                await settle();
+                while (inFlight >= maxInFlight) { await waitWake(); await settle(); }
+
+                const px = await framePixels(view, f, ctx, false);
+                const idx = f - frame0;
+                dispatched = idx + 1;
+                if (!px) { results.set(idx, null); continue; }
+                if (!videoW) { videoW = px.W; videoH = px.H; }
+                const maxArea = dynMaxArea(px.W, px.H);
+
+                // The pool is sized from the frames it will actually chew on - the memory bound
+                // in workerCountFor needs real dimensions - so it cannot be built until the
+                // first one is decoded.
+                if (!workersBroken && !workerCount) {
+                    try {
+                        workerCount = ensureDetectPool(px.W, px.H);
+                        maxInFlight = workerCount + 2;
+                    } catch (e) {
+                        console.warn("[StarTrack] detect worker pool failed to start; "
+                            + "detecting on the main thread", e);
+                        terminateDetectWorkers();
+                        workersBroken = true;
+                    }
+                }
+                if (workersBroken) {
+                    // The synchronous pass's shape, one frame at a time, yield included.
+                    await yieldToBrowser();
+                    const {sources} = detectSources(px.data, px.W, px.H, detectOpts(maxArea));
+                    results.set(idx, {sources, W: px.W, H: px.H, maxArea});
+                    continue;
+                }
+
+                inFlight++;
+                detectInPool(px.data, px.W, px.H, detectOpts(maxArea))
+                    .then((sources) => { results.set(idx, {sources, W: px.W, H: px.H, maxArea}); })
+                    .catch((e) => {
+                        // Rejected because the run went stale and tore the pool down: the loop
+                        // has already returned, nothing will read this frame, and warning would
+                        // blame a worker for an abort.
+                        if (ctx.stale()) { results.set(idx, {retry: f}); return; }
+                        if (!workersBroken) {
+                            workersBroken = true;
+                            console.warn("[StarTrack] detect worker failed; "
+                                + "detecting remaining frames on the main thread", e);
+                            // A broken pool can leave jobs parked on workers that will never
+                            // answer. Tearing it down fails them all NOW, into this retry path,
+                            // instead of hanging the pass on a reply that never comes.
+                            terminateDetectWorkers();
+                        }
+                        results.set(idx, {retry: f});
+                    })
+                    .finally(() => { inFlight--; wakeUp(); });
+            }
+
+            // Drain: every dispatched frame is finalized before the solve reads perFrame.
+            while (nextIdx < dispatched) {
+                if (ctx.stale()) {
+                    params.status = aborted ? "aborted" : "cancelled (video changed)";
+                    terminateDetectWorkers();
+                    return null;
+                }
+                await settle();
+                if (nextIdx < dispatched && !results.has(nextIdx)) await waitWake();
+            }
         }
+
+        console.log(`[StarTrack] detect pass ${Date.now() - tDetect}ms `
+            + `(${perFrame.length} frames, ${workerCount ? `${workerCount} workers` : "main thread"})`);
 
         // Scanning is over, so the per-frame preview stops owning the overlay - the solve stages
         // below have their own displays, and the draw order prefers this one. Cleared here rather
@@ -2114,6 +2316,8 @@ function drawLiveDetections() {
 
     // The detections belong to one frame. The render loop paints frames the scan has already moved
     // past, so drawing them on any other frame would show last frame's circles against this one.
+    // The pipelined analysis keeps this exact: it advances par.frame per FINISHED frame, together
+    // with liveDetections, while its decode runs ahead without touching the playhead.
     if (Math.round(par.frame) !== liveDetections.frame) return;
 
     // Same rescale as the finished overlay: the analysis works in the DECODED pixel space, which
