@@ -101,7 +101,9 @@ describe("identifying the Giddierone pan segments", () => {
         const {solved, tier} = await solveLikeUI(segments.long);
         expect(solved.ok).toBe(true);
         // Never the wide phone-lens tier: the correct solve must win before the fall-through.
-        expect(tier).toBe(1);
+        // (Index 2 is the deep mag-6.5 tier since the density-matched mag-5.5 tier joined the
+        // cascade at index 1.)
+        expect(tier).toBe(2);
         // Measured at the time of writing: RA 288.6, Dec +41.5, fov 15.6 deg, 77.9 px/deg,
         // 42/123 matched at rms 1.89 px. Bars leave room for catalogue and tuning drift.
         expect(Math.abs(solved.centerRaDeg - 288.6)).toBeLessThan(4);
@@ -115,7 +117,7 @@ describe("identifying the Giddierone pan segments", () => {
     test("the short segment still identifies Vega's field exactly as before", async () => {
         const {solved, tier} = await solveLikeUI(segments.short);
         expect(solved.ok).toBe(true);
-        expect(tier).toBe(1);
+        expect(tier).toBe(2);
         expect(Math.abs(solved.centerRaDeg - 283.0)).toBeLessThan(4);
         expect(Math.abs(solved.centerDecDeg - 42.2)).toBeLessThan(3);
         expect(solved.matches.length).toBeGreaterThanOrEqual(25);

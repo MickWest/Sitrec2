@@ -31,6 +31,14 @@ export const STAR_IDENTIFY_DEFAULTS = {
     // the two sets seeing slightly different stars.
     tiers: [
         {magLimit: 5.0, maxAngleDeg: 22, neighbors: 8},
+        // The density-matched middle tier: a ~15-30 deg field detects stars to mag ~5.5-6.5,
+        // and the 8-nearest-bright-neighbours rule couples magnitude depth to quad size, so
+        // tier 0's mag-5 cut can leave a sparse stretch with no representable quad at all
+        // while the mag-6.5 tier's quads are far too small to span the frame. Measured on a
+        // 28-deg field whose sparser ranges (10-11 stars) refused at every other tier: this
+        // one solves both, with every matched star verified real. 101,524 quads, ~126 ms to
+        // build, and it changed no other corpus case's result.
+        {magLimit: 5.5, maxAngleDeg: 22, neighbors: 8},
         {magLimit: 6.5, maxAngleDeg: 8, neighbors: 8},
         // The wide tier serves phone-lens fields (a 24mm-equivalent frame spans ~67 deg): only
         // the naked-eye-bright stars, quads up to 50 deg across, and a much looser code
@@ -45,8 +53,20 @@ export const STAR_IDENTIFY_DEFAULTS = {
 
     // How many image stars may form quads, and how many nearest neighbours each draws its quad
     // partners from. Bounded because quad count grows as C(k,3) per star.
+    //
+    // The neighbour depth must OUT-REACH the catalog side's pollution. The index builds quads
+    // from each catalog star's 8 nearest BRIGHT neighbours, but the image list mixes in stars
+    // the tier's index cannot contain - real stars past the magnitude cap, junk - and each
+    // interloper displaces a bright partner from the list. Measured on a 42-frame clip whose
+    // detector admitted two such stars at threshold sigma 5: at depth 7 the one quad family
+    // the index shared with the image fell out of reach and NO true hypothesis was generated
+    // at any tier (the clip solved at sigma 4 and 7, failing only in between); at depth 9 the
+    // same input solves on tier 0 with 17/18 matched, and three neighbouring inputs that
+    // previously slipped through to a confidently WRONG wide-field solve refuse or solve true
+    // instead. Depth 8 fixed only one of the two failing inputs - 9 is the validated margin,
+    // not a knife edge (10 behaves identically).
     imageQuadStars: 25,
-    imageNeighbors: 7,
+    imageNeighbors: 9,
 
     // Quad anchors are held to a tighter standard than mere detection: they must look like POINT
     // SOURCES. Extent is capped relative to THIS image's median detection, so the bar carries
@@ -685,12 +705,19 @@ async function solveFieldInner(imageStars, catalog, indexes, opts) {
             for (const mirrored of [false, true]) {
                 const mp = mirrored ? pts.map((p) => [p[0], -p[1]]) : pts;
                 const code = quadCode(mp);
-                if (code) imageQuads.push({quad, code, mirrored, diam});
+                if (code) imageQuads.push({quad, code, mirrored, diam, reach: i3});
             }
         }
     }
-    // Large quads first: their codes are the least noise-sensitive.
-    imageQuads.sort((p, q) => q.diam - p.diam);
+    // Large quads first: their codes are the least noise-sensitive. But BANDED by neighbour
+    // reach before size: quads drawn purely from each anchor's 7 nearest neighbours keep
+    // exactly the sequence every solved clip was calibrated against, and the depth-9
+    // extension quads follow. Without the banding the extension's quads - farther neighbours,
+    // so LARGER - sort ahead of the old ones and push them past the hypothesis budget, which
+    // turned two wide-field solves into refusals the moment the depth grew. Extension quads
+    // only ever get budget the old sequence failed to convert.
+    imageQuads.sort((p, q) =>
+        (p.reach <= 6 ? 0 : p.reach) - (q.reach <= 6 ? 0 : q.reach) || q.diam - p.diam);
 
     if (DIAG) {
         Object.assign(DIAG, {
@@ -1188,6 +1215,81 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
             const rd = vecToRaDec(v);
             return {raDeg: rd.ra * 180 / Math.PI, decDeg: rd.dec * 180 / Math.PI};
         },
+        // The raw plate model, for certifySolve: re-verifying this pose against a DIFFERENT
+        // star set needs the same projection the solve itself used, not a reconstruction.
+        model: {T, c0, b0, mirrored},
+    };
+}
+
+/**
+ * Re-verify an accepted solve's pose against a (typically larger) star set, with the same
+ * projection, matching, and acceptance arithmetic the solve itself was held to.
+ *
+ * Exists for solve attempts made on a REDUCED view of the evidence - the failure ladder caps
+ * the input to the most persistent tracks when the full set will not solve. Capping shrinks
+ * every consensus denominator, which makes acceptance structurally easier, so a capped view's
+ * solve may not label stars or steer a camera until the pose has been certified against the
+ * evidence that was actually collected: all of it.
+ *
+ * @param {object} solved - an ok solve from {@link solveField} (carries .model)
+ * @param {Array} fullStars - the UNCAPPED star set, same coordinate frame as the solve input
+ * @param {object} catalog - from {@link parseStarCatalog}
+ * @param {object} [opts] - overrides of STAR_IDENTIFY_DEFAULTS (the caller's solve opts)
+ * @returns {{ok: boolean, reason?: string, matches?: Array, rmsPx?: number, nImage?: number,
+ *   matchedFraction?: number, tolPx?: number}} matches index into fullStars.
+ */
+export function certifySolve(solved, fullStars, catalog, opts = {}) {
+    if (!solved?.ok || !solved.model) return {ok: false, reason: "nothing to certify"};
+    const O = {...STAR_IDENTIFY_DEFAULTS, ...opts};
+    const {T, c0, b0, mirrored} = solved.model;
+
+    // The verification geometry of the FULL set: its own bounds, its own tolerance. Using the
+    // capped view's smaller field here would understate the area the chance arithmetic
+    // divides by, which is the exact laxity certification exists to remove.
+    let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+    for (const s of fullStars) {
+        if (s.x < bx0) bx0 = s.x;
+        if (s.x > bx1) bx1 = s.x;
+        if (s.y < by0) by0 = s.y;
+        if (s.y > by1) by1 = s.y;
+    }
+    const pad = 12;
+    const bounds = opts.bounds ?? [bx0 - pad, by0 - pad, bx1 + pad, by1 + pad];
+    const width = opts.width ?? Math.max(bx1 - bx0, by1 - by0);
+    const centerPx = opts.center ?? [(bx0 + bx1) / 2, (by0 + by1) / 2];
+    const tolPx = Math.max(O.verifyPixelMin, O.verifyPixelFraction * width);
+
+    const deep = [];
+    for (let i = 0; i < catalog.n; i++) {
+        if (catalog.mag[i] <= O.verifyMagLimit) deep.push(i);
+    }
+    const deepVec = deep.map((i) => raDecToVec(catalog.ra[i], catalog.dec[i]));
+
+    const pm = projectAndMatch(fullStars, mirrored, T, c0, b0, deep, deepVec, tolPx,
+        width, centerPx, bounds, catalog, Math.max(3 * fullStars.length, 100));
+    if (!pm) return {ok: false, reason: "pose does not project as a camera field"};
+    if (pm.matches.length < O.minMatches
+        || !consensusMet(O, fullStars.length, pm.matches.length, pm.nProjected, pm.expected)) {
+        return {ok: false, reason: "pose does not hold the full set's consensus",
+            matches: pm.matches, nImage: fullStars.length};
+    }
+    let sse = 0;
+    for (const m of pm.matches) sse += m.dPx * m.dPx;
+    return {
+        ok: true,
+        matches: pm.matches.map((m) => ({
+            image: m.image,
+            cat: m.cat,
+            hip: catalog.hip[m.cat],
+            raDeg: catalog.ra[m.cat] * 180 / Math.PI,
+            decDeg: catalog.dec[m.cat] * 180 / Math.PI,
+            mag: catalog.mag[m.cat],
+            dPx: m.dPx,
+        })),
+        rmsPx: Math.sqrt(sse / pm.matches.length),
+        nImage: fullStars.length,
+        matchedFraction: pm.matches.length / fullStars.length,
+        tolPx,
     };
 }
 

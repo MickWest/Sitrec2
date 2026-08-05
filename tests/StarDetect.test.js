@@ -7,6 +7,7 @@
 import {
     STAR_DETECT_DEFAULTS,
     calibrateDetection,
+    chooseDetectionSigma,
     detectSources,
     estimateBackground,
     lumaFromRGBA,
@@ -760,5 +761,48 @@ describe("StarDetect calibration", () => {
         const {rgba, W, H} = render({starCount: 0, hotPixels: 0});
         const cal = calibrateDetection(rgba, W, H);
         expect(cal.ok).toBe(false);
+    });
+});
+
+describe("chooseDetectionSigma", () => {
+    test("the reference-like scene gets a threshold inside the measured good zone", () => {
+        // The sweep's lesson in one number: the default 5 sat in a knife edge while 2-4
+        // solved. The chooser reads the plateau off the significance CDF and must land
+        // inside [2, 6] by construction - and comfortably off the damage line for a scene
+        // with the reference clip's measured sky and noise.
+        // Full-frame dimensions and a realistic population - the probe needs enough blobs
+        // above its permissive threshold to read a plateau at all (its own sparse guard
+        // demands 40, which the small default test scene cannot supply).
+        const scene = buildScene({width: 1280, height: 720, starCount: 260, maxMag: 7.0});
+        const {rgba} = renderFrame(scene, 0);
+        const pick = chooseDetectionSigma(rgba, scene.params.width, scene.params.height);
+        expect(pick.ok).toBe(true);
+        expect(pick.sigma).toBeGreaterThanOrEqual(2);
+        expect(pick.sigma).toBeLessThanOrEqual(6);
+        // The chosen level must retain a solver-worthy population, not just the top handful.
+        expect(pick.kept).toBeGreaterThanOrEqual(10);
+    });
+
+    test("a frame too sparse to read a plateau from refuses rather than guesses", () => {
+        // A handful of blobs is an anecdote - the caller keeps its configured threshold,
+        // exactly the calibrateDetection philosophy for the same situation.
+        const scene = buildScene({starCount: 6, hotPixels: 0, laser: false,
+            movingObject: false});
+        const {rgba} = renderFrame(scene, 0);
+        const pick = chooseDetectionSigma(rgba, scene.params.width, scene.params.height);
+        expect(pick.ok).toBe(false);
+    });
+
+    test("a noisy frame never picks below the damage line", () => {
+        // Triple the reference noise: the noise face of the CDF moves up, and the pick must
+        // stay clamped at or above 2 - below it the detector destroys real stars (measured:
+        // merged airglow blobs, centroids tens of px off), which no downstream stage undoes.
+        const scene = buildScene({noiseSigma: 9.3, chromaSigma: 6.6});
+        const {rgba} = renderFrame(scene, 0);
+        const pick = chooseDetectionSigma(rgba, scene.params.width, scene.params.height);
+        if (pick.ok) {
+            expect(pick.sigma).toBeGreaterThanOrEqual(2);
+            expect(pick.sigma).toBeLessThanOrEqual(6);
+        }
     });
 });

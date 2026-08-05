@@ -73,7 +73,7 @@ function shortOpts(seg) {
  * couple of px between ANALYSIS RUNS - run C needs the wider radius.)
  */
 async function auditAgainstShort(labels, longStars, twinPx) {
-    const S = await solveField(segments.short.stars, catalog, [indexes[1]],
+    const S = await solveField(segments.short.stars, catalog, [indexes[2]],
         shortOpts(segments.short));
     expect(S.ok).toBe(true);
     let agree = 0, audited = 0;
@@ -280,16 +280,23 @@ describe("windowed identification of the degraded capture (run C)", () => {
         });
     }, 600000);
 
-    test("only the first window solves, and the result says so honestly", () => {
-        // This capture's tracker output degraded mid-clip: its FULL chart does not solve
-        // either (verified in the design investigation), so partial coverage is the truth of
-        // the data, not a windowing shortcoming.
+    test("most windows now solve, and the uncovered tail is reported honestly", () => {
+        // This capture's tracker output degraded mid-clip, and originally only the first
+        // window solved (its FULL chart never solves at all). The density-matched mag-5.5
+        // tier and the depth-9 neighbour lists then rescued the middle windows too - four
+        // windows marching with the pan, agreeing to a degree - leaving only the final
+        // stretch behind the frame-630 track-break wall uncovered. Partial coverage remains
+        // the honest truth of this data.
         expect(win.ok).toBe(true);
-        expect(win.surviving.length).toBe(1);
+        expect(win.surviving.length).toBeGreaterThanOrEqual(3);
         expect(win.surviving[0].w0).toBe(0);
+        // The windows must be ONE sky, marching: RA increases monotonically with the pan.
+        const ras = win.surviving.map((w) => w.solved.centerRaDeg);
+        for (let i = 1; i < ras.length; i++) expect(ras[i]).toBeGreaterThan(ras[i - 1] - 0.5);
         expect(win.partial).toBe(true);
         expect(win.covered[0][0]).toBe(0);
         expect(win.covered[0][1]).toBeLessThan(runC.totalFrames);
+        expect(win.disputes).toHaveLength(0);
     });
 
     test("Vega is still named - the single-model path delivers nothing here", async () => {
@@ -316,7 +323,7 @@ describe("the solver hardenings hold on the deterministic impostor", () => {
             bx0 = Math.min(bx0, s.x); bx1 = Math.max(bx1, s.x);
             by0 = Math.min(by0, s.y); by1 = Math.max(by1, s.y);
         }
-        const solved = await solveField(sub, catalog, [indexes[2]], {
+        const solved = await solveField(sub, catalog, [indexes[3]], {
             center: [(bx0 + bx1) / 2, (by0 + by1) / 2],
             width: Math.max(bx1 - bx0, by1 - by0),
             bounds: [bx0 - 12, by0 - 12, bx1 + 12, by1 + 12],

@@ -16,7 +16,8 @@ import {par} from "../par";
 import {abFrameRange} from "../TraverseAnalysisData";
 import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator";
 
-import {STAR_DETECT_DEFAULTS, calibrateDetection, detectSources, rejectReason} from "./StarDetect";
+import {STAR_DETECT_DEFAULTS, calibrateDetection, chooseDetectionSigma, detectSources,
+    rejectReason} from "./StarDetect";
 import {applyTransform, invertTransform, solveFrameChain} from "./StarMatch";
 import {STAR_SOLVE_DEFAULTS, solveStarField} from "./StarSolve";
 import {STAR_CLUSTER_DEFAULTS, groupMovingClusters} from "./StarCluster";
@@ -30,6 +31,7 @@ import {LENS_PRESETS, lensFOV, serializeLens} from "../CameraLens";
 import {
     STAR_IDENTIFY_DEFAULTS,
     buildQuadIndex,
+    certifySolve,
     chartSpansBeyondFrame,
     parseStarCatalog,
     parseStarNames,
@@ -109,6 +111,7 @@ let calibration = null;
 // another - consumers drop the calibration when this no longer matches.
 let calibrationVideoData = null;
 let minAreaController = null;
+let threshSigmaController = null;
 // Whether params.minArea currently holds a MEASURED value rather than a user-chosen one - it
 // must fall with the calibration it came from, or teardown leaves a half-calibrated set.
 let minAreaCalibrated = false;
@@ -123,6 +126,10 @@ let calibrationPending = false;
 const params = {
     // Detection
     threshSigma: STAR_DETECT_DEFAULTS.threshSigma,
+    // Resolve threshSigma from the footage before each run (chooseDetectionSigma over a few
+    // spread frames) instead of trusting the slider. Opt-in: the probe is a heuristic with
+    // measured guards, not yet a default.
+    autoSigma: false,
     minArea: STAR_DETECT_DEFAULTS.minArea,
     // Classification
     minObservations: STAR_SOLVE_DEFAULTS.minObservations,
@@ -331,6 +338,33 @@ export async function detectStarSize() {
         if (ctx.stale() || request !== calibrationRequest) return false;
         if (!px) { params.status = "no decoded frame to measure"; return true; }
 
+        let autoNote = "";
+        if (params.autoSigma) {
+            // Resolve the threshold from the footage itself: probe up to three spread frames
+            // of the analysed range and take the median recommendation. Several frames
+            // because any single one can be atypical (a cloud, a person, a flare); the
+            // median so one bad probe cannot drag the pick. When every probe refuses (too
+            // few blobs to read a plateau from), the slider's value stands - refusing to
+            // guess IS the sparse guard.
+            const [af, bf] = abFrameRange(Sit.frames, 1);
+            const sigmas = [];
+            for (const f of [...new Set([af, Math.round((af + bf) / 2), bf])]) {
+                const ppx = await framePixels(view, f, ctx);
+                if (ctx.stale() || request !== calibrationRequest) return false;
+                if (!ppx) continue;
+                const pick = chooseDetectionSigma(ppx.data, ppx.W, ppx.H);
+                if (pick.ok) sigmas.push(pick.sigma);
+            }
+            if (sigmas.length) {
+                sigmas.sort((x, y) => x - y);
+                params.threshSigma = sigmas[sigmas.length >> 1];
+                threshSigmaController?.updateDisplay?.();
+                autoNote = `auto sigma ${params.threshSigma} (${sigmas.length} frames) - `;
+            } else {
+                autoNote = `auto sigma: unreadable frames, keeping ${params.threshSigma} - `;
+            }
+        }
+
         const cal = calibrateDetection(px.data, px.W, px.H, {threshSigma: params.threshSigma});
         if (!cal.ok) {
             // Keep whatever calibration exists. A failed measurement is not evidence the
@@ -345,7 +379,8 @@ export async function detectStarSize() {
         params.minArea = cal.minArea;
         minAreaCalibrated = true;
         if (minAreaController) minAreaController.updateDisplay();
-        params.status = `${cal.count} blobs, median ${cal.medianArea} px, r ~${cal.rPsf.toFixed(1)} px`
+        params.status = autoNote
+            + `${cal.count} blobs, median ${cal.medianArea} px, r ~${cal.rPsf.toFixed(1)} px`
             + ` -> min area ${cal.minArea}, aperture ${cal.apertureRadius}`;
         return true;
     } catch (e) {
@@ -1273,6 +1308,57 @@ export async function identifyStars() {
             if (solved.ok) break;
         }
         if (!solved || !solved.ok) {
+            // FAILURE LADDER. A knife-edge input - one or two marginal tracks the solver
+            // cannot digest - can starve quad generation while the field remains perfectly
+            // solvable from its reliable core (measured: inputs that failed outright solved
+            // from their 11-12 most persistent tracks). So retry on progressively smaller
+            // views ranked by persistence. A capped view shrinks every consensus denominator
+            // though, which makes acceptance structurally EASIER - so a view's solve may not
+            // ship until certifySolve has re-verified its pose against the full input with
+            // the full input's own arithmetic. Labels then come from that certification, so
+            // a rescued solve still names every star the pose explains, not just the view.
+            const boundsOpts = (set) => {
+                let bx0 = 0, by0 = 0, bx1 = myResult.videoW || 0, by1 = myResult.videoH || 0;
+                for (const s of set) {
+                    if (s.x < bx0) bx0 = s.x;
+                    if (s.x > bx1) bx1 = s.x;
+                    if (s.y < by0) by0 = s.y;
+                    if (s.y > by1) by1 = s.y;
+                }
+                return {
+                    center: [(bx0 + bx1) / 2, (by0 + by1) / 2],
+                    width: Math.max(bx1 - bx0, by1 - by0),
+                    bounds: [bx0 - 12, by0 - 12, bx1 + 12, by1 + 12],
+                };
+            };
+            for (const cap of [12, 11]) {
+                if (stars.length <= cap) continue;
+                const view = [...stars]
+                    .sort((a, b) => b.n - a.n || a.mag - b.mag || a.index - b.index)
+                    .slice(0, cap);
+                params.status = `identify failed - retrying with the ${cap} most persistent stars`;
+                await yieldToBrowser();
+                let attempt = null;
+                for (const tier of tierOrder) {
+                    await ensureIndex(tier);
+                    if (!fresh()) return;
+                    attempt = await solveField(view, catalog, [quadIndexes[tier]], {
+                        ...(myResult.videoW ? boundsOpts(view) : {}),
+                        ...commonSolveOpts,
+                    });
+                    if (!fresh()) return;
+                    if (attempt.ok) break;
+                }
+                if (!attempt?.ok) continue;
+                const cert = certifySolve(attempt, stars, catalog);
+                if (!cert.ok) continue;
+                solved = {...attempt, matches: cert.matches, nImage: cert.nImage,
+                    matchedFraction: cert.matchedFraction, rmsPx: cert.rmsPx,
+                    tolPx: cert.tolPx, certifiedFromCap: cap};
+                break;
+            }
+        }
+        if (!solved || !solved.ok) {
             params.status = `identify failed: ${solved ? solved.reason : "no result"}`;
             return;
         }
@@ -1283,7 +1369,9 @@ export async function identifyStars() {
         const raH = solved.centerRaDeg / 15;
         params.status = `identified ${solved.matches.length}/${stars.length} stars - `
             + `field ${solved.fovDeg.toFixed(1)} deg at RA ${raH.toFixed(2)}h `
-            + `Dec ${solved.centerDecDeg.toFixed(1)} deg, rms ${solved.rmsPx.toFixed(1)} px`;
+            + `Dec ${solved.centerDecDeg.toFixed(1)} deg, rms ${solved.rmsPx.toFixed(1)} px`
+            + (solved.certifiedFromCap
+                ? ` (rescued from a ${solved.certifiedFromCap}-star retry, certified)` : "");
         setRenderOne();
     } catch (e) {
         // Only while this run still owns the state - a failure surfacing after a sitch change
@@ -2490,6 +2578,7 @@ export function disposeStarTracker() {
         minAreaCalibrated = false;
     }
     minAreaController = null;
+    threshSigmaController = null;
     // A calibration still in flight belongs to the departing sitch; without this, the next
     // sitch's first minArea edit would report cancelling work that no longer exists.
     calibrationPending = false;
@@ -2540,7 +2629,36 @@ export function setupStarTrackerMenu() {
 
     folder.add({all: () => { runFullStarTracker(); }}, "all")
         .name("Full Analysis");
-    folder.add(params, "status").name("Status").listen().disable();
+    const statusController = folder.add(params, "status").name("Status").listen().disable();
+    // Status strings routinely outgrow the readout ("identify failed: round-0 rematch
+    // collapsed" shows as "identify failed: round-...") so the full text rides the row's
+    // hover tooltip. The VISIBLE menu rows are MenuMirror twins of this controller, not its
+    // own DOM, and twins only copy a tooltip at creation - so each frame the title is
+    // stamped onto every Status row currently displaying this status text (an unrelated
+    // Status row can only collide when its text is identical, making the stamp a no-op in
+    // meaning). The loop retires when this folder's own row leaves the document - a menu
+    // rebuild spawns a fresh one.
+    const statusInput = statusController.domElement?.querySelector?.("input");
+    if (statusInput) {
+        // A timer rather than requestAnimationFrame: rAF pauses in hidden tabs, and a hover
+        // tooltip needs half-second freshness, not frame accuracy.
+        let wasConnected = false;
+        const timer = setInterval(() => {
+            const connected = statusInput.isConnected;
+            if (connected) wasConnected = true;
+            if (wasConnected && !connected) {
+                clearInterval(timer);
+                return;
+            }
+            for (const row of document.querySelectorAll(".controller.string")) {
+                if (row.querySelector(".name")?.textContent !== "Status") continue;
+                const inp = row.querySelector("input");
+                if (inp && inp.value === params.status && inp.title !== params.status) {
+                    inp.title = params.status;
+                }
+            }
+        }, 500);
+    }
 
     folder.add(params, "useMask").name("Use mask")
         .tooltip("Ignore detections that fall inside the video mask, painted under Video > "
@@ -2567,7 +2685,14 @@ export function setupStarTrackerMenu() {
 
     const tweaks = folder.addFolder("Star Tracker Tweaks").close();
 
-    tweaks.add(params, "threshSigma", 3, 10, 0.5).name("Detect threshold (sigma)");
+    tweaks.add(params, "autoSigma").name("Auto detect threshold")
+        .tooltip("Measure the detection threshold from the footage before each run: probe "
+            + "three spread frames at a permissive threshold and pick the level where the "
+            + "blob count stops falling - above the noise face, below the damage line where "
+            + "airglow swallows real stars. The slider below shows what was chosen; when the "
+            + "frames are too sparse to read, the slider's own value stands.");
+    threshSigmaController =
+        tweaks.add(params, "threshSigma", 2, 10, 0.25).name("Detect threshold (sigma)");
     // A hand-edited value is a user preference, not a measurement - it must survive sitch
     // teardown, where a calibrated one falls with its calibration. The edit also invalidates
     // any calibration still awaiting its frame, or that request would land afterwards,
