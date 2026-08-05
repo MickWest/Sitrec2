@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.116.2 (2026-08-05)
+
+### Improvements
+- **Star identification now works across long panning shots** (Video → Star Tracker → *Full Analysis*): a pan's star map is built by stitching frame onto frame, and the tiny stitching errors add up — measured at 1.3 degrees end to end on a 671-frame pan, far more than star matching can absorb — so one rigid match could only ever fit one stretch of it. On that clip only 42 of 123 stars were named, all from the late part of the pan, and the stars the video actually opens on — Vega among them — got no names at all. Pans are now identified piece by piece, in overlapping stretches of time cut where the tracking breaks across every star at once (a burst of blur, typically), and the names combined: 100 of the 123 stars named on that clip, all of them correctly on a spot check of 25. Stretches that disagree with the consensus of their neighbours are thrown out rather than averaged in. The status line reports each stretch as it is matched and how many solved; if part of the clip could not be matched, it says which frames were.
+- **Sync Camera follows pans and mid-pan zooms** (Video → Star Tracker → *Sync Camera*): the synced camera now takes its direction from whichever stretch of the pan covers each frame, blending smoothly where stretches overlap, and the zoom is recorded frame by frame rather than as one number for the whole clip, so a zoom in the middle of a pan keeps its framing. Frames in a stretch that could not be matched are bridged from the good stretches either side of it, and the status line says which frames are exact and which approximate; if the two sides of a gap disagree about where the sky is, the camera refuses to guess its way across rather than steering through a made-up average.
+
+### Bug Fixes
+- Fixed running star identification a second time, with the camera already synced, leaving the camera split across the two runs (Video → Star Tracker): the zoom followed the new result while the direction stayed on the old one, and saving then locked the old result in for every reload. Re-identifying now updates the synced camera completely, and if the new result is not good enough to sync, the previous sync is left untouched rather than half-changed.
+- Fixed the two remaining ways star identification could accept a confidently wrong patch of sky, found while stress-testing the panning work. An answer whose matches largely vanish the moment they are re-checked against its own best fit is now thrown out — on the wrong answers this was built to catch, 26 claimed matches re-checked to 5, and that test alone rules out the wrong southern-sky answer fixed in 2.116.0 even with that release's safeguard switched off. And an answer that never survived a re-check at all must now beat pure coincidence by a clear margin, not by a fraction of a match, which is exactly how the wrong answers had been scraping through.
+
+---
+
 ## Version 2.116.1 (2026-08-04)
 
 ### Improvements
