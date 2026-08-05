@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.116.1 (2026-08-04)
+
+### Improvements
+- **The eclipse track is cheaper to leave switched on** (Show → Celestial → *Eclipse Path*): the ground-following lines are now kept and reused rather than rebuilt from scratch on every single frame, so having the path on costs well under half of what it did. They are still rebuilt when they need to be — when new terrain arrives underneath them, or when you zoom far enough that they should sit a little higher above the ground.
+
+### Bug Fixes
+- Fixed the northern and southern edges of the band of totality stopping short (Show → Celestial → *Eclipse Path*). For the 12 August 2026 eclipse both ended near the Spanish coast, about 290 km before the published maps put them — and not on some thin tail: the band is still about 300 km wide there, so Mallorca was drawn sitting on the line that closes the path off rather than in the middle of it. Sitrec now finds each edge by asking a place on the ground directly — is the Sun completely covered from here, and is it above the horizon when it is — and searching across the track for where the answer changes, instead of measuring the widest points of the shadow's outline, which stops meaning anything near the ends where the shadow is long and lying along its own track. Checked against an entirely separate eclipse calculation the width of the band now agrees to within a kilometre, and six towns tested — including Madrid and Barcelona, which both miss totality by a hair — come out the same way in both.
+- Fixed the ends of the eclipse track crossing over themselves, jumping in long straight lines, and simply stopping in open water (Show → Celestial → *Eclipse Path*). The track was sampled on a fixed two-minute clock, which is 150 km of ground over Spain but 525 km over the Balearics, so the most curved part of the whole path was drawn as one straight line. The moments the shadow first and last touches the Earth are now pinned to the second and the samples in between are placed by distance on the ground, never more than 80 km apart. The sweep also no longer stops the moment the shadow's axis leaves the Earth — the shadow is about 100 km across and goes on standing on the ground after that — and both ends of the band are now closed off with a line drawn across them.
+- Fixed the eclipse track and the shadow's outline breaking up into dashes the moment they crossed onto land, while staying solid over the sea (Show → Celestial). They were not gappy lines, they were buried ones: the terrain that actually gets drawn is coarser than the height data the lines were being laid on, so the ground stood up over them and swallowed them. They are now held a little further above the ground, by an amount that grows with how far away you are looking from — roughly a pixel's worth at any zoom.
+- Fixed the line marking the shadow's centre along its direction of travel being drawn dead straight (Show → Celestial → *Moon Shadow Center*), which was visibly at odds with the real, curving track drawn right beside it by *Eclipse Path*. It is now taken from where the shadow actually lands at nearby moments, so the two agree. With *Eclipse Path* switched on that line is left out altogether, since the path already draws it and the two were doubling up on each other; the line across the shadow is unchanged.
+- Fixed the Sun being drawn as a hard yellow disc sitting inside its own white glare — and a disc narrower than the Sun looks, so it read as a small yellow dot inside the Sun rather than as the Sun. The Sun's disc, the glow around it, its name label and its direction arrow (Show → Celestial → *Sun Vector*) are all neutral white now. The Sun really is very nearly white; the warmth you see in a low Sun comes from the air it is shining through, which Sitrec already draws.
+- Fixed the main view still going dark through a solar eclipse when *No Lighting in Main View* is switched on (Lighting). That switch exists to light everything flatly so the geometry can be read, and the eclipse was dimming the very light it turns on. The eclipse is still drawn in the main view — the Moon crossing the Sun, the corona, the beads — and the look view still darkens normally.
+
+---
+
 ## Version 2.116.0 (2026-08-04)
 
 ### New Features
