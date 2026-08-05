@@ -117,6 +117,12 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         // ground does. Elevation tiles stream in long after the path is first
         // drawn; dropping the geometry key re-clamps it on the next frame.
         this._pathGeomKey = null;
+        // Scratch for the sweep's inner loop — the totality test runs a few
+        // hundred thousand times per eclipse and must not allocate.
+        this._ephem = null;
+        this._vSun = new Vector3();
+        this._vMoon = new Vector3();
+        this._vUp = new Vector3();
         this._onElevationChanged = () => { this._pathGeomKey = null; };
         EventManager.addEventListener("elevationChanged", this._onElevationChanged);
         this.gui.add(this, "showEclipsePath").name("Eclipse Path").onChange(() => {
@@ -511,64 +517,132 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         return null;
     }
 
-    // Shadow geometry on the ground at one instant, independent of the current
-    // frame's globals so it can be called for any time in the sweep.
+    // ---------------------------------------------------------------------
+    // Totality as a question about a PLACE, not about the shadow
     //
-    // The ring is returned SPARSE — one entry per position angle, null where
-    // that cone generator misses the Earth — because the misses are the
-    // information the limits are read from. Near the ends of an eclipse the
-    // umbra footprint hangs off the limb and the ring is an open arc; a dense
-    // array of hits alone cannot tell an edge of the shadow from an edge of the
-    // Earth. `at` re-evaluates a single generator at an arbitrary position
-    // angle, which is how the tangent points are refined off the grid.
+    // The limits of totality bound the region that sees the Sun completely
+    // covered, so the way to find them is to ask a ground point directly — does
+    // the Moon ever cover the Sun from here, and is the Sun up when it does? —
+    // and bisect for where the answer changes.
     //
-    // allowMiss keeps a usable centre after the axis has left the Earth, where
-    // the umbra itself has not (see the sweep). It is only a reference point for
-    // measuring cross-track distance and travel: the ring does not depend on it,
-    // since a cone generator through the Moon's limb is the same line in space
-    // whatever distance its cross-section is taken at.
-    shadowGroundAt(date, segments = 48, allowMiss = false) {
-        const moon = getGeocentricBodyPositionECEF(Astronomy.Body.Moon, date, true);
-        const sun = getGeocentricBodyPositionECEF(Astronomy.Body.Sun, date, true);
-        if (!moon || !sun) return null;
+    // The alternative, and what this used to do, is to take the umbra outline at
+    // one instant and pick its extreme point across the track. That is exact in
+    // the middle of the path and useless at the ends: by then the footprint is
+    // hundreds of km long and lying almost ALONG the track, so cross-track
+    // distance over its edge is nearly flat, the position of the maximum is
+    // decided by noise, and it jumps hundreds of km between neighbouring
+    // samples. Measured on 2026-08-12, accepting those extremes put a 287 km
+    // discontinuity in the northern limit and 345 km in the southern; rejecting
+    // them (by insisting on a genuine turnover) instead ended both limits ~290 km
+    // early, short of the Balearics. There is no extremum in the per-point
+    // question at all, so neither failure exists.
+    //
+    // The cost of asking it is one Sun and Moon position, which is why they are
+    // precomputed and interpolated below: ~0.09 us per evaluation against ~8 us
+    // for a fresh pair, and a corridor needs a few hundred thousand.
+    // ---------------------------------------------------------------------
 
-        const shadowDir = moon.clone().sub(sun).normalize();
-        let center = intersectEllipsoid(moon, shadowDir);
-        const axisHit = !!center;
-        if (!center) {                            // shadow axis misses the Earth
-            if (!allowMiss) return null;
-            center = this.nearestSurfacePoint(moon, shadowDir);
-            if (!center) return null;
+    // Sun and Moon in ECEF across the eclipse, for interpolation.
+    //
+    // A minute apart, read back QUADRATICALLY. What moves fastest here is not
+    // either body but the FRAME — ECEF turns under them at 15 deg/hour, swinging
+    // the Moon through 0.25 deg of arc in a step — and a parabola through three
+    // samples of that is good to a couple of metres, against ~100 m for a
+    // straight line. Both only ever enter as directions and distances, where two
+    // metres out of 384,000 km is five nanoradians.
+    buildEphemeris(key) {
+        if (this._ephem?.key === key) return this._ephem;
+        const STEP_MS = 60000, SPAN_MS = 150 * 60000;   // +/-2.5 h covers any transit
+        const sun = [], moon = [];
+        for (let dt = -SPAN_MS; dt <= SPAN_MS; dt += STEP_MS) {
+            const d = new Date(key + dt);
+            sun.push(getGeocentricBodyPositionECEF(Astronomy.Body.Sun, d, true));
+            moon.push(getGeocentricBodyPositionECEF(Astronomy.Body.Moon, d, true));
         }
+        this._ephem = {key, t0: key - SPAN_MS, step: STEP_MS, sun, moon,
+                       tMin: key - SPAN_MS, tMax: key + SPAN_MS};
+        return this._ephem;
+    }
 
-        const axisDist = moon.distanceTo(center);
-        const sunMoonDistance = sun.distanceTo(moon);
-        const radii = this.calculateShadowRadii(axisDist, sunMoonDistance);
-        const perp = perpendicularVector(shadowDir).normalize();
-        const other = shadowDir.clone().cross(perp);
-        const coneEnd = moon.clone().add(shadowDir.clone().multiplyScalar(axisDist));
-        const radius = radii.umbraDiameter / 2;
+    // Interpolated position, written into `out`. Allocates nothing: this is the
+    // inner loop of every bisection in the sweep.
+    ephemAt(arr, t, out) {
+        const e = this._ephem;
+        const f = (t - e.t0) / e.step;
+        const i = Math.max(1, Math.min(arr.length - 2, Math.round(f)));
+        const u = f - i, a = arr[i - 1], b = arr[i], c = arr[i + 1];
+        const wa = 0.5 * u * (u - 1), wb = 1 - u * u, wc = 0.5 * u * (u + 1);
+        return out.set(a.x * wa + b.x * wb + c.x * wc,
+                       a.y * wa + b.y * wb + c.y * wc,
+                       a.z * wa + b.z * wb + c.z * wc);
+    }
 
-        // One point of the ground ring, traced the same way rebuild() traces
-        // it: along the cone generator through the Moon's limb at this position
-        // angle. Null when that generator misses the Earth.
-        const at = (theta) => {
-            if (!(radius > 0)) return null;       // annular: no umbra on the ground
-            const edge = coneEnd.clone()
-                .add(perp.clone().multiplyScalar(Math.cos(theta) * radius))
-                .add(other.clone().multiplyScalar(Math.sin(theta) * radius));
-            const limb = moon.clone()
-                .add(perp.clone().multiplyScalar(Math.cos(theta) * this.moonRadius))
-                .add(other.clone().multiplyScalar(Math.sin(theta) * this.moonRadius));
-            return intersectEllipsoid(limb, edge.clone().sub(limb).normalize());
-        };
+    // How deep inside totality a ground point is, in radians: the Moon's
+    // apparent radius, less the Sun's, less their separation. Positive means the
+    // Sun is completely covered from there. Smooth in t, which is what lets the
+    // moment of deepest eclipse be found without derivatives.
+    totalityDepth(P, t) {
+        const s = this.ephemAt(this._ephem.sun, t, this._vSun).sub(P);
+        const m = this.ephemAt(this._ephem.moon, t, this._vMoon).sub(P);
+        const ds = s.length(), dm = m.length();
+        const cos = Math.max(-1, Math.min(1, s.dot(m) / (ds * dm)));
+        return Math.asin(this.moonRadius / dm) - Math.asin(this.sunRadius / ds)
+             - Math.acos(cos);
+    }
 
-        // No penumbra ring here: its path limits are not drawn (they sweep most
-        // of a hemisphere and read as clutter), so tracing it every sample would
-        // be ~half the sweep's cost for geometry nothing uses.
-        const ring = [];
-        for (let i = 0; i < segments; i++) ring.push(at(i / segments * 2 * Math.PI));
-        return {center, axisHit, ring, at, segments};
+    // The Sun's altitude at a ground point, off the ellipsoid normal. The
+    // corridor ends where the Sun sets during totality, so this — not any
+    // property of the shadow — is what closes each end of the path.
+    sunAltitude(P, t) {
+        const a = Globals.equatorRadius, b = Globals.polarRadius;
+        const up = this._vUp.set(P.x / (a * a), P.y / (a * a), P.z / (b * b)).normalize();
+        const s = this.ephemAt(this._ephem.sun, t, this._vSun).sub(P);
+        return Math.asin(s.dot(up) / s.length());
+    }
+
+    // When the eclipse is deepest at a point, searched near a known time. Every
+    // point this is asked about is within a few hundred km of the centreline at
+    // t0, so its deepest moment is within a couple of minutes of it — and depth
+    // has a single maximum there, so a ternary search converges on it.
+    deepestNear(P, t0) {
+        let lo = t0 - 300000, hi = t0 + 300000;
+        for (let i = 0; i < 20; i++) {           // (2/3)^20 of 10 min: 0.2 s
+            const a = lo + (hi - lo) / 3, b = hi - (hi - lo) / 3;
+            if (this.totalityDepth(P, a) < this.totalityDepth(P, b)) lo = a; else hi = b;
+        }
+        return 0.5 * (lo + hi);
+    }
+
+    // Does this place see totality at all, and is the Sun above the horizon when
+    // it does? Those two are kept apart on purpose: the first bounds the corridor
+    // sideways (the limits), the second bounds it lengthways (the sunset curve).
+    seesTotality(P, t0) {
+        const t = this.deepestNear(P, t0);
+        return {t, total: this.totalityDepth(P, t) > 0, alt: this.sunAltitude(P, t)};
+    }
+
+    // A point pushed out (or in) to the ellipsoid surface along its own radius.
+    surfacePoint(p) {
+        const a = Globals.equatorRadius, b = Globals.polarRadius;
+        const len = p.length();
+        if (!(len > 0)) return p;
+        const ux = p.x / len, uy = p.y / len, uz = p.z / len;
+        const r = 1 / Math.sqrt((ux * ux + uy * uy) / (a * a) + (uz * uz) / (b * b));
+        return new Vector3(ux * r, uy * r, uz * r);
+    }
+
+    // Where the shadow axis meets the ellipsoid, or — past that — where it comes
+    // closest to it, which is only ever used as a place to measure cross-track
+    // offsets from.
+    axisPointAt(t, allowMiss = false) {
+        const moon = this.ephemAt(this._ephem.moon, t, this._vMoon).clone();
+        const sun = this.ephemAt(this._ephem.sun, t, this._vSun);
+        const dir = moon.clone().sub(sun).normalize();
+        const hit = intersectEllipsoid(moon, dir);
+        if (hit) return {p: hit, axisHit: true};
+        if (!allowMiss) return null;
+        const near = this.nearestSurfacePoint(moon, dir);
+        return near ? {p: near, axisHit: false} : null;
     }
 
     // Where a line comes closest to the surface, for when it no longer meets it.
@@ -590,77 +664,86 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         return new Vector3(p.x * a, p.y * a, p.z * b);
     }
 
-    // The northern and southern limits of totality at one instant.
+    // One limit of totality at one instant: step out across the track from
+    // `origin` and bisect for the edge.
     //
-    // The limits are the boundary of the region the umbra sweeps, and for a
-    // shape that is translating, that boundary is traced by the point whose
-    // outward normal is perpendicular to the motion — i.e. the footprint's
-    // extreme point ACROSS the track. Two things about that point matter:
-    //
-    // NOT EVERY EXTREME IS ONE. Once the footprint runs off the limb the ring is
-    // an open arc, and the extreme among the surviving points is wherever the
-    // arc was CUT. What separates the two is that a real tangent point is a
-    // LOCAL extremum: the cross-track distance turns over there. At a cut end it
-    // is still climbing, into the points that are missing. So the test is
-    // d[i] >= both neighbours (and the neighbours must exist to compare), not
-    // "biggest of what survived".
-    //
-    // The distinction is not pedantic. By the time the ring is being clipped the
-    // footprint is hundreds of km long and lying almost along the track, so
-    // cross-track distance along its northern edge is nearly FLAT — the position
-    // of the biggest value is then decided by noise, and it jumps hundreds of km
-    // back and forth along that edge from one sample to the next. Requiring a
-    // genuine turnover is what keeps the limits from flailing; it is also why
-    // each limit ends where it does, a couple of hundred km short of the
-    // terminator, and why the corridor needs a cap drawn across it.
-    //
-    // AND IT IS NOT ON THE GRID. Half a step of position angle (3.75 deg at 48
-    // segments) is tens of km ALONG the track near the ends, so the limit would
-    // step sideways every time the winning index changed — a visible kink.
-    // Cross-track distance is smooth and quadratic near a tangency, so a
-    // parabola through the winner and its two neighbours gives the position
-    // angle to sub-grid accuracy, and the generator is re-traced there.
-    limitPoints(s, crossTrack) {
-        const n = s.segments, ring = s.ring, step = 2 * Math.PI / n;
-        const d = new Array(n).fill(null);
-        for (let i = 0; i < n; i++) {
-            if (ring[i]) d[i] = ring[i].clone().sub(s.center).dot(crossTrack);
+    // The edge is found on DEPTH — the umbra's rim — and the Sun's altitude
+    // THERE is reported alongside rather than tested, because the two bound the
+    // corridor in different directions and the caller needs both: depth bounds
+    // it sideways, altitude bounds it lengthways. Gating here instead was wrong
+    // twice over. The altitude at the edge is within a tenth of a degree of zero
+    // for the whole last stretch — it is the sunset curve, so of course it is —
+    // and it wobbles across the sign, so the first negative is not the end of
+    // anything; and past the true end the edge RETREATS back into daylight, so a
+    // gate cannot see that it should have stopped either.
+    limitEdge(origin, crossTrack, sign, t0, seedM) {
+        const MAX_OFFSET = 500000;             // wider than any umbra footprint
+        const SEED_STEP = 25000;
+        const probe = (k) => this.surfacePoint(origin.clone().addScaledVector(crossTrack, k));
+
+        // A seed inside totality to bisect out from. Usually the origin itself —
+        // but past the axis it is only a nearby reference point, and may be
+        // outside, so fall back to a scan across the whole corridor.
+        let inK = null;
+        for (const k of [0, seedM ?? 0]) {
+            if (this.seesTotality(probe(k), t0).total) { inK = k; break; }
         }
-        let hiI = -1, loI = -1, hiD = -Infinity, loD = Infinity;
-        for (let i = 0; i < n; i++) {
-            const a = d[(i + n - 1) % n], c = d[i], b = d[(i + 1) % n];
-            if (a === null || b === null || c === null) continue;
-            if (c >= a && c >= b && c > hiD) { hiD = c; hiI = i; }
-            if (c <= a && c <= b && c < loD) { loD = c; loI = i; }
+        if (inK === null) {
+            for (let k = -MAX_OFFSET; k <= MAX_OFFSET; k += SEED_STEP) {
+                if (this.seesTotality(probe(k), t0).total) { inK = k; break; }
+            }
         }
-        const refine = (i) => {
-            if (i < 0) return null;
-            const d0 = d[(i + n - 1) % n], d1 = d[i], d2 = d[(i + 1) % n];
-            const denom = d0 - 2 * d1 + d2;
-            // Flat within rounding — the grid point is already the answer.
-            if (Math.abs(denom) < 1e-9) return ring[i];
-            const shift = 0.5 * (d0 - d2) / denom;
-            if (!(Math.abs(shift) <= 1)) return ring[i];
-            return s.at((i + shift) * step) ?? ring[i];
-        };
-        return {hi: refine(hiI), lo: refine(loI)};
+        if (inK === null) return null;
+
+        let outK = sign * MAX_OFFSET;
+        if (this.seesTotality(probe(outK), t0).total) return null;   // never closes
+        for (let i = 0; i < 14; i++) {         // 500 km / 2^14 -> 30 m
+            const m = 0.5 * (inK + outK);
+            if (this.seesTotality(probe(m), t0).total) inK = m; else outK = m;
+        }
+        const p = probe(inK);
+        return {p, k: inK, alt: this.seesTotality(p, t0).alt};
+    }
+
+    // Cut a limit down to the stretch that is actually part of the path.
+    //
+    // Two things have to come off. Past the end of the path the reference point
+    // the probe measures from is no longer a track position — it stalls and
+    // retreats — so the edge it finds retreats too, doubling the limit back over
+    // itself; the same happens mirrored before the start. The furthest points
+    // along track in each direction are the real tips, and taking them by the
+    // RUNNING TOTAL of advance rather than by the first change of sign is what
+    // makes it robust: near the ends the samples are seconds apart and the real
+    // motion per sample is a kilometre or two.
+    //
+    // Then, whatever survives that must be in daylight — the corridor ends where
+    // the Sun sets on it, and that is the "eclipse ends at sunset" curve of the
+    // published maps. It only ever trims a point or two, because the tip lands
+    // on that curve anyway.
+    trimLimit(points, advance, altitude) {
+        let sum = 0, lo = 0, hi = 0, min = 0, max = 0;
+        for (let i = 0; i < points.length; i++) {
+            sum += advance[i];
+            if (sum < min) { min = sum; lo = i; }
+            if (sum > max) { max = sum; hi = i; }
+        }
+        while (lo < hi && altitude[lo] < 0) lo++;
+        while (hi > lo && altitude[hi] < 0) hi--;
+        return points.slice(lo, hi + 1);
     }
 
     // The terminal closure: the great circle joining the ends of the two limits.
     //
     // This is the "eclipse begins/ends at sunrise/sunset" line of the published
-    // maps, and it is a CHORD BETWEEN THE LIMITS — deliberately not routed
-    // through the end of the centreline. The centreline runs on to the axis
-    // tangency, which happens after either limit has ended, so joining north end
-    // to centreline end to south end puts a ~90 km kink in the closure. The
-    // centreline is clipped to this line instead of being left to poke out of
-    // the end of the corridor.
+    // maps. Each limit ends ON that curve, since limitEdge stops a limit exactly
+    // where its own Sun sets, so the curve between them is a short arc of the
+    // terminator — a few hundred km of a great circle, which is what a straight
+    // pair of points drawn by groundLineBetween traces, to within a couple of km.
     //
-    // Known limitation: the umbra goes on grazing the Earth past this line, and
-    // the published maps carry their limits a couple of hundred km further along
-    // the terminator than these end. Following them out needs the boundary of
-    // the swept region where the footprint lies along the track, which the
-    // cross-track extreme cannot give — it is ill-conditioned exactly there.
+    // Deliberately not routed through the end of the centreline: that runs on to
+    // the axis tangency, later than either limit ends, and joining north end to
+    // centreline end to south end puts a ~90 km kink in the closure. The
+    // centreline is clipped to this line instead.
     capBetween(a, b) {
         return (a && b) ? [a, b] : null;
     }
@@ -716,14 +799,15 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         const key = peakDate.getTime();
         if (this._pathCache && this._pathCache.key === key) return this._pathCache;
 
-        // +/-4 h at 2 min for the coarse pass. Any eclipse crosses the Earth
-        // well inside that; this pass only BRACKETS it.
-        const SPAN_MIN = 240, STEP_MIN = 2;
+        // +/-2.5 h at 2 min for the coarse pass, matching the ephemeris grid.
+        // Any eclipse crosses the Earth well inside that; this pass only
+        // BRACKETS it.
+        this.buildEphemeris(key);
+        const SPAN_MIN = 150, STEP_MIN = 2;
         const STEP_MS = STEP_MIN * 60000;
         const MAX_STEP_M = 80000;   // ground distance between samples
         const MAX_DEPTH = 8;        // 2 min / 256, i.e. ~0.5 s at the ends
         const EDGE_TOL_MS = 1000;   // how tightly first/last contact is pinned
-        const SEGMENTS = 48;        // position angles the umbra ring is traced at
 
         const empty = {key, centerLine: [], umbraN: [], umbraS: [],
                        startCap: null, endCap: null, totalSamples: 0};
@@ -731,7 +815,7 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         let tIn = null, tOut = null, gotBefore = false, gotAfter = false;
         for (let m = -SPAN_MIN; m <= SPAN_MIN; m += STEP_MIN) {
             const t = key + m * 60000;
-            if (!this.shadowCenterAt(new Date(t))) continue;
+            if (!this.axisPointAt(t)) continue;
             if (tIn === null) { tIn = t; gotBefore = m > -SPAN_MIN; }
             tOut = t; gotAfter = m < SPAN_MIN;
         }
@@ -743,7 +827,7 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         const bisect = (hitT, missT) => {
             while (Math.abs(hitT - missT) > EDGE_TOL_MS) {
                 const mid = 0.5 * (hitT + missT);
-                if (this.shadowCenterAt(new Date(mid))) hitT = mid; else missT = mid;
+                if (this.axisPointAt(mid)) hitT = mid; else missT = mid;
             }
             return hitT;
         };
@@ -758,23 +842,24 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         // — so the last leg, the most curved part of the whole path, was drawn
         // as one straight chord. Splitting any interval longer than MAX_STEP_M
         // puts samples where the geometry needs them and none where it does not.
-        const samples = [];
-        const split = (t0, g0, t1, g1, depth) => {
-            if (depth < MAX_DEPTH && g0.center.distanceTo(g1.center) > MAX_STEP_M) {
-                const tm = 0.5 * (t0 + t1);
-                const gm = this.shadowGroundAt(new Date(tm), SEGMENTS);
+        const samples = [];                     // {t, p, axisHit}
+        const split = (a, b, depth) => {
+            if (depth < MAX_DEPTH && a.p.distanceTo(b.p) > MAX_STEP_M) {
+                const tm = 0.5 * (a.t + b.t);
+                const gm = this.axisPointAt(tm);
                 if (gm) {
-                    split(t0, g0, tm, gm, depth + 1);
-                    split(tm, gm, t1, g1, depth + 1);
+                    const m = {t: tm, ...gm};
+                    split(a, m, depth + 1);
+                    split(m, b, depth + 1);
                     return;
                 }
             }
-            samples.push(g1);
+            samples.push(b);
         };
-        let gPrev = this.shadowGroundAt(new Date(tIn), SEGMENTS);
-        if (!gPrev) { this._pathCache = empty; return empty; }
-        samples.push(gPrev);
-        let tPrev = tIn;
+        const first = this.axisPointAt(tIn);
+        if (!first) { this._pathCache = empty; return empty; }
+        let prev = {t: tIn, ...first};
+        samples.push(prev);
         const grid = [];
         for (let m = -SPAN_MIN; m <= SPAN_MIN; m += STEP_MIN) {
             const t = key + m * 60000;
@@ -782,66 +867,43 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         }
         grid.push(tOut);
         for (const t of grid) {
-            const g = this.shadowGroundAt(new Date(t), SEGMENTS);
+            const g = this.axisPointAt(t);
             if (!g) continue;
-            split(tPrev, gPrev, t, g, 0);
-            tPrev = t; gPrev = g;
+            const s = {t, ...g};
+            split(prev, s, 0);
+            prev = s;
         }
 
-        // Past the axis, but not past the shadow.
+        // Past the axis, but not past the path.
         //
-        // The umbra is ~100 km across, so it goes on standing on the Earth for
-        // a while after its AXIS has left: at the 2026-08-12 eclipse the last
-        // ~250 km of the southern limit — from Valencia out past Ibiza, which
-        // the published maps all show — happens entirely after the axis has
-        // gone. Stopping the sweep at axis egress cut it off there and left the
-        // three lines ending at three unrelated places. So walk on from each end
-        // in small steps until neither limit finds a tangent point any more,
-        // which is the moment the last of the umbra clears the limb. The
-        // centreline does NOT get these samples: with no axis intersection there
-        // is no centre to trace, which is why it is the SHORTEST of the three
-        // lines at the ends rather than the longest.
-        // The direction of travel is CARRIED IN, not measured here. Out here the
-        // centre is nearestSurfacePoint's, and once the axis has swung past the
-        // Earth that point stalls and then retreats — differencing it reverses
-        // the travel direction mid-extension, which flips cross-track, which
-        // swaps north for south partway along the cap. The real track turns by
-        // about a degree over the minute or two this runs, so the direction from
-        // the last pair of real intersections is good for all of it.
-        const EXT_STEP_MS = 5000, EXT_MAX_STEPS = 180;
+        // The umbra is ~100 km across, so it goes on standing on the Earth after
+        // its AXIS has left — and the corridor runs on with it, all the way to
+        // where the Sun sets on it. At the 2026-08-12 eclipse that is the last
+        // ~290 km, from the Spanish coast out past the Balearics, which is not a
+        // thin spike: the corridor is still ~300 km wide there, and Mallorca sits
+        // in the middle of it. So walk on from each end for a few minutes and let
+        // the limits themselves decide where the path stops.
+        //
+        // These samples have no centre in any real sense — nearestSurfacePoint
+        // gives a reference point to measure cross-track from, nothing more — so
+        // they contribute no centreline, and the direction of travel is CARRIED
+        // IN rather than measured out here: that reference point stalls and then
+        // retreats once the axis is past, which would reverse a differenced
+        // direction and swap north for south partway along.
+        const EXT_STEP_MS = 5000, EXT_SPAN_MS = 300000;
         const extend = (fromT, dir, sign) => {
             const out = [];
-            const accept = (dt) => {
-                const g = this.shadowGroundAt(new Date(fromT + sign * dt), SEGMENTS, true);
-                if (!g) return null;
-                const cross = g.center.clone().normalize().cross(dir);
-                if (!(cross.lengthSq() > 0)) return null;
-                const lim = this.limitPoints(g, cross.normalize());
-                if (!lim.hi && !lim.lo) return null;
-                g.travelDir = dir;
-                return g;
-            };
-            let k = 1, lo = 0;
-            for (; k <= EXT_MAX_STEPS; k++) {
-                const g = accept(k * EXT_STEP_MS);
+            for (let dt = EXT_STEP_MS; dt <= EXT_SPAN_MS; dt += EXT_STEP_MS) {
+                const t = fromT + sign * dt;
+                if (t < this._ephem.tMin || t > this._ephem.tMax) break;
+                const g = this.axisPointAt(t, true);
                 if (!g) break;
-                out.push(g);
-                lo = k * EXT_STEP_MS;
-            }
-            // Close the last interval. A flat 5 s step leaves each limit ending
-            // wherever the walk happened to land, up to a step short of where its
-            // last tangent point really is; bisecting walks it up to the real end,
-            // which is also where the cap is drawn from.
-            let hi = k * EXT_STEP_MS;
-            for (let j = 0; j < 12; j++) {
-                const mid = 0.5 * (lo + hi);
-                const g = accept(mid);
-                if (g) { out.push(g); lo = mid; } else hi = mid;
+                out.push({t, ...g, travelDir: dir});
             }
             return out;
         };
         const dirBetween = (a, b) => {              // a earlier than b
-            const d = b.center.clone().sub(a.center);
+            const d = b.p.clone().sub(a.p);
             return d.lengthSq() > 1 ? d.normalize() : null;
         };
         const n = samples.length;
@@ -852,38 +914,55 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
 
         // Cross-track needs the direction of travel, which needs the NEXT
         // centre — hence a second pass rather than doing it in the first.
+        //
+        // Each limit is collected whole and trimmed afterwards (see trimLimit):
+        // where it ends cannot be decided sample by sample, because the edge is
+        // still being found long after it has stopped being part of the path.
         const centerLine = [], umbraN = [], umbraS = [];
+        const advN = [], advS = [], altN = [], altS = [];
+        let seedN = null, seedS = null;
         for (let i = 0; i < all.length; i++) {
             const s = all[i];
-            if (s.axisHit) centerLine.push(s.center);
+            if (s.axisHit) centerLine.push(s.p);
 
             // Central difference, and always FORWARD in time. Falling back to
-            // the previous sample as `next` (as this did) reverses the travel
-            // direction at the last sample, which swaps north for south on the
-            // one sample that ends the path. Only real axis intersections are
-            // differenced — an extension sample's centre is not a track position
-            // (see extend), and those samples carry their direction instead.
+            // the previous sample as `next` reverses the travel direction at the
+            // last sample, which swaps north for south on the one sample that
+            // ends the path. Only real axis intersections are differenced.
             let travel = s.travelDir?.clone();
             if (!travel) {
                 const before = all[i - 1]?.axisHit ? all[i - 1] : s;
                 const after = all[i + 1]?.axisHit ? all[i + 1] : s;
-                travel = after.center.clone().sub(before.center);
+                travel = after.p.clone().sub(before.p);
                 if (travel.lengthSq() < 1) continue;
                 travel.normalize();
             }
-            const up = s.center.clone().normalize();
-            const crossTrack = up.clone().cross(travel).normalize();
+            const crossTrack = s.p.clone().normalize().cross(travel);
+            if (!(crossTrack.lengthSq() > 0)) continue;
+            crossTrack.normalize();
 
-            const lim = this.limitPoints(s, crossTrack);
-            if (lim.hi) umbraN.push(lim.hi);
-            if (lim.lo) umbraS.push(lim.lo);
+            const add = (e, pts, adv, alt) => {
+                if (!e) return;
+                const prev = pts[pts.length - 1];
+                adv.push(prev ? e.p.clone().sub(prev).dot(travel) : 0);
+                alt.push(e.alt);
+                pts.push(e.p);
+            };
+            const en = this.limitEdge(s.p, crossTrack, +1, s.t, seedN);
+            add(en, umbraN, advN, altN);
+            if (en) seedN = en.k;
+            const es = this.limitEdge(s.p, crossTrack, -1, s.t, seedS);
+            add(es, umbraS, advS, altS);
+            if (es) seedS = es.k;
         }
 
+        const trimmedN = this.trimLimit(umbraN, advN, altN);
+        const trimmedS = this.trimLimit(umbraS, advS, altS);
         const last = (a) => a[a.length - 1];
-        const startCap = this.capBetween(umbraN[0], umbraS[0]);
-        const endCap = this.capBetween(last(umbraN), last(umbraS));
+        const startCap = this.capBetween(trimmedN[0], trimmedS[0]);
+        const endCap = this.capBetween(last(trimmedN), last(trimmedS));
         this._pathCache = {
-            key, umbraN, umbraS, startCap, endCap,
+            key, umbraN: trimmedN, umbraS: trimmedS, startCap, endCap,
             centerLine: this.clipToCaps(centerLine, startCap, endCap,
                                         centerLine[Math.floor(centerLine.length / 2)]),
             totalSamples: all.length,
