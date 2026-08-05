@@ -196,7 +196,7 @@ describe("identifying the real rotating-starfield clip", () => {
         expect(solved.ok).toBe(false);
         // ...which is why identifyStars would fall through to the wide tier, where it does
         // solve - but at a per-label quality this suite does not yet accept.
-        const wide = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[2]);
+        const wide = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[3]);
         const wideSolved = await solveField(stars, catalog, [wide], uiOpts(stars));
         expect(wideSolved.ok).toBe(true);
         expect(wideSolved.matches.length).toBeGreaterThan(80);

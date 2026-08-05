@@ -363,7 +363,7 @@ describe("StarIdentify blind solve", () => {
         const stars = degrade(truth, {seed: 31, W: field.W, H: field.H});
         const scalePrior = (Math.PI / 180) / field.pxPerDeg;
 
-        for (const idx of [index, buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[2])]) {
+        for (const idx of [index, buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[3])]) {
             const result = await solveField(stars, catalog, [idx],
                 {center: [field.W / 2, field.H / 2], scalePrior});
             expect(result.ok).toBe(true);
@@ -391,7 +391,7 @@ describe("StarIdentify blind solve", () => {
         expect(truth.length).toBeGreaterThan(60);
         const stars = degrade(truth, {seed: 17, W: field.W, H: field.H});
 
-        const wide = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[2]);
+        const wide = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[3]);
         const result = await solveField(stars, catalog, [wide], {center: [field.W / 2, field.H / 2]});
         expect(result.ok).toBe(true);
         expect(Math.abs(result.centerDecDeg - field.decDeg)).toBeLessThan(2);

@@ -726,3 +726,57 @@ export function calibrateDetection(rgba, W, H, opts = {}) {
         cameraFixedMaxRawSpan: clamp(Math.round(3.5 * rPsf), 4, 16),
     };
 }
+
+/**
+ * Choose the detection threshold from what the frame actually contains.
+ *
+ * threshSigma is the one pixel-space parameter {@link calibrateDetection} cannot derive from
+ * a single measurement, because it defines which blobs exist to measure. It is also not safe
+ * to guess: a 42-frame reference clip analysed at every threshold 1..10 solved its star field
+ * at 2,3,4,7,8,9,10 - the DEFAULT of 5 sat in a knife-edge pair that lost one load-bearing
+ * star - and at sigma 1 the threshold sank into airglow structure and the detector destroyed
+ * the real stars themselves (blobs merged into clouds, centroids 12-37 px off). So the choice
+ * is read off the frame: detect once at a permissive 1.5 sigma recording each blob's peak
+ * significance, then walk the survivor count N(t) = #{peakSNR >= t} upward and stop at the
+ * PLATEAU ONSET - the smallest t where raising the threshold a full sigma keeps at least 80%
+ * of the blobs. Below that point the count is halving per sigma (noise face); on the plateau
+ * the survivors are stars. Measured on the reference clip's frames this picks 3.5-3.75,
+ * inside the solvable zone with margin on both cliffs.
+ *
+ * Guards, each measured or argued in the sweep record:
+ *  - fewer than 40 probe blobs: a plateau read off a handful of blobs is an anecdote -
+ *    refuse, keep the caller's default (the calibrateDetection philosophy).
+ *  - dense sky: a star continuum reaching the noise has no plateau; the count guard raises
+ *    the threshold until at most ~120 blobs survive so the tracker is not flooded.
+ *  - hard clamp [2, 6]: 2 is the measured damage line (below it stars are destroyed at
+ *    detection and nothing downstream can recover them); 6 is the top of the reference
+ *    clip's solvable zone and past any plateau a real sky produces.
+ *
+ * Pure and side-effect free; the caller decides what to do with the recommendation (the UI
+ * probes several spread frames and takes the median).
+ *
+ * @returns {{ok: boolean, count: number, sigma?: number, kept?: number}}
+ */
+export function chooseDetectionSigma(rgba, W, H, opts = {}) {
+    const O = {...STAR_DETECT_DEFAULTS, ...opts, threshSigma: 1.5, minArea: 2};
+    const {sources} = detectSources(rgba, W, H, O);
+    const snrs = sources.map((s) => s.peakSNR)
+        .filter((v) => Number.isFinite(v))
+        .sort((a, b) => b - a);
+    if (snrs.length < 40) return {ok: false, count: snrs.length};
+    // Descending order makes N(t) a binary search for the first entry below t.
+    const N = (t) => {
+        let lo = 0, hi = snrs.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (snrs[mid] >= t) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    };
+    let t = 2;
+    while (t < 8 && N(t + 1) < 0.8 * N(t)) t += 0.25;
+    while (N(t) > 120 && t < 6) t += 0.25;
+    const sigma = Math.min(6, Math.max(2, t));
+    return {ok: true, sigma, count: snrs.length, kept: N(sigma)};
+}
