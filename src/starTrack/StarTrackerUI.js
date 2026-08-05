@@ -2540,7 +2540,36 @@ export function setupStarTrackerMenu() {
 
     folder.add({all: () => { runFullStarTracker(); }}, "all")
         .name("Full Analysis");
-    folder.add(params, "status").name("Status").listen().disable();
+    const statusController = folder.add(params, "status").name("Status").listen().disable();
+    // Status strings routinely outgrow the readout ("identify failed: round-0 rematch
+    // collapsed" shows as "identify failed: round-...") so the full text rides the row's
+    // hover tooltip. The VISIBLE menu rows are MenuMirror twins of this controller, not its
+    // own DOM, and twins only copy a tooltip at creation - so each frame the title is
+    // stamped onto every Status row currently displaying this status text (an unrelated
+    // Status row can only collide when its text is identical, making the stamp a no-op in
+    // meaning). The loop retires when this folder's own row leaves the document - a menu
+    // rebuild spawns a fresh one.
+    const statusInput = statusController.domElement?.querySelector?.("input");
+    if (statusInput) {
+        // A timer rather than requestAnimationFrame: rAF pauses in hidden tabs, and a hover
+        // tooltip needs half-second freshness, not frame accuracy.
+        let wasConnected = false;
+        const timer = setInterval(() => {
+            const connected = statusInput.isConnected;
+            if (connected) wasConnected = true;
+            if (wasConnected && !connected) {
+                clearInterval(timer);
+                return;
+            }
+            for (const row of document.querySelectorAll(".controller.string")) {
+                if (row.querySelector(".name")?.textContent !== "Status") continue;
+                const inp = row.querySelector("input");
+                if (inp && inp.value === params.status && inp.title !== params.status) {
+                    inp.title = params.status;
+                }
+            }
+        }, 500);
+    }
 
     folder.add(params, "useMask").name("Use mask")
         .tooltip("Ignore detections that fall inside the video mask, painted under Video > "
