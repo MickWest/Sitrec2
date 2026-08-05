@@ -30,10 +30,15 @@ import {LENS_PRESETS, lensFOV, serializeLens} from "../CameraLens";
 import {
     STAR_IDENTIFY_DEFAULTS,
     buildQuadIndex,
+    chartSpansBeyondFrame,
     parseStarCatalog,
     parseStarNames,
+    raDecToVec,
     scalePriorFromFov,
     solveField,
+    solveFieldWindowed,
+    vecToRaDec,
+    windowVfovDegAt,
 } from "./StarIdentify";
 
 let folder = null;
@@ -526,8 +531,8 @@ export function makeStarChart() {
  */
 function starTrackPose(globalFrame) {
     const r = result;
-    const refToSky = r?.identify?.solved?.refToSky;
-    if (!refToSky || !r.videoW) return null;
+    const id = r?.identify;
+    if (!id?.solved?.refToSky || !r.videoW) return null;
     const transforms = r.solved.transforms;
     const i = Math.max(0, Math.min(transforms.length - 1, Math.round(globalFrame) - r.frame0));
     const T = transforms[i];
@@ -538,7 +543,69 @@ function starTrackPose(globalFrame) {
     const upOffset = Math.max(50, r.videoH * 0.1);
     const [rx0, ry0] = applyTransform(inv, cx, cy);
     const [rx1, ry1] = applyTransform(inv, cx, cy - upOffset);
-    return {centre: refToSky(rx0, ry0), above: refToSky(rx1, ry1)};
+    if (!id.windowed) {
+        return {centre: id.solved.refToSky(rx0, ry0), above: id.solved.refToSky(rx1, ry1)};
+    }
+
+    // Windowed: each surviving window calibrates its own stretch of the chart, so the pose
+    // comes from the window(s) covering THIS frame. In overlaps the two-point poses are
+    // blended with triangular weights (distance to the window edge), which fades each model
+    // in from zero - the camera path stays continuous across every window boundary.
+    //
+    // A frame no surviving window covers sits in a stretch whose drift was never calibrated.
+    // Refusing it entirely was tried and punishes exactly the honest case: a clip whose
+    // blurred middle broke the chart still deserves a camera that follows the calibrated
+    // parts, so uncovered frames EXTRAPOLATE from the flanking calibrated windows instead -
+    // weighted by proximity, pinned to the accurate models at both edges of the gap, and
+    // disclosed as approximate by the Sync status. An interior gap whose two flanks disagree
+    // by more than 5 degrees is a different animal (one of them is not the same sky) - that
+    // still refuses rather than steering the camera through a fictitious average.
+    const D2R = Math.PI / 180;
+    let covering = id.windows
+        .filter((w) => i >= w.w0 && i < w.w1)
+        .map((w) => ({w, wt: Math.min(i - w.w0 + 1, w.w1 - i)}));
+    if (!covering.length) {
+        const flanks = [];
+        let before = null, after = null;
+        for (const w of id.windows) {
+            if (w.w1 <= i && (!before || w.w1 > before.w1)) before = w;
+            if (w.w0 > i && (!after || w.w0 < after.w0)) after = w;
+        }
+        if (before) flanks.push({w: before, wt: 1 / (i - before.w1 + 1)});
+        if (after) flanks.push({w: after, wt: 1 / (after.w0 - i)});
+        if (!flanks.length) return null;
+        if (flanks.length === 2) {
+            const c0d = flanks[0].w.solved.refToSky(rx0, ry0);
+            const c1d = flanks[1].w.solved.refToSky(rx0, ry0);
+            const v0 = raDecToVec(c0d.raDeg * D2R, c0d.decDeg * D2R);
+            const v1 = raDecToVec(c1d.raDeg * D2R, c1d.decDeg * D2R);
+            const dot = v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2];
+            if (dot < Math.cos(5 * D2R)) return null;
+        }
+        covering = flanks;
+    }
+    const sc = [0, 0, 0], sa = [0, 0, 0];
+    for (const {w, wt} of covering) {
+        const c = w.solved.refToSky(rx0, ry0);
+        const a = w.solved.refToSky(rx1, ry1);
+        const vc = raDecToVec(c.raDeg * D2R, c.decDeg * D2R);
+        const va = raDecToVec(a.raDeg * D2R, a.decDeg * D2R);
+        for (let k = 0; k < 3; k++) {
+            sc[k] += wt * vc[k];
+            sa[k] += wt * va[k];
+        }
+    }
+    const nc = Math.hypot(...sc), na = Math.hypot(...sa);
+    if (nc < 1e-9 || na < 1e-9) {
+        // Near-cancelling blend means the windows disagree wildly at this frame - refuse
+        // rather than emit the meaningless average.
+        return null;
+    }
+    const toDeg = (v, n) => {
+        const rd = vecToRaDec([v[0] / n, v[1] / n, v[2] / n]);
+        return {raDeg: rd.ra * 180 / Math.PI, decDeg: rd.dec * 180 / Math.PI};
+    };
+    return {centre: toDeg(sc, nc), above: toDeg(sa, na)};
 }
 
 /**
@@ -560,6 +627,9 @@ class CNodeControllerStarTrack extends CNodeController {
         this.frame0 = v.frame0 ?? 0;
         this.poseTrack = Array.isArray(v.poseTrack) ? v.poseTrack : null;
         this.vfovDeg = Number.isFinite(v.vfovDeg) ? v.vfovDeg : null;
+        // Per-frame FOV, baked only for windowed solves (a zoom-during-pan clip has no single
+        // plate scale). Same indexing as poseTrack; vfovDeg stays as the scalar fallback.
+        this.vfovTrack = Array.isArray(v.vfovTrack) ? v.vfovTrack : null;
     }
 
     /**
@@ -593,6 +663,27 @@ class CNodeControllerStarTrack extends CNodeController {
         this.frame0 = r.frame0;
         this.poseTrack = track;
         this.vfovDeg = r.videoH ? starTrackVfovDeg(r.identify.solved, r.videoH) : null;
+        // A windowed solve carries one plate scale PER WINDOW, and on a zoom-during-pan clip
+        // those genuinely differ - baking one window's constant would render the sky at the
+        // wrong framing everywhere else. So the FOV is baked per frame, blended across window
+        // overlaps with the same weights as the pose. Frames in an uncalibrated stretch (the
+        // pose extrapolates there) take the NEAREST calibrated window's scale.
+        if (r.identify.windowed && r.videoH) {
+            const windows = r.identify.windows;
+            const nearestVfov = (i) => {
+                let best = null, bestD = Infinity;
+                for (const w of windows) {
+                    const d = i < w.w0 ? w.w0 - i : (i >= w.w1 ? i - w.w1 + 1 : 0);
+                    if (d < bestD) { bestD = d; best = w; }
+                }
+                return 2 * Math.atan((Math.PI / 180 / best.solved.pxPerDeg) * r.videoH / 2)
+                    * 180 / Math.PI;
+            };
+            this.vfovTrack = Array.from({length: transforms.length}, (_, i) =>
+                +(windowVfovDegAt(windows, i, r.videoH) ?? nearestVfov(i)).toFixed(4));
+        } else {
+            this.vfovTrack = null;
+        }
         return true;
     }
 
@@ -615,6 +706,7 @@ class CNodeControllerStarTrack extends CNodeController {
             frame0: this.frame0,
             poseTrack: this.poseTrack,
             vfovDeg: this.vfovDeg,
+            vfovTrack: this.vfovTrack,
         };
     }
 
@@ -623,6 +715,7 @@ class CNodeControllerStarTrack extends CNodeController {
         if (Number.isFinite(v.frame0)) this.frame0 = v.frame0;
         if (Array.isArray(v.poseTrack)) this.poseTrack = v.poseTrack;
         if (Number.isFinite(v.vfovDeg)) this.vfovDeg = v.vfovDeg;
+        if (Array.isArray(v.vfovTrack)) this.vfovTrack = v.vfovTrack;
         // Put the "Star Track" entries back in the camera dropdowns. The switches restore their
         // own saved choice through CNodeSwitch's pendingChoice, which waits for the option to be
         // registered - so this is what lets a sitch saved with the camera synced come back
@@ -833,18 +926,22 @@ function attachStarTrackCamera(controller, select = false) {
     headingSwitch.replaceOption("Star Track", controller);
     if (select) headingSwitch.selectOption("Star Track");
 
-    // The solve knows the zoom too: a constant vertical FOV from the fitted plate scale, so the
-    // rendered sky matches the video's framing, selectable alongside the heading.
+    // The solve knows the zoom too: the vertical FOV from the fitted plate scale, selectable
+    // alongside the heading so the rendered sky matches the video's framing. A windowed solve
+    // baked one FOV PER FRAME (zoom can change mid-pan); otherwise the scalar fills the
+    // timeline. Frames outside the analysed range hold the nearest baked value, exactly as
+    // the pose does.
     const fovSwitch = NodeMan.get("fovSwitch", false);
-    if (fovSwitch && Number.isFinite(controller.vfovDeg)) {
+    const vt = controller.vfovTrack;
+    if (fovSwitch && (vt?.length || Number.isFinite(controller.vfovDeg))) {
+        const fovArray = Array.from({length: Sit.frames}, (_, f) => (vt?.length
+            ? vt[Math.max(0, Math.min(vt.length - 1, f - controller.frame0))]
+            : controller.vfovDeg));
         let fovNode = NodeMan.get("starTrackFOV", false);
         if (fovNode) {
-            fovNode.array = new Array(Sit.frames).fill(controller.vfovDeg);
+            fovNode.array = fovArray;
         } else {
-            fovNode = new CNodeArray({
-                id: "starTrackFOV",
-                array: new Array(Sit.frames).fill(controller.vfovDeg),
-            });
+            fovNode = new CNodeArray({id: "starTrackFOV", array: fovArray});
         }
         fovSwitch.replaceOption("Star Track", fovNode);
         if (select) fovSwitch.selectOption("Star Track");
@@ -865,7 +962,15 @@ export function syncCameraToStarTrack() {
     // Bake BEFORE attaching: the controller drives the camera from its baked track, so
     // attaching one that is still empty would point the camera at nothing.
     if (!controller.bakeFrom(result)) {
-        params.status = "the solve has no per-frame transforms to sync to";
+        const id = result.identify;
+        // Uncalibrated stretches are normally bridged by extrapolating the flanking windows;
+        // the bake only refuses when even that is dishonest - the flanks disagree on the sky.
+        params.status = id?.windowed && id.partial
+            ? "identify calibrated frames "
+                + id.covered.map(([a, b]) => `${result.frame0 + a}-${result.frame0 + b - 1}`)
+                    .join(", ")
+                + " only, and the calibrated stretches disagree - cannot bridge the gap"
+            : "the solve has no per-frame transforms to sync to";
         return;
     }
     if (!attachStarTrackCamera(controller, true)) {
@@ -873,7 +978,14 @@ export function syncCameraToStarTrack() {
         return;
     }
 
-    params.status = "camera synced to the star field";
+    // Partial identify still syncs - the camera follows the calibrated stretches exactly and
+    // the bridged frames approximately - but say which is which.
+    params.status = result.identify?.windowed && result.identify.partial
+        ? "camera synced - frames "
+            + result.identify.covered
+                .map(([a, b]) => `${result.frame0 + a}-${result.frame0 + b - 1}`).join(", ")
+            + " calibrated, the rest approximate"
+        : "camera synced to the star field";
     setRenderOne();
 }
 
@@ -979,6 +1091,10 @@ export async function identifyStars() {
                 && c.n >= minIdentifyObs
                 && !myResult.disabledStars?.has(c.index))
             .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index,
+                // The track's ACTUAL observation frames. Windowed identification cuts and
+                // admits by these - tracks are gappy, and a [first, last] span overstates what
+                // any given window really saw of them.
+                obsF: myResult.solved.tracks[c.index].obs.map((o) => o.f),
                 // How much this track looks like a POINT SOURCE, for choosing quad anchors.
                 // Read off the detector's own records rather than recomputed, and medianed over
                 // the track's detections so one bad frame cannot decide it. Without these the
@@ -1007,14 +1123,126 @@ export async function identifyStars() {
         const tierOrder = STAR_IDENTIFY_DEFAULTS.tiers.map((_, i) => i);
         if (fovWdeg > 35) tierOrder.reverse();
 
-        let solved = null;
-        for (const tier of tierOrder) {
+        // Everything below may run several solves - a windowed clip runs one per window - and
+        // they all share the same scale prior and live-display options.
+        const commonSolveOpts = {
+            ...(scalePrior ? {scalePrior} : {}),
+            ...(params.showDuringAnalysis ? {
+                onYield: yieldToBrowser,
+                onCandidate: (q) => {
+                    // Best-last, so the strongest quad paints on top of the others.
+                    liveQuads.push(q);
+                    liveQuads.sort((a, b) => a.fraction - b.fraction);
+                    if (liveQuads.length > MAX_LIVE_QUADS) liveQuads.shift();
+                    setRenderOne();
+                },
+            } : {}),
+        };
+        const ensureIndex = async (tier) => {
             if (!quadIndexes[tier]) {
                 params.status = `building star geometry index (tier ${tier + 1})`;
                 await yieldToBrowser();
                 quadIndexes[tier] = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[tier]);
+            }
+            return quadIndexes[tier];
+        };
+        // Join the names on, keyed by the classified-track index the overlay draws from.
+        const joinNames = (entries) => {
+            const identified = new Map();
+            for (const [index, m] of entries) {
+                const nm = names.get(m.hip);
+                const label = nm?.name
+                    || (nm?.greek ? `${nm.greek} ${nm.constellation}` : `HIP ${m.hip}`);
+                identified.set(index, {
+                    label, hip: m.hip, mag: m.mag, raDeg: m.raDeg, decDeg: m.decDeg,
+                    dPx: m.dPx,
+                    // A PROPER name (Altair, Deneb) - drawn more prominently than the Bayer
+                    // and HIP-number fallbacks.
+                    named: !!nm?.name,
+                });
+            }
+            return identified;
+        };
+        const refreshSyncedCamera = () => {
+            // A previously-synced camera keeps driving from its BAKE, so a re-identification
+            // (say, after toggling stars off) must RE-BAKE it whole. Refreshing only the live
+            // FOV array - the old behaviour - left the heading and the serialized vfovDeg/
+            // vfovTrack on the previous solve: zoom and heading came from two different
+            // solves, and a save then froze the stale pair for every reload. When the new
+            // solve cannot bake (a windowed identify with partial coverage), the old bake is
+            // left intact rather than half-updated; pressing Sync explains why.
+            const ctrl = NodeMan.get("starTrackCameraController", false);
+            if (!ctrl?.poseTrack) return;
+            if (ctrl.bakeFrom(myResult)) {
+                attachStarTrackCamera(ctrl, false);
+                setRenderOne();
+            }
+        };
+
+        // A clip whose chart robustly extends well beyond the video frame is a PAN, and a
+        // pan's chart carries time-accumulated stitching drift that no single plate model can
+        // fit (the windowed-identification block in StarIdentify.js holds the measurements).
+        // Such clips are identified per time window and the labels merged; everything else
+        // takes the single whole-chart solve below, exactly as before.
+        const transforms = myResult.solved.transforms;
+        if (!myResult.still && myResult.videoW && transforms?.length > 1
+            && chartSpansBeyondFrame(stars, myResult.videoW, myResult.videoH)) {
+            const indexes = [];
+            for (const tier of tierOrder) {
+                indexes.push(await ensureIndex(tier));
                 if (!fresh()) return;
             }
+            const win = await solveFieldWindowed(stars, catalog, indexes, {
+                videoW: myResult.videoW,
+                videoH: myResult.videoH,
+                transforms,
+                totalFrames: transforms.length,
+                solveOpts: commonSolveOpts,
+                onWindowStatus: (k, n) => {
+                    params.status = `matching window ${k}/${n}`;
+                },
+                shouldStop: () => !fresh(),
+            });
+            if (!win || !fresh()) return;
+            if (win.ok) {
+                myResult.identify = {
+                    solved: win.primary.solved,
+                    windowed: true,
+                    // The surviving windows, for the per-frame pose lookup: each covers
+                    // [w0, w1) in analysed-frame numbers and carries its own calibration.
+                    windows: win.surviving.map((w) => ({w0: w.w0, w1: w.w1, solved: w.solved})),
+                    partial: win.partial,
+                    covered: win.covered,
+                    report: win.windows,
+                    identified: joinNames(win.labels),
+                };
+                refreshSyncedCamera();
+                // The status zoom figure comes from the primary window; when the windows
+                // disagree on plate scale beyond noise the baked FOV varies per frame, and
+                // the status says so.
+                const scales = win.surviving.map((w) => w.solved.pxPerDeg);
+                const spread = (Math.max(...scales) - Math.min(...scales))
+                    / Math.min(...scales);
+                const uncovered = win.partial
+                    ? " - frames " + win.covered.map(([a, b]) =>
+                        `${myResult.frame0 + a}-${myResult.frame0 + b - 1}`).join(", ")
+                        + " only"
+                    : "";
+                params.status = `identified ${myResult.identify.identified.size}`
+                    + `/${stars.length} stars in ${win.surviving.length}`
+                    + `/${win.windows.length} windows${uncovered}`
+                    + (spread > 0.02 ? " - zoom varies across the pan" : "");
+                setRenderOne();
+                return;
+            }
+            params.status = "no window solved - trying the whole chart";
+            await yieldToBrowser();
+        }
+
+        let solved = null;
+        for (const tier of tierOrder) {
+            await ensureIndex(tier);
+            if (!fresh()) return;
             params.status = `matching against ${quadIndexes[tier].n} catalog quads (tier ${tier + 1})`;
             await yieldToBrowser();
             // The reference frame is frame-0 pixels, but a panning clip carries the star map
@@ -1039,17 +1267,7 @@ export async function identifyStars() {
                     width: Math.max(bx1 - bx0, by1 - by0),
                     bounds: [bx0 - boundsPad, by0 - boundsPad, bx1 + boundsPad, by1 + boundsPad],
                 } : {}),
-                ...(scalePrior ? {scalePrior} : {}),
-                ...(params.showDuringAnalysis ? {
-                    onYield: yieldToBrowser,
-                    onCandidate: (q) => {
-                        // Best-last, so the strongest quad paints on top of the others.
-                        liveQuads.push(q);
-                        liveQuads.sort((a, b) => a.fraction - b.fraction);
-                        if (liveQuads.length > MAX_LIVE_QUADS) liveQuads.shift();
-                        setRenderOne();
-                    },
-                } : {}),
+                ...commonSolveOpts,
             });
             if (!fresh()) return;
             if (solved.ok) break;
@@ -1059,30 +1277,9 @@ export async function identifyStars() {
             return;
         }
 
-        // Join the names on, keyed by the classified-track index the overlay draws from.
-        const identified = new Map();
-        for (const m of solved.matches) {
-            const nm = names.get(m.hip);
-            const label = nm?.name
-                || (nm?.greek ? `${nm.greek} ${nm.constellation}` : `HIP ${m.hip}`);
-            identified.set(stars[m.image].index, {
-                label, hip: m.hip, mag: m.mag, raDeg: m.raDeg, decDeg: m.decDeg, dPx: m.dPx,
-                // A PROPER name (Altair, Deneb) - drawn more prominently than the Bayer and
-                // HIP-number fallbacks.
-                named: !!nm?.name,
-            });
-        }
-        myResult.identify = {solved, identified};
-
-        // If the camera is already synced, a re-identification (say, after toggling stars off)
-        // refines the plate scale under it. The heading controller reads the new refToSky live
-        // at apply time, so the cached Star Track FOV must follow - otherwise heading and zoom
-        // would come from two different solves.
-        const fovNode = NodeMan.get("starTrackFOV", false);
-        if (fovNode && myResult.videoH) {
-            fovNode.array = new Array(Sit.frames).fill(starTrackVfovDeg(solved, myResult.videoH));
-            setRenderOne();
-        }
+        myResult.identify = {solved,
+            identified: joinNames(solved.matches.map((m) => [stars[m.image].index, m]))};
+        refreshSyncedCamera();
         const raH = solved.centerRaDeg / 15;
         params.status = `identified ${solved.matches.length}/${stars.length} stars - `
             + `field ${solved.fovDeg.toFixed(1)} deg at RA ${raH.toFixed(2)}h `

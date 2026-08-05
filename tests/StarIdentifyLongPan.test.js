@@ -83,17 +83,18 @@ describe("identifying the Giddierone pan segments", () => {
         expect(Math.max(...ys)).toBeGreaterThan(1100);
     });
 
-    test("CONTROL: the old density-blind arithmetic accepts the southern-sky impostor", async () => {
-        // The shipped-with-2.110.0 gates, re-created exactly: fraction floor 0.35 and the
-        // chance gate disabled (a zero margin accepts any count). This is the machine-checked
-        // record of the failure, not a behaviour anyone wants back.
+    test("CONTROL: the southern-sky impostor stays dead even with the chance gate disabled", async () => {
+        // The original failure, machine-checked: under the shipped-with-2.110.0 arithmetic
+        // (fraction floor 0.35, no chance gate) a bogus 96-degree hypothesis with ~30 chance
+        // matches against its 3,495-star projection was ACCEPTED at RA 160 / Dec -40. Two
+        // independent defenses now block it, and this run proves the second alone suffices:
+        // with the chance knobs zeroed, the round-0 rematch collapse rule still disqualifies
+        // the impostor - its rematch could re-find only 1 of the 44 provisional matches, which
+        // was always the confession that the 44 were coincidence. (The chance gate itself is
+        // exercised by every other test in this file, which runs with it on.)
         const {solved} = await solveLikeUI(segments.long,
             {strongMatchFraction: 0.35, chanceMarginMin: 0, chanceSigmas: 0});
-        expect(solved.ok).toBe(true);
-        // Wrong hemisphere, absurd field - "confident" purely on chance matches against a
-        // 3,495-star projection.
-        expect(solved.centerDecDeg).toBeLessThan(0);
-        expect(solved.fovDeg).toBeGreaterThan(60);
+        expect(solved.ok).toBe(false);
     });
 
     test("the long segment now identifies the true Cygnus/Lyra field, on the narrow tier", async () => {

@@ -1040,6 +1040,7 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
     const fin = DIAG && {provisional: matches.length, rounds: [], nProjected, expected};
     if (fin) DIAG.finalists.push(fin);
 
+    let committedAny = false;
     for (let round = 0; round < O.refineRounds; round++) {
         // The round either completes wholly or leaves no trace: a break after the refit would
         // pair the NEW transform with the OLD matches and residuals - the exact stale mixture
@@ -1078,6 +1079,19 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
         // before refinement touched it, instead of the failed round being rolled back.
         const pm = projectAndMatch(imageStars, mirrored, T, c0, b0, allIdx, allVec, tolPx,
             width, centerPx, bounds, catalog, maxProjected);
+        // A FIRST-round rematch that cannot re-find even half the provisional matches under
+        // its own refit is not a failed refinement to roll back from - it is the provisional
+        // count confessing to being chance. Both wrong-field acceptances measured on the
+        // Giddierone pan windows worked exactly this way: a dense wide-tier projection scraped
+        // past the gates (chance bar cleared by under half a match), the rematch collapsed
+        // 26->5 and 25->8, and the rollback let the final gate judge the unrefined arithmetic.
+        // Disqualifying the CANDIDATE (not the solve - the caller tries the runners-up) closes
+        // that path; a genuine field re-finds its matches, and did in every healthy solve of
+        // both captured runs of that clip.
+        if (round === 0 && (!pm || pm.matches.length < Math.ceil(prev.matches.length / 2))) {
+            diagCount("rej.rematchCollapse");
+            return {ok: false, reason: "round-0 rematch collapsed"};
+        }
         if (!pm || pm.matches.length < O.minMatches
             || !consensusMet(O, imageStars.length, pm.matches.length, pm.nProjected, pm.expected)) {
             if (fin) {
@@ -1096,6 +1110,18 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
         matches = pm.matches;
         nProjected = pm.nProjected;
         expected = pm.expected;
+        committedAny = true;
+    }
+
+    // A final judged on PROVISIONAL arithmetic alone - no refinement round ever recommitted
+    // the match set - has never had its count independently reproduced, so it must clear the
+    // chance bar with margin rather than by a fraction of a match, which is precisely how the
+    // measured wide-tier impostors survived (clearances of 0.34 and 0.46 matches).
+    if (!committedAny
+        && matches.length < expected
+            + Math.max(O.chanceMarginMin, O.chanceSigmas * Math.sqrt(expected)) + 2) {
+        diagCount("rej.provisionalFinalMargin");
+        return {ok: false, reason: "provisional-only final lacks chance margin"};
     }
 
     // Refinement only ever rematches with the verification gate, but hold the acceptance
@@ -1148,6 +1174,10 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
         nImage: imageStars.length,
         matchedFraction: matches.length / imageStars.length,
         rmsPx: Math.sqrt(sse / matches.length),
+        // The verification tolerance this solve matched at. Residuals are only comparable
+        // ACROSS solves when normalised by it - it scales with the field width, so two windows
+        // of one pan can hold the same star to different pixel standards.
+        tolPx,
         // The full calibration as a function: any reference-frame pixel to its place on the
         // sky under the final model. This is the bridge a camera sync needs - the per-frame
         // transforms give each video frame's centre in reference pixels, and this turns that
@@ -1159,4 +1189,367 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
             return {raDeg: rd.ra * 180 / Math.PI, decDeg: rd.dec * 180 / Math.PI};
         },
     };
+}
+
+// =============================================================================================
+// WINDOWED identification, for panning clips.
+//
+// A pan's reference chart is stitched from per-frame similarities, and the stitching drift
+// accumulates over TIME - measured at 1.3 degrees end to end on a 671-frame superzoom pan,
+// against a 6 px verification tolerance. One plate model can only fit one stretch of such a
+// chart: the full-chart solve of that clip matched 42 of 123 stars, all from the late pan, and
+// the frames the video actually opens on (Vega among them) got nothing. Worse, the drift
+// re-enters broken tracks as DUPLICATE chart entries (~17% of that clip's identify set), so a
+// single model's consensus denominator is permanently inflated.
+//
+// The warp is invisible over a short enough time span: tracks observed TOGETHER are chart-
+// consistent to a couple of pixels even when the whole chart is not. So: solve overlapping
+// time windows of tracks with the ordinary solveField - every gate applies per window - and
+// merge the labels. Validated on two independent captures of the same clip: 100/123 labeled
+// (from 42) with a 25/25 per-label audit on the healthy capture; and on a degraded capture
+// whose full chart does not solve at all, the one healthy window still labels Vega + 27 with
+// a clean audit, where the single-model path would deliver nothing.
+//
+// Windows cannot be cut blindly. Blur bursts break every track at once - a "wall" - and the
+// wall SPLITS the chart into two drift regimes. A window whose brightest stars straddle a wall
+// mixes the regimes and generates zero correct-field quad hypotheses (measured: solving
+// windows ride on exactly ONE viable quad each; the straddling window had none, while the
+// correct field, force-fitted, would have passed every gate with 40 of 61 matches). Walls also
+// MOVE between analyses of the same clip (~80 frames between the two captures), so boundaries
+// are cut from the track-break structure of the run at hand, never at fixed frames.
+// =============================================================================================
+
+export const STAR_WINDOW_DEFAULTS = {
+    // Parameter-swept on the Giddierone captures: any width in [160, 220] with any step and
+    // any in-window floor in [8, 25] labels 100-106 of 123 with a clean audit; at >= 300 the
+    // within-window drift breaks the rigid-fit assumption and coverage collapses to 71 with
+    // outright mislabels. 220 is the top of the safe plateau.
+    maxWindowFrames: 220,
+    minWindowFrames: 60,        // walls closer than this to the clip ends are not worth a cut
+    minWindowObs: 15,           // ACTUAL observed frames a track needs in-window to join it
+    minWindowStars: 8,          // fewer and the window is skipped, not solved
+    wallBinFrames: 20,
+    // Windowing engages when the chart's robust span exceeds this factor of the video frame -
+    // 3rd-lowest to 3rd-highest star coordinate, so a lone mis-tracked outlier (which a plain
+    // bbox would follow) cannot trigger it; three tracks must support the excess.
+    panSpanFactor: 1.25,
+};
+
+/** Does the chart say "pan"? Robust span (3rd-lowest..3rd-highest star coordinate) beyond
+ *  panSpanFactor x the video frame on either axis. Under six stars there is no robust span. */
+export function chartSpansBeyondFrame(stars, videoW, videoH, O = STAR_WINDOW_DEFAULTS) {
+    if (stars.length < 6 || !videoW || !videoH) return false;
+    const xs = stars.map((s) => s.x).sort((a, b) => a - b);
+    const ys = stars.map((s) => s.y).sort((a, b) => a - b);
+    const spanX = xs[xs.length - 3] - xs[2];
+    const spanY = ys[ys.length - 3] - ys[2];
+    return spanX > O.panSpanFactor * videoW || spanY > O.panSpanFactor * videoH;
+}
+
+/**
+ * Wall frames, from the observation spans of the identify-eligible tracks: bin span starts and
+ * ends, flag bins holding at least max(4, 3 x median) of them, merge adjacent flagged bins into
+ * one wall at their mass-weighted centre. Spans touching the clip ends are not breaks.
+ */
+export function detectTrackWalls(spans, totalFrames, O = STAR_WINDOW_DEFAULTS) {
+    const bin = O.wallBinFrames;
+    const nBins = Math.max(1, Math.ceil(totalFrames / bin));
+    const mass = new Array(nBins).fill(0);
+    for (const [f0, f1] of spans) {
+        if (f0 > 0) mass[Math.min(nBins - 1, Math.floor(f0 / bin))]++;
+        if (f1 < totalFrames - 1) mass[Math.min(nBins - 1, Math.floor(f1 / bin))]++;
+    }
+    const sorted = [...mass].sort((a, b) => a - b);
+    const thresh = Math.max(4, 3 * sorted[nBins >> 1]);
+    const walls = [];
+    for (let i = 0; i < nBins; i++) {
+        if (mass[i] < thresh) continue;
+        const frame = i * bin + bin / 2;
+        const last = walls[walls.length - 1];
+        if (last && frame - last.frame <= bin * 1.5) {
+            last.frame = (last.frame * last.mass + frame * mass[i]) / (last.mass + mass[i]);
+            last.mass += mass[i];
+        } else {
+            walls.push({frame, mass: mass[i]});
+        }
+    }
+    return walls.map((w) => Math.round(w.frame));
+}
+
+/**
+ * Cut [0, totalFrames) at the walls, then split any between-wall span longer than
+ * maxWindowFrames into evenly-stepped windows of exactly maxWindowFrames that overlap by at
+ * least half. Deterministic: with no walls a 671-frame clip yields six 220-frame windows
+ * stepping ~90. Windows are half-open [w0, w1).
+ */
+export function planIdentifyWindows(walls, totalFrames, O = STAR_WINDOW_DEFAULTS) {
+    const cuts = [0,
+        ...walls.filter((w) => w > O.minWindowFrames && w < totalFrames - O.minWindowFrames),
+        totalFrames];
+    const windows = [];
+    for (let i = 0; i + 1 < cuts.length; i++) {
+        const a = cuts[i], b = cuts[i + 1], span = b - a;
+        if (span <= O.maxWindowFrames) {
+            windows.push([a, b]);
+            continue;
+        }
+        const n = Math.ceil((2 * span) / O.maxWindowFrames) - 1;
+        const step = (span - O.maxWindowFrames) / (n - 1 || 1);
+        for (let k = 0; k < n; k++) {
+            const w0 = Math.round(a + k * step);
+            windows.push([w0, Math.min(b, w0 + O.maxWindowFrames)]);
+        }
+    }
+    return windows;
+}
+
+/**
+ * Quarantine windows that contradict the consensus. Per-window gates are necessary but not
+ * sufficient: a wide-tier hypothesis once passed every gate with a wholly wrong field and
+ * would have shipped five labels up to 134 degrees wrong - two of them on tracks no other
+ * window matched, invisible to any per-track check. Its signature was unmistakable at the
+ * WINDOW level: 13 of its 13 labels shared with neighbours disagreed.
+ *
+ * Windows pair when they label >= 3 of the same tracks; a pair is compatible when agreements
+ * outnumber disagreements. The largest connected component of compatible windows (ties broken
+ * by total matches) is the chain; a window conflicting with any chain member is quarantined.
+ * A chain needs two windows - a lone disagreeing PAIR is never arbitrated, because healthy
+ * windows legitimately disagree on the odd drift-displaced fragment and per-track majority
+ * voting is anti-signal there (correlated windows repeat the same fragment mislabel).
+ */
+export function quarantineWindows(accepted) {
+    const n = accepted.length;
+    const labelSets = accepted.map((w) => {
+        const m = new Map();
+        for (const match of w.solved.matches) m.set(w.sub[match.image].index, match.hip);
+        return m;
+    });
+    const compatible = [], conflicting = [];
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            let agree = 0, disagree = 0;
+            for (const [index, hip] of labelSets[i]) {
+                const other = labelSets[j].get(index);
+                if (other === undefined) continue;
+                if (other === hip) agree++; else disagree++;
+            }
+            if (agree + disagree < 3) continue;
+            (agree > disagree ? compatible : conflicting).push([i, j]);
+        }
+    }
+    const comp = accepted.map((_, i) => i);
+    const find = (start) => {
+        let i = start;
+        while (comp[i] !== i) {
+            comp[i] = comp[comp[i]];
+            i = comp[i];
+        }
+        return i;
+    };
+    for (const [i, j] of compatible) comp[find(i)] = find(j);
+    const groups = new Map();
+    for (let i = 0; i < n; i++) {
+        const root = find(i);
+        if (!groups.has(root)) groups.set(root, []);
+        groups.get(root).push(i);
+    }
+    let chain = [];
+    let chainMatches = -1;
+    for (const members of groups.values()) {
+        const total = members.reduce((s, i) => s + accepted[i].solved.matches.length, 0);
+        if (members.length > chain.length
+            || (members.length === chain.length && total > chainMatches)) {
+            chain = members;
+            chainMatches = total;
+        }
+    }
+    if (chain.length < 2) return accepted.map(() => false);
+    const inChain = new Set(chain);
+    const out = accepted.map(() => false);
+    for (const [i, j] of conflicting) {
+        if (inChain.has(i) && !inChain.has(j)) out[j] = true;
+        if (inChain.has(j) && !inChain.has(i)) out[i] = true;
+    }
+    return out;
+}
+
+/**
+ * One label per track from the surviving windows, decided LEXICOGRAPHICALLY: most in-window
+ * observations first (the window that watched the track longest is the one whose chart regime
+ * it belongs to), then residual normalised by that window's own tolerance. Never a weighted
+ * score, and never a vote: measured across the captures, the coverage-first rule resolved
+ * every cross-window disagreement correctly, while two correlated windows repeating one
+ * fragment mislabel would have outvoted the single window that had it right.
+ */
+export function mergeWindowLabels(surviving) {
+    const labels = new Map();
+    const disputes = [];
+    for (const w of surviving) {
+        for (const m of w.solved.matches) {
+            const star = w.sub[m.image];
+            const cand = {hip: m.hip, cat: m.cat, raDeg: m.raDeg, decDeg: m.decDeg,
+                mag: m.mag, dPx: m.dPx, cover: star.cover,
+                norm: m.dPx / (w.solved.tolPx || 1), window: [w.w0, w.w1]};
+            const prev = labels.get(star.index);
+            if (!prev) {
+                labels.set(star.index, cand);
+                continue;
+            }
+            const better = cand.cover > prev.cover
+                || (cand.cover === prev.cover && cand.norm < prev.norm);
+            if (cand.hip !== prev.hip) {
+                disputes.push({index: star.index, kept: better ? cand.hip : prev.hip,
+                    dropped: better ? prev.hip : cand.hip});
+            }
+            if (better) labels.set(star.index, cand);
+        }
+    }
+    return {labels, disputes};
+}
+
+/**
+ * The windowed identification: plan wall-aware windows, solve each with the ordinary tier
+ * cascade, quarantine inconsistent windows, merge labels.
+ *
+ * @param {Array} stars       identify-eligible tracks: {x, y, mag, index, obsF, ...}, where
+ *                            obsF is the track's ACTUAL observation frames - tracks are gappy,
+ *                            and span-based membership admits stars a window barely saw.
+ * @param {Array} indexes     quad indexes in the order to try them (the caller owns tier order)
+ * @param {Object} opts       {videoW, videoH, transforms, totalFrames, solveOpts, windowOpts,
+ *                            onWindowStatus(k, n), shouldStop}
+ * @returns {{ok: boolean, windows: Array, labels: Map, disputes: Array, primary, partial,
+ *          covered: Array}|null}  null only when shouldStop asked for an abort.
+ */
+export async function solveFieldWindowed(stars, catalog, indexes, opts) {
+    const O = {...STAR_WINDOW_DEFAULTS, ...(opts.windowOpts ?? {})};
+    const totalFrames = opts.totalFrames ?? opts.transforms?.length ?? 0;
+    const spans = stars.map((s) => [s.obsF[0], s.obsF[s.obsF.length - 1]]);
+    const walls = detectTrackWalls(spans, totalFrames, O);
+    const planned = planIdentifyWindows(walls, totalFrames, O);
+
+    const windows = [];
+    const accepted = [];
+    for (let k = 0; k < planned.length; k++) {
+        if (opts.shouldStop?.()) return null;
+        const [w0, w1] = planned[k];
+        const sub = [];
+        for (const s of stars) {
+            let cover = 0;
+            for (const f of s.obsF) if (f >= w0 && f < w1) cover++;
+            if (cover >= O.minWindowObs) sub.push({...s, cover});
+        }
+        const rec = {w0, w1, nStars: sub.length, ok: false};
+        windows.push(rec);
+        if (sub.length < O.minWindowStars) {
+            rec.reason = "too few stars";
+            continue;
+        }
+        // Bounds: where the video ACTUALLY looked during this window (the frame rectangle's
+        // corners taken back into chart coordinates - transforms map chart to video, so via
+        // the inverse), unioned with the member stars. Never the frame-0 rectangle: for a late
+        // window that is an empty, temporally unrelated region whose area would only dilute
+        // the chance arithmetic and widen the tolerance.
+        let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+        const take = (x, y) => {
+            if (x < bx0) bx0 = x;
+            if (x > bx1) bx1 = x;
+            if (y < by0) by0 = y;
+            if (y > by1) by1 = y;
+        };
+        const transforms = opts.transforms ?? [];
+        const takeThrough = (S, x, y) =>
+            take(S.A[0] * x - S.A[1] * y + S.B[0], S.A[1] * x + S.A[0] * y + S.B[1]);
+        for (let f = w0; f < Math.min(w1, transforms.length); f++) {
+            const T = transforms[f];
+            // invertSim divides by |A|^2 - a degenerate similarity would poison the bounds
+            // with infinities, so it is skipped rather than inverted.
+            if (!T || T.A[0] * T.A[0] + T.A[1] * T.A[1] < 1e-12) continue;
+            const inv = invertSim(T);
+            takeThrough(inv, 0, 0);
+            takeThrough(inv, opts.videoW, 0);
+            takeThrough(inv, 0, opts.videoH);
+            takeThrough(inv, opts.videoW, opts.videoH);
+        }
+        if (!Number.isFinite(bx0)) {
+            // No usable transforms (fixture replay, or every in-window transform degenerate):
+            // the untransformed video rectangle is the only footprint estimate left.
+            take(0, 0);
+            take(opts.videoW, opts.videoH);
+        }
+        for (const s of sub) take(s.x, s.y);
+        const pad = 12;
+        const windowSolveOpts = {
+            ...(opts.solveOpts ?? {}),
+            center: [(bx0 + bx1) / 2, (by0 + by1) / 2],
+            width: Math.max(bx1 - bx0, by1 - by0),
+            bounds: [bx0 - pad, by0 - pad, bx1 + pad, by1 + pad],
+        };
+        opts.onWindowStatus?.(k + 1, planned.length);
+        let solved = null;
+        for (const index of indexes) {
+            if (opts.shouldStop?.()) return null;
+            const attempt = await solveField(sub, catalog, [index], windowSolveOpts);
+            if (attempt.ok) {
+                solved = attempt;
+                break;
+            }
+            rec.reason = attempt.reason;
+        }
+        if (!solved) continue;
+        rec.ok = true;
+        delete rec.reason;
+        rec.solved = solved;
+        accepted.push({w0, w1, solved, sub, rec});
+    }
+
+    const quarantined = quarantineWindows(accepted);
+    const surviving = accepted.filter((w, i) => {
+        if (quarantined[i]) w.rec.quarantined = true;
+        return !quarantined[i];
+    });
+    const {labels, disputes} = mergeWindowLabels(surviving);
+
+    // Compatibility primary: the window the reference frame lives in, best-first, because its
+    // refToSky is the one whose neighbourhood the video opens on. Deterministic fallback when
+    // no surviving window contains frame 0.
+    const byQuality = (a, b) => b.solved.matches.length - a.solved.matches.length || a.w0 - b.w0;
+    const primary = surviving.filter((w) => w.w0 === 0).sort(byQuality)[0]
+        ?? [...surviving].sort(byQuality)[0] ?? null;
+
+    // Covered frame ranges, merged. Windowed pose and the partial flag both read from this.
+    const covered = [];
+    for (const w of [...surviving].sort((a, b) => a.w0 - b.w0)) {
+        const last = covered[covered.length - 1];
+        if (last && w.w0 <= last[1]) last[1] = Math.max(last[1], w.w1);
+        else covered.push([w.w0, w.w1]);
+    }
+    const partial = covered.length !== 1 || covered[0][0] > 0 || covered[0][1] < totalFrames;
+
+    return {ok: surviving.length > 0, windows, labels, disputes, primary, partial, covered,
+        surviving};
+}
+
+/**
+ * The vertical field of view at one analysed frame, from the surviving windows that cover it -
+ * blended with the same triangular weights the pose uses, so a zoom that the windows resolved
+ * as different plate scales bakes into a smoothly varying FOV rather than one window's
+ * constant. Returns null on an uncovered frame (the pose is null there too).
+ *
+ * @param {Array} windows  [{w0, w1, solved}] surviving windows, solved.pxPerDeg present
+ * @param {number} i       analysed-frame index
+ * @param {number} videoH  decoded video height, px
+ */
+export function windowVfovDegAt(windows, i, videoH) {
+    let sum = 0, wsum = 0;
+    for (const w of windows) {
+        if (i < w.w0 || i >= w.w1) continue;
+        const wt = Math.min(i - w.w0 + 1, w.w1 - i);
+        // Same tangent-space formula as starTrackVfovDeg: pxPerDeg holds at the field centre,
+        // so half the frame spans (pi/180/pxPerDeg) * videoH/2 tangent units.
+        const vfov = 2 * Math.atan((Math.PI / 180 / w.solved.pxPerDeg) * videoH / 2)
+            * 180 / Math.PI;
+        sum += wt * vfov;
+        wsum += wt;
+    }
+    return wsum > 0 ? sum / wsum : null;
 }
