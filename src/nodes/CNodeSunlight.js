@@ -34,6 +34,13 @@ export class CNodeSunlight extends CNode {
     // frame (sun, sky brightness, haze) share one real computation.
     calculateEclipseLightFactor(position, date) {
         if (!isEclipseLightingEnabled()) return NO_ECLIPSE;
+        // "No Lighting in Main View" flattens the main view to pure ambient so
+        // the geometry can be seen. An eclipse dimming that flat light is the
+        // same thing the switch exists to defeat, so it is suppressed with it —
+        // and suppressed HERE rather than at the three call sites, because the
+        // direct sun, the sky brightness and the horizon glow all read the
+        // eclipse through this one function.
+        if (this.suppressEclipse) return NO_ECLIPSE;
         // Callers like calculateSkyBrightness(position) omit the date —
         // default it here or the eclipse silently no-ops for those paths.
         if (date === undefined) date = GlobalDateTimeNode.dateNow;

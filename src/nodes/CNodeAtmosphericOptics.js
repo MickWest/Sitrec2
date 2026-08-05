@@ -1240,7 +1240,14 @@ export class CNodeAtmosphericOptics extends CNode {
                 // glow fades into the sky with no visible edge.
                 const win = 1 - MathUtils.smoothstep(v, 0.45, 1.0);
                 const b = base * (core + halo) * win;
-                return [b, b * 0.96, b * 0.86];              // warm white
+                // Neutral, not warm. A warm tint (G 0.96, B 0.86) reads fine in
+                // the faint aureole but not in the core: drawn additively, the
+                // red channel saturates first and the green/blue shortfall shows
+                // up as a yellow disc sitting inside the Sun's own disc, smaller
+                // than it and obviously wrong. Forward-scattered sunlight is
+                // near-neutral anyway — the warmth in a real glare comes from the
+                // sky it is scattering through, which is already in the frame.
+                return [b, b, b];
             }
         );
     }

@@ -466,6 +466,9 @@ export class CNodeLighting extends CNode {
             sunNode.ambientIntensity = ambientIntensity;
             sunNode.sunIntensity = sunIntensity;
             sunNode.ambientOnly = this.ambientOnly;
+            // Forwarded like the other flags above. Set only for the main view's
+            // pass, so the look view keeps its eclipse lighting.
+            sunNode.suppressEclipse = isMain && this.noMainLighting;
             sunNode.sunScattering = this.sunScattering;
             sunNode.atmosphere = this.atmosphere;
             sunNode.sunBoost = this.sunBoost;

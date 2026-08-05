@@ -63,8 +63,14 @@ export class CPlanets {
             "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"
         ];
         
+        // Sun is WHITE. It was "#FFFF40", a saturated yellow, which painted a
+        // hard yellow disc in the middle of the sun glare — and one narrower
+        // than the Sun itself, since the sprite's visible core is smaller than
+        // its quad. The Sun's photosphere is very nearly white; what warmth you
+        // see near the horizon comes from the air it is shining through, which
+        // the atmosphere and refraction paths already supply.
         this.planetColors = config.planetColors ?? [
-            "#FFFF40", "#FFFFFF", "#FFFFFF", "#80ff80", "#ff8080",
+            "#FFFFFF", "#FFFFFF", "#FFFFFF", "#80ff80", "#ff8080",
             "#FFFF80", "#FF80FF", "#FFFFFF", "#FFFFFF", "#FFFFFF"
         ];
         
@@ -199,11 +205,18 @@ export class CPlanets {
     _createSunMaterial() {
         // ShaderMaterial so each vertex gets refracted individually — the
         // Sun's lower limb lifts more than the upper one near the horizon,
-        // producing the characteristic vertical squash. Same color the prior
-        // MeshBasicMaterial used (0xfff27a).
+        // producing the characteristic vertical squash.
+        //
+        // WHITE. This was 0xfff27a, carried over from the MeshBasicMaterial
+        // before it, and it drew a hard yellow disc in the middle of the sun
+        // glare — narrower than the Sun itself, because the sprite's visible
+        // core is smaller than its quad, so it read as a small yellow dot
+        // inside a white glow rather than as the Sun. The photosphere is very
+        // nearly white; the warmth in a real low Sun comes from the air it
+        // shines through, which the atmosphere and refraction paths supply.
         return new ShaderMaterial({
             uniforms: {
-                uColor: {value: new Vector3(1.0, 0.9490, 0.4784)},
+                uColor: {value: new Vector3(1.0, 1.0, 1.0)},
                 uRefractionEnabled: refractionUniforms.uRefractionEnabled,
                 uZenithECI: refractionUniforms.uZenithECI,
                 uZenithECEF: refractionUniforms.uZenithECEF,

@@ -319,17 +319,46 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
     // in the local horizontal. Finite difference over 30 s — the track turns far
     // too slowly for that to matter, and it needs no state.
     shadowTravelDir(date, center) {
-        const later = new Date(date.getTime() + 30000);
-        const moon = getGeocentricBodyPositionECEF(Astronomy.Body.Moon, later, true);
-        const sun = getGeocentricBodyPositionECEF(Astronomy.Body.Sun, later, true);
-        if (!moon || !sun) return null;
-        const next = intersectEllipsoid(moon, moon.clone().sub(sun).normalize());
+        const DT_MS = 30000;
+        const next = this.shadowCenterAt(new Date(date.getTime() + DT_MS));
         if (!next) return null;
         const up = center.clone().normalize();
         // Flatten into the local horizontal so the axis lies along the ground.
         const travel = next.clone().sub(center);
         travel.addScaledVector(up, -travel.dot(up));
-        return travel.lengthSq() > 1 ? travel.normalize() : null;
+        const len = travel.length();
+        if (!(len > 1)) return null;
+        // Speed too, so the centre-path segment can be sampled over a KNOWN time
+        // span (extent / speed) instead of stepping until it leaves the shadow.
+        return {dir: travel.divideScalar(len), speed: len / (DT_MS / 1000)};
+    }
+
+    // Where the shadow axis meets the ellipsoid at an arbitrary time.
+    shadowCenterAt(date) {
+        const moon = getGeocentricBodyPositionECEF(Astronomy.Body.Moon, date, true);
+        const sun = getGeocentricBodyPositionECEF(Astronomy.Body.Sun, date, true);
+        if (!moon || !sun) return null;
+        return intersectEllipsoid(moon, moon.clone().sub(sun).normalize());
+    }
+
+    // The eclipse centreline, clipped to the part inside the shadow.
+    //
+    // This is the REAL track — sampled from the shadow axis over time — so it
+    // curves with the path, unlike a straight line along the travel direction.
+    // The along-track extent is already known in metres and the speed comes
+    // from the same finite difference that gave the direction, so the time span
+    // to cover is just extent/speed: no searching, and a fixed sample count.
+    centerPathSegment(date, travel, loD, hiD) {
+        if (!(travel.speed > 0)) return null;
+        const t0 = loD / travel.speed, t1 = hiD / travel.speed;
+        const N = 24;
+        const pts = [];
+        for (let i = 0; i < N; i++) {
+            const t = t0 + (t1 - t0) * (i / (N - 1));
+            const p = this.shadowCenterAt(new Date(date.getTime() + t * 1000));
+            if (p) pts.push(p);
+        }
+        return pts.length >= 2 ? pts : null;
     }
 
     // Cross through the shadow centre, spanning the umbra's own footprint.
@@ -348,7 +377,7 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         const travel = this.shadowTravelDir(date, center);
         if (!travel) return;
         const up = center.clone().normalize();
-        const crossTrack = up.clone().cross(travel).normalize();
+        const crossTrack = up.clone().cross(travel.dir).normalize();
 
         // Extent along each fixed axis, projected back ONTO that axis through
         // the centre.
@@ -359,32 +388,50 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         // which is why neither line lay along the track. Taking only the scalar
         // extent and rebuilding the endpoints from the centre keeps each line
         // pointing where it should, one of them straight down the centreline.
-        const spanAlong = (axis) => {
+        const extentAlong = (axis) => {
             let loD = Infinity, hiD = -Infinity;
             for (const p of outlinePoints) {
                 const d = p.clone().sub(center).dot(axis);
                 if (d < loD) loD = d;
                 if (d > hiD) hiD = d;
             }
-            if (!(hiD - loD > 1)) return null;
-            return [
-                center.clone().addScaledVector(axis, loD),
-                center.clone().addScaledVector(axis, hiD),
-            ];
+            return (hiD - loD > 1) ? {loD, hiD} : null;
         };
 
         this.centerLines = [];
-        for (const pair of [spanAlong(travel), spanAlong(crossTrack)]) {
-            if (!pair) continue;
-            const pts = this.groundLineBetween(pair[0], pair[1]);
-            if (pts.length < 6) continue;
+        const addLine = (flat) => {
+            if (!flat || flat.length < 6) return;
             const geom = new LineGeometry();
-            geom.setPositions(pts);
+            geom.setPositions(flat);
             const line = new Line2(geom, this.centerMaterial);
             line.computeLineDistances();
             line.scale.setScalar(1);
             this.group.add(line);
             this.centerLines.push(line);
+        };
+
+        // A — the centreline itself, clipped to the shadow. Skipped when the
+        // full Eclipse Path is drawn, since that already includes this segment
+        // and drawing both just doubles a line onto itself.
+        const along = extentAlong(travel.dir);
+        if (along && !this.showEclipsePath) {
+            const seg = this.centerPathSegment(date, travel, along.loD, along.hiD);
+            if (seg) {
+                const flat = [];
+                for (let i = 0; i < seg.length - 1; i++) {
+                    const part = this.groundLineBetween(seg[i], seg[i + 1], 4);
+                    flat.push(...(i === 0 ? part : part.slice(3)));
+                }
+                addLine(flat);
+            }
+        }
+
+        // B — the cross-track line through the centre, spanning the shadow.
+        const across = extentAlong(crossTrack);
+        if (across) {
+            addLine(this.groundLineBetween(
+                center.clone().addScaledVector(crossTrack, across.loD),
+                center.clone().addScaledVector(crossTrack, across.hiD)));
         }
     }
 
