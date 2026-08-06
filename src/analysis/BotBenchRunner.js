@@ -614,6 +614,14 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
                         ? top.h.params.solved.initialRange : null)),
             speedKt: Number.isFinite(top.h.metricsFull?.airSpeed?.mean)
                 ? top.h.metricsFull.airSpeed.mean / KNOTS_TO_MS : null,
+            speedMinKt: Number.isFinite(top.h.metricsFull?.airSpeed?.min)
+                ? top.h.metricsFull.airSpeed.min / KNOTS_TO_MS : null,
+            speedMaxKt: Number.isFinite(top.h.metricsFull?.airSpeed?.max)
+                ? top.h.metricsFull.airSpeed.max / KNOTS_TO_MS : null,
+            // Mean geodetic altitude of the fitted track (metres); the table
+            // shows it in feet.
+            altMeanM: Number.isFinite(top.h.metricsFull?.altitude?.mean)
+                ? top.h.metricsFull.altitude.mean : null,
         } : null,
         candidates: results.hypotheses.length,
         rangeUnobservable: !!results.provenance.rangeUnobservable,
