@@ -209,11 +209,17 @@ export class CNodeWaterReflection extends CNode {
         }
     }
 
-    // Water detection needs a map source that declares its water colour.
+    // Water detection needs a map source that declares its water colour —
+    // or "Combine Terrain with OSM", which stamps OSM's fill into whatever
+    // imagery is loaded and so makes any compatible source detectable.
     getWaterColor() {
-        const terrainNode = NodeMan.get("TerrainModel", false);
-        const sourceDef = terrainNode?.UI?.getSourceDef?.();
-        return sourceDef?.waterColor;
+        const ui = NodeMan.get("TerrainModel", false)?.UI;
+        const ownColor = ui?.getSourceDef?.()?.waterColor;
+        if (ownColor) return ownColor;
+        if (ui?.combineWithOSM && ui.canCombineWithOSM()) {
+            return ui.mapSources?.osm?.waterColor;
+        }
+        return undefined;
     }
 
     getCubeTarget(renderer) {
