@@ -126,11 +126,7 @@ export class CPlanets {
                 observerDirection: { value: new Vector3(0, 0, -1) },
                 skyColor: { value: new Vector3(0, 0, 0) },
                 skyBrightness: { value: 0.0 },
-                uRefractionEnabled: refractionUniforms.uRefractionEnabled,
-                uZenithECI: refractionUniforms.uZenithECI,
-                uZenithECEF: refractionUniforms.uZenithECEF,
-                uRefractionPress: refractionUniforms.uRefractionPress,
-                uRefractionTemp: refractionUniforms.uRefractionTemp,
+                ...refractionUniforms,
             },
             vertexShader: `
                 varying vec3 vNormal;
@@ -217,11 +213,7 @@ export class CPlanets {
         return new ShaderMaterial({
             uniforms: {
                 uColor: {value: new Vector3(1.0, 1.0, 1.0)},
-                uRefractionEnabled: refractionUniforms.uRefractionEnabled,
-                uZenithECI: refractionUniforms.uZenithECI,
-                uZenithECEF: refractionUniforms.uZenithECEF,
-                uRefractionPress: refractionUniforms.uRefractionPress,
-                uRefractionTemp: refractionUniforms.uRefractionTemp,
+                ...refractionUniforms,
             },
             vertexShader: `
                 ${REFRACTION_VERTEX_GLSL}
@@ -517,6 +509,13 @@ export class CPlanets {
             : REFRACTION_DEFAULTS.enabled;
         opts.pressureHPa = Sit.refractionPressure ?? REFRACTION_DEFAULTS.pressureHPa;
         opts.tempC = Sit.refractionTemp ?? REFRACTION_DEFAULTS.tempC;
+        // Height of the observer above the ellipsoid, so the bend is scaled to
+        // the atmosphere the sightline crosses. This CPU result is what the
+        // sky-overlay labels track, so it has to agree with the vertex shader
+        // that draws the disk — hence the radius comes from the same uniform
+        // the shader is reading this frame.
+        opts.observerHeight = observer?.height ?? refractionUniforms.uObserverHeight.value;
+        opts.earthRadius = refractionUniforms.uEarthRadius.value;
         return opts;
     }
 

@@ -3,10 +3,15 @@ import {
     refractionDeltaDeg,
     applyRefractionECI,
     applyRefractionFromObserver,
+    ellipsoidRadiusUnder,
+    rayMinHeight,
     zenithECEFFromLatLon,
     zenithECEFFromPosition,
     zenithEQJFromLatLon,
     REFRACTION_DEFAULTS,
+    REFRACTION_SCALE_HEIGHT_M,
+    REFRACTION_VERTEX_GLSL,
+    refractionUniforms,
 } from '../src/atmosphere/refraction';
 import {getECEFToEQJMatrix, getEQJToECEFMatrix} from '../src/CelestialMath';
 
@@ -82,6 +87,162 @@ describe('refractionDeltaDeg (Saemundsson + Stellarium horizon taper)', () => {
     test('uses Stellarium defaults when no opts passed', () => {
         expect(REFRACTION_DEFAULTS.pressureHPa).toBe(1010);
         expect(REFRACTION_DEFAULTS.tempC).toBe(10);
+    });
+});
+
+// Saemundsson is a sea-level formula. These lock in the observer-height
+// correction that scales it down to the air a sightline actually crosses.
+describe('rayMinHeight (lowest point on the sightline)', () => {
+    const R = 6371000;
+
+    test('looking up, the observer is its own lowest point', () => {
+        for (const alt of [0, 1, 15, 45, 90]) {
+            expect(rayMinHeight(alt, 10000, R)).toBeCloseTo(10000, 6);
+        }
+    });
+
+    test('looking down, it is the tangent height (R+h)·cos(a) − R', () => {
+        for (const [alt, h] of [[-1, 10000], [-5, 493000], [-10.2, 492806], [-21, 492806]]) {
+            const want = (R + h) * Math.cos(alt * Math.PI / 180) - R;
+            expect(rayMinHeight(alt, h, R)).toBeCloseTo(want, 3);
+        }
+    });
+
+    test('continuous through zero', () => {
+        const h = 100000;
+        expect(rayMinHeight(-1e-9, h, R)).toBeCloseTo(rayMinHeight(0, h, R), 6);
+    });
+
+    test('goes negative when the ray runs into the ground', () => {
+        // A ground observer looking below the horizontal, and a 10 km observer
+        // looking down steeply enough to hit the surface (dip is ~3.2°).
+        expect(rayMinHeight(-1, 0, R)).toBeLessThan(0);
+        expect(rayMinHeight(-5, 10000, R)).toBeLessThan(0);
+    });
+
+    test('the reported case: nothing in that field of view touches the air', () => {
+        // Camera at 492.8 km; the main view spanned −2.58° to −10.20°.
+        for (const alt of [-2.58, -4.1, -6.39, -10.2]) {
+            expect(rayMinHeight(alt, 492806, R)).toBeGreaterThan(300000);
+        }
+    });
+});
+
+describe('refractionDeltaDeg observer-height scaling', () => {
+    test('height 0 is bit-identical to omitting it', () => {
+        for (const alt of [-4.9, -3.54, -1, 0, 0.5, 5, 30, 89]) {
+            expect(refractionDeltaDeg(alt, {observerHeight: 0}))
+                .toBe(refractionDeltaDeg(alt));
+        }
+    });
+
+    test('a negative height (below sea level) is also unchanged', () => {
+        expect(refractionDeltaDeg(0, {observerHeight: -430}))
+            .toBe(refractionDeltaDeg(0));
+    });
+
+    test('a ground observer looking down is unchanged — the ray hits dirt', () => {
+        // zMin < 0 there, so the taper region keeps its existing behaviour.
+        for (const alt of [-1, -3.54, -4, -4.9]) {
+            expect(refractionDeltaDeg(alt, {observerHeight: 0.0001}))
+                .toBeCloseTo(refractionDeltaDeg(alt), 12);
+        }
+    });
+
+    test('an aircraft at 10 km sees ~26% of sea-level refraction', () => {
+        // US Standard Atmosphere puts 10 km at 264/1013 = 0.261 of surface
+        // pressure; the 7.5 km scale height reproduces that to ~1%.
+        const ratio = refractionDeltaDeg(0, {observerHeight: 10000})
+            / refractionDeltaDeg(0);
+        expect(ratio).toBeGreaterThan(0.24);
+        expect(ratio).toBeLessThan(0.28);
+    });
+
+    test('refraction never grows as the observer climbs', () => {
+        let prev = Infinity;
+        for (const h of [0, 1000, 5000, 10000, 20000, 50000, 100000, 493000]) {
+            const d = refractionDeltaDeg(0, {observerHeight: h});
+            expect(d).toBeLessThanOrEqual(prev);
+            prev = d;
+        }
+    });
+
+    // The bug this fixes: at 493 km the horizon is 21.8° down, so the −5°
+    // floor fell inside a 7.62° field of view. The top of the frame got 0.65°
+    // of bend and everything below 35% of the way down got none — a visible
+    // seam across the sky. With the height correction the whole frame is
+    // effectively unrefracted, which is right: none of it passes through air.
+    describe('camera at 492.8 km (the reported sitch)', () => {
+        const opts = {observerHeight: 492806, earthRadius: 6371000};
+
+        test('the old model tore the frame into a bent band and a flat one', () => {
+            expect(refractionDeltaDeg(-2.58)).toBeGreaterThan(0.6);   // top
+            expect(refractionDeltaDeg(-6.39)).toBe(0);                // middle
+        });
+
+        test('no part of the frame is bent by more than a milliarcsecond now', () => {
+            for (let alt = -2.58; alt >= -10.2; alt -= 0.1) {
+                expect(refractionDeltaDeg(alt, opts)).toBeLessThan(1 / 3600000);
+            }
+        });
+
+        test('and the seam at the −5° floor is gone', () => {
+            const above = refractionDeltaDeg(-4.99, opts);
+            const below = refractionDeltaDeg(-5.01, opts);
+            expect(Math.abs(above - below)).toBeLessThan(1e-9);
+        });
+    });
+});
+
+describe('ellipsoidRadiusUnder', () => {
+    const A = 6378137.0, B = A * (1 - 1 / 298.257223563);
+    const D2R = Math.PI / 180;
+
+    test('a point on the ellipsoid has exactly zero radial height', () => {
+        // Built from geocentric latitude so the point is on the surface along
+        // the same ray the radius is evaluated along.
+        for (const latDeg of [0, 30, 45, 60, 89.9, -45]) {
+            const la = latDeg * D2R;
+            const dir = new Vector3(Math.cos(la), 0, Math.sin(la));
+            const r = (A * B) / Math.hypot(A * Math.sin(la), B * Math.cos(la));
+            const p = dir.multiplyScalar(r);
+            expect(p.length() - ellipsoidRadiusUnder(p)).toBeCloseTo(0, 6);
+        }
+    });
+
+    test('equator gives a, pole gives b', () => {
+        expect(ellipsoidRadiusUnder(new Vector3(1, 0, 0))).toBeCloseTo(A, 6);
+        expect(ellipsoidRadiusUnder(new Vector3(0, 0, 1))).toBeCloseTo(B, 6);
+    });
+
+    test('a spherical earth model gives that radius everywhere', () => {
+        for (const latDeg of [0, 37, 72]) {
+            const la = latDeg * D2R;
+            const p = new Vector3(Math.cos(la), 0, Math.sin(la)).multiplyScalar(7e6);
+            expect(ellipsoidRadiusUnder(p, A, A)).toBeCloseTo(A, 6);
+        }
+    });
+
+    test('is stable at the origin', () => {
+        expect(Number.isFinite(ellipsoidRadiusUnder(new Vector3(0, 0, 0)))).toBe(true);
+    });
+});
+
+describe('the vertex shader carries the same model as the CPU', () => {
+    test('every shared uniform is declared in the GLSL', () => {
+        for (const name of Object.keys(refractionUniforms)) {
+            expect(REFRACTION_VERTEX_GLSL).toContain(name);
+        }
+    });
+
+    test('the scale height is the exported constant, not a stale literal', () => {
+        expect(REFRACTION_VERTEX_GLSL).toContain(REFRACTION_SCALE_HEIGHT_M.toFixed(1));
+    });
+
+    // GLSL has no implicit int→float, so a bare "7500" would fail to compile
+    // the moment anyone edits the constant to a whole number they typed plainly.
+    test('it is emitted as a float literal whatever value it is set to', () => {
+        expect(REFRACTION_VERTEX_GLSL).toMatch(/exp\(-zMin \/ \d+\.\d+\)/);
     });
 });
 
@@ -179,6 +340,35 @@ describe('applyRefractionFromObserver (satellites)', () => {
         const angleDeg = Math.acos(Math.min(1, cosA)) * 180 / Math.PI;
         expect(angleDeg).toBeGreaterThan(0.2);
         expect(angleDeg).toBeLessThan(0.8);
+    });
+
+    // The observer's ECEF already says how high it is, so callers don't have
+    // to thread a height through. CSatellite relies on this.
+    test('derives the observer height from the observer position', () => {
+        const angle = (o, s, out) => {
+            const a = s.clone().sub(o).normalize();
+            const b = out.clone().sub(o).normalize();
+            return Math.acos(Math.min(1, a.dot(b))) * 180 / Math.PI;
+        };
+        // Same 1000 km horizontal offset, observer at the surface vs 400 km up.
+        const ground = new Vector3(6378137, 0, 0);
+        const orbit = new Vector3(6378137 + 400000, 0, 0);
+        const satG = new Vector3(ground.x, 1000000, 0);
+        const satO = new Vector3(orbit.x, 1000000, 0);
+
+        const bentG = angle(ground, satG, applyRefractionFromObserver(satG, ground));
+        const bentO = angle(orbit, satO, applyRefractionFromObserver(satO, orbit));
+
+        expect(bentG).toBeGreaterThan(0.2);      // unchanged ground behaviour
+        expect(bentO).toBeLessThan(bentG / 100); // 400 km up: essentially none
+    });
+
+    test('an explicit observerHeight overrides the derived one', () => {
+        const obs = new Vector3(6378137 + 400000, 0, 0);
+        const sat = new Vector3(obs.x, 1000000, 0);
+        const derived = applyRefractionFromObserver(sat, obs);
+        const forced = applyRefractionFromObserver(sat, obs, {observerHeight: 0});
+        expect(forced.distanceTo(sat)).toBeGreaterThan(derived.distanceTo(sat));
     });
 
     test('writes to provided target without mutating inputs', () => {

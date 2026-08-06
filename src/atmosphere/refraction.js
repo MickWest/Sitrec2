@@ -19,6 +19,23 @@ export const REFRACTION_DEFAULTS = {
     tempC: 10,
 };
 
+// Effective scale height of atmospheric refractivity, in metres. Refraction is
+// proportional to air density, which falls off close to exponentially, so this
+// one number converts "how high is the ray" into "how much atmosphere is left".
+//
+// 7500 m, not the 8.4-8.5 km isothermal value: the real atmosphere has a lapse
+// rate, so it thins faster than an isothermal column. Fitted against the US
+// Standard Atmosphere the effective scale height ln(P0/P)/z runs ~8.0 km at
+// 5 km, 7.44 km at 10 km, 6.88 km at 20 km and 7.0 km at 50 km. A single 7500
+// tracks that to within a few percent through the altitudes anyone actually
+// observes from (0.264 vs a true 0.261 pressure ratio at 10 km), where 8500
+// would be 19% high.
+export const REFRACTION_SCALE_HEIGHT_M = 7500;
+
+// Mean Earth radius, used only to turn a look-down angle into a tangent
+// height. Callers with the real local radius to hand should pass earthRadius.
+const MEAN_EARTH_RADIUS_M = 6371000;
+
 // Shared uniforms — every material that opts in references the *same*
 // objects, so updating refractionUniforms.uZenithECI.value (etc.) once per
 // frame is visible on every shader without per-material work.
@@ -30,38 +47,92 @@ export const REFRACTION_DEFAULTS = {
 // uZenithECEF is the same zenith but in world space — i.e. *not* carried into
 // the sphere's frame — used for Sun/Moon vertex shaders that work on world
 // positions (modelMatrix * position) and therefore need the world-space zenith.
+//
+// uObserverHeight / uEarthRadius carry the observer's height above the
+// ellipsoid and the Earth radius beneath it, so the shader can work out how
+// much atmosphere each sightline actually crosses (see rayMinHeight).
+//
+// Materials take the WHOLE object — `Object.assign(uniforms, refractionUniforms)`
+// or `...refractionUniforms` in a literal — never a hand-written subset. A
+// material that misses one silently gets 0 for it, and 0 for uObserverHeight is
+// indistinguishable from the sea-level behaviour this exists to correct.
 export const refractionUniforms = {
     uRefractionEnabled: {value: REFRACTION_DEFAULTS.enabled ? 1.0 : 0.0},
     uZenithECI: {value: new Vector3(0, 0, 1)},
     uZenithECEF: {value: new Vector3(0, 0, 1)},
     uRefractionPress: {value: REFRACTION_DEFAULTS.pressureHPa},
     uRefractionTemp: {value: REFRACTION_DEFAULTS.tempC},
+    uObserverHeight: {value: 0},
+    uEarthRadius: {value: MEAN_EARTH_RADIUS_M},
 };
 
 const DEG2RAD = Math.PI / 180;
 const RAD2DEG = 180 / Math.PI;
+
+// Height above the ellipsoid of the LOWEST point on a sightline, in metres.
+//
+// Looking up (altDeg ≥ 0) the ray only ever climbs, so the observer is its own
+// lowest point. Looking down it dips to a perigee at (R+h)·cos(altDeg) before
+// climbing away again — the "tangent height" of limb sounding. A negative
+// result means the ray runs into the ground before it gets there.
+//
+// Written as h·cos(a) − 2R·sin²(a/2) rather than (R+h)·cos(a) − R: the two are
+// algebraically identical but the second form subtracts two numbers near 6.4e6
+// to get one near 1e4, which in the float32 the shader runs on loses most of
+// the answer. Both paths use this form so CPU and GPU agree exactly.
+export function rayMinHeight(altDeg, observerHeight, earthRadius = MEAN_EARTH_RADIUS_M) {
+    if (altDeg >= 0) return observerHeight;
+    const a = altDeg * DEG2RAD;
+    const s = Math.sin(a * 0.5);
+    return observerHeight * Math.cos(a) - 2 * earthRadius * s * s;
+}
+
+// How much of the sea-level refraction survives for a sightline that never
+// gets lower than `zMin` metres. Refraction is proportional to air density, so
+// this is the barometric factor — the same physical quantity as the pressure
+// setting, just evaluated where the light actually travels instead of always
+// at sea level.
+//
+// Returns exactly 1 for an observer at or below sea level, and for any ray
+// that reaches the ground, so ground-level sitches are bit-for-bit unchanged.
+function densityFactor(altDeg, opts) {
+    const h = opts.observerHeight ?? 0;
+    if (!(h > 0)) return 1;
+    const zMin = rayMinHeight(altDeg, h, opts.earthRadius ?? MEAN_EARTH_RADIUS_M);
+    if (zMin <= 0) return 1;
+    return Math.exp(-zMin / REFRACTION_SCALE_HEIGHT_M);
+}
 
 // Saemundsson forward refraction in degrees, with Stellarium-style taper
 // from −3.54° down to −5°. Returns 0 below −5° and at and above the
 // formula's natural fall-off. Pressure is clamped to ≥0 hPa and
 // temperature to >−273°C so a malformed sitch can't produce negative or
 // undefined refraction.
+//
+// Saemundsson is a sea-level formula: it assumes the observer is standing at
+// the bottom of the whole atmosphere. opts.observerHeight lifts that
+// assumption by scaling the result to the air actually along the sightline.
+// Without it an observer in orbit gets full ground-level refraction — and
+// because the −5° cutoff then falls inside the field of view (the horizon is
+// 21.8° down from 493 km) the sky tears into a bent band above an unbent one.
 export function refractionDeltaDeg(altDeg, opts = {}) {
     const P = Math.max(0, opts.pressureHPa ?? REFRACTION_DEFAULTS.pressureHPa);
     const T = Math.max(-272, opts.tempC ?? REFRACTION_DEFAULTS.tempC);
     const ptDeg = (P / 1010) * 283 / (273 + T) / 60;
 
+    let dDeg = 0;
     if (altDeg >= -3.54) {
         const arg = (altDeg + 10.3 / (altDeg + 5.11)) * DEG2RAD;
-        return ptDeg * (1.02 / Math.tan(arg) + 0.0019279);
-    }
-    if (altDeg >= -5) {
+        dDeg = ptDeg * (1.02 / Math.tan(arg) + 0.0019279);
+    } else if (altDeg >= -5) {
         const arg354 = (-3.54 + 10.3 / (-3.54 + 5.11)) * DEG2RAD;
         const d354 = ptDeg * (1.02 / Math.tan(arg354) + 0.0019279);
         const blend = (altDeg + 5) / ((-3.54) + 5);
-        return d354 * blend;
+        dDeg = d354 * blend;
+    } else {
+        return 0;
     }
-    return 0;
+    return dDeg * densityFactor(altDeg, opts);
 }
 
 const _axis = new Vector3();
@@ -110,6 +181,8 @@ export function refractionOptsFromUniforms() {
         enabled: refractionUniforms.uRefractionEnabled.value > 0.5,
         pressureHPa: refractionUniforms.uRefractionPress.value,
         tempC: refractionUniforms.uRefractionTemp.value,
+        observerHeight: refractionUniforms.uObserverHeight.value,
+        earthRadius: refractionUniforms.uEarthRadius.value,
     };
 }
 
@@ -120,6 +193,7 @@ export function refractionOptsFromUniforms() {
 // is preserved.
 const _obsZenith = new Vector3();
 const _obsDir = new Vector3();
+const _obsOpts = {};
 export function applyRefractionFromObserver(pos, observerECEF, opts = {}, target = null) {
     const out = target ?? new Vector3();
     out.copy(pos);
@@ -143,8 +217,19 @@ export function applyRefractionFromObserver(pos, observerECEF, opts = {}, target
     // opposite direction. Passing equal radii collapses this to the radial
     // exactly, which is what a sphere wants.
     zenithECEFFromPosition(observerECEF, _obsZenith, opts.equatorRadius, opts.polarRadius);
+    // How much atmosphere the sightline crosses depends on how high the
+    // observer is — and the observer's own ECEF position already says. Callers
+    // don't have to supply a height (none did before this existed), but an
+    // explicit opts.observerHeight still wins. Only the fields the bend itself
+    // reads are forwarded, so nothing can leak between calls.
+    const surfaceR = ellipsoidRadiusUnder(observerECEF, opts.equatorRadius, opts.polarRadius);
+    _obsOpts.enabled = true;
+    _obsOpts.pressureHPa = opts.pressureHPa;
+    _obsOpts.tempC = opts.tempC;
+    _obsOpts.observerHeight = opts.observerHeight ?? (observerECEF.length() - surfaceR);
+    _obsOpts.earthRadius = opts.earthRadius ?? surfaceR;
     // Bend the direction vector using the same routine as celestial bending.
-    applyRefractionECI(_obsDir, _obsZenith, opts);
+    applyRefractionECI(_obsDir, _obsZenith, _obsOpts);
     out.copy(_obsDir).add(observerECEF);
     return out;
 }
@@ -188,6 +273,26 @@ export function zenithECEFFromPosition(posECEF, target = new Vector3(),
     return zenithECEFFromLatLon(latRad, lonRad, target);
 }
 
+// Geocentric radius of the ellipsoid surface directly beneath an ECEF point —
+// where the line from the Earth's centre through that point crosses the
+// ellipsoid. |pos| minus this is the radial height, which is what a scale
+// height wants.
+//
+// This deliberately uses the GEOCENTRIC latitude, unlike everything else in
+// this file. That is not the geodetic-vs-geocentric mistake: the ellipsoid
+// radius is evaluated along the very ray the height is measured along, so the
+// pair is self-consistent and returns exactly 0 for a point sitting on the
+// ellipsoid at any latitude. Against the true geodetic height the difference is
+// h·(1 − cos(φ − φ_c)) — under 7 cm at 10 km up, and it is about to be divided
+// by a 7.5 km scale height.
+export function ellipsoidRadiusUnder(posECEF, a = WGS84_A, b = WGS84_B) {
+    const r = posECEF.length();
+    if (r < 1e-9) return Math.min(a, b);
+    const sinPhiC = posECEF.z / r;
+    const sinSqr = sinPhiC * sinPhiC;
+    return (a * b) / Math.sqrt(a * a * sinSqr + b * b * (1 - sinSqr));
+}
+
 // Geodetic local zenith in ECEF (X→Greenwich, Z→North) from observer
 // latitude/longitude in radians. Geodetic — i.e. perpendicular to the WGS84
 // horizon — which is what refraction is symmetric about.
@@ -227,6 +332,24 @@ uniform vec3 uZenithECI;
 uniform vec3 uZenithECEF;
 uniform float uRefractionPress;
 uniform float uRefractionTemp;
+uniform float uObserverHeight;
+uniform float uEarthRadius;
+
+// Barometric falloff — the GLSL twin of densityFactor()/rayMinHeight() in
+// refraction.js. The tangent height is written as h*cos(a) - 2R*sin^2(a/2)
+// rather than (R+h)*cos(a) - R because the latter cancels two numbers near
+// 6.4e6 down to one near 1e4, which float32 cannot hold on to.
+float refractionDensityFactor(float altDeg) {
+    if (uObserverHeight <= 0.0) return 1.0;
+    float zMin = uObserverHeight;
+    if (altDeg < 0.0) {
+        float a = radians(altDeg);
+        float s = sin(a * 0.5);
+        zMin = uObserverHeight * cos(a) - 2.0 * uEarthRadius * s * s;
+    }
+    if (zMin <= 0.0) return 1.0;
+    return exp(-zMin / ${REFRACTION_SCALE_HEIGHT_M.toFixed(1)});
+}
 
 vec3 applyRefraction_core(vec3 pos, vec3 zenith) {
     if (uRefractionEnabled < 0.5) return pos;
@@ -246,6 +369,7 @@ vec3 applyRefraction_core(vec3 pos, vec3 zenith) {
         float blend = (altDeg + 5.0) / ((-3.54) + 5.0);
         dDeg = d354 * blend;
     }
+    dDeg *= refractionDensityFactor(altDeg);
     if (dDeg <= 0.0) return pos;
     float dRad = radians(dDeg);
     vec3 axis = cross(d, zenith);
@@ -276,11 +400,7 @@ export function installRefractionOnMaterial(material) {
     const prev = material.onBeforeCompile;
     material.onBeforeCompile = (shader, renderer) => {
         if (typeof prev === "function") prev(shader, renderer);
-        shader.uniforms.uRefractionEnabled = refractionUniforms.uRefractionEnabled;
-        shader.uniforms.uZenithECI = refractionUniforms.uZenithECI;
-        shader.uniforms.uZenithECEF = refractionUniforms.uZenithECEF;
-        shader.uniforms.uRefractionPress = refractionUniforms.uRefractionPress;
-        shader.uniforms.uRefractionTemp = refractionUniforms.uRefractionTemp;
+        Object.assign(shader.uniforms, refractionUniforms);
         shader.vertexShader = shader.vertexShader.replace(
             "void main() {",
             REFRACTION_VERTEX_GLSL + "\nvoid main() {",

@@ -956,7 +956,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         return new Astronomy.Observer(cameraLLA.x, cameraLLA.y, cameraLLA.z);
     }
 
-    _updateRefractionUniforms(observer, ecefToEQJ) {
+    _updateRefractionUniforms(observer, ecefToEQJ, cameraPos) {
         // Use geodetic zenith (perpendicular to the local WGS84 horizon),
         // not the geocentric direction from Earth centre — refraction is
         // symmetric about the local vertical, and the CPU bend in
@@ -973,6 +973,22 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         refractionUniforms.uRefractionEnabled.value = enabled ? 1.0 : 0.0;
         refractionUniforms.uRefractionPress.value = Sit.refractionPressure ?? REFRACTION_DEFAULTS.pressureHPa;
         refractionUniforms.uRefractionTemp.value = Sit.refractionTemp ?? REFRACTION_DEFAULTS.tempC;
+
+        // Saemundsson assumes the observer is at the bottom of the atmosphere.
+        // Feed it the observer's height so it can scale down to the air the
+        // sightline actually crosses — otherwise a camera in orbit gets full
+        // sea-level bending, and the formula's −5° floor lands inside the field
+        // of view (from 493 km the horizon is 21.8° down), tearing the sky into
+        // a refracted band above an unrefracted one.
+        //
+        // The Earth radius is taken as |cameraPos| − height rather than an
+        // equatorial constant: that is exactly the ellipsoid radius under this
+        // observer, and it tracks Sit.useEllipsoid for free.
+        const height = observer.height;
+        refractionUniforms.uObserverHeight.value = height;
+        if (cameraPos) {
+            refractionUniforms.uEarthRadius.value = cameraPos.length() - height;
+        }
     }
 
     syncPlanetSpritesToObserver(cameraPos, date = this.in.startTime.dateNow, options = {}) {
@@ -987,7 +1003,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // the wrong direction near the horizon.
         if (!this._ecefToEQJ) this._ecefToEQJ = new Matrix4();
         getECEFToEQJMatrix(date, this._ecefToEQJ);
-        this._updateRefractionUniforms(observer, this._ecefToEQJ);
+        this._updateRefractionUniforms(observer, this._ecefToEQJ, cameraPos);
 
         // Annual aberration for the star-field shader. Observer-independent
         // (it's the Earth's orbital velocity), but it belongs here because

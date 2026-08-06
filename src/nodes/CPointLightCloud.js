@@ -297,11 +297,7 @@ export class CPointLightCloud extends CNode3D {
 
         if (useRefraction) {
             uniforms.uAberration = aberrationUniforms.uAberration;
-            uniforms.uRefractionEnabled = refractionUniforms.uRefractionEnabled;
-            uniforms.uZenithECI = refractionUniforms.uZenithECI;
-            uniforms.uZenithECEF = refractionUniforms.uZenithECEF;
-            uniforms.uRefractionPress = refractionUniforms.uRefractionPress;
-            uniforms.uRefractionTemp = refractionUniforms.uRefractionTemp;
+            Object.assign(uniforms, refractionUniforms);
         }
 
         if (!usesPerPointColor) {
