@@ -3089,8 +3089,14 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
     // ray endpoints, so a distant platform stops dictating the scale.
     const zb = {minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity};
     const series = [];
+    // Bounds are grown from EVERY frame, never from the drawn decimation:
+    // tiles sample the polylines coarser than the detail view (360 vs 720
+    // points), and bounds that follow the sampling made the two report
+    // DIFFERENT extents for the same candidate — a shared Sync Scale window
+    // aggregated from tiles then clipped an extremum only the denser detail
+    // sampling caught. Drawing stays decimated; measuring does not.
     const sensorPts = sampledPolyline(S, n, opts.compact ? 260 : 520);
-    for (const p of sensorPts) growGraphBounds(b, p);
+    for (let f = 0; f < n; f++) growGraphBounds(b, graphPoint(S, f));
 
     if (hyp.atInfinity) {
         const dir = meanLOSDirection(dataset);
@@ -3100,23 +3106,35 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
                 Math.hypot(S[f * 3] - S[0], S[f * 3 + 1] - S[1], S[f * 3 + 2] - S[2]));
         }
         const lenM = Math.max(sensorSpanM * 1.15, 3 * METERS_PER_NM);
+        // Full-res bounds for the ray ENDPOINTS too (origins are covered by
+        // the sensor pass above); only the drawn segs stay sampled.
+        for (let f = 0; f < n; f++) {
+            const c = clipRayToGround(graphPoint(S, f), [
+                toBigUnits(S[f * 3] + dir[0] * lenM),
+                toBigUnits(S[f * 3 + 1] + dir[1] * lenM),
+                toBigUnits(S[f * 3 + 2] + dir[2] * lenM),
+            ]);
+            if (c) growGraphBounds(b, c);
+        }
         const segs = [];
         for (const f of sampledFrames(n, opts.compact ? 6 : 9)) {
             const a = graphPoint(S, f);
-            growGraphBounds(b, a);
             const c = clipRayToGround(a, [
                 toBigUnits(S[f * 3] + dir[0] * lenM),
                 toBigUnits(S[f * 3 + 1] + dir[1] * lenM),
                 toBigUnits(S[f * 3 + 2] + dir[2] * lenM),
             ]);
             if (!c) continue;
-            growGraphBounds(b, c);
             segs.push([...a, ...c]);
         }
         series.push({type: "rays", segs, color: hyp.color || VIZ.ink2, alpha: 0.72, width: opts.compact ? 1.4 : 1.8});
     } else {
         const trackPts = sampledPolyline(hyp.track, n, opts.compact ? 360 : 720);
-        for (const p of trackPts) { growGraphBounds(b, p); growGraphBounds(zb, p); }
+        for (let f = 0; f < n; f++) {
+            const p = graphPoint(hyp.track, f);
+            growGraphBounds(b, p);
+            growGraphBounds(zb, p);
+        }
 
         let maxRange = 0;
         for (const f of sampledFrames(n, 60)) {
@@ -3126,12 +3144,19 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
                 hyp.track[f * 3 + 2] - S[f * 3 + 2]));
         }
         const rayLenM = Math.max(maxRange * 1.06, METERS_PER_NM);
+        // Full-res bounds for the ray ENDPOINTS: they extend past the track
+        // (rayLenM > maxRange), so the track pass does not cover them, and a
+        // changing LOS can put a detail-only sampled endpoint outside a
+        // tile-derived union. Only the drawn segs stay sampled.
+        for (let f = 0; f < n; f++) {
+            const c = clipRayToGround(graphPoint(S, f), rayEndPoint(dataset, f, rayLenM));
+            if (c) growGraphBounds(b, c);
+        }
         const segs = [];
         for (const f of sampledFrames(n, opts.compact ? 7 : 11)) {
             const a = graphPoint(S, f);
             const c = clipRayToGround(a, rayEndPoint(dataset, f, rayLenM));
             if (!c) continue;
-            growGraphBounds(b, c);
             segs.push([...a, ...c]);
         }
         series.push({type: "rays", segs, color: VIZ.ray, alpha: 0.52, width: 1});
@@ -3167,7 +3192,11 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
                 // isHeadline marks the member that IS this tile's solid track.
                 if (!m.residualOk || m.isHeadline) continue;
                 const pts = sampledPolyline(m.track, n, opts.compact ? 180 : 360);
-                for (const p of pts) { growGraphBounds(b, p); growGraphBounds(zb, p); }
+                for (let f = 0; f < n; f++) {
+                    const p = graphPoint(m.track, f);
+                    growGraphBounds(b, p);
+                    growGraphBounds(zb, p);
+                }
                 series.push({
                     type: "line", pts, color: hyp.color,
                     alpha: m.screened ? 0.28 : 0.14,
@@ -3188,11 +3217,20 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
     // contiguous window, so the filtered polyline stays one segment.
     if (opts.truth) {
         const tv = opts.truth.valid;
+        // Bounds first, UNGUARDED by the drawn count: a tiny valid window can
+        // decimate to a single point in a tile (nothing drawn) while the
+        // detail view draws two — the measured extent must not follow that
+        // difference, or the synced scale clips the truth it never counted.
+        for (let f = 0; f < n; f++) {
+            if (tv && tv[f] !== 1) continue;
+            const p = graphPoint(opts.truth.track, f);
+            growGraphBounds(b, p);
+            growGraphBounds(zb, p);
+        }
         const truthPts = sampledFrames(n, opts.compact ? 360 : 720)
             .filter((f) => !tv || tv[f] === 1)
             .map((f) => graphPoint(opts.truth.track, f));
         if (truthPts.length > 1) {
-            for (const p of truthPts) { growGraphBounds(b, p); growGraphBounds(zb, p); }
             series.push({type: "line", pts: truthPts, color: VIZ.truth,
                 width: opts.compact ? 1.8 : 2.2, dash: [6, 4],
                 startDot: true, endRing: true});
@@ -3932,6 +3970,51 @@ function showResultGallery(results, uiState = null) {
 
     const currentChart = () => detailChart || (selected >= 0 ? tileCharts[selected] : null);
 
+    // The Sync Scale reference covers every candidate still in play (not set
+    // aside): the shared full box is the component-wise UNION of their
+    // bounds, and the magnified window size is the component-wise MAX of
+    // their zoomBounds spans — per axis, because one candidate's box copies
+    // its narrow axes along with its long one, and an east-west outlier's
+    // window would clip a north-south candidate to a sliver. Anchoring to
+    // the selection made the shared scale change with every click, and a
+    // set-aside outlier kept stretching every graph after being excluded
+    // from consideration.
+    const applySyncScale = (on) => {
+        let box = null, span = null;
+        const fold = (c) => {
+            const b = c.bounds;
+            if (b) {
+                box = box ? {
+                    minX: Math.min(box.minX, b.minX), maxX: Math.max(box.maxX, b.maxX),
+                    minY: Math.min(box.minY, b.minY), maxY: Math.max(box.maxY, b.maxY),
+                    minZ: Math.min(box.minZ, b.minZ), maxZ: Math.max(box.maxZ, b.maxZ),
+                } : {...b};
+            }
+            const zb = c.scene.zoomBounds;
+            if (zb) {
+                span = span ? {
+                    x: Math.max(span.x, zb.maxX - zb.minX),
+                    y: Math.max(span.y, zb.maxY - zb.minY),
+                    z: Math.max(span.z, zb.maxZ - zb.minZ),
+                } : {x: zb.maxX - zb.minX, y: zb.maxY - zb.minY, z: zb.maxZ - zb.minZ};
+            }
+        };
+        for (let i = 0; i < tileCharts.length; i++) {
+            const c = tileCharts[i];
+            if (!c || dismissed.has(i)) continue;
+            fold(c);
+        }
+        // The detail chart needs no special handling: scene bounds are grown
+        // from EVERY frame regardless of display decimation (see
+        // hypothesisVolumeScene), so a tile and its detail view report
+        // identical extents and the tile aggregate covers both — and the
+        // shared scale stays independent of which tile is selected.
+        // Nothing in play (every tile set aside, or charts not built yet):
+        // fall back to the focused chart so the toggle still does something.
+        if (!box && currentChart()) box = currentChart().bounds;
+        chartGroup.setSyncScale(on, box, span);
+    };
+
     function registerChart(chart) {
         liveCharts.add(chart);
         chartByCanvas.set(chart.canvas, chart);
@@ -4503,7 +4586,8 @@ function showResultGallery(results, uiState = null) {
     syncScaleBtn.className = "tg-toggle on";
     syncScaleBtn.type = "button";
     syncScaleBtn.textContent = "Sync Scale";
-    syncScaleBtn.title = "When on, compare every graph using the selected graph's size scale.";
+    syncScaleBtn.title = "When on, compare every graph at one scale — the largest "
+        + "candidate still in consideration sets it, for the magnified views too.";
     syncScaleBtn.setAttribute("aria-pressed", "true");
     const setToggleState = (button, on) => {
         button.classList.toggle("on", on);
@@ -4516,7 +4600,7 @@ function showResultGallery(results, uiState = null) {
     });
     syncScaleBtn.addEventListener("click", () => {
         const on = !chartGroup.syncScale;
-        chartGroup.setSyncScale(on, currentChart());
+        applySyncScale(on);
         setToggleState(syncScaleBtn, on);
     });
     // Restore every set-aside tile. Disabled (and count-less) while nothing has
@@ -4637,7 +4721,7 @@ function showResultGallery(results, uiState = null) {
             detailChart = registerChart(new Chart3D(detailCanvas,
                 hypothesisVolumeScene(dataset, h, {truth: results.truth}),
                 chartGroup, {pad: 0.13}));
-            if (chartGroup.syncScale) chartGroup.setSyncScale(true, detailChart);
+            if (chartGroup.syncScale) applySyncScale(true);
             if (groupZoomed && detailChart.scene.zoomBounds) detailChart.setZoom(true);
             syncZoomButton(detailChart);
         }
@@ -4856,6 +4940,10 @@ function showResultGallery(results, uiState = null) {
         if (dismissing) dismissed.add(i); else dismissed.delete(i);
         tile.classList.toggle("dismissed", dismissing);
         syncDismissButton(i);
+        // The shared scale tracks the largest candidate IN PLAY, so setting
+        // an outlier aside re-tightens every graph (and restoring it widens
+        // them again).
+        if (chartGroup.syncScale) applySyncScale(true);
         if (dismissing && wasSelected) {
             const successor = pickSuccessor(i, vacatedRect);
             if (successor >= 0) selectTile(successor);
@@ -4876,6 +4964,7 @@ function showResultGallery(results, uiState = null) {
             // Bulk restore has no fly beat — everything simply slides home
             // together — but the buttons still have to flip back to X.
             restoring.forEach(syncDismissButton);
+            if (chartGroup.syncScale) applySyncScale(true);
             relayout();
         }));
     });

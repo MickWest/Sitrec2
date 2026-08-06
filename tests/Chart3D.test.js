@@ -112,3 +112,96 @@ describe("clipSegmentToBounds", () => {
         expect(seg4.entryClipped).toBe(false);
     });
 });
+
+// Sync Scale in the MAGNIFIED (zoomed) views: the group carries the reference
+// chart's zoom-window SIZE, and each zoomed chart re-centers that window on
+// its own tracks — so magnified candidates compare at one scale. Uses the real
+// activeBounds via .call() on a minimal chart shape; the method only reads
+// zoomed / scene.zoomBounds / group / bounds.
+describe("Sync Scale across zoomed views", () => {
+    const {Chart3DGroup, Chart3D} = require("../src/Chart3D");
+
+    // setSyncScale coalesces a redraw through requestAnimationFrame, which
+    // node's test environment does not define. The callback never needs to
+    // run here — these tests assert state, not painting.
+    beforeAll(() => {
+        global.requestAnimationFrame = () => 0;
+    });
+    afterAll(() => {
+        delete global.requestAnimationFrame;
+    });
+    const mk = (bounds, zoomBounds) => ({bounds, scene: {zoomBounds}});
+    const BIG = mk(
+        {minX: -500, maxX: 500, minY: -500, maxY: 500, minZ: 0, maxZ: 200},
+        {minX: 0, maxX: 100, minY: 0, maxY: 80, minZ: 0, maxZ: 40});
+    const SMALL = mk(
+        {minX: -50, maxX: 50, minY: -50, maxY: 50, minZ: 0, maxZ: 20},
+        {minX: 40, maxX: 60, minY: 10, maxY: 30, minZ: 0, maxZ: 10});
+
+    test("setSyncScale stores the shared box and window; off clears both", () => {
+        const g = new Chart3DGroup({});
+        g.setSyncScale(true, BIG.bounds, {x: 100, y: 80, z: 40});
+        expect(g.sharedBounds).toBe(BIG.bounds);
+        expect(g.sharedZoomSpan).toEqual({x: 100, y: 80, z: 40});
+        g.setSyncScale(false);
+        expect(g.sharedBounds).toBeNull();
+        expect(g.sharedZoomSpan).toBeNull();
+    });
+
+    test("a zoomed chart under sync keeps its own center at the shared size", () => {
+        const g = new Chart3DGroup({});
+        g.setSyncScale(true, BIG.bounds, {x: 100, y: 80, z: 40});
+        const fake = {zoomed: true, scene: SMALL.scene, group: g, bounds: SMALL.bounds};
+        const b = Chart3D.prototype.activeBounds.call(fake);
+        // SMALL's zoom center is (50, 20, 5); the window is the shared 100x80x40.
+        expect(b.minX).toBeCloseTo(0, 9);
+        expect(b.maxX).toBeCloseTo(100, 9);
+        expect(b.minY).toBeCloseTo(-20, 9);
+        expect(b.maxY).toBeCloseTo(60, 9);
+        expect(b.minZ).toBeCloseTo(-15, 9);
+        expect(b.maxZ).toBeCloseTo(25, 9);
+    });
+
+    test("the shared window must be a per-axis maximum, not one chart's spans", () => {
+        // Review case: an E/W 200x10x10 candidate outranks a N/S 10x150x10
+        // one on max single-axis span — but copying the E/W chart's spans
+        // would give the N/S candidate a 10-unit-tall window and clip its
+        // 150-unit track. The per-axis max window covers both.
+        const spans = [{x: 200, y: 10, z: 10}, {x: 10, y: 150, z: 10}];
+        const shared = spans.reduce((a, s) => ({
+            x: Math.max(a.x, s.x), y: Math.max(a.y, s.y), z: Math.max(a.z, s.z),
+        }));
+        expect(shared).toEqual({x: 200, y: 150, z: 10});
+        const g = new Chart3DGroup({});
+        const ns = mk(null, {minX: 0, maxX: 10, minY: 0, maxY: 150, minZ: 0, maxZ: 10});
+        g.setSyncScale(true, null, shared);
+        const fake = {zoomed: true, scene: ns.scene, group: g, bounds: ns.bounds};
+        const b = Chart3D.prototype.activeBounds.call(fake);
+        // The N/S candidate's full 150-unit extent fits the shared window.
+        expect(b.maxY - b.minY).toBeCloseTo(150, 9);
+        expect(b.minY).toBeLessThanOrEqual(0);
+        expect(b.maxY).toBeGreaterThanOrEqual(150);
+    });
+
+    test("sync off leaves the zoomed view on its own zoomBounds", () => {
+        const g = new Chart3DGroup({});
+        g.setSyncScale(false);
+        const fake = {zoomed: true, scene: SMALL.scene, group: g, bounds: SMALL.bounds};
+        expect(Chart3D.prototype.activeBounds.call(fake)).toBe(SMALL.scene.zoomBounds);
+    });
+
+    test("unzoomed sync still follows sharedBounds", () => {
+        const g = new Chart3DGroup({});
+        g.setSyncScale(true, BIG.bounds, {x: 100, y: 80, z: 40});
+        const fake = {zoomed: false, scene: SMALL.scene, group: g, bounds: SMALL.bounds};
+        expect(Chart3D.prototype.activeBounds.call(fake)).toBe(BIG.bounds);
+    });
+
+    test("sync without a shared window leaves zoomed charts on their own box", () => {
+        const g = new Chart3DGroup({});
+        g.setSyncScale(true, BIG.bounds, null);
+        expect(g.sharedZoomSpan).toBeNull();
+        const fake = {zoomed: true, scene: SMALL.scene, group: g, bounds: SMALL.bounds};
+        expect(Chart3D.prototype.activeBounds.call(fake)).toBe(SMALL.scene.zoomBounds);
+    });
+});

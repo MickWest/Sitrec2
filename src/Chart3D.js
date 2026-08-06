@@ -97,6 +97,7 @@ export class Chart3DGroup {
         this.syncOrientation = opts.syncOrientation ?? true;
         this.syncScale = opts.syncScale ?? false;
         this.sharedBounds = null;         // active when syncScale is on
+        this.sharedZoomSpan = null;       // zoomed-view window size when syncScale is on
         this._raf = 0;
         this._redrawAll = false;
         this._redrawSet = new Set();
@@ -153,10 +154,17 @@ export class Chart3DGroup {
         }
     }
 
-    // Lock every chart to `currentChart`'s data bounds (or release the lock).
-    setSyncScale(on, currentChart) {
+    // Lock every chart to a shared world box (or release the lock), and give
+    // zoomed views a shared window SIZE. Both are computed VALUES, not
+    // reference charts: a single chart's box copies its narrow axes along
+    // with its long one, and a 200x10x10 east-west candidate's window
+    // clipped a 10x150x10 north-south candidate to a tenth of its extent —
+    // the caller aggregates across the charts it wants covered
+    // (component-wise union box, component-wise max spans).
+    setSyncScale(on, sharedBounds = null, sharedZoomSpan = null) {
         this.syncScale = on;
-        this.sharedBounds = on && currentChart ? currentChart.bounds : null;
+        this.sharedBounds = on ? sharedBounds : null;
+        this.sharedZoomSpan = on ? sharedZoomSpan : null;
         this._redraw(true);
     }
 
@@ -327,7 +335,23 @@ export class Chart3D {
     }
 
     activeBounds() {
-        if (this.zoomed && this.scene.zoomBounds) return this.scene.zoomBounds;
+        if (this.zoomed && this.scene.zoomBounds) {
+            const zb = this.scene.zoomBounds;
+            const span = this.group.syncScale ? this.group.sharedZoomSpan : null;
+            if (!span) return zb;
+            // Synced magnified views share one WINDOW SIZE (the reference
+            // chart's zoom spans) but each stays centered on its own tracks,
+            // so candidates compare at a single scale without losing their
+            // own framing.
+            const cx = (zb.minX + zb.maxX) / 2;
+            const cy = (zb.minY + zb.maxY) / 2;
+            const cz = (zb.minZ + zb.maxZ) / 2;
+            return {
+                minX: cx - span.x / 2, maxX: cx + span.x / 2,
+                minY: cy - span.y / 2, maxY: cy + span.y / 2,
+                minZ: cz - span.z / 2, maxZ: cz + span.z / 2,
+            };
+        }
         return (this.group.syncScale && this.group.sharedBounds) ? this.group.sharedBounds : this.bounds;
     }
 
