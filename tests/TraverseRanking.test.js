@@ -12,6 +12,8 @@ import {
     rankHypotheses,
     rankTieScore,
     tierBadge,
+    markCoLeaders,
+    coLeaderBadge,
 } from "../src/TraverseRanking";
 import {KNOTS_TO_MS} from "../src/TraverseAnalysis";
 
@@ -609,4 +611,73 @@ describe("solution families never affect ranking", () => {
             boundaryLimited: true};
         expect(plausibilityRating(h)).toEqual(before);
     });
+});
+
+// Co-leaders: candidates the flat comparator cannot order against the leader
+// — matched on every DISCRETE key (screen pass, eligibility, completeness,
+// tier, pin count), separated only by heuristic tie-breaking. The first tile
+// among them is presentation, not a finding.
+describe("markCoLeaders", () => {
+    const item = (rank, {eligible = true, incomplete = false, pins = 0} = {}) => ({
+        h: {},
+        r: {rank, eligible, incomplete, activePins: new Array(pins).fill("p")},
+    });
+
+    test("discrete ties with the leader mark every member, including the leader", () => {
+        const items = [item(3), item(3), item(3), item(2)];
+        markCoLeaders(items);
+        expect(items.map((x) => x.r.coLeader)).toEqual([true, true, true, false]);
+    });
+
+    test("a lone leader is just the leader — no co-leader marks at all", () => {
+        const items = [item(3), item(2), item(2)];
+        markCoLeaders(items);
+        expect(items.map((x) => x.r.coLeader)).toEqual([false, false, false]);
+    });
+
+    test("any discrete key difference breaks the tie", () => {
+        const items = [
+            item(3),
+            item(3, {pins: 1}),          // pinned: worse standing
+            item(3, {incomplete: true}), // incomplete: worse standing
+            item(3, {eligible: false}),  // ineligible: worse standing
+        ];
+        markCoLeaders(items);
+        expect(items.map((x) => x.r.coLeader)).toEqual([false, false, false, false]);
+    });
+
+    test("re-marking is idempotent and clears stale marks", () => {
+        const items = [item(3), item(3)];
+        markCoLeaders(items);
+        items.push(item(4));                 // a new outright leader arrives
+        items.sort((a, b) => b.r.rank - a.r.rank);
+        markCoLeaders(items);
+        expect(items.map((x) => x.r.coLeader)).toEqual([false, false, false]);
+    });
+
+    test("coLeaderBadge renders only for marked ratings", () => {
+        expect(coLeaderBadge({coLeader: true})).toHaveLength(1);
+        expect(coLeaderBadge({coLeader: true})[0].label).toBe("Co-leader");
+        expect(coLeaderBadge({coLeader: false})).toHaveLength(0);
+        expect(coLeaderBadge({})).toHaveLength(0);
+    });
+});
+
+// With a truth track selected, truth separation soundly orders candidates —
+// two discrete-key-tied candidates whose truth scores differ are NOT
+// co-leaders (review case: a 23.6 m quadcopter and a 273.1 m lantern were
+// both badged as unorderable while truth had just ordered them). Blind, the
+// same pair genuinely ties.
+test("truth separation breaks co-leadership when truth is in play", () => {
+    const mk = (score) => ({
+        h: {truthComparison: {comparable: true, score}},
+        r: {rank: 3, eligible: true, incomplete: false, activePins: []},
+    });
+    const truthAware = [mk(23.6), mk(273.1)];
+    markCoLeaders(truthAware);
+    expect(truthAware.map((x) => x.r.coLeader)).toEqual([false, false]);
+
+    const blind = [mk(23.6), mk(273.1)];
+    markCoLeaders(blind, {useTruth: false});
+    expect(blind.map((x) => x.r.coLeader)).toEqual([true, true]);
 });

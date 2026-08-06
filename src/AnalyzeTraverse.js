@@ -69,6 +69,7 @@ import {
     rankAllHypotheses,
     rankingExplanation,
     tierBadge,
+    coLeaderBadge,
 } from "./TraverseRanking";
 import {
     terrainAnalysisConfigScalars,
@@ -3785,10 +3786,13 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
 
     const prose = detailProse(h, r, ss);
     const spaceHTML = solutionSpaceHTML(h, ss);
-    const badges = [tierBadge(r), ...completenessBadges(r), ...windEvidenceBadges(h)];
+    const badges = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r), ...windEvidenceBadges(h)];
     const badgesHTML = badges.map((badge) =>
         `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
     const tieText = tied ? " · within the 0.05 display-score tie threshold" : "";
+    const coText = r.coLeader
+        ? " · co-leader: the ranking cannot order this against the other co-leading candidates; their tile order is presentation, not a finding"
+        : "";
 
     // per-frame diagnostics: g-force, speed, LOS error over the clip
     const sc = hypothesisSeriesCharts(ctx.dataset, h);
@@ -3814,7 +3818,7 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
             <span class="tg-badges">${badgesHTML}</span>
         </div>
         <div class="tg-d-sub">${escapeHtml(h.subtitle || "")}</div>
-        <div class="tg-d-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>
+        <div class="tg-d-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}${escapeHtml(coText)}</div>
         <div class="tg-d-metrics">${statsHTML}</div>
         <div class="tg-d-rank"><strong>Why it is screened and ordered here:</strong> ${escapeHtml(rankingExplanation(h, r, {useTruth: ctx.useTruth !== false}))}</div>
         <p class="tg-d-lead">${escapeHtml(prose.lead)}</p>
@@ -4970,7 +4974,7 @@ function showResultGallery(results, uiState = null) {
     });
 
     tiles.forEach(({h, r, category, groupIndex, groupSize, tied}, i) => {
-        const badges = [tierBadge(r), ...completenessBadges(r), ...windEvidenceBadges(h)];
+        const badges = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r), ...windEvidenceBadges(h)];
         const badgesHTML = badges.map((badge) =>
             `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
         const statsHTML = hypothesisStats(h).map(([k, v]) =>
@@ -5996,7 +6000,7 @@ function buildReportHypothesisDetails(dataset, rankedHyps, ss) {
             `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
         const prose = detailProse(h, r, ss);
         const spaceHTML = solutionSpaceHTML(h, ss);
-        const badgesHTML = [tierBadge(r), ...completenessBadges(r)].map((badge) =>
+        const badgesHTML = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r)].map((badge) =>
             `<span class="pill" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
         const tieText = tied ? " · within the 0.05 display-score tie threshold" : "";
         return `
@@ -6282,7 +6286,7 @@ function buildReportHTML(ctx) {
             const statsHTML = hypothesisStats(h).map(([k, v]) =>
                 `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
                 `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
-            const badgesHTML = [tierBadge(r), ...completenessBadges(r)].map((badge) =>
+            const badgesHTML = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r)].map((badge) =>
                 `<span class="pill" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
             const tieText = tied ? " · display-score tie" : "";
             return `

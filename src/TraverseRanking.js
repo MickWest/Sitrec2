@@ -895,13 +895,58 @@ export function rankHypotheses(hypotheses, {useTruth = true} = {}) {
  */
 export function rankAllHypotheses(hypotheses, opts = {}) {
     const items = [];
+    // Co-leader marks are applied inside groupAndRankHypotheses (on the flat
+    // order), so both this path and the report's direct grouping see them.
     for (const group of groupAndRankHypotheses(hypotheses, opts)) items.push(...group.items);
     items.sort(opts.useTruth === false ? compareAcrossCategoriesBlind : compareAcrossCategories);
     return items;
 }
 
+// CO-LEADERS. Everything the flat comparator decides ABOVE the tie-breakers
+// — screen pass, eligibility, completeness, fit tier, bound-pin count — is
+// sound and comparable across categories. Everything BELOW that line is
+// heuristic: category priority, a secondaryScore that is not commensurable
+// across fit kinds, raw residual. So a candidate that matches the leader on
+// every discrete key is not "second place" — the analysis genuinely cannot
+// order it against the leader, and BOT Bench measured what treating the
+// first tile as the answer costs (the blind ranking picked the closest
+// available candidate on 3 of 18 scenarios whose galleries contained one).
+// Marking is on the RATING (item.r.coLeader) so every badge/report surface
+// that already carries the rating can disclose it. A lone leader gets no
+// mark: co-leadership is only meaningful as a tie. With a truth track
+// SELECTED, truth separation is a sound cross-category key that genuinely
+// orders candidates (it leads the comparator) — so differing truth scores
+// break co-leadership too; claiming "cannot order" while truth just ordered
+// them would be false.
+export function markCoLeaders(items, opts = {}) {
+    if (!items || !items.length) return items;
+    const useTruth = opts.useTruth !== false;
+    const key = (x) => [
+        x.r.rank >= 1 ? 1 : 0,
+        Number(x.r.eligible),
+        Number(x.r.incomplete),
+        x.r.rank,
+        x.r.activePins?.length || 0,
+    ].join("|");
+    const lead = items[0];
+    const leadKey = key(lead);
+    const leadTruth = truthSortScore(lead, useTruth);
+    const co = items.filter((x) => key(x) === leadKey
+        && Object.is(truthSortScore(x, useTruth), leadTruth));
+    for (const x of items) x.r.coLeader = false;
+    if (co.length > 1) for (const x of co) x.r.coLeader = true;
+    return items;
+}
+
+// Badge for a co-leading candidate, in the {label, color} shape the gallery
+// renders. Returned as an array so call sites can spread it like the other
+// conditional badge sets.
+export function coLeaderBadge(rating) {
+    return rating.coLeader ? [{label: "Co-leader", color: "#3c6d9e"}] : [];
+}
+
 export function groupAndRankHypotheses(hypotheses, opts = {}) {
-    return RANKING_CATEGORIES.map((category) => {
+    const groups = RANKING_CATEGORIES.map((category) => {
         const members = (hypotheses || []).filter((h) => hypothesisCategory(h).key === category.key);
         const items = rankHypotheses(members, opts);
         items.forEach((item, index) => {
@@ -911,6 +956,14 @@ export function groupAndRankHypotheses(hypotheses, opts = {}) {
         });
         return {...category, items};
     }).filter((group) => group.items.length);
+    // Mark co-leaders HERE, on the flat cross-category order, so every caller
+    // gets marked ratings — the gallery ranks through rankAllHypotheses, but
+    // the report re-groups FRESH ratings directly through this function, and
+    // marking only the other path left the report's badges permanently blank.
+    const flat = groups.flatMap((g) => g.items).sort(
+        opts.useTruth === false ? compareAcrossCategoriesBlind : compareAcrossCategories);
+    markCoLeaders(flat, opts);
+    return groups;
 }
 
 export function formatRawLosResidual(h) {
