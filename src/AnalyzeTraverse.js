@@ -3958,7 +3958,7 @@ function showResultGallery(results, uiState = null) {
         "align-items:flex-start;justify-content:center;padding:24px 16px;box-sizing:border-box;" +
         "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;";
 
-    const chartGroup = new Chart3DGroup({syncScale: true});
+    const chartGroup = new Chart3DGroup({syncScale: false});
     const pendingTileCharts = [];
     const tileCharts = [];
     const liveCharts = new Set();
@@ -4587,12 +4587,12 @@ function showResultGallery(results, uiState = null) {
     syncOrientationBtn.title = "When on, dragging one 3D graph rotates every graph to match.";
     syncOrientationBtn.setAttribute("aria-pressed", "true");
     const syncScaleBtn = document.createElement("button");
-    syncScaleBtn.className = "tg-toggle on";
+    syncScaleBtn.className = "tg-toggle";
     syncScaleBtn.type = "button";
     syncScaleBtn.textContent = "Sync Scale";
     syncScaleBtn.title = "When on, compare every graph at one scale — the largest "
         + "candidate still in consideration sets it, for the magnified views too.";
-    syncScaleBtn.setAttribute("aria-pressed", "true");
+    syncScaleBtn.setAttribute("aria-pressed", "false");
     const setToggleState = (button, on) => {
         button.classList.toggle("on", on);
         button.setAttribute("aria-pressed", on ? "true" : "false");
