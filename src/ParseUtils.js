@@ -242,3 +242,26 @@ export function stripDuplicateTimes(data) {
     // Return the array of unique data points
     return uniqueData;
 }
+
+// a features CSV has lat, lon, (optional) alt, and label columns. The sniff
+// lives HERE (not in ParseFeaturesCSV, which re-exports it) so the shared
+// CSV type detector and headless consumers can use it without dragging the
+// FeatureManager rendering chain in.
+export const featureColumns = {
+    lat: ["latitude", "lat"],
+    lon: ["longitude", "lon", "long"],
+    alt: ["altitude", "alt"],
+    label: ["label", "name"]
+};
+
+export function isFeaturesCSV(csv) {
+    if (   findColumn(csv, featureColumns.lat) !== -1
+        && findColumn(csv, featureColumns.lat) < 4
+        && findColumn(csv, featureColumns.lon) !== -1
+        && findColumn(csv, featureColumns.lon) < 4
+        && findColumn(csv, featureColumns.label) !== -1
+        && findColumn(csv, featureColumns.label) < 4
+    ) {
+        return "FEATURES"
+    }
+}

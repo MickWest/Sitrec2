@@ -1,27 +1,12 @@
-import {findColumn} from "./ParseUtils";
+import {findColumn, featureColumns, isFeaturesCSV} from "./ParseUtils";
 import {FeatureManager} from "./CFeatureManager";
 import {showError} from "./showError";
 
-// a features CSV has lat, lon, (optional) alt, and label columns
-
-const featureColumns = {
-    lat: ["latitude", "lat"],
-    lon: ["longitude", "lon", "long"],
-    alt: ["altitude", "alt"],
-    label: ["label", "name"]
-};
-
-export function isFeaturesCSV(csv) {
-    if (   findColumn(csv, featureColumns.lat) !== -1
-        && findColumn(csv, featureColumns.lat) < 4
-        && findColumn(csv, featureColumns.lon) !== -1
-        && findColumn(csv, featureColumns.lon) < 4
-        && findColumn(csv, featureColumns.label) !== -1
-        && findColumn(csv, featureColumns.label) < 4
-    ) {
-        return "FEATURES"
-    }
-}
+// The header sniff (isFeaturesCSV) lives in ParseUtils so light consumers —
+// the shared CSV type detector in TrackCSV.js, headless tests — can use it
+// without dragging FeatureManager's rendering chain in. Re-exported here so
+// existing importers keep working.
+export {isFeaturesCSV};
 
 // a features CSV has lat, lon, alt, and label columns
 // iterate over it and make markers with labels at those locations

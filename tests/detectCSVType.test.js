@@ -20,14 +20,16 @@ import {isSTANAGCSV} from '../src/TrackFiles/CTrackFileSTANAGCSV';
 // Extract detectCSVType source and re-implement it for testing
 // This avoids the deep CFileManager import chain
 const source = fs.readFileSync(
-    path.resolve(__dirname, '../src/CFileManagerParse.js'), 'utf-8'
+    path.resolve(__dirname, '../src/TrackFiles/TrackCSV.js'), 'utf-8'
 );
 
 // Verify the function exists and hasn't been moved. detectCSVType moved
-// from CFileManager.js to CFileManagerParse.js during the refactor2
-// module split (commit 36bcc1d7).
+// from CFileManager.js to CFileManagerParse.js during the refactor2 module
+// split (commit 36bcc1d7), then to TrackFiles/TrackCSV.js — beside the
+// type→parser dispatch it feeds — in the CSV single-source-of-truth
+// refactor (CFileManagerParse re-exports it for its existing importers).
 describe('detectCSVType source presence', () => {
-    test('detectCSVType is exported from CFileManagerParse.js', () => {
+    test('detectCSVType is exported from TrackCSV.js', () => {
         expect(source).toContain('export function detectCSVType(');
     });
 });

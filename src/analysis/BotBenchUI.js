@@ -752,8 +752,9 @@ function createDialog() {
 
     const status = document.createElement("div");
     status.textContent = "Ready — choose a folder or drag one onto this window. "
-        + "BOT interchange scenarios (.input/.all.csv + .scenario.json) and FMV clips — "
-        + "video with embedded camera metadata (.ts/.klv).";
+        + "BOT interchange scenarios (.input/.all.csv + .scenario.json), FMV clips — "
+        + "video with embedded camera metadata (.ts/.klv) — and track CSVs with camera "
+        + "pointing (Airdata drone logs, MISB CSVs).";
     status.style.cssText = "font-size: 13px; margin: 0 0 6px 0; min-height: 18px; color: #333;";
 
     const progress = document.createElement("progress");

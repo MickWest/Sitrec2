@@ -58,6 +58,9 @@ import {
     parseFR24CSV,
 } from "./ParseCustom1CSV";
 import {findColumn, stripDuplicateTimes} from "./ParseUtils";
+import {trackFileFromCSVType, detectCSVType} from "./TrackFiles/TrackCSV";
+// Re-exported from its new home so existing importers keep working.
+export {detectCSVType};
 import {SITREC_SERVER} from "./configUtils";
 import {TSParser} from "./TSParser";
 import {NITFParser} from "./NITFParser";
@@ -88,83 +91,6 @@ export function detectTXTType(text) {
         return "PBA";
     }
     return "TLE";
-}
-
-/**
- * Detects the type of a CSV file based on header row patterns.
- * Returns "Airdata", "MISB1", "STANAG_CSV", "CUSTOM1", "CUSTOM_FLL", "FR24CSV",
- * "AZIMUTH", "ELEVATION", "HEADING", "FOV", "FEATURES", or "Unknown".
- */
-export function detectCSVType(csvRows) {
-
-    if (csvRows[0][0] === "time(millisecond)" && csvRows[0][1] === "datetime(utc)") {
-        return "Airdata";
-    }
-
-    if (csvRows[0][1] === "Checksum" && csvRows[0][2] === "UnixTimeStamp" && csvRows[0][3] === "MissionID") {
-        return "MISB_FULL";
-    }
-
-    if (csvRows[0][0] === "DPTS" && csvRows[0][1] === "Security:") {
-        return "MISB1";
-    }
-
-    if (csvRows[0].includes("Sensor Latitude") || csvRows[0].includes("SensorLatitude")) {
-        return "MISB1";
-    }
-
-    if (csvRows[0][0].toLowerCase() === "frame" && csvRows[0][1].toLowerCase() === "latitude" && csvRows[0][2].toLowerCase() === "longitude") {
-        return "CUSTOM_FLL";
-    }
-
-    // Must precede isCustom1: a STANAG CSV's UTC/TPLAT/TPLON headers also satisfy the
-    // generic Custom1 header lists, which would import only the target position and
-    // silently drop the Platform and Ground line-of-sight tracks.
-    if (isSTANAGCSV(csvRows)) {
-        return "STANAG_CSV";
-    }
-
-    // BOT interchange (bearings-only benchmark): Input, Truth or All shape.
-    if (isBOTCSV(csvRows)) {
-        return "BOT_CSV";
-    }
-
-    if (isCustom1(csvRows)) {
-        return "CUSTOM1";
-    }
-
-    if (isFR24CSV(csvRows)) {
-        return "FR24CSV";
-    }
-
-    if ((csvRows[0][0].toLowerCase() === "frame" || csvRows[0][0].toLowerCase() === "time")
-        && csvRows[0][1].toLowerCase() === "az") {
-        return "AZIMUTH";
-    }
-
-    if ((csvRows[0][0].toLowerCase() === "frame" || csvRows[0][0].toLowerCase() === "time")
-        && csvRows[0][1].toLowerCase() === "el") {
-        return "ELEVATION";
-    }
-
-    if ((csvRows[0][0].toLowerCase() === "frame" || csvRows[0][0].toLowerCase() === "time")
-        && csvRows[0][1].toLowerCase() === "heading") {
-        return "HEADING";
-    }
-
-    if ((csvRows[0][0].toLowerCase() === "frame" || csvRows[0][0].toLowerCase() === "time")
-        && (csvRows[0][1].toLowerCase() === "fov" || csvRows[0][1].toLowerCase() === "zoom")) {
-        return "FOV";
-    }
-
-    if (isFeaturesCSV(csvRows)) {
-        return "FEATURES";
-    }
-
-    if (Sit.isCustom && typeof Sit.setup !== 'function' && !Sit.gimbalSetup) {
-        showError("Unhandled CSV type detected.  Please add to detectCSVType() function.");
-    }
-    return "Unknown";
 }
 
 export const parseMethods = {
@@ -1496,59 +1422,17 @@ export const parseMethods = {
                     dataType = detectCSVType(parsed);
                     if (dataType === "Unknown") {
                         parsed.shift();
-                    } else if (dataType === "Airdata") {
-                        const airdataMisb = parseAirdataCSV(parsed);
-                        parsed = new CTrackFileMISB(airdataMisb);
-                        dataType = "trackfile";
-                    } else if (dataType === "MISB_FULL") {
-                        const misbFullData = parseMISB1CSV(parsed);
-                        parsed = new CTrackFileMISB(misbFullData);
-                        dataType = "trackfile";
-                    } else if (dataType === "MISB1") {
-                        const csvMisb = parseMISB1CSV(parsed);
-                        if (Sit.isCustom) {
-                            parsed = new CTrackFileMISB(stripDuplicateTimes(csvMisb));
-                        } else {
-                            parsed = new CTrackFileMISB(csvMisb);
+                    } else {
+                        // ONE dispatch for every track-shaped CSV, shared with
+                        // BOTBench's bulk ingest — see TrackCSV.js. Types that
+                        // are not track files (AZIMUTH, FOV, FEATURES, …) fall
+                        // through to their own handlers below.
+                        const made = trackFileFromCSVType(dataType, parsed,
+                            {stripDuplicates: !!Sit.isCustom});
+                        if (made?.trackFile) {
+                            parsed = made.trackFile;
+                            dataType = "trackfile";
                         }
-                        dataType = "trackfile";
-                    } else if (dataType === "STANAG_CSV") {
-                        // The CSV flavour of STANAG 4676. Wrapped in its own CTrackFile
-                        // (not converted to a single MISB array) so it yields the same
-                        // Target/Platform/Ground sub-tracks, roles and HAE datum as the
-                        // XML flavour — see CTrackFileSTANAGBase.
-                        parsed = new CTrackFileSTANAGCSV(parsed);
-                        dataType = "trackfile";
-                    } else if (dataType === "BOT_CSV") {
-                        // Any of the three BOT shapes. The file carries no
-                        // georeference, so the class applies its default origin and
-                        // epoch — see CTrackFileBOT for what that costs.
-                        parsed = new CTrackFileBOT(parsed);
-                        dataType = "trackfile";
-                    } else if (dataType === "CUSTOM1") {
-                        const custom1Misb = parseCustom1CSV(parsed);
-                        if (Sit.isCustom) {
-                            parsed = new CTrackFileMISB(stripDuplicateTimes(custom1Misb));
-                        } else {
-                            parsed = new CTrackFileMISB(custom1Misb);
-                        }
-                        dataType = "trackfile";
-                    } else if (dataType === "CUSTOM_FLL") {
-                        const customFllMisb = parseCustomFLLCSV(parsed);
-                        if (Sit.isCustom) {
-                            parsed = new CTrackFileMISB(stripDuplicateTimes(customFllMisb));
-                        } else {
-                            parsed = new CTrackFileMISB(customFllMisb);
-                        }
-                        dataType = "trackfile";
-                    } else if (dataType === "FR24CSV") {
-                        const fr24Misb = parseFR24CSV(parsed);
-                        if (Sit.isCustom) {
-                            parsed = new CTrackFileMISB(stripDuplicateTimes(fr24Misb));
-                        } else {
-                            parsed = new CTrackFileMISB(fr24Misb);
-                        }
-                        dataType = "trackfile";
                     }
 
                     break;

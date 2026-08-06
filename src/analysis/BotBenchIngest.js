@@ -40,6 +40,8 @@ import {Globals} from "../Globals";
 import {MISB} from "../MISBFields";
 import {findColumn} from "../ParseUtils";
 import {isBOTCSV, BOT_DEFAULT_ORIGIN, BOT_DEFAULT_EPOCH_ISO} from "../TrackFiles/CTrackFileBOT";
+import {trackFileFromCSVType, trackCSVConventions, detectCSVType} from "../TrackFiles/TrackCSV";
+import csv from "../utils/CSVParser";
 import {misbSightlineHeading} from "../MISBSightline";
 import {assessLinearFitConditioning} from "../LOSFitting";
 import {sensorMotionStats} from "../TraverseAnalysis";
@@ -723,10 +725,83 @@ function misbHasSightline(row) {
  * a ~16 m error in CONUS — small against a 20 km range, but it is free to get
  * right and it keeps these numbers comparable with the app's.
  */
-export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
+/**
+ * An epoch timestamp in SECONDS, from whatever representation the producing
+ * importer used: KLV stores MICROSECONDS (ST 0601 tag 2), Airdata builds a
+ * Date OBJECT, and the MISB CSV importer passes the file's numbers through
+ * VERBATIM — real MISB CSVs carry microseconds, but nothing enforces it.
+ * So normalize per VALUE and never trust a per-format label (a static
+ * "CSV = milliseconds" declaration turned a real MISB fixture's 0.2 s
+ * cadence into 200 s).
+ *
+ * A number is accepted only when EXACTLY one unit interpretation lands in a
+ * plausible sensor-data era (1980-2100): the era is ~13x wide but the units
+ * are 1000x apart, so the three acceptance windows cannot overlap, and any
+ * value between them returns NaN instead of being misread — a 1971
+ * microsecond stamp falls in the gap below the milliseconds window and
+ * fails loud rather than ingesting 1000x wrong. Date objects are
+ * unit-unambiguous and pass through regardless of era.
+ */
+const EPOCH_ERA_MIN = Date.UTC(1980, 0, 1) / 1e3;
+const EPOCH_ERA_MAX = Date.UTC(2100, 0, 1) / 1e3;
+export function epochStampSeconds(v) {
+    if (v instanceof Date) return v.getTime() / 1e3;
+    if (!Number.isFinite(v)) return NaN;
+    for (const div of [1, 1e3, 1e6]) {          // seconds, ms, µs
+        const s = v / div;
+        if (s >= EPOCH_ERA_MIN && s <= EPOCH_ERA_MAX) return s;
+    }
+    return NaN;     // no unit reading lands in the era — refuse, don't guess
+}
+
+/**
+ * Ingest ANY Sitrec-loadable track CSV that carries camera pointing —
+ * Airdata drone logs, MISB-column CSVs — through the SAME dispatch the live
+ * import uses (trackFileFromCSVType, the single source of truth for CSV
+ * importing), then the same sightline/clock pipeline as FMV. Position-only
+ * tracks and multi-role files refuse with the reason: BOTBench needs, at
+ * minimum, a sensor track and a sensor line of sight.
+ */
+export function ingestGenericTrackCSV(text, {label = "", geoid = true} = {}) {
+    const rows = csv.toArrays(String(text));
+    const type = detectCSVType(rows);
+    // Judge the TYPE before parsing the file: several parsers legitimately
+    // touch scene state, which a file we are about to refuse must not
+    // trigger — and the refusal reasons are properties of the format anyway.
+    const conv = trackCSVConventions(type);
+    if (!conv) {
+        throw new Error(`This CSV is not a track file Sitrec recognises (detected: `
+            + `${type}). BOTBench needs a sensor track with camera pointing — a BOT `
+            + `interchange CSV, an Airdata drone log, or a MISB-column CSV.`);
+    }
+    if (conv.multiRole) {
+        throw new Error(`This ${type} file carries multiple track roles `
+            + `(platform/target/ground) and BOTBench cannot choose one — load it in `
+            + `the app and pick a role there.`);
+    }
+    if (conv.pointing === "none") {
+        throw new Error(`This ${type} track is position-only — it carries no camera `
+            + `pointing, so there are no lines of sight to analyse. It could serve as `
+            + `a truth reference, but not as the sensor.`);
+    }
+    const made = trackFileFromCSVType(type, rows);
+    const misb = made.trackFile.toMISB(0);
+    if (!misb || !misb.length) {
+        throw new Error(`This ${type} file parsed but contained no usable track rows.`);
+    }
+    const record = ingestMISBRecords(misb, {
+        label, geoid,
+        boresightPointing: made.pointing === "boresight",
+    });
+    record.meta.sourceFormat = type;
+    return record;
+}
+
+export function ingestMISBRecords(misb, {label = "", geoid = true,
+    boresightPointing = false} = {}) {
     const warnings = [];
     const usable = [];
-    let noSightline = 0, noPosition = 0, noRoll = 0;
+    let noSightline = 0, noPosition = 0, noRoll = 0, boresightRows = 0;
 
     // Per-record PES PTS, paired by index with the MISB array (MISBUtils sets it
     // on the array itself when the TS demuxer supplied PES entries).
@@ -740,23 +815,32 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
         const lon = row[MISB.SensorLongitude];
         const hae = row[MISB.SensorEllipsoidHeight];
         const msl = row[MISB.SensorTrueAltitude];
-        const t = row[MISB.UnixTimeStamp];
+        const t = epochStampSeconds(row[MISB.UnixTimeStamp]);
         // Skipped, not held. The run selector below judges continuity on the
         // TIMESTAMPS, so a missing record shows up as a jump in time whether or
         // not anything stands in for it — which is just as well, because a KLV
         // stream that drops packets has no placeholder to offer.
         if (!Number.isFinite(lat) || !Number.isFinite(lon)
             || (!Number.isFinite(hae) && !Number.isFinite(msl))) { noPosition++; continue; }
-        if (!misbHasSightline(row)) { noSightline++; continue; }
+        // Boresight-pointing formats (Airdata): the importer BUILDS the
+        // platform frame as the pointing frame (drone heading + gimbal
+        // pitch) and leaves the sensor-relative angles empty on purpose.
+        // With the full platform triple present and BOTH relative angles
+        // absent, the sightline is the platform's forward axis — relative
+        // az/el zero by that format's own convention, never as a guess.
+        const boresightRow = boresightPointing && !misbHasSightline(row)
+            && Number.isFinite(row[MISB.PlatformHeadingAngle])
+            && Number.isFinite(row[MISB.PlatformPitchAngle])
+            && Number.isFinite(row[MISB.PlatformRollAngle])
+            && !Number.isFinite(row[MISB.SensorRelativeAzimuthAngle])
+            && !Number.isFinite(row[MISB.SensorRelativeElevationAngle]);
+        if (boresightRow) boresightRows++;
+        else if (!misbHasSightline(row)) { noSightline++; continue; }
         if (!Number.isFinite(row[MISB.SensorRelativeRollAngle])) noRoll++;
         usable.push({
-            // MICROSECONDS. Tag 2 is µs since the Unix epoch per ST 0601, and
-            // parseKLVFile stores the raw value (computeMisbSpans divides by
-            // 1e6 for the same reason). Beware: the CSV importers in MISBUtils
-            // put MILLISECONDS in this same column, so the units of
-            // MISB.UnixTimeStamp depend on which reader produced the array.
-            // This function is only ever handed a KLV-decoded one.
-            t: Number.isFinite(t) ? t / 1e6 : NaN,
+            // Already normalized to SECONDS by epochStampSeconds — see it
+            // for why per-value normalization beats any per-format label.
+            t,
             // PES PTS for the SAME record, when the demuxer supplied it. This is
             // the SYNCHRONOUS timebase — locked to the encoder's clock — and on
             // a stream whose UnixTimeStamp is absent or erratic it is the better
@@ -774,14 +858,20 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
                 platformHeading: row[MISB.PlatformHeadingAngle],
                 platformPitch: row[MISB.PlatformPitchAngle],
                 platformRoll: row[MISB.PlatformRollAngle],
-                sensorAz: row[MISB.SensorRelativeAzimuthAngle],
-                sensorEl: row[MISB.SensorRelativeElevationAngle],
+                sensorAz: boresightRow ? 0 : row[MISB.SensorRelativeAzimuthAngle],
+                sensorEl: boresightRow ? 0 : row[MISB.SensorRelativeElevationAngle],
                 sensorRoll: Number.isFinite(row[MISB.SensorRelativeRollAngle])
                     ? row[MISB.SensorRelativeRollAngle] : 0,
             },
         });
     }
 
+    if (boresightRows) {
+        warnings.push(`${boresightRows} record(s) use BORESIGHT pointing: this format's `
+            + `importer builds the platform frame as the pointing frame (e.g. Airdata's `
+            + `drone heading + gimbal pitch) and carries no sensor-relative angles, so the `
+            + `sightline is the platform's forward axis by the format's own convention.`);
+    }
     if (noPosition) warnings.push(`${noPosition} record(s) had no usable sensor position.`);
     if (noSightline) {
         warnings.push(`${noSightline} record(s) were dropped for incomplete pointing — a sightline `
@@ -1352,6 +1442,13 @@ export async function ingestBotBenchEntry(entry) {
     if (role === "bot-csv") {
         const file = await entry.getFile();
         const text = await file.text();
+        // Not a BOT interchange file? Any Sitrec-loadable track CSV with
+        // camera pointing is analysed through the same shared import
+        // dispatch the live app uses; anything else refuses with the reason.
+        if (!isBOTCSV(toRows(text))) {
+            return ingestGenericTrackCSV(text,
+                {label: entry.relativePath || entry.name});
+        }
         let sidecar = null, labels = null;
         // A sidecar that EXISTS and cannot be used is a different thing from no
         // sidecar at all: the producer stated the frame and we failed to read
