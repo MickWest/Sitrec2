@@ -1,6 +1,7 @@
 import {CNode3DGroup} from "./CNode3DGroup";
 import {CNodeAtmosphericOptics} from "./CNodeAtmosphericOptics";
 import {CNodeEclipse} from "./CNodeEclipse";
+import {CNodeWaterReflection} from "./CNodeWaterReflection";
 import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene, setupNightSkyScene, setupSunSkyScene} from "../LocalFrame";
 import {Color, Group, Matrix4, Ray, Raycaster, Scene, Sphere, Vector3} from "three";
 import {degrees, radians} from "../utils";
@@ -1742,6 +1743,13 @@ export function addNightSky(def) {
     // corona/prominences). A hard no-op unless the Moon overlaps the Sun.
     if (!NodeMan.exists("theEclipse")) {
         new CNodeEclipse({id: "theEclipse"});
+    }
+
+    // Reflect this sky in water. Created here, alongside the sky it captures,
+    // so every night-sky situation gets it and the node exists with a stable
+    // id before saved mods are deserialized. Defaults to off.
+    if (!NodeMan.exists("waterReflection")) {
+        new CNodeWaterReflection({id: "waterReflection"});
     }
 
     return nightSky;

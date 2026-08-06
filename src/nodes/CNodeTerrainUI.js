@@ -121,6 +121,17 @@ export class CNodeTerrainUI extends CNode {
             this.mapSources = {};
         }
 
+        // Backfill the OSM water fill colour (#AAD3DF) that the Water
+        // Reflection effect keys off. config/config.js is per-install and not
+        // checked in, so existing installs would otherwise silently lack it.
+        // A config that sets waterColor itself always wins.
+        for (const key of ["osm", "osmHighlight"]) {
+            const source = this.mapSources[key];
+            if (source !== undefined && source.waterColor === undefined) {
+                source.waterColor = [170, 211, 223];
+            }
+        }
+
         // add the default map sources, wireframe and flat shading
         this.mapSources = {
             ...this.mapSources,

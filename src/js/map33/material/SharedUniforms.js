@@ -1,3 +1,5 @@
+import {Vector3, Vector4} from "three";
+
 // shared uniforms used by multiple materials in Sitrec
 export const sharedUniforms = {
     nearPlane: {value: 0.1},
@@ -9,5 +11,28 @@ export const sharedUniforms = {
     sunNightAmbientIntensity: {value: 0.5},
     showBuildingEdges: {value: false},
     showTileEdges: {value: false},
+
+    // Water Reflection (CNodeWaterReflection). Scoped ON only around the
+    // look view's GlobalScene render, so mainView never sees a reflection.
+    // waterReflection is the master gate AND the night factor (0 = off).
+    waterReflection: {value: 0.0},
+    waterSkyCube: {value: null},
+    waterColor: {value: new Vector3(170 / 255, 211 / 255, 223 / 255)},
+    waterTolerance: {value: 0.10},
+    waterStrength: {value: 1.0},
+    waterDarken: {value: 0.9},
+    waterWaveStrength: {value: 0.02},
+    waterWaveLength: {value: 30.0},
+    waterWaveTime: {value: 0.0},
+    // Wave phase origin, subtracted from vWorldPosition before the sine sum.
+    // ECEF coordinates are ~6.4e6 m, which in float32 leaves no precision for
+    // a 30 m wavelength; subtracting a nearby origin brings them back to
+    // metres-scale where sin() still means something.
+    waterWaveOrigin: {value: new Vector3()},
+    // (a/b)^2 for the current earth model — turns the geocentric radial into
+    // the geodetic up used as the water surface normal. 1.0 for a sphere.
+    waterUpSquash: {value: 1.0},
+    // xyz = view direction for an orthographic camera, w = 1 to use it.
+    waterOrthoDir: {value: new Vector4(0, 0, 0, 0)},
     // ... other shared uniforms
 };
