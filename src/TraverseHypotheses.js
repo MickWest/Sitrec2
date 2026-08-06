@@ -661,6 +661,15 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
                 usedSpeedTarget: plausible.usedSpeedTarget,
                 decisiveness: plausible.decisiveness,
                 boundaryLimited: plausible.boundaryLimited ? 1 : 0,
+                // Stage-1 valley diagnostics (see fitPlausibleBestRange):
+                // together with usedSpeedTarget they record whether pure
+                // geometry PINNED the range — the cheap extraction-attempt
+                // verdict BOTBench surfaces as its Probe column.
+                valleyWidthLog: plausible.valleyWidthLog,
+                valleyMultimodal: plausible.valleyMultimodal ? 1 : 0,
+                valleyFloorShaped: plausible.valleyFloorShaped ? 1 : 0,
+                geometryDecisive: plausible.geometryDecisive ? 1 : 0,
+                speedSanityOverride: plausible.speedSanityOverride ? 1 : 0,
                 errFloor,
             },
             notes: (plausible.usedSpeedTarget

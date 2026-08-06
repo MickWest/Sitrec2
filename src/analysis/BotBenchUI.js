@@ -90,8 +90,9 @@ const TABLE_COLUMNS = [
     ["Decl", "3.5%", "Pointing error the file DECLARES, as a standard deviation in degrees (BOT sidecar losError.sigmaDeg, or the LOSUncertainty column). A trailing * means a CORRELATED error model — slow wobble that neighbouring frames share, not frame-to-frame jitter — whose figure is not comparable with the estimate to the left. Blank for FMV, which declares none.", "source"],
     ["Src", "3.5%", "One-word triage of the columns to the left. Not a calibrated score — hover it for the specific reasons.", "source"],
 
-    ["Verdict", "15.5%", "The executive assessment for this file. Shortened to fit — hover for the full headline.", "analysis"],
-    ["Top interpretation", "12%", "The highest-ranked candidate, and its rank tier. Long method names are shortened — hover for the full name.", "analysis"],
+    ["Probe", "4.5%", "A cheap extraction ATTEMPT, not a pre-fit heuristic: did the Minimum Acceleration fit's pure-smoothness stage pin the range from geometry alone (both valley walls proven, narrow valley, no floor shaping)? 'geom N' = yes, at N nautical miles; 'prior' = geometry left range ambiguous and the speed prior chose. Speaks for geometry only — physics and stationary methods may still succeed on a 'prior' file.", "analysis"],
+    ["Verdict", "14%", "The executive assessment for this file. Shortened to fit — hover for the full headline.", "analysis"],
+    ["Top interpretation", "11%", "The highest-ranked candidate, and its rank tier. Long method names are shortened — hover for the full name.", "analysis"],
     ["|err|", "3.5%", "The top interpretation's mean line-of-sight residual — how far its track lies off the measured sightlines — in degrees.", "analysis"],
     ["Range", "4%", "Start range of the top interpretation, in nautical miles.", "analysis"],
     ["Spd (Knots)", "4%", "The top interpretation's air speed over the clip, min-max, in knots.", "analysis"],
@@ -106,7 +107,7 @@ const TABLE_COLUMNS = [
 // the table's floor and letting the wrapper scroll horizontally instead keeps
 // every cell on ONE line, which is what makes the table scannable; on a wide
 // display the percentages take over and nothing scrolls.
-const TABLE_MIN_WIDTH_PX = 1600;
+const TABLE_MIN_WIDTH_PX = 1660;
 
 /**
  * The verdict headline, shortened for a table cell.
@@ -186,6 +187,8 @@ const CSV_COLUMNS = [
     "verdictCode", "headline", "viableClasses", "rangeUnobservable",
     "declaredMaxRangeM", "maxRangeViolationCount", "topViolatesMaxRange",
     "optAnchorNM", "optRangeBands", "optMcSweep",
+    "probeGeometryPinned", "probeSpeedOverride", "probeRangeM",
+    "probeDecisiveness", "probeValleyWidthLog",
     "topKey", "topName", "topTier", "topErrDeg", "topRangeM", "topSpeedKt",
     "topSpeedMinKt", "topSpeedMaxKt", "topAltM",
     "candidates", "failures",
@@ -230,6 +233,10 @@ function rowToCsvRecord(entry) {
         topViolatesMaxRange: r ? (r.maxRangeViolations ?? []).some((v) => v.key === r.top?.key
             && v.name === r.top?.name) : "",
         topKey: r?.top?.key ?? "", topName: r?.top?.name ?? "", topTier: r?.top?.tier ?? "",
+        probeGeometryPinned: r?.probe ? (r.probe.geometryPinned ? 1 : 0) : "",
+        probeSpeedOverride: r?.probe ? (r.probe.speedOverride ? 1 : 0) : "",
+        probeRangeM: r?.probe?.rangeM, probeDecisiveness: r?.probe?.decisiveness,
+        probeValleyWidthLog: r?.probe?.valleyWidthLog,
         topErrDeg: r?.top?.errDeg, topRangeM: r?.top?.rangeStartM, topSpeedKt: r?.top?.speedKt,
         topSpeedMinKt: r?.top?.speedMinKt, topSpeedMaxKt: r?.top?.speedMaxKt,
         topAltM: r?.top?.altMeanM,
@@ -1012,8 +1019,44 @@ function fillRow(state, entry) {
         + (r.earthModel ? `\n\nEarth model in force: ${r.earthModel}.` : "")
         + (r.surfaceModel ? `\nGround: ${r.surfaceModel}.` : "");
 
-    c[11].textContent = shortVerdict(r.headline, r.verdictCode);
-    c[11].title = (r.headline ? r.headline + "\n\n" : "")
+    const pr = r.probe;
+    if (pr) {
+        c[11].textContent = pr.speedOverride ? "geom→spd"
+            : pr.geometryPinned ? `geom ${n2(pr.rangeM / METERS_PER_NM)}` : "prior";
+        c[11].style.color = pr.speedOverride ? "#ef6c00"
+            : pr.geometryPinned ? "#2e7d32" : "";
+        c[11].style.fontWeight = pr.geometryPinned || pr.speedOverride ? "700" : "";
+        c[11].title = (pr.speedOverride
+            ? `Geometry DID pin a range, but the speed it implies exceeds twice the fit's `
+                + `speed target, so the Minimum Acceleration fit deliberately fell back to `
+                + `its prior${Number.isFinite(pr.rangeM)
+                    ? ` (prior-picked range ${fmtMetres(pr.rangeM)})` : ""}. For data `
+                + `quality read this as RECOVERABLE — a fast object at pinned range is a `
+                + `finding, not an ambiguity.`
+            : pr.geometryPinned
+            ? `Pure-smoothness geometry PINNED the range at ${fmtMetres(pr.rangeM)} — an `
+                + `actual extraction attempt succeeded with no speed assumption.`
+            : `Geometry left the range ambiguous; the Minimum Acceleration fit fell back `
+                + `to its soft speed prior${Number.isFinite(pr.rangeM)
+                    ? ` (prior-picked range ${fmtMetres(pr.rangeM)})` : ""}.`)
+            + (Number.isFinite(pr.decisiveness)
+                ? `\nValley decisiveness ${n2(pr.decisiveness)}`
+                    + (Number.isFinite(pr.valleyWidthLog)
+                        ? `, width ${n2(pr.valleyWidthLog)} nats` : "")
+                    + `, residual ${n3(pr.errDeg)}°.`
+                : "")
+            + (pr.floorShaped
+                ? "\nThe candidate valley was FLOOR-SHAPED and rejected as geometry." : "")
+            + (pr.boundaryLimited
+                ? "\nThe selected range sits on a search edge (unresolved)." : "")
+            + "\nGeometry-only verdict: physics and stationary methods may still succeed "
+            + "on a 'prior' file.";
+    } else {
+        c[11].textContent = "";
+        c[11].title = "No Minimum Acceleration fit available for this file.";
+    }
+    c[12].textContent = shortVerdict(r.headline, r.verdictCode);
+    c[12].title = (r.headline ? r.headline + "\n\n" : "")
         + (r.viableClasses.length
         ? `Viable classes: ${r.viableClasses.join(", ")}.` : "No class reached viable.")
         + (r.rangeUnobservable
@@ -1026,9 +1069,9 @@ function fillRow(state, entry) {
     // ranking first is the whole problem.
     const topViolates = (r.maxRangeViolations ?? []).some((v) => v.key === r.top?.key
         && v.name === r.top?.name);
-    c[12].textContent = (topViolates ? "⚠ " : "") + shortTopName(r.top?.name);
+    c[13].textContent = (topViolates ? "⚠ " : "") + shortTopName(r.top?.name);
     const otherViolators = (r.maxRangeViolations ?? []).length - (topViolates ? 1 : 0);
-    c[12].title = (r.top ? `${r.top.name}\nRank tier: ${r.top.tier}. ${r.candidates} candidates considered.` : "")
+    c[13].title = (r.top ? `${r.top.name}\nRank tier: ${r.top.tier}. ${r.candidates} candidates considered.` : "")
         + (topViolates
             ? `\n\nCONTRADICTS THE DECLARED MaxRange of ${fmtMetres(r.declaredMaxRangeM)}: this `
                 + `candidate places the object beyond the range the file itself says the sensor `
@@ -1043,60 +1086,60 @@ function fillRow(state, entry) {
             ? `\n\n${otherViolators} other candidate(s) also exceed the declared MaxRange of `
                 + `${fmtMetres(r.declaredMaxRangeM)}.`
             : "");
-    if (topViolates) c[12].style.color = "#c62828";
-    c[13].textContent = n3(r.top?.errDeg);
-    c[14].textContent = Number.isFinite(r.top?.rangeStartM)
+    if (topViolates) c[13].style.color = "#c62828";
+    c[14].textContent = n3(r.top?.errDeg);
+    c[15].textContent = Number.isFinite(r.top?.rangeStartM)
         ? n2(r.top.rangeStartM / METERS_PER_NM) : "";
-    c[14].title = Number.isFinite(r.top?.rangeStartM)
+    c[15].title = Number.isFinite(r.top?.rangeStartM)
         ? `${fmtMetres(r.top.rangeStartM)}` + (Number.isFinite(r.top?.speedKt)
             ? `, mean air speed ${n0(r.top.speedKt)} kt` : "") : "";
-    c[15].textContent = Number.isFinite(r.top?.speedMinKt) && Number.isFinite(r.top?.speedMaxKt)
+    c[16].textContent = Number.isFinite(r.top?.speedMinKt) && Number.isFinite(r.top?.speedMaxKt)
         ? `${Math.round(r.top.speedMinKt)}-${Math.round(r.top.speedMaxKt)}`
         : "";
-    c[15].title = Number.isFinite(r.top?.speedKt)
+    c[16].title = Number.isFinite(r.top?.speedKt)
         ? `Air speed of the top interpretation over the clip: `
             + `${Math.round(r.top.speedMinKt)}-${Math.round(r.top.speedMaxKt)} kt `
             + `(mean ${n0(r.top.speedKt)} kt).`
         : "";
-    c[16].textContent = Number.isFinite(r.top?.altMeanM)
+    c[17].textContent = Number.isFinite(r.top?.altMeanM)
         ? `${Math.round(r.top.altMeanM * 3.28084)}` : "";
-    c[16].title = Number.isFinite(r.top?.altMeanM)
+    c[17].title = Number.isFinite(r.top?.altMeanM)
         ? `Mean altitude of the top interpretation's track: `
             + `${Math.round(r.top.altMeanM * 3.28084)} ft (${Math.round(r.top.altMeanM)} m).`
         : "";
 
     if (r.truthScore) {
         const ts = r.truthScore;
-        c[17].textContent = Number.isFinite(ts.topRelSep)
+        c[18].textContent = Number.isFinite(ts.topRelSep)
             ? `${(ts.topRelSep * 100).toFixed(1)}%` : (Number.isFinite(ts.topSepM) ? fmtMetres(ts.topSepM) : "—");
-        c[17].title = `Top interpretation is ${fmtMetres(ts.topSepM)} from truth`
+        c[18].title = `Top interpretation is ${fmtMetres(ts.topSepM)} from truth`
             + (Number.isFinite(ts.topRelSep) ? ` (${(ts.topRelSep * 100).toFixed(1)}% of the true range)` : "")
             + `.\nClosest candidate of any: ${fmtMetres(ts.bestSepM)} (${ts.bestName ?? "—"}).`
             + (Number.isFinite(ts.truthResidualDeg)
                 ? `\nTruth's own LOS residual — the achievable floor — is ${n3(ts.truthResidualDeg)}°.` : "");
         // Green when the analysis both picked well and landed close.
         const good = Number.isFinite(ts.topRelSep) && ts.topRelSep <= 0.10;
-        c[17].style.color = good ? "#2e7d32" : (Number.isFinite(ts.topRelSep) ? "#c62828" : "");
+        c[18].style.color = good ? "#2e7d32" : (Number.isFinite(ts.topRelSep) ? "#c62828" : "");
     } else if (r.directionScore) {
         // DEGREES, not metres, and labelled so. A direction-only target has no
         // range to be right or wrong about; the comparable quantity is bearing
         // error. Showing a blank here previously read as "could not be scored".
         const ds = r.directionScore;
-        c[17].textContent = Number.isFinite(ds.topDeg) ? `${n2(ds.topDeg)}°` : "—";
-        c[17].title = `${ds.label}. The top interpretation's mean BEARING error is `
+        c[18].textContent = Number.isFinite(ds.topDeg) ? `${n2(ds.topDeg)}°` : "—";
+        c[18].title = `${ds.label}. The top interpretation's mean BEARING error is `
             + `${n3(ds.topDeg)}°; the closest candidate of any was ${ds.bestName} at `
             + `${n3(ds.bestDeg)}°.\n\nThis target has no finite range, so 3-D separation and `
             + `relative separation are undefined for it — this column is in degrees for this `
             + `row and metres/percent for the others, and the two are never averaged together.`;
-        c[17].style.color = Number.isFinite(ds.topDeg) && ds.topDeg <= 1 ? "#2e7d32" : "#c62828";
+        c[18].style.color = Number.isFinite(ds.topDeg) && ds.topDeg <= 1 ? "#2e7d32" : "#c62828";
     } else {
-        c[17].textContent = "";
-        c[17].title = "This file carries no TruePosition column and no direction truth, "
+        c[18].textContent = "";
+        c[18].title = "This file carries no TruePosition column and no direction truth, "
             + "so nothing here is scored.";
     }
 
     // Actions: the full gallery, and the HTML report.
-    c[18].innerHTML = "";
+    c[19].innerHTML = "";
     const galleryButton = smallButton("Gallery", "#1976d2", BUTTON_TOOLTIPS["Gallery"]);
     galleryButton.onclick = () => {
         try {
@@ -1105,11 +1148,11 @@ function fillRow(state, entry) {
             showError("Could not open the gallery for this result: " + (e && e.message), e);
         }
     };
-    c[18].appendChild(galleryButton);
+    c[19].appendChild(galleryButton);
     const reportButton = smallButton("Report", "#455a64", BUTTON_TOOLTIPS["Report"]);
     reportButton.style.marginLeft = "3px";
     reportButton.onclick = () => openReport(entry, reportButton);
-    c[18].appendChild(reportButton);
+    c[19].appendChild(reportButton);
 
     entry.tr.style.background = grade.grade === "weak" ? "#fff5f5"
         : grade.grade === "hard" ? "#fffaf0" : "#f7fff7";
@@ -1168,8 +1211,8 @@ function setRowError(entry, message) {
     const c = entry.cells;
     c[1].textContent = "error";
     c[1].title = message;
-    c[11].textContent = message;
-    c[11].title = message;
+    c[12].textContent = message;
+    c[12].title = message;
     entry.tr.style.background = "#fff5f5";
 }
 

@@ -590,12 +590,39 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
         };
     }
 
+    // GEOMETRY PROBE. The Minimum Acceleration fit's stage-1 gate is a cheap
+    // extraction ATTEMPT: it either pinned the range from pure smoothness
+    // geometry (both valley walls proven, narrow width, no floor shaping) or
+    // fell back to the speed prior. That verdict — an actual attempt, not a
+    // pre-fit heuristic like CV rcond — is the direct answer to "could a
+    // path be extracted from geometry alone", and it rides every row for
+    // free because the battery already ran the fit.
+    const plausibleH = results.hypotheses.find((h) => h.key === "plausible");
+    const probe = plausibleH ? {
+        // The PRE-speed-sanity verdict: did pure geometry pin a range? A
+        // decisive valley whose implied speed exceeded 2x the target still
+        // reads pinned here — the fit declined to trust it (speedOverride),
+        // which is a different statement from "geometry was ambiguous".
+        geometryPinned: plausibleH.params?.geometryDecisive === 1,
+        speedOverride: plausibleH.params?.speedSanityOverride === 1,
+        rangeM: Number.isFinite(plausibleH.params?.range)
+            ? plausibleH.params.range : null,
+        decisiveness: Number.isFinite(plausibleH.params?.decisiveness)
+            ? plausibleH.params.decisiveness : null,
+        valleyWidthLog: Number.isFinite(plausibleH.params?.valleyWidthLog)
+            ? plausibleH.params.valleyWidthLog : null,
+        boundaryLimited: !!plausibleH.params?.boundaryLimited,
+        floorShaped: plausibleH.params?.valleyFloorShaped === 1,
+        errDeg: Number.isFinite(plausibleH.errDeg) ? plausibleH.errDeg : null,
+    } : null;
+
     return {
         label: record.label,
         // Human-meaningful scenario name from an answer-key sidecar (null on
         // challenge files); the table shows it in place of the opaque filename.
         displayName: record.meta?.descriptiveName ?? null,
         kind: record.kind,
+        probe,
         trackId: record.meta?.trackId ?? null,
         // Reported on the row because the ingest's comment promises it is: the
         // conversion reads the app's global radii, so the same file can convert

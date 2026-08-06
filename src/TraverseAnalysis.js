@@ -1992,6 +1992,7 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     const VALLEY_WIDTH_MAX = 0.6;
     let lo = {extent: 0, crossed: false}, hi = lo;
     let valleyWidthLog = 0, multimodal = false, valleyFloorShaped = false;
+    let geometryDecisive = false;
     let usedSpeedTarget = true;
     if (decisiveness > decisiveMargin) {
         lo = valleySide(-1);
@@ -2010,12 +2011,23 @@ export function fitPlausibleBestRange(dataset, options = {}) {
         // own solution rides the soft range floor is floor-shaped end to
         // end, whatever its walls look like.
         valleyFloorShaped = (centerBest ?? pureSweep.best).floorActive === true;
-        usedSpeedTarget = !(!valleyFloorShaped && lo.crossed && hi.crossed
-            && valleyWidthLog <= VALLEY_WIDTH_MAX && !multimodal);
+        geometryDecisive = !valleyFloorShaped && lo.crossed && hi.crossed
+            && valleyWidthLog <= VALLEY_WIDTH_MAX && !multimodal;
+        usedSpeedTarget = !geometryDecisive;
     }
+    // Speed sanity: a decisive pure valley whose implied speed exceeds twice
+    // the target still falls back to the prior — but that is a DISTINCT
+    // state from "geometry left range ambiguous", and it is reported as one:
+    // geometryDecisive stays true (geometry DID pin a range; the fit chose
+    // not to trust the extreme speed it implies) with speedSanityOverride
+    // recording the fallback.
+    let speedSanityOverride = false;
     if (!usedSpeedTarget && vTarget) {
         const mPure = trackMetrics(dataset, pureSweep.best.track);
-        if (mPure.airSpeed.mean > 2 * vTarget) usedSpeedTarget = true;
+        if (mPure.airSpeed.mean > 2 * vTarget) {
+            usedSpeedTarget = true;
+            speedSanityOverride = true;
+        }
     }
 
     const vt = usedSpeedTarget ? vTarget : null;
@@ -2081,6 +2093,8 @@ export function fitPlausibleBestRange(dataset, options = {}) {
         valleyMultimodal: multimodal,
         valleyWalls: {loCrossed: lo.crossed, hiCrossed: hi.crossed},
         valleyFloorShaped,
+        geometryDecisive,
+        speedSanityOverride,
         boundaryLimited: boundarySides.lo || boundarySides.hi,
         boundarySides,
     };
