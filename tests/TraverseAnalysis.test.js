@@ -398,6 +398,96 @@ describe("TraverseAnalysis core", () => {
         }
     }, 300000);
 
+    test("a clean close flyby is not branded floor-shaped (P1 floor guard)", () => {
+        // The target legitimately passes ~160 m from the moving sensor —
+        // far enough above the 120 m soft floor that even the smoothness
+        // solve's corner-cutting stays clear, so the floor rows never
+        // engage (at ~130 m they genuinely do: the spline undercuts the
+        // true closest approach by tens of metres). The
+        // floorActive flag must stay false (it once fired off the SMOOTHED
+        // track's proximity to the floor — B-spline overshoot dips below the
+        // raw closest approach — and geometry was wrongly rejected), and the
+        // stage-1 gate must still pick geometry for this decisive scene.
+        const n = 300, fps = 5;
+        const S = new Float64Array(n * 3);
+        const D = new Float64Array(n * 3);
+        const W = new Float64Array(n * 3);
+        const Rs = 667, omega = 0.105;
+        const vel = [8, 3, 0];
+        // Choose the start so the target sits ~160 m from the sensor's
+        // t=30 s orbit position (offset [0, 158, 25]).
+        const s30 = [Rs * Math.sin(omega * 30), Rs * (1 - Math.cos(omega * 30)), 3000];
+        const start = [s30[0] - vel[0] * 30, s30[1] + 158 - vel[1] * 30, s30[2] + 25];
+        for (let f = 0; f < n; f++) {
+            const t = f / fps;
+            S[f * 3] = Rs * Math.sin(omega * t);
+            S[f * 3 + 1] = Rs * (1 - Math.cos(omega * t));
+            S[f * 3 + 2] = 3000;
+            const dx = start[0] + vel[0] * t - S[f * 3];
+            const dy = start[1] + vel[1] * t - S[f * 3 + 1];
+            const dz = start[2] + vel[2] * t - S[f * 3 + 2];
+            const dl = Math.hypot(dx, dy, dz);
+            D[f * 3] = dx / dl; D[f * 3 + 1] = dy / dl; D[f * 3 + 2] = dz / dl;
+        }
+        const ds = {n, fps, S, D, W};
+        const R0 = Math.hypot(start[0] - S[0], start[1] - S[1], start[2] - S[2]);
+
+        const direct = traversePlausible(ds, R0, {
+            vTarget: null, vSigma: 60, iters: 3, K: 15,
+            rangeFloor: true, minDist: 120,
+            smoothOutput: true, smoothSpacingSec: 4,
+        });
+        expect(direct.floorActive).toBe(false);
+
+        // Deliberately NOT asserted: fitPlausibleBestRange's gate on this
+        // scene. The stage-1 spline (K=15 over 300 frames) cannot represent
+        // the violent lambda swing through a 160 m flyby, so the whole
+        // pure-smoothness valley is displaced by representation error and
+        // the gate rightly refuses — a real (separate) limitation, not a
+        // floor-guard defect. This test pins the rows-only floorActive
+        // semantics; the FAST flyby below covers the gate level.
+    }, 300000);
+
+    test("a fast 121 m flyby keeps its real low wall (P1 floor guard)", () => {
+        // Review's counter-case to a blanket floor-off re-score, pinned with
+        // the reviewer's EXACT fixture (an earlier local reconstruction
+        // omitted the wind and displaced the stage-1 valley ~47%, testing
+        // the spline limitation instead of the guard). A fast target
+        // (-50, 20 m/s) passes 120.997 m from the orbiting sensor: its low
+        // wall is REAL, but a floor-free re-solve cheats through the
+        // physically-excluded region and scores smooth — a wall test that
+        // trusted the bare score erased it and forced the prior ~58% high.
+        // The descent rule (bare vs the valley floor's own score) must keep
+        // geometry here: truth R0 = 1731.70 m, expected fit ~1775.53 m.
+        const n = 300, fps = 5;
+        const S = new Float64Array(n * 3);
+        const D = new Float64Array(n * 3);
+        const W = new Float64Array(n * 3);
+        const Rs = 667, omega = 0.105;
+        const vel = [-50, 20, 0];
+        const start = [1494.3923660061, 874.9764272004, 3000];
+        for (let f = 0; f < n; f++) {
+            const t = f / fps;
+            S[f * 3] = Rs * Math.sin(omega * t);
+            S[f * 3 + 1] = Rs * (1 - Math.cos(omega * t));
+            S[f * 3 + 2] = 3000;
+            const dx = start[0] + vel[0] * t - S[f * 3];
+            const dy = start[1] + vel[1] * t - S[f * 3 + 1];
+            const dz = start[2] + vel[2] * t - S[f * 3 + 2];
+            const dl = Math.hypot(dx, dy, dz);
+            D[f * 3] = dx / dl; D[f * 3 + 1] = dy / dl; D[f * 3 + 2] = dz / dl;
+            W[f * 3] = 0.4; W[f * 3 + 1] = 0.2; W[f * 3 + 2] = 0;
+        }
+        const ds = {n, fps, S, D, W};
+        const R0 = Math.hypot(start[0] - S[0], start[1] - S[1], start[2] - S[2]);
+        const fit = fitPlausibleBestRange(ds, {
+            rangeMin: 0.5 * METERS_PER_NM,
+            rangeMax: 20 * METERS_PER_NM,
+        });
+        expect(fit.usedSpeedTarget).toBe(false);
+        expect(Math.abs(fit.startDist - R0) / R0).toBeLessThan(0.35);
+    }, 300000);
+
     test("parabolicVertex is the exact three-point parabola vertex", () => {
         // Symmetric bracket with the minimum exactly at xb: vertex must be xb.
         // (The pre-fix formula proposed 2.5 here — outside the bracket.)

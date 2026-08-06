@@ -1439,6 +1439,26 @@ export function traversePlausible(dataset, startDist, options = {}) {
         track[f * 3 + 1] = S[f * 3 + 1] + D[f * 3 + 1] * lam[f];
         track[f * 3 + 2] = S[f * 3 + 2] + D[f * 3 + 2] * lam[f];
     }
+    // Report whether the soft range floor SHAPED this solution. Two
+    // conditions, BOTH required: some frame tripped the soft-floor rows
+    // during the solve, AND the final solution actually rides the floor.
+    // Rows alone over-report — a transient dip on an early iterate that the
+    // final solve corrects leaves floorW set while the answer is genuinely
+    // floor-free, and that misbranding routed real close passes to the
+    // speed prior. Proximity alone also over-reported, from the other side:
+    // measured on the SMOOTHED lambda, whose B-spline overshoot dips below
+    // the raw closest approach, it falsely condemned a legitimate ~130 m
+    // flyby — which is why this runs HERE, on the raw solve, before
+    // smoothing rewrites lam.
+    let floorActive = false;
+    if (useFloor) {
+        let rows = false, riding = false;
+        for (let f = 0; f < n; f++) {
+            if (floorW[f] > 0) rows = true;
+            if (lam[f] <= minDist * 1.02) riding = true;
+            if (rows && riding) { floorActive = true; break; }
+        }
+    }
     // Optional post-smoothing: LIGHT (control point every smoothSpacingSec
     // seconds) — sheds frame-scale LOS jitter, keeps real loops visible.
     if (options.smoothOutput) {
@@ -1450,7 +1470,7 @@ export function traversePlausible(dataset, startDist, options = {}) {
             lam[f] = Math.hypot(track[f * 3] - S[f * 3], track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
         }
     }
-    return {track, lam};
+    return {track, lam, floorActive};
 }
 
 // Smoothing-spline fit: a low-order uniform cubic B-spline fit to a track
@@ -1792,8 +1812,8 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     const finalK = options.finalK ?? 25, finalIters = options.finalIters ?? 6;
 
     const scoreAt = (R, o) => {
-        const {track} = traversePlausible(dataset, R, o);
-        return {R, score: straightFlightScore(trackMetrics(dataset, track)), track};
+        const {track, floorActive} = traversePlausible(dataset, R, o);
+        return {R, score: straightFlightScore(trackMetrics(dataset, track)), track, floorActive};
     };
 
     const coarseSweep = (o) => {
@@ -1941,7 +1961,26 @@ export function fitPlausibleBestRange(dataset, options = {}) {
         for (let s = 1; s <= VALLEY_WALK_MAX; s++) {
             const R = Math.exp(logBest + dir * s * VALLEY_WALK_STEP);
             if (R < 30) return {extent, crossed: false};   // physical floor, not the bracket
-            if (scoreAt(R, walkOpts).score > wallThresh) {
+            const sample = scoreAt(R, walkOpts);
+            if (sample.score > wallThresh) {
+                if (dir < 0 && sample.floorActive) {
+                    // The floor engaged at this crossing. The decisive
+                    // question — independent of where the caller put
+                    // rangeMin, which is user-settable and defeated every
+                    // proxy gate — is whether the LANDSCAPE keeps descending
+                    // through this "wall" once the guardrail is removed.
+                    // Re-score floor-free and compare to the valley floor
+                    // itself: a bare score BELOW the center's means the
+                    // supposed minimum only exists because the floor stopped
+                    // a descent (the closer-is-smoother slide: 1.2 bare vs
+                    // ~3.3 at the certified "floor"), so the wall is the
+                    // penalty talking. A real close-pass wall's bare solve,
+                    // even cheating through the physically-excluded region,
+                    // stays WORSE than the true minimum (0.578 vs 0.122 on
+                    // the 121 m flyby) and the crossing stands.
+                    const bare = scoreAt(R, {...walkOpts, rangeFloor: false});
+                    if (bare.score < centerScore) return {extent, crossed: false};
+                }
                 return {extent, crossed: true};
             }
             extent = s * VALLEY_WALK_STEP;
@@ -1952,7 +1991,7 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     // default grid; past that the geometry is not pinning a single range.
     const VALLEY_WIDTH_MAX = 0.6;
     let lo = {extent: 0, crossed: false}, hi = lo;
-    let valleyWidthLog = 0, multimodal = false;
+    let valleyWidthLog = 0, multimodal = false, valleyFloorShaped = false;
     let usedSpeedTarget = true;
     if (decisiveness > decisiveMargin) {
         lo = valleySide(-1);
@@ -1967,7 +2006,11 @@ export function fitPlausibleBestRange(dataset, options = {}) {
             return d < -(lo.extent + VALLEY_WALK_STEP)
                 || d > hi.extent + VALLEY_WALK_STEP;
         });
-        usedSpeedTarget = !(lo.crossed && hi.crossed
+        // The valley FLOOR itself must also be floor-free: a minimum whose
+        // own solution rides the soft range floor is floor-shaped end to
+        // end, whatever its walls look like.
+        valleyFloorShaped = (centerBest ?? pureSweep.best).floorActive === true;
+        usedSpeedTarget = !(!valleyFloorShaped && lo.crossed && hi.crossed
             && valleyWidthLog <= VALLEY_WIDTH_MAX && !multimodal);
     }
     if (!usedSpeedTarget && vTarget) {
@@ -2037,6 +2080,7 @@ export function fitPlausibleBestRange(dataset, options = {}) {
         valleyWidthLog,
         valleyMultimodal: multimodal,
         valleyWalls: {loCrossed: lo.crossed, hiCrossed: hi.crossed},
+        valleyFloorShaped,
         boundaryLimited: boundarySides.lo || boundarySides.hi,
         boundarySides,
     };
@@ -2274,12 +2318,16 @@ export async function fitAircraft(dataset, options = {}) {
     const lo = [rangeMin, 0, 25 * KNOTS_TO_MS, -4, -0.3, -40];
     const hi = [rangeMax, 360, 700 * KNOTS_TO_MS, 4, 0.3, 40];
     const runs = [];
-    for (let r = 0; r < nRuns; r++) {
+    // Each run reports progress inside its own [p0, p1] window so the bar is
+    // MONOTONIC across the whole fit: the default runs share [0, 0.85] and
+    // escalation, when it fires, owns the reserved [0.85, 1] tail — it must
+    // never rewind a bar that already reported the defaults nearly done.
+    const doRun = async (popN, gensN, seed, p0, p1) => {
         const clock = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
         let lastYield = clock();
         let stage = "de";
         let stageEvaluations = 0;
-        const expectedDEEvaluations = pop * (gens + 1);
+        const expectedDEEvaluations = popN * (gensN + 1);
         const expectedPolishEvaluations = 1 + 300 * lo.length * 2;
         const optimizerPulse = () => {
             stageEvaluations++;
@@ -2288,17 +2336,17 @@ export async function fitAircraft(dataset, options = {}) {
             const local = stage === "de"
                 ? 0.9 * Math.min(1, stageEvaluations / expectedDEEvaluations)
                 : 0.9 + 0.1 * Math.min(1, stageEvaluations / expectedPolishEvaluations);
-            return Promise.resolve(options.progress((r + local) / nRuns)).then(() => {
+            return Promise.resolve(options.progress(p0 + local * (p1 - p0))).then(() => {
                 lastYield = clock();
                 return !(options.shouldCancel && options.shouldCancel());
             });
         };
         const de = await differentialEvolution(cost, lo, hi, {
-            pop, gens,
+            pop: popN, gens: gensN,
             // Deterministic per-run seed: identical inputs give identical
             // fits (run-to-run variance was user-visible); distinct seeds per
             // run preserve the independent-restart diversity.
-            rng: mulberry32(0x51F17A + r * 0x9E3779),
+            rng: mulberry32(seed),
             // A long generation contains `pop` full-clip integrations. Yield and
             // check Cancel between candidates rather than waiting for all of them.
             onEvaluation: optimizerPulse,
@@ -2316,14 +2364,54 @@ export async function fitAircraft(dataset, options = {}) {
             throw new Error("cancelled");
         }
         pol.de = {
-            seed: (0x51F17A + r * 0x9E3779) >>> 0,
+            seed: seed >>> 0,
+            pop: popN,
+            gens: gensN,
             generations: de.generations,
             evaluations: de.evaluations,
             stopReason: de.stopReason,
         };
-        runs.push(pol);
+        return pol;
+    };
+    const ESC_RESERVE = 0.15;
+    for (let r = 0; r < nRuns; r++) {
+        runs.push(await doRun(pop, gens, 0x51F17A + r * 0x9E3779,
+            (1 - ESC_RESERVE) * r / nRuns, (1 - ESC_RESERVE) * (r + 1) / nRuns));
     }
     runs.sort((a, b) => a.cost - b.cost);
+
+    // ADAPTIVE BASIN VERIFICATION (P2). The deterministic default-budget
+    // runs can all converge on the same wrong basin: the benchmark scenario
+    // bb-2af6154e returned cost 13.69 from every default run while a 9.97
+    // basin existed in-bounds, and denser search — not more restarts — was
+    // what found it. One escalated higher-density run triggers when the
+    // independent runs DISAGREE (they found different basins, so coverage is
+    // clearly incomplete) or when the best cost is mediocre but not hopeless
+    // (a plausibly-wrong basin worth one deeper look; a hopeless fit stays
+    // hopeless at any budget and is not worth doubling the latency for).
+    // Thresholds are in cost units, dominated by errDeg/errSigma: 6 is
+    // ~0.12 deg of pure residual — a fit no better than that has room to be
+    // wrong — and 300 is far past anything a real aircraft interpretation
+    // survives.
+    const runSpread = runs.length > 1 && Number.isFinite(runs[0].cost) && runs[0].cost > 0
+        ? (runs[runs.length - 1].cost - runs[0].cost) / runs[0].cost
+        : 0;
+    let escalated = false;
+    if (options.escalate !== false
+        && (runSpread > 0.10 || (runs[0].cost > 6 && runs[0].cost < 300))) {
+        escalated = true;
+        // A latency-bounded RECOVERY pass, not full basin verification: on
+        // the reference case 120/300 recovered cost 10.10 where 180/500
+        // reaches 8.83 (and much better truth separation) at ~1.6x the added
+        // time. The budget is a deliberate trade; escalatePop/escalateGens
+        // let a caller buy more.
+        const esc = await doRun(
+            options.escalatePop ?? 120, options.escalateGens ?? 300,
+            0xE5CA1A7, 1 - ESC_RESERVE, 1);
+        esc.escalated = true;
+        runs.push(esc);
+        runs.sort((a, b) => a.cost - b.cost);
+    }
     const best = runs[0];
     if (!best || !Number.isFinite(best.cost)
         || !Array.isArray(best.params) || best.params.some((value) => !Number.isFinite(value))) {
@@ -2395,11 +2483,14 @@ export async function fitAircraft(dataset, options = {}) {
         track,
         metrics: summarizeMetrics(metrics),
         series: metrics.series,
+        escalated,
+        runSpread,
         runs: runs.map(r => ({
             cost: r.cost,
             startDist: r.params[0], heading: ((r.params[1] % 360) + 360) % 360,
             tas: r.params[2], turnRate: r.params[3], turnAccel: r.params[4], climb: r.params[5],
             polishIterations: r.iterations, polishStopReason: r.stopReason,
+            escalated: r.escalated === true,
             de: r.de,
         })),
     };
