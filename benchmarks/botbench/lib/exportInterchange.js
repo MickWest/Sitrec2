@@ -633,8 +633,18 @@ export function writeInterchange(scenario, challengeDir, opts = {}) {
     fs.writeFileSync(allFile, allCsv);
     // All/ is self-contained: a consumer handed that folder alone still gets
     // the frame declaration (without which X/Y/Z are unanchored numbers) and
-    // the class/events/geometry metadata that no CSV column can carry.
-    fs.writeFileSync(path.join(allDir, `${basename}.scenario.json`), scenarioJson);
+    // the class/events/geometry metadata that no CSV column can carry. Its
+    // sidecar copy ADDITIONALLY carries the human-meaningful scenario name —
+    // All/ is answer-key material by definition, so the name leaks nothing
+    // the folder does not already contain, while the challenge-side sidecar
+    // stays name-free (the sealed-release leak test enforces it).
+    const allScenarioJson = opts.descriptiveName
+        ? JSON.stringify({
+            ...JSON.parse(scenarioJson),
+            descriptiveName: opts.descriptiveName,
+        }, null, 2) + "\n"
+        : scenarioJson;
+    fs.writeFileSync(path.join(allDir, `${basename}.scenario.json`), allScenarioJson);
     fs.writeFileSync(path.join(allDir, `${basename}.truth.json`), truthJson);
 
     return {

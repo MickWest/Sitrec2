@@ -592,6 +592,9 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
 
     return {
         label: record.label,
+        // Human-meaningful scenario name from an answer-key sidecar (null on
+        // challenge files); the table shows it in place of the opaque filename.
+        displayName: record.meta?.descriptiveName ?? null,
         kind: record.kind,
         trackId: record.meta?.trackId ?? null,
         // Reported on the row because the ingest's comment promises it is: the

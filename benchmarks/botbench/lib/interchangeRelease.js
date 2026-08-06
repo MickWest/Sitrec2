@@ -950,6 +950,10 @@ export function buildRelease({
             designIntent: e.designIntent,
             windEstimate: analystWind(scenario, publishedName),
             placement: e.placement,
+            // Carried ONLY in the All/ (answer-key) copy of the sidecar, so
+            // an analyst scoring against truth sees meaningful names while
+            // the challenge side stays opaque (the leak test enforces that).
+            descriptiveName: e.descriptive,
             // Only when sealed. The manifest hard-codes saltedCommitments:
             // sealed, so passing the salt on an unsealed build wrote HMAC
             // commitments under a manifest declaring plain sha256 — and the

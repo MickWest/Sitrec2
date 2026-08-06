@@ -175,7 +175,7 @@ function csvEscape(value) {
 }
 
 const CSV_COLUMNS = [
-    "file", "kind", "status", "trackId",
+    "file", "displayName", "kind", "status", "trackId",
     "frames", "durationS", "fps", "sensorSpanM", "sensorPathM", "straightness",
     "sensorAltSpanM", "netSweepDeg", "sweepPathDeg", "rateMedianDegPerS",
     "jitterDeg", "noiseEstDeg", "declaredLosSigmaDeg",
@@ -201,6 +201,7 @@ function rowToCsvRecord(entry) {
     const grade = r ? sourceQualityGrade(q) : null;
     return {
         file: entry.relativePath,
+        displayName: r?.displayName ?? "",
         kind: r?.kind ?? "",
         status: entry.status,
         trackId: r?.trackId ?? "",
@@ -963,6 +964,13 @@ function fillRow(state, entry) {
     const q = r.quality;
     const grade = sourceQualityGrade(q);
 
+    // An answer-key sidecar carries the human-meaningful scenario name;
+    // show it in place of the opaque filename, keeping the path in the
+    // tooltip. Challenge files (no name) keep showing their path.
+    if (r.displayName) {
+        c[0].textContent = r.displayName;
+        c[0].title = `${r.displayName}\n${entry.relativePath}`;
+    }
     c[1].textContent = "done";
     c[1].title = r.warnings.length ? r.warnings.join("\n") : "";
     c[2].textContent = n0(q.frames);

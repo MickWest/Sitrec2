@@ -655,6 +655,10 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
         } : null,
         meta: {
             trackId: sidecar?.trackId ?? ids[0] ?? null,
+            // Human-meaningful scenario name, carried only by answer-key
+            // (All/) sidecars of a sealed release; null for challenge files.
+            descriptiveName: typeof sidecar?.descriptiveName === "string"
+                ? sidecar.descriptiveName : null,
             siteElevationMSL,
             originLLA: [oLat, oLon, oAlt],
             epochISO: sidecar?.epochISO ?? BOT_DEFAULT_EPOCH_ISO,
