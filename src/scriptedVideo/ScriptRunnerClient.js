@@ -23,7 +23,7 @@ const HARD_TIMEOUT_MS = 3000;
 
 let worker = null;
 let seq = 0;
-const pending = new Map();   // requestId -> {resolve, timer, text, viewPresets}
+const pending = new Map();   // requestId -> {resolve, timer, text, viewPresets, tabs}
 
 function canUseWorker() {
     return typeof Worker !== "undefined";
@@ -54,7 +54,7 @@ function drainPendingToFallback() {
     pending.clear();
     for (const p of dead) {
         clearTimeout(p.timer);
-        Promise.resolve(runScriptJS(p.text, {viewPresets: p.viewPresets})).then(p.resolve);
+        Promise.resolve(runScriptJS(p.text, {viewPresets: p.viewPresets, tabs: p.tabs})).then(p.resolve);
     }
 }
 
@@ -82,10 +82,11 @@ function ensureWorker() {
 // carried in the model, matching runScriptJS's own contract.
 export async function runScriptViaWorker(text, opts = {}) {
     const viewPresets = opts.viewPresets || {};
+    const tabs = opts.tabs || {};   // other script tabs, for the include command
     const scriptText = String(text ?? "");
 
     if (!canUseWorker()) {
-        return runScriptJS(scriptText, {viewPresets});     // Jest / non-browser
+        return runScriptJS(scriptText, {viewPresets, tabs});     // Jest / non-browser
     }
 
     let w;
@@ -93,7 +94,7 @@ export async function runScriptViaWorker(text, opts = {}) {
         w = ensureWorker();
     } catch (err) {
         console.warn("[ScriptRunner] worker spawn failed; running in-process:", err);
-        return runScriptJS(scriptText, {viewPresets});
+        return runScriptJS(scriptText, {viewPresets, tabs});
     }
 
     const requestId = ++seq;
@@ -105,16 +106,16 @@ export async function runScriptViaWorker(text, opts = {}) {
             resolve(timeoutModel("script ran too long — infinite loop?"));
         }, HARD_TIMEOUT_MS);
 
-        pending.set(requestId, {resolve, timer, text: scriptText, viewPresets});
+        pending.set(requestId, {resolve, timer, text: scriptText, viewPresets, tabs});
 
         try {
-            w.postMessage({requestId, text: scriptText, viewPresets});
+            w.postMessage({requestId, text: scriptText, viewPresets, tabs});
         } catch (err) {
             // e.g. viewPresets not structured-cloneable — degrade gracefully.
             clearTimeout(timer);
             pending.delete(requestId);
             console.warn("[ScriptRunner] postMessage failed; running in-process:", err);
-            Promise.resolve(runScriptJS(scriptText, {viewPresets})).then(resolve);
+            Promise.resolve(runScriptJS(scriptText, {viewPresets, tabs})).then(resolve);
         }
     });
 }

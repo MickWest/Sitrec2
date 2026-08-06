@@ -565,6 +565,26 @@ export const COMMANDS = {
         args: [{name: "control", type: "string", required: true}],
         finish(e) { return {menu: null, path: e.control, value: false, dur: 0}; },
     },
+
+    // include "Scene 1" — inline another script TAB at the current clock, so a
+    // master tab can be just a list of scene tabs run in order. Registered here
+    // so the sugar rewriter recognizes the word; the runner (runScriptJS)
+    // handles it specially via runnerSpecial — it compiles the named tab
+    // against the same record-only API, so the scene's events land on the
+    // master's timeline and the clock advances through it. Sequential only:
+    // don't attach `&` lines to an include (they'd anchor at t=0) — put
+    // concurrent captions inside the scene tab instead.
+    include: {
+        cameraBeat: false,
+        runnerSpecial: "include",
+        color: "#b58900",
+        label: (e) => "include " + e.tab,
+        args: [{name: "tab", type: "string", required: true}],
+        finish(e, error) {
+            if (typeof e.tab !== "string" || !e.tab) return error(`include("tab name") — needs a script tab name`);
+            return {tab: e.tab, dur: 0};
+        },
+    },
 };
 
 // command-name aliases → canonical registry key

@@ -25,6 +25,38 @@ The Scripting window has a **tab bar** — keep several named scripts in one sit
 - The **active** tab is the one that Parse / Preview / Render and the timeline operate on.
 - All tabs are saved to the sitch and to local storage automatically.
 
+### Master / scene scripts (`include`)
+
+A tab can **include** another tab by name, so a long production can live as one
+scene per tab plus a master tab that just plays them in order:
+
+```text
+# ——— Master ———
+include "Scene 1 - POV"
+include "Scene 2 - Wide"
+fade main 3 0
+```
+
+`include "Name"` compiles that tab's script and inlines its events at the
+current point on the timeline — the clock runs through the scene and the next
+line continues after it. Each scene tab stays individually previewable (switch
+to it and press Preview) for fast iteration. Rules: includes are **sequential
+only** — don't attach `&` lines to an `include` (put concurrent captions inside
+the scene tab); the included tab's events are shown on the master timeline but
+are wheel-editable only in their own tab; self-includes and circular includes
+are errors, nesting is capped at 8.
+
+Because a script stretches over the **whole** sitch timeline, a scene tab that
+covers only part of the world's time should pad itself when previewed alone —
+the **`included()`** predicate (plain JS) keeps the padding out of the master:
+
+```text
+# ——— Scene 2 - Wide ———  (world time 90–180 in the master)
+if (!included()) sleep(90);   # standalone preview: skip to this scene's world time
+from object 0 115 3800 12
+...
+```
+
 ## Author by flying (Capture)
 
 Instead of typing and guessing camera numbers, **fly the main view to the shot you want and

@@ -150,6 +150,7 @@ export const ModelFiles = {
     "X-37":                 { file: 'data/models/X-37.glb',},
     "Saucer":               { file: 'data/models/saucer01a.glb',},
     "TR-3B":               { file: 'data/models/tr-3b.glb',},
+    "TR-3B (lit)":         { file: 'data/models/tr-3b-lit.glb',},   // bright corner lights + black metallic hull, for night scenes
     "LCS":                 { file: 'data/models/LCS.glb',},
 
 }

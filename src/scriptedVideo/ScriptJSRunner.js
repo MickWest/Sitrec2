@@ -71,6 +71,11 @@ export function activeViewAt(events, defaultView, t) {
 // can validate preset names at parse time (pure callers just omit it).
 export async function runScriptJS(text, opts = {}) {
     const ctx = {viewPresets: opts.viewPresets || {}};
+    // other script tabs, {name: text} — the include command inlines these.
+    // The caller excludes the active tab, so a self-include reads as unknown.
+    const tabs = opts.tabs || {};
+    const includeStack = [];
+    const MAX_INCLUDE_DEPTH = 8;
     const {code, lineInfo} = desugarScript(text);
     const events = [], cameraBeats = [], errors = [], errorDetails = [];
     let clock = 0, maxEnd = 0, aborted = false, calls = 0;
@@ -107,6 +112,42 @@ export async function runScriptJS(text, opts = {}) {
     let lastTarget;   // "assume last target": zoom OE-LNC 5 → orbit 6 180 reuses OE-LNC
     for (const type of Object.keys(COMMANDS)) {
         const def = COMMANDS[type];
+        // include: not a recorded event — compile the named tab's text and run
+        // it against this same API, so its events land on this timeline and the
+        // shared clock advances through it. Awaiting the returned promise (the
+        // sugar spine does) makes inclusion sequential.
+        if (def.runnerSpecial === "include") {
+            define(type, async (tabName) => {
+                guard();
+                const {callSite} = rec.capture();
+                const fail = (msg) => { pushError(callSite, msg); };
+                if (typeof tabName !== "string" || !tabName) return fail(`include("tab name") — needs a script tab name`);
+                if (!(tabName in tabs)) return fail(`include: no script tab named "${tabName}"`);
+                // a null entry marks a duplicated tab name (the caller poisons
+                // collisions) — refuse rather than silently run either copy
+                if (tabs[tabName] === null) return fail(`include: multiple tabs are named "${tabName}" — rename one`);
+                if (includeStack.includes(tabName)) return fail(`include: circular include of "${tabName}"`);
+                if (includeStack.length >= MAX_INCLUDE_DEPTH) return fail(`include: nesting deeper than ${MAX_INCLUDE_DEPTH} tabs`);
+                const {code: childCode, lineInfo: childInfo} = desugarScript(String(tabs[tabName]));
+                childInfo.forEach((info, i) => { if (info?.error) pushError(callSite, `[${tabName}] line ${i + 1}: ${info.error}`); });
+                let childFn;
+                try {
+                    childFn = new AsyncFunction("__probe__", ...apiNames, "__sp", PRELUDE + "\n" + childCode);
+                } catch (e) {
+                    return fail(`[${tabName}] syntax error: ${e.message}`);
+                }
+                includeStack.push(tabName);
+                try {
+                    await childFn(rec.probe, ...apiFns, undefined);
+                } catch (e) {
+                    if (e instanceof CScriptAbort) throw e;   // guard caps abort the whole run
+                    pushError(callSite, `[${tabName}] ` + ((e && e.message) || String(e)));
+                } finally {
+                    includeStack.pop();
+                }
+            });
+            continue;
+        }
         define(type, (...argv) => {
             guard();
             const {callSite, chain} = rec.capture();
@@ -123,9 +164,19 @@ export async function runScriptJS(text, opts = {}) {
             const e = {type, start: clock, line: callSite?.line ?? 0, callSite, chain, ...partial};
             if (e.dur == null) e.dur = 0;
             if (e.dur < 0) { pushError(callSite, `negative duration ${e.dur}s`); return makeHandle(clock, clock); }
-            const info = callSite ? lineInfo[callSite.line - 1] : null;
-            e.spans = info?.spans ?? {};      // sugar lines are wheel-editable
-            e.offSpan = info?.offSpan ?? null;
+            if (includeStack.length) {
+                // event from an included tab: its callSite line/col index into
+                // the INCLUDED tab's text, not the master's — blank the spans so
+                // the wheel editor can never rewrite the wrong master characters,
+                // and tag the origin for display/debugging
+                e.spans = {};
+                e.offSpan = null;
+                e.includedFrom = includeStack[includeStack.length - 1];
+            } else {
+                const info = callSite ? lineInfo[callSite.line - 1] : null;
+                e.spans = info?.spans ?? {};      // sugar lines are wheel-editable
+                e.offSpan = info?.offSpan ?? null;
+            }
             events.push(e);
             if (def.cameraBeat) cameraBeats.push(e);
             if (a0 && a0.assumeLast && e.target) lastTarget = e.target;
@@ -143,6 +194,11 @@ export async function runScriptJS(text, opts = {}) {
         if (typeof secs !== "number" || !isFinite(secs)) pushError(rec.capture().callSite, "sleep(secs) needs a number");
         else clock += Math.max(0, secs);
     });
+    // true while running inside an include — lets a scene tab pad itself for
+    // correct standalone preview (the script stretches over the whole sitch)
+    // without the padding leaking into the master timeline:
+    //   if (!included()) sleep(90);   // Scene 2's world time starts at 90 s
+    define("included", () => { guard(); return includeStack.length > 0; });
     define("all", (...hs) => {
         guard();
         const valid = hs.filter((h) => h && h.isScriptHandle);

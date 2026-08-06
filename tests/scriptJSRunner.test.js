@@ -408,3 +408,68 @@ describe("activeViewAt", () => {
         expect(activeViewAt(r.events, "main", 2)).toBe("main");
     });
 });
+
+describe("include — master/scene tabs", () => {
+    const TABS = {
+        "Scene 1": ["zoom A 6", '& text "one" 4'].join("\n"),
+        "Scene 2": ["orbit B 9"].join("\n"),
+    };
+    const runWithTabs = (lines) =>
+        runScriptJS(Array.isArray(lines) ? lines.join("\n") : lines, {tabs: TABS});
+
+    test("includes run sequentially and advance the master clock", async () => {
+        const r = await runWithTabs(['include "Scene 1"', 'include "Scene 2"', "wait 2"]);
+        expect(r.errors).toEqual([]);
+        const starts = r.events.map(e => [e.type, e.start]);
+        expect(starts).toEqual([["zoom", 0], ["text", 0], ["orbit", 6], ["wait", 15]]);
+        expect(r.totalDuration).toBe(17);
+    });
+
+    test("included events are tagged and not wheel-editable", async () => {
+        const r = await runWithTabs(['include "Scene 1"']);
+        expect(r.errors).toEqual([]);
+        for (const e of r.events) {
+            expect(e.includedFrom).toBe("Scene 1");
+            expect(e.spans).toEqual({});
+        }
+    });
+
+    test("unknown tab is a line-tagged error, run continues", async () => {
+        const r = await runWithTabs(['include "Nope"', "wait 3"]);
+        expect(r.errors[0]).toMatch(/^line 1: include: no script tab named "Nope"/);
+        expect(r.events.map(e => e.type)).toEqual(["wait"]);
+    });
+
+    test("circular includes are refused", async () => {
+        const r = await runScriptJS('include "A"', {tabs: {
+            A: 'include "B"',
+            B: 'include "A"',
+        }});
+        expect(r.errors.some(m => /circular include of "A"/.test(m))).toBe(true);
+        // the non-circular halves still scheduled nothing (A and B are includes only)
+        expect(r.events).toEqual([]);
+    });
+
+    test("with no tabs supplied, include reports unknown tab", async () => {
+        const r = await run('include "Scene 1"');
+        expect(r.errors[0]).toMatch(/no script tab named "Scene 1"/);
+    });
+
+    test("a duplicated tab name (poisoned to null) is refused, not guessed", async () => {
+        const r = await runScriptJS('include "Scene"', {tabs: {Scene: null}});
+        expect(r.errors[0]).toMatch(/multiple tabs are named "Scene"/);
+        expect(r.events).toEqual([]);
+    });
+
+    test("included() lets a scene pad itself only when standalone", async () => {
+        const scene = 'if (!included()) sleep(90);\nzoom A 6';
+        // standalone: the pad shifts the zoom to 90
+        const alone = await runScriptJS(scene);
+        expect(alone.errors).toEqual([]);
+        expect(alone.events[0].start).toBe(90);
+        // included from a master: no pad, zoom lands at the master clock (0)
+        const master = await runScriptJS('include "S"', {tabs: {S: scene}});
+        expect(master.errors).toEqual([]);
+        expect(master.events[0].start).toBe(0);
+    });
+});

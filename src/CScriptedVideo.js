@@ -225,8 +225,19 @@ class CScriptedVideoManager {
         // runs the script in a sandboxed Worker (falls back in-process where no
         // Worker is available); resolves as a macrotask, so callers must not read
         // this.events/totalDuration until parse()'s promise settles.
+        // other tabs by name, for the include command — the ACTIVE tab is
+        // excluded (its live text is the script being parsed), so a
+        // self-include reads as an unknown tab rather than recursing.
+        // Tab names are user-editable with no uniqueness guard: a duplicated
+        // name is poisoned to null so include() errors on the ambiguity
+        // instead of silently running whichever duplicate came last.
+        const tabsMap = {};
+        (this.tabs || []).forEach((t, i) => {
+            if (i === this.activeTab) return;
+            tabsMap[t.name] = Object.prototype.hasOwnProperty.call(tabsMap, t.name) ? null : t.text;
+        });
         const r = await runScriptViaWorker(this.getScriptText(),
-            {viewPresets: {...((CustomManager && CustomManager.viewPresets) || {}), VideoOverlay: {}, photo: {}}});
+            {viewPresets: {...((CustomManager && CustomManager.viewPresets) || {}), VideoOverlay: {}, photo: {}}, tabs: tabsMap});
         if (seq !== this._parseSeq) return this.parseErrors;
         // A half-typed JS line is a syntax error on every keystroke: keep showing
         // the last good timeline, just surface the error (and still save the text).

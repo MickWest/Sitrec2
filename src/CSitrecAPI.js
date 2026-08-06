@@ -14,6 +14,7 @@ import {
     Synth3DManager,
     TrackManager,
     UndoManager,
+    Units,
     withTestUser,
 } from "./Globals";
 import {isLocal, isServerless, SITREC_SERVER} from "./configUtils";
@@ -622,11 +623,13 @@ class CSitrecAPI {
             createWalker: {
                 doc: "Create a marker object that walks/moves through a list of lat/lon waypoints over a frame range — e.g. a viewer walking around to a vantage point, or a flying object. The object follows a linear track and holds at the last waypoint until the end. Address it later by name with show/hide/setMenuValue (e.g. hide it once the camera reaches it).",
                 params: {
-                    name: "Object id/name (string)",
+                    name: "Object id/name (string). Avoid 'object', 'target', 'witness', 'camera', 'observer' — the scripted-video system resolves those as ALIASES for other nodes, so a walker with one of these names can't be used as a script target",
                     waypoints: "Ordered array of [lat, lon] or [lat, lon, alt] the object moves through (array, >= 2). A missing alt falls back to the 'alt' param",
-                    alt: "Default altitude in meters MSL for waypoints without their own (float, optional, defaults to 0)",
+                    alt: "Default altitude in meters above the WGS84 ELLIPSOID (HAE — the datum of tile raycasts and getGroundAltitude's altHAE) for waypoints without their own (float, optional, defaults to 0). NOT MSL: convert with altHAE = altMSL + geoidOffset (getGroundAltitude reports both)",
                     fractions: "Per-waypoint time fractions 0..1 of [startFrame, endFrame], non-decreasing, starting at 0 and ending at 1, same length as waypoints — for uneven timing like hover-then-dash; hold early by duplicating a waypoint (array, optional, default = even spacing)",
                     geometry: "Geometry: cylinder, sphere, box, cone, capsule (string, optional, default 'cylinder')",
+                    model: "Built-in 3D model name (e.g. 'TR-3B', 'Saucer' — see listModels) rendered instead of parametric geometry; overrides 'geometry' and the color/material/size params (string, optional)",
+                    modelLength: "Desired model length in meters — the model is scaled so its longest axis matches (float, optional, model only)",
                     color: "Color as a hex number or '#rrggbb' string (optional, default 0xffd24a)",
                     material: "Material type: basic, lambert, phong, physical, envmap (string, optional, default 'phong')",
                     emissive: "Self-illuminated color as '#rrggbb' (string, optional — for glowing objects; lambert/phong/physical only)",
@@ -659,6 +662,13 @@ class CSitrecAPI {
                         }
                         const alt = num(v.alt ?? 0);
                         const geometry = v.geometry || "cylinder";
+                        // optional built-in model instead of parametric geometry —
+                        // registry names only, so a walker spec can never serialize a
+                        // model reference the deserialize pass can't load
+                        const modelName = v.model !== undefined ? String(v.model) : null;
+                        if (modelName && !ModelFiles[modelName]) {
+                            return { success: false, error: `unknown model "${modelName}" — use one of: ${Object.keys(ModelFiles).join(", ")}` };
+                        }
                         // validate the material BEFORE the destructive teardown below, so a
                         // bad override can never destroy the existing walker and then fail
                         // inside CNode3DObject (rebuildMaterial asserts on unknown types)
@@ -675,7 +685,7 @@ class CSitrecAPI {
                         if (!isFinite(height) || !isFinite(radius)) {
                             return { success: false, error: "'height' and 'radius' must be finite numbers" };
                         }
-                        for (const k of ["width", "depth", "rotateY", "emissiveIntensity"]) {
+                        for (const k of ["width", "depth", "rotateY", "emissiveIntensity", "modelLength"]) {
                             if (v[k] !== undefined && !isFinite(num(v[k]))) {
                                 return { success: false, error: `'${k}' must be a finite number` };
                             }
@@ -797,10 +807,21 @@ class CSitrecAPI {
                         if (v.width !== undefined) matProps.width = v.width;
                         if (v.depth !== undefined) matProps.depth = v.depth;
                         if (v.rotateY !== undefined) matProps.rotateY = v.rotateY;
-                        const objectNode = new CNode3DObject({
-                            id: name, geometry, radiusTop: radius, radiusBottom: radius, radius, height,
-                            color, material: "phong", position: start, ...matProps,
-                        });
+                        const objectNode = modelName
+                            ? new CNode3DObject({
+                                id: name, model: modelName, position: start,
+                                // API contract is meters; the node's modelLength GUIValue
+                                // stores the current SMALL display unit (ft in imperial/
+                                // nautical), so convert at this boundary. The spec keeps
+                                // the meters value, so a reload under different units
+                                // re-converts correctly.
+                                ...(v.modelLength !== undefined ? { modelLength: num(v.modelLength) * (Units?.m2Small ?? 1) } : {}),
+                                ...(v.rotateY !== undefined ? { rotateY: v.rotateY } : {}),
+                            })
+                            : new CNode3DObject({
+                                id: name, geometry, radiusTop: radius, radiusBottom: radius, radius, height,
+                                color, material: "phong", position: start, ...matProps,
+                            });
                         if (v.upright ?? true) {
                             // align the geometry's +Y axis with the local vertical so a
                             // cylinder/capsule stands up instead of lying along world-Y
@@ -842,6 +863,8 @@ class CSitrecAPI {
                         Globals.walkerSpecs[name] = {
                             name, waypoints: wps.map((w) => w.map(Number)), alt,
                             ...(fr ? {fractions: [...fr]} : {}),
+                            ...(modelName ? {model: modelName} : {}),
+                            ...(v.modelLength !== undefined ? {modelLength: num(v.modelLength)} : {}),
                             geometry, color: v.color ?? 0xffd24a, height, radius,
                             ...(v.material !== undefined ? {material: v.material} : {}),
                             ...(v.emissive !== undefined ? {emissive: v.emissive} : {}),

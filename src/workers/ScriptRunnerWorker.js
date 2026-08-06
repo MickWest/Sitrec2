@@ -53,16 +53,16 @@
 
 import {runScriptJS} from "../scriptedVideo/ScriptJSRunner";
 
-// Protocol: main thread posts {requestId, text, viewPresets}; we reply with
+// Protocol: main thread posts {requestId, text, viewPresets, tabs}; we reply with
 // {requestId, result} where result is runScriptJS's full model. Post the WHOLE
 // model in ONE message: structured clone preserves the shared object identity
 // between `events` and `cameraBeats` entries only within a single postMessage,
 // and the main thread relies on that identity (it mutates events in place and
 // reads the poses back off cameraBeats).
 self.onmessage = async (e) => {
-    const {requestId, text, viewPresets} = e.data || {};
+    const {requestId, text, viewPresets, tabs} = e.data || {};
     try {
-        const result = await runScriptJS(String(text ?? ""), {viewPresets: viewPresets || {}});
+        const result = await runScriptJS(String(text ?? ""), {viewPresets: viewPresets || {}, tabs: tabs || {}});
         self.postMessage({requestId, result});
     } catch (err) {
         // Should be rare (runScriptJS catches script errors internally), but never
