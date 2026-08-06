@@ -1817,13 +1817,159 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     // best-vs-median alone always reads "decisive" on far-field scenes: the
     // close half of the log grid scores terribly and inflates the median even
     // when the far valley is FLAT (Gimbal — the canonical range-unobservable
-    // scene — read 12.9 and returned an arbitrary 843 kt valley member). Add a
-    // LOCAL flatness gate: geometry only picks the range when few coarse cells
-    // are heuristically close to the winner (same family recipe as the
-    // Minimum Speed saddle), plus a speed sanity check against the prior.
+    // scene — read 12.9 and returned an arbitrary 843 kt valley member). So a
+    // LOCAL flatness gate is also required — but it must measure the VALLEY,
+    // not the grid. The old gate (famCount <= 3 cells under the family
+    // threshold) made the decision a function of sweep resolution: the same
+    // physical valley read "decisive" on a 5-cell grid and "flat" on a
+    // 72-cell one, and a fine grid handed slow/close scenes to the speed
+    // prior, dragging them to several times the true range (P1). Instead,
+    // walk outward from the winner in FIXED log-range steps until the score
+    // crosses the family threshold: the sweep grid finds the valley, the walk
+    // measures its width at a resolution that never changes with `coarse`.
     const famThresh = pureSweep.best.score + 0.5 * Math.max(1e-9, decisiveness);
     const famCount = pureSweep.profile.filter(p => p.score <= famThresh).length;
-    let usedSpeedTarget = !(decisiveness > decisiveMargin && famCount <= 3);
+    // The valley walls are defined by a FIXED score rise above the floor —
+    // the same margin that says the floor is meaningfully below the field.
+    // Scaling the wall threshold with decisiveness (as famThresh does for the
+    // reported family count) measures decisive scenes as WIDER, which is
+    // backwards for a sharpness test.
+    const walkOpts = mk(null, searchK, searchIters);
+    // The coarse cell nearest the floor can sit half a grid step up the wall
+    // — on a 5-cell grid that offset alone reads as ~0.5 nats of spurious
+    // width, because the walk's downhill side keeps passing until it climbs
+    // the FAR wall. Re-center on the valley floor before measuring, so the
+    // width is the valley's and not the grid's. The floor is BRACKETED by
+    // the best cell's neighbours (a discrete minimum always lies between
+    // them); successive parabolic steps shrink the bracket. One vertex alone
+    // is not enough: through cells 0.9 nats apart (a 5-cell grid) it can
+    // land more than a walk step off the floor, which read as spurious width
+    // and re-created the resolution dependence at the coarse end — the
+    // mirror of the original bug.
+    let centerLog = Math.log(pureSweep.best.R);
+    let centerScore = pureSweep.best.score;
+    let centerBest = null;   // full scoreAt result at the refined floor
+    if (decisiveness > decisiveMargin) {
+        const prof = pureSweep.profile;
+        const cell = (i) => ({x: Math.log(prof[i].startDist), s: prof[i].score});
+        const bi = prof.findIndex((p) => p.startDist === pureSweep.best.R);
+        let lo = null, mid = null, hi = null;
+        if (bi > 0 && bi < prof.length - 1) {
+            lo = cell(bi - 1); mid = cell(bi); hi = cell(bi + 1);
+        } else if (prof.length >= 2) {
+            // The winner is an EDGE cell — at very coarse grids the nearest
+            // cell to an interior floor can be the boundary one, and refusing
+            // to refine there re-created the resolution dependence at
+            // coarse=4. Probe the (log) midpoint toward the lone neighbour:
+            // better than the edge means the floor is interior and bracketed;
+            // worse means the score rises away from the boundary, the floor
+            // is at or beyond it, and the walk's boundary rule should decide.
+            const nb = bi === 0 ? 1 : prof.length - 2;
+            const edge = cell(bi), other = cell(nb);
+            // Bisect TOWARD the edge: an interior floor can hug the boundary
+            // closer than the first midpoint (review case: a 0.704 NM floor
+            // against a 0.5 NM rangeMin at coarse=4 — the midpoint probe read
+            // worse than the edge cell and a real interior minimum was
+            // abandoned). Each failed probe halves the interval; a floor
+            // closer to the boundary than ~1/8 of a cell is then genuinely
+            // indistinguishable from a boundary minimum and correctly defers.
+            // Five halvings resolve a floor ~1/32 of a cell from the edge —
+            // needed so a legitimate minimum hugging the boundary (a 19.16 NM
+            // floor against rangeMax=20 on a 4-cell grid) is found at EVERY
+            // resolution, not just fine ones; the squeezed-wall rule below
+            // requires a strictly interior floor, so failing to find one
+            // must not depend on the grid.
+            let far = other;
+            for (let k = 0; k < 5 && !mid; k++) {
+                const v = scoreAt(Math.exp((edge.x + far.x) / 2), walkOpts);
+                const probe = {x: Math.log(v.R), s: v.score};
+                if (probe.s < edge.s) {
+                    lo = edge.x < far.x ? edge : far;
+                    hi = edge.x < far.x ? far : edge;
+                    mid = probe;
+                    centerBest = v;
+                } else {
+                    far = probe;
+                }
+            }
+        }
+        if (mid) {
+            for (let pass = 0; pass < 3; pass++) {
+                const xv = parabolicVertex(lo.x, lo.s, mid.x, mid.s, hi.x, hi.s);
+                if (xv === null || xv <= lo.x || xv >= hi.x) break;
+                const v = scoreAt(Math.exp(xv), walkOpts);
+                const pt = {x: Math.log(v.R), s: v.score};
+                if (pt.s < mid.s) {
+                    if (pt.x < mid.x) hi = mid; else lo = mid;
+                    mid = pt;
+                    centerBest = v;
+                } else if (pt.x < mid.x) {
+                    lo = pt;
+                } else {
+                    hi = pt;
+                }
+            }
+            if (mid.s < centerScore) {
+                centerLog = mid.x;
+                centerScore = mid.s;
+            }
+        }
+    }
+    const wallThresh = centerScore + decisiveMargin;
+    const logBest = centerLog;
+    const VALLEY_WALK_STEP = 0.26;  // nats per step (~1.30x in range)
+    const VALLEY_WALK_MAX = 4;      // past ~2.8x total the valley is broad regardless
+    // Walk one side of the valley. `crossed` records that the wall actually
+    // ROSE past the threshold inside the walk — a side that ran into the
+    // range boundary (or the cap) without rising is an UNPROVEN wall, and an
+    // unproven wall means no interior minimum on that side (the tilted-flat
+    // far-field valley whose "best" is just the last cell before the
+    // boundary: the arbitrary-member case this gate exists to catch).
+    // The walls are measured on the VALLEY's own scale — OUTSIDE the
+    // caller's [rangeMin, rangeMax] if that is where they stand. The range
+    // bracket constrains the ANSWER, never the measurement: a genuinely
+    // interior minimum sitting near a boundary proves its wall just beyond
+    // the bracket, while noisy range-unobservable data — whose
+    // closer-is-smoother minimum parks ON the boundary (or digs a
+    // noise-scale dip just inside it) — keeps descending out there and no
+    // wall ever appears. Two review rounds of "squeezed wall" heuristics
+    // tried to certify near-boundary floors from inside the bracket alone;
+    // both were defeated by constructions at noise scale. Measuring through
+    // the boundary is the version with nothing to exploit.
+    const valleySide = (dir) => {
+        let extent = 0;
+        for (let s = 1; s <= VALLEY_WALK_MAX; s++) {
+            const R = Math.exp(logBest + dir * s * VALLEY_WALK_STEP);
+            if (R < 30) return {extent, crossed: false};   // physical floor, not the bracket
+            if (scoreAt(R, walkOpts).score > wallThresh) {
+                return {extent, crossed: true};
+            }
+            extent = s * VALLEY_WALK_STEP;
+        }
+        return {extent, crossed: false};
+    };
+    // ~0.55 nats (3 of 18 log cells) is what the old rule INTENDED at its
+    // default grid; past that the geometry is not pinning a single range.
+    const VALLEY_WIDTH_MAX = 0.6;
+    let lo = {extent: 0, crossed: false}, hi = lo;
+    let valleyWidthLog = 0, multimodal = false;
+    let usedSpeedTarget = true;
+    if (decisiveness > decisiveMargin) {
+        lo = valleySide(-1);
+        hi = valleySide(+1);
+        valleyWidthLog = lo.extent + hi.extent;
+        // A sweep cell within the wall threshold OUTSIDE the measured valley
+        // (with one walk step of slack) is a second competing range family —
+        // geometry is ambiguous however narrow the primary valley is.
+        multimodal = pureSweep.profile.some((p) => {
+            if (p.score > wallThresh) return false;
+            const d = Math.log(p.startDist) - logBest;
+            return d < -(lo.extent + VALLEY_WALK_STEP)
+                || d > hi.extent + VALLEY_WALK_STEP;
+        });
+        usedSpeedTarget = !(lo.crossed && hi.crossed
+            && valleyWidthLog <= VALLEY_WIDTH_MAX && !multimodal);
+    }
     if (!usedSpeedTarget && vTarget) {
         const mPure = trackMetrics(dataset, pureSweep.best.track);
         if (mPure.airSpeed.mean > 2 * vTarget) usedSpeedTarget = true;
@@ -1834,6 +1980,14 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     const finalOpts = mk(vt, finalK, finalIters);
 
     let {profile, best} = usedSpeedTarget ? coarseSweep(searchOpts) : pureSweep;
+    // When geometry decides, continue from the REFINED floor, not the coarse
+    // cell: at a very coarse grid the winning cell can sit a full grid step
+    // from the valley floor, outside the +-1.5x bracket the refine below
+    // searches — the gate then chose geometry while the returned range never
+    // reached it.
+    if (!usedSpeedTarget && centerBest && centerBest.score < best.score) {
+        best = centerBest;
+    }
 
     // parabolic refine in log-range around the coarse minimum (2 passes)
     let loR = Math.max(rangeMin, best.R / 1.5);
@@ -1880,6 +2034,9 @@ export function fitPlausibleBestRange(dataset, options = {}) {
         usedSpeedTarget,
         decisiveness,
         flatFamilyCount: famCount,
+        valleyWidthLog,
+        valleyMultimodal: multimodal,
+        valleyWalls: {loCrossed: lo.crossed, hiCrossed: hi.crossed},
         boundaryLimited: boundarySides.lo || boundarySides.hi,
         boundarySides,
     };

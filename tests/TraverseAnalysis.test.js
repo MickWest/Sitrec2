@@ -288,6 +288,116 @@ describe("TraverseAnalysis core", () => {
         expect(fit.score).toBeLessThan(straightFlightScore(trackMetrics(dataset, wrong.track)));
     }, 30000);
 
+    test("fitPlausibleBestRange stage-1 gate is grid-resolution invariant (P1)", () => {
+        // A slow drifter at ~2 km watched from a full 60 s sensor orbit
+        // (1.3 km baseline): DECISIVE geometry — the pure-smoothness valley
+        // has a sharp interior minimum at truth, and the 300 kt default speed
+        // prior must stay out of it. The old famCount<=3 gate counted GRID
+        // CELLS under the family threshold, so this same scene read
+        // "decisive" at coarse=5 and "flat" at coarse>=8, and the prior
+        // dragged the range to ~3.6x truth. The decision must not change
+        // with `coarse`.
+        const orbitScene = (start) => {
+            const n = 300, fps = 5;
+            const S = new Float64Array(n * 3);
+            const D = new Float64Array(n * 3);
+            const W = new Float64Array(n * 3);
+            const Rs = 667, omega = 0.105;
+            const vel = [4, 3, 0], windMs = [2, 1, 0];
+            for (let f = 0; f < n; f++) {
+                const t = f / fps;
+                S[f * 3] = Rs * Math.sin(omega * t);
+                S[f * 3 + 1] = Rs * (1 - Math.cos(omega * t));
+                S[f * 3 + 2] = 3000;
+                const dx = start[0] + vel[0] * t - S[f * 3];
+                const dy = start[1] + vel[1] * t - S[f * 3 + 1];
+                const dz = start[2] + vel[2] * t - S[f * 3 + 2];
+                const dl = Math.hypot(dx, dy, dz);
+                D[f * 3] = dx / dl; D[f * 3 + 1] = dy / dl; D[f * 3 + 2] = dz / dl;
+                W[f * 3] = windMs[0] / fps;
+                W[f * 3 + 1] = windMs[1] / fps;
+                W[f * 3 + 2] = windMs[2] / fps;
+            }
+            const R0 = Math.hypot(start[0], start[1], start[2] - 3000);
+            return {dataset: {n, fps, S, D, W}, R0};
+        };
+        // Four truth ranges, because the failures kept finding new ends of
+        // the bracket: the original famCount gate broke at FINE grids
+        // (~1.1 NM scene, famCount 4/8/29 at coarse 8/18/72); the first
+        // walk-based fix broke at COARSE grids on a farther scene (the
+        // 5-cell grid's winner sat too far off the floor to measure from);
+        // then review constructed a floor hugging rangeMin (the edge-cell
+        // probe gave up on a real interior minimum) and one near rangeMax
+        // (the wall walk exited the domain without sampling the boundary).
+        // The last two floors sit within ONE walk step of rangeMin/rangeMax:
+        // the squeezed-wall cases, where the boundary-side wall has no room
+        // to prove itself and must not hand an interior minimum to the prior.
+        for (const start of [
+            [1500, 1200, 3500], [2400, 2000, 3600],
+            [1000, 800, 3350], [17000, 14000, 5000],
+            [850, 620, 3350], [24500, 25500, 6000],
+        ]) {
+            const orbit = orbitScene(start);
+            for (const coarse of [4, 5, 7, 8, 18, 72]) {
+                const fit = fitPlausibleBestRange(orbit.dataset, {
+                    rangeMin: 0.5 * METERS_PER_NM,
+                    rangeMax: 20 * METERS_PER_NM,
+                    coarse,
+                });
+                expect(fit.usedSpeedTarget).toBe(false);
+                expect(Math.abs(fit.startDist - orbit.R0) / orbit.R0).toBeLessThan(0.35);
+            }
+        }
+
+        // The controls: a straight-flying sensor is the canonical
+        // range-unobservable case — the valley is flat at EVERY resolution,
+        // so the gate must hand over to the speed prior at every resolution.
+        // The jittered variant is review round 5's exploit: tiny pointing
+        // noise makes closer-look-smoother, parking the smoothness minimum
+        // exactly ON rangeMin — which must read as a boundary-limited
+        // minimum, never as a squeezed-but-interior one (it briefly rode
+        // squeezed acceptance to a forced-slow 0.5 NM on a ~13 NM target).
+        const straightScene = (jitterRad, f1 = 1.7, f2 = 2.3) => {
+            const n = 400, fps = 30;
+            const S = new Float64Array(n * 3);
+            const D = new Float64Array(n * 3);
+            const W = new Float64Array(n * 3);
+            for (let f = 0; f < n; f++) {
+                const t = f / fps;
+                S[f * 3] = 60 * t; S[f * 3 + 1] = 0; S[f * 3 + 2] = 3000;
+                const dx = 15000 + 80 * t - S[f * 3];
+                const dy = 20000 + 40 * t;
+                const dz = 1500;
+                const dl = Math.hypot(dx, dy, dz);
+                let ux = dx / dl, uy = dy / dl, uz = dz / dl;
+                if (jitterRad) {
+                    ux += jitterRad * Math.sin(f1 * f);
+                    uy += jitterRad * Math.cos(f2 * f);
+                    const ul = Math.hypot(ux, uy, uz);
+                    ux /= ul; uy /= ul; uz /= ul;
+                }
+                D[f * 3] = ux; D[f * 3 + 1] = uy; D[f * 3 + 2] = uz;
+            }
+            return {n, fps, S, D, W};
+        };
+        // Three jitter variants: none; the one whose smoothness minimum
+        // parks ON rangeMin; and the one that digs a noise-scale dip just
+        // INSIDE rangeMin (the micro-dip exploit that defeated in-bracket
+        // squeezed-wall heuristics — the through-boundary walk sees its
+        // score keep descending outside the bracket and refuses).
+        for (const [jitterRad, f1, f2] of [[0], [3e-5], [2.5e-5, 0.7, 0.91]]) {
+            const straight = straightScene(jitterRad, f1, f2);
+            for (const coarse of [4, 8, 18]) {
+                const fit = fitPlausibleBestRange(straight, {
+                    rangeMin: 0.5 * METERS_PER_NM,
+                    rangeMax: 20 * METERS_PER_NM,
+                    coarse,
+                });
+                expect(fit.usedSpeedTarget).toBe(true);
+            }
+        }
+    }, 300000);
+
     test("parabolicVertex is the exact three-point parabola vertex", () => {
         // Symmetric bracket with the minimum exactly at xb: vertex must be xb.
         // (The pre-fix formula proposed 2.5 here — outside the bracket.)
