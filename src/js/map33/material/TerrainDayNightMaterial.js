@@ -110,6 +110,8 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 
             uniform float waterReflection;
             uniform samplerCube waterSkyCube;
+            uniform samplerCube waterOcclusionCube;
+            uniform float waterOcclusion;
             uniform vec3 waterColor;
             uniform float waterTolerance;
             uniform float waterStrength;
@@ -301,6 +303,18 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                         // (black) ground half of the cube and punch holes.
                         if (dot(reflected, up) > 0.0) {
                             vec3 sky = textureCube(waterSkyCube, reflected).rgb;
+
+                            // Mask out sky the terrain is standing in front of.
+                            // The silhouette is captured from the observer, so
+                            // this is exact underfoot and approximate for the
+                            // far side of the lake — but it is the difference
+                            // between reflecting a star and reflecting a star
+                            // that is behind a hill. Bilinear filtering of the
+                            // mask softens the ridge line for free.
+                            if (waterOcclusion > 0.0) {
+                                float visible = textureCube(waterOcclusionCube, reflected).r;
+                                sky *= mix(1.0, visible, waterOcclusion);
+                            }
 
                             // Schlick Fresnel for water (F0 = 0.02): almost a
                             // mirror at grazing angles, nearly nothing straight down.

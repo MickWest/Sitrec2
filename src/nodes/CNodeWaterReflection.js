@@ -44,10 +44,11 @@ import {
     HalfFloatType,
     LinearFilter,
     LinearMipmapLinearFilter,
+    MeshBasicMaterial,
     Vector3,
     WebGLCubeRenderTarget,
 } from "three";
-import {GlobalNightSkyScene, GlobalSunSkyScene} from "../LocalFrame";
+import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame";
 import {guiMenus, NodeMan, Sit, setRenderOne, Globals} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import * as LAYER from "../LayerMasks";
@@ -67,21 +68,24 @@ export class CNodeWaterReflection extends CNode {
         // How far the flat map water colour is pulled towards black while the
         // reflection is active. 0.9 leaves 10% of it.
         this.darken = v.darken ?? 0.9;
-        // A 90-degree cube face at 512px resolves ~0.18 degrees per pixel, so a
+        // A 90-degree cube face resolves ~0.09 degrees per pixel at 1024, so a
         // star at its true size lands sub-pixel and vanishes once the water
         // shader samples it. Boosting star SIZE inflates their total flux by
-        // roughly the square of the boost, so keep this modest: past ~4 the
-        // starfield out-glares a full Moon and the water turns milky.
-        this.starBoost = v.starBoost ?? 3.0;
+        // roughly the square of the boost, so it stays deliberately small — a
+        // little goes a long way before the water turns milky.
+        this.starBoost = v.starBoost ?? 1.4;
         // The Moon gets the same treatment for the same reason: its disc is
-        // only ~3 pixels across in the cube, so once stars are boosted the
+        // only a few pixels across in the cube, so once stars are boosted the
         // moonglade — which in reality dominates a night lake — reads weaker
         // than the starfield. Boosting size raises flux by roughly its square.
-        this.moonBoost = v.moonBoost ?? 2.5;
+        this.moonBoost = v.moonBoost ?? 1.4;
         this.waveStrength = v.waveStrength ?? 0.02;
         this.waveLength = v.waveLength ?? 30.0;
         this.waveSpeed = v.waveSpeed ?? 1.0;
-        this.cubeResolution = v.cubeResolution ?? 512;
+        // Only allocated while the effect is on, so 1024 (~88MB with the
+        // occlusion mask) is a fair default — 512 is visibly chunkier.
+        this.cubeResolution = v.cubeResolution ?? 1024;
+        this.occlusion = v.occlusion ?? true;
 
         this.addSimpleSerials([
             "enabled",
@@ -94,11 +98,14 @@ export class CNodeWaterReflection extends CNode {
             "waveLength",
             "waveSpeed",
             "cubeResolution",
+            "occlusion",
         ]);
 
         // Per-renderer cube targets. Each CNodeView3D owns its own
         // WebGLRenderer, and a cube render target belongs to one GL context.
         this.cubeTargets = new Map();
+        this.occlusionTargets = new Map();
+        this._occlusionKey = null;
 
         this.waveTime = 0;
         this.waveOrigin = new Vector3();
@@ -111,6 +118,7 @@ export class CNodeWaterReflection extends CNode {
         if (this.gui) {
             const changed = () => {
                 this._captureKey = null; // force a fresh capture
+                this._occlusionKey = null;
                 setRenderOne(true);
             };
             const addValue = (property, start, end, step, name) =>
@@ -119,15 +127,16 @@ export class CNodeWaterReflection extends CNode {
             this.gui.add(this, "enabled").name("Water Reflection").listen().onChange(changed)
                 .tooltip("Reflect the night sky in water. Water is detected by the colour of the map texture, "
                     + "so it needs a map source with a flat water fill (OSM). Look view only.");
-            addValue("strength", 0, 4, 0.01, "Reflection Strength")
+            addValue("strength", 0, 2, 0.01, "Reflection Strength")
                 .tooltip("Brightness of the reflected sky. 1.0 is the physical Fresnel amount.");
             addValue("darken", 0, 1, 0.01, "Water Darkening")
                 .tooltip("How far the flat map water colour is pulled towards black while the reflection is on. "
                     + "0.9 leaves 10% of it, so the reflected sky dominates instead of being washed out by map blue.");
-            addValue("starBoost", 1, 30, 0.1, "Star Boost")
+            addValue("starBoost", 1, 3, 0.01, "Star Boost")
                 .tooltip("How much bigger stars are drawn into the reflection cube map than they appear on screen. "
-                    + "At their true size most stars are sub-pixel in the cube and disappear from the reflection.");
-            addValue("moonBoost", 1, 10, 0.1, "Moon Boost")
+                    + "At their true size most stars are sub-pixel in the cube and disappear from the reflection. "
+                    + "Brightness rises with roughly the square of this, so small changes go a long way.");
+            addValue("moonBoost", 1, 3, 0.01, "Moon Boost")
                 .tooltip("Same idea for the Moon, so the moonglade stays brighter than the reflected stars.");
             addValue("waveStrength", 0, 0.2, 0.001, "Wave Strength")
                 .tooltip("How much ripples tilt the water surface. 0 gives a perfect mirror.");
@@ -135,6 +144,25 @@ export class CNodeWaterReflection extends CNode {
                 .tooltip("Distance between wave crests.");
             addValue("waveSpeed", 0, 5, 0.01, "Wave Speed")
                 .tooltip("How fast ripples move. 0 freezes them (and stops forcing re-renders while paused).");
+            // A dropdown rather than a slider: cube sizes want to be powers of
+            // two, and a slider would dispose and rebuild the render target on
+            // every drag step — at 2048 that is a ~270MB texture each time.
+            // Every label carries a non-digit: a key that looks like an integer
+            // ("512") is hoisted to the front of the object in numeric order by
+            // the JS engine, which scrambles the menu.
+            this.gui.add(this, "cubeResolution", {
+                "256 (fastest)": 256,
+                "512 (low)": 512,
+                "1024 (default)": 1024,
+                "2048 (heavy)": 2048,
+            }).name("Env Map Resolution").listen().onChange(changed)
+                .tooltip("Cube map size for the reflected sky. Higher gives finer, sharper stars and a crisper "
+                    + "Moon, at the cost of video memory — a 2048 cube is around 270MB, and the sky is re-rendered "
+                    + "into it whenever time moves. 512 or 1024 is the sweet spot. The terrain occlusion mask "
+                    + "follows this but stops at 1024.");
+            this.gui.add(this, "occlusion").name("Terrain Occlusion").listen().onChange(changed)
+                .tooltip("Stop the water reflecting sky that is hidden behind terrain. Captures the terrain "
+                    + "silhouette from the observer and masks the reflection with it.");
             addValue("tolerance", 0.01, 0.5, 0.005, "Water Colour Tolerance")
                 .tooltip("How close a map pixel must be to the source's water colour to count as water. "
                     + "Raise it to fill in antialiased shorelines, lower it if land is being flooded.");
@@ -142,11 +170,15 @@ export class CNodeWaterReflection extends CNode {
     }
 
     dispose() {
-        for (const {target, camera} of this.cubeTargets.values()) {
-            target.dispose();
-            camera.children.length = 0;
+        for (const map of [this.cubeTargets, this.occlusionTargets]) {
+            for (const {target, camera} of map.values()) {
+                target.dispose();
+                camera.children.length = 0;
+            }
+            map.clear();
         }
-        this.cubeTargets.clear();
+        this._occluderMaterial?.dispose();
+        this._occluderMaterial = undefined;
         this.clearUniforms();
         if (this.gui) {
             this.gui.destroy();
@@ -211,6 +243,119 @@ export class CNodeWaterReflection extends CNode {
         const entry = {target, camera, resolution: this.cubeResolution};
         this.cubeTargets.set(key, entry);
         return entry;
+    }
+
+    // The occlusion mask is a silhouette, not a starfield, so it gains far less
+    // from resolution than the sky cube does — and it is a full extra cube of
+    // VRAM. Track the sky resolution but stop at 1024.
+    get occlusionResolution() {
+        return Math.min(this.cubeResolution, 1024);
+    }
+
+    getOcclusionTarget(renderer) {
+        const key = renderer.domElement;
+        const resolution = this.occlusionResolution;
+        const existing = this.occlusionTargets.get(key);
+        if (existing && existing.resolution === resolution) {
+            return existing;
+        }
+        if (existing) {
+            existing.target.dispose();
+            this.occlusionTargets.delete(key);
+        }
+        // A plain byte target: this holds a coverage mask, not radiance. No
+        // mipmaps — minifying a hard ridge line would bleed terrain into the
+        // sky either side of it.
+        const target = new WebGLCubeRenderTarget(resolution, {
+            generateMipmaps: false,
+            minFilter: LinearFilter,
+            magFilter: LinearFilter,
+        });
+        // Far enough to reach a distant mountain skyline. Depth testing is off
+        // for this pass, so the range costs no precision.
+        const camera = new CubeCamera(1, 2000000, target);
+        const entry = {target, camera, resolution};
+        this.occlusionTargets.set(key, entry);
+        return entry;
+    }
+
+    // Capture the terrain skyline as seen from the observer: white where the
+    // sky is open, black where terrain blocks it. Cached on observer position
+    // and tile count rather than on time — the skyline does not care what the
+    // sky is doing, which is exactly why this is a separate cube from the sky
+    // capture that re-renders every frame during playback.
+    captureOcclusion(view) {
+        const terrainNode = NodeMan.get("TerrainModel", false);
+        const terrainGroup = terrainNode?.getGroup?.();
+        if (!terrainGroup || !terrainGroup.visible) return false;
+
+        const buildingsGroup = terrainNode.UI?.buildingsNode?.group;
+        const renderer = view.renderer;
+        const {target, camera} = this.getOcclusionTarget(renderer);
+        const p = view.camera.position;
+
+        const key = [
+            Math.round(p.x / 2), Math.round(p.y / 2), Math.round(p.z / 2),
+            terrainGroup.children.length,
+            buildingsGroup ? buildingsGroup.children.length : 0,
+            this.occlusionResolution,
+        ].join(",");
+        if (key === this._occlusionKey) return true;
+        this._occlusionKey = key;
+
+        // Everything that is not landscape is hidden: tracks, LOS lines and
+        // markers are annotations, and punching their silhouettes into the sky
+        // mask would carve black streaks across the reflection.
+        const keep = new Set([terrainGroup, buildingsGroup].filter(Boolean));
+        const hidden = [];
+        for (const child of GlobalScene.children) {
+            if (!keep.has(child) && child.visible) {
+                child.visible = false;
+                hidden.push(child);
+            }
+        }
+
+        this._occluderMaterial ??= new MeshBasicMaterial({
+            color: 0x000000,
+            fog: false,
+            // Silhouette only: whatever terrain covers is blocked, and drawing
+            // it last over a white clear means depth never enters into it.
+            depthTest: false,
+            depthWrite: false,
+        });
+
+        const savedTarget = renderer.getRenderTarget();
+        const savedAutoClear = renderer.autoClear;
+        const savedClearAlpha = renderer.getClearAlpha();
+        const savedClearColor = renderer.getClearColor(this._clearColorScratch ??= new Color());
+        const savedOverride = GlobalScene.overrideMaterial;
+        // Six renders of GlobalScene would otherwise drag six shadow-map
+        // updates along with them — with most of the scene hidden, which is
+        // both wasted work and pointless for a flat black silhouette.
+        const savedShadows = renderer.shadowMap.enabled;
+
+        camera.position.copy(p);
+        camera.updateMatrixWorld();
+        for (const faceCamera of camera.children) {
+            faceCamera.layers.mask = LAYER.MASK_LOOKRENDER;
+        }
+
+        try {
+            GlobalScene.overrideMaterial = this._occluderMaterial;
+            renderer.shadowMap.enabled = false;
+            renderer.setClearColor(0xffffff, 1);
+            renderer.autoClear = true;
+            camera.update(renderer, GlobalScene);
+        } finally {
+            GlobalScene.overrideMaterial = savedOverride;
+            renderer.shadowMap.enabled = savedShadows;
+            renderer.autoClear = savedAutoClear;
+            renderer.setClearColor(savedClearColor, savedClearAlpha);
+            renderer.setRenderTarget(savedTarget);
+            for (const obj of hidden) obj.visible = true;
+        }
+
+        return true;
     }
 
     // Render both sky scenes into the cube. Returns false if it could not.
@@ -285,6 +430,8 @@ export class CNodeWaterReflection extends CNode {
         const savedAutoClear = renderer.autoClear;
         const savedClearAlpha = renderer.getClearAlpha();
         const savedClearColor = renderer.getClearColor(this._clearColorScratch ??= new Color());
+        // Nothing in the celestial scenes casts or receives shadows.
+        const savedShadows = renderer.shadowMap.enabled;
 
         // The six cube-camera child cameras carry their own layer masks.
         for (const faceCamera of camera.children) {
@@ -292,6 +439,7 @@ export class CNodeWaterReflection extends CNode {
         }
 
         try {
+            renderer.shadowMap.enabled = false;
             renderer.setClearColor(0x000000, 1);
             // renderCanvas leaves autoClear off; without a clear each face
             // accumulates the previous capture and stars smear into trails.
@@ -305,6 +453,7 @@ export class CNodeWaterReflection extends CNode {
                 camera.update(renderer, GlobalSunSkyScene);
             }
         } finally {
+            renderer.shadowMap.enabled = savedShadows;
             renderer.autoClear = savedAutoClear;
             renderer.setClearColor(savedClearColor, savedClearAlpha);
             renderer.setRenderTarget(savedTarget);
@@ -322,6 +471,8 @@ export class CNodeWaterReflection extends CNode {
     clearUniforms() {
         sharedUniforms.waterReflection.value = 0.0;
         sharedUniforms.waterSkyCube.value = null;
+        sharedUniforms.waterOcclusion.value = 0.0;
+        sharedUniforms.waterOcclusionCube.value = null;
     }
 
     // Called immediately before the look view renders GlobalScene. Returns
@@ -360,6 +511,14 @@ export class CNodeWaterReflection extends CNode {
 
         sharedUniforms.waterReflection.value = nightFactor;
         sharedUniforms.waterSkyCube.value = target.texture;
+
+        if (this.occlusion && this.captureOcclusion(view)) {
+            sharedUniforms.waterOcclusionCube.value = this.getOcclusionTarget(view.renderer).target.texture;
+            sharedUniforms.waterOcclusion.value = 1.0;
+        } else {
+            sharedUniforms.waterOcclusion.value = 0.0;
+        }
+
         sharedUniforms.waterColor.value.set(waterColor[0] / 255, waterColor[1] / 255, waterColor[2] / 255);
         sharedUniforms.waterTolerance.value = this.tolerance;
         sharedUniforms.waterStrength.value = this.strength;

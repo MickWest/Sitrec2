@@ -17,6 +17,10 @@ export const sharedUniforms = {
     // waterReflection is the master gate AND the night factor (0 = off).
     waterReflection: {value: 0.0},
     waterSkyCube: {value: null},
+    // Terrain silhouette from the observer: 1 = open sky, 0 = blocked. Without
+    // it the lake reflects stars that are behind a hillside.
+    waterOcclusionCube: {value: null},
+    waterOcclusion: {value: 0.0},
     waterColor: {value: new Vector3(170 / 255, 211 / 255, 223 / 255)},
     waterTolerance: {value: 0.10},
     waterStrength: {value: 1.0},
