@@ -184,10 +184,11 @@ disappoints.
   guarantee success, but a tiny one guarantees a specific failure.
 - **Sweep** — total angular path travelled by the sightline, in degrees. A
   bearing that never moves carries no information about the target's motion.
-- **rcond** — [conditioning](#conditioning-and-rcond) of the
+- **CV rcond** — [conditioning](#conditioning-and-rcond) of the
   [Constant Velocity (CV) family](#constant-velocity-cv-family)'s fit design
-  (0–1, higher is better; the same diagnostic the live analysis computes, and
-  the thing the tooltips call "CV family conditioning").
+  (0–1, higher is better; the same diagnostic the live analysis computes).
+  The "CV" in the header is load-bearing: this number speaks for the
+  constant-velocity family of fits and nothing else.
   It answers one narrow question: *could a linear fit determine range here?*
   It is one-way — poor rcond genuinely rules the linear family out, but good
   rcond is not a promise, and [physics](#physics-models) or
