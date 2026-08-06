@@ -10,6 +10,24 @@
 
 set -e
 
+# If config/shared.env.example is part of this commit, stamp it with a fresh
+# SHARED_ENV_VERSION (date-based) so downstream installs know their shared.env
+# needs updating — the build refuses to run against a stale version and prints
+# merge instructions (see scripts/sharedEnvVersion.js). Exit 3 = nothing to do.
+if git diff --cached --name-only --diff-filter=ACMR | grep -qx "config/shared.env.example"; then
+    bump_status=0
+    node scripts/sharedEnvVersion.js --bump-staged || bump_status=$?
+    if [ "$bump_status" -eq 0 ]; then
+        git add config/shared.env.example
+    elif [ "$bump_status" -ne 3 ]; then
+        # The script has already explained what is wrong and how to fix it.
+        echo ""
+        echo "❌ shared.env.example version stamping failed — commit blocked."
+        echo "   (bypass with: git commit --no-verify)"
+        exit 1
+    fi
+fi
+
 # Fast path: no files staged under src/ → nothing to lint.
 STAGED_SRC=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^src/.*\.(js|mjs|ts)$' || true)
 if [ -z "$STAGED_SRC" ]; then
