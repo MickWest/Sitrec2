@@ -239,8 +239,8 @@ export function sourceQualityGrade(q) {
     if (!(q.frames >= 10)) reasons.push("fewer than 10 frames");
     if (!(q.sensorSpanM > 100)) reasons.push("sensor barely moved");
     if (!(q.netSweepDeg > 0.05) && !(q.sweepPathDeg > 0.2)) reasons.push("sightline barely swept");
-    if (q.conditioning === "poor") reasons.push("CV-family conditioning poor");
-    else if (q.conditioning === "marginal") reasons.push("CV-family conditioning marginal");
+    if (q.conditioning === "poor") reasons.push("Constant Velocity (CV) family conditioning poor");
+    else if (q.conditioning === "marginal") reasons.push("Constant Velocity (CV) family conditioning marginal");
     if (q.timeCv !== null && q.timeCv > 0.25) reasons.push("irregular sample timing");
     if (q.timeGaps > 0) reasons.push(`${q.timeGaps} timing gap(s)`);
     if (q.frameStated === false) reasons.push("coordinate frame/origin unstated (no sidecar)");
@@ -562,9 +562,10 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
     // acceleration, not a cosmetic detail. Say so rather than let the derived
     // rate imply the data is even.
     if (timing && (timing.cv > 0.05 || timing.gaps > 0)) {
-        warnings.push(`Sample timing is not uniform (CV ${(timing.cv * 100).toFixed(1)}%, `
-            + `${timing.gaps} gap(s)). The fits assume an even cadence of ${fps.toFixed(3)} Hz, so `
-            + `speeds, accelerations and g-loads are distorted wherever the real spacing differs.`);
+        warnings.push(`Sample timing is not uniform (intervals vary by `
+            + `${(timing.cv * 100).toFixed(1)}% of their mean, ${timing.gaps} gap(s)). The fits `
+            + `assume an even sample rate of ${fps.toFixed(3)} Hz, so speeds, accelerations and `
+            + `g-loads are distorted wherever the real spacing differs.`);
     }
     const declaredSigma = Number.isFinite(sidecar?.losError?.sigmaDeg) ? sidecar.losError.sigmaDeg
         : (sigmaCount ? sigmaSum / sigmaCount : null);
@@ -782,8 +783,8 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
         warnings.push(`${noSightline} record(s) were dropped for incomplete pointing — a sightline `
             + `needs SensorRelativeAzimuth/Elevation AND the full PlatformHeading/Pitch/Roll `
             + `triple. None of the three is assumed: platform roll re-orients the axes the `
-            + `gimbal angles are measured about, so assuming wings level would swing every `
-            + `off-boresight sightline. See misbHasSightline.`);
+            + `gimbal angles are measured about, so assuming level flight would swing every `
+            + `sightline that points away from straight ahead.`);
     }
     if (noRoll) {
         warnings.push(`${noRoll} record(s) carry no SensorRelativeRollAngle, taken as 0. That is `
@@ -1013,7 +1014,8 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     // DROPOUTS; it does not and cannot remove jitter. This warning was present,
     // then lost in a rewrite of this block; without it the flattening is silent.
     if (timing && (timing.cv > 0.05 || timing.gaps > 0)) {
-        warnings.push(`Retained cadence is not uniform (CV ${(timing.cv * 100).toFixed(1)}%`
+        warnings.push(`Retained sample spacing is not uniform (intervals vary by `
+            + `${(timing.cv * 100).toFixed(1)}% of their mean`
             + `${timing.gaps ? `, ${timing.gaps} interval(s) over 3x the median` : ""}). The fits `
             + `assume an even ${fps.toFixed(3)} Hz, so speeds, accelerations and g-loads are `
             + `distorted wherever the real spacing differs from it.`);

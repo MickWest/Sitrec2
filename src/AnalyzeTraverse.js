@@ -4302,7 +4302,11 @@ function showResultGallery(results, uiState = null) {
     titleRow.className = "tg-titlerow";
     const title = document.createElement("div");
     title.className = "tg-title";
-    title.textContent = `Traverse Analysis — ${Sit.name ?? "unnamed sitch"}`;
+    // Prefer the results' own label over the loaded sitch: a BOTBench row's
+    // gallery belongs to the file it analysed, not to whatever sitch happens
+    // to be open. The live path sets manifest.situation to Sit.name, so this
+    // changes nothing there.
+    title.textContent = `Traverse Analysis — ${results?.manifest?.situation ?? Sit.name ?? "unnamed sitch"}`;
     const xBtn = document.createElement("button");
     xBtn.className = "tg-x";
     xBtn.textContent = "×";

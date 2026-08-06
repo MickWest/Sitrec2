@@ -206,6 +206,11 @@ export const helpDocs = [
         chatDesc: "The Analyze Traverse Methods button and what it produces: the hypothesis gallery, how tiles are ranked, solution families and range bands, the plausibility checks, and the executive verdict — all five verdict wordings, exactly what each one licenses you to say, and the list of causes Sitrec has no model for at all. Read this for 'what does the verdict mean', 'what does Probably a wind-blown balloon mean', 'what does Unresolved mean', 'how do I read the analysis gallery', or 'can I quote this result'.",
     },
     {
+        file: "docs/BOTBench", labelKey: "menus.help.documentation.botBench",
+        section: "analysis", menuId: "file", role: "reference",
+        chatDesc: "The BOTBench window (File → File Analysis → BOTBench...) — BOT = Bearings-Only Traversal: running the traverse analysis over a whole folder of BOT benchmark scenarios or MISB FMV clips and comparing the results in one table. Covers every control, summary tile and table column (the SOURCE quality measurements — baseline, sweep, rcond, the pointing-noise estimate vs the declared sigma — and the ANALYSIS verdict/interpretation columns), what a bulk run deliberately cannot do, how results are scored against truth, the BOT interchange CSV format and its scenario.json sidecar, how the scenario files are generated (bench-bot-interchange, sealed releases), and a glossary of the technical terms used. Read for 'what is BOTBench / BotBench', 'what does the rcond/Base/Sweep/Src column mean', 'how do I run the analysis on many files', or 'where do the bot-NNNN.input.csv files come from'.",
+    },
+    {
         file: "docs/satcam", labelKey: "menus.help.documentation.cameraModes",
         section: "analysis", menuId: "camera", role: "reference",
         chatDesc: "Look-camera orientation modes (Normal vs Satellite PTZ) — how the camera points and how the look angle is defined.",

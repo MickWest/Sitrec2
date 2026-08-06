@@ -4,7 +4,8 @@ import {saveAs} from "file-saver";
 // shape of showError() but with two action buttons (Copy / Download) plus
 // Close, since the content is something the user typically wants to share
 // with someone else looking at the data.
-export function showTimingAnalysis(text, suggestedFilename = "sitrec-timing-analysis.txt") {
+export function showTimingAnalysis(text, suggestedFilename = "sitrec-timing-analysis.txt",
+                                   title = "MISB Timing Analysis") {
     const overlay = document.createElement("div");
     overlay.style.cssText = `
         position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -23,7 +24,7 @@ export function showTimingAnalysis(text, suggestedFilename = "sitrec-timing-anal
     `;
 
     const titleEl = document.createElement("h3");
-    titleEl.textContent = "MISB Timing Analysis";
+    titleEl.textContent = title;
     titleEl.style.cssText = "margin: 0 0 12px 0; color: #1976d2; font-size: 18px; flex: 0 0 auto;";
 
     const textarea = document.createElement("textarea");

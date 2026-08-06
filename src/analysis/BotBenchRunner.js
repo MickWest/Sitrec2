@@ -48,7 +48,7 @@ import {rankAllHypotheses} from "../TraverseRanking";
  */
 export const ABSENT_HYPOTHESES = [
     "Sky Lantern / Balloon (measured wind)",
-    "Drone (flown inputs) is present, but the live LOS-fit method nodes are not",
+    "Drone (flown control inputs) is fitted, but the interactive scene's LOS-fit methods are not",
     "Astronomical (current time / best time)",
     "Catalogued satellite pass",
     "independent balloon wind evidence",
@@ -346,7 +346,7 @@ export async function runBotBenchAnalysis(record, {
 
     const manifest = Object.freeze({
         inputFingerprint: null,
-        situation: `BotBench: ${record.label}`,
+        situation: `BOTBench: ${record.label}`,
         frames: {start: 0, end: dataset.n - 1, count: dataset.n},
         timing: {sourceFps: dataset.fps, simSpeed: 1, physicalFps: dataset.fps},
         assumptions: {
@@ -437,7 +437,7 @@ export async function runBotBenchAnalysis(record, {
     });
 
     const buildHtml = () => buildTraverseReportHTML({
-        sitName: `BotBench: ${record.label}`,
+        sitName: `BOTBench: ${record.label}`,
         dataset, windText, speedTarget: SPEED_TARGET_MS,
         sweep, fastProfile, slowProfile, aircraft,
         bestTrack: series.bestTrack, bestMetrics: series.bestMetrics,

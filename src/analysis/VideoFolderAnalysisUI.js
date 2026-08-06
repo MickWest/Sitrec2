@@ -876,7 +876,8 @@ export function openVideoFolderAnalysisDialog() {
             "sitrec-fmv-data-reports.txt");
     };
     state.summaryButton.onclick = () => {
-        showTimingAnalysis(buildSummaryReport(state.results), "sitrec-fmv-data-summary.txt");
+        showTimingAnalysis(buildSummaryReport(state.results), "sitrec-fmv-data-summary.txt",
+            "FMV Data Summary");
     };
 
     wireDragAndDrop(state);

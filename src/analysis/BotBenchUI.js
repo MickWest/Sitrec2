@@ -47,8 +47,8 @@ let botBenchController = null;
 const BUTTON_TOOLTIPS = {
     "Close": "Close this window and restore the previous Sitrec playback state. Results are discarded.",
     "Choose Folder": "Pick a folder of BOT interchange scenarios and/or FMV clips. Sidecars (.scenario.json) are paired automatically.",
-    "Choose Files": "Pick individual files to run. Without their .scenario.json sidecars, BOT files fall back to the shipped set's default origin and rate.",
-    "Cancel Run": "Stop after the file currently being analysed finishes.",
+    "Choose Files": "Pick individual files to run. Without their .scenario.json sidecars, BOT files fall back to the shipped set's default origin, with the rate read from the CSV's own Time column.",
+    "Cancel Run": "Stop the run. The file currently being analysed is abandoned and marked cancelled; completed rows keep their results.",
     "Clear Results": "Remove every result from the table and start fresh.",
     "Export JSON": "Save every row's measurements and conclusions (not the fitted tracks).",
     "Export CSV": "Save one row per file for spreadsheet analysis.",
@@ -61,11 +61,11 @@ const SUMMARY_TOOLTIPS = {
     "Queued": "Files queued for this run.",
     "Analysed": "Files that produced a result.",
     "Errors": "Files that could not be ingested or analysed.",
-    "Good source": "Files whose source data has no flagged degeneracy — enough frames, a real sensor baseline, a swept sightline and good CV-family conditioning.",
+    "Good source": "Files whose source data has no flagged degeneracy — enough frames, a real sensor baseline, a swept sightline and good Constant Velocity (CV) family conditioning.",
     "Range unobservable": "Files where the sensor baseline is too small for any free-range method to determine distance. No fit can recover range here; that is a property of the data, not the analysis.",
     "Resolved": "Files whose executive verdict was something other than 'unresolved' AND whose top candidate does not contradict the file's declared MaxRange. A parenthesised figure is how many were excluded for that contradiction — a verdict resting on a candidate the measurement says is impossible is not a resolution.",
     "With truth": "Files whose conclusion can be scored — a TruePosition column, or a direction truth for a target that has a bearing but no finite range. The two are scored in different units and are never averaged together; the counts are shown as positional+direction.",
-    "Median |err|": "Median LOS residual of the top-ranked interpretation across the run, in degrees.",
+    "Median |err|": "Median line-of-sight (LOS) residual of the top-ranked interpretation across the run, in degrees — how far the winning candidates' tracks lie off the measured sightlines.",
     "Median rel. sep": "Median of (top interpretation's mean 3D separation from truth) / (mean true range), over the files that carry truth. Scale-free, so a 2 km and a 50 km scenario compare.",
 };
 
@@ -83,16 +83,16 @@ const TABLE_COLUMNS = [
     ["n", "2.5%", "Usable samples in the file, at its own native rate — not resampled to a video frame rate.", "source"],
     ["Dur", "3%", "Clip duration in seconds.", "source"],
     ["Rate", "2.5%", "Samples per second: the sidecar's declared rate, or the median sample interval.", "source"],
-    ["Base", "4.5%", "Straight-line extent of the sensor path. This is the aperture of the whole problem: with no baseline there is no parallax and no range.", "source"],
+    ["Base", "4.5%", "Straight-line extent of the sensor path. This is what makes distance solvable at all: a moving sensor sees near things shift against far ones (parallax); with no baseline there is no parallax and no range.", "source"],
     ["Sweep", "3.5%", "Total angular path travelled by the sightline, in degrees. A bearing that never moves carries no information about motion.", "source"],
-    ["rcond", "3.5%", "CV-family design conditioning (0-1, higher is better). Says whether a LINEAR fit can determine range here — physics and stationary-point methods may still work when this is poor. One-way: 'good' is not a guarantee.", "source"],
-    ["Noise", "3.5%", "Pointing noise estimated FROM THE SIGHTLINES: the median second-difference angle, de-biased under an assumption of isotropic Gaussian error on a locally straight path. Compare with 'Decl' — agreement is evidence the declared figure is honest.", "source"],
-    ["Decl", "3.5%", "Pointing sigma the file DECLARES (BOT sidecar losError.sigmaDeg, or the LOSUncertainty column). A trailing * means a CORRELATED error model, whose figure is not comparable with the estimate to the left. Blank for FMV, which declares none.", "source"],
+    ["rcond", "3.5%", "Conditioning of the Constant Velocity (CV) family of fits (0-1, higher is better). Says whether a LINEAR fit can determine range here — physics and stationary-point methods may still work when this is poor. One-way: 'good' is not a guarantee.", "source"],
+    ["Noise", "3.5%", "Pointing noise estimated FROM THE SIGHTLINES: how far each sightline tips away from the midpoint of its two neighbours (median over the clip), converted to a standard deviation by assuming the error is random frame to frame. Compare with 'Decl' — agreement is evidence the declared figure is honest.", "source"],
+    ["Decl", "3.5%", "Pointing error the file DECLARES, as a standard deviation in degrees (BOT sidecar losError.sigmaDeg, or the LOSUncertainty column). A trailing * means a CORRELATED error model — slow wobble that neighbouring frames share, not frame-to-frame jitter — whose figure is not comparable with the estimate to the left. Blank for FMV, which declares none.", "source"],
     ["Src", "3.5%", "One-word triage of the columns to the left. Not a calibrated score — hover it for the specific reasons.", "source"],
 
     ["Verdict", "18%", "The executive assessment for this file. Shortened to fit — hover for the full headline.", "analysis"],
     ["Top interpretation", "16%", "The highest-ranked candidate, and its rank tier.", "analysis"],
-    ["|err|", "3.5%", "The top interpretation's mean LOS residual, in degrees.", "analysis"],
+    ["|err|", "3.5%", "The top interpretation's mean line-of-sight residual — how far its track lies off the measured sightlines — in degrees.", "analysis"],
     ["Range", "4%", "Start range of the top interpretation, in nautical miles.", "analysis"],
     ["Truth", "4.5%", "Where truth exists: the top interpretation's separation from it as a fraction of the true range — or, for a target with no finite range, its bearing error in degrees.", "analysis"],
     ["", "7.5%", "Open this file's full analysis.", "analysis"],
@@ -262,7 +262,7 @@ function buildSummaryReport(entries, options) {
     const withTruth = rows.filter((r) => r.truthScore);
 
     const L = [];
-    L.push("=== Sitrec BotBench — bulk traverse analysis ===");
+    L.push("=== Sitrec BOTBench — Bearings-Only Traversal bulk analysis ===");
     L.push("");
     L.push("RUN");
     L.push("─".repeat(72));
@@ -312,8 +312,8 @@ function buildSummaryReport(entries, options) {
         L.push("─".repeat(72));
         for (const [g, c] of Object.entries(grades)) L.push(`  ${padCell(g + ":", 24)}${c}`);
         L.push(`  ${padCell("Range unobservable:", 24)}${unobs}`);
-        L.push(`  ${padCell("CV conditioning poor:", 24)}${poor}`);
-        L.push(`  ${padCell("CV conditioning marginal:", 24)}${marginal}`);
+        L.push(`  ${padCell("Const-Velocity poor:", 24)}${poor}`);
+        L.push(`  ${padCell("Const-Vel. marginal:", 24)}${marginal}`);
         L.push(`  ${padCell("Median sensor baseline:", 24)}${fmtMetres(median(rows.map((r) => r.quality.sensorSpanM)))}`);
         L.push(`  ${padCell("Median LOS sweep:", 24)}${n2(median(rows.map((r) => r.quality.sweepPathDeg)))}°`);
 
@@ -344,9 +344,10 @@ function buildSummaryReport(entries, options) {
             L.push(`  ${padCell("Correlated-error files:", 24)}${correlated.length}, excluded from the `
                 + `ratio above`);
             if (ratios.length) {
-                L.push(`      Their estimate/declared median is ${n2(median(ratios))}x, which measures`);
-                L.push("      the WHITE RESIDUE of operator wobble against a declared deadband");
-                L.push("      amplitude. A large gap is the signature of wobble, not a disagreement.");
+                L.push(`      Their estimate/declared median is ${n2(median(ratios))}x. The estimator only`);
+                L.push("      sees the fast frame-to-frame part of a slow wobble, so it reads far");
+                L.push("      below the declared amplitude. A large gap is the signature of wobble,");
+                L.push("      not a disagreement.");
             }
         }
         L.push("");
@@ -661,9 +662,11 @@ function createDialog() {
     `;
 
     const title = document.createElement("h3");
-    title.textContent = "BotBench — bulk traverse analysis";
+    title.textContent = "BOTBench — Bearings-Only Traversal bulk analysis";
     title.title = "Run the traverse analysis over many files and compare the results. "
-        + "Drag a folder of BOT interchange scenarios or FMV clips anywhere onto this window.";
+        + "BOT = Bearings-Only Traversal: working out where something was from pointing "
+        + "directions alone. Drag a folder of BOT interchange scenarios or FMV clips "
+        + "anywhere onto this window.";
     title.style.cssText = "margin: 0; color: #1976d2; font-size: 18px; flex: 0 0 auto;";
 
     const header = document.createElement("div");
@@ -720,7 +723,8 @@ function createDialog() {
 
     const status = document.createElement("div");
     status.textContent = "Ready — choose a folder or drag one onto this window. "
-        + "BOT interchange scenarios (.input/.all.csv + .scenario.json) and FMV clips (.ts/.klv).";
+        + "BOT interchange scenarios (.input/.all.csv + .scenario.json) and FMV clips — "
+        + "video with embedded camera metadata (.ts/.klv).";
     status.style.cssText = "font-size: 13px; margin: 0 0 6px 0; min-height: 18px; color: #333;";
 
     const progress = document.createElement("progress");
@@ -952,23 +956,26 @@ function fillRow(state, entry) {
         + `${n3(q.rateMedianDegPerS)}°/s. A large path with a small net change means the `
         + `sightline went out and came back.`;
     c[7].textContent = n3(q.rcond);
-    c[7].title = `${q.conditioning} (effective rank ${q.effectiveRank ?? "?"} of 6). `
-        + `This is a CV-FAMILY statement only.`;
+    c[7].title = `${q.conditioning} — the data pins down ${q.effectiveRank ?? "?"} of the 6 `
+        + `numbers a constant-velocity fit needs. This is a statement about the Constant `
+        + `Velocity (CV) family only.`;
     c[8].textContent = n3(q.noiseEstDeg);
-    c[8].title = `Median second-difference angle ${n3(q.jitterDeg)}°, de-biased by 1.4422 `
-        + `under an assumption of isotropic Gaussian pointing error on a locally straight `
-        + `path. On a slowly-sampled manoeuvring target the curvature term inflates this.`;
+    c[8].title = `Raw frame-to-frame deviation ${n3(q.jitterDeg)}° (median), divided by 1.4422 `
+        + `to convert it to a standard deviation — valid when the pointing error is random in `
+        + `every direction and the true path is locally straight. On a slowly-sampled `
+        + `manoeuvring target real curvature inflates this.`;
     c[9].textContent = n3(q.declaredLosSigmaDeg)
         + (q.losErrorCorrelated ? "*" : "");
     c[9].title = q.declaredLosSigmaDeg == null ? "This file declares no pointing error."
         : q.losErrorCorrelated
             ? `Error model: ${q.losErrorModel ?? "correlated"} — NOT comparable with the `
                 + `estimate to the left. ${q.losErrorNote ?? ""}\n\nCorrelated (operator wobble) `
-                + `error is smooth in time, so a second-difference estimator sees only its white `
-                + `residue and reads much lower. The GAP is the signature of wobble, not a `
+                + `error drifts smoothly, so a frame-to-frame estimator sees only its fast `
+                + `fraction and reads much lower. The GAP is the signature of wobble, not a `
                 + `disagreement about magnitude.`
-            : `Error model: ${q.losErrorModel ?? "white"} — a per-axis 1-sigma, directly `
-                + `comparable with the estimate to the left. ${q.losErrorNote ?? ""}`;
+            : `Error model: ${q.losErrorModel ?? "white"} — a per-axis standard deviation `
+                + `(1-sigma), directly comparable with the estimate to the left. `
+                + `${q.losErrorNote ?? ""}`;
     c[10].textContent = grade.grade;
     c[10].style.color = GRADE_COLOURS[grade.grade] ?? "";
     c[10].style.fontWeight = "700";
@@ -1415,7 +1422,7 @@ export function openBotBenchDialog() {
     };
     state.summaryButton.onclick = () => {
         showTimingAnalysis(buildSummaryReport(state.entries, runOptions(state)),
-            "sitrec-botbench-summary.txt");
+            "sitrec-botbench-summary.txt", "BOTBench Run Summary");
     };
 
     wireDragAndDrop(state);
@@ -1448,9 +1455,10 @@ export function addBotBenchMenu(fileAnalysisFolder) {
         };
     }
     botBenchController = fileAnalysisFolder.add({botBench: openBotBenchDialog}, "botBench")
-        .name("BotBench...")
+        .name("BOTBench...")
         .tooltip("Run the traverse analysis over many files at once and compare the results — "
-            + "BOT interchange scenarios or FMV clips")
+            + "BOT (bearings-only traversal) interchange scenarios, or FMV video clips with "
+            + "embedded camera metadata")
         .perm();
     return botBenchController;
 }
