@@ -807,6 +807,12 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     // on the array itself when the TS demuxer supplied PES entries).
     const pesPTS = Array.isArray(misb.pesPTSus) && misb.pesPTSus.length === misb.length
         ? misb.pesPTSus : null;
+    // When the no-timeline refusal fires, the difference between "no stamps at
+    // all" and "stamps present but unclassifiable" is the whole diagnosis —
+    // the latter names a relative clock, a spreadsheet date serial, or a
+    // mangled export, and showing one raw value lets the user see which.
+    let stampsUnclassifiable = 0;
+    let stampSample = null;
     let rowIndex = -1;
     for (const row of misb) {
         rowIndex++;
@@ -815,7 +821,12 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
         const lon = row[MISB.SensorLongitude];
         const hae = row[MISB.SensorEllipsoidHeight];
         const msl = row[MISB.SensorTrueAltitude];
-        const t = epochStampSeconds(row[MISB.UnixTimeStamp]);
+        const rawStamp = row[MISB.UnixTimeStamp];
+        const t = epochStampSeconds(rawStamp);
+        if (rawStamp !== null && rawStamp !== undefined && !Number.isFinite(t)) {
+            stampsUnclassifiable++;
+            if (stampSample === null) stampSample = rawStamp;
+        }
         // Skipped, not held. The run selector below judges continuity on the
         // TIMESTAMPS, so a missing record shows up as a jump in time whether or
         // not anything stands in for it — which is just as well, because a KLV
@@ -837,7 +848,23 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
         if (boresightRow) boresightRows++;
         else if (!misbHasSightline(row)) { noSightline++; continue; }
         if (!Number.isFinite(row[MISB.SensorRelativeRollAngle])) noRoll++;
+        // Truth columns (truth_lat/truth_long/truth_alt in the client files,
+        // mapped to the Truth tags by parseMISB1CSV). All three are required:
+        // a truth point without an altitude cannot be placed in 3D, and
+        // guessing one would corrupt the very reference errors are scored
+        // against. truth_alt carries no units label in the source CSV;
+        // observed client data is in FEET, so feet is the app's default
+        // interpretation (CTrackFileMISB._truthTrackMISB has a per-track GUI
+        // switch to meters — bulk ingest has no switch, so it applies the
+        // same default and says so in a warning).
+        const truthLat = row[MISB.TruthLatitude];
+        const truthLon = row[MISB.TruthLongitude];
+        const truthAlt = row[MISB.TruthAltitude];
+        const truthLLA = Number.isFinite(truthLat) && Number.isFinite(truthLon)
+            && Number.isFinite(truthAlt)
+            ? {lat: truthLat, lon: truthLon, alt: truthAlt * 0.3048} : null;
         usable.push({
+            truthLLA,
             // Already normalized to SECONDS by epochStampSeconds — see it
             // for why per-value normalization beats any per-format label.
             t,
@@ -1069,10 +1096,17 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     }
     const haveAllTimes = !!chosen;
     if (!haveAllTimes) {
+        const stampDiag = stampsUnclassifiable
+            ? ` ${stampsUnclassifiable} record(s) DO carry a UnixTimeStamp value `
+              + `(e.g. ${String(stampSample).slice(0, 40)}) that is not recognizable as an `
+              + `epoch stamp — seconds, milliseconds or microseconds for dates 1980-2100 — `
+              + `so the column likely holds a relative clock, a spreadsheet date serial, or `
+              + `a mangled export.`
+            : "";
         throw new Error("Neither UnixTimeStamp nor KLV PES PTS gives a usable, advancing "
             + "timeline for these records, so this clip carries no timing. Every speed, "
             + "acceleration and g-load the analysis reports is derived from it, so there is "
-            + "nothing honest to compute here.");
+            + "nothing honest to compute here." + stampDiag);
     }
     const run = longestUniformRun(complete, useTimeOf);
     const kept = run.items;
@@ -1281,6 +1315,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     // and one read from the loaded file are in the same coordinates.
     const ecef = [];
     const headings = [];
+    const truthEcef = [];
     let mx = 0, my = 0, mz = 0;
     for (const u of kept) {
         let alt = u.altHAE;
@@ -1292,6 +1327,18 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
         ecef.push(p);
         headings.push(misbSightlineHeading(p, u.angles));
         mx += p.x; my += p.y; mz += p.z;
+        if (u.truthLLA) {
+            // TruthAltitude is meters with no HAE variant, so it gets the same
+            // MSL treatment as SensorTrueAltitude — the truth and the sensor
+            // must sit on the SAME datum or every scored error inherits the
+            // geoid offset as a fake vertical miss.
+            const tOff = (geoid && isGeoidLoaded())
+                ? meanSeaLevelOffset(u.truthLLA.lat, u.truthLLA.lon) : 0;
+            truthEcef.push(LLAToECEF(u.truthLLA.lat, u.truthLLA.lon,
+                u.truthLLA.alt + (Number.isFinite(tOff) ? tOff : 0)));
+        } else {
+            truthEcef.push(null);
+        }
     }
     mx /= n; my /= n; mz /= n;
     const [originLat, originLon] = ECEFToLLA_radii(mx, my, mz);
@@ -1299,11 +1346,46 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     const S = new Float64Array(n * 3);
     const D = new Float64Array(n * 3);
     const W = new Float64Array(n * 3);   // no wind source for a bare FMV file
+    const T = new Float64Array(n * 3);
+    const tValid = new Uint8Array(n);
+    let anyTruth = false;
     for (let f = 0; f < n; f++) {
         const pENU = ECEF2ENU_radii(ecef[f], originLat, originLon);
         S[f * 3] = pENU.x; S[f * 3 + 1] = pENU.y; S[f * 3 + 2] = pENU.z;
         const dENU = ECEF2ENU_radii(headings[f], originLat, originLon, true).normalize();
         D[f * 3] = dENU.x; D[f * 3 + 1] = dENU.y; D[f * 3 + 2] = dENU.z;
+        if (truthEcef[f]) {
+            const tENU = ECEF2ENU_radii(truthEcef[f], originLat, originLon);
+            T[f * 3] = tENU.x; T[f * 3 + 1] = tENU.y; T[f * 3 + 2] = tENU.z;
+            tValid[f] = 1;
+            anyTruth = true;
+        } else if (f > 0) {
+            // Hold the last known position on frames with no truth — same
+            // reasoning as the BOT ingest: scoring honours tValid, but the
+            // charts plot the raw array, and a zero triple is the ENU origin.
+            T[f * 3] = T[(f - 1) * 3];
+            T[f * 3 + 1] = T[(f - 1) * 3 + 1];
+            T[f * 3 + 2] = T[(f - 1) * 3 + 2];
+        }
+    }
+    // The forward hold cannot reach frames BEFORE the first valid truth, so
+    // back-fill those from it — same as the BOT ingest, and lost the same way
+    // once there: without it a truth track that starts blank keeps the
+    // zero-fill on its opening frames, and zero is the ENU ORIGIN, so the
+    // chart drew a trajectory sweeping in from kilometres away. Never scored
+    // either way; tValid stays 0.
+    if (anyTruth) {
+        let firstValid = -1;
+        for (let f = 0; f < n; f++) if (tValid[f]) { firstValid = f; break; }
+        for (let f = 0; f < firstValid; f++) {
+            T[f * 3] = T[firstValid * 3];
+            T[f * 3 + 1] = T[firstValid * 3 + 1];
+            T[f * 3 + 2] = T[firstValid * 3 + 2];
+        }
+        warnings.push(`Truth altitudes were interpreted as FEET — truth_alt carries no units `
+            + `label, and feet is the app's default for this client column (the app has a `
+            + `per-track "Source Altitude is Meters" switch; bulk ingest applies the default). `
+            + `If this file's truth is in meters, its truth altitudes read 3.28x low here.`);
     }
 
     // Resolve the ground datum ONCE and remember whether the geoid was actually
@@ -1343,7 +1425,15 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
         // of it is free to get right.
         groundZ: geoidN,
         clipStartMs: haveEpoch ? clipStartS * 1000 : null,
-        truth: null,
+        // Truth from the file's own truth columns, in the exact shape the BOT
+        // ingest returns, so scoring and the gallery treat both sources alike.
+        truth: anyTruth ? {
+            track: T, valid: tValid,
+            validCount: tValid.reduce((a, b) => a + b, 0),
+            usable: tValid.reduce((a, b) => a + b, 0) >= 5,
+            label: "Truth (file truth columns)",
+            trackID: null,
+        } : null,
         labels: null,
         meta: {
             records: misb.length,

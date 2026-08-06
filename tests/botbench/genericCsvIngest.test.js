@@ -100,3 +100,98 @@ test("a real µs-stamped MISB_FULL CSV ingests at its ~5 Hz cadence", () => {
     expect(durationS).toBeGreaterThan(100);
     expect(durationS).toBeLessThan(200);
 });
+
+// The "UNIC Time Stamp" client family (sanitized template: data/misb/misb2.csv):
+// MISB1-detected, tag-name headers, the epoch stamp under a TYPO header
+// ("UNIC Time Stamp", microseconds), a spreadsheet DAY-SERIAL date column
+// ("UNIX Time Stamp date"), and truth columns (truth_lat/truth_long/truth_alt).
+// Before the alias + date fallback, NEITHER time column mapped, every record
+// imported with a null stamp, and the folder failed with the no-timeline error.
+const FAMILY_HEADER = "DPTS,Security:,UNIX Time Stamp date,UNIC Time Stamp,"
+    + "Platform Heading Angle,Platform Pitch Angle,Platform Roll Angle,"
+    + "Sensor Latitude,Sensor Longitude,Sensor True Altitude,"
+    + "Sensor Relative Azimuth Angle,Sensor Relative Elevation Angle,"
+    + "truth_lat,truth_long,truth_alt";
+
+function familyCSV({n = 30, unic = true, dateSerial = true} = {}) {
+    const lines = [FAMILY_HEADER];
+    for (let i = 0; i < n; i++) {
+        lines.push([
+            "", "",                                              // DPTS, Security:
+            dateSerial ? String(45000 + (0.5 * i) / 86400) : "", // day serial, 0.5 s steps
+            unic ? String(1700000000000000 + 500000 * i) : "",   // µs, 0.5 s steps
+            90, 0, 0,
+            (35 + i * 1e-5).toFixed(6), "-125.000000", 1000,
+            10, -5,
+            (35.01 + i * 1e-5).toFixed(6), "-124.990000", 800,
+        ].join(","));
+    }
+    return lines.join("\n");
+}
+
+test("the UNIC Time Stamp family ingests: typo stamp header, truth columns", () => {
+    const record = ingestGenericTrackCSV(familyCSV(), {label: "family.csv", geoid: false});
+    expect(record.meta.sourceFormat).toBe("MISB1");
+    const ds = record.dataset;
+    expect(ds.n).toBe(30);
+    expect(ds.fps).toBeGreaterThan(1.9);        // 0.5 s µs steps -> 2 Hz
+    expect(ds.fps).toBeLessThan(2.1);
+    expect(record.truth).not.toBeNull();
+    expect(record.truth.usable).toBe(true);
+    expect(record.truth.validCount).toBe(30);
+    // truth_alt is unit-UNLABELED and the app's default reading is FEET
+    // (CTrackFileMISB), so 800 in the column is ~244 m up in ENU — reading it
+    // as meters put client truth 3.28x too high and scored fake vertical
+    // error. Sensor sits at 1000 m HAE, so ENU z is truth-vs-ellipsoid here.
+    expect(record.truth.track[2]).toBeGreaterThan(230);
+    expect(record.truth.track[2]).toBeLessThan(250);
+    expect(record.warnings.join("\n")).toContain("FEET");
+});
+
+test("truth starting mid-clip back-fills its opening frames, never scored", () => {
+    // Truth only from row 10 on: frames 0-9 must HOLD frame 10's position
+    // (zero would be the ENU origin, drawing a sweep in from kilometres away)
+    // while tValid keeps them out of scoring.
+    const lines = [FAMILY_HEADER];
+    for (let i = 0; i < 30; i++) {
+        const hasTruth = i >= 10;
+        lines.push(["", "", "", String(1700000000000000 + 500000 * i), 90, 0, 0,
+            (35 + i * 1e-5).toFixed(6), "-125.000000", 1000, 10, -5,
+            hasTruth ? (35.01 + i * 1e-5).toFixed(6) : "",
+            hasTruth ? "-124.990000" : "",
+            hasTruth ? "800" : ""].join(","));
+    }
+    const record = ingestGenericTrackCSV(lines.join("\n"),
+        {label: "sparse-truth.csv", geoid: false});
+    const {track, valid, validCount} = record.truth;
+    expect(validCount).toBe(20);
+    expect(valid[0]).toBe(0);
+    expect(track[0]).toBe(track[10 * 3]);
+    expect(track[1]).toBe(track[10 * 3 + 1]);
+    expect(track[2]).toBe(track[10 * 3 + 2]);
+});
+
+test("with no stamp column, the day-serial date column supplies the timeline", () => {
+    const record = ingestGenericTrackCSV(familyCSV({unic: false}),
+        {label: "family-dateonly.csv", geoid: false});
+    const ds = record.dataset;
+    expect(ds.fps).toBeGreaterThan(1.9);        // 0.5 s serial steps -> 2 Hz
+    expect(ds.fps).toBeLessThan(2.1);
+    // (45000 - 25569) days = 2023; the epoch must land there, not 1970.
+    expect(new Date(record.clipStartMs).getUTCFullYear()).toBe(2023);
+});
+
+test("a stamp column holding a relative clock refuses AND says what it saw", () => {
+    // UnixTimeStamp holding 0, 0.5, 1.0... — a relative clock. No unit reading
+    // lands in the 1980-2100 era, and the refusal must say the values were
+    // PRESENT but unclassifiable, not imply the column was missing.
+    const header = FAMILY_HEADER.replace("UNIC Time Stamp", "UnixTimeStamp");
+    const lines = [header];
+    for (let i = 0; i < 15; i++) {
+        lines.push(["", "", "", String(0.5 * i), 90, 0, 0,
+            (35 + i * 1e-5).toFixed(6), "-125.000000", 1000, 10, -5,
+            "", "", ""].join(","));
+    }
+    expect(() => ingestGenericTrackCSV(lines.join("\n"), {label: "rel.csv", geoid: false}))
+        .toThrow(/not recognizable as an epoch stamp/);
+});

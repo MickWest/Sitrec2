@@ -383,10 +383,24 @@ const MISB_CSV_HEADER_ALIASES = {
     "truth_long": "TruthLongitude",
     "truth_lon": "TruthLongitude",
     "truth_lng": "TruthLongitude",
-    "truth_alt": "TruthAltitude",           // meters
+    "truth_alt": "TruthAltitude",           // unit-unlabeled; consumers default to FEET (see CTrackFileMISB)
     "truth_heading": "TruthHeading",
     "truth_speed": "TruthSpeed",
+    // One client family (the data/misb/misb2.csv shape) heads its epoch-stamp
+    // column "UNIC Time Stamp" — a typo baked into the exporter — alongside a
+    // separate "UNIX Time Stamp date" column that holds a spreadsheet date,
+    // not the stamp. Without this alias the stamp column falls to the
+    // unhandled-column warning and every record imports with no time.
+    "unictimestamp": "UnixTimeStamp",
 };
+
+// Days between the spreadsheet day-serial epoch (1899-12-30) and the Unix
+// epoch, and the serial range accepted as a date (1954-2189) — anything
+// outside it is not distinguishable from a numeric timestamp and is passed
+// through for the per-value normalization consumers apply to UnixTimeStamp.
+const EXCEL_EPOCH_DAYS = 25569;
+const EXCEL_SERIAL_MIN = 20000;
+const EXCEL_SERIAL_MAX = 80000;
 
 export function parseMISB1CSV(csv) {
     const rows = csv.length;
@@ -397,6 +411,12 @@ export function parseMISB1CSV(csv) {
     for (let i = 1; i < rows; i++) {
         MISBArray[i - 1] = new Array(MISBFields).fill(null);
     }
+
+    // Epoch ms recovered from a date-shaped column ("UNIX Time Stamp date"),
+    // held aside and applied AFTER the column loop, only to rows whose
+    // UnixTimeStamp is still null — a real stamp column ("UNIC Time Stamp",
+    // "UnixTimeStamp") must win regardless of which column comes first.
+    let dateFallbackMs = null;
 
     // for each column header, find the corresponding MISB field
     // then parse the values for the entire column and put them in the MISBArray
@@ -463,9 +483,42 @@ export function parseMISB1CSV(csv) {
                     }
                 }
 
+            } else if (header === "unixtimestampdate") {
+                // The date column of the "UNIC Time Stamp" client family: a
+                // spreadsheet DAY SERIAL (e.g. 40000.0 = 2009-07-06) or a date
+                // string, depending on how the file went through Excel. Kept
+                // as a FALLBACK only — see dateFallbackMs above.
+                dateFallbackMs = new Array(rows - 1).fill(null);
+                for (let row = 1; row < rows; row++) {
+                    const raw = csv[row][col];
+                    if (raw === null || raw === "" || raw === "null") continue;
+                    const num = Number(raw);
+                    if (Number.isFinite(num)) {
+                        if (num >= EXCEL_SERIAL_MIN && num <= EXCEL_SERIAL_MAX) {
+                            dateFallbackMs[row - 1] = (num - EXCEL_EPOCH_DAYS) * 86400000;
+                        } else {
+                            // Numeric but not a day serial — a timestamp put in
+                            // the date column. Pass it through untouched.
+                            dateFallbackMs[row - 1] = num;
+                        }
+                    } else if (typeof raw === "string") {
+                        const s = raw.endsWith("Z") ? raw : raw + "Z";
+                        const ms = new Date(s).getTime();
+                        if (Number.isFinite(ms)) dateFallbackMs[row - 1] = ms;
+                    }
+                }
+
             } else {
 
                 console.warn("UNHANDLED MISB DATA: " + csv[0][col]);
+            }
+        }
+    }
+
+    if (dateFallbackMs) {
+        for (let i = 0; i < MISBArray.length; i++) {
+            if (MISBArray[i][MISB.UnixTimeStamp] === null && dateFallbackMs[i] !== null) {
+                MISBArray[i][MISB.UnixTimeStamp] = dateFallbackMs[i];
             }
         }
     }
