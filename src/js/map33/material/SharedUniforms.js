@@ -14,8 +14,14 @@ export const sharedUniforms = {
 
     // Water Reflection (CNodeWaterReflection). Scoped ON only around the
     // look view's GlobalScene render, so mainView never sees a reflection.
-    // waterReflection is the master gate AND the night factor (0 = off).
+    // waterReflection is the master gate (0 = off); waterNightFactor is
+    // separate so the effect can run by day (sun glitter on dark blue water)
+    // as well as by night (stars and moonglade on near-black water).
     waterReflection: {value: 0.0},
+    waterNightFactor: {value: 0.0},
+    // What daytime water attenuates towards, in sRGB. Deep water is dark blue,
+    // not the flat pale fill the map paints it.
+    waterDayColor: {value: new Vector3(0.06, 0.13, 0.20)},
     waterSkyCube: {value: null},
     // Terrain silhouette from the observer: 1 = open sky, 0 = blocked. Without
     // it the lake reflects stars that are behind a hillside.

@@ -65,9 +65,12 @@ export class CNodeWaterReflection extends CNode {
         this.enabled = v.enabled ?? false;
         this.strength = v.strength ?? 1.0;
         this.tolerance = v.tolerance ?? 0.10;
-        // How far the flat map water colour is pulled towards black while the
-        // reflection is active. 0.9 leaves 10% of it.
+        // How far the flat map water colour is pulled towards the real water
+        // colour while the reflection is active. 0.9 leaves 10% of the map fill.
         this.darken = v.darken ?? 0.9;
+        // Daytime deep-water colour, sRGB 0-1. At night this fades to black,
+        // where the only thing left on the surface is what it reflects.
+        this.dayColor = v.dayColor ?? [0.06, 0.13, 0.20];
         // A 90-degree cube face resolves ~0.09 degrees per pixel at 1024, so a
         // star at its true size lands sub-pixel and vanishes once the water
         // shader samples it. Boosting star SIZE inflates their total flux by
@@ -97,6 +100,7 @@ export class CNodeWaterReflection extends CNode {
             "enabled",
             "strength",
             "darken",
+            "dayColor",
             "tolerance",
             "starBoost",
             "moonBoost",
@@ -156,8 +160,12 @@ export class CNodeWaterReflection extends CNode {
             addValue("strength", 0, 2, 0.01, "Reflection Strength")
                 .tooltip("Brightness of the reflected sky. 1.0 is the physical Fresnel amount.");
             addValue("darken", 0, 1, 0.01, "Water Darkening")
-                .tooltip("How far the flat map water colour is pulled towards black while the reflection is on. "
-                    + "0.9 leaves 10% of it, so the reflected sky dominates instead of being washed out by map blue.");
+                .tooltip("How far the flat map water colour is pulled towards real water colour while the "
+                    + "reflection is on. 0.9 leaves 10% of the map fill, so the reflection dominates instead "
+                    + "of being washed out by map blue.");
+            this.gui.addColor(this, "dayColor").name("Daylight Water Colour").listen().onChange(changed)
+                .tooltip("What water attenuates towards in daylight — deep water is dark blue, not the pale "
+                    + "flat fill the map paints it. Fades to black at night, where only reflected light is left.");
             addValue("starBoost", 1, 3, 0.01, "Star Boost")
                 .tooltip("How much bigger stars are drawn into the reflection cube map than they appear on screen. "
                     + "At their true size most stars are sub-pixel in the cube and disappear from the reflection. "
@@ -522,6 +530,7 @@ export class CNodeWaterReflection extends CNode {
 
     clearUniforms() {
         sharedUniforms.waterReflection.value = 0.0;
+        sharedUniforms.waterNightFactor.value = 0.0;
         sharedUniforms.waterSkyCube.value = null;
         sharedUniforms.waterOcclusion.value = 0.0;
         sharedUniforms.waterOcclusionCube.value = null;
@@ -541,12 +550,13 @@ export class CNodeWaterReflection extends CNode {
         const nightSky = NodeMan.get("NightSkyNode", false);
         if (!nightSky) return false;
 
-        // Fade with the sky exactly as the night sky itself does: renderSky
-        // skips the stars entirely once skyOpacity reaches 1.
+        // Night factor tracks the sky exactly as renderSky does — it stops
+        // drawing stars once skyOpacity reaches 1. It no longer gates the
+        // effect, only what the water attenuates towards: black at night,
+        // deep-water blue by day, with the Sun's reflection either way.
         const sunNode = NodeMan.get("theSun", true);
         const skyOpacity = sunNode ? sunNode.calculateSkyOpacity(view.camera.position) : 0;
         const nightFactor = Math.max(0, 1 - skyOpacity);
-        if (nightFactor <= 0) return false;
 
         const skyBrightness = sunNode ? sunNode.calculateSkyBrightness(view.camera.position) : 0;
         const skyFactor = Math.max(0, 1 - skyBrightness);
@@ -561,7 +571,9 @@ export class CNodeWaterReflection extends CNode {
             this.waveOriginSet = true;
         }
 
-        sharedUniforms.waterReflection.value = nightFactor;
+        sharedUniforms.waterReflection.value = 1.0;
+        sharedUniforms.waterNightFactor.value = nightFactor;
+        sharedUniforms.waterDayColor.value.set(this.dayColor[0], this.dayColor[1], this.dayColor[2]);
         sharedUniforms.waterSkyCube.value = target.texture;
 
         if (this.occlusion && this.captureOcclusion(view)) {

@@ -109,6 +109,8 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             uniform bool showTileEdges;
 
             uniform float waterReflection;
+            uniform float waterNightFactor;
+            uniform vec3 waterDayColor;
             uniform samplerCube waterSkyCube;
             uniform samplerCube waterOcclusionCube;
             uniform float waterOcclusion;
@@ -250,13 +252,14 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                     float waterMask = 1.0 - smoothstep(waterTolerance * 0.5, waterTolerance, colorDist);
 
                     if (waterMask > 0.0) {
-                        // Knock the flat map-blue down towards black first. Real
-                        // water is dark and what you see is almost entirely the
-                        // reflection; leaving the OSM fill at full strength just
-                        // washes the reflected sky out. Scaled by waterReflection
-                        // so the darkening fades in and out with the effect
-                        // itself rather than leaving black lakes at dawn.
-                        linearColor.rgb *= 1.0 - (waterDarken * waterMask * waterReflection);
+                        // Pull the flat map fill down towards what water really
+                        // looks like, so the reflection carries the surface
+                        // instead of being washed out by map blue. By day that
+                        // target is deep-water dark blue; by night it goes to
+                        // black, where only reflected light remains.
+                        vec3 waterBase = sRGBTransferEOTF(vec4(waterDayColor, 1.0)).rgb
+                                       * (1.0 - waterNightFactor);
+                        linearColor.rgb = mix(linearColor.rgb, waterBase, waterDarken * waterMask);
 
                         // Geodetic up, not the geocentric radial: on WGS84 they
                         // differ by up to 0.19deg, which would tilt the whole
@@ -321,7 +324,10 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                             float cosTheta = max(dot(-viewDir, waveNormal), 0.0);
                             float fresnel = 0.02 + 0.98 * pow(1.0 - cosTheta, 5.0);
 
-                            linearColor.rgb += sky * (waterMask * fresnel * waterStrength * waterReflection);
+                            // The cube already carries the right sources for the
+                            // time of day — stars and moon at night, the Sun's
+                            // disc when it is up — so no day/night term here.
+                            linearColor.rgb += sky * (waterMask * fresnel * waterStrength);
                         }
                     }
                 }
