@@ -28,6 +28,7 @@ lockstep with docs/WhatsNew-Details.md.
 - Fixed the Starlink Horizon Flares tool throwing away your coordinates after using your current location. The search box showed a place name, and any later search looked that name up again — landing on some arbitrary airport in the same city, or failing outright when the name was just a pair of numbers. The same fix covers leaving Origin blank, going back to Edit, and searching again.
 - Fixed the compass in the Starlink Horizon Flares tool resizing and jumping up the screen the moment a scan finished. It now stays exactly where and what size it was while scanning.
 - Fixed one family of MISB CSV files importing with no times at all, because the exporting tool misspells its time column heading as "UNIC Time Stamp". Sitrec now recognises that heading, and can fall back to the accompanying date column when there is no usable time column. Such files were previously refused outright by BOTBench.
+- Fixed the camera pointing slightly off a body it was locked onto (Camera → Heading → *Celestial Lock*). The lock aimed at where the Moon, a planet or a star geometrically is, while the sky is drawn with the atmosphere's bending of light included — about half a degree apart near the horizon, tapering to nothing overhead, which was enough to push a low Moon partly off the edge of the frame. It now aims at where the body is actually drawn, by an amount that scales with the camera's own height, so a camera in orbit gets almost none. Nothing changes if atmospheric refraction is turned off.
 
 ## Version 2.117.0 (2026-08-06)
 
