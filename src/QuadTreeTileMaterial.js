@@ -16,14 +16,15 @@ import {
     NearestFilter,
 } from "three";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
-import {Globals} from "./Globals";
+import {Globals, NodeMan} from "./Globals";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 import {loadTextureWithRetries} from "./js/map33/material/QuadTextureMaterial";
 import {globalMipmapGenerator} from "./MipmapGenerator";
-import {processTextureColors} from "./TextureColorProcessor";
+import {compositeWaterFromOSM, processTextureColors} from "./TextureColorProcessor";
 import {createTerrainDayNightMaterial} from "./js/map33/material/TerrainDayNightMaterial";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {materialCache, textureLoadPromises} from "./QuadTreeTileCache";
+import {osmTileForTile} from "./OSMWaterTileMapping";
 
 // Module-level implementations of the cache-management statics that used to live
 // on the QuadTreeTile class. They're re-exposed as statics on the class from
@@ -142,6 +143,70 @@ export function logCacheStatsImpl() {
     return stats;
 }
 
+// "Combine Terrain with OSM": work out which OSM tile covers this tile, and
+// which part of it. Returns null when the combination is not possible or not
+// wanted, so the caller can take the plain path.
+//
+// OSM stops at zoom 19 while satellite sources go deeper, so past that we take
+// the deepest available OSM ancestor and use only the sub-rectangle of it that
+// this tile covers.
+export function osmWaterSourceForTile(tile) {
+    // The flag lives on the Water Reflection node, which is what the combine
+    // exists to feed. No night sky in this sitch means no node and no combine.
+    if (!NodeMan.get("waterReflection", false)?.combineWithOSM) return null;
+
+    const terrainNode = tile.map.terrainNode;
+    const ui = terrainNode.UI;
+    const sourceDef = terrainNode.getMapSourceDef();
+    const osmDef = ui.mapSources?.osm;
+    if (!osmDef || sourceDef === osmDef) return null;      // already OSM, nothing to combine
+    if (!osmDef.waterColor) return null;
+
+    // Same tiling scheme only. `mapping: 4326` selects GoogleCRS84Quad, whose
+    // tiles do not line up with OSM's Web Mercator grid at all.
+    if (sourceDef.mapping === 4326 || osmDef.mapping === 4326) return null;
+
+    // srcRect comes back as fractions of the ancestor tile; the caller scales
+    // them by the OSM image's pixel size.
+    const {z, x, y, srcRect} = osmTileForTile(tile.z, tile.x, tile.y, osmDef.maxZoom ?? 19);
+
+    const url = osmDef.mapURL(z, x, y);
+    if (!url) return null;
+
+    return {url, srcRect, waterColor: osmDef.waterColor};
+}
+
+// In-flight OSM water tiles, shared between terrain tiles. Past OSM's max zoom
+// several terrain tiles crop from the SAME OSM ancestor, and loadTextureWithRetries
+// has no dedup of its own — without this they each issue their own request to a
+// rate-limited public tile server. Repeat loads after one settles are left to the
+// browser's HTTP cache rather than held here.
+//
+// Deliberately NOT given a tile's abortSignal: the result is shared, so one tile
+// being pruned must not cancel the fetch out from under its siblings.
+const osmWaterImageLoads = new Map();
+
+function loadOSMWaterImage(url) {
+    const existing = osmWaterImageLoads.get(url);
+    if (existing) return existing;
+
+    const promise = loadTextureWithRetries(url, 1, 500, 0, 0, null)
+        .then((texture) => {
+            // Only ever read on the CPU into a canvas, never uploaded, so the
+            // texture wrapper can go immediately; the image stays alive as long
+            // as callers hold it.
+            const image = texture.image;
+            texture.dispose();
+            return image;
+        })
+        .finally(() => {
+            osmWaterImageLoads.delete(url);
+        });
+
+    osmWaterImageLoads.set(url, promise);
+    return promise;
+}
+
 export const materialMethods = {
     buildMaterial() {
         const url = this.textureUrl();
@@ -163,8 +228,13 @@ export const materialMethods = {
         // For non-static textures or static textures without mipmaps, use the original approach
         // Include processColors flag in cache key to prevent mixing processed and unprocessed textures
         const processColorsSuffix = sourceDef.processColors ? '_processed' : '';
-        const cacheKey = isStaticTexture ? `static_${url}${processColorsSuffix}` :
-            (sourceDef.generateMipmaps ? `${url}_z${this.z}${processColorsSuffix}` : `${url}${processColorsSuffix}`);
+        // Combined tiles must not share a cache entry with plain ones — the URL
+        // is identical either way, so without this the toggle would appear to
+        // do nothing for every tile already in the cache.
+        const osmWater = osmWaterSourceForTile(this);
+        const osmWaterSuffix = osmWater ? '_osmwater' : '';
+        const cacheKey = isStaticTexture ? `static_${url}${processColorsSuffix}${osmWaterSuffix}` :
+            (sourceDef.generateMipmaps ? `${url}_z${this.z}${processColorsSuffix}${osmWaterSuffix}` : `${url}${processColorsSuffix}${osmWaterSuffix}`);
 
         // Check if we already have a cached material for this cache key
         if (materialCache.has(cacheKey)) {
@@ -193,9 +263,37 @@ export const materialMethods = {
         // starvation while Google 3D tiles stream, brief network blip) must not
         // permanently dead-branch the tile. Deterministic failures
         // (PlaceholderTile) skip the retry inside the loader.
-        const loadPromise = delayPromise.then(() =>
-            loadTextureWithRetries(url, 1, 500, 0, 0, abortSignal)
-        ).then((texture) => {
+        const loadPromise = delayPromise.then(() => {
+            const mainLoad = loadTextureWithRetries(url, 1, 500, 0, 0, abortSignal);
+            if (!osmWater) return mainLoad;
+
+            // Both fetches start together. Chaining the OSM one after the tile's
+            // own texture doubled the time each tile spent waiting on the
+            // network, which showed up as tiles filling in seconds late after a
+            // camera sweep. A failed OSM fetch is not fatal — the tile keeps its
+            // own imagery and simply has no detectable water.
+            const osmLoad = loadOSMWaterImage(osmWater.url).catch(() => null);
+
+            return Promise.all([mainLoad, osmLoad]).then(([texture, osmImage]) => {
+                if (!osmImage) return texture;
+                try {
+                    const rect = osmWater.srcRect ? {
+                        x: osmWater.srcRect.fx * osmImage.width,
+                        y: osmWater.srcRect.fy * osmImage.height,
+                        w: osmWater.srcRect.fw * osmImage.width,
+                        h: osmWater.srcRect.fh * osmImage.height,
+                    } : null;
+                    const combined = compositeWaterFromOSM(texture, osmImage, {
+                        waterColor: osmWater.waterColor,
+                        srcRect: rect,
+                    });
+                    texture.dispose();
+                    return combined;
+                } catch (e) {
+                    return texture;
+                }
+            });
+        }).then((texture) => {
             let finalTexture = texture;
 
             // Apply color processing if enabled for this source

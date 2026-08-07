@@ -108,6 +108,23 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             uniform bool useDayNight;
             uniform bool showTileEdges;
 
+            uniform float waterReflection;
+            uniform float waterNightFactor;
+            uniform vec3 waterDayColor;
+            uniform samplerCube waterSkyCube;
+            uniform samplerCube waterOcclusionCube;
+            uniform float waterOcclusion;
+            uniform vec3 waterColor;
+            uniform float waterTolerance;
+            uniform float waterStrength;
+            uniform float waterDarken;
+            uniform float waterWaveStrength;
+            uniform float waterWaveLength;
+            uniform float waterWaveTime;
+            uniform vec3 waterWaveOrigin;
+            uniform float waterUpSquash;
+            uniform vec4 waterOrthoDir;
+
             varying vec2 vUv;
             varying vec3 vNormal;
             varying vec3 vWorldPosition;
@@ -220,7 +237,102 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 // Convert sRGB-space output to linear to match standard materials.
                 // The copy-to-screen shader applies sRGB encoding, so this round-trips
                 // back to the original sRGB values while keeping the RT consistently linear.
-                gl_FragColor = sRGBTransferEOTF(finalColor);
+                vec4 linearColor = sRGBTransferEOTF(finalColor);
+
+                // Water Reflection. waterReflection is both the master gate and
+                // the night factor (1 - skyOpacity), so reflections fade out at
+                // dawn exactly as the night sky itself does. The cube holds the
+                // night sky rendered from the origin, in LINEAR radiance — which
+                // is why this is added AFTER the sRGB->linear conversion above.
+                if (waterReflection > 0.0) {
+                    // Detect water by the raw (pre-lighting) map colour. This is
+                    // the OSM water fill by default; the tolerance has to absorb
+                    // antialiased shorelines and PNG resampling.
+                    float colorDist = distance(textureColor.rgb, waterColor);
+                    float waterMask = 1.0 - smoothstep(waterTolerance * 0.5, waterTolerance, colorDist);
+
+                    if (waterMask > 0.0) {
+                        // Pull the flat map fill down towards what water really
+                        // looks like, so the reflection carries the surface
+                        // instead of being washed out by map blue. By day that
+                        // target is deep-water dark blue; by night it goes to
+                        // black, where only reflected light remains.
+                        vec3 waterBase = sRGBTransferEOTF(vec4(waterDayColor, 1.0)).rgb
+                                       * (1.0 - waterNightFactor);
+                        linearColor.rgb = mix(linearColor.rgb, waterBase, waterDarken * waterMask);
+
+                        // Geodetic up, not the geocentric radial: on WGS84 they
+                        // differ by up to 0.19deg, which would tilt the whole
+                        // reflected sky by twice that. waterUpSquash is (a/b)^2
+                        // for the active earth model (1.0 when it's a sphere).
+                        vec3 fromCenter = vWorldPosition - earthCenter;
+                        vec3 up = normalize(vec3(fromCenter.x, fromCenter.y, fromCenter.z * waterUpSquash));
+
+                        // Pole-safe tangent basis for the wave field.
+                        vec3 ref = abs(up.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+                        vec3 east = normalize(cross(ref, up));
+                        vec3 north = cross(up, east);
+
+                        // Wave phase from a nearby origin — see waterWaveOrigin.
+                        vec3 wp = vWorldPosition - waterWaveOrigin;
+                        float e = dot(wp, east);
+                        float n = dot(wp, north);
+                        float k = 6.2831853 / max(waterWaveLength, 0.1);
+                        float t = waterWaveTime;
+
+                        // Three octaves of directional ripples, differentiated
+                        // analytically to get the surface slope directly.
+                        float p1 = e * k + t;
+                        float p2 = (e * 0.6 + n * 0.8) * k * 1.7 - t * 1.3;
+                        float p3 = (n * 0.6 - e * 0.8) * k * 2.9 + t * 0.7;
+                        float slopeE = k * cos(p1)
+                                     + k * 1.7 * 0.6 * 0.5 * cos(p2)
+                                     - k * 2.9 * 0.8 * 0.25 * cos(p3);
+                        float slopeN = k * 1.7 * 0.8 * 0.5 * cos(p2)
+                                     + k * 2.9 * 0.6 * 0.25 * cos(p3);
+
+                        vec3 waveNormal = normalize(up + (slopeE * east + slopeN * north) * waterWaveStrength);
+
+                        // Orthographic cameras have no eye point, so the ray is
+                        // the constant view direction rather than a difference.
+                        vec3 viewDir = waterOrthoDir.w > 0.5
+                            ? normalize(waterOrthoDir.xyz)
+                            : normalize(vWorldPosition - cameraPosition);
+
+                        vec3 reflected = reflect(viewDir, waveNormal);
+
+                        // Only sample the sky hemisphere — a ray bent below the
+                        // horizon by a steep wave would otherwise pick up the
+                        // (black) ground half of the cube and punch holes.
+                        if (dot(reflected, up) > 0.0) {
+                            vec3 sky = textureCube(waterSkyCube, reflected).rgb;
+
+                            // Mask out sky the terrain is standing in front of.
+                            // The silhouette is captured from the observer, so
+                            // this is exact underfoot and approximate for the
+                            // far side of the lake — but it is the difference
+                            // between reflecting a star and reflecting a star
+                            // that is behind a hill. Bilinear filtering of the
+                            // mask softens the ridge line for free.
+                            if (waterOcclusion > 0.0) {
+                                float visible = textureCube(waterOcclusionCube, reflected).r;
+                                sky *= mix(1.0, visible, waterOcclusion);
+                            }
+
+                            // Schlick Fresnel for water (F0 = 0.02): almost a
+                            // mirror at grazing angles, nearly nothing straight down.
+                            float cosTheta = max(dot(-viewDir, waveNormal), 0.0);
+                            float fresnel = 0.02 + 0.98 * pow(1.0 - cosTheta, 5.0);
+
+                            // The cube already carries the right sources for the
+                            // time of day — stars and moon at night, the Sun's
+                            // disc when it is up — so no day/night term here.
+                            linearColor.rgb += sky * (waterMask * fresnel * waterStrength);
+                        }
+                    }
+                }
+
+                gl_FragColor = linearColor;
                 #include <fog_fragment>
                 
                 // Logarithmic depth. In an ORTHOGRAPHIC projection clip-space w is

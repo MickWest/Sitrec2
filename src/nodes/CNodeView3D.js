@@ -2472,6 +2472,18 @@ export class CNodeView3D extends CNodeViewCanvas {
                 }
 
                 const atmosphereFogState = this.pushLookViewAtmosphereFog();
+
+                // Water Reflection. Scoped around the actual GlobalScene draw
+                // rather than done in a preRender hook: the terrain uniforms are
+                // SHARED BY REFERENCE with mainView's material clones, and some
+                // render paths (ExportImageSet, CFileManager) call renderCanvas
+                // directly without ever running preRender. Push/pop here is the
+                // only place that is guaranteed to bracket exactly the draw the
+                // reflection is meant for. This also runs AFTER renderSky(),
+                // which has already synced the Sun/Moon to this view's observer.
+                const waterReflectionNode = NodeMan.get("waterReflection", false);
+                const waterReflectionPushed = waterReflectionNode ? waterReflectionNode.push(this) : false;
+
                 let _restoreShadowScope = null;
                 if (Globals.shadowsEnabled) {
                     _restoreShadowScope = this._enterShadowRenderScope();
@@ -2491,6 +2503,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     }
                 } finally {
                     if (_restoreShadowScope) _restoreShadowScope();
+                    if (waterReflectionPushed) waterReflectionNode.pop();
                     this.popLookViewAtmosphereFog(atmosphereFogState);
                 }
 

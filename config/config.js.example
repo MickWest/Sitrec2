@@ -81,6 +81,10 @@ export const _configParams = {
             },
             maxZoom: 19,
             supportsOceanSurface: true, // OpenStreetMap can have ocean surface overlay
+            // Flat fill the standard OSM style uses for water (#AAD3DF). The
+            // Water Reflection effect keys off this to find lakes and sea in
+            // the tile texture; sources without it get no reflection.
+            waterColor: [170, 211, 223],
             attribution: "\u00a9 OpenStreetMap contributors",
             termsURL: "https://www.openstreetmap.org/copyright",
         },

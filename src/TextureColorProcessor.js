@@ -91,13 +91,94 @@ export function processTextureColors(texture, options = {}) {
     // Create a new texture from the canvas
     const processedTexture = new CanvasTexture(canvas);
     processedTexture.needsUpdate = true;
-    
+
     // Copy relevant properties from the original texture
     processedTexture.colorSpace = texture.colorSpace;
     processedTexture.minFilter = texture.minFilter;
     processedTexture.magFilter = texture.magFilter;
     processedTexture.wrapS = texture.wrapS;
     processedTexture.wrapT = texture.wrapT;
-    
+
     return processedTexture;
+}
+
+/**
+ * Paint OSM's flat water fill onto another source's tile.
+ *
+ * Imagery like satellite photography has no flat colour for water, so nothing
+ * downstream can tell a lake from a dark field. This finds water in the
+ * equivalent OSM tile and stamps that exact colour into the destination, which
+ * gives colour-keyed consumers (the Water Reflection effect) something to
+ * match on any source sharing OSM's tiling scheme.
+ *
+ * @param {THREE.Texture} texture - destination tile texture (from a blob URL, so the canvas is not tainted)
+ * @param {HTMLImageElement} osmImage - the equivalent OSM tile image
+ * @param {Object} options
+ * @param {Array<number>} options.waterColor - OSM water fill as [r,g,b] 0-255
+ * @param {number} options.tolerance - match radius in 0-255 colour distance
+ * @param {Object} [options.srcRect] - {x,y,w,h} region of osmImage to use, for when
+ *        the destination is deeper than OSM's max zoom and only part of an
+ *        ancestor OSM tile covers it
+ * @returns {THREE.CanvasTexture}
+ */
+export function compositeWaterFromOSM(texture, osmImage, options = {}) {
+    const {
+        waterColor = [170, 211, 223],
+        tolerance = 16,
+        srcRect = null,
+    } = options;
+
+    const image = texture.image;
+    const width = image.width;
+    const height = image.height;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    const destData = ctx.getImageData(0, 0, width, height);
+
+    // Bring the OSM tile to the destination's size and region. Smoothing is
+    // off deliberately: interpolating a 256px OSM tile up to a 512px satellite
+    // tile would blend shoreline pixels into colours that no longer match the
+    // flat fill, eating away at the edge of every lake.
+    const osmCanvas = document.createElement('canvas');
+    osmCanvas.width = width;
+    osmCanvas.height = height;
+    const osmCtx = osmCanvas.getContext('2d');
+    osmCtx.imageSmoothingEnabled = false;
+    if (srcRect) {
+        osmCtx.drawImage(osmImage, srcRect.x, srcRect.y, srcRect.w, srcRect.h, 0, 0, width, height);
+    } else {
+        osmCtx.drawImage(osmImage, 0, 0, width, height);
+    }
+    const osmData = osmCtx.getImageData(0, 0, width, height);
+
+    const [wr, wg, wb] = waterColor;
+    const toleranceSq = tolerance * tolerance;
+    const dest = destData.data;
+    const src = osmData.data;
+
+    for (let i = 0; i < dest.length; i += 4) {
+        const dr = src[i] - wr;
+        const dg = src[i + 1] - wg;
+        const db = src[i + 2] - wb;
+        if (dr * dr + dg * dg + db * db <= toleranceSq) {
+            dest[i] = wr;
+            dest[i + 1] = wg;
+            dest[i + 2] = wb;
+        }
+    }
+
+    ctx.putImageData(destData, 0, 0);
+
+    const combined = new CanvasTexture(canvas);
+    combined.needsUpdate = true;
+    combined.colorSpace = texture.colorSpace;
+    combined.minFilter = texture.minFilter;
+    combined.magFilter = texture.magFilter;
+    combined.wrapS = texture.wrapS;
+    combined.wrapT = texture.wrapT;
+    return combined;
 }

@@ -121,6 +121,17 @@ export class CNodeTerrainUI extends CNode {
             this.mapSources = {};
         }
 
+        // Backfill the OSM water fill colour (#AAD3DF) that the Water
+        // Reflection effect keys off. config/config.js is per-install and not
+        // checked in, so existing installs would otherwise silently lack it.
+        // A config that sets waterColor itself always wins.
+        for (const key of ["osm", "osmHighlight"]) {
+            const source = this.mapSources[key];
+            if (source !== undefined && source.waterColor === undefined) {
+                source.waterColor = [170, 211, 223];
+            }
+        }
+
         // add the default map sources, wireframe and flat shading
         this.mapSources = {
             ...this.mapSources,
@@ -426,6 +437,10 @@ export class CNodeTerrainUI extends CNode {
         this.gui = guiMenus.terrain;
         this.mapTypeMenu = this.gui.add(this, "mapType", this.mapTypesKV).listen().name(t("terrainUI.mapType.label"))
             .tooltip(t("terrainUI.mapType.tooltip"))
+
+        // The "Combine Terrain with OSM" control lives in the Water Reflection
+        // folder (CNodeWaterReflection) — it exists to serve that effect. Only
+        // the compatibility test lives here, since this owns mapSources.
 
 //////////////////////////////////////////////////////////////////////////////////////////
         // same for elevation sources
@@ -1531,6 +1546,17 @@ export class CNodeTerrainUI extends CNode {
         if (this.terrainNode && this.terrainNode.group) {
             this.terrainNode.group.visible = visible;
         }
+    }
+
+    // Only offer the OSM combine where the tiles actually line up: a source
+    // using `mapping: 4326` (GoogleCRS84Quad) has a different grid entirely, and
+    // combining OSM with OSM is a no-op.
+    canCombineWithOSM() {
+        const osmDef = this.mapSources?.osm;
+        if (!osmDef || !osmDef.waterColor) return false;
+        const sourceDef = this.mapSources?.[this.mapType];
+        if (!sourceDef || sourceDef === osmDef) return false;
+        return sourceDef.mapping !== 4326 && osmDef.mapping !== 4326;
     }
 
     getSourceDef() {
