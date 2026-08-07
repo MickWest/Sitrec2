@@ -1,4 +1,4 @@
-import {degrees, metersPerSecondFromKnots, radians} from "../utils";
+import {degrees, f2m, metersPerSecondFromKnots, radians} from "../utils";
 import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {NodeMan, Sit, Units} from "../Globals";
 import {CNode} from "./CNode";
@@ -29,7 +29,7 @@ export class CNodeJetTrack extends CNodeTrack {
         }
 
         this.requireInputs(["speed", "turnRate", "wind", "heading", "origin"])
-        this.optionalInputs(["terrain", "legLength", "transitionTime"]);
+        this.optionalInputs(["terrain", "legLength", "transitionTime", "climbRate"]);
         this.isNumber = false;
 
         this.agl = v.agl ?? 0;
@@ -121,6 +121,27 @@ export class CNodeJetTrack extends CNodeTrack {
             const jetSpeedKnots = this.in.speed.getValueFrame(f)  // 239-242 knots
             const jetSpeed = metersPerSecondFromKnots(jetSpeedKnots)  // 351 from CAS of 241 (239-242)
             jetPos.add(jetFwd.clone().multiplyScalar(jetSpeed * dt)) // one frame
+
+            // Vertical motion. climbRate is FEET PER MINUTE (the aviation convention the
+            // slider is labelled in), positive = climbing. Applied along the LOCAL UP at
+            // the current position, so it is a real altitude change on the ellipsoid and
+            // not a nudge in some fixed world direction.
+            //
+            // Read per frame rather than once, so a keyframed/linked climb rate works.
+            // Uses the same dt as the airspeed step and the turn integration, so Sim Speed
+            // stretches the clock without bending the vertical profile.
+            //
+            // Optional input: sitches created before this existed (Gimbal, FLIR1, GoFast)
+            // have no climbRate node, so this is a no-op and they fly level exactly as
+            // before. Note it is deliberately NOT applied in AGL/terrain-following mode —
+            // there the clamp at the top of the loop owns the altitude, and adding a climb
+            // would just fight it.
+            if (!terrainNode) {
+                const climbFPM = this.in.climbRate?.getValueFrame(f) ?? 0;
+                if (climbFPM !== 0) {
+                    jetPos.add(getLocalUpVector(jetPos).multiplyScalar(f2m(climbFPM) / 60 * dt));
+                }
+            }
 
             // add in the wind vector, uses the local North and Up vectors for reference
             this.in.wind.setPosition(jetPos)

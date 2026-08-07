@@ -945,20 +945,39 @@ export class CCustomManager {
                 tooltip: "Seconds to ramp the turn rate from 0 to the full Turn Rate at the start and end of each 180° turn",
             }, folder);
         }
+        if (!NodeMan.exists("climbRate")) {
+            new CNodeGUIValue({
+                id: "climbRate",
+                value: 0,
+                start: -1000,
+                end: 1000,
+                step: 1,
+                desc: "Climb Rate",
+                tooltip: "Vertical speed in feet per minute; positive climbs, negative descends. "
+                    + "Applied along local up, so it changes altitude rather than pitching the "
+                    + "flight path. Has no effect in terrain-following (AGL) mode.",
+            }, folder);
+        }
 
-        // Wire racetrack inputs into the JetTrack. JetTrack was constructed
+        // Wire racetrack + climb inputs into the JetTrack. JetTrack was constructed
         // before these nodes existed (sitch object processed first), so
         // optionalInputs left them undefined — patch them in now.
         if (NodeMan.exists("flightSimCameraPosition")) {
             const jt = NodeMan.get("flightSimCameraPosition");
             const legLengthNode = NodeMan.get("legLength");
             const transitionNode = NodeMan.get("transitionTime");
-            const wiredNew = jt.in.legLength !== legLengthNode || jt.in.transitionTime !== transitionNode;
+            const climbRateNode = NodeMan.get("climbRate");
+            const wiredNew = jt.in.legLength !== legLengthNode
+                || jt.in.transitionTime !== transitionNode
+                || jt.in.climbRate !== climbRateNode;
             if (jt.in.legLength !== legLengthNode) {
                 jt.addMoreInputs({legLength: legLengthNode});
             }
             if (jt.in.transitionTime !== transitionNode) {
                 jt.addMoreInputs({transitionTime: transitionNode});
+            }
+            if (jt.in.climbRate !== climbRateNode) {
+                jt.addMoreInputs({climbRate: climbRateNode});
             }
             // Re-run recalc so the new inputs take effect immediately.
             if (wiredNew) jt.recalculate();
