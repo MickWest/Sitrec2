@@ -1231,7 +1231,11 @@ export class CNodeView3D extends CNodeViewCanvas {
         return true;
     }
 
-    populateAtmosphereRayUniforms(uniforms, {linear = false} = {}) {
+    // `camera` defaults to the view's own, but can be overridden to ask for the
+    // sky as some OTHER camera sees it — the water planar mirror renders the
+    // sky gradient from a camera reflected through the lake, and this view's
+    // camera is a getter onto the camera node, so it cannot simply be swapped.
+    populateAtmosphereRayUniforms(uniforms, {linear = false, camera = this.camera} = {}) {
         const sunNode = NodeMan.get("theSun", false);
         const visT = Math.max(0, Math.min(1, (50 - this.atmosphereVisibilityKm) / 45));
         const blueBoost = 0.35 + 0.25 * visT;
@@ -1240,7 +1244,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         // solar eclipse it must darken with the sky or the gradient path
         // stays bright through totality. Factor is exactly 1 otherwise.
         const eclipseSky = sunNode?.calculateEclipseSkyFactor
-            ? sunNode.calculateEclipseSkyFactor(this.camera.position) : 1;
+            ? sunNode.calculateEclipseSkyFactor(camera.position) : 1;
         this._atmosphereBlueZenithScaled.copy(this._atmosphereBlueZenith).multiplyScalar(eclipseSky);
         this._atmosphereZenithColor.copy(skyColor).lerp(this._atmosphereBlueZenithScaled, blueBoost);
 
@@ -1251,7 +1255,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         assignColor(uniforms.zenithColor, this._atmosphereZenithColor);
 
         const haze = sunNode?.calculateHazeColors
-            ? sunNode.calculateHazeColors(this.camera.position, undefined, {
+            ? sunNode.calculateHazeColors(camera.position, undefined, {
                 visibilityKm: this.atmosphereVisibilityKm,
                 sunAngle: Globals.sunAngle,
             })
@@ -1267,12 +1271,12 @@ export class CNodeView3D extends CNodeViewCanvas {
             uniforms.warmStrength.value = 0;
         }
 
-        const e = this.camera.matrixWorld.elements;
+        const e = camera.matrixWorld.elements;
         uniforms.cameraWorldX.value.set(e[0], e[1], e[2]).normalize();
         uniforms.cameraWorldY.value.set(e[4], e[5], e[6]).normalize();
         uniforms.cameraWorldZ.value.set(e[8], e[9], e[10]).normalize();
 
-        const cameraWorldPosition = this._scratchVec.setFromMatrixPosition(this.camera.matrixWorld);
+        const cameraWorldPosition = this._scratchVec.setFromMatrixPosition(camera.matrixWorld);
         const upWorld = getLocalUpVector(cameraWorldPosition).normalize();
         uniforms.upWorld.value.copy(upWorld);
         uniforms.upCamera.value.set(
@@ -1281,8 +1285,8 @@ export class CNodeView3D extends CNodeViewCanvas {
             upWorld.dot(uniforms.cameraWorldZ.value),
         ).normalize();
 
-        uniforms.cameraTanHalfFov.value = Math.tan(this.camera.fov * Math.PI / 360);
-        uniforms.cameraAspect.value = this.camera.aspect;
+        uniforms.cameraTanHalfFov.value = Math.tan(camera.fov * Math.PI / 360);
+        uniforms.cameraAspect.value = camera.aspect;
         const cameraLLA = ECEFToLLAVD_radii(cameraWorldPosition);
         const cameraAltM = Math.max(cameraLLA.z, 0);
         uniforms.horizonDip.value = Math.min(Math.sqrt(2 * cameraAltM / wgs84.RADIUS), 0.08);
@@ -2473,22 +2477,31 @@ export class CNodeView3D extends CNodeViewCanvas {
 
                 const atmosphereFogState = this.pushLookViewAtmosphereFog();
 
-                // Water Reflection. Scoped around the actual GlobalScene draw
-                // rather than done in a preRender hook: the terrain uniforms are
-                // SHARED BY REFERENCE with mainView's material clones, and some
-                // render paths (ExportImageSet, CFileManager) call renderCanvas
-                // directly without ever running preRender. Push/pop here is the
-                // only place that is guaranteed to bracket exactly the draw the
-                // reflection is meant for. This also runs AFTER renderSky(),
-                // which has already synced the Sun/Moon to this view's observer.
                 const waterReflectionNode = NodeMan.get("waterReflection", false);
-                const waterReflectionPushed = waterReflectionNode ? waterReflectionNode.push(this) : false;
-
+                let waterReflectionPushed = false;
                 let _restoreShadowScope = null;
-                if (Globals.shadowsEnabled) {
-                    _restoreShadowScope = this._enterShadowRenderScope();
-                }
                 try {
+                    if (Globals.shadowsEnabled) {
+                        _restoreShadowScope = this._enterShadowRenderScope();
+                    }
+
+                    // Water Reflection. Scoped around the actual GlobalScene draw
+                    // rather than done in a preRender hook: the terrain uniforms are
+                    // SHARED BY REFERENCE with mainView's material clones, and some
+                    // render paths (ExportImageSet, CFileManager) call renderCanvas
+                    // directly without ever running preRender. Push/pop here is the
+                    // only place that is guaranteed to bracket exactly the draw the
+                    // reflection is meant for. This also runs AFTER renderSky(),
+                    // which has already synced the Sun/Moon to this view's observer.
+                    //
+                    // INSIDE the shadow scope, not before it: push() in planar
+                    // mirror mode renders the whole world a second time, and the
+                    // only sun that is visible while shadows are on is the
+                    // view-scoped one that _enterShadowRenderScope() switches to
+                    // (Globals.sunLight is hidden). Capturing before that point
+                    // gave a reflection lit by ambient alone.
+                    waterReflectionPushed = waterReflectionNode ? waterReflectionNode.push(this) : false;
+
                     // [DBG] Render main scene
                     if (Globals.renderDebugFlags.dbg_renderMainScene) {
                         // Set focal length immediately before rendering (not earlier, to avoid being overwritten by other views)
@@ -2502,8 +2515,9 @@ export class CNodeView3D extends CNodeViewCanvas {
                         this.renderer.render(GlobalScene, this.camera);
                     }
                 } finally {
-                    if (_restoreShadowScope) _restoreShadowScope();
+                    // Reverse order of acquisition.
                     if (waterReflectionPushed) waterReflectionNode.pop();
+                    if (_restoreShadowScope) _restoreShadowScope();
                     this.popLookViewAtmosphereFog(atmosphereFogState);
                 }
 

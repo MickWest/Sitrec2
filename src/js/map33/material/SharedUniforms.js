@@ -1,4 +1,4 @@
-import {Vector3, Vector4} from "three";
+import {Matrix4, Vector3, Vector4} from "three";
 
 // shared uniforms used by multiple materials in Sitrec
 export const sharedUniforms = {
@@ -44,5 +44,25 @@ export const sharedUniforms = {
     waterUpSquash: {value: 1.0},
     // xyz = view direction for an orthographic camera, w = 1 to use it.
     waterOrthoDir: {value: new Vector4(0, 0, 0, 0)},
+
+    // Planar Mirror mode (CWaterPlanarMirror). An alternative to the sky cube
+    // above: the whole world is re-rendered from a camera mirrored through the
+    // lake's plane, and the water samples THAT instead of a celestial cube, so
+    // hills, buildings and objects appear in the reflection too. waterMirror is
+    // the gate; the two are mutually exclusive.
+    waterMirror: {value: 0.0},
+    waterMirrorMap: {value: null},
+    // biasMatrix * mirrorProjection * mirrorView. Projecting a world point with
+    // this gives where that point landed in the mirror render, which is exactly
+    // what the water needs to look up — see the shader for why this beats
+    // sampling by raw screen coordinate.
+    waterMirrorMatrix: {value: new Matrix4()},
+    // The matrix above expects positions RELATIVE TO this point, not raw ECEF:
+    // cancelling a 6.4e6 m translation in float32 leaves metres of error on a
+    // lookup that must be pixel-accurate.
+    waterMirrorOrigin: {value: new Vector3()},
+    // How far along the reflected ray the reflected scenery is ASSUMED to be.
+    // Only affects how far ripples displace the image; see the shader.
+    waterMirrorDistance: {value: 1500.0},
     // ... other shared uniforms
 };

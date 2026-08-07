@@ -51,6 +51,7 @@ import {
 import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame";
 import {guiMenus, NodeMan, Sit, setRenderOne, Globals} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
+import {CWaterPlanarMirror} from "../WaterPlanarMirror";
 import * as LAYER from "../LayerMasks";
 
 // Beyond this distance from the wave-phase origin, float32 world positions stop
@@ -96,8 +97,31 @@ export class CNodeWaterReflection extends CNode {
         // current source's tiles line up with OSM's.
         this.combineWithOSM = v.combineWithOSM ?? false;
 
+        // "cube" reflects the celestial sphere only, from a cube map (the
+        // original, cheap, and exact for the sky). "mirror" re-renders the
+        // entire world from a mirrored camera, so the far shore lands in the
+        // water too — at the cost of a second full scene render, and of
+        // pretending a 35 km lake is flat. See WaterPlanarMirror.js.
+        this.mode = v.mode ?? "cube";
+        // Mirror render target size relative to the look view's own.
+        this.mirrorScale = v.mirrorScale ?? 1.0;
+        this.mirrorClip = v.mirrorClip ?? true;
+        // Metres the clip plane is lifted above the water, so the lake surface
+        // itself does not fight its own reflection at the near plane.
+        this.mirrorClipBias = v.mirrorClipBias ?? 0.2;
+        this.mirrorDistance = v.mirrorDistance ?? 1500;
+        this.mirrorAutoLevel = v.mirrorAutoLevel ?? true;
+        this.mirrorLevel = v.mirrorLevel ?? 0;
+
         this.addSimpleSerials([
             "enabled",
+            "mode",
+            "mirrorScale",
+            "mirrorClip",
+            "mirrorClipBias",
+            "mirrorDistance",
+            "mirrorAutoLevel",
+            "mirrorLevel",
             "strength",
             "darken",
             "dayColor",
@@ -139,6 +163,17 @@ export class CNodeWaterReflection extends CNode {
                 .tooltip("Reflect the night sky in water. Water is detected by the colour of the map texture, "
                     + "so it needs a map source with a flat water fill (OSM) — or Combine Terrain with OSM "
                     + "below. Look view only.");
+            this.gui.add(this, "mode", {
+                "Sky Cube": "cube",
+                "Planar Mirror (experimental)": "mirror",
+            }).name("Method").listen().onChange(() => {
+                this.applyMode();
+                changed();
+            }).tooltip("Sky Cube reflects only the celestial sphere — stars, Moon and Sun — captured into a "
+                + "cube map. Planar Mirror finds the flat surface of the water and re-renders the whole world "
+                + "from a camera mirrored through it, so hills, buildings and objects appear in the water too. "
+                + "The mirror costs a second full render of the scene, and treats the lake as flat, which it "
+                + "is not over more than a few kilometres.");
             this.combineController = this.gui.add(this, "combineWithOSM")
                 .name("Combine Terrain with OSM").listen()
                 .tooltip("Also load the matching Open Streetmap tile for each terrain tile and copy its water "
@@ -166,12 +201,13 @@ export class CNodeWaterReflection extends CNode {
             this.gui.addColor(this, "dayColor").name("Daylight Water Colour").listen().onChange(changed)
                 .tooltip("What water attenuates towards in daylight — deep water is dark blue, not the pale "
                     + "flat fill the map paints it. Fades to black at night, where only reflected light is left.");
-            addValue("starBoost", 1, 3, 0.01, "Star Boost")
+            this.cubeOnly = [];
+            this.cubeOnly.push(addValue("starBoost", 1, 3, 0.01, "Star Boost")
                 .tooltip("How much bigger stars are drawn into the reflection cube map than they appear on screen. "
                     + "At their true size most stars are sub-pixel in the cube and disappear from the reflection. "
-                    + "Brightness rises with roughly the square of this, so small changes go a long way.");
-            addValue("moonBoost", 1, 3, 0.01, "Moon Boost")
-                .tooltip("Same idea for the Moon, so the moonglade stays brighter than the reflected stars.");
+                    + "Brightness rises with roughly the square of this, so small changes go a long way."));
+            this.cubeOnly.push(addValue("moonBoost", 1, 3, 0.01, "Moon Boost")
+                .tooltip("Same idea for the Moon, so the moonglade stays brighter than the reflected stars."));
             addValue("waveStrength", 0, 0.2, 0.001, "Wave Strength")
                 .tooltip("How much ripples tilt the water surface. 0 gives a perfect mirror.");
             addValue("waveLength", 1, 200, 0.5, "Wave Length (m)")
@@ -184,7 +220,7 @@ export class CNodeWaterReflection extends CNode {
             // Every label carries a non-digit: a key that looks like an integer
             // ("512") is hoisted to the front of the object in numeric order by
             // the JS engine, which scrambles the menu.
-            this.gui.add(this, "cubeResolution", {
+            this.cubeOnly.push(this.gui.add(this, "cubeResolution", {
                 "256 (fastest)": 256,
                 "512 (low)": 512,
                 "1024 (default)": 1024,
@@ -193,14 +229,67 @@ export class CNodeWaterReflection extends CNode {
                 .tooltip("Cube map size for the reflected sky. Higher gives finer, sharper stars and a crisper "
                     + "Moon, at the cost of video memory — a 2048 cube is around 270MB, and the sky is re-rendered "
                     + "into it whenever time moves. 512 or 1024 is the sweet spot. The terrain occlusion mask "
-                    + "follows this but stops at 1024.");
-            this.gui.add(this, "occlusion").name("Terrain Occlusion").listen().onChange(changed)
+                    + "follows this but stops at 1024."));
+            this.cubeOnly.push(this.gui.add(this, "occlusion").name("Terrain Occlusion").listen().onChange(changed)
                 .tooltip("Stop the water reflecting sky that is hidden behind terrain. Captures the terrain "
-                    + "silhouette from the observer and masks the reflection with it.");
+                    + "silhouette from the observer and masks the reflection with it."));
             addValue("tolerance", 0.01, 0.5, 0.005, "Water Colour Tolerance")
                 .tooltip("How close a map pixel must be to the source's water colour to count as water. "
                     + "Raise it to fill in antialiased shorelines, lower it if land is being flooded.");
+
+            // Planar-mirror-only settings, in their own folder so the main
+            // panel does not grow a row of controls that do nothing in the
+            // default mode.
+            this.mirrorGui = this.gui.addFolder("Planar Mirror");
+            const addMirror = (property, start, end, step, name) =>
+                this.mirrorGui.add(this, property, start, end, step).name(name).listen().onChange(changed);
+
+            addMirror("mirrorDistance", 10, 20000, 10, "Ripple Reach (m)")
+                .tooltip("How far away the reflected scenery is assumed to be. Ripples displace the reflection "
+                    + "by tilting the reflected ray, and how far that moves the image depends on how distant "
+                    + "what it hits is. Too small and the water goes glassy; too large and it churns.");
+            this.mirrorGui.add(this, "mirrorScale", {
+                "Full (sharpest)": 1.0,
+                "Half (faster)": 0.5,
+                "Quarter (fastest)": 0.25,
+            }).name("Mirror Resolution").listen().onChange(changed)
+                .tooltip("Size of the mirrored render relative to the look view. The reflection is broken up by "
+                    + "ripples and dimmed by Fresnel, so half resolution is usually indistinguishable and costs "
+                    + "a quarter of the fill.");
+            this.mirrorGui.add(this, "mirrorClip").name("Clip Below Water").listen().onChange(changed)
+                .tooltip("Bend the mirrored camera's near plane onto the water surface so nothing below the "
+                    + "waterline is drawn into the reflection. Turn it off to see what it was hiding — around "
+                    + "Tahoe the land to the east is 500 m below lake level and floods the reflection.");
+            addMirror("mirrorClipBias", 0, 5, 0.05, "Clip Bias (m)")
+                .tooltip("How far above the water the clip plane sits. The lake surface is exactly coplanar with "
+                    + "the mirror, so a small lift stops it fighting its own reflection at the near plane.");
+            this.mirrorGui.add(this, "mirrorAutoLevel").name("Auto Water Level").listen().onChange(changed)
+                .tooltip("Find the water surface by firing a grid of rays into the view and taking the largest "
+                    + "cluster of equal ground altitudes — a lake is perfectly flat in the elevation data, so it "
+                    + "stands out. Turn off to set the level by hand when the automatic pick lands on the wrong "
+                    + "flat thing.");
+            addMirror("mirrorLevel", 0, 9000, 0.1, "Water Level (m HAE)")
+                .tooltip("Manual water surface height, in metres above the WGS84 ellipsoid — NOT sea level. "
+                    + "Ignored while Auto Water Level is on, which reports the height it found here.");
+
+            this.applyMode();
         }
+    }
+
+    // A saved sitch restores `mode` by writing the property directly, which
+    // does not run the dropdown's onChange — so the panel would keep showing
+    // the other mode's controls until the user touched it.
+    modDeserialize(v) {
+        super.modDeserialize(v);
+        this.applyMode();
+    }
+
+    // Show only the controls that do something in the current mode.
+    applyMode() {
+        if (!this.gui) return;
+        const mirror = this.mode === "mirror";
+        for (const controller of this.cubeOnly) controller.show(!mirror);
+        this.mirrorGui.show(mirror);
     }
 
     dispose() {
@@ -213,6 +302,8 @@ export class CNodeWaterReflection extends CNode {
         }
         this._occluderMaterial?.dispose();
         this._occluderMaterial = undefined;
+        this.planarMirror?.dispose();
+        this.planarMirror = undefined;
         this.clearUniforms();
         if (this.gui) {
             this.gui.destroy();
@@ -534,6 +625,8 @@ export class CNodeWaterReflection extends CNode {
         sharedUniforms.waterSkyCube.value = null;
         sharedUniforms.waterOcclusion.value = 0.0;
         sharedUniforms.waterOcclusionCube.value = null;
+        sharedUniforms.waterMirror.value = 0.0;
+        sharedUniforms.waterMirrorMap.value = null;
     }
 
     // Called immediately before the look view renders GlobalScene. Returns
@@ -561,9 +654,37 @@ export class CNodeWaterReflection extends CNode {
         const skyBrightness = sunNode ? sunNode.calculateSkyBrightness(view.camera.position) : 0;
         const skyFactor = Math.max(0, 1 - skyBrightness);
 
-        if (!this.captureSky(view, skyFactor)) return false;
+        if (this.mode === "mirror") {
+            this.planarMirror ??= new CWaterPlanarMirror(this);
+            const skyColor = sunNode ? sunNode.calculateSkyColor(view.camera.position) : view.background;
+            const texture = this.planarMirror.render(view, skyOpacity, skyColor);
+            // No plane found (nothing flat in view, or the camera is under the
+            // water): fall back to drawing no reflection at all rather than to
+            // the cube, so it is obvious the mirror is not working.
+            if (texture === null) return false;
+            sharedUniforms.waterMirror.value = 1.0;
+            sharedUniforms.waterMirrorMap.value = texture;
+            sharedUniforms.waterMirrorMatrix.value.copy(this.planarMirror.textureMatrix);
+            sharedUniforms.waterMirrorOrigin.value.copy(this.planarMirror.origin);
+            sharedUniforms.waterMirrorDistance.value = this.mirrorDistance;
+            sharedUniforms.waterOcclusion.value = 0.0;
+            // Report what the detector found, so the manual box is pre-filled
+            // with something sensible the moment auto is switched off.
+            if (this.mirrorAutoLevel && this.planarMirror.plane) {
+                this.mirrorLevel = this.planarMirror.plane.altitude;
+            }
+        } else {
+            sharedUniforms.waterMirror.value = 0.0;
+            if (!this.captureSky(view, skyFactor)) return false;
+            sharedUniforms.waterSkyCube.value = this.getCubeTarget(view.renderer).target.texture;
 
-        const {target} = this.getCubeTarget(view.renderer);
+            if (this.occlusion && this.captureOcclusion(view)) {
+                sharedUniforms.waterOcclusionCube.value = this.getOcclusionTarget(view.renderer).target.texture;
+                sharedUniforms.waterOcclusion.value = 1.0;
+            } else {
+                sharedUniforms.waterOcclusion.value = 0.0;
+            }
+        }
 
         // Re-anchor the wave phase origin only on a big jump — see the constant.
         if (!this.waveOriginSet || this.waveOrigin.distanceTo(view.camera.position) > WAVE_ORIGIN_REANCHOR_M) {
@@ -574,14 +695,6 @@ export class CNodeWaterReflection extends CNode {
         sharedUniforms.waterReflection.value = 1.0;
         sharedUniforms.waterNightFactor.value = nightFactor;
         sharedUniforms.waterDayColor.value.set(this.dayColor[0], this.dayColor[1], this.dayColor[2]);
-        sharedUniforms.waterSkyCube.value = target.texture;
-
-        if (this.occlusion && this.captureOcclusion(view)) {
-            sharedUniforms.waterOcclusionCube.value = this.getOcclusionTarget(view.renderer).target.texture;
-            sharedUniforms.waterOcclusion.value = 1.0;
-        } else {
-            sharedUniforms.waterOcclusion.value = 0.0;
-        }
 
         sharedUniforms.waterColor.value.set(waterColor[0] / 255, waterColor[1] / 255, waterColor[2] / 255);
         sharedUniforms.waterTolerance.value = this.tolerance;

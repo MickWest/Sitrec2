@@ -125,6 +125,12 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             uniform float waterUpSquash;
             uniform vec4 waterOrthoDir;
 
+            uniform float waterMirror;
+            uniform sampler2D waterMirrorMap;
+            uniform mat4 waterMirrorMatrix;
+            uniform vec3 waterMirrorOrigin;
+            uniform float waterMirrorDistance;
+
             varying vec2 vUv;
             varying vec3 vNormal;
             varying vec3 vWorldPosition;
@@ -301,10 +307,65 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 
                         vec3 reflected = reflect(viewDir, waveNormal);
 
-                        // Only sample the sky hemisphere — a ray bent below the
-                        // horizon by a steep wave would otherwise pick up the
-                        // (black) ground half of the cube and punch holes.
-                        if (dot(reflected, up) > 0.0) {
+                        // Schlick Fresnel for water (F0 = 0.02): almost a
+                        // mirror at grazing angles, nearly nothing straight down.
+                        float cosTheta = max(dot(-viewDir, waveNormal), 0.0);
+                        float fresnel = 0.02 + 0.98 * pow(1.0 - cosTheta, 5.0);
+
+                        if (waterMirror > 0.0) {
+                            // PLANAR MIRROR MODE. The whole world has been
+                            // re-rendered from a camera mirrored through the
+                            // lake's plane, so the answer to "what is along this
+                            // reflected ray" is already in a texture — the only
+                            // question is where in it.
+                            //
+                            // For a fragment exactly on the mirror plane with an
+                            // unperturbed normal, the mirror camera's ray THROUGH
+                            // THAT FRAGMENT is the reflected ray, so projecting
+                            // the fragment itself gives the exact lookup, and any
+                            // point along the ray gives the same answer.
+                            //
+                            // Waves break that: the reflected ray tilts away from
+                            // the mirror camera's ray. Walking waterMirrorDistance
+                            // along the TILTED ray and projecting that point picks
+                            // the mirror ray that meets ours at that distance —
+                            // exact if the reflected scenery really is that far
+                            // away, and gracefully wrong otherwise. It costs one
+                            // matrix multiply and gets the perspective for free:
+                            // near water ripples strongly, water near the horizon
+                            // barely moves, which is what real water does. A flat
+                            // screen-space offset would do the opposite.
+                            //
+                            // The same term quietly absorbs part of the Earth's
+                            // curvature: 'up' here is the geodetic up AT THIS
+                            // FRAGMENT, which tilts away from the plane normal by
+                            // (distance / earthRadius) as the lake recedes.
+                            // Relative to waterMirrorOrigin, never raw ECEF —
+                            // the matrix has the origin's translation already
+                            // folded in on the CPU in double precision, because
+                            // doing that cancellation here in float32 costs
+                            // metres of accuracy. Same reason waterWaveOrigin
+                            // exists for the wave phase above.
+                            vec4 mirrorClip = waterMirrorMatrix * vec4(
+                                (vWorldPosition - waterMirrorOrigin)
+                                    + reflected * waterMirrorDistance, 1.0);
+                            if (mirrorClip.w > 0.0) {
+                                vec2 muv = mirrorClip.xy / mirrorClip.w;
+                                // Ripples can push the lookup off the edge of the
+                                // render, where there is no information. Fade out
+                                // instead of clamping, which would smear the edge
+                                // pixel into a streak.
+                                vec2 fade = smoothstep(vec2(0.0), vec2(0.03), muv)
+                                          * (1.0 - smoothstep(vec2(0.97), vec2(1.0), muv));
+                                vec3 mirrorColor = texture2D(waterMirrorMap, clamp(muv, 0.0, 1.0)).rgb;
+                                linearColor.rgb += mirrorColor
+                                    * (waterMask * fresnel * waterStrength * fade.x * fade.y);
+                            }
+                        } else if (dot(reflected, up) > 0.0) {
+                            // SKY CUBE MODE. Only sample the sky hemisphere — a
+                            // ray bent below the horizon by a steep wave would
+                            // otherwise pick up the (black) ground half of the
+                            // cube and punch holes.
                             vec3 sky = textureCube(waterSkyCube, reflected).rgb;
 
                             // Mask out sky the terrain is standing in front of.
@@ -318,11 +379,6 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                                 float visible = textureCube(waterOcclusionCube, reflected).r;
                                 sky *= mix(1.0, visible, waterOcclusion);
                             }
-
-                            // Schlick Fresnel for water (F0 = 0.02): almost a
-                            // mirror at grazing angles, nearly nothing straight down.
-                            float cosTheta = max(dot(-viewDir, waveNormal), 0.0);
-                            float fresnel = 0.02 + 0.98 * pow(1.0 - cosTheta, 5.0);
 
                             // The cube already carries the right sources for the
                             // time of day — stars and moon at night, the Sun's
