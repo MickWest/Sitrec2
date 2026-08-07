@@ -228,31 +228,33 @@ function flareArc(flares, cx, cy, R) {
 // --- compass rose ----------------------------------------------------------
 // Shared rose geometry (SVG units). compassViewBox() and compassRose() both use it.
 const ROSE = { cx: 110, cy: 112, R: 84 };
+// Clear space kept OUTSIDE the rim, all the way round, for the satellite display
+// (the flare sprinkle and the density arc). It has to be uniform: once the dial
+// tracks the phone's heading the flares can end up at any screen angle, so there
+// is no longer a "flare side" to bias the spare room toward.
+const ROSE_PAD = 46;
 
-// Adaptive viewBox for the rose given the arrow azimuths. The flare sprinkle +
-// density arc sit just beyond the rim in the flare DIRECTION, so the spare room goes
-// on THAT side instead of always padding the top: south flares -> rose floats up and
-// the sprinkle shows below it; north -> floats down; E/W -> shifts sideways. The rose
-// stays horizontally centred. Returns {x, y, w, h} in SVG units. Exported so the page
-// can read the aspect ratio when fitting the rose to the available screen height.
-export function compassViewBox(arrows) {
+// Centre of the rose in SVG units — the origin the page rotates the dial about.
+export const ROSE_CENTER = { cx: ROSE.cx, cy: ROSE.cy };
+
+// Text-anchor position for the cardinal label at azimuth `azDeg` when the dial has
+// been rotated so true north sits `headingDeg` clockwise of screen-up. The y already
+// carries the +4 baseline nudge that centres the glyph on the ring, so the initial
+// render and the live updater place the labels through this one function and cannot
+// drift apart. The letters themselves stay upright at every heading — they orbit the
+// ring rather than turning with it, which keeps them readable on a phone.
+export function roseLabelXY(azDeg, headingDeg = 0) {
+    const a = (azDeg - headingDeg) * DEG, rr = ROSE.R - 22;
+    return { x: ROSE.cx + Math.sin(a) * rr, y: ROSE.cy - Math.cos(a) * rr + 4 };
+}
+
+// Square viewBox for the rose: the rim plus ROSE_PAD of clear space on every side.
+// Takes (and ignores) the arrows so existing callers are unchanged. Exported so the
+// page can read the aspect ratio when fitting the rose to the available screen height.
+export function compassViewBox() {
     const { cx, cy, R } = ROSE;
-    const SPR = R + 36;                          // outer reach of sprinkle + a little drift
-    // Sample the arrow azimuths (which bracket the flare sector) plus their mean
-    // direction (the deepest reach). Fall back to due-south if there are no arrows.
-    const azList = (arrows && arrows.length) ? arrows.map(a => a.azDeg) : [180];
-    let mx = 0, my = 0;
-    for (const az of azList) { mx += Math.sin(az * DEG); my += -Math.cos(az * DEG); }
-    const meanAz = Math.atan2(mx, -my) / DEG;    // screen vector -> azimuth
-    let minX = cx - R, maxX = cx + R, minY = cy - R, maxY = cy + R;   // the circle
-    for (const az of [...azList, meanAz]) {
-        const px = cx + Math.sin(az * DEG) * SPR, py = cy - Math.cos(az * DEG) * SPR;
-        if (px < minX) minX = px; if (px > maxX) maxX = px;
-        if (py < minY) minY = py; if (py > maxY) maxY = py;
-    }
-    const m = 6;                                 // uniform margin
-    const halfW = Math.max(maxX - cx, cx - minX) + m;   // keep the rose centred in X
-    return { x: cx - halfW, y: minY - m, w: 2 * halfW, h: (maxY - minY) + 2 * m };
+    const half = R + ROSE_PAD;
+    return { x: cx - half, y: cy - half, w: 2 * half, h: 2 * half };
 }
 
 // arrows: [{ azDeg, color?, label? }] (1 or 2). Yellow by default.
@@ -273,13 +275,15 @@ export function compassRose(arrows, flares, opts = {}) {
         const x2 = cx + Math.sin(a * DEG) * R, y2 = cy - Math.cos(a * DEG) * R;
         pts.push(`<line x1="${n(x1)}" y1="${n(y1)}" x2="${n(x2)}" y2="${n(y2)}" stroke="#3a4566" stroke-width="${major ? 2 : 1}" stroke-opacity="0.6"/>`);
     }
-    // 8-point labels
+    // 8-point labels. Drawn for heading 0 and tagged with their azimuth: when the live
+    // compass is on, the page moves each one to roseLabelXY(az, heading) every frame,
+    // which orbits it with the dial while leaving the glyph upright.
     const dirs = [["N", 0], ["NE", 45], ["E", 90], ["SE", 135], ["S", 180], ["SW", 225], ["W", 270], ["NW", 315]];
     const labels = dirs.map(([t, a]) => {
-        const rr = R - 22;
-        const x = cx + Math.sin(a * DEG) * rr, y = cy - Math.cos(a * DEG) * rr;
+        const { x, y } = roseLabelXY(a, 0);
         const major = a % 90 === 0;
-        return `<text x="${n(x)}" y="${n(y + 4)}" text-anchor="middle" font-size="${major ? 13 : 10}" `
+        return `<text class="rose-lab" data-az="${a}" x="${n(x)}" y="${n(y)}" text-anchor="middle" `
+            + `font-size="${major ? 13 : 10}" `
             + `fill="${major ? "#cfe0ff" : "#7f8db3"}" font-weight="${major ? 700 : 500}">${t}</text>`;
     }).join("");
 
@@ -297,16 +301,23 @@ export function compassRose(arrows, flares, opts = {}) {
             + `<polygon points="${n(tipx)},${n(tipy)} ${n(bx + hx)},${n(by + hy)} ${n(bx - hx)},${n(by - hy)}" fill="${col}"/>`;
     }).join("");
 
-    const vb = compassViewBox(arrows);
+    const vb = compassViewBox();
     const vbStr = `${n(vb.x)} ${n(vb.y)} ${n(vb.w)} ${n(vb.h)}`;
+    // Everything that carries an AZIMUTH — ticks, the flare-density arc, the satellite
+    // sprinkle and the direction arrows — goes inside .rose-dial, the one group the page
+    // rotates to track the phone. The two backing circles and the hub are rotationally
+    // symmetric so they stay outside it, and the cardinal letters are moved separately
+    // (see roseLabelXY) so they orbit without turning upside down.
     return `<svg viewBox="${vbStr}" class="compass-rose" role="img" aria-label="Compass showing the flare direction">
       <circle cx="${cx}" cy="${cy}" r="${R}" fill="#0c1224" stroke="#2a3550" stroke-width="2"/>
       <circle cx="${cx}" cy="${cy}" r="${R - 30}" fill="none" stroke="#1c2740" stroke-width="1"/>
-      ${pts.join("")}
+      <g class="rose-dial">
+        ${pts.join("")}
+        ${flareArc(flares, cx, cy, R)}
+        ${opts.live ? "" : flareDots(arrows, cx, cy, R, opts.dotScale || 1)}
+        ${arr}
+      </g>
       ${labels}
-      ${flareArc(flares, cx, cy, R)}
-      ${opts.live ? "" : flareDots(arrows, cx, cy, R, opts.dotScale || 1)}
-      ${arr}
       <circle cx="${cx}" cy="${cy}" r="3.5" fill="#cfe0ff"/>
     </svg>`;
 }

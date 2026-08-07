@@ -31,8 +31,13 @@ const server = http.createServer(async (req, res) => {
     try {
         let p = decodeURIComponent(req.url.split("?")[0]);
         if (p === "/") p = "/index.html";
-        const full = normalize(join(ROOT, p));
-        if (!full.startsWith(ROOT)) { res.writeHead(403).end(); return; }
+        // The app imports shared tool libraries from ../src (tools/src) — the compass
+        // used by the results rose. The browser normalises that to /src/..., which is
+        // outside this server's ROOT, so map it to the real directory. Deployed, both
+        // sit under /tools, so this mirrors production rather than special-casing it.
+        const TOOLS = dirname(ROOT);
+        const full = p.startsWith("/src/") ? normalize(join(TOOLS, p)) : normalize(join(ROOT, p));
+        if (!full.startsWith(p.startsWith("/src/") ? TOOLS : ROOT)) { res.writeHead(403).end(); return; }
         const buf = await readFile(full);
         const ext = full.slice(full.lastIndexOf("."));
         res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });

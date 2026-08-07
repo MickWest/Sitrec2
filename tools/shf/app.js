@@ -20,7 +20,7 @@ const [
   { compass16, greatCircleDistanceKm },
   { equatorialToAltAz, planetEquatorial, moonEquatorial, sunEquatorial },
   { BRIGHT_STARS },
-  { compassRose, compassViewBox, horizonView, horizonWindow, flareSimSky, horizonProjection, flareBrightnessAt, skyBodiesSVG, MOTION_SAMPLE_MS },
+  { compassRose, compassViewBox, horizonView, horizonWindow, flareSimSky, horizonProjection, flareBrightnessAt, skyBodiesSVG, MOTION_SAMPLE_MS, ROSE_CENTER, roseLabelXY },
   { generateDummyTLE },
 ] = await Promise.all([
   import("./location.js" + VERSION),
@@ -39,6 +39,7 @@ const els = {
   form: $("form"), go: $("go"),
   origin: $("origin"), dest: $("dest"),
   originSug: $("origin-suggestions"), destSug: $("dest-suggestions"),
+  originLocate: $("origin-locate"),
   date: $("date"), time: $("time"), tzbtn: $("tzbtn"),
   duration: $("duration"), alt: $("alt"),
   tlefile: $("tlefile"), fetchtle: $("fetchtle"), tlestatus: $("tlestatus"),
@@ -167,6 +168,7 @@ function wireAutocomplete(input, box, onPick) {
     // Prefer a code (unambiguous to resolveLocation); fall back to name.
     input.value = code || rec.name || `${rec.lat},${rec.lon}`;
     input._resolved = rec;          // cache so we skip a redundant resolve
+    input._geoOrigin = null;        // an explicit pick supersedes any geolocated fix
     close();
     if (onPick) onPick(rec);        // e.g. origin → update the time-zone button
   };
@@ -190,6 +192,7 @@ function wireAutocomplete(input, box, onPick) {
 
   input.addEventListener("input", async () => {
     input._resolved = null;
+    input._geoOrigin = null;        // typing means the user wants THIS text, not the old fix
     const q = input.value.trim();
     if (q.length < 2) { items = []; close(); return; }
     // searchAirports is async (it awaits the airports dataset). Await it and drop
@@ -225,6 +228,10 @@ function escapeHtml(s) {
 async function resolveField(input) {
   const q = input.value.trim();
   if (!q) return null;
+  // Fixed by the browser's geolocation (the Origin button, or a blank-origin run whose
+  // label is still in the box): those coordinates ARE the answer — don't round-trip the
+  // display label through the geocoder.
+  if (input._geoOrigin) return input._geoOrigin;
   if (input._resolved) {
     const r = input._resolved;
     return {
@@ -265,7 +272,41 @@ async function resolveBrowserLocation() {
   const label = name || `${pos.lat.toFixed(3)}°, ${pos.lon.toFixed(3)}°`;
   els.origin.value = label;       // show what we detected (and for Edit)
   els.origin._resolved = null;
-  return { lat: pos.lat, lon: pos.lon, altKm: 0, name: label, short: label, tz: "", source: "geolocation" };
+  // The DISPLAYED text is a place name (or a lat/lon string) — a label, not something
+  // that should ever be geocoded back. Keep the browser's actual fix pinned to the
+  // field so a later submit uses these coordinates verbatim: re-resolving "Boulder,
+  // United States" would land on some airport in Boulder, and re-resolving
+  // "40.000°, -105.000°" would simply fail to geocode. Cleared the moment the user
+  // types or picks a suggestion (below), because then they mean the new text.
+  const origin = { lat: pos.lat, lon: pos.lon, altKm: 0, name: label, short: label, tz: "", source: "geolocation" };
+  els.origin._geoOrigin = origin;
+  return origin;
+}
+
+// The Origin field's "use my current location" button. Leaving Origin blank already
+// geolocates at submit time; this does it up front so the user can SEE where they
+// were placed (and correct it) before searching. Failures land on the form's status
+// line rather than the results screen, which is where the user is still looking.
+async function locateOrigin() {
+  const btn = els.originLocate;
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.classList.add("busy");
+  setStatus("");
+  try {
+    await resolveBrowserLocation();
+    // A geolocated point carries no IANA zone, so times fall back to the browser's own —
+    // which for wherever the user is standing is the right one. Writing .value from code
+    // fires no "input" event, so clear the location-zone state by hand (the UTC/local
+    // toggle itself is the user's choice and is left alone).
+    formTz = "";
+    updateTzButton();
+  } catch (e) {
+    formError(e && e.message ? e.message : "Couldn't get your location.");
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("busy");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +484,9 @@ function restorePendingRealSearch() {
   els.date.value = s.date || els.date.value;
   els.time.value = s.time || els.time.value;
   els.origin.value = s.origin || "";
+  // Only the TEXT survives a reload, so any previous geolocation fix is gone; the
+  // restored label must resolve normally (or re-geolocate if it was left blank).
+  els.origin._geoOrigin = null;
   els.dest.value = s.dest || "";
   els.duration.value = s.duration || "";
   els.alt.value = s.alt || "";
@@ -560,6 +604,8 @@ let activeWorker = null;
 // flare worker when landing on the form, and build the info visuals (once) for info.
 function renderScreen(name) {
   if (name !== "results") stopReplay();   // tear down the replay rAF/listeners when leaving results
+  // Orientation sensors only run while the compass is actually on screen.
+  if (name === "results") startCompassSensors(); else stopCompassSensors();
   if (name === "form" && activeWorker) { activeWorker.terminate(); activeWorker = null; }
   if (name === "form") { stopLiveTimer(); showTopProgress(false); }   // leaving a running scan
   if (name === "info") buildInfoVisuals();
@@ -702,16 +748,24 @@ function setLiveStatus(html) { if (liveStatusEl) liveStatusEl.innerHTML = html; 
 function setupLiveResults() {
   stopReplay();      // a fresh scan tears down any replay animation from the previous result
   stopLiveBurst();   // …and any leftover live-burst animator
-  // Same element structure as the final results screen (r-when / r-dir / r-meta / rose /
-  // horizon / legend) so the compass and wide view sit in their FINAL position from the
-  // first frame — only the text inside the three header lines fills in as the scan runs.
+  // Same element structure AND the same heights as the final results screen, so the
+  // compass and wide view sit in their final position from the first frame and the one
+  // compass measurement taken here stays valid when the screen goes final. Two pieces
+  // have to be reserved explicitly because they are empty while scanning: the wide view
+  // (an empty SVG carrying the real one's viewBox, so it reserves the same aspect) and
+  // the trailing button + data-source note (visibility:hidden — see .results-tail-reserve).
+  // Only the text inside the three header lines fills in as the scan runs.
   els.results.innerHTML =
     `<div class="r-when" id="live-status">Resolving location…</div>
      <div class="r-dir" id="live-dir"></div>
      <div class="r-meta" id="live-meta"></div>
-     <div class="rose-wrap" id="live-rose"></div>
-     ${horizonWrapHTML("")}
-     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>`;
+     ${roseBoxHTML("", "live-rose")}
+     ${horizonWrapHTML(`<svg viewBox="0 -30 760 330" class="horizon-view"></svg>`)}
+     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>
+     <div class="results-tail-reserve" aria-hidden="true">
+       <button type="button" class="go-btn sitrec-btn" tabindex="-1">Open in Sitrec ↗</button>
+       <div class="sim-note synth">⚠<br><span class="synth-cta">&nbsp;</span></div>
+     </div>`;
   // The live scaffold reuses ".r-when" for its status line, so tests/automation must NOT treat
   // that class as "results are final". data-state is the unambiguous marker: "scanning" now,
   // flipped to "final" by renderResults/renderNoFlares/renderError when the real screen renders.
@@ -721,6 +775,14 @@ function setupLiveResults() {
   liveMetaEl = document.getElementById("live-meta");
   liveRoseEl = document.getElementById("live-rose");
   liveHorizonEl = els.results.querySelector(".horizon-svg");   // the SVG holder inside the wrap
+  // A new results session: re-measure the compass size once, then hold it. Painting an
+  // empty rose (no arrows, no flares) right away means the box is at its final size from
+  // the very first frame instead of collapsing to zero height until flares arrive.
+  _roseW = 0;
+  _fitState = { arrows: [], flares: [], live: true };
+  paintRose([], [], true);
+  scheduleFit();      // re-measure once laid out, in case the first paint was pre-layout
+  wireRoseCompass();
   const btn = els.results.querySelector(".hv-toggle");
   if (btn) btn.addEventListener("click", () => {
     horizonMode = HMODES[(HMODES.indexOf(horizonMode) + 1) % HMODES.length];
@@ -835,7 +897,8 @@ function liveRender() {
   setLiveStatus(`Scanning… <b>${flares.length}</b> flare${flares.length === 1 ? "" : "s"} · ${range}`);
   // "Look …" direction line — same content as the final header, shown live for a stable layout.
   if (liveDirEl) liveDirEl.innerHTML = moved ? `Look <b>${compass16(startAz)}</b> → <b>${compass16(endAz)}</b>` : `Look <b>${compass16(startAz)}</b>`;
-  if (liveRoseEl) liveRoseEl.innerHTML = compassRose(arrows, hvFlares, { live: true });
+  _fitState = { arrows, flares: hvFlares, live: true };
+  paintRose(arrows, hvFlares, true);      // frozen width — the box never resizes mid-scan
   // Use replay mode live: it draws the dim (12%) streak backdrop AND the empty .replay-flares
   // layer the burst animator fills with the 60× flurry of dots as flares stream in. (dots/
   // streaks modes have no animated layer, so the burst simply doesn't draw there.)
@@ -1147,43 +1210,214 @@ function openInSitrec(req, flares, origin, dest, peakMs) {
 // model (flareEngine sets f.visible via isFlareVisible), so SHF and Sitrec agree on the
 // definition. The display simply filters on f.visible.
 
-// Size the results compass so the whole results stack (down to the "Synthetic
-// satellites" / "Actual TLE" note box) fits the viewport when possible: grow the
-// rose into spare vertical room, shrink it when the content would overflow. Because
-// the rose sits in normal flow ABOVE the notes, one measure-then-resize pass is
-// exact (a height change shifts the results bottom 1:1). The flare-dot sprinkle is
-// re-rendered counter-scaled so it keeps its small on-screen size at any rose size.
-let _fitState = null;            // { arrows, flares } for the current results screen
+// ---------------------------------------------------------------------------
+// Live compass (device orientation)
+// ---------------------------------------------------------------------------
+// The results rose is a live magnetic compass BY DEFAULT: the dial — ticks, flare-density
+// arc, satellite sprinkle, direction arrows — turns so its N points at TRUE north, and the
+// cardinal letters orbit with it while staying upright. Hold the phone flat and the yellow
+// arrow points the way you physically have to look. Heading comes from
+// tools/src/DeviceOrientationCompass.js, the same shared library tools/compass uses,
+// imported LAZILY the first time a results screen appears — so the app still boots (and
+// runs offline) on a device that has no sensors at all.
+//
+// "By default" has one unavoidable platform exception: iOS gates orientation behind a
+// permission prompt that must originate in a user gesture, so there the rose stays
+// north-up until the toggle is tapped once. Everywhere else it starts on its own.
+let compassOn = true;          // user's intent — default on; survives re-renders of the rose
+let compassRunning = false;    // sensors actually attached and feeding headings
+let compassDev = null;         // DeviceOrientationCompass instance, once imported
+let compassHeadingDeg = 0;     // smoothed heading, degrees clockwise from true north
+let compassFrame = 0;          // pending rAF handle (coalesces sensor events to frames)
+
+// iOS 13+ only. Where this is true the sensors cannot be started without a tap.
+function needsOrientationPermission() {
+  return typeof DeviceOrientationEvent !== "undefined" &&
+         typeof DeviceOrientationEvent.requestPermission === "function";
+}
+
+// Feed a raw sensor heading in. Smoothed exponentially along the SHORT way round, so
+// the dial neither jitters with the raw magnetometer nor spins the long way through
+// the 360°/0° wrap. Redraw is deferred to the next frame — the sensor can fire faster
+// than the display refreshes, and one DOM write per frame is plenty.
+function pushHeading(raw) {
+  if (!Number.isFinite(raw)) return;
+  compassHeadingDeg = (compassHeadingDeg + angDiff(raw, compassHeadingDeg) * 0.25 + 360) % 360;
+  if (!compassFrame) compassFrame = requestAnimationFrame(applyRoseHeading);
+}
+
+// Point whichever results rose is currently up (live-scanning or final) at the smoothed
+// heading. Deliberately cheap: one transform attribute plus eight label moves, never an
+// SVG rebuild — so this is safe to run every frame. With the compass off it re-runs at
+// heading 0, which is what snaps the dial back to north-up.
+function applyRoseHeading() {
+  compassFrame = 0;
+  const svg = els.results.querySelector(".compass-rose");
+  if (!svg) return;
+  const h = compassRunning ? compassHeadingDeg : 0;
+  const dial = svg.querySelector(".rose-dial");
+  if (dial) dial.setAttribute("transform", `rotate(${(-h).toFixed(2)} ${ROSE_CENTER.cx} ${ROSE_CENTER.cy})`);
+  for (const lab of svg.querySelectorAll(".rose-lab")) {
+    const p = roseLabelXY(+lab.dataset.az, h);
+    lab.setAttribute("x", p.x.toFixed(1));
+    lab.setAttribute("y", p.y.toFixed(1));
+  }
+}
+
+// Import the shared library and wire it up. Separate from starting the sensors so the
+// import can be awaited outside a user gesture (auto-start) or inside one (iOS tap).
+async function ensureCompassDev() {
+  if (!compassDev) {
+    const mod = await import("../src/DeviceOrientationCompass.js" + VERSION);
+    compassDev = new mod.DeviceOrientationCompass();
+    compassDev.onUpdate = (r) => pushHeading(r.heading);
+  }
+  return compassDev;
+}
+
+// Sensors run only while the results screen is showing (renderScreen drives this) — an
+// orientation listener left attached in the background is pure battery drain. This is
+// also the auto-start path: on anything but iOS it brings the compass up unprompted.
+async function startCompassSensors() {
+  if (compassRunning || !compassOn || !window.DeviceOrientationEvent) return;
+  // iOS: cannot prompt outside a gesture. Stay north-up until the toggle is tapped.
+  if (!compassDev && needsOrientationPermission()) return;
+  try {
+    await ensureCompassDev();
+    compassDev.startListening();
+    compassRunning = true;
+    syncCompassButton();
+  } catch (_) { /* no sensors, or the library is unreachable offline — stays north-up */ }
+}
+
+function stopCompassSensors() {
+  if (compassDev) compassDev.stopListening();
+  compassRunning = false;
+  syncCompassButton();
+}
+
+// The button lights up only when headings are actually arriving, so it never claims to
+// be live while iOS is still waiting for its permission tap.
+function syncCompassButton() {
+  const btn = els.results.querySelector(".rose-compass");
+  if (btn) btn.classList.toggle("on", compassRunning);
+}
+
+async function toggleRoseCompass(btn) {
+  if (compassRunning) {
+    compassOn = false;
+    stopCompassSensors();
+    applyRoseHeading();                 // back to north-up
+    return;
+  }
+  try {
+    // iOS 13+ only grants orientation access when requestPermission() is called from
+    // inside the tap itself, so it goes FIRST — awaiting the module import below would
+    // end the user-gesture window and the prompt would be refused. (The library has its
+    // own requestPermission(); calling it after the import is exactly the trap.)
+    if (needsOrientationPermission() &&
+        (await DeviceOrientationEvent.requestPermission()) !== "granted") return;
+    compassHeadingDeg = 0;
+    compassOn = true;
+    await ensureCompassDev();
+    compassDev.startListening();
+    compassRunning = true;
+    syncCompassButton();
+  } catch (_) {
+    // Refused permission, or the shared library is unreachable offline: the toggle
+    // simply stays off and the rose stays north-up.
+    compassOn = false;
+    compassRunning = false;
+    syncCompassButton();
+  }
+}
+
+// The results compass plus its live-compass toggle. The button sits OUTSIDE .rose-wrap
+// because paintRose() replaces that element's innerHTML wholesale. It is only offered
+// where orientation events exist at all (i.e. not on a desktop browser).
+function roseBoxHTML(roseSvg, wrapId) {
+  const btn = window.DeviceOrientationEvent
+    ? `<button type="button" class="rose-compass${compassRunning ? " on" : ""}" `
+      + `aria-label="Turn the compass to match the way the phone is pointing" `
+      + `title="Point the compass at true north">`
+      + `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">`
+      + `<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/>`
+      + `<polygon points="12,4.5 15,13 12,11.4 9,13" fill="currentColor"/>`
+      + `<polygon points="12,19.5 9,11 12,12.6 15,11" fill="currentColor" opacity="0.45"/>`
+      + `</svg></button>`
+    : "";
+  const id = wrapId ? ` id="${wrapId}"` : "";
+  return `<div class="rose-box"><div class="rose-wrap"${id}>${roseSvg}</div>${btn}</div>`;
+}
+
+// Wire the toggle after any render that rebuilt the results DOM. renderScreen kicks the
+// sensors off before this DOM exists (and the import is async anyway), so re-sync the
+// button here as well as aiming the dial.
+function wireRoseCompass() {
+  const btn = els.results.querySelector(".rose-compass");
+  if (btn) btn.addEventListener("click", () => toggleRoseCompass(btn));
+  syncCompassButton();
+  applyRoseHeading();
+}
+
+// Size the results compass ONCE per results session and keep it there, so it does not
+// move or resize when the screen flips from scanning to final results. Two things make
+// that work together:
+//   * the live scaffold reserves the space the "Open in Sitrec" button and the
+//     data-source note will later occupy (visibility:hidden reserves height but draws
+//     nothing), so the layout measured DURING the scan is already the final layout; and
+//   * the width that measurement yields is frozen in _roseW and reused by every later
+//     repaint — including the 10 Hz live one — instead of being recomputed against
+//     whatever happens to be on screen at that moment.
+// Measured before this: on a 375x667 screen the rose went 0 -> 300px -> 177px, dragging
+// the wide view 123px up the instant results appeared.
+//
+// The size still adapts to the viewport (grow into spare room, shrink rather than
+// overflow); a resize just unfreezes it for one recompute.
+let _fitState = null;            // { arrows, flares, live } for the current results screen
+let _roseW = 0;                  // frozen on-screen width (px) for this results session
 let _fitQueued = false;
-function fitResultsCompass() {
-  if (!_fitState || els.results.dataset.state !== "final") return;
+
+// Draw the rose into the results wrap at the session's frozen width. EVERY render, live
+// and final, goes through here — that single path is what keeps the size stable.
+function paintRose(arrows, flares, live) {
   const wrap = els.results.querySelector(".rose-wrap");
-  let rose = wrap && wrap.querySelector(".compass-rose");
-  if (!rose) return;
-  const vb = compassViewBox(_fitState.arrows);
-  const aspect = vb.w / vb.h;
-  const curH = rose.getBoundingClientRect().height;
-  if (!curH) return;
-  // Spare vertical room left below the whole results stack.
-  const safeBottom = 12;
-  const slack = (window.innerHeight - safeBottom) - els.results.getBoundingClientRect().bottom;
-  let newW = (curH + slack) * aspect;
-  const maxW = Math.min(wrap.clientWidth || 9999, 460);
-  newW = Math.max(150, Math.min(maxW, newW));
-  // Keep the sprinkle dots at their original on-screen size regardless of rose size:
-  // dotScale = (original px-per-unit) / (this render's px-per-unit). Capped at 1 so a
+  if (!wrap) return;
+  const vb = compassViewBox();
+  if (!_roseW) {
+    // First paint of the session: draw at the CSS default, measure the room left under
+    // the (already final-height) stack, then freeze the width that just fills it.
+    wrap.innerHTML = compassRose(arrows, flares, { live });
+    const rose = wrap.querySelector(".compass-rose");
+    const curH = rose ? rose.getBoundingClientRect().height : 0;
+    if (!curH) return;                 // not laid out yet — the next scheduleFit retries
+    const safeBottom = 12;
+    const slack = (window.innerHeight - safeBottom) - els.results.getBoundingClientRect().bottom;
+    const maxW = Math.min(wrap.clientWidth || 9999, 460);
+    _roseW = Math.max(150, Math.min(maxW, (curH + slack) * (vb.w / vb.h)));
+  }
+  // Keep the sprinkle dots at a constant on-screen size whatever the rose's size:
+  // dotScale = (reference px-per-unit) / (this render's px-per-unit). Capped at 1 so a
   // small rose never gets bigger-than-original dots.
-  const dotScale = Math.min(1, (196 / 220) * vb.w / newW);
-  wrap.innerHTML = compassRose(_fitState.arrows, _fitState.flares, { dotScale });
-  wrap.querySelector(".compass-rose").style.width = newW + "px";
+  const dotScale = Math.min(1, (196 / 220) * vb.w / _roseW);
+  wrap.innerHTML = compassRose(arrows, flares, { live, dotScale });
+  const svg = wrap.querySelector(".compass-rose");
+  if (svg) svg.style.width = _roseW + "px";
+  applyRoseHeading();                  // a freshly built dial starts north-up; re-aim it
+}
+
+function repaintRose() {
+  if (_fitState) paintRose(_fitState.arrows, _fitState.flares, _fitState.live);
 }
 function scheduleFit() {
   if (_fitQueued) return;
   _fitQueued = true;
-  requestAnimationFrame(() => { _fitQueued = false; fitResultsCompass(); });
+  requestAnimationFrame(() => { _fitQueued = false; repaintRose(); });
 }
-window.addEventListener("resize", scheduleFit);
-window.addEventListener("orientationchange", scheduleFit);
+// A viewport change invalidates the frozen width — recompute once, then freeze again.
+function unfreezeRose() { _roseW = 0; scheduleFit(); }
+window.addEventListener("resize", unfreezeRose);
+window.addEventListener("orientationchange", unfreezeRose);
 
 // Full results screen: verdict, one-sentence summary, compass rose, horizon view.
 function renderResults(flares, stats, req, origin, dest) {
@@ -1238,16 +1472,19 @@ function renderResults(flares, stats, req, origin, dest) {
     `<div class="r-when">Flares <b>${localT}</b> ${escapeHtml(zone)} · peak <b>${peakT}</b></div>
      <div class="r-dir">${dirLine}</div>
      <div class="r-meta">${escapeHtml(place)} · ${fmtDateShort(t1, tz)} · ${utcT} UTC</div>
-     <div class="rose-wrap">${compassRose(arrows, hvFlares)}</div>
+     ${roseBoxHTML("")}
      ${horizonWrapHTML(horizonView({ stars, bodies, flares: hvFlares, sunMarks, mode: horizonMode, ...zoomWin(win) }))}
      <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>
      <button id="opensitrec" type="button" class="go-btn sitrec-btn">Open in Sitrec ↗</button>
      ${notesHTML(req)}`;
 
   els.results.dataset.state = "final";   // real results screen is up (see setupLiveResults)
-  // Size the compass to use the available height (flare dots kept small); re-runs on resize.
-  _fitState = { arrows, flares: hvFlares };
-  scheduleFit();
+  // Paint the rose at the width frozen when the scan started, so nothing shifts as the
+  // screen goes final. The wrap above is emitted EMPTY and filled here, so the rose is
+  // never briefly drawn at the CSS default size first.
+  _fitState = { arrows, flares: hvFlares, live: false };
+  paintRose(arrows, hvFlares, false);
+  wireRoseCompass();
   const openBtn = els.results.querySelector("#opensitrec");
   if (openBtn) openBtn.addEventListener("click", () => openInSitrec(req, shown, origin, dest, peakMs));
 
@@ -1588,6 +1825,24 @@ if (isLocalHost) {
     get tleFetchInFlight() { return !!tleFetchInFlight; },
     get horizonMode() { return horizonMode; },
     get replayCtl() { return replayCtl; },
+    get compassOn() { return compassOn; },
+    get compassRunning() { return compassRunning; },
+    get compassHeading() { return compassHeadingDeg; },
+    get roseWidth() { return _roseW; },
+    // Aim the rose without sensors (desktop / MCP testing): the dial lands exactly where
+    // it would on a phone pointed at `deg`. Pass null to switch back to north-up.
+    setCompassHeading(deg) {
+      if (deg === null) {
+        // Hand the dial back to the real state rather than forcing it "off".
+        compassRunning = !!compassDev && compassOn;
+        compassHeadingDeg = 0;
+      } else {
+        compassRunning = true;
+        compassHeadingDeg = ((deg % 360) + 360) % 360;
+      }
+      applyRoseHeading();
+      return compassHeadingDeg;
+    },
     // live module helpers, callable from the MCP / console for ad-hoc checks
     horizonView, horizonWindow, compassRose, horizonProjection, flareBrightnessAt,
     equatorialToAltAz, sunEquatorial, planetEquatorial, moonEquatorial,
@@ -1824,6 +2079,7 @@ function init() {
   // zone (back to browser-local) until it's picked or resolved; changing the date/time
   // refreshes the abbreviation in case it crosses a DST boundary.
   els.tzbtn.addEventListener("click", toggleTimeZone);
+  if (els.originLocate) els.originLocate.addEventListener("click", locateOrigin);
   els.origin.addEventListener("input", () => { formTz = ""; updateTzButton(); });
   els.date.addEventListener("change", updateTzButton);
   els.time.addEventListener("change", updateTzButton);

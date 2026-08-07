@@ -52,10 +52,23 @@
     <form id="form" autocomplete="off" novalidate>
       <div class="field combo">
         <label for="origin">Origin <span class="opt">(blank for current location)</span></label>
-        <input id="origin" name="origin" type="text" inputmode="text"
-               placeholder="Airport code, name, or place — e.g. LAX, Heathrow, Paris"
-               aria-autocomplete="list" aria-expanded="false" autocapitalize="off"
-               spellcheck="false">
+        <div class="input-row">
+          <button type="button" id="origin-locate" class="locate-btn"
+                  aria-label="Use my current location" title="Use my current location">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="12" r="6.2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+              <circle cx="12" cy="12" r="2.4" fill="currentColor"/>
+              <g stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <line x1="12" y1="1.9" x2="12" y2="4.4"/><line x1="12" y1="19.6" x2="12" y2="22.1"/>
+                <line x1="1.9" y1="12" x2="4.4" y2="12"/><line x1="19.6" y1="12" x2="22.1" y2="12"/>
+              </g>
+            </svg>
+          </button>
+          <input id="origin" name="origin" type="text" inputmode="text"
+                 placeholder="Airport code, name, or place — e.g. LAX, Heathrow, Paris"
+                 aria-autocomplete="list" aria-expanded="false" autocapitalize="off"
+                 spellcheck="false">
+        </div>
         <div class="suggestions" id="origin-suggestions" role="listbox" hidden></div>
       </div>
 

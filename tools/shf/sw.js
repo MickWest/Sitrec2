@@ -20,6 +20,12 @@ const CACHE = "starlink-flares-" + VERSION;
 // TLE proxy at /sitrecServer/proxy.php) must bypass the cache. Derived from self.location so it
 // matches whatever case the tool was opened with (e.g. /tools/SHF/ on a case-insensitive FS).
 const SCOPE = new URL("./", self.location).pathname;
+// Shared tool libraries live one level up, OUTSIDE this SW's scope — currently
+// DeviceOrientationCompass.js, which the results compass imports on first use. The
+// worker still SEES those requests (scope limits which pages it controls, not which
+// fetches it observes), so cache them alongside the tool's own assets; without this
+// the rose's live compass would be the one thing that stopped working offline.
+const SHARED = new URL("../src/", self.location).pathname;
 
 self.addEventListener("install", () => {
   self.skipWaiting();                       // activate the new worker as soon as it's parsed
@@ -63,7 +69,7 @@ self.addEventListener("fetch", (event) => {
   // static). Other same-origin requests — above all the Sitrec TLE proxy
   // (/sitrecServer/proxy.php?request=CURRENT_STARLINK) — pass straight to the network so a
   // {cache:"no-store"} fetch reaches the server instead of being served stale from Cache Storage.
-  if (!url.pathname.startsWith(SCOPE)) return;
+  if (!url.pathname.startsWith(SCOPE) && !url.pathname.startsWith(SHARED)) return;
 
   // Same-origin tool assets: cache-first (versioned URLs make this safe and fast).
   event.respondWith((async () => {
