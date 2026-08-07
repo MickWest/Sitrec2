@@ -597,12 +597,12 @@ button.sim-note.synth-load.load-err {
    because paintRose() replaces that element's innerHTML wholesale. */
 .rose-box { position: relative; }
 .rose-wrap { display: flex; justify-content: center; margin: 0; }
-/* Baseline size for the rose (info-screen demo + live scanning preview). On the
-   RESULTS screen, fitResultsCompass() overrides the width inline so the whole stack
-   (down to the data-source note) fits the viewport — growing into spare room or
-   shrinking when it would overflow. The viewBox is square (padded all round so the
-   satellites can sit at any azimuth once the dial rotates), so height:auto makes the
-   element square too. */
+/* Baseline size for the rose (info-screen demo only). On the RESULTS screen — both
+   while scanning and once final — paintRose() overrides the width inline with the
+   session's frozen size, so the whole stack (down to the data-source note) fits the
+   viewport and nothing resizes between the two phases. The viewBox is square (padded
+   all round so the satellites can sit at any azimuth once the dial rotates), so
+   height:auto makes the element square too. */
 .compass-rose { width: min(340px, 80vw); height: auto; }
 
 /* Live-compass toggle (top-right of the compass): rotates the dial so N points at
