@@ -202,6 +202,19 @@ To get the newest release:
 
 `pull` updates the **Sitrec image**. To update the management script itself (and your local `shared.env.example`), run `./sitrec.sh update` (`.\sitrec.cmd update`).
 
+**Checking for new settings after an update.** Your settings live in `.env`, which
+updating never touches, so a new release can add options you never hear about. The
+reference file `shared.env.example` carries a `SHARED_ENV_VERSION` stamp near the top
+— a date that changes whenever the available settings change:
+
+```bash
+grep SHARED_ENV_VERSION shared.env.example
+```
+
+If that date moved since you last looked, skim the file for settings worth adding to
+your `.env`. (Docker installs are not blocked by this — the build-time check applies
+only to source installs that keep their own `config/shared.env`.)
+
 Or manually:
 ```bash
 docker compose pull && docker compose down && docker compose up      # Docker
@@ -891,16 +904,103 @@ Edit the files in `config/`:
 - **`config.php`** — Server-side auth integration (XenForo, etc.). See `config.php.example`.
 - **`config-install.js`** — Build output paths.
 
-#### Keeping shared.env up to date
+### Keeping shared.env up to date
 
-`shared.env.example` carries a date-based `SHARED_ENV_VERSION` stamp that is bumped
-automatically whenever the example changes. The build compares it against the
-`SHARED_ENV_VERSION` in your `shared.env`; if yours is older, the build stops and
-prints what changed in the example since your version (from git history when
-available) plus step-by-step update instructions. After merging any new settings
-into your `shared.env`, set its `SHARED_ENV_VERSION` to match the example's and
-rebuild. Fresh installs that copy `shared.env.example` to `shared.env` inherit the
-current stamp and are unaffected.
+Your `config/shared.env` is yours — it holds your API keys and your settings, and
+updating Sitrec never touches it. That creates a problem: when a new Sitrec version
+adds a setting to `config/shared.env.example`, nothing in your copy tells you. You
+would only find out when a feature quietly failed to work.
+
+So `shared.env.example` carries a version stamp near the top:
+
+```bash
+SHARED_ENV_VERSION=2026-08-06
+```
+
+It is a date (with a `.1`, `.2` suffix if it changes more than once in a day), and it
+is updated automatically whenever the example file's settings change. Your
+`shared.env` carries the same line, recording which version of the example you are
+in sync with. **The build compares the two and refuses to build if yours is older.**
+
+#### What you will see
+
+Every build command that reads your config — `npm run build`, `npm run deploy`,
+`npm run copy`, `npm run build-standalone`, `npm run build-serverless` — stops
+immediately with a report like this:
+
+```
+============================================================================
+ BUILD STOPPED: your config/shared.env is out of date
+============================================================================
+
+ config/shared.env.example has changed since your config/shared.env was last brought
+ up to date. New or changed settings may affect this install.
+
+     your    config/shared.env          SHARED_ENV_VERSION=2026-05-01
+     current config/shared.env.example  SHARED_ENV_VERSION=2026-08-06
+
+ Commits touching config/shared.env.example since your version:
+   0fd2bfb0 2026-08-02  Satellites: read OMM CSV, not TLE — the TLE format ran out of...
+   3475a5c8 2026-06-23  Added SITREC_TRACK_STATS (false)
+   ...
+
+ diff --git a/config/shared.env.example b/config/shared.env.example
+ ...the actual changes, so you can see exactly which settings are new...
+
+ What to do:
+   ...
+```
+
+The commit list and diff come from your git history, so you see precisely which
+settings appeared and why. If you installed from a zip (no git history available),
+the report links to the file's history on GitHub instead.
+
+#### What you need to do
+
+1. **Read the diff in the report.** It shows every change to the example since your
+   version. Most additions are new optional settings with safe defaults that you can
+   ignore; what matters is anything affecting how *your* install works — storage,
+   authentication, map or elevation sources, or a setting whose default changed.
+
+2. **Copy anything relevant into your `config/shared.env`.** Add the new lines and
+   adjust the values for your deployment. Settings you have no opinion about can
+   usually be left out — most are optional, and the example file's comments say what
+   each one does and what happens when it is unset.
+
+3. **Update the version line in your `config/shared.env`** to match the example's,
+   exactly as the report gives it:
+
+   ```bash
+   SHARED_ENV_VERSION=2026-08-06
+   ```
+
+   If your `shared.env` has no such line (it predates version stamping), add one
+   anywhere in the file.
+
+4. **Build again.** This is the only step that clears the block, so do it after you
+   have merged what you need — the version line is your statement that you have
+   looked.
+
+To see the full picture at any time, compare the two files directly:
+
+```bash
+diff config/shared.env config/shared.env.example
+```
+
+Expect plenty of differences even when you are current: your file has your real keys
+and your own choices. Only the version line decides whether the build proceeds.
+
+#### Notes
+
+- **Fresh installs are never blocked.** Copying `shared.env.example` to `shared.env`
+  (as the setup step above does) brings the current stamp with it. The same applies
+  to the Docker image and CI, which build from the example.
+- **Older branches still build.** If your `shared.env` stamp is *newer* than the
+  example's — for instance after checking out an older release — the build proceeds.
+- **You can check without building:**
+  ```bash
+  node scripts/sharedEnvVersion.js --check
+  ```
 
 ### Download Videos
 
