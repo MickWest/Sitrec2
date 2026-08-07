@@ -31,6 +31,12 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
         UniformsLib.lights,
         {
             map: { value: null },
+            // PER-TILE, deliberately not in sharedUniforms: 0 marks a tile
+            // whose "water" cannot be the body being reflected — a mountain
+            // whose only blue pixels are streams and rivers, hundreds of metres
+            // above the lake. Set by CNodeWaterReflection each frame; 1 by
+            // default so any tile it never reaches behaves exactly as before.
+            tileWaterAllowed: { value: 1.0 },
             sunDirection: { value: new Vector3() },
             earthCenter: { value: new Vector3(0, 0, 0) },
             terrainShadingStrength: { value: terrainShadingStrength },
@@ -127,6 +133,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 
             uniform float waterMaxTileSize;
             uniform float cameraFocalLength;
+            uniform float tileWaterAllowed;
 
             uniform float waterMirror;
             uniform sampler2D waterMirrorMap;
@@ -259,6 +266,14 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                     // antialiased shorelines and PNG resampling.
                     float colorDist = distance(textureColor.rgb, waterColor);
                     float waterMask = 1.0 - smoothstep(waterTolerance * 0.5, waterTolerance, colorDist);
+
+                    // Tiles whose blue pixels cannot be the body being reflected
+                    // — mountainsides whose only water is streams and rivers,
+                    // hundreds of metres above the lake — are switched off whole
+                    // by the CPU, which can see the tile's elevation range and
+                    // how much of it is water. Reflecting a river using a plane
+                    // fitted to the sea is meaningless.
+                    waterMask *= tileWaterAllowed;
 
 
                     // Stop trusting the colour test once the tile under this

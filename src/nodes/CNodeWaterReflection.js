@@ -65,6 +65,17 @@ const WAVE_ORIGIN_REANCHOR_M = 50000;
 // covering their own LOD cracks.
 const SKIRT_HIDE_MARGIN_M = 50;
 
+// A tile whose LOWEST point is this far above the water cannot contain the body
+// being reflected. Its blue pixels are streams, rivers and reservoirs at some
+// other elevation, and reflecting those in a plane fitted to the lake is
+// meaningless — they light up as bright lines threading through the hills.
+const WATER_TILE_ALT_MARGIN_M = 20;
+
+// ...and a tile only a sliver of which is water is a watercourse, not a body of
+// it. A shoreline tile runs from a few percent to most of a tile; a river is far
+// below this even where it fills its whole tile lengthwise.
+const WATER_TILE_MIN_FRACTION = 0.02;
+
 export class CNodeWaterReflection extends CNode {
     constructor(v) {
         super(v);
@@ -683,10 +694,12 @@ export class CNodeWaterReflection extends CNode {
         if (this.mode === "mirror") {
             this.planarMirror ??= new CWaterPlanarMirror(this);
             const skyColor = sunNode ? sunNode.calculateSkyColor(view.camera.position) : view.background;
-            // Detect the plane first so the skirt test knows where the water
-            // is; the result is cached, so render() re-using it costs nothing.
-            // Before the capture, so the mirror pass is rid of them too.
-            this.hideSkirts(this.planarMirror.detectPlane(view));
+            // Detect the plane first so the tile tests know where the water is;
+            // the result is cached, so render() re-using it costs nothing.
+            // Both before the capture, so the mirror pass sees the same world.
+            const detected = this.planarMirror.detectPlane(view);
+            this.applyTileWaterGating(detected);
+            this.hideSkirts(detected);
             const texture = this.planarMirror.render(view, skyOpacity, skyColor);
             // No plane found (nothing flat in view, or the camera is under the
             // water): fall back to drawing no reflection at all rather than to
@@ -694,6 +707,7 @@ export class CNodeWaterReflection extends CNode {
             // not run on a false return, so undo the skirts here.
             if (texture === null) {
                 this.restoreSkirts();
+                this.restoreTileWaterGating();
                 return false;
             }
             sharedUniforms.waterMirror.value = 1.0;
@@ -775,6 +789,70 @@ export class CNodeWaterReflection extends CNode {
     // skirt has to go for the duration of this view's render. Scoped to
     // push()/pop() so it covers BOTH the mirror capture and the main draw, and
     // so mainView keeps its skirts.
+    // Can this tile's water be the body we are reflecting? Two ways to say no,
+    // both cheap and both decided per TILE rather than per fragment, because
+    // the evidence — the tile's elevation range and how much of its texture the
+    // OSM composite actually stamped — only exists at tile level.
+    //
+    //  (a) The tile's lowest point is above the water. Then whatever is blue on
+    //      it is a stream, a river or a reservoir somewhere else entirely.
+    //  (b) Barely any of it is water. A watercourse threading through a
+    //      mountainside is a sliver of a tile; a shore is a substantial part.
+    //
+    // Unknowns are treated as "allowed": a tile whose bounds are not measured
+    // yet, or whose texture came from an ancestor and so carries no match
+    // count, keeps working exactly as it did before.
+    tileWaterAllowed(tile, waterAlt) {
+        const bounds = tile.altitudeBounds;
+        if (bounds && bounds.measured && isFinite(bounds.min)
+            && bounds.min > waterAlt + WATER_TILE_ALT_MARGIN_M) {
+            return false;
+        }
+        const u = tile.mesh?.material?.uniforms?.map?.value?.userData;
+        if (u && u.osmTotal > 0 && u.osmMatched !== undefined
+            && u.osmMatched / u.osmTotal < WATER_TILE_MIN_FRACTION) {
+            return false;
+        }
+        return true;
+    }
+
+    // Switch off water on tiles that cannot hold the reflected body, and hide
+    // the skirts of the ones that can. One pass over the tiles, because both
+    // decisions want the same per-tile facts.
+    applyTileWaterGating(plane) {
+        this.gatedTiles = [];
+        this.gatedSkirts = new Set();
+        if (plane === null || plane === undefined) return;
+        const terrainNode = NodeMan.get("TerrainModel", false);
+        const cache = terrainNode?.maps?.[terrainNode.UI?.mapType]?.map?.tileCache;
+        if (!cache) return;
+        const waterAlt = plane.altitude;
+        for (const z in cache) {
+            for (const x in cache[z]) {
+                for (const y in cache[z][x]) {
+                    const tile = cache[z][x][y];
+                    const uniforms = tile.mesh?.material?.uniforms;
+                    if (!uniforms?.tileWaterAllowed) continue;
+                    if (this.tileWaterAllowed(tile, waterAlt)) continue;
+                    uniforms.tileWaterAllowed.value = 0.0;
+                    this.gatedTiles.push(uniforms.tileWaterAllowed);
+                    // A tile with no reflectable water has no reason to lose
+                    // its skirt either — that is what was opening seams in the
+                    // hills. A Set rather than a flag on the mesh, so there is
+                    // nothing left behind to clear.
+                    if (tile.skirtMesh) this.gatedSkirts.add(tile.skirtMesh);
+                }
+            }
+        }
+    }
+
+    restoreTileWaterGating() {
+        if (!this.gatedTiles) return;
+        for (const u of this.gatedTiles) u.value = 1.0;
+        this.gatedTiles = undefined;
+        this.gatedSkirts = undefined;
+    }
+
     hideSkirts(plane) {
         this.hiddenSkirts = [];
         if (!this.mirrorHideSkirts) return;
@@ -794,6 +872,9 @@ export class CNodeWaterReflection extends CNode {
 
         terrainGroup.traverse((o) => {
             if (!o.userData.isTerrainSkirt || !o.visible) return;
+            // Its tile has no reflectable water, so it has nothing to get out
+            // of the way of — keep it, and keep its LOD cracks covered.
+            if (this.gatedSkirts?.has(o)) return;
             if (waterAlt !== null) {
                 const tile = o.userData.tile;
                 const tileMesh = tile?.mesh;
@@ -819,6 +900,7 @@ export class CNodeWaterReflection extends CNode {
 
     pop() {
         this.restoreSkirts();
+        this.restoreTileWaterGating();
         this.clearUniforms();
     }
 }
