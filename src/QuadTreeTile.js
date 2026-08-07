@@ -2132,6 +2132,11 @@ export class QuadTreeTile {
         // Anything rendering the world from below the ground — the water planar
         // mirror — has to be able to find and hide them.
         this.skirtMesh.userData.isTerrainSkirt = true;
+        // Back-reference so a consumer can ask how high this skirt's TILE sits.
+        // The skirt's own bounds are useless for that: it hangs a tenth of the
+        // tile's width downwards, so a big mountain tile's skirt reaches far
+        // below sea level.
+        this.skirtMesh.userData.tile = this;
 //        console.log(`buildMesh: ${this.key()} - skirtMesh created with layers.mask=${this.skirtMesh.layers.mask.toString(2)} (${this.skirtMesh.layers.mask})`);
     }
 

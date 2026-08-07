@@ -52,12 +52,18 @@ import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame
 import {guiMenus, NodeMan, Sit, setRenderOne, Globals} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {CWaterPlanarMirror} from "../WaterPlanarMirror";
+import {altitudeHAE} from "../SphericalMath";
 import * as LAYER from "../LayerMasks";
 
 // Beyond this distance from the wave-phase origin, float32 world positions stop
 // resolving a wavelength. Re-origin only on a jump this large so the ripple
 // pattern never visibly swims while the camera moves normally.
 const WAVE_ORIGIN_REANCHOR_M = 50000;
+
+// Clearance a skirt's lower edge must keep above the water before it is left
+// alone. Skirts that stop short of this never intrude on the lake, so they keep
+// covering their own LOD cracks.
+const SKIRT_HIDE_MARGIN_M = 50;
 
 export class CNodeWaterReflection extends CNode {
     constructor(v) {
@@ -274,11 +280,13 @@ export class CNodeWaterReflection extends CNode {
                     + "cluster of equal ground altitudes — a lake is perfectly flat in the elevation data, so it "
                     + "stands out. Turn off to set the level by hand when the automatic pick lands on the wrong "
                     + "flat thing.");
-            this.mirrorGui.add(this, "mirrorHideSkirts").name("Hide Tile Skirts").listen().onChange(changed)
+            this.mirrorGui.add(this, "mirrorHideSkirts").name("Hide Waterline Skirts").listen().onChange(changed)
                 .tooltip("Hide the downward skirts terrain tiles carry to cover the cracks between detail "
-                    + "levels. A skirt is a tenth of its tile wide, so a distant tile hangs a wall over a "
-                    + "kilometre deep — invisible looking down, but at eye level over water they stand across "
-                    + "the view and block the surface being reflected. Turn off to see them.");
+                    + "levels, for tiles at or near the waterline. A skirt is a tenth of its tile wide, so a "
+                    + "distant tile hangs a wall over a kilometre deep — invisible looking down, but at eye "
+                    + "level over water they stand across the view and block the surface being reflected. "
+                    + "Terrain well above the water keeps its skirts, so hillsides keep their crack covers. "
+                    + "Turn off to see them.");
             addMirror("mirrorMaxTile", 0, 20000, 100, "Max Tile Size (m)")
                 .tooltip("Fade the reflection out where the terrain tile is wider than this. Water is found by "
                     + "the colour of the map texture, and distant water is drawn by huge low-detail tiles that "
@@ -675,8 +683,10 @@ export class CNodeWaterReflection extends CNode {
         if (this.mode === "mirror") {
             this.planarMirror ??= new CWaterPlanarMirror(this);
             const skyColor = sunNode ? sunNode.calculateSkyColor(view.camera.position) : view.background;
+            // Detect the plane first so the skirt test knows where the water
+            // is; the result is cached, so render() re-using it costs nothing.
             // Before the capture, so the mirror pass is rid of them too.
-            this.hideSkirts();
+            this.hideSkirts(this.planarMirror.detectPlane(view));
             const texture = this.planarMirror.render(view, skyOpacity, skyColor);
             // No plane found (nothing flat in view, or the camera is under the
             // water): fall back to drawing no reflection at all rather than to
@@ -765,16 +775,39 @@ export class CNodeWaterReflection extends CNode {
     // skirt has to go for the duration of this view's render. Scoped to
     // push()/pop() so it covers BOTH the mirror capture and the main draw, and
     // so mainView keeps its skirts.
-    hideSkirts() {
+    hideSkirts(plane) {
         this.hiddenSkirts = [];
         if (!this.mirrorHideSkirts) return;
         const terrainGroup = NodeMan.get("TerrainModel", false)?.getGroup?.();
         if (!terrainGroup) return;
+
+        // Hide only the skirts that can actually reach the water. A skirt is
+        // extruded a TENTH of its tile's width downwards, so what matters is
+        // not how high the tile sits but how far its skirt hangs: a 16 km tile
+        // on a 500 m ridge trails a 1.6 km wall that ends up a kilometre under
+        // the sea, and shows up wherever the sightline passes over water that
+        // has curved away. A small tile high on a hillside never reaches the
+        // water at all, so it keeps covering its own LOD cracks — otherwise the
+        // whole terrain loses its crack covers for the sake of the lake, and
+        // seams open along ridgelines while the camera is subdividing.
+        const waterAlt = plane ? plane.altitude + SKIRT_HIDE_MARGIN_M : null;
+
         terrainGroup.traverse((o) => {
-            if (o.userData.isTerrainSkirt && o.visible) {
-                o.visible = false;
-                this.hiddenSkirts.push(o);
+            if (!o.userData.isTerrainSkirt || !o.visible) return;
+            if (waterAlt !== null) {
+                const tile = o.userData.tile;
+                const tileMesh = tile?.mesh;
+                const sphere = tileMesh?.geometry?.boundingSphere;
+                if (sphere && tile.size !== undefined) {
+                    const c = this._skirtScratch ??= new Vector3();
+                    c.copy(sphere.center).applyMatrix4(tileMesh.matrixWorld);
+                    // buildSkirtGeometry() uses size * 0.1 for the drop.
+                    const skirtBottom = altitudeHAE(c) - tile.size * 0.1;
+                    if (skirtBottom > waterAlt) return;   // never gets near the water
+                }
             }
+            o.visible = false;
+            this.hiddenSkirts.push(o);
         });
     }
 
