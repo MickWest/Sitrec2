@@ -125,6 +125,9 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             uniform float waterUpSquash;
             uniform vec4 waterOrthoDir;
 
+            uniform float waterMaxTileSize;
+            uniform float cameraFocalLength;
+
             uniform float waterMirror;
             uniform sampler2D waterMirrorMap;
             uniform mat4 waterMirrorMatrix;
@@ -256,6 +259,30 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                     // antialiased shorelines and PNG resampling.
                     float colorDist = distance(textureColor.rgb, waterColor);
                     float waterMask = 1.0 - smoothstep(waterTolerance * 0.5, waterTolerance, colorDist);
+
+
+                    // Stop trusting the colour test once the tile under this
+                    // fragment gets too coarse. Distant water is drawn by
+                    // enormous low-zoom tiles that still carry only a 512px
+                    // texture, so one texel spans kilometres and the flat water
+                    // fill is averaged together with the coastline — the test
+                    // then passes in patches and the reflection breaks into
+                    // blotches. Fading the MASK (not just the reflection) means
+                    // distant water simply reverts to plain map colour.
+                    //
+                    // vUv runs 0..1 across the tile, so
+                    //   tile width in metres = (metres per pixel) / (uv per pixel)
+                    // and metres per pixel comes from the focal length. NOT from
+                    // fwidth(vWorldPosition): at ECEF magnitudes float32 quantises
+                    // world position to ~0.4 m, so its derivative is pure noise.
+                    if (waterMaxTileSize > 0.0 && waterMask > 0.0) {
+                        float uvPerPixel = length(fwidth(vUv));
+                        float metresPerPixel = length(vWorldPosition - cameraPosition)
+                                             / max(cameraFocalLength, 1.0);
+                        float tileMetres = metresPerPixel / max(uvPerPixel, 1e-9);
+                        waterMask *= 1.0 - smoothstep(waterMaxTileSize * 0.5,
+                                                      waterMaxTileSize, tileMetres);
+                    }
 
                     if (waterMask > 0.0) {
                         // Pull the flat map fill down towards what water really

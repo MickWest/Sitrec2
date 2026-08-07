@@ -64,5 +64,13 @@ export const sharedUniforms = {
     // How far along the reflected ray the reflected scenery is ASSUMED to be.
     // Only affects how far ripples displace the image; see the shader.
     waterMirrorDistance: {value: 1500.0},
+    // Width in metres of the largest terrain tile whose map texture is still
+    // trusted to say "this is water". Distant water is drawn by very coarse
+    // tiles — bounding radii run from 11 km to 7800 km at Santa Monica — whose
+    // single 512px texture smears the flat OSM water fill together with the
+    // coastline, so the colour test only passes in patches and the reflection
+    // breaks into blotches. Beyond this the water mask fades out and the
+    // reflection stops rather than degrading. 0 disables the fade.
+    waterMaxTileSize: {value: 0.0},
     // ... other shared uniforms
 };

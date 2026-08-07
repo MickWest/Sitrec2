@@ -2127,6 +2127,11 @@ export class QuadTreeTile {
         // V5 shadows: skirts always opt out.
         this.skirtMesh.castShadow = false;
         this.skirtMesh.receiveShadow = false;
+        // Skirts exist only to hide LOD cracks when seen from ABOVE, and their
+        // UVs are constant along the extruded axis so their texture is a smear.
+        // Anything rendering the world from below the ground — the water planar
+        // mirror — has to be able to find and hide them.
+        this.skirtMesh.userData.isTerrainSkirt = true;
 //        console.log(`buildMesh: ${this.key()} - skirtMesh created with layers.mask=${this.skirtMesh.layers.mask.toString(2)} (${this.skirtMesh.layers.mask})`);
     }
 

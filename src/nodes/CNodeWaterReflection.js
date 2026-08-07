@@ -112,6 +112,10 @@ export class CNodeWaterReflection extends CNode {
         this.mirrorDistance = v.mirrorDistance ?? 1500;
         this.mirrorAutoLevel = v.mirrorAutoLevel ?? true;
         this.mirrorLevel = v.mirrorLevel ?? 0;
+        // Widest terrain tile (metres) whose map texture is still trusted to
+        // identify water. See the shader; 0 disables the fade.
+        this.mirrorMaxTile = v.mirrorMaxTile ?? 4000;
+        this.mirrorHideSkirts = v.mirrorHideSkirts ?? true;
 
         this.addSimpleSerials([
             "enabled",
@@ -122,6 +126,8 @@ export class CNodeWaterReflection extends CNode {
             "mirrorDistance",
             "mirrorAutoLevel",
             "mirrorLevel",
+            "mirrorMaxTile",
+            "mirrorHideSkirts",
             "strength",
             "darken",
             "dayColor",
@@ -268,6 +274,17 @@ export class CNodeWaterReflection extends CNode {
                     + "cluster of equal ground altitudes — a lake is perfectly flat in the elevation data, so it "
                     + "stands out. Turn off to set the level by hand when the automatic pick lands on the wrong "
                     + "flat thing.");
+            this.mirrorGui.add(this, "mirrorHideSkirts").name("Hide Tile Skirts").listen().onChange(changed)
+                .tooltip("Hide the downward skirts terrain tiles carry to cover the cracks between detail "
+                    + "levels. A skirt is a tenth of its tile wide, so a distant tile hangs a wall over a "
+                    + "kilometre deep — invisible looking down, but at eye level over water they stand across "
+                    + "the view and block the surface being reflected. Turn off to see them.");
+            addMirror("mirrorMaxTile", 0, 20000, 100, "Max Tile Size (m)")
+                .tooltip("Fade the reflection out where the terrain tile is wider than this. Water is found by "
+                    + "the colour of the map texture, and distant water is drawn by huge low-detail tiles that "
+                    + "still carry only a 512-pixel texture — one texel covers kilometres, the flat water fill "
+                    + "gets averaged with the coastline, and the reflection breaks into blotches. This makes it "
+                    + "stop cleanly instead. 0 turns the fade off, to see what it was hiding.");
             addMirror("mirrorLevel", 0, 9000, 0.1, "Water Level (m HAE)")
                 .tooltip("Manual water surface height, in metres above the WGS84 ellipsoid — NOT sea level. "
                     + "Ignored while Auto Water Level is on, which reports the height it found here.");
@@ -627,6 +644,7 @@ export class CNodeWaterReflection extends CNode {
         sharedUniforms.waterOcclusionCube.value = null;
         sharedUniforms.waterMirror.value = 0.0;
         sharedUniforms.waterMirrorMap.value = null;
+        sharedUniforms.waterMaxTileSize.value = 0.0;
     }
 
     // Called immediately before the look view renders GlobalScene. Returns
@@ -657,16 +675,23 @@ export class CNodeWaterReflection extends CNode {
         if (this.mode === "mirror") {
             this.planarMirror ??= new CWaterPlanarMirror(this);
             const skyColor = sunNode ? sunNode.calculateSkyColor(view.camera.position) : view.background;
+            // Before the capture, so the mirror pass is rid of them too.
+            this.hideSkirts();
             const texture = this.planarMirror.render(view, skyOpacity, skyColor);
             // No plane found (nothing flat in view, or the camera is under the
             // water): fall back to drawing no reflection at all rather than to
-            // the cube, so it is obvious the mirror is not working.
-            if (texture === null) return false;
+            // the cube, so it is obvious the mirror is not working. pop() will
+            // not run on a false return, so undo the skirts here.
+            if (texture === null) {
+                this.restoreSkirts();
+                return false;
+            }
             sharedUniforms.waterMirror.value = 1.0;
             sharedUniforms.waterMirrorMap.value = texture;
             sharedUniforms.waterMirrorMatrix.value.copy(this.planarMirror.textureMatrix);
             sharedUniforms.waterMirrorOrigin.value.copy(this.planarMirror.origin);
             sharedUniforms.waterMirrorDistance.value = this.mirrorDistance;
+            sharedUniforms.waterMaxTileSize.value = this.mirrorMaxTile;
             sharedUniforms.waterOcclusion.value = 0.0;
             // Report what the detector found, so the manual box is pre-filled
             // with something sensible the moment auto is switched off.
@@ -675,6 +700,9 @@ export class CNodeWaterReflection extends CNode {
             }
         } else {
             sharedUniforms.waterMirror.value = 0.0;
+            // Cube mode reflects a smooth sky, which hides the blotchy mask
+            // entirely — so leave its long-standing behaviour alone.
+            sharedUniforms.waterMaxTileSize.value = 0.0;
             if (!this.captureSky(view, skyFactor)) return false;
             sharedUniforms.waterSkyCube.value = this.getCubeTarget(view.renderer).target.texture;
 
@@ -722,7 +750,42 @@ export class CNodeWaterReflection extends CNode {
         return true;
     }
 
+    // Terrain tiles carry a "skirt": geometry extruded straight down from every
+    // tile edge by a TENTH of the tile's width, there to cover the cracks
+    // between detail levels. Looking down at terrain you never see one. Standing
+    // at eye level over water you see little else: a distant tile is kilometres
+    // across, so its skirt is a wall hundreds of metres deep, and at grazing
+    // incidence that wall stands across the view and hides the water surface
+    // behind it. They also share the tile's material, so the water shader runs
+    // on them and paints the reflection onto a vertical wall of 1-D smeared
+    // texture — a band of vertical streaks across the lake.
+    //
+    // Nothing in the shader can fix that, because whatever is painted there is
+    // occupying screen space where the water surface should be visible. The
+    // skirt has to go for the duration of this view's render. Scoped to
+    // push()/pop() so it covers BOTH the mirror capture and the main draw, and
+    // so mainView keeps its skirts.
+    hideSkirts() {
+        this.hiddenSkirts = [];
+        if (!this.mirrorHideSkirts) return;
+        const terrainGroup = NodeMan.get("TerrainModel", false)?.getGroup?.();
+        if (!terrainGroup) return;
+        terrainGroup.traverse((o) => {
+            if (o.userData.isTerrainSkirt && o.visible) {
+                o.visible = false;
+                this.hiddenSkirts.push(o);
+            }
+        });
+    }
+
+    restoreSkirts() {
+        if (!this.hiddenSkirts) return;
+        for (const o of this.hiddenSkirts) o.visible = true;
+        this.hiddenSkirts = undefined;
+    }
+
     pop() {
+        this.restoreSkirts();
         this.clearUniforms();
     }
 }
