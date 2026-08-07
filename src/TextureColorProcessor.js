@@ -160,6 +160,7 @@ export function compositeWaterFromOSM(texture, osmImage, options = {}) {
     const dest = destData.data;
     const src = osmData.data;
 
+    let matched = 0;
     for (let i = 0; i < dest.length; i += 4) {
         const dr = src[i] - wr;
         const dg = src[i + 1] - wg;
@@ -168,12 +169,24 @@ export function compositeWaterFromOSM(texture, osmImage, options = {}) {
             dest[i] = wr;
             dest[i + 1] = wg;
             dest[i + 2] = wb;
+            matched++;
         }
     }
 
     ctx.putImageData(destData, 0, 0);
 
     const combined = new CanvasTexture(canvas);
+    // How much water this composite actually stamped. Worth recording because
+    // the result alone cannot tell you: a composite that matched NOTHING still
+    // returns a CanvasTexture, identical in every observable way to one that
+    // stamped a whole lake. That fact cost an afternoon of chasing a missing
+    // reflection — "the texture is canvas-backed" proves the composite ran, not
+    // that it found anything. It is also the number a caller needs if it ever
+    // wants to stop caching an empty result as though the combine had worked.
+    combined.userData.osmMatched = matched;
+    combined.userData.osmTotal = width * height;
+    combined.userData.osmSrcRect = srcRect ? [srcRect.x|0, srcRect.y|0, srcRect.w|0, srcRect.h|0] : null;
+    combined.userData.osmImageSize = [osmImage.width, osmImage.height];
     combined.needsUpdate = true;
     combined.colorSpace = texture.colorSpace;
     combined.minFilter = texture.minFilter;
