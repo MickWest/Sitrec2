@@ -20,6 +20,12 @@ if (result.error) {
     throw result.error;
 }
 
+// Stop the build when config/shared.env predates config/shared.env.example
+// (compares SHARED_ENV_VERSION stamps; prints what changed and how to update).
+// Covers every bundling build, which all require this file; webpack.copy-files.js
+// does not, so it carries its own copy of this call.
+require('./scripts/sharedEnvVersion').checkOrExit();
+
 // Rewrite inter-document links from .md to .html for the generated doc pages.
 // Handles a trailing anchor: [x](Foo.md#bar) -> [x](Foo.html#bar). The previous pattern
 // required a literal ".md)" and so silently left every anchored link pointing at the raw

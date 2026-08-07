@@ -891,6 +891,17 @@ Edit the files in `config/`:
 - **`config.php`** — Server-side auth integration (XenForo, etc.). See `config.php.example`.
 - **`config-install.js`** — Build output paths.
 
+#### Keeping shared.env up to date
+
+`shared.env.example` carries a date-based `SHARED_ENV_VERSION` stamp that is bumped
+automatically whenever the example changes. The build compares it against the
+`SHARED_ENV_VERSION` in your `shared.env`; if yours is older, the build stops and
+prints what changed in the example since your version (from git history when
+available) plus step-by-step update instructions. After merging any new settings
+into your `shared.env`, set its `SHARED_ENV_VERSION` to match the example's and
+rebuild. Fresh installs that copy `shared.env.example` to `shared.env` inherit the
+current stamp and are unaffected.
+
 ### Download Videos
 
 Public videos (government-produced, unrestricted) are available at:
