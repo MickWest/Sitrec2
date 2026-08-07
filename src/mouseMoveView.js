@@ -143,8 +143,25 @@ export function onDocumentMouseDown(event) {
   //              console.log("onDocumentMouseDown has mouseInViewOnly true for" + view.id)
                 if (view.onMouseDown !== undefined) {
                   //  console.log("Calling onMouseDown for" + view.id)
-                    view.onMouseDown(event, mouseX, mouseY)
-                    mouseDragView = view;
+                    // Every view under the cursor gets onMouseDown and the LAST one wins
+                    // mouseDragView, because mouseInViewOnly only rejects a view when a
+                    // HIGHER-z view with an onMouseDown covers the point — overlays sharing
+                    // a z-index (all the video overlays sit at z=3) never exclude each other.
+                    //
+                    // So a handler that DECLINES the click by returning false was still
+                    // being handed the drag, stealing it from the view that actually took
+                    // it. That is how dragging a manual-tracking keyframe broke: the
+                    // trackingOverlay started the drag (and jumped to the keyframe's frame,
+                    // which is why it looked like a seek), then annotateOverlay — not in
+                    // editing mode, returning false — overwrote mouseDragView, so the
+                    // mousemove never reached the overlay and the point never moved.
+                    //
+                    // Treat an explicit false as "not mine". Anything else (true, or the
+                    // undefined that most handlers return) keeps the previous behaviour,
+                    // so this only changes views that already opted out on purpose.
+                    if (view.onMouseDown(event, mouseX, mouseY) !== false) {
+                        mouseDragView = view;
+                    }
                 } else {
                    // console.log("No callback onMouseDown for" + view.id)
                 }
