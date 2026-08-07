@@ -110,6 +110,31 @@ export function applyRefractionMaster() {
     Sit.terrestrialRefraction = terrestrial;
 }
 
+// The sky half's settings as an options block for the CPU refraction helpers
+// (applyRefractionFromObserver / applyRefractionToDirection), so a CPU path bends
+// by exactly what the sky was drawn with. Reads Sit.refractionEnabled, which
+// applyRefractionMaster() derives from the master and the Sky checkbox.
+//
+// Deliberately carries no observerHeight: those helpers derive it from the
+// observer ECEF they are given, which is what makes a camera in orbit get almost
+// no bend and one on the ground get the full amount.
+//
+// (CSatellite predates this and still builds an identical block inline.)
+export function currentRefractionOpts() {
+    return {
+        enabled: Sit.refractionEnabled !== undefined
+            ? !!Sit.refractionEnabled
+            : REFRACTION_DEFAULTS.enabled,
+        pressureHPa: Sit.refractionPressure ?? REFRACTION_DEFAULTS.pressureHPa,
+        tempC: Sit.refractionTemp ?? REFRACTION_DEFAULTS.tempC,
+        // Refraction bends about the local vertical, which depends on the active
+        // earth model (Sit.useEllipsoid): the radial on a sphere, the geodetic
+        // normal on an ellipsoid. These track it.
+        equatorRadius: Globals.equatorRadius,
+        polarRadius: Globals.polarRadius,
+    };
+}
+
 // Grey out whichever of the two ways to set k is not in force, so the folder can
 // never offer an editable gradient AND an editable k at once.
 export function updateRefractionGUIState() {

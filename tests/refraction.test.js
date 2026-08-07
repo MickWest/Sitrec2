@@ -3,6 +3,7 @@ import {
     refractionDeltaDeg,
     applyRefractionECI,
     applyRefractionFromObserver,
+    applyRefractionToDirection,
     ellipsoidRadiusUnder,
     rayMinHeight,
     zenithECEFFromLatLon,
@@ -381,6 +382,84 @@ describe('applyRefractionFromObserver (satellites)', () => {
         expect(obsCopy.x).toBe(obs.x);
         // Target populated.
         expect(target.length()).toBeGreaterThan(0);
+    });
+});
+
+// The camera's Celestial Lock aims down a DIRECTION, not at a finite position.
+// It must land on the body where the renderer DRAWS it, i.e. bent by exactly the
+// same amount the finite-position path bends a satellite in that direction.
+describe('applyRefractionToDirection (Celestial Lock)', () => {
+    // Observer on the +X axis at sea level; local zenith is +X.
+    const obs = new Vector3(6371000, 0, 0);
+    // Due "north" along +Z from this observer, on the horizon.
+    const horizonDir = new Vector3(0, 0, 1);
+    const zenithDir = new Vector3(1, 0, 0);
+
+    test('disabled → direction unchanged', () => {
+        const out = applyRefractionToDirection(horizonDir, obs, {enabled: false});
+        expect(out.x).toBeCloseTo(0, 12);
+        expect(out.z).toBeCloseTo(1, 12);
+    });
+
+    test('a direction at the zenith is not bent', () => {
+        const out = applyRefractionToDirection(zenithDir, obs, {enabled: true});
+        expect(out.angleTo(zenithDir) * 180 / Math.PI).toBeLessThan(1e-9);
+    });
+
+    test('a horizon direction lifts toward the zenith by the Saemundsson amount', () => {
+        const out = applyRefractionToDirection(horizonDir, obs, {enabled: true});
+        const liftDeg = out.angleTo(horizonDir) * 180 / Math.PI;
+        // Same value refractionDeltaDeg gives at alt 0 for a sea-level observer.
+        expect(liftDeg).toBeCloseTo(refractionDeltaDeg(0, {enabled: true}), 6);
+        // Lifted TOWARD the zenith (+X), not away.
+        expect(out.x).toBeGreaterThan(0);
+    });
+
+    test('result stays a unit vector', () => {
+        const out = applyRefractionToDirection(new Vector3(0, 0, 5), obs, {enabled: true});
+        expect(out.length()).toBeCloseTo(1, 12);
+    });
+
+    test('agrees with the finite-position path used for satellites', () => {
+        // A satellite far along the same direction must end up on the bent ray.
+        for (const dir of [new Vector3(0, 0, 1), new Vector3(0.2, 0, 1).normalize(),
+                           new Vector3(0.6, 0.3, 1).normalize()]) {
+            const bentDir = applyRefractionToDirection(dir, obs, {enabled: true});
+            const far = dir.clone().multiplyScalar(2000000).add(obs);
+            const bentPos = applyRefractionFromObserver(far, obs, {enabled: true});
+            const fromObs = bentPos.clone().sub(obs).normalize();
+            // Both describe the same apparent direction.
+            expect(bentDir.angleTo(fromObs) * 180 / Math.PI).toBeLessThan(1e-6);
+        }
+    });
+
+    test('is range-independent (a body at infinity has no distance)', () => {
+        const a = applyRefractionToDirection(horizonDir, obs, {enabled: true});
+        // Bend a nearby point in the same direction and compare the direction only.
+        const near = horizonDir.clone().multiplyScalar(1000).add(obs);
+        const bentNear = applyRefractionFromObserver(near, obs, {enabled: true});
+        const b = bentNear.clone().sub(obs).normalize();
+        expect(a.angleTo(b) * 180 / Math.PI).toBeLessThan(1e-6);
+    });
+
+    test('an observer in orbit gets almost no bend, one on the ground gets the full amount', () => {
+        // Same horizon-ish direction, two very different observer heights. This is the
+        // altitude scaling that made the lock wrong in the first place.
+        const ground = applyRefractionToDirection(horizonDir, obs, {enabled: true});
+        const orbitObs = new Vector3(6371000 + 492800, 0, 0);
+        const orbit = applyRefractionToDirection(horizonDir, orbitObs, {enabled: true});
+        const groundLift = ground.angleTo(horizonDir) * 180 / Math.PI;
+        const orbitLift = orbit.angleTo(horizonDir) * 180 / Math.PI;
+        expect(groundLift).toBeGreaterThan(0.4);
+        expect(orbitLift).toBeLessThan(groundLift / 100);
+    });
+
+    test('writing into a supplied target aliased to the input is safe', () => {
+        const dir = new Vector3(0, 0, 1);
+        const out = applyRefractionToDirection(dir, obs, {enabled: true}, dir);
+        expect(out).toBe(dir);
+        expect(dir.length()).toBeCloseTo(1, 12);
+        expect(dir.x).toBeGreaterThan(0);      // actually bent, not left alone
     });
 });
 

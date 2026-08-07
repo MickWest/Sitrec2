@@ -12,6 +12,8 @@ import {
 import {CNode3D} from "./CNode3D";
 import {MV3} from "../threeUtils";
 import {getCelestialDirection, getCelestialDirectionFromRaDec} from "../CelestialMath";
+import {applyRefractionToDirection} from "../atmosphere/refraction";
+import {currentRefractionOpts} from "../atmosphere/refractionSettings";
 import {t} from "../i18n";
 import {raycastLocalGround} from "../raycastGround";
 
@@ -395,6 +397,19 @@ export class CNodeCamera extends CNode3D {
                 dir = getCelestialDirectionFromRaDec(raRad, decRad, GlobalDateTimeNode.dateNow);
             }
             if (dir) {
+                // getCelestialDirection returns the GEOMETRIC direction, but the sky is
+                // DRAWN refracted — every body is bent toward the observer's zenith before
+                // it is rendered. Locking on the geometric direction therefore aimed the
+                // camera just off the body it was locked to, by the full refraction amount
+                // (~0.48° at the horizon from the ground, and nothing at the zenith). Bend
+                // the lock direction the same way, through the same routine the satellites
+                // use, so the camera and the drawn body stay together.
+                //
+                // The bend depends on observer HEIGHT as well as apparent altitude, and
+                // applyRefractionToDirection derives that from the camera's own ECEF
+                // position — so a camera in orbit correctly gets almost no bend while one
+                // on the ground gets the full amount.
+                dir = applyRefractionToDirection(dir, this.camera.position, currentRefractionOpts());
                 // Compute az/el from the celestial direction without modifying the camera
                 const fakeTarget = this.camera.position.clone().add(dir.multiplyScalar(1000));
                 const toTarget = fakeTarget.clone().sub(this.camera.position).normalize();

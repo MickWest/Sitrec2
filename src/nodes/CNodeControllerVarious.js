@@ -9,6 +9,8 @@ import {CNodeController} from "./CNodeController";
 
 import {MISB} from "../MISBUtils";
 import {getCelestialDirection, getCelestialDirectionFromRaDec, getStarDirectionECEF} from "../CelestialMath";
+import {applyRefractionToDirection} from "../atmosphere/refraction";
+import {currentRefractionOpts} from "../atmosphere/refractionSettings";
 import {Quaternion, Vector2, Vector3} from "three";
 import {assert} from "../assert";
 import {getCursorPositionFromTopView} from "../mouseMoveView";
@@ -762,6 +764,14 @@ export class CNodeControllerCelestial extends CNodeController {
         if (!dir) {
             return;
         }
+        // lockDirection is the GEOMETRIC direction, but the sky is DRAWN refracted —
+        // every body is bent toward the observer's zenith before it is rendered. Aiming
+        // the camera down the geometric direction therefore missed the body it was
+        // locked to by the full refraction amount (~0.48° at the horizon from the
+        // ground, nothing at the zenith). Bend it the same way so the camera and the
+        // drawn body stay together; the bend scales with the camera's own height, which
+        // applyRefractionToDirection reads from the ECEF position it is given.
+        applyRefractionToDirection(dir, camera.position, currentRefractionOpts(), dir);
         const target = camera.position.clone().add(dir);
         camera.up = getLocalUpVector(camera.position);
         camera.lookAt(target);

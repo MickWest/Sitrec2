@@ -234,6 +234,25 @@ export function applyRefractionFromObserver(pos, observerECEF, opts = {}, target
     return out;
 }
 
+// Bend a DIRECTION — a unit vector toward something effectively at infinity: a
+// star, a planet, the Sun, the Moon — as seen from an observer. The finite-
+// position form above needs a real distance; a celestial body has none that
+// matters, because the bend is a function of apparent altitude and observer
+// height ONLY, not of range. Used by the camera's Celestial Lock, so the camera
+// points at where the body is DRAWN rather than where it geometrically is.
+const _dirFar = new Vector3();
+export function applyRefractionToDirection(dir, observerECEF, opts = {}, target = null) {
+    const out = target ?? new Vector3();
+    const enabled = opts.enabled ?? REFRACTION_DEFAULTS.enabled;
+    if (!enabled) return out.copy(dir).normalize();
+    // Any far sample along the ray gives the same bent direction. 1e9 m clears
+    // the 1 m minimum applyRefractionFromObserver ignores by a wide margin,
+    // while staying small enough that float64 keeps the subtraction exact.
+    _dirFar.copy(dir).normalize().multiplyScalar(1e9).add(observerECEF);
+    applyRefractionFromObserver(_dirFar, observerECEF, opts, _dirFar);
+    return out.copy(_dirFar).sub(observerECEF).normalize();
+}
+
 // Geodetic zenith (ellipsoid normal) at an ECEF position, at any altitude.
 // Bowring's closed-form inverse — good to well under a milliarcsecond, and
 // self-contained so this module keeps its "three only" dependency and its unit
