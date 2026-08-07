@@ -438,28 +438,9 @@ export class CNodeTerrainUI extends CNode {
         this.mapTypeMenu = this.gui.add(this, "mapType", this.mapTypesKV).listen().name(t("terrainUI.mapType.label"))
             .tooltip(t("terrainUI.mapType.tooltip"))
 
-        // Combine Terrain with OSM: fetch the matching OSM tile alongside each
-        // tile and stamp its flat water fill into the loaded imagery. Satellite
-        // photography has no flat colour for water, so this is what lets
-        // colour-keyed features (Water Reflection) find lakes on such a source.
-        this.combineWithOSM = v.combineWithOSM ?? false;
-        this.addSimpleSerial("combineWithOSM");
-        this.combineWithOSMMenu = this.gui.add(this, "combineWithOSM")
-            .listen()
-            .name("Combine Terrain with OSM")
-            .tooltip("Also load the matching Open Streetmap tile for each terrain tile and copy its water "
-                + "areas into the current imagery. Lets water-colour detection (Water Reflection) work on "
-                + "satellite sources. Costs one extra tile fetch per tile, and reloads the terrain when changed. "
-                + "Only available for sources that share OSM's tile layout.")
-            .onChange(() => {
-                // Same reload path as switching map source: every tile's
-                // texture has to be rebuilt, and cached materials are keyed
-                // separately for combined vs plain.
-                this.terrainNode.loadMapTexture(this.mapType);
-                this.requestSubdivisionPass();
-                setRenderOne(true);
-            })
-        this.updateCombineWithOSMAvailability();
+        // The "Combine Terrain with OSM" control lives in the Water Reflection
+        // folder (CNodeWaterReflection) — it exists to serve that effect. Only
+        // the compatibility test lives here, since this owns mapSources.
 
 //////////////////////////////////////////////////////////////////////////////////////////
         // same for elevation sources
@@ -600,7 +581,6 @@ export class CNodeTerrainUI extends CNode {
             this.layer = null; // reset the layer so setMapType can set it to default for new map type
             // do this async, as we might need to wait for the capabilities to be loaded
             this.setMapType(v).then(() => {
-                this.updateCombineWithOSMAvailability();
                 this.terrainNode.loadMapTexture(v)
                 // Force a subdivision/render pass after the async texture
                 // load resolves — same reason as the elevationType handler
@@ -1577,17 +1557,6 @@ export class CNodeTerrainUI extends CNode {
         const sourceDef = this.mapSources?.[this.mapType];
         if (!sourceDef || sourceDef === osmDef) return false;
         return sourceDef.mapping !== 4326 && osmDef.mapping !== 4326;
-    }
-
-    updateCombineWithOSMAvailability() {
-        if (!this.combineWithOSMMenu) return;
-        const available = this.canCombineWithOSM();
-        this.combineWithOSMMenu.enable(available);
-        // Turning it off when it becomes unavailable keeps the flag honest —
-        // otherwise it would read as on while doing nothing.
-        if (!available && this.combineWithOSM) {
-            this.combineWithOSM = false;
-        }
     }
 
     getSourceDef() {

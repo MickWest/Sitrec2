@@ -16,7 +16,7 @@ import {
     NearestFilter,
 } from "three";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
-import {Globals} from "./Globals";
+import {Globals, NodeMan} from "./Globals";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 import {loadTextureWithRetries} from "./js/map33/material/QuadTextureMaterial";
 import {globalMipmapGenerator} from "./MipmapGenerator";
@@ -151,10 +151,12 @@ export function logCacheStatsImpl() {
 // the deepest available OSM ancestor and use only the sub-rectangle of it that
 // this tile covers.
 export function osmWaterSourceForTile(tile) {
+    // The flag lives on the Water Reflection node, which is what the combine
+    // exists to feed. No night sky in this sitch means no node and no combine.
+    if (!NodeMan.get("waterReflection", false)?.combineWithOSM) return null;
+
     const terrainNode = tile.map.terrainNode;
     const ui = terrainNode.UI;
-    if (!ui?.combineWithOSM) return null;
-
     const sourceDef = terrainNode.getMapSourceDef();
     const osmDef = ui.mapSources?.osm;
     if (!osmDef || sourceDef === osmDef) return null;      // already OSM, nothing to combine
@@ -172,6 +174,37 @@ export function osmWaterSourceForTile(tile) {
     if (!url) return null;
 
     return {url, srcRect, waterColor: osmDef.waterColor};
+}
+
+// In-flight OSM water tiles, shared between terrain tiles. Past OSM's max zoom
+// several terrain tiles crop from the SAME OSM ancestor, and loadTextureWithRetries
+// has no dedup of its own — without this they each issue their own request to a
+// rate-limited public tile server. Repeat loads after one settles are left to the
+// browser's HTTP cache rather than held here.
+//
+// Deliberately NOT given a tile's abortSignal: the result is shared, so one tile
+// being pruned must not cancel the fetch out from under its siblings.
+const osmWaterImageLoads = new Map();
+
+function loadOSMWaterImage(url) {
+    const existing = osmWaterImageLoads.get(url);
+    if (existing) return existing;
+
+    const promise = loadTextureWithRetries(url, 1, 500, 0, 0, null)
+        .then((texture) => {
+            // Only ever read on the CPU into a canvas, never uploaded, so the
+            // texture wrapper can go immediately; the image stays alive as long
+            // as callers hold it.
+            const image = texture.image;
+            texture.dispose();
+            return image;
+        })
+        .finally(() => {
+            osmWaterImageLoads.delete(url);
+        });
+
+    osmWaterImageLoads.set(url, promise);
+    return promise;
 }
 
 export const materialMethods = {
@@ -230,18 +263,20 @@ export const materialMethods = {
         // starvation while Google 3D tiles stream, brief network blip) must not
         // permanently dead-branch the tile. Deterministic failures
         // (PlaceholderTile) skip the retry inside the loader.
-        const loadPromise = delayPromise.then(() =>
-            loadTextureWithRetries(url, 1, 500, 0, 0, abortSignal)
-        ).then((texture) => {
-            // Stamp OSM's water fill over this tile before anything else looks
-            // at its colours. Loading the OSM tile is a second network fetch
-            // per tile, so it only happens while the option is on. A failure
-            // here is not fatal: the tile keeps its own imagery and simply has
-            // no detectable water.
-            if (!osmWater) return texture;
-            return loadTextureWithRetries(osmWater.url, 1, 500, 0, 0, abortSignal)
-                .then((osmTexture) => {
-                    const osmImage = osmTexture.image;
+        const loadPromise = delayPromise.then(() => {
+            const mainLoad = loadTextureWithRetries(url, 1, 500, 0, 0, abortSignal);
+            if (!osmWater) return mainLoad;
+
+            // Both fetches start together. Chaining the OSM one after the tile's
+            // own texture doubled the time each tile spent waiting on the
+            // network, which showed up as tiles filling in seconds late after a
+            // camera sweep. A failed OSM fetch is not fatal — the tile keeps its
+            // own imagery and simply has no detectable water.
+            const osmLoad = loadOSMWaterImage(osmWater.url).catch(() => null);
+
+            return Promise.all([mainLoad, osmLoad]).then(([texture, osmImage]) => {
+                if (!osmImage) return texture;
+                try {
                     const rect = osmWater.srcRect ? {
                         x: osmWater.srcRect.fx * osmImage.width,
                         y: osmWater.srcRect.fy * osmImage.height,
@@ -252,11 +287,12 @@ export const materialMethods = {
                         waterColor: osmWater.waterColor,
                         srcRect: rect,
                     });
-                    osmTexture.dispose();
                     texture.dispose();
                     return combined;
-                })
-                .catch(() => texture);
+                } catch (e) {
+                    return texture;
+                }
+            });
         }).then((texture) => {
             let finalTexture = texture;
 

@@ -86,6 +86,12 @@ export class CNodeWaterReflection extends CNode {
         // occlusion mask) is a fair default — 512 is visibly chunkier.
         this.cubeResolution = v.cubeResolution ?? 1024;
         this.occlusion = v.occlusion ?? true;
+        // Paint OSM's water fill into whatever imagery is loaded, so water is
+        // detectable on sources that have no flat colour for it (satellite
+        // photography). Owned here rather than by the terrain UI because it
+        // exists to serve this effect; the terrain UI only decides whether the
+        // current source's tiles line up with OSM's.
+        this.combineWithOSM = v.combineWithOSM ?? false;
 
         this.addSimpleSerials([
             "enabled",
@@ -99,6 +105,7 @@ export class CNodeWaterReflection extends CNode {
             "waveSpeed",
             "cubeResolution",
             "occlusion",
+            "combineWithOSM",
         ]);
 
         // Per-renderer cube targets. Each CNodeView3D owns its own
@@ -112,9 +119,9 @@ export class CNodeWaterReflection extends CNode {
         this.waveOriginSet = false;
         this._captureKey = null;
 
-        // GUI — a submenu under Show. Guarded so the node still works in
+        // GUI — a submenu under Effects. Guarded so the node still works in
         // headless contexts where the menu bar does not exist.
-        this.gui = guiMenus.showhide ? guiMenus.showhide.addFolder("Water Reflection") : undefined;
+        this.gui = guiMenus.effects ? guiMenus.effects.addFolder("Water Reflection") : undefined;
         if (this.gui) {
             const changed = () => {
                 this._captureKey = null; // force a fresh capture
@@ -126,7 +133,26 @@ export class CNodeWaterReflection extends CNode {
 
             this.gui.add(this, "enabled").name("Water Reflection").listen().onChange(changed)
                 .tooltip("Reflect the night sky in water. Water is detected by the colour of the map texture, "
-                    + "so it needs a map source with a flat water fill (OSM). Look view only.");
+                    + "so it needs a map source with a flat water fill (OSM) — or Combine Terrain with OSM "
+                    + "below. Look view only.");
+            this.combineController = this.gui.add(this, "combineWithOSM")
+                .name("Combine Terrain with OSM").listen()
+                .tooltip("Also load the matching Open Streetmap tile for each terrain tile and copy its water "
+                    + "areas into the current imagery, so water can be detected on satellite sources. Costs one "
+                    + "extra tile fetch per tile and reloads the terrain when changed. Only available for "
+                    + "sources that share OSM's tile layout.")
+                .onChange(() => {
+                    // Same reload path as switching map source: every tile's
+                    // texture has to be rebuilt, and cached materials are keyed
+                    // separately for combined vs plain.
+                    const terrainNode = NodeMan.get("TerrainModel", false);
+                    if (terrainNode) {
+                        terrainNode.loadMapTexture(terrainNode.UI.mapType);
+                        terrainNode.UI.requestSubdivisionPass();
+                    }
+                    this._captureKey = null;
+                    setRenderOne(true);
+                });
             addValue("strength", 0, 2, 0.01, "Reflection Strength")
                 .tooltip("Brightness of the reflected sky. 1.0 is the physical Fresnel amount.");
             addValue("darken", 0, 1, 0.01, "Water Darkening")
@@ -190,8 +216,28 @@ export class CNodeWaterReflection extends CNode {
     // Ripple animation. Pinned to the locked frame in fixed-frame/regression
     // mode so identical frames render identically; free-running otherwise so
     // ripples keep moving even when the timeline is paused.
+    // The combine only works where the source's tiles line up with OSM's, and
+    // that can change under us — the terrain node may not even exist yet when
+    // this node is built, and the user can switch map source at any time. Cheap
+    // enough to re-check each frame rather than wiring up change notifications.
+    updateCombineAvailability() {
+        if (!this.combineController) return;
+        const ui = NodeMan.get("TerrainModel", false)?.UI;
+        const available = ui ? ui.canCombineWithOSM() : false;
+        if (available !== this._combineAvailable) {
+            this._combineAvailable = available;
+            this.combineController.enable(available);
+        }
+        // Keep the flag honest: left on under an incompatible source it would
+        // read as enabled while doing nothing.
+        if (!available && this.combineWithOSM) {
+            this.combineWithOSM = false;
+        }
+    }
+
     update(frame) {
         super.update(frame);
+        this.updateCombineAvailability();
 
         const animating = this.enabled && this.waveSpeed > 0;
         // Only keep the render loop awake while there is actually something
@@ -216,7 +262,7 @@ export class CNodeWaterReflection extends CNode {
         const ui = NodeMan.get("TerrainModel", false)?.UI;
         const ownColor = ui?.getSourceDef?.()?.waterColor;
         if (ownColor) return ownColor;
-        if (ui?.combineWithOSM && ui.canCombineWithOSM()) {
+        if (this.combineWithOSM && ui?.canCombineWithOSM()) {
             return ui.mapSources?.osm?.waterColor;
         }
         return undefined;
