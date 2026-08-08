@@ -30,6 +30,7 @@ import {CNodePositionXYZ} from "../nodes/CNodePositionLLA";
 import {GlobalScene} from "../LocalFrame";
 import * as LAYER from "../LayerMasks";
 import {isViewDragging} from "../DragResizeUtils";
+import {fitViewSyncActive, fitViewSyncPan, fitViewSyncWheel} from "../FitViewSync";
 
 // Eye height above the ground for WASD walking — 5 feet, the height the user
 // asked the camera to hold above the 3D tile surface directly below.
@@ -252,6 +253,14 @@ class CameraMapControls {
 		if (this.enabled === false || this.enableZoom === false || this.state !== STATE.NONE) return;
 
 		event.preventDefault();
+
+		// Ahead of the PTZ path: while a camera fit is being edited the wheel zooms the VIDEO, and
+		// the look view follows because it is already synced to it. Zooming the camera instead
+		// would change the very thing the fit is solving for.
+		if (fitViewSyncActive(this.view)) {
+			fitViewSyncWheel(this.view, event);
+			return;
+		}
 
 		const ptzControls = getPTZController(this.view.cameraNode);
 		if (ptzControls !== undefined) {
@@ -949,6 +958,17 @@ class CameraMapControls {
 
 		if (this.mouseStart.equals(this.mouseEnd)) {
 			console.warn("mouse motion with no actual motion. Retina issues? ")
+			return;
+		}
+
+		// Left drag during a camera fit pans the VIDEO, and the look view follows. Keyed off the
+		// button rather than this.state, because updateStateFromEvent forces every button to
+		// STATE.PAN whenever a PTZ controller is driving the camera — which, during a fit, it
+		// always is. Middle and right keep their normal meaning, so the camera is still reachable.
+		if (this.button === 0 && fitViewSyncActive(this.view)) {
+			fitViewSyncPan(this.view, this.mouseEnd.x - this.mouseStart.x, this.mouseEnd.y - this.mouseStart.y);
+			// Consumed here, so the shared copy at the end of this handler is never reached.
+			this.mouseStart.copy(this.mouseEnd);
 			return;
 		}
 
