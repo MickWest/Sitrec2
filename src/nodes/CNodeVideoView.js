@@ -72,6 +72,7 @@ import {CNodeVideoHistogramView} from "./CNodeVideoHistogramView";
 import {CNodeVideoCurvesView} from "./CNodeVideoCurvesView";
 import {CNodeVideoLevelsView} from "./CNodeVideoLevelsView";
 import {CNodeAudioSpectrumView} from "./CNodeAudioSpectrumView";
+import {rightClickWasClaimed} from "../ViewUtils";
 
 // Re-export for external consumers (e.g. CMotionAnalysis).
 export {addFiltersToVideoNode, applyConvolution} from "./CNodeVideoViewFilters";
@@ -1125,8 +1126,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     // Check if mouse position is over a tracking overlay control point
     _isOverOverlayControl(canvasX, canvasY) {
         const trackingOverlay = NodeMan.get("trackingOverlay", false);
-        if (!trackingOverlay || !trackingOverlay.draggable) return false;
-        return trackingOverlay.draggable.some(d => d.isWithin(canvasX, canvasY));
+        if (trackingOverlay && trackingOverlay.draggable
+            && trackingOverlay.draggable.some(d => d.isWithin(canvasX, canvasY))) return true;
+        const fit = NodeMan.get("fitCameraPoints", false);
+        return !!(fit && fit.enabled && fit.pointNear(canvasX, canvasY));
     }
 
     // Check if a tracking overlay control is currently being dragged
@@ -1134,6 +1137,17 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         const trackingOverlay = NodeMan.get("trackingOverlay", false);
         if (!trackingOverlay || !trackingOverlay.draggable) return false;
         return trackingOverlay.draggable.some(d => d.dragging);
+    }
+
+    // Check if a camera-fit control point is currently being dragged.
+    //
+    // Gated on the DRAG, not on the feature being enabled — unlike the mask and annotate gates
+    // below. Placing fit points accurately means panning and zooming the video to find the
+    // landmark, so taking left-drag away for the whole session would break the workflow. Only the
+    // gesture that grabbed a point is claimed.
+    _isFitPointDragging() {
+        const fit = NodeMan.get("fitCameraPoints", false);
+        return !!(fit && fit.enabled && fit.draggingId !== null);
     }
 
     // Check if the video mask overlay is currently in paint-edit mode.
@@ -1195,6 +1209,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             drag: (e) => {
                 // Don't pan if a tracking overlay control point is being dragged
                 if (this._isOverlayDragging()) {
+                    this.canvas.style.cursor = 'grabbing';
+                    return;
+                }
+
+                // Same for a camera-fit control point.
+                if (this._isFitPointDragging()) {
                     this.canvas.style.cursor = 'grabbing';
                     return;
                 }
@@ -1271,6 +1291,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             },
 
             contextMenu: (e) => {
+                // An overlay on this view may have already used the right-click for its own
+                // purpose (deleting a camera-fit control point, say). It cannot cancel this
+                // event — different element, separate DOM event — so it leaves a claim instead.
+                if (rightClickWasClaimed()) return;
                 // Show Video Adjustments as a context menu at click position
                 if (!Globals.menuBar || !guiMenus.video || !CustomManager) return;
                 const adjFolder = guiMenus.video.folders.find(

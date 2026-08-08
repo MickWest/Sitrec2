@@ -13,6 +13,41 @@ import {assert} from "./assert";
 import {ViewMan} from "./CViewManager";
 import {Vector2} from "three";
 
+// ---------------------------------------------------------------------------------------------
+// Right-click arbitration between a view and an overlay sitting on top of it.
+//
+// An overlay canvas has pointer-events:none and receives its clicks through the document-level
+// router in mouseMoveView.js, while a view's own context menu comes from a `contextmenu` listener
+// on the VIEW's canvas. Those are two separate DOM events on two different elements, so an
+// overlay that acts on a right-click has no event to cancel — its handler has already returned by
+// the time the view's fires.
+//
+// So the overlay CLAIMS the click, and the view checks the claim before opening its menu.
+//
+// The claim is SINGLE USE, and also time windowed. Both, because the two failure modes are
+// different: consuming it means a claim suppresses exactly the one context menu it was paired
+// with, so a second right-click a moment later still opens the menu normally; and the time window
+// means a claim that is never consumed at all — the overlay acted, but that view has no context
+// menu to suppress — expires instead of lying in wait for the next real one.
+// ---------------------------------------------------------------------------------------------
+
+let rightClickClaimedAt = -Infinity;
+
+/** Call from an overlay that just acted on a right-click, to suppress the view's context menu. */
+export function claimRightClick() {
+    rightClickClaimedAt = performance.now();
+}
+
+/**
+ * Call from a view's contextmenu handler; if true, an overlay already handled this click.
+ * Consumes the claim, so it suppresses one menu and not a burst of them.
+ */
+export function rightClickWasClaimed(windowMs = 600) {
+    if (!(performance.now() - rightClickClaimedAt < windowMs)) return false;
+    rightClickClaimedAt = -Infinity;
+    return true;
+}
+
 /**
  * Convert screen coordinates to view-relative coordinates.
  * Both input and output use top-left origin (screen convention).

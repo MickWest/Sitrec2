@@ -68,6 +68,7 @@ import {CNodeControllerTrackingWobble} from "./nodes/CNodeControllerTrackingWobb
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeAnnotateOverlay} from "./nodes/CNodeAnnotateOverlay";
 import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
+import {CNodeFitCameraPoints} from "./nodes/CNodeFitCameraPoints";
 import {CNodeLensGhost} from "./nodes/CNodeLensGhost";
 import {makeBespoke3DView} from "./BespokeView";
 import {DebugArrow} from "./threeExt";
@@ -305,6 +306,18 @@ export const setupMethods = {
         if (Sit.isCustom && NodeMan.exists("video") && !NodeMan.exists("videoMask")) {
             new CNodeMaskOverlay({
                 id: "videoMask",
+                overlayView: "video",
+            });
+        }
+
+        // "Fit Camera to Points": recover an unknown platform position and FOV from landmarks.
+        // Created unconditionally for the same reason the two overlays above are — the control
+        // points are saved in the node's own mod, and a node that does not exist when the mods
+        // are applied never receives its saved state. It is inert until "Enable Fit" is ticked,
+        // so an older save gets one for free and a sitch that never uses it pays nothing.
+        if (Sit.isCustom && NodeMan.exists("video") && !NodeMan.exists("fitCameraPoints")) {
+            new CNodeFitCameraPoints({
+                id: "fitCameraPoints",
                 overlayView: "video",
             });
         }
