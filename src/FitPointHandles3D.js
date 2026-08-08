@@ -52,6 +52,36 @@ function withDisplayedCamera(view, fn) {
     }
 }
 
+/**
+ * The sub-rectangle of the overlay's pixel space that the host view's 3D canvas actually fills,
+ * as {x, y, w, h}.
+ *
+ * Normally the whole thing — but not always, and the exception is invisible until it bites. With
+ * "Match Video Aspect" on, CNodeView3D letterboxes by resizing and centring the 3D CANVAS ELEMENT
+ * inside its div (canvas.style.width/height/left/top) rather than by using a viewport inside a
+ * full-size canvas. The overlay this class draws on is a SEPARATE canvas that still covers the
+ * whole div. Measured on a 572x435 div: the 3D canvas was 572x321 at a 57 px vertical inset.
+ *
+ * Mapping NDC across the overlay's full height, as this used to, therefore spread the handles
+ * over 435 px of a scene drawn into 321 of them — correct at the centre, wrong everywhere else,
+ * and wrong by a different amount whenever the letterbox changed. Going through the real rect
+ * covers letterbox, pillarbox and neither, without this code having to know which is in play.
+ */
+function renderedRect(view, w, h) {
+    const canvas = view.canvas, div = view.div;
+    const whole = {x: 0, y: 0, w, h};
+    if (!canvas || !div) return whole;
+    const rc = canvas.getBoundingClientRect();
+    const rd = div.getBoundingClientRect();
+    if (!(rd.width > 0) || !(rd.height > 0) || !(rc.width > 0) || !(rc.height > 0)) return whole;
+    return {
+        x: ((rc.left - rd.left) / rd.width) * w,
+        y: ((rc.top - rd.top) / rd.height) * h,
+        w: (rc.width / rd.width) * w,
+        h: (rc.height / rd.height) * h,
+    };
+}
+
 /** World position -> canvas pixels for a view, or null when it is not in front of the camera. */
 export function projectToCanvas(view, world) {
     if (!view || !view.camera || !(view.widthPx > 0)) return null;
@@ -61,16 +91,19 @@ export function projectToCanvas(view, world) {
         if (world.clone().sub(cam.position).dot(fwd) <= 0) return null;   // behind the camera
         const ndc = world.clone().project(cam);
         if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y)) return null;
-        return [(ndc.x + 1) * 0.5 * view.widthPx, (1 - ndc.y) * 0.5 * view.heightPx];
+        const r = renderedRect(view, view.widthPx, view.heightPx);
+        return [r.x + (ndc.x + 1) * 0.5 * r.w, r.y + (1 - ndc.y) * 0.5 * r.h];
     });
 }
 
 /** Canvas pixels -> the ground point under them, or null if the ray never reaches ground. */
 export function groundUnderCanvasPoint(view, cx, cy) {
     if (!view || !view.camera || !(view.widthPx > 0)) return null;
+    const r = renderedRect(view, view.widthPx, view.heightPx);
+    if (!(r.w > 0) || !(r.h > 0)) return null;
     const ray = withDisplayedCamera(view, (cam) => {
-        const ndcX = (cx / view.widthPx) * 2 - 1;
-        const ndcY = -((cy / view.heightPx) * 2 - 1);
+        const ndcX = ((cx - r.x) / r.w) * 2 - 1;
+        const ndcY = -(((cy - r.y) / r.h) * 2 - 1);
         const origin = new Vector3().setFromMatrixPosition(cam.matrixWorld);
         const dir = new Vector3(ndcX, ndcY, 0.5).unproject(cam).sub(origin).normalize();
         return {origin, dir};
