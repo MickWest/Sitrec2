@@ -2312,6 +2312,7 @@ async function setupFunctions() {
     par.paused = Sit.paused;
 
     Globals.showMeasurements = true;
+    Globals.showMeasurementsLook = false;
 
 
     // Setup the watch nodes that allow access via Math expressions

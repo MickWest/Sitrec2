@@ -1400,8 +1400,12 @@ const pt = {
 
     labels3d: {
         measurements: {
-            label: "Medições",
-            tooltip: "Mostrar rótulos e setas de medição de distância e ângulo",
+            label: "Medições na Principal",
+            tooltip: "Mostrar rótulos e setas de medição de distância e ângulo na visualização 3D principal",
+        },
+        measurementsInLook: {
+            label: "Medições na Câmera",
+            tooltip: "Mostrar rótulos e setas de medição de distância e ângulo na visualização de câmera",
         },
         labelsInMain: {
             label: "Rótulos na Principal",

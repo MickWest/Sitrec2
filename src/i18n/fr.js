@@ -1400,8 +1400,12 @@ const fr = {
 
     labels3d: {
         measurements: {
-            label: "Mesures",
-            tooltip: "Afficher les étiquettes et flèches de mesure de distance et d'angle",
+            label: "Mesures dans la vue principale",
+            tooltip: "Afficher les étiquettes et flèches de mesure de distance et d'angle dans la vue 3D principale",
+        },
+        measurementsInLook: {
+            label: "Mesures dans la vue caméra",
+            tooltip: "Afficher les étiquettes et flèches de mesure de distance et d'angle dans la vue caméra",
         },
         labelsInMain: {
             label: "Étiquettes dans la vue principale",

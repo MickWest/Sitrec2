@@ -1404,8 +1404,12 @@ const zh = {
 
     labels3d: {
         measurements: {
-            label: "测量",
-            tooltip: "显示距离和角度测量标签及箭头",
+            label: "主视图中的测量",
+            tooltip: "在主 3D 视图中显示距离和角度测量标签及箭头",
+        },
+        measurementsInLook: {
+            label: "观察视图中的测量",
+            tooltip: "在观察/相机视图中显示距离和角度测量标签及箭头",
         },
         labelsInMain: {
             label: "主视图中的标签",

@@ -1400,8 +1400,12 @@ const de = {
 
     labels3d: {
         measurements: {
-            label: "Messungen",
-            tooltip: "Entfernungs- und Winkelmessungslabels und -pfeile anzeigen",
+            label: "Messungen in Hauptansicht",
+            tooltip: "Entfernungs- und Winkelmessungslabels und -pfeile in der 3D-Hauptansicht anzeigen",
+        },
+        measurementsInLook: {
+            label: "Messungen in Blickansicht",
+            tooltip: "Entfernungs- und Winkelmessungslabels und -pfeile in der Blick-/Kameraansicht anzeigen",
         },
         labelsInMain: {
             label: "Labels in Hauptansicht",

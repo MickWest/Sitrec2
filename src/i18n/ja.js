@@ -1404,8 +1404,12 @@ const ja = {
 
     labels3d: {
         measurements: {
-            label: "測定",
-            tooltip: "距離と角度の測定ラベルと矢印を表示",
+            label: "メインビューの測定",
+            tooltip: "メイン3Dビューに距離と角度の測定ラベルと矢印を表示",
+        },
+        measurementsInLook: {
+            label: "ルックビューの測定",
+            tooltip: "ルック/カメラビューに距離と角度の測定ラベルと矢印を表示",
         },
         labelsInMain: {
             label: "メインビューのラベル",

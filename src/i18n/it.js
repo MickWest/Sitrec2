@@ -1404,8 +1404,12 @@ const it = {
 
     labels3d: {
         measurements: {
-            label: "Misurazioni",
-            tooltip: "Mostra etichette e frecce di misurazione di distanza e angolo",
+            label: "Misurazioni nella Principale",
+            tooltip: "Mostra etichette e frecce di misurazione di distanza e angolo nella vista 3D principale",
+        },
+        measurementsInLook: {
+            label: "Misurazioni nella Osservazione",
+            tooltip: "Mostra etichette e frecce di misurazione di distanza e angolo nella vista di osservazione",
         },
         labelsInMain: {
             label: "Etichette nella Principale",

@@ -525,7 +525,8 @@ export const serializeMethods = {
         ]
 
         const globalsNeeded = [
-            "showMeasurements",
+            "showMeasurements",         // "Measurements in Main" — name kept for older saves
+            "showMeasurementsLook",
             "showLabelsMain",
             "showLabelsLook",
             "showFeaturesMain",

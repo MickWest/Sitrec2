@@ -1728,8 +1728,12 @@ const en = {
 
     labels3d: {
         measurements: {
-            label: "Measurements",
-            tooltip: "Show distance and angle measurement labels and arrows",
+            label: "Measurements in Main",
+            tooltip: "Show distance and angle measurement labels and arrows in the main 3D view",
+        },
+        measurementsInLook: {
+            label: "Measurements in Look",
+            tooltip: "Show distance and angle measurement labels and arrows in the look/camera view",
         },
         labelsInMain: {
             label: "Labels in Main",

@@ -1400,8 +1400,12 @@ const es = {
 
     labels3d: {
         measurements: {
-            label: "Mediciones",
-            tooltip: "Mostrar etiquetas y flechas de medición de distancia y ángulo",
+            label: "Mediciones en vista principal",
+            tooltip: "Mostrar etiquetas y flechas de medición de distancia y ángulo en la vista 3D principal",
+        },
+        measurementsInLook: {
+            label: "Mediciones en vista de cámara",
+            tooltip: "Mostrar etiquetas y flechas de medición de distancia y ángulo en la vista de cámara",
         },
         labelsInMain: {
             label: "Etiquetas en vista principal",

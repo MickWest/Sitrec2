@@ -1400,8 +1400,12 @@ const nl = {
 
     labels3d: {
         measurements: {
-            label: "Metingen",
-            tooltip: "Afstands- en hoekmetinglabels en -pijlen tonen",
+            label: "Metingen in hoofdweergave",
+            tooltip: "Afstands- en hoekmetinglabels en -pijlen in de 3D-hoofdweergave tonen",
+        },
+        measurementsInLook: {
+            label: "Metingen in kijkweergave",
+            tooltip: "Afstands- en hoekmetinglabels en -pijlen in de kijk-/cameraweergave tonen",
         },
         labelsInMain: {
             label: "Labels in hoofdweergave",

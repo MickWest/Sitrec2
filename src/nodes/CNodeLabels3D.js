@@ -2,7 +2,10 @@
 // Uses the 2D canvas overlay system (CNodeDisplaySkyOverlay) for rendering
 
 import * as LAYER from "../LayerMasks";
-import {DebugArrowAB, DebugArrows, getTilesPointBelow, isVisible, propagateLayerMaskObject, removeDebugArrow} from "../threeExt";
+import {
+    DebugArrowAB, DebugArrows, getTilesPointBelow, isVisible, propagateLayerMaskObject,
+    removeDebugArrow, setLayerMaskRecursive,
+} from "../threeExt";
 import {pointOnSphereBelow} from "../SphericalMath";
 import {CNodeMunge} from "./CNodeMunge";
 import {Globals, guiShowHide, NodeMan, setRenderOne, Units} from "../Globals";
@@ -24,7 +27,7 @@ const HIGH_ALTITUDE_LABEL_DECIMALS = 2;
 export const measurementUIVars = {
 }
 
-// a global flag to show/hide all measurements
+// global flags to show/hide all measurements, one per 3D view
 let measurementUIDdone = false;
 let measureArrowGroupNode = null;
 let measureDistanceGroupNode = null;
@@ -36,6 +39,46 @@ let labelsControllerLook = null;
 let featuresGroupNode = null;
 let featuresControllerMain = null;
 let featuresControllerLook = null;
+
+/**
+ * Which views measurements are drawn in, as a layer mask.
+ *
+ * MASK_HELPERS for the main view rather than MASK_MAIN, because MASK_HELPERS is what measurements
+ * have always used and is exactly what "the main view, never the recreation" means here — so main
+ * on / look off reproduces the old single-flag behaviour bit for bit.
+ *
+ * The main-view flag keeps its original name, `showMeasurements`, rather than gaining a "Main"
+ * suffix to match the label. It is written into every saved sitch (see globalsNeeded in
+ * CustomManagerSerialize), and renaming it would silently turn measurements back ON in every sitch
+ * that was saved with them off.
+ */
+export function measurementLayerMask() {
+    let mask = 0;
+    if (Globals.showMeasurements ?? true) mask |= LAYER.MASK_HELPERS;
+    if (Globals.showMeasurementsLook) mask |= LAYER.MASK_LOOK;
+    return mask;
+}
+
+/**
+ * Point every existing measurement at the views the toggles now name.
+ *
+ * The group flag stays the master switch as well as the mask, because CNodeMeasureAB.update()
+ * early-outs on it — a measurement hidden in both views then stops recomputing, and
+ * CNodeMeasureAltitude's ground point is a terrain raycast that is not worth running for nothing.
+ */
+export function refreshMeasurementVisibility() {
+    const mask = measurementLayerMask();
+    const anyView = mask !== 0;
+    NodeMan.iterate((key, node) => {
+        if (!node.isMeasurement) return;
+        node.group.visible = anyView;
+        if (node.layerMask !== undefined) node.layerMask = mask;
+        // DebugArrow applies a layer mask only when it CREATES the arrow — later calls under the
+        // same name leave the layers alone — so arrows already in the scene have to be re-layered
+        // here. Waiting for the next update() would never fix them.
+        setLayerMaskRecursive(node.group, mask);
+    })
+}
 
 function altitudeMSLFromECEF(pos) {
     const lla = ECEFToLLAVD_radii(pos);
@@ -52,6 +95,10 @@ export function setupMeasurementUI() {
     // initializes Globals.showMeasurements. Default to visible so the roots
     // don't get stuck hidden until the UI toggle is touched later.
     Globals.showMeasurements ??= true;
+    // Off by default in the look view, matching labels and features: the look view is the
+    // recreation, and measurement arrows drawn across it are exactly what "not in the recreation"
+    // was protecting. This is also what makes the new toggle a no-op for every existing sitch.
+    Globals.showMeasurementsLook ??= false;
 
     // We create a group node to hold all the measurement arrows
     measureArrowGroupNode = new CNode3DGroup({
@@ -74,20 +121,15 @@ export function setupMeasurementUI() {
 
 //    console.warn("%%%%%%% setupMeasurementUI: Globals.showMeasurements = " + Globals.showMeasurements)
 
-    function refreshMeasurementVisibility() {
-        const showMeasurements = Globals.showMeasurements ?? true;
-        NodeMan.iterate((key, node) => {
-            if (node.isMeasurement) {
-//                console.log ("Setting visibility of " + key + " to " + Globals.showMeasurements)
-                node.group.visible = showMeasurements;
-            }
-        })
-    }
-
     refreshMeasurementVisibility();
 
     measurementUIVars.controller =  guiShowHide.add(Globals, "showMeasurements").name(t("labels3d.measurements.label")).tooltip(t("labels3d.measurements.tooltip")).listen().onChange( (value) => {
 //        console.warn("%%%%%%% showMeasurements changed to " + value)
+        refreshMeasurementVisibility();
+        setRenderOne(true);
+    })
+
+    measurementUIVars.controllerLook = guiShowHide.add(Globals, "showMeasurementsLook").name(t("labels3d.measurementsInLook.label")).tooltip(t("labels3d.measurementsInLook.tooltip")).listen().onChange( (value) => {
         refreshMeasurementVisibility();
         setRenderOne(true);
     })
@@ -224,6 +266,12 @@ export class CNodeLabel3D extends CNode3DGroup {
             this.layerMask = v.layers;
         } else if (groupNodeId === "LabelsGroupNode" || groupNodeId === "FeaturesGroupNode") {
             this.layerMask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
+        } else if (groupNode.isMeasurement) {
+            // Whatever the Show menu currently says. Keyed off the GROUP rather than the else
+            // branch, because that branch also catches labels hung on unrelated groups — the night
+            // sky's celestial arrows among them — which are not measurements and must not start
+            // following the measurement toggles.
+            this.layerMask = measurementLayerMask();
         } else {
             this.layerMask = LAYER.MASK_HELPERS;
         }
