@@ -9,6 +9,26 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.119.0 (2026-08-08)
+
+### New Features
+
+- **Planar Mirror water reflection** (Effects → Water Reflection → *Method*): a second reflection mode that mirrors the whole scene in the water — the far shore, hills, buildings and objects — instead of only the sky. It finds the surface of the lake or sea automatically from the terrain, and a *Planar Mirror* sub-folder adds ripple, resolution, clipping and manual water-level settings. Look view only, and marked experimental because it costs a second full render and treats the water as flat.
+- **Fit Camera to Points** (Camera → Fit Camera to Points): work out an unknown camera position, direction and field of view from landmarks you can identify in the footage. Click the video to mark a point, drag its matching handle in the main or look view onto the real place on the ground, and the camera re-solves so the two agree. Includes locks for position, field of view and roll, a readout of how closely the camera explains the points, and an *Observability* readout that says when the landmarks simply cannot determine what is being solved — rather than returning a confident wrong answer. The points are saved with the sitch, so a published camera carries a record of the landmarks it came from.
+- **Climb Rate** (Physics → Simple Flight Sim): fly the simulated aircraft up or down at a set vertical speed, from −1000 to +1000 feet per minute. It changes altitude rather than pitching the flight path, and has no effect in terrain-following mode.
+
+### Improvements
+
+- Planar Mirror reflections hold up much better at a distance (Effects → Water Reflection → Planar Mirror): very coarse distant terrain now stops reflecting cleanly instead of breaking into blotches (*Max Tile Size*), streams and rivers high in the hills are no longer mistaken for the lake or sea being reflected, and the hidden vertical edges that terrain tiles hang beneath themselves no longer stand across the view hiding the water (*Hide Waterline Skirts*). Terrain well above the water keeps those edges, so hillsides keep their seam covers.
+- Main-view terrain detail is now chosen for the field of view actually being rendered. In sitches with a letterboxed video this makes main-view terrain about 8% finer — sharper, but more to load.
+
+### Bug Fixes
+
+- Fixed Google Photorealistic 3D tiles vanishing from the look view when the video was zoomed or panned, leaving correct imagery in a band at the top and nothing below a hard horizontal line.
+- Fixed terrain and tile detail not refreshing after panning the video — the terrain stayed at the detail level it had before the pan until something else moved the camera.
+- Fixed points placed on the terrain in the main view landing off-target when a video is loaded, which made a fixed spot on the ground appear to slide as the camera turned. This affected hand-placed trees as well as the new camera-fit handles.
+- Fixed manual-tracking keyframes on the video not being draggable (Traverse → Manual Tracking): clicking one jumped to its frame but the point would not move. More generally, an overlay that declines a click no longer steals the drag from the one that accepted it.
+
 ## Version 2.118.0 (2026-08-06)
 
 ### New Features
