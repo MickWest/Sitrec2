@@ -4,7 +4,7 @@
 
 import {V2} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
-import {mouseInViewOnly} from "./ViewUtils";
+import {mouseInViewOnly, renderedRect} from "./ViewUtils";
 import {setRenderOne} from "./Globals";
 
 let mouseDragView
@@ -300,9 +300,17 @@ export function screenToNDC(view, screenX, screenY) {
     const viewX = screenX - view.leftPx - containerOffsetX;
     const viewY = screenY - view.topPx;
 
+    // Against the rect the 3D canvas actually fills, NOT the whole pane. NDC is by definition
+    // relative to the rendered image, and with "Match Video Aspect" on the render is letterboxed
+    // into part of the div (see renderedRect). Every caller feeds this to setFromCamera, so
+    // measuring across the full pane put the pick ray somewhere the user was not pointing —
+    // correct at the centre and drifting toward the edges. Reduces to the old formula exactly
+    // when the render fills the canvas.
+    const r = renderedRect(view, view.widthPx, view.heightPx);
+
     // Convert to NDC: x from -1 (left) to +1 (right), y from -1 (bottom) to +1 (top)
-    const ndcX = (viewX / view.widthPx) * 2 - 1;
-    const ndcY = -(viewY / view.heightPx) * 2 + 1;  // Invert Y for Three.js
+    const ndcX = ((viewX - r.x) / r.w) * 2 - 1;
+    const ndcY = -((viewY - r.y) / r.h) * 2 + 1;  // Invert Y for Three.js
 
     return V2(ndcX, ndcY);
 }

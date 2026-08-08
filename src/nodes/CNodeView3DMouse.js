@@ -25,7 +25,7 @@ import {
 import {Sphere, Vector3} from "three";
 import {par} from "../par";
 import {DRAG, getMousePosition, screenToNDC} from "../mouseMoveView";
-import {mouseInViewOnly} from "../ViewUtils";
+import {mouseInViewOnly, withDisplayedCamera} from "../ViewUtils";
 import {DebugArrowAB} from "../threeExt";
 import {CNode3DObject} from "./CNode3DObject";
 import {FeatureManager} from "../CFeatureManager";
@@ -55,17 +55,25 @@ export const mouseMethods = {
     // tracks the same way the old per-mousemove path did. Used by onMouseMove
     // (only when something needs continuous updates) and onMouseDown (so every
     // click sees a fresh cursor position).
-    // Wrapper: apply the display-only lookAt (Render Camera Use Traverse Track)
-    // for the duration of the pick so screen->ray casting matches what the view
-    // actually rendered, then restore. Nested calls no-op via the re-entrancy
-    // guard in applyDisplayLookAt.
+    // Wrapper: hold the camera in the projection the view is actually RENDERED with for the
+    // duration of the pick, then restore.
+    //
+    // This used to apply only the display-only lookAt (Render Camera Use Traverse Track), which
+    // is one of the EIGHT things prepareCameraForLOD applies to turn the stored camera into the
+    // displayed one. The others are camera.zoom from the videoZoom node, aspect from the pane,
+    // the look view's fovCoverage widening, Match Video Aspect's fov/aspect rewrite, the video
+    // pan's off-centre frustum, y-compression, and the camera-tweak offsets. The video ones bite
+    // exactly when the user zooms or pans the video, and the pan and y-compress terms are why a
+    // rebuild cannot substitute: they are written straight into projectionMatrix.elements[8]/[9]
+    // and [5], which updateProjectionMatrix() will never reproduce. With any of them active the
+    // ray was cast through a projection the user was never shown, so the cursor — and everything
+    // reading it: the V/B measure arrow, C/X position snapping, the orbit pivot, focus-track
+    // snapping — landed away from the pointer.
+    //
+    // withDisplayedCamera is prepareCameraForLOD/restoreCameraAfterLOD, which applies all eight.
+    // It is re-entrant, and it subsumes the lookAt this used to do on its own.
     _refreshCursorFromMouse(mouseRay, options = {}) {
-        const _dl = this.applyDisplayLookAt?.(par.frame);
-        try {
-            return this._refreshCursorFromMouseInner(mouseRay, options);
-        } finally {
-            this.removeDisplayLookAt?.(_dl);
-        }
+        return withDisplayedCamera(this, () => this._refreshCursorFromMouseInner(mouseRay, options));
     },
 
     _refreshCursorFromMouseInner(mouseRay, options = {}) {

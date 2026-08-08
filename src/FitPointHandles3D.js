@@ -21,7 +21,7 @@ import {Vector3} from "three";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
 import {setRenderOne} from "./Globals";
 import {ViewMan} from "./CViewManager";
-import {mouseToCanvas} from "./ViewUtils";
+import {mouseToCanvas, renderedRect, withDisplayedCamera} from "./ViewUtils";
 import {raycastGroundElevationFast} from "./raycastGround";
 import {drawFitHandle, GRAB_RADIUS} from "./FitHandleDraw";
 
@@ -30,57 +30,6 @@ const HANDLE_VIEWS = ["mainView", "lookView"];
 
 /** How far a drag ray will look for ground before giving up. */
 const MAX_GROUND_RANGE = 400000;
-
-/**
- * Put a view's camera into the projection actually on screen, run `fn`, and put it back.
- *
- * Load-bearing for the look view, which renders a wider frustum to an offscreen target and shows
- * a magnified crop of it — so the live camera projection is roughly twice as wide as what the
- * user sees. prepareCameraForLOD() applies the full displayed transform (video zoom, FOV
- * coverage, pan, y-compression, display-only lookAt, camera-tweak offsets); it exists for terrain
- * LOD, and it is exactly what makes a handle land on the pixel its ground point appears at.
- * Without it the handle would be drawn in one place and pick from another.
- */
-function withDisplayedCamera(view, fn) {
-    const lodActive = view._lodSavedZoom !== undefined;
-    if (!lodActive) view.prepareCameraForLOD();
-    view.camera.updateMatrixWorld();
-    try {
-        return fn(view.camera);
-    } finally {
-        if (!lodActive) view.restoreCameraAfterLOD();
-    }
-}
-
-/**
- * The sub-rectangle of the overlay's pixel space that the host view's 3D canvas actually fills,
- * as {x, y, w, h}.
- *
- * Normally the whole thing — but not always, and the exception is invisible until it bites. With
- * "Match Video Aspect" on, CNodeView3D letterboxes by resizing and centring the 3D CANVAS ELEMENT
- * inside its div (canvas.style.width/height/left/top) rather than by using a viewport inside a
- * full-size canvas. The overlay this class draws on is a SEPARATE canvas that still covers the
- * whole div. Measured on a 572x435 div: the 3D canvas was 572x321 at a 57 px vertical inset.
- *
- * Mapping NDC across the overlay's full height, as this used to, therefore spread the handles
- * over 435 px of a scene drawn into 321 of them — correct at the centre, wrong everywhere else,
- * and wrong by a different amount whenever the letterbox changed. Going through the real rect
- * covers letterbox, pillarbox and neither, without this code having to know which is in play.
- */
-function renderedRect(view, w, h) {
-    const canvas = view.canvas, div = view.div;
-    const whole = {x: 0, y: 0, w, h};
-    if (!canvas || !div) return whole;
-    const rc = canvas.getBoundingClientRect();
-    const rd = div.getBoundingClientRect();
-    if (!(rd.width > 0) || !(rd.height > 0) || !(rc.width > 0) || !(rc.height > 0)) return whole;
-    return {
-        x: ((rc.left - rd.left) / rd.width) * w,
-        y: ((rc.top - rd.top) / rd.height) * h,
-        w: (rc.width / rd.width) * w,
-        h: (rc.height / rd.height) * h,
-    };
-}
 
 /** World position -> canvas pixels for a view, or null when it is not in front of the camera. */
 export function projectToCanvas(view, world) {

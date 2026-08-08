@@ -153,3 +153,60 @@ export function mouseInViewOnly(view, x, y, debug = false) {
 
     return inView;
 }
+/**
+ * The sub-rectangle of a view's pixel space that its 3D canvas actually fills, as {x, y, w, h}.
+ *
+ * Normally the whole thing — but not always, and the exception is invisible until it bites. With
+ * "Match Video Aspect" on, CNodeView3D letterboxes by resizing and centring the 3D CANVAS ELEMENT
+ * inside its div (canvas.style.width/height/left/top) rather than by using a viewport inside a
+ * full-size canvas. Anything working in the div's pixel space — an overlay canvas drawn on top,
+ * or a mouse position measured against the pane — therefore spans more pixels than the scene was
+ * drawn into. Measured on a 572x435 div: the 3D canvas was 572x321 at a 57 px vertical inset, so
+ * a straight mapping was correct at the centre, wrong everywhere else, and wrong by a different
+ * amount whenever the letterbox changed. One fit handle landed 39 px low.
+ *
+ * Going through the real rect covers letterbox, pillarbox and neither without the caller having
+ * to know which is in play, and reduces to the naive mapping exactly when the render fills the
+ * canvas.
+ */
+export function renderedRect(view, w, h) {
+    const canvas = view.canvas, div = view.div;
+    const whole = {x: 0, y: 0, w, h};
+    if (!canvas || !div) return whole;
+    const rc = canvas.getBoundingClientRect();
+    const rd = div.getBoundingClientRect();
+    if (!(rd.width > 0) || !(rd.height > 0) || !(rc.width > 0) || !(rc.height > 0)) return whole;
+    return {
+        x: ((rc.left - rd.left) / rd.width) * w,
+        y: ((rc.top - rd.top) / rd.height) * h,
+        w: (rc.width / rd.width) * w,
+        h: (rc.height / rd.height) * h,
+    };
+}
+
+/**
+ * Run fn with the view's camera holding the projection it is actually RENDERED with, then put it
+ * back.
+ *
+ * view.camera between renders carries the base fov/aspect/zoom and a clean projection matrix.
+ * What reaches the screen can differ by a lot: video zoom, video fov coverage, video pan (an
+ * off-centre frustum written straight into projectionMatrix.elements[8]/[9], which
+ * updateProjectionMatrix() will never reproduce), Match Video Aspect's fov/aspect rewrite,
+ * y-compression, the display-only lookAt, and camera-tweak offsets. prepareCameraForLOD applies
+ * all of them — it exists so terrain LOD evaluates the frustum that is displayed — and it is
+ * equally what makes a screen->world pick land on the pixel the user is pointing at.
+ *
+ * Re-entrant: if LOD has already prepared the camera (a pick from inside the render pass), the
+ * state is used as-is and left alone, since the paired restore rebuilds from the saved fov/aspect
+ * /zoom and a nested pair would restore to the wrong baseline.
+ */
+export function withDisplayedCamera(view, fn) {
+    const lodActive = view._lodSavedZoom !== undefined;
+    if (!lodActive) view.prepareCameraForLOD();
+    view.camera.updateMatrixWorld();
+    try {
+        return fn(view.camera);
+    } finally {
+        if (!lodActive) view.restoreCameraAfterLOD();
+    }
+}

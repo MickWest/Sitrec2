@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.119.3 (2026-08-08)
+
+### Bug Fixes
+
+- Fixed the V and B measurement points landing away from the mouse pointer whenever the 3D view is zoomed or panned to follow the video (**View → *Video Zoom %***, or zooming and panning inside the video pane), or whenever **Match Video Aspect** (Camera menu) is on. The cause was in the shared "what is under the cursor" calculation rather than in measuring, so the same error was displacing every other click-and-hover pick in the 3D views — snapping the camera and target position with C and X, the orbit pivot, focus-track snapping and scrubbing, the line-of-sight debug arrow, right-click menus, and the drag handles in the synthetic object, ground overlay, flood, cloud and building editors. All of these now land on the point actually under the pointer.
+
 ## Version 2.119.2 (2026-08-08)
 
 ### Bug Fixes
