@@ -30,7 +30,7 @@ import {CNodeActiveOverlay} from "./CNodeTrackingOverlay";
 import {CNodeVideoView} from "./CNodeVideoView";
 import {Vector3} from "three";
 import {assert} from "../assert";
-import {guiMenus, NodeMan, setRenderOne, UndoManager} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, UndoManager} from "../Globals";
 import {par} from "../par";
 import {claimRightClick, mouseToCanvas} from "../ViewUtils";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
@@ -88,6 +88,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this._cancelListener = null;
         // Snapshot taken when an undoable edit opens; see beginUndo.
         this._undoBefore = null;
+        this._pendingEnable = undefined;
 
         this.markers = new FitPointHandles3D({
             getPoints: () => this.points.map((p) => ({
@@ -142,9 +143,31 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // Restore the points, but NOT the fit. The camera already carries the answer the last fit
         // produced — it was written into fixedCameraPosition/ptzAngles/fovUI and saved with them.
         // Re-solving on load would overwrite any hand adjustment made since, to no benefit.
-        if (v.enabled !== undefined) this.setEnabled(v.enabled);
+        // Enabling builds two overlay VIEWS, and creating views from inside the mod pass
+        // corrupts it. Measured on a real save: 17 other nodes silently lost their restored
+        // state — the camera position reverted to the sitch default on the far side of the
+        // world, along with the FOV and the target position — because new views appeared in the
+        // middle of the loop that was still applying mods to the existing ones. The overlays
+        // that predate this feature (annotate, videoMask) sidestep the whole question by being
+        // built in CCustomManager.setup(), before any mod is applied.
+        //
+        // So record the wish and grant it once the pass is over; update() picks it up on the
+        // next frame. A feature that appears one frame late is not a cost anyone can see; a
+        // sitch that quietly loads with the wrong camera is the worst kind of bug this tool
+        // could have, because the camera IS the output.
+        if (v.enabled !== undefined) this._pendingEnable = v.enabled;
         this.updateStatus(this.enabled ? "Loaded" : "Off");
         setRenderOne(true);
+    }
+
+    update(f) {
+        if (super.update) super.update(f);
+        // Deferred from modDeserialize — see the note there.
+        if (this._pendingEnable !== undefined && !Globals.deserializing) {
+            const on = this._pendingEnable;
+            this._pendingEnable = undefined;
+            this.setEnabled(on);
+        }
     }
 
     dispose() {
