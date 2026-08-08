@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.119.2 (2026-08-08)
+
+### Bug Fixes
+
+- Fixed clicking the video *still* not placing a control point (Camera → Fit Camera to Points → *Enable Fit*). The fix in 2.119.1 came with a safeguard meant to stop a click belonging to another video overlay — annotation, the mask or manual tracking — from dropping a stray fit point as well, but that safeguard mistook every ordinary click on the video for one belonging to manual tracking and so rejected all of them, leaving the feature unusable in that release. Clicking now adds a point, while a click that is genuinely part of an annotation stroke, a mask paint or dragging a manual-tracking keyframe still correctly adds nothing.
+
 ## Version 2.119.1 (2026-08-08)
 
 ### New Features
@@ -17,7 +23,7 @@ lockstep with docs/WhatsNew-Details.md.
 
 ### Bug Fixes
 
-- Fixed clicking the video not placing a control point (Camera → Fit Camera to Points): with *Enable Fit* on, a click on empty video never added a point in 2.119.0 — dragging an existing point, right-clicking to delete one, and the handles in the 3D views all worked as described. Clicking now adds a point, panning the video does not leave stray points behind (any movement of more than a few pixels during the press counts as a pan), a click that another video overlay is using — annotation, the mask or manual tracking — no longer adds one as well, and a two-finger pinch on a touchscreen cannot drop points.
+- Fixed clicking the video not placing a control point (Camera → Fit Camera to Points): with *Enable Fit* on, a click on empty video never added a point in 2.119.0 — dragging an existing point, right-clicking to delete one, and the handles in the 3D views all worked as described. Clicking now adds a point, panning the video does not leave stray points behind (any movement of more than a few pixels during the press counts as a pan), a click that another video overlay is using — annotation, the mask or manual tracking — no longer adds one as well, and a two-finger pinch on a touchscreen cannot drop points. One of the safeguards in this fix was itself faulty and rejected every click, so clicking still did not add a point in this release; corrected in 2.119.2.
 
 ## Version 2.119.0 (2026-08-08)
 

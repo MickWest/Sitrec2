@@ -33,7 +33,6 @@ import {assert} from "../assert";
 import {Globals, guiMenus, NodeMan, setRenderOne, UndoManager} from "../Globals";
 import {par} from "../par";
 import {claimRightClick, mouseToCanvas} from "../ViewUtils";
-import {getMouseDragView} from "../mouseMoveView";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getLocalUpVector, getNorthPole} from "../SphericalMath";
@@ -260,9 +259,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             // CLAIMED the press. So both halves of the gesture have to be watched directly here,
             // or a click could never add a point at all.
             //
-            // CAPTURE phase for the release: onDocumentMouseUp is itself a pointerup listener,
-            // registered at startup and therefore ahead of this one in the bubble phase, and it
-            // clears the claimed view. Capture runs first, so the claim is still readable.
+            // CAPTURE phase for the release: finishPendingAdd asks the video view whether an
+            // overlay is mid-edit, and one of those answers — _isOverlayDragging — reads the
+            // tracking overlay's `dragging` flags, which its own onMouseUp clears. That runs
+            // from onDocumentMouseUp, a bubble-phase pointerup registered at startup and so
+            // ahead of this one. In the bubble phase the flags would already be cleared and a
+            // real keyframe drag would read as an ordinary click; capture runs first.
             this._moveListener = (e) => this.trackPendingAdd(e);
             this._upListener = (e) => this.finishPendingAdd(e);
             document.addEventListener("pointermove", this._moveListener);
@@ -986,8 +988,13 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
      *
      * Every visible view under the cursor gets onMouseDown, not just the one that ends up owning
      * the gesture, so a pending add is opened even when Annotate, the mask, or manual tracking
-     * claimed the same press. Committing it then would drop a camera-fit point into an unrelated
-     * edit. If anyone else claimed the press, it is theirs.
+     * took the same press. Committing it then would drop a camera-fit point into an unrelated
+     * edit, so those are asked directly whether they are mid-edit.
+     *
+     * NOT by asking who holds mouseDragView, which was tried and is wrong: the dispatcher sets it
+     * for any handler that did not return an explicit false, and most fall off the end returning
+     * undefined. CNodeTrackingOverlay does exactly that on every ordinary click, so "somebody
+     * else holds the drag" is true for every click on the video and rejected all of them.
      */
     finishPendingAdd(e) {
         // Checked BEFORE consuming: another pointer's release must leave the pending add intact
@@ -998,8 +1005,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (!this.enabled || !this.hasVideoGeometry()) return;
         if (e && e.button !== undefined && e.button !== 0) return;
 
-        const owner = getMouseDragView();
-        if (owner !== null && owner !== this) return;
+        // The video view's own gates for "left-click belongs to an overlay, not to me" — the
+        // single place that already answers this, rather than a second opinion that can drift.
+        const ov = this.overlayView;
+        if (ov?._isMaskEditing?.() || ov?._isAnnotateEditing?.() || ov?._isOverlayDragging?.()) {
+            return;
+        }
 
         const [vx, vy] = this.overlayView.canvasToVideoCoordsOriginal(pending.cx, pending.cy);
         this.withUndo("Add camera fit point", () => {

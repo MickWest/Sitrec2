@@ -10,17 +10,11 @@ import {setRenderOne} from "./Globals";
 let mouseDragView
 let mouseDown = false
 
-/**
- * The view that claimed the press currently in progress, or null if none did.
- *
- * Read-only, for handlers that listen to the document directly and need to know whether the
- * gesture already belongs to somebody. Note that onDocumentMouseUp clears it, and is itself a
- * pointerup listener registered at startup — so a caller wanting the value during a release must
- * listen in the CAPTURE phase to run first.
- */
-export function getMouseDragView() {
-    return mouseDragView ?? null;
-}
+// Deliberately NOT exposed: mouseDragView is not "the view that claimed the press". The
+// dispatcher below sets it for any handler that did not return an explicit false, and most fall
+// off the end returning undefined — CNodeTrackingOverlay does so on every ordinary click. An
+// overlay wanting to know whether a press belongs to somebody else must ask that overlay
+// directly (see CNodeVideoView._isMaskEditing / _isAnnotateEditing / _isOverlayDragging).
 export const DRAG = {
     NONE: 0,
     PAN: 1,
