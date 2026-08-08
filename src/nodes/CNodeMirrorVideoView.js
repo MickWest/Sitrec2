@@ -24,5 +24,22 @@ export class CNodeMirrorVideoView extends CNodeVideoView {
         // Sync pan offset from mirrored view so overlay matches
         this.panOffsetX = this.in.mirror.panOffsetX ?? 0;
         this.panOffsetY = this.in.mirror.panOffsetY ?? 0;
+
+        // Full A-B Echo / Blend / Exposure accumulate the WHOLE A-B range into one composite, and
+        // that composite is per-view state, living on whichever video node actually ran the
+        // accumulation — always the main video view, because the Video Processing GUI binds its
+        // buttons to the first video node that built it (addFiltersToVideoNode) while the flag
+        // NODES themselves are shared singletons every video view reads.
+        //
+        // So without this the mirror saw the flag as on but its own result as null, took the
+        // rolling-echo branch in getAdjustedVideoFrameSource instead, and overlaid the look view
+        // with an "Echo Frames"-deep smear while the video view showed the full range. The two are
+        // meant to be the same picture — that is the entire point of an overlay.
+        this._fullABEchoResult = this.in.mirror._fullABEchoResult ?? null;
+        // Mirrored too, because it selects between the two ways the composite is shown: while the
+        // accumulation is still running it IS the frame, and once finished it is composited over
+        // the live frame at the A-B Echo Opacity. Copying only the result would show a finished
+        // pass as if it were still accumulating.
+        this._fullABEchoRunning = this.in.mirror._fullABEchoRunning ?? false;
     }
 }
