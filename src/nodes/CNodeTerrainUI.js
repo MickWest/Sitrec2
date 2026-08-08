@@ -1871,10 +1871,40 @@ export class CNodeTerrainUI extends CNode {
             // Skip expensive view-specific subdivision if cameras haven't moved
             // AND tiles have had time to settle. We use a grace period so that
             // tiles still loading when the camera stops continue to get subdivided.
-            let cameraFingerprint = 0;
-            for (const view of views) {
-                if (view && view.visible && view.camera) {
+            //
+            // The fingerprint is taken from the PREPARED camera — the projection actually
+            // displayed — not from the live one. Subdivision itself already runs against the
+            // prepared camera (that is what the prepare loop below was for), so anything that
+            // changes the prepared camera without changing the live one changes the right answer
+            // while leaving the old fingerprint identical. Video PAN is the clear case: it is an
+            // asymmetric frustum shift written into projectionMatrix elements[8]/[9], touching
+            // none of the terms below, so once the grace expired a pan could not wake subdivision
+            // at all and the terrain stayed at the pre-pan LOD until something else moved. The
+            // camera-tweak rotation and the display-only lookAt have the same property — both are
+            // applied by prepareCameraForLOD, so neither reaches the live matrixWorld.
+            //
+            // Preparing every frame rather than only inside the grace window is what makes that
+            // possible. It costs a handful of matrix operations per view; the expensive thing
+            // this gate protects is the tile-tree traversal below, which is still skipped.
+            const preparedViews = [];
+            try {
+                for (const view of views) {
+                    if (!(view && view.visible && view.camera)) continue;
+                    // prepareCameraForLOD is not re-entrant and does not guard itself, so only
+                    // open (and only close) a bracket nobody else already owns.
+                    if (view.prepareCameraForLOD && view._lodSavedZoom === undefined) {
+                        view.prepareCameraForLOD();
+                        preparedViews.push(view);
+                    }
                     view.camera.updateMatrixWorld(true);
+                }
+
+                let cameraFingerprint = 0;
+                this._lastLodShift ??= [];
+                let shiftChanged = false;
+                for (let i = 0; i < views.length; i++) {
+                    const view = views[i];
+                    if (!(view && view.visible && view.camera)) continue;
                     const e = view.camera.matrixWorld.elements;
                     // Hash a few matrix elements that change on any move/rotate/zoom
                     cameraFingerprint += e[0] + e[5] + e[10] + e[12] + e[13] + e[14];
@@ -1887,77 +1917,83 @@ export class CNodeTerrainUI extends CNode {
                     // fullscreen until the camera moved. Weighted so width/height changes
                     // can't cancel out in the sum.
                     cameraFingerprint += (view.widthPx ?? 0) + (view.heightPx ?? 0) * 1.31;
-                }
-            }
-            if (cameraFingerprint !== this._lastCameraFingerprint) {
-                this._lastCameraFingerprint = cameraFingerprint;
-                this._subdivGraceFrames = 120; // keep subdividing for ~4s after camera stops
-            } else if (this._subdivGraceFrames > 0) {
-                this._subdivGraceFrames--;
-            }
 
-            // Keep a short grace alive ONLY while tiles are genuinely loading
-            // (network/decode in flight), so textures that finish AFTER the
-            // camera-driven grace expired still get one coverage pass (otherwise
-            // a freshly-loaded child renders alongside its still-active parent —
-            // z-fighting). pendingTileLoads is the authoritative in-flight set;
-            // when the last load completes the grace decays over 5 frames, which
-            // is the cleanup window.
-            //
-            // We must NOT gate this on _dirtyParents.size or a tile-count
-            // signature. Both create a feedback loop: a coverage pass flips a
-            // tile's active state (or re-marks a parent dirty) as a SIDE EFFECT,
-            // which changes the signal, which refreshes grace, which runs another
-            // pass that flips it back — churning forever with a static camera and
-            // re-arming the render loop every frame (~600% CPU / continuous
-            // render). During that churn pendingTileLoads is empty, so gating on
-            // real loads lets grace decay and the scene finally settles; genuine
-            // loading still extends it. A camera move resets grace to 120.
-            const textureMap = this.terrainNode.maps[this.mapType]?.map;
-            if (textureMap?.pendingTileLoads?.size > 0 && this._subdivGraceFrames < 5) {
-                this._subdivGraceFrames = 5;
-            }
-
-            if (this._subdivGraceFrames > 0) {
-                // Prepare each view's camera with effective zoom + pan for accurate LOD.
-                // This ensures tile subdivision uses the actual rendered FOV and direction.
-                for (const view of views) {
-                    if (view && view.visible && view.prepareCameraForLOD) {
-                        view.prepareCameraForLOD();
+                    // The frustum shift (pan) and vertical scale (y-compress) are compared
+                    // exactly and per view rather than summed in, because a sum can cancel:
+                    // pan right and up by matching amounts, or pan one view and counter-pan the
+                    // other, and the total is unchanged while both frusta have moved.
+                    const p = view.camera.projectionMatrix.elements;
+                    const prev = this._lastLodShift[i];
+                    if (!prev || prev[0] !== p[8] || prev[1] !== p[9] || prev[2] !== p[5]) {
+                        shiftChanged = true;
+                        this._lastLodShift[i] = [p[8], p[9], p[5]];
                     }
                 }
+                if (cameraFingerprint !== this._lastCameraFingerprint || shiftChanged) {
+                    this._lastCameraFingerprint = cameraFingerprint;
+                    this._subdivGraceFrames = 120; // keep subdividing for ~4s after camera stops
+                } else if (this._subdivGraceFrames > 0) {
+                    this._subdivGraceFrames--;
+                }
 
-                // subdivide the elevation first so elevation requests will come before textures
-                // this makes it more likely that the elevation will be ready when the texture is ready to make a tile.
-                if (this.terrainNode.elevationMap !== undefined) {
-                    // Higher elevationDetail → smaller error target → more refinement.
-                    const elevationTarget = this.elevationErrorTarget / this.elevationDetail;
-                    for (const view of views) {
-                        if (view && view.visible) {
-                            this.terrainNode.elevationMap.subdivideTilesViewSpecific(view, elevationTarget);
+                // Keep a short grace alive ONLY while tiles are genuinely loading
+                // (network/decode in flight), so textures that finish AFTER the
+                // camera-driven grace expired still get one coverage pass (otherwise
+                // a freshly-loaded child renders alongside its still-active parent —
+                // z-fighting). pendingTileLoads is the authoritative in-flight set;
+                // when the last load completes the grace decays over 5 frames, which
+                // is the cleanup window.
+                //
+                // We must NOT gate this on _dirtyParents.size or a tile-count
+                // signature. Both create a feedback loop: a coverage pass flips a
+                // tile's active state (or re-marks a parent dirty) as a SIDE EFFECT,
+                // which changes the signal, which refreshes grace, which runs another
+                // pass that flips it back — churning forever with a static camera and
+                // re-arming the render loop every frame (~600% CPU / continuous
+                // render). During that churn pendingTileLoads is empty, so gating on
+                // real loads lets grace decay and the scene finally settles; genuine
+                // loading still extends it. A camera move resets grace to 120.
+                const textureMap = this.terrainNode.maps[this.mapType]?.map;
+                if (textureMap?.pendingTileLoads?.size > 0 && this._subdivGraceFrames < 5) {
+                    this._subdivGraceFrames = 5;
+                }
+
+                if (this._subdivGraceFrames > 0) {
+                    // Cameras are already in their displayed projection — the bracket opened above
+                    // for the fingerprint covers this subdivision too, so tile selection uses the
+                    // actual rendered FOV, direction and pan.
+
+                    // subdivide the elevation first so elevation requests will come before textures
+                    // this makes it more likely that the elevation will be ready when the texture is ready to make a tile.
+                    if (this.terrainNode.elevationMap !== undefined) {
+                        // Higher elevationDetail → smaller error target → more refinement.
+                        const elevationTarget = this.elevationErrorTarget / this.elevationDetail;
+                        for (const view of views) {
+                            if (view && view.visible) {
+                                this.terrainNode.elevationMap.subdivideTilesViewSpecific(view, elevationTarget);
+                            }
                         }
                     }
-                }
 
-                // For texture maps, call subdivideTilesViewSpecific separately for each view
-                if (this.terrainNode.maps[this.mapType].map !== undefined) {
-                    const mapDef = this.mapSources[this.mapType];
-                    const baseTarget = mapDef?.errorTargetPixels ?? this.textureErrorTarget;
-                    const textureTarget = baseTarget / this.textureDetail;
+                    // For texture maps, call subdivideTilesViewSpecific separately for each view
+                    if (this.terrainNode.maps[this.mapType].map !== undefined) {
+                        const mapDef = this.mapSources[this.mapType];
+                        const baseTarget = mapDef?.errorTargetPixels ?? this.textureErrorTarget;
+                        const textureTarget = baseTarget / this.textureDetail;
 
-                    for (const view of views) {
-                        if (view && view.visible) {
-                            this.terrainNode.maps[this.mapType].map.subdivideTilesViewSpecific(view, textureTarget);
+                        for (const view of views) {
+                            if (view && view.visible) {
+                                this.terrainNode.maps[this.mapType].map.subdivideTilesViewSpecific(view, textureTarget);
+                            }
                         }
                     }
-                }
 
-                // Restore cameras after LOD evaluation
-                for (const view of views) {
-                    if (view && view.visible && view.restoreCameraAfterLOD) {
-                        view.restoreCameraAfterLOD();
-                    }
                 }
+            } finally {
+                // Restore in a finally: an exception anywhere in subdivision would otherwise
+                // strand every view's camera in the prepared projection, quietly corrupting the
+                // rendered view rather than just failing this pass.
+                for (const view of preparedViews) view.restoreCameraAfterLOD();
             }
 
         }

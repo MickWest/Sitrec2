@@ -1085,14 +1085,46 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
         this.camera.aspect = this.widthPx / this.heightPx;
 
-        // Apply fovOverride if we have a video view with fovCoverage
-        let videoView = null;
-        if (NodeMan.exists("mirrorVideo")) videoView = NodeMan.get("mirrorVideo");
-        else if (NodeMan.exists("video")) videoView = NodeMan.get("video");
-        if (videoView !== null && videoView.fovCoverage !== undefined) {
-            this.camera.fov = 180 / Math.PI * 2 * Math.atan(
-                Math.tan(this.camera.fov * Math.PI / 360) / videoView.fovCoverage
-            );
+        // Apply fovOverride if we have a video view with fovCoverage.
+        //
+        // SCOPED TO THE LOOK VIEW, because the render is: renderTargetAndEffects() computes
+        // fovOverride inside `if (this.id === "lookView")`. Without the same guard this widened
+        // the field of view of EVERY view using a letterbox coverage belonging to the look view's
+        // video — measured at a 0.918 coverage, the main view's 30 deg came out of here as
+        // 32.54 deg, 8.47% wide, a widening its render never applies.
+        //
+        // That mattered in two different ways, and the second is why the guard is here:
+        //
+        //   Tile LOD — benign either way. Screen-space error goes as 1/tan(fov/2), so the wider
+        //   field computed ~8% LESS error and picked slightly COARSER main-view tiles. Culling
+        //   was never at risk: a wider frustum is a superset, so nothing on screen was culled.
+        //
+        //   Screen projection and picking — broken. Callers place and pick screen-space handles
+        //   through this (FitPointHandles3D, TreeManualBrush), and an inflated field of view puts
+        //   the handle somewhere the thing it represents is not: measured 20-29 px out near the
+        //   edges of a 709x603 main view and zero at the exact centre, so a fixed ground point
+        //   appeared to SLIDE as the camera turned and its screen radius changed — 41 px of error
+        //   at one heading becoming 69 px a tenth of a radian later.
+        //
+        // The one behaviour change to watch for: main-view terrain tiles are now selected against
+        // the field of view actually rendered, so in any sitch with a letterboxed video they come
+        // out ~8% finer than before. That is the correct answer rather than a new one, but it is
+        // more tile loading and memory in a view that previously got away with less.
+        //
+        // Two smaller divergences from the render remain, both currently harmless. The pan block
+        // below gates on `syncVideoZoom || syncPixelZoomWithVideo` while the render gates on
+        // `syncVideoZoom` alone — equivalent while every video-synced view sets both. And the
+        // matchVideoAspect block is already effectively self-scoping, keying on a per-camera
+        // `<cameraNode>_Frustum` node that the main camera does not have.
+        if (this.id === "lookView") {
+            let videoView = null;
+            if (NodeMan.exists("mirrorVideo")) videoView = NodeMan.get("mirrorVideo");
+            else if (NodeMan.exists("video")) videoView = NodeMan.get("video");
+            if (videoView !== null && videoView.fovCoverage !== undefined) {
+                this.camera.fov = 180 / Math.PI * 2 * Math.atan(
+                    Math.tan(this.camera.fov * Math.PI / 360) / videoView.fovCoverage
+                );
+            }
         }
 
         // Apply matchVideoAspect: adjust FOV and aspect to match video,

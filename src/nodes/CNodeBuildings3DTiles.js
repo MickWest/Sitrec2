@@ -10,7 +10,7 @@
 import {CNode} from "./CNode";
 import {Globals, markShadowCastersDirty, NodeMan, setRenderOne} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
-import {DoubleSide, Group, Raycaster} from "three";
+import {DoubleSide, Group, Raycaster, Vector2} from "three";
 import * as LAYER from "../LayerMasks";
 import {TilesRenderer} from "3d-tiles-renderer";
 import {GLTFExtensionsPlugin, TilesFadePlugin} from "3d-tiles-renderer/plugins";
@@ -69,6 +69,9 @@ function applyMeshOpacity(mesh, opacity) {
 }
 
 
+
+/** Scratch for renderer.getSize() in the per-frame settle check — avoids a per-frame alloc. */
+const _tilesSizeTmp = new Vector2();
 
 // Per-view state: a TilesRenderer instance, its parent group, and the view it tracks.
 class PerViewTiles {
@@ -266,22 +269,57 @@ class PerViewTiles {
         // have run yet this frame depending on node update order.
         view.camera.updateMatrixWorld();
 
-        // Camera Tweaks xOffset/yOffset rotate the camera at render time only
-        // (CNodeView3D.applyCameraOffset in renderTargetAndEffects). Tile LOD
-        // selection runs outside that window, so without applying the same
-        // rotation here it culls against the UN-offset frustum — with offsets
-        // comparable to the FOV, the tiles actually on screen never load
-        // (gaps). Apply for the fingerprint + renderer update, restore after.
-        const savedOffsetQuat = (typeof view.applyCameraOffset === "function")
-            ? view.applyCameraOffset() : null;
-        if (savedOffsetQuat) view.camera.updateMatrixWorld();
+        // Tile LOD and frustum culling have to evaluate the projection that is actually
+        // DISPLAYED, not the live camera. This started as a narrow fix for the Camera Tweaks
+        // xOffset/yOffset ROTATION alone (applyCameraOffset, applied at render time only), on the
+        // reasoning that culling against the un-offset frustum means "the tiles actually on
+        // screen never load (gaps)". That reasoning was right and the fix was too small: the
+        // rendered projection also carries video zoom, matchVideoAspect letterboxing, y-compress,
+        // the display-only lookAt, and — the one that bit — the video PAN, which is an asymmetric
+        // frustum shift written into projectionMatrix elements[8]/[9].
+        //
+        // Measured on a Google-photorealistic look view at 232% video zoom with panOffsetY 0.26:
+        // the camera handed to setCamera() had elements[8]/[9] = 0/0 while the displayed frustum
+        // had -0.425/-1.209 — a vertical displacement of 1.21 half-heights, about 263 px on a
+        // 435 px view. Tiles were loaded and healthy (1889 loaded, 0 failed) but culled against a
+        // frustum that had slid off the rendered one, so the view showed correct imagery in a
+        // band at the top and nothing below a straight horizontal line.
+        //
+        // prepareCameraForLOD() is the function that applies all of that, and is what the terrain
+        // subdivision already uses ("Prepare each view's camera with effective zoom + pan for
+        // accurate LOD", CNodeTerrainUI). It applies the tweak rotation ITSELF, so it REPLACES the
+        // applyCameraOffset call rather than wrapping it — doing both would rotate twice.
+        //
+        // Scoped to views whose displayed projection actually differs from their live camera.
+        // prepareCameraForLOD applies video fovCoverage and matchVideoAspect unconditionally,
+        // while the render path computes fovCoverage for the look view only, so routing a plain
+        // main view through it would hand its LOD a frustum its render never uses. Views with no
+        // video sync and no y-compress therefore keep exactly the previous behaviour.
+        const canPrepare = typeof view.prepareCameraForLOD === "function"
+            && typeof view.restoreCameraAfterLOD === "function";
+        const displayedDiffers = canPrepare
+            && (view.syncVideoZoom || view.syncPixelZoomWithVideo || (view.yCompress ?? 1) > 1.0001);
+        // prepareCameraForLOD is NOT re-entrant and does not guard itself — _lodSavedZoom is only
+        // its restore marker. Callers guard externally, so only prepare (and only restore) a
+        // bracket we actually opened; if the terrain pass already has one open, reuse it.
+        const ownsBracket = displayedDiffers && view._lodSavedZoom === undefined;
+
+        let savedOffsetQuat = null;
         try {
+            if (ownsBracket) {
+                view.prepareCameraForLOD();
+            } else if (!displayedDiffers && typeof view.applyCameraOffset === "function") {
+                savedOffsetQuat = view.applyCameraOffset();
+            }
+            view.camera.updateMatrixWorld();
             this._updateWithCurrentCamera(view);
         } finally {
-            if (savedOffsetQuat) {
+            if (ownsBracket) {
+                view.restoreCameraAfterLOD();
+            } else if (savedOffsetQuat) {
                 view.removeCameraOffset(savedOffsetQuat);
-                view.camera.updateMatrixWorld();
             }
+            view.camera.updateMatrixWorld();
         }
     }
 
@@ -310,8 +348,33 @@ class PerViewTiles {
         const fp = e[0] + e[5] + e[10] + e[12] + e[13] + e[14]
             + cam.fov + cam.zoom + (cam.aspect || 0)
             + p[0] + p[5] + p[10] + p[14];
-        if (fp !== this._lastCamFingerprint) {
+
+        // The asymmetric frustum SHIFT (video pan) and the render resolution are compared
+        // separately, and exactly, rather than folded into the sum above.
+        //
+        // Separately, because a pure pan changes ONLY p[8]/p[9] — none of the summed terms move,
+        // so before this a pan could not wake a settled tileset at all: measured, a pan that slid
+        // the frustum from -1.209 to -1.906 left the fingerprint identical to the last digit. The
+        // dropout was therefore state-dependent, persisting until something else disturbed the
+        // camera.
+        //
+        // Exactly, because a sum can cancel: pan right and up by matching amounts and p[8] + p[9]
+        // is unchanged while the frustum has moved diagonally.
+        const size = view.renderer.getSize(_tilesSizeTmp);
+        const shiftX = p[8], shiftY = p[9];
+        const moved = fp !== this._lastCamFingerprint
+            || shiftX !== this._lastProjShiftX
+            || shiftY !== this._lastProjShiftY
+            // Screen-space error is per-pixel, so a same-aspect resize changes the LOD answer
+            // while leaving every camera term alone.
+            || size.x !== this._lastResW
+            || size.y !== this._lastResH;
+        if (moved) {
             this._lastCamFingerprint = fp;
+            this._lastProjShiftX = shiftX;
+            this._lastProjShiftY = shiftY;
+            this._lastResW = size.x;
+            this._lastResH = size.y;
             this._updateGraceFrames = 60; // keep updating ~1s after camera stops
         } else if (this._updateGraceFrames > 0) {
             this._updateGraceFrames--;
