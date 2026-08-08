@@ -33,6 +33,7 @@ import {assert} from "../assert";
 import {Globals, guiMenus, NodeMan, setRenderOne, UndoManager} from "../Globals";
 import {par} from "../par";
 import {claimRightClick, mouseToCanvas} from "../ViewUtils";
+import {getMouseDragView} from "../mouseMoveView";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getLocalUpVector, getNorthPole} from "../SphericalMath";
@@ -86,6 +87,8 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // point) or a pan. See onMouseDown.
         this.pendingAdd = null;
         this._cancelListener = null;
+        this._moveListener = null;
+        this._upListener = null;
         // Snapshot taken when an undoable edit opens; see beginUndo.
         this._undoBefore = null;
         this._pendingEnable = undefined;
@@ -252,10 +255,26 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             this._cancelListener = () => this.cancelGesture();
             document.addEventListener("pointercancel", this._cancelListener);
             window.addEventListener("blur", this._cancelListener);
+            // The press on empty video returns false from onMouseDown so the video keeps its
+            // pan, and mouseMoveView delivers onMouseDrag and onMouseUp only to the view that
+            // CLAIMED the press. So both halves of the gesture have to be watched directly here,
+            // or a click could never add a point at all.
+            //
+            // CAPTURE phase for the release: onDocumentMouseUp is itself a pointerup listener,
+            // registered at startup and therefore ahead of this one in the bubble phase, and it
+            // clears the claimed view. Capture runs first, so the claim is still readable.
+            this._moveListener = (e) => this.trackPendingAdd(e);
+            this._upListener = (e) => this.finishPendingAdd(e);
+            document.addEventListener("pointermove", this._moveListener);
+            document.addEventListener("pointerup", this._upListener, true);
         } else if (!on && this._cancelListener) {
             document.removeEventListener("pointercancel", this._cancelListener);
             window.removeEventListener("blur", this._cancelListener);
+            document.removeEventListener("pointermove", this._moveListener);
+            document.removeEventListener("pointerup", this._upListener, true);
             this._cancelListener = null;
+            this._moveListener = null;
+            this._upListener = null;
         }
 
         if (on) {
@@ -901,7 +920,13 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // enabled, and every attempt to pan left an unwanted control point behind. Placing points
         // accurately is mostly a matter of panning and zooming around to find the landmark, so
         // that is precisely the wrong thing to take away.
-        this.pendingAdd = {cx, cy};
+        //
+        // Only a PRIMARY pointer arms one, and it remembers which pointer it belongs to. A
+        // second finger arriving mid-press has already voided the pending add through the
+        // cancelGesture above, and not re-arming here means it stays voided: during a pinch,
+        // neither finger's release may drop a point. Same rule the Star Tracker's click-toggle
+        // uses. A mouse is always primary, so none of this changes on the desktop.
+        if (e.isPrimary !== false) this.pendingAdd = {cx, cy, pointerId: e.pointerId};
         return false;
     }
 
@@ -926,18 +951,67 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         setRenderOne(true);
     }
 
-    onMouseUp() {
+    /**
+     * Watch a pending add for movement. Same rule as onMouseDrag — past the slop it was a pan,
+     * not a click — but driven from the document, because a press this node declined is never
+     * handed drag events either. Without it the pan/click test would reduce to comparing where
+     * the press went down with where it came up, and a pan that wandered away and back would
+     * read as a click.
+     */
+    trackPendingAdd(e) {
+        if (!this.isPendingPointer(e)) return;
+        const [cx, cy] = mouseToCanvas(this, e.clientX, e.clientY);
+        if (Math.hypot(cx - this.pendingAdd.cx, cy - this.pendingAdd.cy) > CLICK_SLOP) {
+            this.pendingAdd = null;
+        }
+    }
+
+    /** Is this event from the pointer that opened the pending add? False if there is none. */
+    isPendingPointer(e) {
+        const pending = this.pendingAdd;
+        if (pending === null) return false;
+        if (e === undefined || e.pointerId === undefined || pending.pointerId === undefined) {
+            return true;    // not a pointer event: nothing to disambiguate, so it is ours
+        }
+        return e.pointerId === pending.pointerId;
+    }
+
+    /**
+     * Complete a press on empty video that survived to release without moving: add the point.
+     *
+     * Driven by a document-level pointerup (see setEnabled) rather than by the view dispatcher,
+     * because that press declined the drag and so is never handed the release. It can arrive
+     * either way — whichever delivery lands first consumes the pending add, and the other finds
+     * nothing to do.
+     *
+     * Every visible view under the cursor gets onMouseDown, not just the one that ends up owning
+     * the gesture, so a pending add is opened even when Annotate, the mask, or manual tracking
+     * claimed the same press. Committing it then would drop a camera-fit point into an unrelated
+     * edit. If anyone else claimed the press, it is theirs.
+     */
+    finishPendingAdd(e) {
+        // Checked BEFORE consuming: another pointer's release must leave the pending add intact
+        // for the pointer that actually opened it.
+        if (!this.isPendingPointer(e)) return;
         const pending = this.pendingAdd;
         this.pendingAdd = null;
+        if (!this.enabled || !this.hasVideoGeometry()) return;
+        if (e && e.button !== undefined && e.button !== 0) return;
 
+        const owner = getMouseDragView();
+        if (owner !== null && owner !== this) return;
+
+        const [vx, vy] = this.overlayView.canvasToVideoCoordsOriginal(pending.cx, pending.cy);
+        this.withUndo("Add camera fit point", () => {
+            this.addPointAtVideo(vx, vy);
+            this.requestFit();
+        });
+    }
+
+    onMouseUp(e) {
         // Released without moving: it was a click, so add the point.
-        if (pending !== null) {
-            if (!this.enabled) return;
-            const [vx, vy] = this.overlayView.canvasToVideoCoordsOriginal(pending.cx, pending.cy);
-            this.withUndo("Add camera fit point", () => {
-                this.addPointAtVideo(vx, vy);
-                this.requestFit();
-            });
+        if (this.pendingAdd !== null) {
+            this.finishPendingAdd(e);
             return;
         }
 

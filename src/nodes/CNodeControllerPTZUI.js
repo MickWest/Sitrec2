@@ -8,6 +8,7 @@ import {
     getNorthPole
 } from "../SphericalMath";
 import {guiMenus, NodeMan, Sit} from "../Globals";
+import {ViewMan} from "../CViewManager";
 
 import {CNodeController} from "./CNodeController";
 import {V3} from "../threeUtils";
@@ -115,6 +116,20 @@ export class CNodeControllerAzElZoom extends CNodeController {
 }
 
 
+// Aspect ratios worth naming in the readout. A bare 1.7778 is correct but "16:9" is what the
+// number actually means to anyone reading it.
+const NAMED_ASPECTS = [
+    [16 / 9, "16:9"], [4 / 3, "4:3"], [3 / 2, "3:2"], [1, "1:1"],
+    [21 / 9, "21:9"], [2.39, "2.39:1"], [5 / 4, "5:4"], [9 / 16, "9:16"], [3 / 4, "3:4"],
+];
+
+function nameAspect(a) {
+    for (const [value, name] of NAMED_ASPECTS) {
+        if (Math.abs(a - value) < 0.005 * value) return name;
+    }
+    return null;
+}
+
 // UI based version of this, PTZ = Az, El, Zoom, and have constants defined by the gui
 export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     constructor(v) {
@@ -134,6 +149,14 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         this.satQuat = new Quaternion(); // satellite mode orientation (relative to nadir frame)
         this._satQuatDirty = true;       // rebuild from angles on next applySatellite
 
+        // Horizontal FOV is not a second stored quantity — it is this.fov read through an aspect
+        // ratio, and setting it writes back through the same one. See fovAspect for which ratio.
+        this.lockAspect = v.lockAspect ?? false;
+        this.lockedAspect = v.lockedAspect ?? 16 / 9;
+        // Plain field rather than a getter: lil-gui assigns to the property it is handed, and a
+        // getter-only accessor would throw if anything ever wrote back. Refreshed in apply().
+        this.aspectDisplay = "-";
+
         assert(v.fov !== undefined, "CNodeControllerPTZUI: initial fov is undefined")
 
         if (v.showGUI) {
@@ -151,6 +174,46 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
                 this.fovController = fovFolder.add(this, "fov", 0.0001, 170, 0.01, false).listen().name(t("ptzUI.zoomFov.label")).tooltip(t("ptzUI.zoomFov.tooltip")).onChange(v => {
                     this.refresh()
                 }).setLabelColor(pszUIColor) // .elastic(0.0001, 170)
+
+                // The same angle across the frame's width. Not a second stored value — it reads
+                // and writes this.fov through fovAspect, so the two sliders can never disagree.
+                this.hfovController = fovFolder.add(this, "hfov", 0.0001, 179, 0.01, false)
+                    .listen()
+                    .name(t("ptzUI.hfov.label", {defaultValue: "HFOV (deg)"}))
+                    .tooltip(t("ptzUI.hfov.tooltip", {defaultValue:
+                        "Camera HORIZONTAL field of view in degrees, across the full width of " +
+                        "the frame.\n\nDerived from VFOV and the aspect ratio below — editing " +
+                        "it sets VFOV to match. An HFOV means nothing without saying what " +
+                        "frame it spans, which is what the aspect ratio is for."}))
+                    .onChange(() => this.refresh())
+                    .setLabelColor(pszUIColor);
+
+                this.aspectController = fovFolder.add(this, "aspectDisplay")
+                    .listen().disable()
+                    .name(t("ptzUI.aspect.label", {defaultValue: "Aspect Ratio"}))
+                    .tooltip(t("ptzUI.aspect.tooltip", {defaultValue:
+                        "Width divided by height of the frame that VFOV and HFOV are quoted " +
+                        "against.\n\nWith a video loaded this is the video's own pixel " +
+                        "dimensions and cannot be changed. Otherwise it is either pinned (Lock " +
+                        "Aspect on) or taken from the view pane, which changes when you resize " +
+                        "the window."}));
+
+                this.lockAspectController = fovFolder.add(this, "lockAspect")
+                    .listen()
+                    .name(t("ptzUI.lockAspect.label", {defaultValue: "Lock Aspect"}))
+                    .tooltip(t("ptzUI.lockAspect.tooltip", {defaultValue:
+                        "Hold the aspect ratio fixed instead of letting it follow the view " +
+                        "pane, so HFOV stays put when the window is resized.\n\nAlways on, and " +
+                        "not editable, while a video is loaded: the video defines the frame.\n\n" +
+                        "This is separate from Match Video Aspect, which changes how the 3D is " +
+                        "RENDERED rather than what the FOV numbers mean."}))
+                    .onChange((on) => {
+                        // Freeze whatever it is right now, so ticking the box never moves the
+                        // camera — it only stops the number from drifting afterwards.
+                        if (on) this.lockedAspect = this.liveAspect() ?? this.lockedAspect;
+                        this.refresh();
+                    });
+                this.updateAspectLockAvailability();
             }
             if (this.roll !== undefined ) {
                 this.rollController = guiPTZ.add(this, "roll", -180, 180, 0.005).listen().name(t("ptzUI.roll.label")).tooltip(t("ptzUI.roll.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
@@ -176,12 +239,120 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
        // this.refresh()
     }
 
+    // ---------- vertical / horizontal FOV and the aspect that links them ----------
+    //
+    // Only the VERTICAL FOV is stored (this.fov, and fovUI behind it), because that is what a
+    // three.js PerspectiveCamera takes. Horizontal FOV is that same angle read through an aspect
+    // ratio. Which ratio is the whole question: an HFOV quoted without saying what frame it spans
+    // is not a measurement of anything, and getting exactly this wrong by 10 degrees is how a
+    // published reconstruction can put a sensor 60% too high.
+
+    /** The aspect of the loaded video, from its ORIGINAL coded dimensions. Undefined if none. */
+    videoAspect() {
+        const videoNode = NodeMan.get("video", false);
+        if (!videoNode) return undefined;
+        // Originals rather than the working dimensions: a resolution cap rewrites the working
+        // pair, and metadata rotation can swap it, while the coded pair stays as delivered.
+        const w = videoNode.originalVideoWidth || videoNode.videoData?.videoWidth || 0;
+        const h = videoNode.originalVideoHeight || videoNode.videoData?.videoHeight || 0;
+        return (w > 0 && h > 0) ? w / h : undefined;
+    }
+
+    /** The aspect of the pane this camera is actually being rendered into. Undefined if none. */
+    liveAspect() {
+        const node = this._objectNode;
+        if (!node) return undefined;
+        for (const id in ViewMan.list) {
+            const view = ViewMan.list[id];
+            if (view.cameraNode === node && view.widthPx > 0 && view.heightPx > 0) {
+                return view.widthPx / view.heightPx;
+            }
+        }
+        return undefined;
+    }
+
+    /**
+     * The aspect ratio the horizontal FOV is quoted against.
+     *
+     * A video wins outright and cannot be overridden — the footage IS the frame, so its shape is
+     * not a preference. Otherwise Lock Aspect chooses between a pinned value and the live pane,
+     * which drifts every time the window is resized and would otherwise make HFOV wander while
+     * nothing about the camera changed.
+     */
+    get fovAspect() {
+        const video = this.videoAspect();
+        if (video !== undefined) return video;
+        if (this.lockAspect) return this.lockedAspect;
+        return this.liveAspect() ?? this.lockedAspect;
+    }
+
+    /** True when the aspect is dictated by a video, so Lock Aspect is not the user's to set. */
+    get aspectForcedByVideo() {
+        return this.videoAspect() !== undefined;
+    }
+
+    get hfov() {
+        const a = this.fovAspect;
+        if (!(a > 0) || !(this.fov > 0)) return 0;
+        return 2 * degrees(Math.atan(a * Math.tan(radians(this.fov) / 2)));
+    }
+
+    set hfov(h) {
+        const a = this.fovAspect;
+        if (!(a > 0) || !(h > 0)) return;
+        const v = 2 * degrees(Math.atan(Math.tan(radians(h) / 2) / a));
+        // Same bounds as the vertical slider, so driving from either end cannot leave the camera
+        // somewhere the other control could not have reached.
+        this.fov = Math.min(170, Math.max(0.0001, v));
+    }
+
+    /**
+     * Grey out Lock Aspect while a video owns the aspect, and show it ticked, because that is
+     * what is actually happening. A checkbox that stays unticked while the value it controls is
+     * being overridden reads as the app ignoring it.
+     *
+     * Called every frame from apply(), so a video dropped in later takes effect; the controller
+     * is only touched when the state actually changes.
+     */
+    updateAspectLockAvailability() {
+        if (!this.lockAspectController) return;
+        const forced = this.aspectForcedByVideo;
+        if (forced === this._aspectLockForced) return;
+        this._aspectLockForced = forced;
+        if (forced) {
+            // Remember what the user had, so unloading the video puts it back rather than
+            // leaving the tick behind as a setting they never made.
+            this._userLockAspect = this.lockAspect;
+            this.lockAspect = true;
+        } else if (this._userLockAspect !== undefined) {
+            this.lockAspect = this._userLockAspect;
+            this._userLockAspect = undefined;
+        }
+        this.lockAspectController.enable(!forced);
+    }
+
+    /** Refresh the read-only readout: the ratio, plus what it is in human terms. */
+    updateAspectReadout() {
+        const a = this.fovAspect;
+        if (!(a > 0)) { this.aspectDisplay = "-"; return; }
+        const videoNode = NodeMan.get("video", false);
+        const w = videoNode?.originalVideoWidth ?? 0;
+        const h = videoNode?.originalVideoHeight ?? 0;
+        // The video's own pixel dimensions say more than any named ratio, and say it exactly:
+        // a clip that is 1440x1080 stretched to 16:9 is a thing that happens.
+        const note = (this.aspectForcedByVideo && w > 0 && h > 0)
+            ? `${w}×${h}` : nameAspect(a);
+        this.aspectDisplay = note ? `${a.toFixed(4)}  (${note})` : a.toFixed(4);
+    }
+
     modSerialize() {
         return {
             ...super.modSerialize(),
             az: this.az,
             el: this.el,
             fov: this.fov,
+            lockAspect: this.lockAspect,
+            lockedAspect: this.lockedAspect,
             roll: this.roll,
             xOffset: this.xOffset,
             yOffset: this.yOffset,
@@ -206,6 +377,8 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         this.relative = v.relative ?? false;
         this.satellite = v.satellite ?? false;
         this.rotation = v.rotation ?? 0;
+        this.lockAspect = v.lockAspect ?? false;
+        this.lockedAspect = v.lockedAspect ?? 16 / 9;
         this.updateSatelliteSliderVisibility();
     }
 
@@ -230,6 +403,13 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         const camera = objectNode.camera;
         camera.near = this.nearPlane;
         camera.updateProjectionMatrix();
+
+        // Which camera node this is, so liveAspect can find the pane it renders into. Recorded
+        // here rather than in the constructor because the controller is attached to the camera
+        // after it is built.
+        this._objectNode = objectNode;
+        this.updateAspectLockAvailability();
+        this.updateAspectReadout();
     }
 
     // Satellite mode: quaternion-based orientation, no gimbal lock.

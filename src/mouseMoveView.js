@@ -9,6 +9,18 @@ import {setRenderOne} from "./Globals";
 
 let mouseDragView
 let mouseDown = false
+
+/**
+ * The view that claimed the press currently in progress, or null if none did.
+ *
+ * Read-only, for handlers that listen to the document directly and need to know whether the
+ * gesture already belongs to somebody. Note that onDocumentMouseUp clears it, and is itself a
+ * pointerup listener registered at startup — so a caller wanting the value during a release must
+ * listen in the CAPTURE phase to run first.
+ */
+export function getMouseDragView() {
+    return mouseDragView ?? null;
+}
 export const DRAG = {
     NONE: 0,
     PAN: 1,

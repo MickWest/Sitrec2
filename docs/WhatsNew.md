@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.119.1 (2026-08-08)
+
+### New Features
+
+- **Separate vertical and horizontal field of view** (Camera → FOV (Zoom)): the field-of-view slider is now labelled *VFOV (deg)* and is joined by a new *HFOV (deg)* slider for the same angle measured across the width of the frame, so a figure quoted as a horizontal field of view can be entered directly instead of converted by hand. They are two views of one setting and always agree — the camera still stores the vertical angle, so existing sitches are unchanged. A read-only *Aspect Ratio* shows the shape of frame those angles are quoted against: the video's own pixel size when a video is loaded (for example *1.7778  (1920×1080)*), otherwise a named ratio such as *16:9*. A new *Lock Aspect* pins that ratio so the horizontal figure stops shifting when you resize the window; ticking it keeps whatever the ratio is at that moment, so it never moves the camera. With a video loaded the video defines the frame, so *Lock Aspect* is held on and greyed out. It is separate from *Match Video Aspect*, which changes how the 3D is drawn rather than what the field-of-view numbers mean.
+
+### Bug Fixes
+
+- Fixed clicking the video not placing a control point (Camera → Fit Camera to Points): with *Enable Fit* on, a click on empty video never added a point in 2.119.0 — dragging an existing point, right-clicking to delete one, and the handles in the 3D views all worked as described. Clicking now adds a point, panning the video does not leave stray points behind (any movement of more than a few pixels during the press counts as a pan), a click that another video overlay is using — annotation, the mask or manual tracking — no longer adds one as well, and a two-finger pinch on a touchscreen cannot drop points.
+
 ## Version 2.119.0 (2026-08-08)
 
 ### New Features

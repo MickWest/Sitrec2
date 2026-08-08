@@ -1276,7 +1276,7 @@ const de = {
             tooltip: "Kameraerhöhung / Neigungswinkel in Grad",
         },
         zoomFov: {
-            label: "Zoom (FOV)",
+            label: "VFOV (deg)",
             tooltip: "Vertikales Kamerasichtfeld in Grad",
         },
         roll: {

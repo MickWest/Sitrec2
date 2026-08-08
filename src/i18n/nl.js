@@ -1276,7 +1276,7 @@ const nl = {
             tooltip: "Camera-elevatie / kantelhoek in graden",
         },
         zoomFov: {
-            label: "Zoom (FOV)",
+            label: "VFOV (deg)",
             tooltip: "Verticaal gezichtsveld van de camera in graden",
         },
         roll: {

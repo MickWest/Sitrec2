@@ -1280,7 +1280,7 @@ const ja = {
             tooltip: "カメラの仰角/チルト角度（度）",
         },
         zoomFov: {
-            label: "ズーム (FOV)",
+            label: "VFOV (deg)",
             tooltip: "カメラの垂直視野角（度）",
         },
         roll: {

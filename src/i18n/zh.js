@@ -1280,7 +1280,7 @@ const zh = {
             tooltip: "相机仰角 / 垂直转动角度（度）",
         },
         zoomFov: {
-            label: "变焦 (FOV)",
+            label: "VFOV (deg)",
             tooltip: "相机垂直视场角（度）",
         },
         roll: {

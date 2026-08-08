@@ -1276,7 +1276,7 @@ const pt = {
             tooltip: "Elevação / ângulo de inclinação da câmera em graus",
         },
         zoomFov: {
-            label: "Zoom (fov)",
+            label: "VFOV (deg)",
             tooltip: "Campo de visão vertical da câmera em graus",
         },
         roll: {

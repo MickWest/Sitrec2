@@ -1580,8 +1580,32 @@ const en = {
             tooltip: "Camera elevation / tilt angle in degrees",
         },
         zoomFov: {
-            label: "Zoom (fov)",
-            tooltip: "Camera vertical field of view in degrees",
+            label: "VFOV (deg)",
+            tooltip: "Camera VERTICAL field of view in degrees, across the full height of the " +
+                "frame.\n\nThis is the value the camera actually stores; HFOV below is this " +
+                "angle read through the aspect ratio.",
+        },
+        hfov: {
+            label: "HFOV (deg)",
+            tooltip: "Camera HORIZONTAL field of view in degrees, across the full width of the " +
+                "frame.\n\nDerived from VFOV and the aspect ratio below — editing it sets VFOV " +
+                "to match. An HFOV means nothing without saying what frame it spans, which is " +
+                "what the aspect ratio is for.",
+        },
+        aspect: {
+            label: "Aspect Ratio",
+            tooltip: "Width divided by height of the frame that VFOV and HFOV are quoted " +
+                "against.\n\nWith a video loaded this is the video's own pixel dimensions and " +
+                "cannot be changed. Otherwise it is either pinned (Lock Aspect on) or taken " +
+                "from the view pane, which changes when you resize the window.",
+        },
+        lockAspect: {
+            label: "Lock Aspect",
+            tooltip: "Hold the aspect ratio fixed instead of letting it follow the view pane, " +
+                "so HFOV stays put when the window is resized.\n\nAlways on, and not editable, " +
+                "while a video is loaded: the video defines the frame.\n\nThis is separate from " +
+                "Match Video Aspect, which changes how the 3D is RENDERED rather than what the " +
+                "FOV numbers mean.",
         },
         roll: {
             label: "Roll",
