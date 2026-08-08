@@ -266,17 +266,91 @@ const handlers = {
             const viewId = viewAliases[view] || view;
             const viewNode = window.NodeMan?.get(viewId);
             if (!viewNode) return { error: `View '${viewId}' not found` };
-            // 3D views have a WebGL renderer; 2D views (video, overlays) have a canvas directly
-            const captureCanvas = viewNode.renderer?.domElement || viewNode.canvas;
-            if (!captureCanvas) return { error: `View '${viewId}' has no renderer or canvas` };
+            // v.canvas, not renderer.domElement. For a 3D view the renderer draws into an
+            // offscreen target and the result is composited onto v.canvas — which is also the
+            // one surface the full-viewport path below reads, for every view, and it is correct
+            // there for both the main and the look view.
+            const baseCanvas = viewNode.canvas || viewNode.renderer?.domElement;
+            if (!baseCanvas) return { error: `View '${viewId}' has no renderer or canvas` };
+            if (!(baseCanvas.width > 0) || !(baseCanvas.height > 0)) {
+                return { error: `View '${viewId}' has a zero-sized canvas` };
+            }
             try {
-                if (typeof viewNode.renderSky === "function") viewNode.renderSky();
+                // ONE call, the same one the frame loop makes (see indexRender.js). renderCanvas()
+                // IS the whole render for a 3D view: it calls renderTargetAndEffects(), which calls
+                // renderSky() itself (CNodeView3D.js). The old code drove all three by hand, and
+                // measurably wrecked the look view: sampling its canvas before and after gave
+                // correct sky and terrain first — (100,153,174), (166,121,99) — and uniform R=G=B
+                // grey after. Only the look view, which is the one carrying the IR/video effects
+                // chain. The mechanism inside that chain was NOT pinned down, so no claim is made
+                // here about which pass does it; what is established is that the extra calls cause
+                // it and that a single renderCanvas() does not. Note the old code did not merely
+                // return a wrong image — it wrote one to the LIVE canvas, where it stayed until
+                // something else asked for a repaint.
                 if (typeof viewNode.renderCanvas === "function") viewNode.renderCanvas(frame);
-                if (typeof viewNode.renderTargetAndEffects === "function") viewNode.renderTargetAndEffects();
             } catch (e) {
                 return { error: `Render error during screenshot: ${e.message}` };
             }
-            return exportCanvas(captureCanvas);
+
+            // Composite the view's child views on top, mirroring the app's own single-view exporter
+            // (CNodeView3D.js, "render this view to video"). Without them a single-view capture
+            // silently drops everything drawn by an overlay — fit handles, measurement labels,
+            // tracking cursors, the HUD — which is usually the thing it was taken to look at.
+            //
+            // The output frames the view's DIV, not the 3D canvas, because those are not the same
+            // rectangle: under Match Video Aspect the 3D canvas is letterboxed inside the div
+            // (measured on a 767x435 look view: canvas inset 2px and 4px shorter), while the
+            // overlays cover the whole div. Stretching one onto the other puts every handle a few
+            // pixels off the thing it is marking. So: size the output from the div, place the 3D
+            // canvas in the sub-rectangle it actually occupies, and let the overlays span the rest.
+            const rc = baseCanvas.getBoundingClientRect();
+            const rd = (viewNode.div || baseCanvas).getBoundingClientRect();
+            const usable = rc.width > 0 && rc.height > 0 && rd.width > 0 && rd.height > 0;
+            // Backing-store pixels per CSS pixel, so the capture keeps the render's real resolution.
+            const s = usable ? baseCanvas.width / rc.width : 1;
+
+            const out = document.createElement("canvas");
+            out.width = usable ? Math.max(1, Math.round(rd.width * s)) : baseCanvas.width;
+            out.height = usable ? Math.max(1, Math.round(rd.height * s)) : baseCanvas.height;
+            const outCtx = out.getContext("2d");
+            outCtx.fillStyle = "#000000";
+            outCtx.fillRect(0, 0, out.width, out.height);
+            if (usable) {
+                outCtx.drawImage(baseCanvas, (rc.left - rd.left) * s, (rc.top - rd.top) * s,
+                    rc.width * s, rc.height * s);
+            } else {
+                outCtx.drawImage(baseCanvas, 0, 0, out.width, out.height);
+            }
+
+            const VM = window.Globals?.ViewMan || window.ViewMan;
+            if (VM && typeof VM.iterate === "function") {
+                if (typeof VM.computeEffectiveVisibility === "function") VM.computeEffectiveVisibility();
+                VM.iterate((id, childView) => {
+                    if (childView === viewNode || !childView.canvas) return;
+                    // _effectivelyVisible, not .visible: a view can be hidden by an ancestor, and a
+                    // hidden overlay's canvas keeps whatever it last drew — nothing clears it — so
+                    // compositing it would paint stale handles back onto the image.
+                    if (childView._effectivelyVisible === false) return;
+                    const isOverlayChild = childView.overlayView === viewNode;
+                    // relativeTo children are the HUDs (compass, Wescam MX, MQ9) — they are not
+                    // overlays, but they are part of what this view looks like on screen.
+                    if (!isOverlayChild && childView.in?.relativeTo !== viewNode) return;
+                    if (childView.canvas.style.display === "none"
+                        || childView.canvas.style.visibility === "hidden") return;
+                    const alpha = childView.transparency !== undefined ? childView.transparency : 1;
+                    if (alpha <= 0) return;
+                    if (!(childView.canvas.width > 0) || !(childView.canvas.height > 0)) return;
+                    childView.renderCanvas(frame);
+                    outCtx.globalAlpha = alpha;
+                    // Placed by its own offset within the parent, in CSS pixels scaled to backing
+                    // pixels — a HUD does not necessarily fill the view.
+                    outCtx.drawImage(childView.canvas,
+                        (childView.leftPx - viewNode.leftPx) * s, (childView.topPx - viewNode.topPx) * s,
+                        childView.widthPx * s, childView.heightPx * s);
+                    outCtx.globalAlpha = 1;
+                });
+            }
+            return exportCanvas(out);
         }
 
         // Default: composite all visible views (same as "Render Viewport Video")
