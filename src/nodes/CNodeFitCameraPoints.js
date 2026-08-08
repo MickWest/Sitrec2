@@ -89,6 +89,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // Snapshot taken when an undoable edit opens; see beginUndo.
         this._undoBefore = null;
         this._pendingEnable = undefined;
+        this._restoreMatchVideoAspect = undefined;
 
         this.markers = new FitPointHandles3D({
             getPoints: () => this.points.map((p) => ({
@@ -236,6 +237,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.markers.setEnabled(on);
         this.cancelGesture();
 
+        // See setMatchVideoAspect: while editing a fit the look view must frame the 3D the way
+        // the video is framed, or the preview the user is judging by is not comparable.
+        if (on) {
+            const was = this.setMatchVideoAspect(true);
+            if (was === false) this._restoreMatchVideoAspect = false;
+        } else if (this._restoreMatchVideoAspect !== undefined) {
+            this.setMatchVideoAspect(this._restoreMatchVideoAspect);
+            this._restoreMatchVideoAspect = undefined;
+        }
+
         // Only listened for while the feature is on, so a disabled fit really does cost nothing.
         if (on && !this._cancelListener) {
             this._cancelListener = () => this.cancelGesture();
@@ -252,7 +263,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             // own it.
             if (this.points.length === 0) this.fitFrame = Math.round(par.frame);
             setRenderOne(true);
-            this.updateStatus(this.points.length ? "Ready" : "Click the video to add a point");
+            // Say when we changed a setting out from under the user, rather than leaving them to
+            // notice a checkbox ticking itself.
+            const forced = this._restoreMatchVideoAspect === false
+                ? " · Match Video Aspect on, so the look view frames the 3D like the video" : "";
+            this.updateStatus(
+                (this.points.length ? "Ready" : "Click the video to add a point") + forced);
         } else {
             this.updateStatus("Off");
         }
@@ -386,6 +402,36 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.beginUndo();
         fn();
         this.endUndo(description);
+    }
+
+    // ---------- Match Video Aspect ----------
+
+    /**
+     * Force the look view to frame the 3D scene exactly as the video is framed, for as long as
+     * the fit is being edited.
+     *
+     * The fit itself does not care — it is solved entirely in video-pixel space, and toggling
+     * this leaves the residual and the solved camera byte-identical. What it changes is whether
+     * the PREVIEW means anything. With it off the look view renders at its own aspect while the
+     * video has another, so the 3D and the footage are framed differently and a control point can
+     * sit exactly on its landmark while appearing not to. Since the entire way a user judges this
+     * tool is "does the sphere sit on the feature in the look view", a preview that lies is worse
+     * than no preview.
+     *
+     * The previous value is returned so switching the fit off puts it back.
+     */
+    setMatchVideoAspect(on) {
+        const camNode = this.lookCameraNode();
+        const frustum = camNode ? NodeMan.get(camNode.id + "_Frustum", false) : null;
+        if (!frustum) return undefined;
+        const was = frustum.matchVideoAspect;
+        if (was === on) return was;
+        // Through the GUI controller where there is one, so the checkbox follows the change
+        // rather than silently disagreeing with the state.
+        const controller = findGuiController(frustum, "matchVideoAspect");
+        if (controller) controller.setValue(on);
+        else frustum.matchVideoAspect = on;
+        return was;
     }
 
     // ---------- geometry helpers ----------
@@ -963,4 +1009,29 @@ function describeObservability(result) {
     const worst = d.weakestMode?.components?.[0]?.name ?? "some combination";
     const verb = d.conditioning === "unobservable" ? "cannot be determined" : "is weakly determined";
     return `Weak: ${worst} ${verb} by these points — held near its previous value`;
+}
+
+/**
+ * Find the lil-gui controller bound to obj[prop], anywhere under the menu bar.
+ *
+ * Setting a flag directly would work but would leave its checkbox showing the old state, which
+ * reads as the app ignoring you. Going through the controller keeps the two in step.
+ */
+function findGuiController(obj, prop) {
+    const search = (gui) => {
+        if (!gui) return null;
+        for (const c of gui.controllers ?? []) {
+            if (c.object === obj && c.property === prop) return c;
+        }
+        for (const f of gui.folders ?? []) {
+            const found = search(f);
+            if (found) return found;
+        }
+        return null;
+    };
+    for (const key of Object.keys(guiMenus)) {
+        const found = search(guiMenus[key]);
+        if (found) return found;
+    }
+    return null;
 }
