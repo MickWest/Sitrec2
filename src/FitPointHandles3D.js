@@ -28,6 +28,17 @@ import {drawFitHandle, GRAB_RADIUS} from "./FitHandleDraw";
 /** The 3D views a handle is offered in. */
 const HANDLE_VIEWS = ["mainView", "lookView"];
 
+/**
+ * The view the convergence display is drawn in.
+ *
+ * Only this one, because the look view IS the camera the sight lines start at: every line would
+ * project to a single point, and every marker on the video quad would land on top of the pixel it
+ * already sits on in the video view. The whole display only says anything from outside. It is also
+ * the only view the frustum's video quad is drawn in at all — it is on the helpers layer, which the
+ * look view deliberately excludes.
+ */
+const RAY_VIEW = "mainView";
+
 /** How far a drag ray will look for ground before giving up. */
 const MAX_GROUND_RANGE = 400000;
 
@@ -43,6 +54,27 @@ export function projectToCanvas(view, world) {
         const r = renderedRect(view, view.widthPx, view.heightPx);
         return [r.x + (ndc.x + 1) * 0.5 * r.w, r.y + (1 - ndc.y) * 0.5 * r.h];
     });
+}
+
+/**
+ * Does the frustum's video quad block the view from `eye` to `world`?
+ *
+ * Answered in the quad's own local frame, where the quad is exactly the square x,y in [-0.5, 0.5]
+ * at z = 0, so the whole test is one segment-plane intersection and two comparisons — no projection
+ * and no polygon walk. `t` is where the sight line crosses that plane, as a fraction of the way
+ * from the eye to the point: outside (0,1) the quad is behind the viewer or beyond the point, and
+ * blocks nothing.
+ *
+ * @param {{worldToQuad: Matrix4}} occluder
+ */
+function behindQuad(occluder, eye, world) {
+    const a = eye.clone().applyMatrix4(occluder.worldToQuad);
+    const b = world.clone().applyMatrix4(occluder.worldToQuad);
+    const dz = b.z - a.z;
+    if (dz === 0) return false;                     // sight line lies in the plane of the quad
+    const t = -a.z / dz;
+    if (t <= 0 || t >= 1) return false;
+    return Math.abs(a.x + (b.x - a.x) * t) <= 0.5 && Math.abs(a.y + (b.y - a.y) * t) <= 0.5;
 }
 
 /** Canvas pixels -> the ground point under them, or null if the ray never reaches ground. */
@@ -85,7 +117,15 @@ class CFitHandleOverlay extends CNodeViewUI {
         const out = [];
         if (!host) return out;
         const points = this.owner.getPoints();
+        // The handles are drawn on an overlay and so are never hidden by the terrain, which is
+        // deliberate: a landmark you are trying to place is exactly the thing you still need to see
+        // when a ridge is in the way. The video quad is the one exception — it is a picture of what
+        // the camera sees, so a marker showing through the FRONT of it would read as a point in
+        // mid-air rather than a place on the ground beyond.
+        const occluder = this.hostId === RAY_VIEW ? this.owner.getOccluder() : null;
+        const eye = occluder ? host.camera.position : null;
         for (let i = 0; i < points.length; i++) {
+            if (occluder && behindQuad(occluder, eye, points[i].position)) continue;
             const p = projectToCanvas(host, points[i].position);
             if (p === null) continue;
             out.push({id: points[i].id, color: points[i].color, index: i, cx: p[0], cy: p[1]});
@@ -98,6 +138,27 @@ class CFitHandleOverlay extends CNodeViewUI {
         if (!this.owner.enabled || !this.ctx) return;
         for (const h of this.projected()) {
             drawFitHandle(this.ctx, h.cx, h.cy, h.color, String(h.index + 1));
+        }
+        // Last, so a video point stays readable where it lands on top of its own ground handle —
+        // which is exactly what a well-fitted near landmark looks like from behind the camera.
+        if (this.hostId === RAY_VIEW) this.drawVideoPlaneHandles();
+    }
+
+    /**
+     * Mark each video point where it falls on the video hanging in the frustum.
+     *
+     * The other end of the sight lines FitPointSightLines3D draws: a correct camera runs each line
+     * straight through its own marker on its way to the ground point. Drawn as the same handle the
+     * user places on the video, because it IS that point — seen from outside the camera that saw it.
+     */
+    drawVideoPlaneHandles() {
+        const host = this.host;
+        const display = this.owner.getRayDisplay();
+        if (!host || !display) return;
+        for (const p of display.points) {
+            if (p.image === null) continue;
+            const at = projectToCanvas(host, p.image);
+            if (at !== null) drawFitHandle(this.ctx, at[0], at[1], p.color, String(p.index + 1));
         }
     }
 
@@ -163,6 +224,9 @@ class CFitHandleOverlay extends CNodeViewUI {
  *
  * @param {object}   v
  * @param {Function} v.getPoints     () => [{id, color, position: Vector3}]
+ * @param {Function} v.getRayDisplay () => {origin: Vector3, points: [{index, color,
+ *                                   ground: Vector3, image: Vector3|null}]} | null
+ * @param {Function} v.getOccluder   () => {worldToQuad: Matrix4} | null
  * @param {Function} v.onMoved       (id, Vector3) => void, continuously during a drag
  * @param {Function} v.onCommit      (id) => void, once on release
  * @param {Function} v.onCorrectFrame () => boolean
@@ -172,6 +236,8 @@ class CFitHandleOverlay extends CNodeViewUI {
 export class FitPointHandles3D {
     constructor(v) {
         this.getPoints = v.getPoints;
+        this.getRayDisplay = v.getRayDisplay ?? (() => null);
+        this.getOccluder = v.getOccluder ?? (() => null);
         this.onMoved = v.onMoved ?? (() => {});
         this.onCommit = v.onCommit ?? (() => {});
         this.onCorrectFrame = v.onCorrectFrame ?? (() => true);

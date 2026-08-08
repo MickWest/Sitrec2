@@ -28,7 +28,7 @@
 
 import {CNodeActiveOverlay} from "./CNodeTrackingOverlay";
 import {CNodeVideoView} from "./CNodeVideoView";
-import {Vector3} from "three";
+import {Matrix4, Vector3} from "three";
 import {assert} from "../assert";
 import {Globals, guiMenus, NodeMan, setRenderOne, UndoManager} from "../Globals";
 import {par} from "../par";
@@ -39,6 +39,7 @@ import {getLocalUpVector, getNorthPole} from "../SphericalMath";
 import {raycastGroundElevationFast} from "../raycastGround";
 import {extractFOV} from "./CNodeControllerVarious";
 import {FitPointHandles3D} from "../FitPointHandles3D";
+import {FitPointSightLines3D} from "../FitPointSightLines3D";
 import {drawFitHandle, GRAB_RADIUS, POINT_COLORS} from "../FitHandleDraw";
 import {
     azElRollFromBasis, basisFromAzElRoll, evaluateCamera, fitCameraToPoints, MAX_ABS_EL,
@@ -49,6 +50,8 @@ import {showConfirm} from "../showError";
 const CLICK_SLOP = 4;
 /** How far along the ray to drop a new 3D point when the terrain raycast misses. */
 const FALLBACK_RANGE = 5000;
+/** The camera contributes pose but no scale to the video quad's world matrix. */
+const UNIT_SCALE = new Vector3(1, 1, 1);
 
 export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     constructor(v) {
@@ -75,6 +78,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.lockRoll = true;
 
         this.autoFit = true;
+        this.showRays = true;
         this.status = "Off";
         this.residual = "-";
         this.observability = "-";
@@ -97,12 +101,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             getPoints: () => this.points.map((p) => ({
                 id: p.id, color: p.color, position: this.pointECEF(p),
             })),
+            getRayDisplay: () => this.rayDisplay(),
+            getOccluder: () => this.videoQuadOccluder(),
             onMoved: (id, pos) => this.onMarkerMoved(id, pos),
             onCommit: () => this.requestFit(),
             onCorrectFrame: () => this.onCorrectFrame(),
             onBeginEdit: () => this.beginUndo(),
             onEndEdit: (description) => this.endUndo(description),
         });
+
+        this.sightLines = new FitPointSightLines3D(() => this.rayDisplay());
 
         this._setupGUI();
     }
@@ -121,6 +129,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             lockFOV: this.lockFOV,
             lockRoll: this.lockRoll,
             autoFit: this.autoFit,
+            showRays: this.showRays,
             points: this.points.map((p) => ({
                 vx: p.vx, vy: p.vy, lat: p.lat, lon: p.lon, alt: p.alt, color: p.color,
             })),
@@ -142,6 +151,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (v.lockFOV !== undefined) this.lockFOV = v.lockFOV;
         if (v.lockRoll !== undefined) this.lockRoll = v.lockRoll;
         if (v.autoFit !== undefined) this.autoFit = v.autoFit;
+        if (v.showRays !== undefined) this.showRays = v.showRays;
 
         // Restore the points, but NOT the fit. The camera already carries the answer the last fit
         // produced — it was written into fixedCameraPosition/ptzAngles/fovUI and saved with them.
@@ -171,11 +181,13 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             this._pendingEnable = undefined;
             this.setEnabled(on);
         }
+        this.sightLines.update();
     }
 
     dispose() {
         this.setEnabled(false);   // also removes the gesture-cancel listeners
         this.markers.dispose();
+        this.sightLines.dispose();
         super.dispose();
     }
 
@@ -191,6 +203,14 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             .tooltip("Show the control points and allow editing. When off this feature does " +
                 "nothing at all — the camera keeps whatever the last fit gave it. Saved points " +
                 "are kept either way.");
+
+        this.gui.add(this, "showRays").name("Show Sight Lines").listen()
+            .onChange(() => setRenderOne(true))
+            .tooltip("In the main view, draw a line from the camera to each ground point, and " +
+                "mark each video point where it falls on the video in the frustum (Show/Hide " +
+                "-> Video in Frustum). Every line crosses the video at its own marker only for " +
+                "the one camera position and pointing that explains all the pairs at once — so " +
+                "any gap you can see is that point's residual, drawn in 3D.");
 
         this.gui.add(this, "autoFit").name("Fit on Change").listen()
             .tooltip("Re-solve the camera whenever a point is moved. Turn off to place several " +
@@ -237,6 +257,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.enabled = on;
         this.visible = on;
         this.markers.setEnabled(on);
+        this.sightLines.setEnabled(on);
         this.cancelGesture();
 
         // See setMatchVideoAspect: while editing a fit the look view must frame the 3D the way
@@ -442,8 +463,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
      * The previous value is returned so switching the fit off puts it back.
      */
     setMatchVideoAspect(on) {
-        const camNode = this.lookCameraNode();
-        const frustum = camNode ? NodeMan.get(camNode.id + "_Frustum", false) : null;
+        const frustum = this.frustumNode();
         if (!frustum) return undefined;
         const was = frustum.matchVideoAspect;
         if (was === on) return was;
@@ -485,6 +505,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
     lookCameraNode() {
         return NodeMan.get("lookCamera", false);
+    }
+
+    /** The frustum display node for the look camera, which owns the video quad and its toggles. */
+    frustumNode() {
+        const camNode = this.lookCameraNode();
+        return camNode ? NodeMan.get(camNode.id + "_Frustum", false) : null;
     }
 
     /**
@@ -544,6 +570,75 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             b.fwd[1] * fpx + b.right[1] * dx + b.down[1] * dy,
             b.fwd[2] * fpx + b.right[2] * dx + b.down[2] * dy,
         ).normalize();
+    }
+
+    // ---------- the convergence display ----------
+    //
+    // See FitPointSightLines3D for what this display is saying. This end of it just answers three
+    // questions for the two halves that draw it: where the camera and the ground points are (the
+    // lines, drawn as scene geometry), where each video point falls on the video in the frustum
+    // (drawn as a handle by the view overlays), and where the video quad is (so the ground handles
+    // can hide behind it).
+
+    /**
+     * World matrix of the frustum's video quad, or null unless it is actually showing the video.
+     *
+     * Gated on the toggle because the markers are meant to sit ON the footage. The quad still
+     * exists when the toggle is off — it is just an invisible rectangle in mid-air, and markers
+     * floating on a plane the user cannot see would read as points in space at some arbitrary
+     * range, which is the opposite of the thing being demonstrated.
+     *
+     * Composed here rather than read from quad.matrixWorld, because the frustum sets the quad's
+     * local transform in its own update() and may not have run yet this frame — so its stored world
+     * matrix can describe last frame's camera. Everything else in this display comes from the LIVE
+     * camera, and a fit moves the camera in one step; mixing the two would smear the markers off
+     * the video for exactly the frame the user is looking at the result. The quad's own local
+     * position and scale are still the frustum's, so nothing about its placement is duplicated —
+     * only the parent pose, which the frustum defines as the camera's (see its update()).
+     */
+    videoQuadMatrix() {
+        const frustum = this.frustumNode();
+        const quad = frustum?.videoQuad;
+        if (!quad || !frustum.showVideoInFrustum || !quad.visible) return null;
+        const cam = frustum.camera;
+        return new Matrix4()
+            .compose(cam.position, cam.quaternion, UNIT_SCALE)
+            .multiply(new Matrix4().compose(quad.position, quad.quaternion, quad.scale));
+    }
+
+    /**
+     * The video quad as a thing the ground handles can hide behind, or null when it is not shown.
+     *
+     * Handed over as the world -> quad-local transform because that is the frame the occlusion test
+     * is trivial in: the quad is exactly the square x,y in [-0.5, 0.5] at z = 0, so a line of sight
+     * is blocked by it or not with one segment-plane intersection and two comparisons.
+     */
+    videoQuadOccluder() {
+        const m = this.videoQuadMatrix();
+        return m === null ? null : {worldToQuad: m.invert()};
+    }
+
+    /**
+     * Everything the display needs, or null if there is nothing to draw. `image` is null per point
+     * when the video is not being shown in the frustum.
+     */
+    rayDisplay() {
+        if (!this.showRays || !this.enabled || this.points.length === 0) return null;
+        const node = this.lookCameraNode();
+        if (!node) return null;
+        node.camera.updateMatrixWorld();
+
+        const quad = this.videoQuadMatrix();
+        const size = this.videoSize;
+        return {
+            origin: node.camera.position.clone(),
+            points: this.points.map((p, i) => ({
+                index: i,
+                color: p.color,
+                ground: this.pointECEF(p),
+                image: quad && size ? videoPointOnQuad(quad, p, size) : null,
+            })),
+        };
     }
 
     // ---------- point management ----------
@@ -1080,6 +1175,24 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             drawFitHandle(ctx, cx, cy, p.color, label, alpha);
         }
     }
+}
+
+/**
+ * Where an original-video pixel lands on the frustum's video quad, in world space.
+ *
+ * Put through the quad's own transform rather than recomputed from the FOV and the video distance.
+ * The quad is a unit PlaneGeometry that the frustum scales by the LOOK CAMERA's fov and aspect —
+ * not the video's — so the footage is stretched across it whenever those two disagree, which under
+ * Match Video Aspect and video zoom they routinely do. The texture is stretched over the whole
+ * quad, so normalised (u,v) through the same matrix lands on the pixel it names by construction,
+ * and keeps doing so if the frustum ever changes how it sizes or places the quad.
+ *
+ * v is measured DOWN from the top of the frame, and the quad's top edge is v=1 in texture space
+ * (PlaneGeometry's first row, and CanvasTexture's default flipY puts canvas row 0 there) — hence
+ * 0.5 - vy/H rather than vy/H - 0.5.
+ */
+function videoPointOnQuad(quadMatrix, p, size) {
+    return new Vector3(p.vx / size[0] - 0.5, 0.5 - p.vy / size[1], 0).applyMatrix4(quadMatrix);
 }
 
 /** One line the user can act on, rather than a condition number. */
