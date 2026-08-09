@@ -19,7 +19,7 @@
 
 import {Vector3} from "three";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
-import {setRenderOne} from "./Globals";
+import {NodeMan, setRenderOne} from "./Globals";
 import {ViewMan} from "./CViewManager";
 import {mouseToCanvas, renderedRect, withDisplayedCamera} from "./ViewUtils";
 import {raycastGroundElevationFast} from "./raycastGround";
@@ -294,7 +294,17 @@ export class FitPointHandles3D {
     }
 
     dispose() {
-        for (const o of this.overlays) o.dispose?.();
+        // Go through the manager, not straight to the node. These overlays are constructed with
+        // an id, so they are registered in NodeMan; disposing one directly tears down its DOM
+        // but leaves the registration behind. NodeMan.disposeAll then reaches the same node and
+        // disposes it a second time, and the second pass throws on removeChild(null) — which is
+        // what killed the transition when one fit sitch was loaded after another. It also left a
+        // dead id registered, so re-enabling the fit tried to build "fitHandles_mainView" when
+        // one already existed. disposeRemove does both halves.
+        for (const o of this.overlays) {
+            if (o?.id !== undefined && NodeMan.exists(o.id)) NodeMan.disposeRemove(o.id);
+            else o?.dispose?.();
+        }
         this.overlays = [];
     }
 }

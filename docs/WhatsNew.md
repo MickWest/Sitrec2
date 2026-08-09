@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.120.0 (2026-08-08)
+
+### New Features
+
+- **A second way to solve the camera** (Camera → Fit Camera to Points → *Method*): alongside the existing *3D points (direct)* solve, a *Plane homography* method that assumes the landmarks lie on flat ground and recovers the camera from the way that plane maps onto the image — the classical approach most published photogrammetric reconstructions use. Running both on the same landmarks is what lets you show that a disagreement comes from the landmarks rather than from the choice of method. It needs at least four points, and because it works out position, pointing and field of view together in one step it cannot hold any of them fixed, so *Lock Position*, *Lock FOV* and *Lock Roll* are greyed out while it is chosen. Its *Observability* readout is based on how spread out the landmarks are in distance, since that is what actually determines whether the camera's height can be recovered — a sharply defined answer from landmarks all at one distance is precision, not accuracy. New in this release and not yet tried on real footage.
+- **Show Sight Lines** (Camera → Fit Camera to Points): draws, in the main view, a line from the camera to each landmark in that pair's colour, and marks where the matching video point falls on the video hanging in the camera's frustum. A camera that explains all the pairs at once runs every line straight through its own marker, so any gap you can see is that point's error, drawn at the size and direction it has in the scene rather than quoted as a number of pixels. The lines are real geometry, so terrain hides them where it should — a line that vanishes into a ridge and comes out the far side is telling you something true about where that landmark is. On by default while the fit is on; the markers on the video need *Video in Frustum* (Show menu). Landmark handles in the main view are now hidden where they fall behind the video, so a marker no longer appears to float in front of the footage.
+- **Zoom and pan the look view while fitting a camera** (Camera → Fit Camera to Points): with *Enable Fit* on, the mouse wheel and left drag on the look view now zoom and pan the *video*, and the 3D view follows it. Placing a landmark means finding the same feature in the footage and in the world, which needs both zoomed a long way in — and previously the only way to zoom the 3D was to move the camera, which is the very thing being solved for, so it pulled the two pictures apart and changed the answer. The camera provably does not move, rotate or change its field of view. Middle and right drag still work as before, and turning the fit off puts every control back as it was.
+- **Measurements in Look** (Show menu): measurement labels and arrows can now be shown in the look/camera view. Until now they could only ever appear in the main view, so a V/B measurement — or any of the built-in distance and altitude labels — was invisible in the look view no matter what. The old *Measurements* toggle is now *Measurements in Main*, and the new look-view toggle is off by default, so nothing changes in any existing sitch.
+
+### Bug Fixes
+
+- Fixed the video overlaid on the look view showing a different picture from the video view when *Full A-B Echo*, *Full A-B Blend* or *Full A-B Exposure* was on (Video → Video Processing). The video view showed the whole A-B range accumulated into one image, while the overlay showed a short rolling echo — or just the live frame — instead. The two are now the same picture, including while the accumulation is still running and once it has finished and is drawn over the live frame at the *A-B Echo Opacity %* you set.
+- Fixed an error when loading one sitch after another with *Fit Camera to Points* switched on (Camera menu), which broke the changeover and could then stop the fit from being switched back on.
+
 ## Version 2.119.3 (2026-08-08)
 
 ### Bug Fixes

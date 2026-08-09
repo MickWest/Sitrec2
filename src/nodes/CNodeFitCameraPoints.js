@@ -44,6 +44,13 @@ import {drawFitHandle, GRAB_RADIUS, POINT_COLORS} from "../FitHandleDraw";
 import {
     azElRollFromBasis, basisFromAzElRoll, evaluateCamera, fitCameraToPoints, MAX_ABS_EL,
 } from "../CameraPointFit";
+import {fitCameraByPlaneHomography} from "../CameraPlaneHomography";
+
+/** Solver choices for the Method dropdown. Values are what gets serialised. */
+export const FIT_METHODS = {
+    "3D points (direct)": "direct",
+    "Plane homography": "homography",
+};
 import {showConfirm} from "../showError";
 
 /** Movement below this many canvas pixels still counts as a click, not a drag. */
@@ -76,6 +83,11 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.lockPosition = false;
         this.lockFOV = false;
         this.lockRoll = true;
+        // Which solver runs. "direct" fits the camera to the points at their real 3D positions;
+        // "homography" assumes they are coplanar and recovers the camera from the plane-to-image
+        // projective map. Having both makes it possible to tell a disagreement caused by the
+        // control points apart from one caused by the choice of method.
+        this.fitMethod = "direct";
 
         this.autoFit = true;
         this.showRays = true;
@@ -128,6 +140,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             lockPosition: this.lockPosition,
             lockFOV: this.lockFOV,
             lockRoll: this.lockRoll,
+            fitMethod: this.fitMethod,
             autoFit: this.autoFit,
             showRays: this.showRays,
             points: this.points.map((p) => ({
@@ -150,6 +163,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (v.lockPosition !== undefined) this.lockPosition = v.lockPosition;
         if (v.lockFOV !== undefined) this.lockFOV = v.lockFOV;
         if (v.lockRoll !== undefined) this.lockRoll = v.lockRoll;
+        if (v.fitMethod !== undefined) {
+            this.fitMethod = v.fitMethod;
+            this.syncMethodControls();
+        }
         if (v.autoFit !== undefined) this.autoFit = v.autoFit;
         if (v.showRays !== undefined) this.showRays = v.showRays;
 
@@ -219,18 +236,33 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.gui.add(this, "fitNow").name("Fit Now")
             .tooltip("Solve the camera from the current control points.");
 
-        this.gui.add(this, "lockPosition").name("Lock Position").listen()
-            .onChange(() => this.requestFit())
-            .tooltip("Keep the camera where it is and solve only pointing and FOV. Use this when " +
-                "the platform position is known, or when all the landmarks are distant and the " +
-                "position is not recoverable from them.");
-        this.gui.add(this, "lockFOV").name("Lock FOV").listen()
-            .onChange(() => this.requestFit())
-            .tooltip("Keep the current field of view and solve only position and pointing.");
-        this.gui.add(this, "lockRoll").name("Lock Roll").listen()
-            .onChange(() => this.requestFit())
-            .tooltip("Hold camera roll at its current value. Leave on unless the horizon in the " +
-                "video is visibly tilted.");
+        this.gui.add(this, "fitMethod", FIT_METHODS).name("Method").listen()
+            .onChange(() => { this.syncMethodControls(); this.requestFit(); })
+            .tooltip("How the camera is solved. '3D points' uses each landmark's real terrain " +
+                "position and searches position, pointing and FOV together. 'Plane homography' " +
+                "instead assumes the landmarks are coplanar, solves the plane-to-image " +
+                "projective map, and recovers the focal length from the rotation columns — the " +
+                "classical method, and the one most published reconstructions use. On " +
+                "well-spread points the two agree; where they disagree, the control points are " +
+                "the reason, not the method.");
+
+        // Kept so the Method dropdown can grey them out: the homography solver recovers
+        // position, pointing and focal length from one decomposition and cannot hold any of
+        // them fixed, so leaving these live would let the user set a lock that did nothing.
+        this._lockControls = [
+            this.gui.add(this, "lockPosition").name("Lock Position").listen()
+                .onChange(() => this.requestFit())
+                .tooltip("Keep the camera where it is and solve only pointing and FOV. Use this " +
+                    "when the platform position is known, or when all the landmarks are distant " +
+                    "and the position is not recoverable from them."),
+            this.gui.add(this, "lockFOV").name("Lock FOV").listen()
+                .onChange(() => this.requestFit())
+                .tooltip("Keep the current field of view and solve only position and pointing."),
+            this.gui.add(this, "lockRoll").name("Lock Roll").listen()
+                .onChange(() => this.requestFit())
+                .tooltip("Hold camera roll at its current value. Leave on unless the horizon in " +
+                    "the video is visibly tilted."),
+        ];
 
         const ro = (prop, name, tip) => {
             const c = this.gui.add(this, prop).name(name).listen().disable();
@@ -249,6 +281,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             "unresolvable combination is held at its starting value rather than invented.");
 
         this.gui.add(this, "clearAllPoints").name("Clear All Points");
+        this.syncMethodControls();
+    }
+
+    /** Grey out the lock toggles the current solver cannot honour. */
+    syncMethodControls() {
+        if (!this._lockControls) return;
+        const homography = this.fitMethod === "homography";
+        for (const c of this._lockControls) {
+            if (homography) c.disable(); else c.enable();
+        }
     }
 
     // ---------- enable / disable ----------
@@ -766,13 +808,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             points: solverPoints, imageSize: size, state, localFrame,
         });
 
-        const result = fitCameraToPoints({
+        const solverSpec = {
             points: solverPoints,
             imageSize: size,
             initial: state,
             free,
             localFrame,
-        });
+        };
+        const result = this.fitMethod === "homography"
+            ? fitCameraByPlaneHomography(solverSpec)
+            : fitCameraToPoints(solverSpec);
 
         if (!result.ok) {
             this.lastResult = null;
@@ -788,13 +833,25 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // field and a 612 px residual, which would have silently destroyed a good camera. So the
         // fit has to actually be an improvement before it is allowed to touch anything. The
         // margin keeps float noise on an already-perfect fit from reading as a regression.
-        if (Number.isFinite(current.rms) && current.behind === 0
-            && result.rms > current.rms + 0.01) {
+        //
+        // The margin depends on which solver ran, because the two do not optimise the same
+        // thing. The direct solver minimises reprojection error, so its answer IS the RMS
+        // optimum and anything worse than the current camera means it fell into a bad basin —
+        // a hair's margin is right there. The homography solver never minimises RMS at all; it
+        // builds the camera from a decomposition, so it normally lands a little worse in RMS
+        // than a direct optimum even when it is exactly right. Judging it by the tight margin
+        // rejected every homography fit made after a direct one — which is precisely the
+        // comparison the second method exists to support — so it gets a threshold that only
+        // catches an actual runaway.
+        const ruinous = this.fitMethod === "homography"
+            ? current.rms * 4 + 20
+            : current.rms + 0.01;
+        if (Number.isFinite(current.rms) && current.behind === 0 && result.rms > ruinous) {
             this.lastResult = null;
             this.residual = `${current.rms.toFixed(2)} px (unchanged)`;
             this.observability = "-";
-            this.updateStatus(`Rejected: best fit found (${result.rms.toFixed(1)} px) is worse ` +
-                `than the current camera (${current.rms.toFixed(1)} px) — camera left alone`);
+            this.updateStatus(`Rejected: fit ${result.rms.toFixed(1)} px is worse than the ` +
+                `current ${current.rms.toFixed(1)} px — camera left alone`);
             setRenderOne(true);
             return;
         }
@@ -806,7 +863,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         result.pointIds = this.points.map((p) => p.id);
         this.lastResult = result;
         this.residual = `${result.rms.toFixed(2)} px`;
-        this.observability = describeObservability(result);
+        // The homography solver reports its own observability, because what limits it is the
+        // control points' spread in RANGE rather than the parameter conditioning the direct
+        // solver measures.
+        this.observability = result.observability ?? describeObservability(result);
         // Notes come LAST. They are the reasons the applied camera might not be the solved one,
         // and an earlier version of this composed them the other way round — so every warning
         // was overwritten by the word "Fitted" and none of them ever reached the user.
