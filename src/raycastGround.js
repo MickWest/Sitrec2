@@ -92,18 +92,34 @@ export function raycastLocalGround(raycaster, camera = undefined) {
         return {point: bestPoint.clone(), isTerrain: true};
     }
 
-    const o = raycaster.ray.origin;
-    const camLen = o.length();
+    const point = ellipsoidAlongRay(raycaster.ray.origin, raycaster.ray.direction);
+    return point === null ? null : {point, isTerrain: false};
+}
+
+/**
+ * Where a ray meets a sphere at the local ground radius — the last-resort surface.
+ *
+ * The radius is the geocentric ellipsoid radius at the RAY ORIGIN'S OWN latitude, not
+ * Globals.equatorRadius. At mid-latitudes the WGS84 equatorial-radius sphere sits several
+ * kilometres above the real ground, so a camera near street level is mathematically INSIDE it,
+ * and from inside a sphere Three.js's Ray.intersectSphere returns the far exit point ~12,700 km
+ * away through the opposite side of the planet — which then poisons every anchor derived from it.
+ *
+ * @param {Vector3} origin
+ * @param {Vector3} direction  must be normalised
+ * @returns {Vector3|null} null when the ray goes away from the local ground (e.g. up at the sky)
+ */
+export function ellipsoidAlongRay(origin, direction) {
+    const camLen = origin.length();
     if (camLen < 1) return null;
 
-    const sinLat = o.z / camLen;
+    const sinLat = origin.z / camLen;
     const cosLatSq = 1 - sinLat * sinLat;
     const a = wgs84.RADIUS;
     const b = wgs84.POLAR_RADIUS;
     const groundRadius = 1 / Math.sqrt(cosLatSq / (a * a) + (sinLat * sinLat) / (b * b));
 
-    const d = raycaster.ray.direction;
-    const B = o.dot(d);
+    const B = origin.dot(direction);
     const C = camLen * camLen - groundRadius * groundRadius;
     const disc = B * B - C;
     if (disc < 0) return null;
@@ -113,10 +129,11 @@ export function raycastLocalGround(raycaster, camera = undefined) {
     const t0 = -B - Math.sqrt(disc);
     if (t0 <= 0) return null;
 
-    return {
-        point: new Vector3(o.x + d.x * t0, o.y + d.y * t0, o.z + d.z * t0),
-        isTerrain: false,
-    };
+    return new Vector3(
+        origin.x + direction.x * t0,
+        origin.y + direction.y * t0,
+        origin.z + direction.z * t0,
+    );
 }
 
 // One sample of the served ground surface under an ECEF point: signed

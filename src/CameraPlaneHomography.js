@@ -305,9 +305,6 @@ export function fitCameraByPlaneHomography(spec) {
         bestS = orthonormalityScore(Hm, bestF, cx, cy);
     }
 
-    const dec = decomposeAtFocal(Hm, bestF, cx, cy);
-    if (!dec) return fail("The homography decomposes to a camera below the ground plane.");
-
     // The plane basis is expressed in LOCAL (east/north/up) components, so a vector given in
     // plane components becomes a local one here and a world one in localDirToWorld below.
     const planeDirToLocal = (v) => [
@@ -315,31 +312,42 @@ export function fitCameraByPlaneHomography(spec) {
         plane.ax1[1] * v[0] + plane.ax2[1] * v[1] + plane.nrm[1] * v[2],
         plane.ax1[2] * v[0] + plane.ax2[2] * v[1] + plane.nrm[2] * v[2],
     ];
-
-    const posLocal = add(plane.origin,
-        add(scale(plane.ax1, dec.centre[0]),
-            add(scale(plane.ax2, dec.centre[1]), scale(plane.nrm, dec.centre[2]))));
-    const position = toWorld(posLocal);
-
     // Local-frame direction components -> world directions.
     const localDirToWorld = (v) => normalize(
         add(scale(east, v[0]), add(scale(north, v[1]), scale(up, v[2]))));
-    const basis = {
-        right: localDirToWorld(planeDirToLocal(dec.right)),
-        down: localDirToWorld(planeDirToLocal(dec.down)),
-        fwd: localDirToWorld(planeDirToLocal(dec.fwd)),
+
+    /**
+     * One focal length -> one complete camera. Every focal the scan scored implies a whole camera,
+     * not just a field of view — position and pointing fall out of the same decomposition — which
+     * is the thing worth seeing when the sweep is replayed. The answer and every traced step go
+     * through this same function, so the animation shows exactly the cameras that were scored.
+     *
+     * @returns {object|null} null when the decomposition puts the camera below the plane
+     */
+    const cameraAtFocal = (f) => {
+        const dec = decomposeAtFocal(Hm, f, cx, cy);
+        if (!dec) return null;
+        const posLocal = add(plane.origin,
+            add(scale(plane.ax1, dec.centre[0]),
+                add(scale(plane.ax2, dec.centre[1]), scale(plane.nrm, dec.centre[2]))));
+        const position = toWorld(posLocal);
+        const camFrame = localFrame(position);
+        const {azDeg, elDeg, rollDeg} = azElRollFromBasis(
+            normalize(camFrame.up), normalize(camFrame.north), {
+                right: localDirToWorld(planeDirToLocal(dec.right)),
+                down: localDirToWorld(planeDirToLocal(dec.down)),
+                fwd: localDirToWorld(planeDirToLocal(dec.fwd)),
+            });
+        return {position, azDeg, elDeg, rollDeg, vfovDeg: fovFromFocal(f),
+            heightAbovePlane: dec.heightAbovePlane};
     };
 
-    const camFrame = localFrame(position);
-    const {azDeg, elDeg, rollDeg} = azElRollFromBasis(
-        normalize(camFrame.up), normalize(camFrame.north), basis);
-    const vfovDeg = fovFromFocal(bestF);
-
+    const state = cameraAtFocal(bestF);
+    if (state === null) return fail("The homography decomposes to a camera below the ground plane.");
+    const {position, azDeg, elDeg, rollDeg, vfovDeg} = state;
     if (!Number.isFinite(vfovDeg) || vfovDeg < 0.02 || vfovDeg > 175) {
         return fail(`The homography implies an impossible field of view (${vfovDeg.toFixed(1)} deg).`);
     }
-
-    const state = {position, azDeg, elDeg, rollDeg, vfovDeg};
     const evaluated = evaluateCamera({points, imageSize, state, localFrame});
 
     // The 5% score band is the same acceptance rule these pipelines usually publish. It measures
@@ -398,8 +406,23 @@ export function fitCameraByPlaneHomography(spec) {
             scoreAtMinimum: bestS,
             homographyRms: refined.rms,
             maxOffPlane: plane.maxOffPlane,
-            heightAbovePlane: dec.heightAbovePlane,
+            heightAbovePlane: state.heightAbovePlane,
         },
+        // Undefined unless spec.trace was set. The sweep itself, subsampled for playback: the
+        // camera each scored focal length implies, ending on the answer. Replaying it walks the
+        // camera along the focal/position trade-off, so a score that barely moves while the
+        // camera travels a long way is visible rather than merely reported by `observability`.
+        trace: !spec.trace ? undefined : (() => {
+            const out = [];
+            const STEPS = Math.min(140, samples.length - 1);
+            for (let i = 0; i <= STEPS; i++) {
+                const [f, s] = samples[Math.round((i * (samples.length - 1)) / STEPS)];
+                const st = cameraAtFocal(f);
+                if (st !== null) out.push({...st, score: s});
+            }
+            out.push({...state, score: bestS});     // finish on the one it settled at
+            return out;
+        })(),
         freeParams: ["homography"],
     };
 }

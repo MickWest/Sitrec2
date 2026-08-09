@@ -36,10 +36,10 @@ import {claimRightClick, mouseToCanvas} from "../ViewUtils";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getLocalUpVector, getNorthPole} from "../SphericalMath";
-import {raycastGroundElevationFast} from "../raycastGround";
 import {extractFOV} from "./CNodeControllerVarious";
-import {FitPointHandles3D} from "../FitPointHandles3D";
+import {FitPointHandles3D, surfaceAlongRay} from "../FitPointHandles3D";
 import {FitPointSightLines3D} from "../FitPointSightLines3D";
+import {FitSearchPlayback, showTracedCamera} from "../FitSearchPlayback";
 import {drawFitHandle, GRAB_RADIUS, POINT_COLORS} from "../FitHandleDraw";
 import {
     azElRollFromBasis, basisFromAzElRoll, evaluateCamera, fitCameraToPoints, MAX_ABS_EL,
@@ -91,6 +91,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
         this.autoFit = true;
         this.showRays = true;
+        // Place control points against the 3D tile geometry — roofs, walls, trees — rather than
+        // the elevation surface. Off by default because the elevation surface is the right one
+        // for landmarks that ARE the ground, and because it is the one that is always there:
+        // both surfaces stream, but elevation tiles cover the whole planet at some zoom while the
+        // photorealistic 3D tiles cover a fraction of it and may not be enabled at all.
+        this.useTiles = false;
         this.status = "Off";
         this.residual = "-";
         this.observability = "-";
@@ -115,6 +121,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             })),
             getRayDisplay: () => this.rayDisplay(),
             getOccluder: () => this.videoQuadOccluder(),
+            getUseTiles: () => this.useTiles,
             onMoved: (id, pos) => this.onMarkerMoved(id, pos),
             onCommit: () => this.requestFit(),
             onCorrectFrame: () => this.onCorrectFrame(),
@@ -123,6 +130,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         });
 
         this.sightLines = new FitPointSightLines3D(() => this.rayDisplay());
+        this.playback = new FitSearchPlayback();
 
         this._setupGUI();
     }
@@ -143,6 +151,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             fitMethod: this.fitMethod,
             autoFit: this.autoFit,
             showRays: this.showRays,
+            useTiles: this.useTiles,
             points: this.points.map((p) => ({
                 vx: p.vx, vy: p.vy, lat: p.lat, lon: p.lon, alt: p.alt, color: p.color,
             })),
@@ -169,6 +178,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         }
         if (v.autoFit !== undefined) this.autoFit = v.autoFit;
         if (v.showRays !== undefined) this.showRays = v.showRays;
+        if (v.useTiles !== undefined) this.useTiles = v.useTiles;
 
         // Restore the points, but NOT the fit. The camera already carries the answer the last fit
         // produced — it was written into fixedCameraPosition/ptzAngles/fovUI and saved with them.
@@ -198,10 +208,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             this._pendingEnable = undefined;
             this.setEnabled(on);
         }
+        this.stepPlayback();
         this.sightLines.update();
     }
 
     dispose() {
+        this.playback.stop();     // lands the fit rather than abandoning the camera mid-search
         this.setEnabled(false);   // also removes the gesture-cancel listeners
         this.markers.dispose();
         this.sightLines.dispose();
@@ -280,6 +292,26 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             "range and field of view trading off against each other; when that happens the " +
             "unresolvable combination is held at its starting value rather than invented.");
 
+        this.gui.add(this, "useTiles").name("Place on 3D Buildings").listen()
+            .onChange(() => setRenderOne(true))
+            .tooltip("Put control points on the 3D tile geometry that is actually on screen — a " +
+                "roof, a wall, the top of a tree — instead of on the elevation surface. The " +
+                "elevation map has no buildings on it, so a rooftop corner placed against it " +
+                "lands at street level, which at short range is a large error and at long range " +
+                "is none at all. Whichever surface the ray meets FIRST wins, so a landmark on " +
+                "bare ground still lands on bare ground. Needs the 3D tiles to have loaded; " +
+                "affects where new points are dropped and where dragged handles land, not points " +
+                "already placed.");
+
+        this.gui.add(this, "showAlgorithmWorking").name("Show Algorithm Working")
+            .tooltip("Solve again, but replay the search one step per frame instead of jumping " +
+                "straight to the answer. The 3D points fit descends from a rough starting guess " +
+                "and converges. The plane homography instead sweeps the field of view, and " +
+                "because every focal length it tries implies a whole camera, you watch the " +
+                "camera slide along the trade-off — if it travels a long way while the score " +
+                "barely changes, these landmarks do not pin it down. Ends on the same camera an " +
+                "ordinary Fit Now would give.");
+
         this.gui.add(this, "clearAllPoints").name("Clear All Points");
         this.syncMethodControls();
     }
@@ -296,6 +328,9 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     // ---------- enable / disable ----------
 
     setEnabled(on) {
+        // Switching the fit off mid-replay lands it on the solved camera rather than leaving the
+        // camera wherever the search happened to have reached.
+        if (!on) this.playback.stop();
         this.enabled = on;
         this.visible = on;
         this.markers.setEnabled(on);
@@ -694,11 +729,13 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         const origin = new Vector3(state.position[0], state.position[1], state.position[2]);
         const dir = this.rayForVideoPixel(state, vx, vy, size);
 
-        // Seed on the terrain under the ray. This is only a starting place — the pair carries no
+        // Seed on the surface under the ray. This is only a starting place — the pair carries no
         // information until the sphere is dragged to the real feature — but starting on the
-        // ground under the clicked pixel is a far better guess than a fixed range, and for a
-        // landmark the user has already identified it is often close to right.
-        let world = raycastGroundElevationFast(origin, dir, 400000);
+        // surface under the clicked pixel is a far better guess than a fixed range, and for a
+        // landmark the user has already identified it is often close to right. Uses the same
+        // surface the handles are dragged against, so clicking a rooftop seeds on the roof rather
+        // than on the street below it and then jumping when first dragged.
+        let world = surfaceAlongRay(origin, dir, this.useTiles, this.lookCameraNode()?.camera);
         if (!world) world = origin.clone().addScaledVector(dir, FALLBACK_RANGE);
 
         const lla = ECEFToLLAVD_radii(world);
@@ -758,8 +795,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (this.autoFit) this.runFit(false);
     }
 
-    runFit(explicit) {
+    /** @param {boolean} animate replay the search rather than jumping to the answer */
+    runFit(explicit, animate = false) {
         if (!this.enabled) return;
+        // A replay in progress owns the camera; starting another solve underneath it would have
+        // two things writing the same nodes every frame.
+        if (this.playback.running && !animate) return;
 
         // Re-entrancy guard. Applying a fit selects switches and writes nodes, each of which
         // cascades; anything downstream that pokes this node back must not start a second solve
@@ -814,6 +855,9 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             initial: state,
             free,
             localFrame,
+            // Only when the user asked to watch. The direct solver takes it through `options`.
+            trace: animate,
+            options: animate ? {trace: true} : undefined,
         };
         const result = this.fitMethod === "homography"
             ? fitCameraByPlaneHomography(solverSpec)
@@ -856,22 +900,74 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             return;
         }
 
-        const notes = this.applyResult(result);
-        // Residuals are keyed by point id, not by array index. Add or delete a point after a fit
-        // and the indices shift, which would silently draw each residual against the wrong
-        // landmark — the most misleading thing this display could do.
-        result.pointIds = this.points.map((p) => p.id);
-        this.lastResult = result;
-        this.residual = `${result.rms.toFixed(2)} px`;
-        // The homography solver reports its own observability, because what limits it is the
-        // control points' spread in RANGE rather than the parameter conditioning the direct
-        // solver measures.
-        this.observability = result.observability ?? describeObservability(result);
-        // Notes come LAST. They are the reasons the applied camera might not be the solved one,
-        // and an earlier version of this composed them the other way round — so every warning
-        // was overwritten by the word "Fitted" and none of them ever reached the user.
-        this.updateStatus([explicit ? "Fitted" : "Fitted (auto)", ...notes].join(" · "));
-        setRenderOne(true);
+        const land = () => {
+            const notes = this.applyResult(result);
+            // Residuals are keyed by point id, not by array index. Add or delete a point after a
+            // fit and the indices shift, which would silently draw each residual against the wrong
+            // landmark — the most misleading thing this display could do.
+            result.pointIds = this.points.map((p) => p.id);
+            this.lastResult = result;
+            this.residual = `${result.rms.toFixed(2)} px`;
+            // The homography solver reports its own observability, because what limits it is the
+            // control points' spread in RANGE rather than the parameter conditioning the direct
+            // solver measures.
+            this.observability = result.observability ?? describeObservability(result);
+            // Notes come LAST. They are the reasons the applied camera might not be the solved one,
+            // and an earlier version of this composed them the other way round — so every warning
+            // was overwritten by the word "Fitted" and none of them ever reached the user.
+            this.updateStatus([explicit ? "Fitted" : "Fitted (auto)", ...notes].join(" · "));
+            setRenderOne(true);
+        };
+
+        // Watching it: walk the trace first and apply the real result on arrival, so a replay ends
+        // in exactly the state an ordinary fit would have reached. The apply is deferred rather
+        // than done up front and re-shown, because applyResult selects switches — and selecting a
+        // heading source re-syncs ptzAngles from the live camera, which would fight the playback
+        // on every frame.
+        if (animate && Array.isArray(result.trace) && result.trace.length > 1) {
+            const label = this.fitMethod === "homography" ? "Sweeping FOV" : "Descending";
+            this.playback.start(result.trace, label, land);
+            return;
+        }
+        land();
+    }
+
+    /**
+     * Solve again, but replay the search instead of jumping to the answer.
+     *
+     * Re-solves rather than replaying the last fit, so what is shown is always the search that
+     * produced the camera you end up with — a stored trace could be from before the points moved.
+     */
+    showAlgorithmWorking() {
+        if (this.playback.running) { this.playback.stop(); return; }
+        this.runFit(true, true);
+    }
+
+    /** Advance a running replay by one step. Called once per frame from update(). */
+    stepPlayback() {
+        if (!this.playback.running) return;
+        const state = this.playback.step();
+        if (!state) return;
+        // Guarded so the cascade this write kicks off cannot re-enter runFit and start a second
+        // solve inside the replay of the first.
+        this.applyingFit = true;
+        try {
+            showTracedCamera(state, (p) => {
+                const lla = ECEFToLLAVD_radii(new Vector3(p[0], p[1], p[2]));
+                // MSL, matching writePosition — the altitude field means orthometric height, and
+                // recalculate() adds the geoid separation back on the way to ECEF.
+                return [lla.x, lla.y, lla.z - meanSeaLevelOffset(lla.x, lla.y)];
+            });
+        } finally {
+            this.applyingFit = false;
+        }
+        // The last step both shows itself AND lands the fit, and land() has already written the
+        // real status by the time step() returns. Writing progress over it here left "Descending"
+        // on screen after the fit had finished.
+        if (!this.playback.running) return;
+        const detail = Number.isFinite(state.rms) ? ` · ${state.rms.toFixed(1)} px`
+            : Number.isFinite(state.score) ? ` · score ${state.score.toExponential(2)}` : "";
+        this.updateStatus(`${this.playback.label} ${this.playback.progress}${detail}`);
     }
 
     /**
