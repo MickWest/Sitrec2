@@ -8,8 +8,8 @@ import {
     getVideoExportSpeedInfo,
     getVideoExportSpeedSuffix,
     getVideoExtension,
-    findFadeOverlayView,
     findFirstVideoData,
+    getCanvasDisplayRect,
     scanDuplicateVideoFrames
 } from "../VideoExporter";
 import {drawVideoWatermark, ExportProgressWidget} from "../utils";
@@ -505,21 +505,16 @@ export class CNodeView3D extends CNodeViewCanvas {
         compositeCanvas.height = height;
         const compositeCtx = compositeCanvas.getContext('2d');
 
-        // Render Fade drives the video overlay's opacity per output frame instead of, or as
-        // well as, the frame number. The compositing pass below only draws overlays that are
-        // effectively visible, so force this one visible for the render and restore after -
-        // otherwise a fade requested with the overlay hidden would silently produce no fade.
+        // Render Fade drives the video overlay's opacity per output frame instead of, or as well
+        // as, the frame number. The compositing pass below reads childView.transparency, so
+        // setting it is all that is needed here; forcing the overlay visible and restoring it
+        // afterwards is owned by VideoExportManager.exportFadeVideo, which both paths go through.
         // canvas.style.opacity is kept in step purely so the on-screen view fades along too.
-        const fadeOverlay = plan.alphaAt ? findFadeOverlayView(ViewMan, this) : null;
-        const savedOverlayTransparency = fadeOverlay ? fadeOverlay.transparency : 0;
-        const savedOverlayVisible = fadeOverlay ? fadeOverlay.visible : false;
+        const fadeOverlay = plan.alphaAt ? (options.fadeOverlay ?? null) : null;
         const setOverlayAlpha = (alpha) => {
             fadeOverlay.transparency = alpha;
             if (fadeOverlay.canvas) fadeOverlay.canvas.style.opacity = alpha;
         };
-        if (fadeOverlay) {
-            fadeOverlay.setVisibleRaw(true);
-        }
 
         try {
             const exporter = await createVideoExporter(formatId, {
@@ -585,9 +580,16 @@ export class CNodeView3D extends CNodeViewCanvas {
                     compositeCtx.drawImage(this.canvas, 0, 0);
 
                     // Also render visible child views (overlays and relativeTo children like compass, MQ9UI)
-                    // Scale from CSS pixels to composite canvas backing pixels
-                    const scaleX = width / this.widthPx;
-                    const scaleY = height / this.heightPx;
+                    // Scale from CSS pixels to composite canvas backing pixels.
+                    //
+                    // The composite IS this view's canvas, so the mapping basis is the rect that
+                    // canvas occupies on screen, not the whole div. With matchVideoAspect the two
+                    // differ: the canvas is letterboxed inside the div, so a child mapped against
+                    // the div lands stretched across the full frame while the 3D behind it is the
+                    // letterboxed crop. Child coordinates are in div space, hence the -rect.x/y.
+                    const rect = getCanvasDisplayRect(this);
+                    const scaleX = width / rect.width;
+                    const scaleY = height / rect.height;
                     ViewMan.computeEffectiveVisibility();
                     ViewMan.iterate((id, childView) => {
                         if (childView === this) return;
@@ -605,8 +607,8 @@ export class CNodeView3D extends CNodeViewCanvas {
 
                         childView.renderCanvas(frame);
                         if (childView.canvas) {
-                            const dx = (childView.leftPx - this.leftPx) * scaleX;
-                            const dy = (childView.topPx - this.topPx) * scaleY;
+                            const dx = (childView.leftPx - this.leftPx - rect.x) * scaleX;
+                            const dy = (childView.topPx - this.topPx - rect.y) * scaleY;
                             const dw = childView.widthPx * scaleX;
                             const dh = childView.heightPx * scaleY;
                             const alpha = childView.transparency !== undefined ? childView.transparency : 1;
@@ -663,10 +665,6 @@ export class CNodeView3D extends CNodeViewCanvas {
             alert('Video export failed: ' + e.message);
         } finally {
             progress.remove();
-            if (fadeOverlay) {
-                setOverlayAlpha(savedOverlayTransparency);
-                fadeOverlay.setVisibleRaw(savedOverlayVisible);
-            }
             par.frame = savedFrame;
             par.paused = savedPaused;
             setRenderOne(true);

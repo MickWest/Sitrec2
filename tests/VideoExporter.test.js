@@ -3,6 +3,7 @@ import {
     createFadeExportPlan,
     createVideoExportFramePlan,
     findFadeOverlayView,
+    getCanvasDisplayRect,
 } from "../src/VideoExporter";
 
 describe("createVideoExportFramePlan", () => {
@@ -129,6 +130,31 @@ describe("createFadeExportPlan", () => {
         expect(plan.skippedDuplicateFrames).toBe(0);
         expect(plan.totalSourceFrames).toBe(plan.totalFrames);
         expect(plan.nameSuffix).toBe("fade");
+    });
+});
+
+describe("getCanvasDisplayRect", () => {
+    test("a canvas at 100% covers the whole view", () => {
+        const view = {widthPx: 493, heightPx: 871, canvas: {style: {width: "100%", height: "100%"}}};
+
+        expect(getCanvasDisplayRect(view)).toEqual({x: 0, y: 0, width: 493, height: 871});
+    });
+
+    test("a letterboxed canvas reports its inset rect", () => {
+        // matchVideoAspect centring a 0.5625 canvas in a 566x871 div
+        const view = {
+            widthPx: 566, heightPx: 871,
+            canvas: {style: {width: "489px", height: "871px", left: "38.5px", top: "0px"}},
+        };
+
+        expect(getCanvasDisplayRect(view)).toEqual({x: 38.5, y: 0, width: 489, height: 871});
+    });
+
+    test("falls back to the full view when there is no usable canvas style", () => {
+        const full = {x: 0, y: 0, width: 100, height: 200};
+
+        expect(getCanvasDisplayRect({widthPx: 100, heightPx: 200})).toEqual(full);
+        expect(getCanvasDisplayRect({widthPx: 100, heightPx: 200, canvas: {style: {width: "0px", height: "0px"}}})).toEqual(full);
     });
 });
 

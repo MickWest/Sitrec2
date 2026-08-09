@@ -341,9 +341,13 @@ const en = {
                 label: "Hold Current Frame",
                 tooltip: "Freeze on the current frame for the whole render, so the output is a still comparison. Turn off to play the A-B range while fading, looping it if the fade schedule outlasts the clip",
             },
+            viewport: {
+                label: "Render Whole Viewport",
+                tooltip: "Render the entire viewport - every visible view, laid out as on screen - instead of just the one view. The fade still runs on the look view's video overlay, so the rest of the viewport plays normally around it",
+            },
             render: {
                 label: "Render Fade Video",
-                tooltip: "Render the fade using the view chosen in Render Video View. Length is Initial Delay + Fades x (Fade Time + Hold Time)",
+                tooltip: "Render the fade using the view chosen in Render Video View, or the whole viewport if Render Whole Viewport is on. Length is Initial Delay + Fades x (Fade Time + Hold Time)",
             },
             startOptions: {
                 look: "Look",
