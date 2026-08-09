@@ -149,6 +149,7 @@ describe("docs on disk", () => {
         "atmospheric-refraction-plan",
         "colorspace-fix-plan",
         "DroneControlFitReview-R1",
+        "FitPointsAPI",
         "localFileSystemPlan",
         "sitrec-MCP-plan-FINAL",
         "StarTracker-PriorWork",

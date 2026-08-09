@@ -29,6 +29,8 @@ import {raycastLocalGround} from "./raycastGround";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {par} from "./par";
 import {ViewMan} from "./CViewManager";
+import {groundUnderCanvasPoint} from "./FitSurfacePick";
+import {renderedRect} from "./ViewUtils";
 import {areControlsHidden, toggleControlsVisibility} from "./PageStructure";
 import {closeFullscreen, isFullscreen, openFullscreen} from "./utils";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
@@ -119,6 +121,212 @@ class CSitrecAPI {
                     lon: "Longitude in degrees (float, optional — defaults to the camera's)"
                 },
                 fn: (v) => this.groundAltitudeAt(v?.lat, v?.lon)
+            },
+
+            // ---- Fit Camera to Points -------------------------------------------------
+            //
+            // Programmatic access to the "Fit Camera to Points" tool (CNodeFitCameraPoints),
+            // added so AI agents driving Sitrec over MCP can place control points without
+            // synthesising mouse gestures. Workflow and conventions: docs/FitPointsAPI.md.
+
+            pickWorldPoint: {
+                doc: "Where a pixel of a 3D view lands in the world. Casts a ray from the named"
+                    + " view's camera through the pixel and returns the surface point it hits as"
+                    + " lat/lon/altitude — against the 3D building tiles by default, so picking a"
+                    + " rooftop returns the roof, not the street under it. fx/fy are fractions"
+                    + " (0-1) across the view's rendered image, so they can be read straight off"
+                    + " a screenshot of that view: the centre is fx 0.5, fy 0.5.",
+                params: {
+                    view: "View to pick in: 'mainView' or 'lookView' (string, optional, default 'mainView')",
+                    fx: "Horizontal fraction 0-1 across the view (float; give fx/fy or cx/cy)",
+                    fy: "Vertical fraction 0-1 down the view (float)",
+                    cx: "Canvas x in pixels, alternative to fx (float, optional)",
+                    cy: "Canvas y in pixels, alternative to fy (float, optional)",
+                    useTiles: "Prefer the 3D tile geometry (roofs, walls, trees) over the bare elevation surface (bool, optional, default true)",
+                },
+                fn: (v) => {
+                    const viewName = v?.view ?? "mainView";
+                    const view = ViewMan.get(viewName, false);
+                    if (!view || !view.camera) return {success: false, error: `no 3D view named '${viewName}'`};
+                    let cx = v?.cx, cy = v?.cy;
+                    if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
+                        if (!Number.isFinite(v?.fx) || !Number.isFinite(v?.fy)) {
+                            return {success: false, error: "give fx/fy fractions (0-1) or cx/cy canvas pixels"};
+                        }
+                        const r = renderedRect(view, view.widthPx, view.heightPx);
+                        cx = r.x + v.fx * r.w;
+                        cy = r.y + v.fy * r.h;
+                    }
+                    const useTiles = v?.useTiles ?? true;
+                    const world = groundUnderCanvasPoint(view, cx, cy, useTiles);
+                    if (!world) return {success: false, error: "the ray hit no surface (was that pixel sky?)"};
+                    const lla = ECEFToLLAVD_radii(world);
+                    const geoid = meanSeaLevelOffset(lla.x, lla.y);
+                    return {success: true, lat: lla.x, lon: lla.y,
+                        altHAE: lla.z, altMSL: lla.z - geoid,
+                        canvas: [cx, cy], view: viewName};
+                }
+            },
+
+            fitPointsStatus: {
+                doc: "State of the 'Fit Camera to Points' tool: settings, the control points"
+                    + " (each pairs a video pixel with a world position), solve status, residual,"
+                    + " and the current look camera. Video pixel coordinates are in the ORIGINAL"
+                    + " video frame, whose size is videoSize [width, height].",
+                fn: () => {
+                    const fit = this._fitNode();
+                    if (!fit) return {success: false, error: "no fitCameraPoints node (needs a custom sitch with a video)"};
+                    return {success: true, ...this._fitSummary(fit)};
+                }
+            },
+
+            fitPointsConfigure: {
+                doc: "Configure the 'Fit Camera to Points' tool. All parameters optional; returns"
+                    + " the resulting state (as fitPointsStatus). Enable the tool before solving.",
+                params: {
+                    enabled: "Turn the tool on/off (bool, optional)",
+                    useTiles: "Place points against the 3D building geometry rather than the elevation surface (bool, optional)",
+                    autoFit: "Re-solve the camera after every point change (bool, optional)",
+                    lockPosition: "Keep the camera position, solve pointing/FOV only (bool, optional)",
+                    lockFOV: "Keep the current field of view (bool, optional)",
+                    lockRoll: "Hold camera roll at its current value (bool, optional)",
+                    method: "Solver: 'direct' or 'homography' (string, optional)",
+                },
+                fn: (v) => {
+                    const fit = this._fitNode();
+                    if (!fit) return {success: false, error: "no fitCameraPoints node (needs a custom sitch with a video)"};
+                    if (typeof v?.enabled === "boolean") fit.setEnabled(v.enabled);
+                    if (typeof v?.useTiles === "boolean") fit.useTiles = v.useTiles;
+                    if (typeof v?.autoFit === "boolean") fit.autoFit = v.autoFit;
+                    if (typeof v?.lockPosition === "boolean") fit.lockPosition = v.lockPosition;
+                    if (typeof v?.lockFOV === "boolean") fit.lockFOV = v.lockFOV;
+                    if (typeof v?.lockRoll === "boolean") fit.lockRoll = v.lockRoll;
+                    if (v?.method === "direct" || v?.method === "homography") {
+                        fit.fitMethod = v.method;
+                        fit.syncMethodControls();
+                    }
+                    setRenderOne(true);
+                    return {success: true, ...this._fitSummary(fit)};
+                }
+            },
+
+            fitPointsAdd: {
+                doc: "Add one control point pair to 'Fit Camera to Points': a pixel on the video"
+                    + " (vx/vy in original video pixels, or fx/fy as 0-1 fractions of the video"
+                    + " frame) plus, optionally, the real-world position that pixel shows. Without"
+                    + " lat/lon the world point just seeds on the surface under the current"
+                    + " camera's ray and carries no information until moved. Altitude: pass alt"
+                    + " (metres above the ellipsoid, as pickWorldPoint returns) or altMSL, or omit"
+                    + " both for the surface height at lat/lon. Enables the tool if it is off.",
+                params: {
+                    vx: "Video x in original video pixels (float; give vx/vy or fx/fy)",
+                    vy: "Video y in original video pixels (float)",
+                    fx: "Video x as a fraction 0-1 of the video width (float, optional)",
+                    fy: "Video y as a fraction 0-1 of the video height (float, optional)",
+                    lat: "Latitude of the real-world feature (float, optional)",
+                    lon: "Longitude of the real-world feature (float, optional)",
+                    alt: "Altitude of the feature in metres above the ellipsoid (float, optional)",
+                    altMSL: "Altitude of the feature in metres above sea level (float, optional)",
+                },
+                fn: (v) => {
+                    const fit = this._fitNode();
+                    if (!fit) return {success: false, error: "no fitCameraPoints node (needs a custom sitch with a video)"};
+                    if (!fit.enabled) fit.setEnabled(true);
+                    const size = fit.videoSize;
+                    if (!size) return {success: false, error: "no video loaded"};
+                    // Points own the frame they were placed on, exactly as in the UI: the first
+                    // point adopts the current frame, and after that mixing frames would
+                    // serialize observations no single camera can satisfy.
+                    if (fit.points.length === 0) fit.fitFrame = Math.round(par.frame);
+                    else if (!fit.onCorrectFrame()) return this._fitWrongFrame(fit);
+                    let vx = v?.vx, vy = v?.vy;
+                    if (!Number.isFinite(vx) || !Number.isFinite(vy)) {
+                        if (!Number.isFinite(v?.fx) || !Number.isFinite(v?.fy)) {
+                            return {success: false, error: "give vx/vy pixels or fx/fy fractions (0-1)"};
+                        }
+                        vx = v.fx * size[0];
+                        vy = v.fy * size[1];
+                    }
+                    const world = this._fitResolveWorld(v);
+                    if (world?.error) return world;
+                    let point = null;
+                    fit.withUndo("Add camera fit point", () => {
+                        point = fit.addPointAtVideo(vx, vy);
+                        if (point && world) Object.assign(point, world);
+                        if (point) fit.requestFit();
+                    });
+                    if (!point) return {success: false, error: "could not add the point (no video or no look camera)"};
+                    return {success: true, point: this._fitPointOut(point),
+                        status: fit.status, residual: fit.residual};
+                }
+            },
+
+            fitPointsMove: {
+                doc: "Move either half of an existing fit point pair: the video pixel (vx/vy in"
+                    + " original video pixels) and/or the world position (lat/lon with alt or"
+                    + " altMSL, as in fitPointsAdd). Re-solves if 'Fit on Change' is on.",
+                params: {
+                    id: "Point id from fitPointsAdd or fitPointsStatus (integer)",
+                    vx: "New video x in original video pixels (float, optional)",
+                    vy: "New video y in original video pixels (float, optional)",
+                    lat: "New latitude (float, optional, needs lon)",
+                    lon: "New longitude (float, optional, needs lat)",
+                    alt: "New altitude in metres above the ellipsoid (float, optional)",
+                    altMSL: "New altitude in metres above sea level (float, optional)",
+                },
+                fn: (v) => {
+                    const fit = this._fitNode();
+                    if (!fit) return {success: false, error: "no fitCameraPoints node (needs a custom sitch with a video)"};
+                    const p = fit.points.find((q) => q.id === v?.id);
+                    if (!p) return {success: false, error: `no fit point with id ${v?.id}`};
+                    if (!fit.onCorrectFrame()) return this._fitWrongFrame(fit);
+                    let world = this._fitResolveWorld(v);
+                    if (world?.error) return world;
+                    if (!world && (Number.isFinite(v?.alt) || Number.isFinite(v?.altMSL))) {
+                        // Altitude-only change, at the point's own lat/lon.
+                        world = {lat: p.lat, lon: p.lon, alt: Number.isFinite(v?.alt)
+                            ? v.alt : v.altMSL + meanSeaLevelOffset(p.lat, p.lon)};
+                    }
+                    fit.withUndo("Move camera fit point", () => {
+                        if (Number.isFinite(v?.vx)) p.vx = v.vx;
+                        if (Number.isFinite(v?.vy)) p.vy = v.vy;
+                        if (world) Object.assign(p, world);
+                        fit.requestFit();
+                    });
+                    setRenderOne(true);
+                    return {success: true, point: this._fitPointOut(p),
+                        status: fit.status, residual: fit.residual};
+                }
+            },
+
+            fitPointsRemove: {
+                doc: "Delete one 'Fit Camera to Points' control point by id.",
+                params: {
+                    id: "Point id from fitPointsAdd or fitPointsStatus (integer)",
+                },
+                fn: (v) => {
+                    const fit = this._fitNode();
+                    if (!fit) return {success: false, error: "no fitCameraPoints node (needs a custom sitch with a video)"};
+                    const p = fit.points.find((q) => q.id === v?.id);
+                    if (!p) return {success: false, error: `no fit point with id ${v?.id}`};
+                    fit.removePoint(p.id);
+                    return {success: true, remaining: fit.points.length};
+                }
+            },
+
+            fitPointsSolve: {
+                doc: "Solve the camera from the current fit points (the 'Fit Now' button) and"
+                    + " report the result: status, RMS residual in original video pixels,"
+                    + " observability, and the camera the fit produced. A solve only applies if"
+                    + " it beats the camera it started from — 'Rejected' in the status means the"
+                    + " camera was left alone.",
+                fn: () => {
+                    const fit = this._fitNode();
+                    if (!fit) return {success: false, error: "no fitCameraPoints node (needs a custom sitch with a video)"};
+                    if (!fit.enabled) return {success: false, error: "fit tool is off — call fitPointsConfigure {enabled: true} first"};
+                    fit.fitNow();
+                    return {success: true, ...this._fitSummary(fit)};
+                }
             },
 
             setCameraToEyeLevel: {
@@ -1971,6 +2179,64 @@ class CSitrecAPI {
         };
     }
 
+    // ---- Fit Camera to Points helpers (see the fitPoints* API entries) ----
+
+    _fitNode() {
+        return NodeMan.get("fitCameraPoints", false);
+    }
+
+    /** The refusal every off-frame edit gets, matching the UI's onCorrectFrame gate. */
+    _fitWrongFrame(fit) {
+        return {success: false, error: `points belong to frame ${fit.fitFrame} and the current`
+            + ` frame is ${Math.round(par.frame)} — setFrame back to ${fit.fitFrame} first`
+            + ` (observations from different frames cannot share one camera solve)`};
+    }
+
+    /** One control point as the API reports it. Point altitude is stored as HAE (see CNodeFitCameraPoints). */
+    _fitPointOut(p) {
+        const geoid = meanSeaLevelOffset(p.lat, p.lon);
+        return {id: p.id, vx: p.vx, vy: p.vy, lat: p.lat, lon: p.lon,
+            altHAE: p.alt, altMSL: p.alt - geoid, color: p.color};
+    }
+
+    /**
+     * The world half of a point pair from API args: lat/lon plus alt (HAE), altMSL, or — with
+     * neither — the surface height at lat/lon. Returns null when no lat/lon was given, or
+     * {success:false, error} when one was given but no altitude could be resolved.
+     */
+    _fitResolveWorld(v) {
+        if (!Number.isFinite(v?.lat) || !Number.isFinite(v?.lon)) return null;
+        if (Number.isFinite(v?.alt)) return {lat: v.lat, lon: v.lon, alt: v.alt};
+        if (Number.isFinite(v?.altMSL)) {
+            return {lat: v.lat, lon: v.lon, alt: v.altMSL + meanSeaLevelOffset(v.lat, v.lon)};
+        }
+        const ground = this.groundAltitudeAt(v.lat, v.lon);
+        if (!ground.success) return {success: false, error: "no surface found at that lat/lon to take an altitude from — pass alt or altMSL"};
+        return {lat: v.lat, lon: v.lon, alt: ground.altHAE};
+    }
+
+    /** Everything an agent needs to know about the fit tool's state, shared by several entries. */
+    _fitSummary(fit) {
+        const state = fit.currentCameraState();
+        let camera = null;
+        if (state) {
+            const lla = ECEFToLLAVD_radii(new Vector3(state.position[0], state.position[1], state.position[2]));
+            const geoid = meanSeaLevelOffset(lla.x, lla.y);
+            camera = {lat: lla.x, lon: lla.y, altHAE: lla.z, altMSL: lla.z - geoid,
+                azDeg: state.azDeg, elDeg: state.elDeg, rollDeg: state.rollDeg, vfovDeg: state.vfovDeg};
+        }
+        return {
+            enabled: fit.enabled, useTiles: fit.useTiles, autoFit: fit.autoFit,
+            fitMethod: fit.fitMethod, lockPosition: fit.lockPosition,
+            lockFOV: fit.lockFOV, lockRoll: fit.lockRoll,
+            fitFrame: fit.fitFrame, currentFrame: par.frame,
+            status: fit.status, residual: fit.residual, observability: fit.observability,
+            videoSize: fit.videoSize,
+            points: fit.points.map((p) => this._fitPointOut(p)),
+            camera,
+        };
+    }
+
     _extractControllerDoc(controller) {
         const doc = {
             name: controller._name,
@@ -3294,6 +3560,8 @@ class CSitrecAPI {
             "toggleDebug",
             "getNearbyWeatherBalloons",
             "compareSondeTrajectory",
+            "pickWorldPoint",
+            "fitPointsStatus",
             "listViews",
             "showView",
             "hideView",
