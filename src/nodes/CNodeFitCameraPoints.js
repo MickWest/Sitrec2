@@ -298,8 +298,11 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 "roof, a wall, the top of a tree — instead of on the elevation surface. The " +
                 "elevation map has no buildings on it, so a rooftop corner placed against it " +
                 "lands at street level, which at short range is a large error and at long range " +
-                "is none at all. Whichever surface the ray meets FIRST wins, so a landmark on " +
-                "bare ground still lands on bare ground. Needs the 3D tiles to have loaded; " +
+                "is none at all. The tiles are used wherever they cover the ray, even when the " +
+                "elevation surface happens to be nearer — which it can be, since it is draped " +
+                "over the buildings rather than around them. A landmark on bare ground still " +
+                "lands on bare ground, because the tilesets carry their own ground. Needs the " +
+                "3D tiles to have loaded; " +
                 "affects where new points are dropped and where dragged handles land, not points " +
                 "already placed.");
 
