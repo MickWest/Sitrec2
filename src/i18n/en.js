@@ -312,6 +312,44 @@ const en = {
             label: "Export Video Frame (PNG)",
             tooltip: "Export the current video frame as displayed (with effects) as a PNG file",
         },
+        fade: {
+            folder: {
+                title: "Render Fade",
+                tooltip: "Render the selected view crossfading between the sim and the video overlay, as if the \"Vid Overlay Trans %\" slider were being moved up and down",
+            },
+            startView: {
+                label: "Start With",
+                tooltip: "Which view the render opens on. Look is the sim on its own (overlay transparency 0), Video is the video overlay alone (transparency 1)",
+            },
+            initialDelay: {
+                label: "Initial Delay (s)",
+                tooltip: "Seconds to hold on the starting view before the first fade begins",
+            },
+            fadeTime: {
+                label: "Fade Time (s)",
+                tooltip: "Seconds each crossfade takes, from one view fully to the other",
+            },
+            holdTime: {
+                label: "Hold Time (s)",
+                tooltip: "Seconds to hold on each view after a fade arrives on it, before the next fade starts",
+            },
+            fades: {
+                label: "Fades",
+                tooltip: "How many crossfades to render. Each fade goes to the other view, so 2 fades goes to the other view and back to the start",
+            },
+            holdFrame: {
+                label: "Hold Current Frame",
+                tooltip: "Freeze on the current frame for the whole render, so the output is a still comparison. Turn off to play the A-B range while fading, looping it if the fade schedule outlasts the clip",
+            },
+            render: {
+                label: "Render Fade Video",
+                tooltip: "Render the fade using the view chosen in Render Video View. Length is Initial Delay + Fades x (Fade Time + Hold Time)",
+            },
+            startOptions: {
+                look: "Look",
+                video: "Video",
+            },
+        },
     },
     tracking: {
         enable: {

@@ -8,6 +8,7 @@ import {
     getVideoExportSpeedInfo,
     getVideoExportSpeedSuffix,
     getVideoExtension,
+    findFadeOverlayView,
     findFirstVideoData,
     scanDuplicateVideoFrames
 } from "../VideoExporter";
@@ -409,38 +410,42 @@ export class CNodeView3D extends CNodeViewCanvas {
      * @param {string} formatId - Video format ID (e.g., 'mp4-h264', 'webm-vp8')
      * @param {boolean} includeAudio - Whether to include audio track if available
      * @param {boolean} waitForBackgroundLoading - When true, wait for background loading between captured frames
+     * @param {object} options - options.plan supplies a pre-built frame plan (Render Fade) instead of the A-B one
      */
     async exportVideo(requestedFormatId = DefaultVideoFormat, includeAudio = true, waitForBackgroundLoading = false, options = {}) {
         const startFrame = Sit.aFrame;
         const endFrame = Sit.bFrame;
         const width = this.canvas.width;
         const height = this.canvas.height;
-        let duplicateFrameSet = null;
-        if (options.uniqueFramesOnly) {
-            const scanProgress = new ExportProgressWidget("Scanning duplicate video frames...", endFrame - startFrame + 1);
-            try {
-                duplicateFrameSet = await scanDuplicateVideoFrames(findFirstVideoData(NodeMan), startFrame, endFrame, scanProgress, {
-                    meanAbsDiffThreshold: options.uniqueFrameMeanAbsDiffThreshold,
-                });
-                if (scanProgress.shouldStop()) {
-                    console.log("Duplicate frame scan cancelled; exporting all frames");
-                    duplicateFrameSet = null;
-                } else {
-                    console.log(`Unique frames only: found ${duplicateFrameSet.size} duplicate frame(s) in ${startFrame}-${endFrame}`);
+        let plan = options.plan;
+        if (!plan) {
+            let duplicateFrameSet = null;
+            if (options.uniqueFramesOnly) {
+                const scanProgress = new ExportProgressWidget("Scanning duplicate video frames...", endFrame - startFrame + 1);
+                try {
+                    duplicateFrameSet = await scanDuplicateVideoFrames(findFirstVideoData(NodeMan), startFrame, endFrame, scanProgress, {
+                        meanAbsDiffThreshold: options.uniqueFrameMeanAbsDiffThreshold,
+                    });
+                    if (scanProgress.shouldStop()) {
+                        console.log("Duplicate frame scan cancelled; exporting all frames");
+                        duplicateFrameSet = null;
+                    } else {
+                        console.log(`Unique frames only: found ${duplicateFrameSet.size} duplicate frame(s) in ${startFrame}-${endFrame}`);
+                    }
+                } finally {
+                    scanProgress.remove();
                 }
-            } finally {
-                scanProgress.remove();
             }
+            plan = createVideoExportFramePlan({
+                startFrame,
+                endFrame,
+                sourceFps: Sit.fps,
+                playbackSpeed: par.playbackSpeed ?? 1,
+                pingPong: options.pingPong ?? par.pingPong,
+                loops: options.loops ?? 1,
+                duplicateFrameSet,
+            });
         }
-        const plan = createVideoExportFramePlan({
-            startFrame,
-            endFrame,
-            sourceFps: Sit.fps,
-            playbackSpeed: par.playbackSpeed ?? 1,
-            pingPong: options.pingPong ?? par.pingPong,
-            loops: options.loops ?? 1,
-            duplicateFrameSet,
-        });
         if (plan.totalFrames === 0) {
             alert("Video export failed: no unique frames found in the A-B range.");
             return;
@@ -499,7 +504,23 @@ export class CNodeView3D extends CNodeViewCanvas {
         compositeCanvas.width = width;
         compositeCanvas.height = height;
         const compositeCtx = compositeCanvas.getContext('2d');
-        
+
+        // Render Fade drives the video overlay's opacity per output frame instead of, or as
+        // well as, the frame number. The compositing pass below only draws overlays that are
+        // effectively visible, so force this one visible for the render and restore after -
+        // otherwise a fade requested with the overlay hidden would silently produce no fade.
+        // canvas.style.opacity is kept in step purely so the on-screen view fades along too.
+        const fadeOverlay = plan.alphaAt ? findFadeOverlayView(ViewMan, this) : null;
+        const savedOverlayTransparency = fadeOverlay ? fadeOverlay.transparency : 0;
+        const savedOverlayVisible = fadeOverlay ? fadeOverlay.visible : false;
+        const setOverlayAlpha = (alpha) => {
+            fadeOverlay.transparency = alpha;
+            if (fadeOverlay.canvas) fadeOverlay.canvas.style.opacity = alpha;
+        };
+        if (fadeOverlay) {
+            fadeOverlay.setVisibleRaw(true);
+        }
+
         try {
             const exporter = await createVideoExporter(formatId, {
                 width,
@@ -528,6 +549,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 
                 const frame = plan.frameAt(i);
                 const renderSingleViewFrame = async () => {
+                    if (fadeOverlay) setOverlayAlpha(plan.alphaAt(i));
                     par.frame = frame;
                     GlobalDateTimeNode.update(frame);
                     
@@ -641,6 +663,10 @@ export class CNodeView3D extends CNodeViewCanvas {
             alert('Video export failed: ' + e.message);
         } finally {
             progress.remove();
+            if (fadeOverlay) {
+                setOverlayAlpha(savedOverlayTransparency);
+                fadeOverlay.setVisibleRaw(savedOverlayVisible);
+            }
             par.frame = savedFrame;
             par.paused = savedPaused;
             setRenderOne(true);

@@ -1,5 +1,6 @@
 import {MediabunnyExporter} from "./MediabunnyExporter";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
+import {showError} from "./showError";
 import {t} from "./i18n";
 
 const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.includes('Firefox');
@@ -282,8 +283,99 @@ export function createVideoExportFramePlan({
     };
 }
 
+// A "Render Fade" pass ignores the A-B frame range as a timeline and is driven purely by
+// wall-clock seconds: hold on one view, crossfade to the other, hold, and so on. What it
+// animates is the video overlay's opacity - the same 0-1 the "Vid Overlay Trans %" slider
+// writes - so 0 is the look view alone and 1 is the video alone.
+//
+// The returned object is the same shape createVideoExportFramePlan returns, so the normal
+// single-view encode loop in CNodeView3D.exportVideo can run it unchanged, plus alphaAt()
+// for the per-output-frame overlay opacity.
+//
+// holdFrame true freezes on `frame` for the whole render (a still comparison); false plays
+// the A-B range from the start, wrapping when the fade schedule outlasts the clip.
+export function createFadeExportPlan({
+    fps = 30,
+    startWithVideo = false,
+    initialDelay = 0,
+    fadeTime = 1,
+    holdTime = 2,
+    fades = 2,
+    holdFrame = true,
+    startFrame = 0,
+    endFrame = 0,
+    frame = 0,
+}) {
+    const outFps = fps > 0 ? fps : 30;
+    const fadeCount = Math.max(1, Math.round(fades || 1));
+    const fadeSeconds = Math.max(0, fadeTime);
+    const holdSeconds = Math.max(0, holdTime);
+    const delaySeconds = Math.max(0, initialDelay);
+    const totalSeconds = delaySeconds + fadeCount * (fadeSeconds + holdSeconds);
+    const totalFrames = Math.max(1, Math.round(totalSeconds * outFps));
+
+    const alphaStart = startWithVideo ? 1 : 0;
+    // A-B is inclusive. One fade ends on the opposite view, so an even fade count returns to
+    // the starting view - two fades is "there and back", which is the usual comparison loop.
+    const alphaEnd = (fadeCount % 2 === 0) ? alphaStart : 1 - alphaStart;
+    const rangeLength = Math.max(1, endFrame - startFrame + 1);
+
+    const alphaAt = (index) => {
+        let t = index / outFps - delaySeconds;
+        if (t <= 0) return alphaStart;
+        for (let i = 0; i < fadeCount; i++) {
+            // Each fade starts where the previous one ended, so `from` alternates.
+            const from = (i % 2 === 0) ? alphaStart : 1 - alphaStart;
+            const to = 1 - from;
+            if (t < fadeSeconds) return from + (to - from) * (t / fadeSeconds);
+            t -= fadeSeconds;
+            if (t < holdSeconds) return to;
+            t -= holdSeconds;
+        }
+        return alphaEnd;
+    };
+
+    return {
+        startFrame,
+        endFrame,
+        totalFrames,
+        totalSourceFrames: totalFrames,
+        skippedDuplicateFrames: 0,
+        fps: outFps,
+        frameStep: 1,
+        playbackSpeed: 1,
+        pingPong: false,
+        loops: 1,
+        nameSuffix: "fade",
+        totalSeconds,
+        alphaStart,
+        alphaEnd,
+        holdFrame,
+        frameAt(index) {
+            if (holdFrame) return frame;
+            return startFrame + (index % rangeLength);
+        },
+        alphaAt,
+    };
+}
+
+// The view whose opacity "Render Fade" animates: the video overlay attached to the view being
+// exported (mirrorVideo over the look view). Identified exactly the way the export compositor
+// identifies it - an overlay child carrying a `transparency`, which is what the Vid Overlay
+// Trans slider writes to. ViewMan is passed in to keep this module free of that import.
+export function findFadeOverlayView(ViewMan, parentView) {
+    let found = null;
+    ViewMan.iterate((id, view) => {
+        if (found === null && view.overlayView === parentView && view.transparency !== undefined) {
+            found = view;
+        }
+    });
+    return found;
+}
+
 export function getVideoExportSpeedSuffix(plan) {
     const parts = [];
+    if (plan.nameSuffix) parts.push(plan.nameSuffix);
     if (plan.playbackSpeed !== 1) parts.push(`${plan.playbackSpeed}x`);
     if (plan.pingPong) parts.push("pingpong");
     if (plan.loops > 1) parts.push(`${plan.loops}loops`);
@@ -404,6 +496,15 @@ export class VideoExportManager {
         this.waitForBackgroundLoading = false;
         this.videoFormat = null;
         this.renderVideoFolder = null;
+
+        // Render Fade: hold a second on the start view, one second per crossfade, two seconds
+        // on each view after it arrives, two fades = out to the other view and back again.
+        this.fadeStartView = "look";
+        this.fadeInitialDelay = 1;
+        this.fadeTime = 1;
+        this.fadeHoldTime = 2;
+        this.fadeCount = 2;
+        this.fadeHoldFrame = true;
     }
 
     async setupMenu(parentFolder, options = {}) {
@@ -522,11 +623,91 @@ export class VideoExportManager {
         }, "exportFramePng").name(t("videoExport.exportFramePng.label"))
             .tooltip(t("videoExport.exportFramePng.tooltip"));
 
+        this.setupFadeMenu(this.renderVideoFolder);
+
         if (!options.skipPanorama) {
             setupPanoramaExport(this.renderVideoFolder);
         }
 
         return this.renderVideoFolder;
+    }
+
+    setupFadeMenu(parentFolder) {
+        const fadeFolder = parentFolder.addFolder(t("videoExport.fade.folder.title")).close()
+            .tooltip(t("videoExport.fade.folder.tooltip"));
+
+        const startOptions = {};
+        startOptions[t("videoExport.fade.startOptions.look")] = "look";
+        startOptions[t("videoExport.fade.startOptions.video")] = "video";
+
+        fadeFolder.add(this, "fadeStartView", startOptions)
+            .name(t("videoExport.fade.startView.label"))
+            .tooltip(t("videoExport.fade.startView.tooltip"));
+
+        fadeFolder.add(this, "fadeInitialDelay", 0, 30, 0.1)
+            .name(t("videoExport.fade.initialDelay.label"))
+            .tooltip(t("videoExport.fade.initialDelay.tooltip"));
+
+        fadeFolder.add(this, "fadeTime", 0, 30, 0.1)
+            .name(t("videoExport.fade.fadeTime.label"))
+            .tooltip(t("videoExport.fade.fadeTime.tooltip"));
+
+        fadeFolder.add(this, "fadeHoldTime", 0, 30, 0.1)
+            .name(t("videoExport.fade.holdTime.label"))
+            .tooltip(t("videoExport.fade.holdTime.tooltip"));
+
+        fadeFolder.add(this, "fadeCount", 1, 20, 1)
+            .name(t("videoExport.fade.fades.label"))
+            .tooltip(t("videoExport.fade.fades.tooltip"));
+
+        fadeFolder.add(this, "fadeHoldFrame")
+            .name(t("videoExport.fade.holdFrame.label"))
+            .tooltip(t("videoExport.fade.holdFrame.tooltip"));
+
+        fadeFolder.add({
+            renderFade: () => this.exportFadeVideo()
+        }, "renderFade").name(t("videoExport.fade.render.label"))
+            .tooltip(t("videoExport.fade.render.tooltip"));
+
+        return fadeFolder;
+    }
+
+    // Render the selected view (the "Render Video View" pick, normally the look view) while
+    // crossfading the video overlay in and out on a seconds-based schedule.
+    async exportFadeVideo() {
+        const { ViewMan } = await import("./CViewManager");
+        const { Sit } = await import("./Globals");
+        const { par } = await import("./par");
+
+        const view = ViewMan.get(this.videoExportView, false);
+        if (!view || !view.exportVideo) {
+            showError(`Render Fade: no exportable view named "${this.videoExportView}".`);
+            return;
+        }
+
+        if (!findFadeOverlayView(ViewMan, view)) {
+            showError(`Render Fade needs the video overlay that the "Vid Overlay Trans %" slider controls, and "${this.videoExportView}" does not have one. Load a video, and export a view the video is mirrored onto (normally the look view).`);
+            return;
+        }
+
+        const plan = createFadeExportPlan({
+            fps: Sit.fps,
+            startWithVideo: this.fadeStartView === "video",
+            initialDelay: this.fadeInitialDelay,
+            fadeTime: this.fadeTime,
+            holdTime: this.fadeHoldTime,
+            fades: this.fadeCount,
+            holdFrame: this.fadeHoldFrame,
+            startFrame: Sit.aFrame,
+            endFrame: Sit.bFrame,
+            frame: par.frame,
+        });
+
+        console.log(`Starting fade export: ${plan.totalFrames} frames, ${plan.totalSeconds.toFixed(2)}s at ${plan.fps} fps, ${this.fadeCount} fade(s) starting on ${this.fadeStartView}, ${plan.holdFrame ? `holding frame ${par.frame}` : `playing ${Sit.aFrame}-${Sit.bFrame}`}`);
+
+        // Audio is left out: the schedule either holds one frame or wraps the clip, so there is
+        // no source timeline for an audio track to follow.
+        await view.exportVideo(this.videoFormat, false, this.waitForBackgroundLoading, { plan });
     }
 
     async buildDuplicateFrameSetForExport(videoData, startFrame, endFrame) {
