@@ -1,13 +1,26 @@
 import {toPoint as mgrsToPoint} from "mgrs";
 
-export function parseCoordinate(input) {
+// The three degree glyphs that turn up in pasted coordinates: DEGREE SIGN,
+// RING ABOVE, and MASCULINE ORDINAL INDICATOR (Word/Excel like to substitute
+// the latter two).
+const DEGREE_CHARS = "°˚º";
+
+/**
+ * @typedef {object} ParseOptions
+ * @property {boolean} [loose] - Also accept bare whitespace-separated pairs
+ *   ("25.299895 60.430364", "40 26 46 79 58 56"). Only safe for a string the
+ *   user has finished and submitted (the Lookup box, the Go To prompt) — never
+ *   for live typing in a latitude field, where "45 30" means 45°30'.
+ */
+
+export function parseCoordinate(input, options = {}) {
     if (typeof input !== "string" || !input.trim()) return null;
     const trimmed = input.trim();
 
     const mgrs = parseMGRS(trimmed);
     if (mgrs) return mgrs;
 
-    const pair = parseLatLonPair(trimmed);
+    const pair = parseLatLonPair(trimmed, options);
     if (pair) return pair;
 
     const single = parseSingleCoordinate(trimmed);
@@ -98,12 +111,17 @@ function parseDMSorDM(input) {
     return null;
 }
 
-export function parseLatLonPair(input) {
+/**
+ * @param {string} input
+ * @param {ParseOptions} [options]
+ * @returns {{lat:number, lon:number}|null}
+ */
+export function parseLatLonPair(input, options = {}) {
     const mgrs = parseMGRS(input);
     if (mgrs) return mgrs;
 
     const trimmed = input.trim();
-    const parts = splitLatLon(trimmed);
+    const parts = splitLatLon(trimmed, options.loose === true);
     if (!parts) return null;
 
     const lat = parseSingleCoordinate(parts.lat);
@@ -115,7 +133,7 @@ export function parseLatLonPair(input) {
     return {lat, lon};
 }
 
-function splitLatLon(input) {
+function splitLatLon(input, loose = false) {
     const upper = input.toUpperCase();
 
     const nsMatch = upper.match(/([NS])/g);
@@ -165,11 +183,62 @@ function splitLatLon(input) {
         };
     }
 
-    // Bare whitespace is intentionally NOT treated as a pair separator:
-    // "32 55" is ambiguous with degrees-minutes notation (32°55'), and
-    // greedy pair-matching breaks live typing in the LLA Lat input.
-    // Pairs must use comma, semicolon, or N/S/E/W direction markers.
+    // Two degree symbols means two coordinates: a single coordinate can only
+    // carry one (its minutes and seconds use ′ and ″). So "25.299895°
+    // 60.430364°" and "40° 26' 46\" 79° 58' 56\"" split at the last whitespace
+    // before the SECOND degree symbol — everything before that, minutes and
+    // seconds included, belongs to the latitude.
+    const degreeSplit = splitAtSecondDegreeSymbol(input);
+    if (degreeSplit) return degreeSplit;
+
+    // Bare whitespace is NOT a pair separator by default: "32 55" is ambiguous
+    // with degrees-minutes notation (32°55'), and greedy pair-matching breaks
+    // live typing in the LLA Lat input. Callers that get a complete, submitted
+    // string (the Lookup box, the Go To prompt) opt in with {loose: true}.
+    if (loose) return splitWhitespaceHalves(input);
+
     return null;
+}
+
+// "25.299895° 60.430364°" -> {lat: "25.299895°", lon: "60.430364°"}
+function splitAtSecondDegreeSymbol(input) {
+    const degrees = [];
+    for (let i = 0; i < input.length; i++) {
+        if (DEGREE_CHARS.includes(input[i])) degrees.push(i);
+    }
+    if (degrees.length !== 2) return null;
+
+    // Walk back from the second degree symbol to the token boundary that starts
+    // its coordinate. Without whitespace between them ("25°60°") we can't tell
+    // where one ends, so we decline rather than guess.
+    for (let i = degrees[1] - 1; i > degrees[0]; i--) {
+        if (/\s/.test(input[i])) {
+            return {
+                lat: input.slice(0, i).trim(),
+                lon: input.slice(i + 1).trim()
+            };
+        }
+    }
+    return null;
+}
+
+// "25.299895 60.430364" -> D/D, "40 26 46 79 58 56" -> DMS/DMS. An even number
+// of purely numeric tokens splits down the middle; anything else (odd counts, a
+// word like "Area 51") is not a coordinate pair.
+function splitWhitespaceHalves(input) {
+    const tokens = input.split(/\s+/).filter(p => p !== "");
+    if (tokens.length < 2 || tokens.length > 6 || tokens.length % 2 !== 0) return null;
+    if (!tokens.every(isNumericToken)) return null;
+    const half = tokens.length / 2;
+    return {
+        lat: tokens.slice(0, half).join(" "),
+        lon: tokens.slice(half).join(" ")
+    };
+}
+
+function isNumericToken(token) {
+    const bare = token.replace(/[°˚º′'″"]/g, "");
+    return /^[-+]?(\d+\.?\d*|\.\d+)$/.test(bare);
 }
 
 function findSplitPoint(input, delimiter) {

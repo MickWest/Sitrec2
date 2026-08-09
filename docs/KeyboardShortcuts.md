@@ -24,7 +24,7 @@ Keys are ignored while you are typing in a text field.
 | `←` / `→` | Step back / forward; hold to run continuously |
 | `↑` / `↓` | Scrub quickly forward / backward |
 | `<` and `>` (Shift+`,` / Shift+`.`) | Jump to the previous / next **keyframe**, where a tool has published them. Does nothing if none exist — it deliberately does not fall back to single-stepping |
-| `G` | Go to frame: prompts for a frame number, jumps there and pauses |
+| `G` | Go To: prompts for a frame number (jumps there and pauses), a date and/or time (`12pm`, `15:20`, `17:33 UTC`, `12/25`, `Jan 6, 2020`), a coordinate in any format, or a place name to fly the camera to |
 | `I` | Set the **In** frame (start of the A-B range) |
 | `O` | Set the **Out** frame (end of the A-B range) |
 

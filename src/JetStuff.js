@@ -284,7 +284,7 @@ export function UpdateHUD(text="") {
             "Num-. - Reset Camera<br>" +
             "< - Frame Back<br>" +
             "> - Frame Forward<br>" +
-            "G - Go to Frame<br>" +
+            "G - Go To frame/time/coords/place<br>" +
             "I - Set In Frame<br>" +
             "O - Set Out Frame<br>" +
             "Space Play/Pause<br>" +

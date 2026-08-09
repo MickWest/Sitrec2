@@ -22,7 +22,7 @@ import {getApproximateLocationFromIP} from "../GeoLocation";
 import {customAltitudeFunction, customLocationFunction} from "../runtimeConfig";
 import {showError} from "../showError";
 import {f2m} from "../utils";
-import {parseLatLonPair, parseSingleCoordinate} from "../CoordinateParser";
+import {attachLatLonInputs, moveTerrainTo, resolveLocationString} from "../CoordinateInput";
 import {t} from "../i18n";
 
 export class CNodePositionLLA extends CNodeTrack {
@@ -48,34 +48,12 @@ export class CNodePositionLLA extends CNodeTrack {
                this.guiLat = new CNodeGUIValue({
                    id: id + " Lat",
                    desc: name + " Lat",
-                   tooltip: this.tipName + " latitude in degrees. Paste 'lat,lon' to set both.",
+                   tooltip: this.tipName + " latitude in degrees. Paste a full 'lat, lon' (any format) to set both.",
                    value: this._LLA[0],
                    start: -90, end: 90, step: 0.01,
                    stepExplicit: false, // prevent snapping
                    noSlider: true,
                    onChange: (v) => {
-                       const $input = this.guiLat.guiEntry?.$input;
-                       const input = $input?.value;
-                       const isFocused = $input && document.activeElement === $input;
-                       if (isFocused && input && String(v) !== input) {
-                           const pair = parseLatLonPair(input);
-                           if (pair) {
-                               this.guiLat.guiEntry.$input.value = pair.lat;
-                               this._LLA[0] = pair.lat;
-                               this._LLA[1] = pair.lon;
-                               this.guiLon.value = pair.lon;
-                               this.recalculateCascade()
-                               EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
-                               return;
-                           }
-                           const single = parseSingleCoordinate(input);
-                           if (single !== null) {
-                               this._LLA[0] = single;
-                               this.recalculateCascade()
-                               EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
-                               return;
-                           }
-                       }
                        this._LLA[0] = parseFloat(v);
                        EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
                        this.recalculateCascade()
@@ -91,23 +69,16 @@ export class CNodePositionLLA extends CNodeTrack {
                    stepExplicit: false, // prevent snapping
                    noSlider: true,
                    onChange: (v) => {
-                       const $input = this.guiLon.guiEntry?.$input;
-                       const input = $input?.value;
-                       const isFocused = $input && document.activeElement === $input;
-                       if (isFocused && input && String(v) !== input) {
-                           const single = parseSingleCoordinate(input);
-                           if (single !== null) {
-                               this._LLA[1] = single;
-                               this.recalculateCascade()
-                               EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
-                               return;
-                           }
-                       }
                        this._LLA[1] = v;
                        this.recalculateCascade()
                        EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
                    }
                 }, v.gui)
+
+               // Both boxes accept any coordinate format (decimal, D M, D M S,
+               // hemisphere letters, degree symbols, MGRS); a complete pair
+               // dropped into either one fills in both.
+               attachLatLonInputs(this.guiLat.guiEntry, this.guiLon.guiEntry)
 
                // The elastic range here will be increased to the default sitch altitude
                 // (currently 1000 feet?)
@@ -158,19 +129,15 @@ export class CNodePositionLLA extends CNodeTrack {
                     this.lookupController = gui.add(this, "lookupString").name(t("positionLLA.lookup.label")).tooltip(t("positionLLA.lookup.tooltip")).onFinishChange(async () => {
                         if (this.lookupString.length > 0) {
                             try {
-                                const coord = parseLatLonPair(this.lookupString);
-                                let lat, lon;
-                                if (coord) {
-                                    lat = coord.lat;
-                                    lon = coord.lon;
-                                } else {
-                                    const location = await customLocationFunction(this.lookupString);
-                                    if (!location) {
-                                        alert("No results found for " + this.lookupString);
-                                        return;
-                                    }
-                                    [lat, lon] = location;
+                                // Coordinates in any supported format resolve here,
+                                // without a geocoder round trip; only a genuine place
+                                // name is looked up.
+                                const location = await resolveLocationString(this.lookupString);
+                                if (!location) {
+                                    showError("No results found for " + this.lookupString);
+                                    return;
                                 }
+                                const {lat, lon} = location;
 
                                 this.guiLat.value = lat;
                                 this.guiLon.value = lon;
@@ -192,16 +159,9 @@ export class CNodePositionLLA extends CNodeTrack {
                                 markSitchDirty();
                                 EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id});
 
-                                if (NodeMan.exists("terrainUI")) {
-                                    const terrainUI = NodeMan.get("terrainUI");
-                                    terrainUI.lat = this._LLA[0];
-                                    terrainUI.lon = this._LLA[1];
-                                    terrainUI.flagForRecalculation();
-                                    terrainUI.startLoading = true;
-                                }
+                                moveTerrainTo(this._LLA[0], this._LLA[1]);
                             } catch (error) {
-                                showError("Error during lookup: ", error);
-                                alert("Error during lookup: " + error.message);
+                                showError("Error during lookup: " + error.message, error);
                             }
                         }
                     });
@@ -293,15 +253,7 @@ export class CNodePositionLLA extends CNodeTrack {
         markSitchDirty();
         NodeMan.get("mainCamera").goToPoint(this.ecef,2300000,100000);
 
-
-        if (NodeMan.exists("terrainUI")) {
-            const terrainUI = NodeMan.get("terrainUI")
-            terrainUI.lat = this._LLA[0]
-            terrainUI.lon = this._LLA[1]
-            terrainUI.flagForRecalculation();
-            terrainUI.startLoading = true;
-
-        }
+        moveTerrainTo(this._LLA[0], this._LLA[1]);
 
         EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
     }

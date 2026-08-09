@@ -212,6 +212,87 @@ describe("parseLatLonPair", () => {
         });
     });
 
+    describe("space separated with degree symbols", () => {
+        // A coordinate can only carry one degree symbol, so two of them is
+        // unambiguously two coordinates even with only whitespace between.
+        test("decimal degrees with degree symbols", () => {
+            const result = parseLatLonPair("25.299895° 60.430364°");
+            expect(result.lat).toBeCloseTo(25.299895, 6);
+            expect(result.lon).toBeCloseTo(60.430364, 6);
+        });
+
+        test("negative longitude", () => {
+            const result = parseLatLonPair("25.299895° -60.430364°");
+            expect(result.lat).toBeCloseTo(25.299895, 6);
+            expect(result.lon).toBeCloseTo(-60.430364, 6);
+        });
+
+        test("DMS without direction letters", () => {
+            const result = parseLatLonPair("40°26'46\" 79°58'56\"");
+            expect(result.lat).toBeCloseTo(40.446111, 5);
+            expect(result.lon).toBeCloseTo(79.982222, 5);
+        });
+
+        test("DMS with spaces between every part", () => {
+            const result = parseLatLonPair("40° 26' 46\" 79° 58' 56\"");
+            expect(result.lat).toBeCloseTo(40.446111, 5);
+            expect(result.lon).toBeCloseTo(79.982222, 5);
+        });
+
+        test("alternate degree glyphs", () => {
+            const result = parseLatLonPair("25.3˚ 60.4º");
+            expect(result.lat).toBeCloseTo(25.3, 5);
+            expect(result.lon).toBeCloseTo(60.4, 5);
+        });
+
+        test("no whitespace between the two coordinates is declined", () => {
+            expect(parseLatLonPair("25.3°60.4°")).toBeNull();
+        });
+
+        test("a single coordinate is still a single coordinate", () => {
+            expect(parseLatLonPair("45° 30'")).toBeNull();
+            expect(parseSingleCoordinate("45° 30'")).toBeCloseTo(45.5, 5);
+        });
+    });
+
+    describe("loose whitespace pairs (submitted strings only)", () => {
+        test("bare decimal pair", () => {
+            const result = parseLatLonPair("45.5 -122.5", {loose: true});
+            expect(result.lat).toBeCloseTo(45.5, 5);
+            expect(result.lon).toBeCloseTo(-122.5, 5);
+        });
+
+        test("four tokens are a DM pair", () => {
+            const result = parseLatLonPair("45 30 122 30", {loose: true});
+            expect(result.lat).toBeCloseTo(45.5, 5);
+            expect(result.lon).toBeCloseTo(122.5, 5);
+        });
+
+        test("six tokens are a DMS pair", () => {
+            const result = parseLatLonPair("45 30 30 122 30 30", {loose: true});
+            expect(result.lat).toBeCloseTo(45.508333, 4);
+            expect(result.lon).toBeCloseTo(122.508333, 4);
+        });
+
+        test("place names are not coordinates", () => {
+            expect(parseLatLonPair("Area 51", {loose: true})).toBeNull();
+            expect(parseLatLonPair("New York", {loose: true})).toBeNull();
+            expect(parseLatLonPair("Highway 101 California", {loose: true})).toBeNull();
+        });
+
+        test("odd token counts are not pairs", () => {
+            expect(parseLatLonPair("45 30 30", {loose: true})).toBeNull();
+        });
+
+        test("out of range values are rejected", () => {
+            expect(parseLatLonPair("1600 1600", {loose: true})).toBeNull();
+        });
+
+        test("loose is opt-in - the default is unchanged", () => {
+            expect(parseLatLonPair("45.5 -122.5")).toBeNull();
+        });
+    });
+
     describe("semicolon separated", () => {
         test("semicolon separation", () => {
             const result = parseLatLonPair("45.5; -122.5");

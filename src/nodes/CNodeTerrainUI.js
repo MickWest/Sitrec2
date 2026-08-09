@@ -35,6 +35,7 @@ import {
     setTilesAttribution
 } from "../AttributionOverlay";
 import {t} from "../i18n";
+import {attachLatLonInputs} from "../CoordinateInput";
 
 /**
  * Static map of token names to their build-time values.
@@ -610,6 +611,13 @@ export class CNodeTerrainUI extends CNode {
             }).onFinishChange(v => {
                 this.startLoading = true
             }).tooltip(t("terrainUI.lon.tooltip"))
+
+            // Same coordinate handling as the Camera/Target Lat/Lon boxes: any
+            // format is accepted, and a full pair pasted into either box fills
+            // in both.
+            attachLatLonInputs(this.latController, this.lonController, () => {
+                this.startLoading = true;
+            })
 
             this.zoomController = this.gui.add(this, "zoom", 2, 15, 1).onChange(v => {
                 this.flagForRecalculation()
