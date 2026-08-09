@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.120.1 (2026-08-08)
+
+### Bug Fixes
+
+- Fixed the landmark handles of *Fit Camera to Points* (Camera menu) staying drawn over the main and look views after *Enable Fit* was switched off, with *Clear All Points* unable to remove them either. Switching the fit off now clears them from both views immediately, and switching it back on brings them and the sight lines back as before.
+
 ## Version 2.120.0 (2026-08-08)
 
 ### New Features

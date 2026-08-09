@@ -105,6 +105,16 @@ class CFitHandleOverlay extends CNodeViewUI {
         this.doubleClickFullScreen = false;
         this.draggingId = null;
         this.visible = false;
+        // Required for `visible = false` to actually hide anything. ViewMan.updateDOMVisibility
+        // only touches an overlay's canvas when the overlay declares separate visibility;
+        // everything else is left to the PARENT div's display, and this overlay's parent is the
+        // main or look view, which stays up. So without this, switching Enable Fit off dropped
+        // the overlay out of the render loop — _computeEV went false — while its canvas stayed
+        // on screen holding the last handles it drew, frozen there because the view that would
+        // have cleared them was no longer being rendered. Clear All Points could not shift them
+        // either, for the same reason. The fit's own video overlay (CNodeFitCameraPoints) has
+        // always set this; the 3D handles were the odd ones out.
+        this.separateVisibility = true;
     }
 
     get host() {
