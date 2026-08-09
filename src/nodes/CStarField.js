@@ -42,9 +42,17 @@ export class CStarField {
     }
 
     /**
-     * Loads star data from binary BSC5 (Yale Bright Star Catalog) file
-     * Binary format: Fixed-width records containing star positions and magnitudes
-     * Reference: https://observablehq.com/@visnup/yale-bright-star-catalog
+     * Loads star data from the binary star catalogue.
+     *
+     * The "BSC5" name is the FORMAT, not the contents. The file this reads
+     * (data/nightsky/sitrec_bsc_lite.bin) is a repacked HIPPARCOS catalogue —
+     * 117,955 stars keyed by HIP number, magnitude -1.44 to 14.08 — carried in
+     * the BSC5 binary container (28-byte header of 7 int32, then 22-byte
+     * records). The real 9,110-entry Yale Bright Star Catalogue sits unused
+     * beside it as BSC5.bin. Verified against known stars: HIP 32349 reads
+     * 6.753h / -16.71 / -1.44, which is Sirius.
+     *
+     * Format reference: https://observablehq.com/@visnup/yale-bright-star-catalog
      */
     loadStarData() {
         const buffer = FileManager.get("BSC5");

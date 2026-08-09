@@ -416,12 +416,33 @@ lists star names officially approved by the IAU and is freely usable.
 See: https://www.iau.org/public/themes/naming_stars/`,
     },
     {
+        name: "Hipparcos Catalogue (ESA)",
+        version: "ESA SP-1200 (1997)",
+        license: "Public Domain",
+        copyright: "European Space Agency (ESA) / Hipparcos mission",
+        repository: "https://www.cosmos.esa.int/web/hipparcos",
+        notes: "The star catalogue Sitrec actually loads and renders: repacked as " +
+            "data/nightsky/sitrec_bsc_lite.bin — 117,955 stars keyed by Hipparcos (HIP) number, " +
+            "magnitudes -1.44 to 14.08. Despite the filename and the BSC5 key in " +
+            "src/ExtraFiles.js, the CONTENTS are Hipparcos, not the Yale Bright Star Catalogue; " +
+            "only the 28-byte-header / 22-byte-record binary container comes from the BSC5 " +
+            "format. Star proper names are correlated to it by HIP number from the IAU CSN.",
+        licenseTextOverride: `The Hipparcos Catalogue is the astrometric catalogue produced by the European
+Space Agency's Hipparcos mission and published as ESA Special Publication
+SP-1200 (1997). ESA distributes it for free public use, and the data are facts
+(stellar positions, parallaxes, magnitudes, etc.) not subject to copyright.
+Reference: M. A. C. Perryman, L. Lindegren, J. Kovalevsky et al., "The
+HIPPARCOS Catalogue", Astronomy & Astrophysics 323, L49-L52, 1997.`,
+    },
+    {
         name: "Yale Bright Star Catalog (BSC5)",
         version: "5th Revised",
         license: "Public Domain",
         copyright: "Hoffleit, D. & Warren, W.H., Yale University Observatory",
         repository: "http://tdc-www.harvard.edu/catalogs/bsc5.html",
-        notes: "Bright Star Catalog, derived/repacked for Sitrec as data/nightsky/sitrec_bsc_lite.bin.",
+        notes: "Present in the tree as data/nightsky/BSC5.bin but NOT loaded — the BSC5 entry in " +
+            "src/ExtraFiles.js points at the Hipparcos repack above. Credited because the file " +
+            "is still distributed, and because the BSC5 binary format is what that repack uses.",
         licenseTextOverride: `The Yale Bright Star Catalog (BSC5) is a public-domain stellar catalog
 originally compiled by Dorrit Hoffleit and Wayne H. Warren Jr. at Yale
 University Observatory and distributed via NASA ADC / Harvard CDS.
