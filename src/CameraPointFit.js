@@ -58,6 +58,26 @@ export const CAMERA_FIT_DEFAULTS = {
     // Stop when the robust cost stops improving by a meaningful relative amount.
     tolerance: 1e-12,
 
+    // Restarts of the WINNING run, from wherever it stopped.
+    //
+    // A run that ends at maxIterations has not converged, it has run out of budget — and on an
+    // ill-conditioned configuration that is the normal outcome, because progress along a nearly
+    // flat valley is slow and LM's lambda has to be re-earned after every rejected trial.
+    // Measured on the 3-point 38 km case: four consecutive presses of Fit Now moved the camera
+    // 54 km, 2.6 km, 1.1 km and 13.4 km, each a genuine improvement (176.9 -> 62.8 -> 62.5 ->
+    // 62.4 -> 61.1 px RMS), before the acceptance gate finally refused the fifth. What the user
+    // saw was a fixed control point wandering every time they pressed the button; what was
+    // actually happening is that pressing it again was doing the optimiser's remaining work by
+    // hand, one budget at a time.
+    //
+    // So finish it here instead. Restarting also resets lambda, which is the point: a run that
+    // has ended with lambda large is not stuck, it is just taking tiny steps.
+    //
+    // Costs nothing on a well-conditioned fit, where the first restart reproduces the same cost
+    // and stops immediately.
+    maxRestarts: 8,
+    restartTolerance: 1e-6,
+
     // Huber transition, in pixels. One badly placed pair should be limited, not erased: at N = 4
     // there is no redundancy to reject anything with, and a loss that drives a deliberate
     // placement to zero weight would silently turn a 4-point solve into an underdetermined
@@ -88,7 +108,18 @@ export const CAMERA_FIT_DEFAULTS = {
     kappaSevere: 1e6,
     // Below this fraction of sigmaMax a mode carries no usable information and its step is
     // suppressed entirely, leaving that combination at its starting value.
-    sigmaFloorRatio: 1e-8,
+    //
+    // It is 1/kappaSevere, and the two MUST stay tied: kappaSevere is the threshold at which
+    // buildDiagnostics reports a mode as "unobservable", which the UI renders as "cannot be
+    // determined by these points — held near its previous value". At the old 1e-8 that sentence
+    // was not true. Every mode between 1e-8 and 1e-6 was declared undeterminable and stepped
+    // anyway, and near convergence it is stepped HARD: the SVD gain sigma/(sigma^2 + lambda)
+    // tends to 1/sigma as lambda decays, so the weakest mode takes the largest step of all.
+    // Measured on a 3-point fit at 38 km, all three landmarks at the same range: the camera slid
+    // 2.29 km along the range/focal trade-off and narrowed its field 5.7% for an RMS change of
+    // 0.01 px, every time the button was pressed. Freezing at the same place the diagnostics
+    // draw the line makes the promise the UI prints a fact.
+    sigmaFloorRatio: 1e-6,
 
     // Reported uncertainty never claims better than this, however exact the algebra. A four-point
     // fit can pass exactly through its own data and still be wrong by whatever the placement
@@ -331,7 +362,11 @@ function solveDense(A, b, n) {
  *          lens's representable field. Null is a first-class outcome, not an error.
  */
 export function projectWorldPoint(state, world, lens, imageSize) {
-    const d = sub(world, state.position);
+    let d = sub(world, state.position);
+    // Where the camera SAW this point, which is not where it is if the air between them bends.
+    // The caller supplies the bend (see spec.liftFactory) because the model belongs to the host;
+    // without one this is the plain pinhole it has always been.
+    if (state.lift) d = state.lift(d);
     const z = dot(d, state.basis.fwd);
     // Reject at the plane rather than at zero: a point grazing 90 degrees off-axis projects to
     // an arbitrarily large pixel coordinate and would dominate any least-squares cost.
@@ -348,7 +383,7 @@ export function projectWorldPoint(state, world, lens, imageSize) {
  * `base` carries everything the parameters are relative to: the starting position, the fixed ENU
  * basis the position offsets are expressed in, and the starting angles/focal for any locked slot.
  */
-function stateFromParams(p, base, localFrame) {
+function stateFromParams(p, base, localFrame, liftFactory) {
     const position = [
         base.position[0] + p[P_EAST] * base.east[0] + p[P_NORTH] * base.north[0] + p[P_UP] * base.up[0],
         base.position[1] + p[P_EAST] * base.east[1] + p[P_NORTH] * base.north[1] + p[P_UP] * base.up[1],
@@ -367,6 +402,9 @@ function stateFromParams(p, base, localFrame) {
         focalScale: Math.exp(p[P_LOGF]),
         basis,
         frame,
+        // Rebuilt at the CURRENT position for the same reason the frame is: the bend is a
+        // property of where the observer stands, and the optimiser moves the observer.
+        lift: liftFactory ? liftFactory(position) : null,
     };
 }
 
@@ -439,7 +477,7 @@ function rmsOf(r, n) {
  *        one. Null by default and never allocated when off, so the solve is untouched.
  */
 function runLM(seedParams, base, ctx, maxIterations = ctx.options.maxIterations, trace = null) {
-    const {points, lens, imageSize, localFrame, freeIdx, options} = ctx;
+    const {points, lens, imageSize, localFrame, liftFactory, freeIdx, options} = ctx;
     const nFree = freeIdx.length;
     const nPts = points.length;
     const m = nPts * 2;
@@ -447,7 +485,7 @@ function runLM(seedParams, base, ctx, maxIterations = ctx.options.maxIterations,
     const p = Float64Array.from(seedParams);
     const stepSize = ctx.stepSize;
 
-    let state = stateFromParams(p, base, localFrame);
+    let state = stateFromParams(p, base, localFrame, liftFactory);
     let {r} = residualsFor(state, points, lens, imageSize);
     let delta = options.huberDeltaInit;
     let w = huberWeights(r, nPts, delta);
@@ -484,8 +522,8 @@ function runLM(seedParams, base, ctx, maxIterations = ctx.options.maxIterations,
             const h = stepSize[slot];
             const pPlus = Float64Array.from(p); pPlus[slot] += h;
             const pMinus = Float64Array.from(p); pMinus[slot] -= h;
-            const rp = residualsFor(stateFromParams(pPlus, base, localFrame), points, lens, imageSize).r;
-            const rm = residualsFor(stateFromParams(pMinus, base, localFrame), points, lens, imageSize).r;
+            const rp = residualsFor(stateFromParams(pPlus, base, localFrame, liftFactory), points, lens, imageSize).r;
+            const rm = residualsFor(stateFromParams(pMinus, base, localFrame, liftFactory), points, lens, imageSize).r;
             for (let i = 0; i < nPts; i++) {
                 const g = w[i] / (2 * h);
                 J[(i * 2) * nFree + c] = (rp[i * 2] - rm[i * 2]) * g;
@@ -543,7 +581,7 @@ function runLM(seedParams, base, ctx, maxIterations = ctx.options.maxIterations,
             }
 
             if (finite && Math.abs(pTry[P_EL]) <= MAX_ABS_EL) {
-                const tryState = stateFromParams(pTry, base, localFrame);
+                const tryState = stateFromParams(pTry, base, localFrame, liftFactory);
                 const tryR = residualsFor(tryState, points, lens, imageSize).r;
                 const tryCost = robustCost(tryR, nPts, delta);
                 if (Number.isFinite(tryCost) && tryCost < cost) {
@@ -747,7 +785,7 @@ function pixelSpread(points) {
  * still be far worse than where the user already was.
  *
  * @param {object} spec {points, imageSize, state: {position, azDeg, elDeg, rollDeg, vfovDeg},
- *                       localFrame, lens?}
+ *                       localFrame, lens?, liftFactory?}
  * @returns {{rms: number, behind: number, perPoint: object[]}}
  */
 export function evaluateCamera(spec) {
@@ -758,6 +796,9 @@ export function evaluateCamera(spec) {
         position: state.position,
         focalScale: 1,
         basis: basisFromAzElRoll(frame.up, frame.north, state.azDeg, state.elDeg, state.rollDeg),
+        // Same forward model the fit uses, or the "is the fit better than what we have?"
+        // comparison would be scoring two cameras with two different physics.
+        lift: spec.liftFactory ? spec.liftFactory(state.position) : null,
     };
     const {r, behind} = residualsFor(st, points, lens, imageSize);
     const perPoint = points.map((p, i) => ({
@@ -780,6 +821,11 @@ export function evaluateCamera(spec) {
  *                                    to up. Supply the SAME frame the camera controller uses.
  * @param {object}  [spec.lens]       CameraLens object; defaults to the rectilinear pinhole at
  *                                    initial.vfovDeg. focalScale multiplies its focal length.
+ * @param {Function}[spec.liftFactory] (positionECEF) => ((offsetECEF) => offsetECEF) | null.
+ *                                    Given where the camera is, returns the map from a
+ *                                    camera-relative world offset to the APPARENT one — the
+ *                                    atmosphere between camera and landmark. Omit for straight
+ *                                    lines. The host owns the model; this module only applies it.
  * @param {object}  [spec.options]    overrides for CAMERA_FIT_DEFAULTS
  *
  * @returns {object} {ok, reason, position, azDeg, elDeg, rollDeg, vfovDeg, rms, residuals,
@@ -844,7 +890,8 @@ export function fitCameraToPoints(spec) {
     stepSize[P_AZ] = stepSize[P_EL] = stepSize[P_ROLL] = 1e-4;   // degrees
     stepSize[P_LOGF] = 1e-6;
 
-    const ctx = {points, lens, imageSize, localFrame, freeIdx, options, stepSize};
+    const liftFactory = spec.liftFactory ?? null;
+    const ctx = {points, lens, imageSize, localFrame, liftFactory, freeIdx, options, stepSize};
 
     // --- seeds -----------------------------------------------------------------------------
 
@@ -868,6 +915,11 @@ export function fitCameraToPoints(spec) {
     // Only scan for a pose when the geometry can support one. With position locked the caller has
     // asserted where the camera is, and with fewer than 3 points the Kabsch/intersection pair has
     // nothing to work with.
+    //
+    // The scan itself works in STRAIGHT lines even when spec.liftFactory bends them. A seed only
+    // has to land in the right basin, and the bend is a fraction of a degree where these
+    // candidates differ by tens of degrees and kilometres. The LM refinement that follows uses
+    // the real forward model, so the ANSWER carries the bend even though the guess did not.
     if (nPts >= 3) {
         const candidates = [];
         const {focalScanCount: NF, focalScanMinVFOV: V0, focalScanMaxVFOV: V1} = options;
@@ -979,6 +1031,26 @@ export function fitCameraToPoints(spec) {
     }
 
     if (best === null) return fail("The solver did not converge from any starting point.");
+
+    // --- run the winner to a fixed point -----------------------------------------------------
+    //
+    // See maxRestarts. Only the winner: the losing seeds are in other basins and finishing their
+    // descent would not change which basin won.
+    for (let restart = 0; restart < options.maxRestarts; restart++) {
+        const t = options.trace ? [] : null;
+        const again = runLM(best.params, base, ctx, undefined, t);
+        if (!Number.isFinite(again.cost)) break;
+        const better = again.behind < best.behind
+            || (again.behind === best.behind && again.cost < best.cost);
+        if (!better) break;
+        const improvedBy = (best.cost - again.cost) / Math.max(best.cost, 1e-300);
+        best = again;
+        // The restart's first trace entry IS the previous run's last state, so drop it — an
+        // animated replay should not sit still for a frame at every restart boundary.
+        if (t !== null && bestTrace !== null) bestTrace.push(...t.slice(1));
+        if (improvedBy < options.restartTolerance) break;
+    }
+
     if (best.behind > 0) {
         return fail(`${best.behind} point${best.behind === 1 ? " is" : "s are"} behind the ` +
             `fitted camera — check the 3D placements.`);

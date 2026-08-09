@@ -24,6 +24,8 @@ import {ViewMan} from "./CViewManager";
 import {mouseToCanvas, renderedRect, withDisplayedCamera} from "./ViewUtils";
 import {ellipsoidAlongRay, raycastGroundElevationFast} from "./raycastGround";
 import {drawFitHandle, GRAB_RADIUS} from "./FitHandleDraw";
+import {liftWorldPoint} from "./atmosphere/terrestrialRefraction";
+import {currentTerrestrialLiftContext} from "./atmosphere/refractionSettings";
 
 /** The 3D views a handle is offered in. */
 const HANDLE_VIEWS = ["mainView", "lookView"];
@@ -101,14 +103,29 @@ export function surfaceAlongRay(origin, direction, useTiles, camera) {
     return ellipsoidAlongRay(origin, dir);
 }
 
-/** World position -> canvas pixels for a view, or null when it is not in front of the camera. */
+/**
+ * World position -> canvas pixels for a view, or null when it is not in front of the camera.
+ *
+ * Projects where the render PUTS the point, not where its geometry is. Those differ by the
+ * terrestrial refraction lift, which the solid scene gets in the vertex shader and a bare
+ * projection does not — nothing at 1 km, 57 px of a 393 px pane on a 38 km sightline from 13 km
+ * up. A marker placed on a landmark and drawn at the unlifted projection therefore sat well off
+ * the landmark in the look view while being exactly on it in the main view, and slid whenever
+ * the camera range changed. See the CPU twin's header in atmosphere/terrestrialRefraction.js.
+ *
+ * With refraction off the context is null and this reduces to the plain projection exactly.
+ */
 export function projectToCanvas(view, world) {
     if (!view || !view.camera || !(view.widthPx > 0)) return null;
     return withDisplayedCamera(view, (cam) => {
+        // Through matrixWorld, matching updateTerrestrialRefractionUniforms — the observer the
+        // shader bends about is the camera's WORLD position, not its local one.
+        const eye = new Vector3().setFromMatrixPosition(cam.matrixWorld);
+        const apparent = liftWorldPoint(currentTerrestrialLiftContext(eye), world, new Vector3());
         const fwd = new Vector3();
         cam.getWorldDirection(fwd);
-        if (world.clone().sub(cam.position).dot(fwd) <= 0) return null;   // behind the camera
-        const ndc = world.clone().project(cam);
+        if (apparent.clone().sub(eye).dot(fwd) <= 0) return null;   // behind the camera
+        const ndc = apparent.project(cam);
         if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y)) return null;
         const r = renderedRect(view, view.widthPx, view.heightPx);
         return [r.x + (ndc.x + 1) * 0.5 * r.w, r.y + (1 - ndc.y) * 0.5 * r.h];
@@ -136,11 +153,8 @@ function behindQuad(occluder, eye, world) {
     return Math.abs(a.x + (b.x - a.x) * t) <= 0.5 && Math.abs(a.y + (b.y - a.y) * t) <= 0.5;
 }
 
-/** Canvas pixels -> the surface point under them, or null if the ray never reaches one. */
-export function groundUnderCanvasPoint(view, cx, cy, useTiles = false) {
-    if (!view || !view.camera || !(view.widthPx > 0)) return null;
-    const r = renderedRect(view, view.widthPx, view.heightPx);
-    if (!(r.w > 0) || !(r.h > 0)) return null;
+/** The surface the GEOMETRIC ray through a canvas pixel meets, or null if it meets none. */
+function surfaceUnderCanvasRay(view, r, cx, cy, useTiles) {
     const ray = withDisplayedCamera(view, (cam) => {
         const ndcX = ((cx - r.x) / r.w) * 2 - 1;
         const ndcY = -(((cy - r.y) / r.h) * 2 - 1);
@@ -152,6 +166,52 @@ export function groundUnderCanvasPoint(view, cx, cy, useTiles = false) {
     // view.camera, not the LOD-prepared one: prepareCameraForLOD changes fov, aspect and offsets
     // but never the layer mask, which is the only thing the tiles pass reads.
     return surfaceAlongRay(ray.origin, ray.dir, useTiles, view.camera);
+}
+
+/** Movement below this many canvas pixels counts as landing on the cursor. */
+const PICK_TOLERANCE = 0.25;
+/** Refraction is smooth and small; three corrections is far more than it ever needs. */
+const PICK_ITERATIONS = 4;
+
+/**
+ * Canvas pixels -> the surface point under them, or null if the ray never reaches one.
+ *
+ * "Under them" means under them ON SCREEN, which is not the same as along the geometric ray once
+ * the scene is refracted: the render lofts the ground, so the surface the user is pointing at is
+ * BELOW the geometric ray by the bend. Casting the geometric ray and stopping would hand back a
+ * point tens of metres from the one they clicked on — and, worse, a point that then draws
+ * somewhere else again, so a dragged handle would never settle under the cursor.
+ *
+ * Solved by iteration rather than by inverting the lift: the lift depends on the range, the range
+ * depends on where the ray lands, and the surface is a raycast against terrain or tile geometry
+ * with no closed form anyway. Aim, see where that lands on screen, and aim off by the error. The
+ * correction is a fraction of a degree and the map is a contraction, so it settles in one or two
+ * passes; the loop is bounded regardless.
+ *
+ * With refraction off the first pass lands exactly on the cursor and the loop exits immediately,
+ * leaving the original single-cast behaviour untouched.
+ */
+export function groundUnderCanvasPoint(view, cx, cy, useTiles = false) {
+    if (!view || !view.camera || !(view.widthPx > 0)) return null;
+    const r = renderedRect(view, view.widthPx, view.heightPx);
+    if (!(r.w > 0) || !(r.h > 0)) return null;
+
+    let aimX = cx, aimY = cy;
+    let found = null;
+    for (let i = 0; i < PICK_ITERATIONS; i++) {
+        const hit = surfaceUnderCanvasRay(view, r, aimX, aimY, useTiles);
+        // Aimed off the world (into the sky, past the horizon): keep the last real surface
+        // rather than throwing away a good answer because a correction overshot.
+        if (!hit) return found;
+        found = hit;
+        const at = projectToCanvas(view, hit);
+        if (at === null) return found;
+        const ex = cx - at[0], ey = cy - at[1];
+        if (Math.hypot(ex, ey) < PICK_TOLERANCE) break;
+        aimX += ex;
+        aimY += ey;
+    }
+    return found;
 }
 
 /**

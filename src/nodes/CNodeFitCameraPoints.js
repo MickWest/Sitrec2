@@ -45,6 +45,8 @@ import {
     azElRollFromBasis, basisFromAzElRoll, evaluateCamera, fitCameraToPoints, MAX_ABS_EL,
 } from "../CameraPointFit";
 import {fitCameraByPlaneHomography} from "../CameraPlaneHomography";
+import {liftCameraRelative, liftWorldPoint} from "../atmosphere/terrestrialRefraction";
+import {currentTerrestrialLiftContext} from "../atmosphere/refractionSettings";
 
 /** Solver choices for the Method dropdown. Values are what gets serialised. */
 export const FIT_METHODS = {
@@ -57,6 +59,34 @@ import {showConfirm} from "../showError";
 const CLICK_SLOP = 4;
 /** How far along the ray to drop a new 3D point when the terrain raycast misses. */
 const FALLBACK_RANGE = 5000;
+/**
+ * How many times one press of Fit Now may re-solve from its own answer.
+ *
+ * The solver's seed set depends on where the camera currently is — the caller's state is one
+ * seed, and the focal scan stands off from the landmark centroid ALONG the direction the caller's
+ * camera lies in. So moving the camera changes which basins get looked at, and a solve from the
+ * answer is not the same solve again: measured on the 3-point 38 km case, successive presses ran
+ * 176.9 -> 62.4 -> 62.1 -> 61.1 px, each finding a basin the previous press could not see from
+ * where it stood. That is a fixed control point appearing to wander every time the button is
+ * pressed, and the user is right that it should not.
+ *
+ * The fix is not to refuse the improvement — it is real — but to stop making the user click for
+ * it. One press runs to a fixed point, and the next press then has nothing left to find and is
+ * refused by the acceptance gate, which is what "idempotent" means here.
+ */
+const SOLVE_PASSES = 6;
+/** Below this improvement in RMS pixels, a re-solve has found nothing worth moving the camera for. */
+const RESOLVE_EPS = 0.01;
+/**
+ * How far the applied camera's residual may exceed the solved one before it is called out —
+ * absolute and relative, both required, so a sub-pixel fit cannot trip it on rounding.
+ */
+const APPLIED_RESIDUAL_SLOP = 0.5;
+const APPLIED_RESIDUAL_FRACTION = 0.05;
+/** Seeding a new point against the refracted render: close enough, in original video pixels. */
+const SEED_TOLERANCE = 0.5;
+/** Bound on that correction. The bend is smooth and small; it settles in one or two. */
+const SEED_ITERATIONS = 4;
 /** The camera contributes pose but no scale to the video quad's world matrix. */
 const UNIT_SCALE = new Vector3(1, 1, 1);
 
@@ -482,11 +512,14 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         setRenderOne(true);
     }
 
-    /** Score the camera as it stands against the current points, without solving anything. */
-    measureCurrentResidual() {
+    /**
+     * RMS reprojection error of the camera as it now stands, in original video pixels.
+     * @returns {number|null} null when there is nothing to score.
+     */
+    currentResidualPx() {
         const size = this.videoSize;
         const state = this.currentCameraState();
-        if (!size || !state || this.points.length === 0) return "-";
+        if (!size || !state || this.points.length === 0) return null;
         const r = evaluateCamera({
             points: this.points.map((p) => {
                 const w = this.pointECEF(p);
@@ -495,8 +528,15 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             imageSize: size,
             state,
             localFrame: (pos) => this.localFrameAt(pos),
+            liftFactory: this.liftFactory(),
         });
-        return Number.isFinite(r.rms) ? `${r.rms.toFixed(2)} px` : "-";
+        return Number.isFinite(r.rms) ? r.rms : null;
+    }
+
+    /** Score the camera as it stands against the current points, without solving anything. */
+    measureCurrentResidual() {
+        const rms = this.currentResidualPx();
+        return rms === null ? "-" : `${rms.toFixed(2)} px`;
     }
 
     /** Open an undoable edit. Paired with endUndo; used for edits that span a whole drag. */
@@ -576,6 +616,41 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         return LLAToECEF(p.lat, p.lon, p.alt);
     }
 
+    /**
+     * The air between the camera and the landmarks, in the form the solver wants it.
+     *
+     * The video shows a REFRACTED world, and so does the look view: the solid scene is lofted in
+     * the vertex shader by k*d/(2R) (see atmosphere/terrestrialRefraction.js). Matching a video
+     * pixel to a straight line through the landmark therefore charges the whole bend to the
+     * camera's pointing. That is a self-consistent lie — the residuals come out small, because
+     * every landmark at a similar range is displaced by a similar amount and a pitch error
+     * absorbs it — and it is exactly why a fit could read 0.5 px on a point while the look view
+     * visibly disagreed with the footage. Measured here: 0.013 deg of bend on a 38 km sightline,
+     * against a 0.084 deg field. Fifteen per cent of the frame, hidden inside a plausible number.
+     *
+     * Returns null when refraction is off, so the solve is then bit-identical to before.
+     */
+    liftFactory() {
+        return (positionArray) => {
+            const ctx = currentTerrestrialLiftContext(
+                new Vector3(positionArray[0], positionArray[1], positionArray[2]));
+            if (!ctx) return null;
+            // One scratch pair per factory call, not per projection: the solver calls this a few
+            // thousand times per solve through the numerical Jacobian.
+            const rel = new Vector3(), out = new Vector3();
+            return (d) => {
+                liftCameraRelative(ctx, rel.set(d[0], d[1], d[2]), out);
+                return [out.x, out.y, out.z];
+            };
+        };
+    }
+
+    /** The apparent (rendered) position of a control point, for the closed-form solvers. */
+    apparentPointECEF(p, cameraECEF) {
+        return liftWorldPoint(currentTerrestrialLiftContext(cameraECEF), this.pointECEF(p),
+            new Vector3());
+    }
+
     get videoSize() {
         const ov = this.overlayView;
         const w = ov?.originalVideoWidth ?? 0;
@@ -650,6 +725,62 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             b.fwd[1] * fpx + b.right[1] * dx + b.down[1] * dy,
             b.fwd[2] * fpx + b.right[2] * dx + b.down[2] * dy,
         ).normalize();
+    }
+
+    /**
+     * Exact inverse of rayForVideoPixel: where a world point falls, in original video pixels.
+     * Same intrinsics and same basis, so a point put through one and back through the other
+     * returns the pixel it started from.
+     *
+     * @returns {number[]|null} null when the point is behind the camera.
+     */
+    videoPixelForPoint(state, world, size) {
+        const frame = this.localFrameAt(state.position);
+        const b = basisFromAzElRoll(frame.up, frame.north, state.azDeg, state.elDeg, state.rollDeg);
+        const dx = world.x - state.position[0];
+        const dy = world.y - state.position[1];
+        const dz = world.z - state.position[2];
+        const f = dx * b.fwd[0] + dy * b.fwd[1] + dz * b.fwd[2];
+        if (!(f > 1e-6)) return null;
+        const r = dx * b.right[0] + dy * b.right[1] + dz * b.right[2];
+        const d = dx * b.down[0] + dy * b.down[1] + dz * b.down[2];
+        const fpx = size[1] / (2 * Math.tan((state.vfovDeg * Math.PI) / 360));
+        return [size[0] / 2 + (fpx * r) / f, size[1] / 2 + (fpx * d) / f];
+    }
+
+    /**
+     * The surface point that RENDERS at a video pixel, or null if the ray reaches none.
+     *
+     * The mirror of groundUnderCanvasPoint, for the same reason: the ray through a pixel is the
+     * APPARENT ray, and the ground it appears to meet sits below it by the refraction lift. Cast
+     * that ray and stop, and the point is seeded where the pixel would have looked through a
+     * vacuum — metres of ground, and tens of screen pixels, from the feature just clicked on.
+     * So aim, see where the aim actually lands once lofted, and aim off by the error.
+     *
+     * With refraction off the first cast is exact and the loop leaves after one pass.
+     */
+    surfaceUnderVideoPixel(state, vx, vy, size, origin) {
+        const camera = this.lookCameraNode()?.camera;
+        const ctx = currentTerrestrialLiftContext(origin);
+        const apparent = new Vector3();
+        let aimX = vx, aimY = vy;
+        let found = null;
+        for (let i = 0; i < SEED_ITERATIONS; i++) {
+            const dir = this.rayForVideoPixel(state, aimX, aimY, size);
+            const hit = surfaceAlongRay(origin, dir, this.useTiles, camera);
+            // Aimed off the world: keep the last real surface rather than discarding a good
+            // answer because a correction overshot the horizon.
+            if (!hit) return found;
+            found = hit;
+            if (ctx === null) break;
+            const at = this.videoPixelForPoint(state, liftWorldPoint(ctx, hit, apparent), size);
+            if (at === null) break;
+            const ex = vx - at[0], ey = vy - at[1];
+            if (Math.hypot(ex, ey) < SEED_TOLERANCE) break;
+            aimX += ex;
+            aimY += ey;
+        }
+        return found;
     }
 
     // ---------- the convergence display ----------
@@ -730,16 +861,19 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (!size || !state) return null;
 
         const origin = new Vector3(state.position[0], state.position[1], state.position[2]);
-        const dir = this.rayForVideoPixel(state, vx, vy, size);
 
-        // Seed on the surface under the ray. This is only a starting place — the pair carries no
-        // information until the sphere is dragged to the real feature — but starting on the
-        // surface under the clicked pixel is a far better guess than a fixed range, and for a
-        // landmark the user has already identified it is often close to right. Uses the same
-        // surface the handles are dragged against, so clicking a rooftop seeds on the roof rather
-        // than on the street below it and then jumping when first dragged.
-        let world = surfaceAlongRay(origin, dir, this.useTiles, this.lookCameraNode()?.camera);
-        if (!world) world = origin.clone().addScaledVector(dir, FALLBACK_RANGE);
+        // Seed on the surface under the pixel. This is only a starting place — the pair carries
+        // no information until the sphere is dragged to the real feature — but starting under
+        // the clicked pixel is a far better guess than a fixed range, and for a landmark the user
+        // has already identified it is often close to right. Uses the same surface the handles
+        // are dragged against, so clicking a rooftop seeds on the roof rather than on the street
+        // below it and then jumping when first dragged. UNDER THE PIXEL means under it in the
+        // rendered image, refraction included — see surfaceUnderVideoPixel.
+        let world = this.surfaceUnderVideoPixel(state, vx, vy, size, origin);
+        if (!world) {
+            const dir = this.rayForVideoPixel(state, vx, vy, size);
+            world = origin.clone().addScaledVector(dir, FALLBACK_RANGE);
+        }
 
         const lla = ECEFToLLAVD_radii(world);
         const point = {
@@ -845,11 +979,13 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             return {px: [p.vx, p.vy], world: [w.x, w.y, w.z]};
         });
         const localFrame = (pos) => this.localFrameAt(pos);
+        const liftFactory = this.liftFactory();
 
         // What the camera the user already has scores against these points. The fit has to beat
-        // it to be worth applying — see the rejection below.
+        // it to be worth applying — see the rejection below. Scored through the SAME forward
+        // model the fit uses, or the gate would be comparing two different physics.
         const current = evaluateCamera({
-            points: solverPoints, imageSize: size, state, localFrame,
+            points: solverPoints, imageSize: size, state, localFrame, liftFactory,
         });
 
         const solverSpec = {
@@ -858,13 +994,32 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             initial: state,
             free,
             localFrame,
+            liftFactory,
             // Only when the user asked to watch. The direct solver takes it through `options`.
             trace: animate,
             options: animate ? {trace: true} : undefined,
         };
-        const result = this.fitMethod === "homography"
-            ? fitCameraByPlaneHomography(solverSpec)
-            : fitCameraToPoints(solverSpec);
+        const solveFrom = (initial) => (this.fitMethod === "homography"
+            ? this.fitHomographyRefracted({...solverSpec, initial})
+            : fitCameraToPoints({...solverSpec, initial}));
+
+        let result = solveFrom(state);
+        // Re-solve from the answer until the answer stops improving — see SOLVE_PASSES. Not while
+        // animating: "Show Algorithm Working" is showing ONE descent, and splicing several
+        // together would show a search that never happened.
+        if (!animate) {
+            for (let pass = 1; pass < SOLVE_PASSES && result.ok; pass++) {
+                const again = solveFrom({
+                    position: result.position, azDeg: result.azDeg, elDeg: result.elDeg,
+                    rollDeg: result.rollDeg, vfovDeg: result.vfovDeg,
+                });
+                // Judged on RMS, the same metric the acceptance gate below and the Residual
+                // readout use, so a pass is kept exactly when it is an improvement the user
+                // would be shown.
+                if (!again.ok || !(again.rms < result.rms - RESOLVE_EPS)) break;
+                result = again;
+            }
+        }
 
         if (!result.ok) {
             this.lastResult = null;
@@ -936,6 +1091,84 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     }
 
     /**
+     * Plane homography, with the atmosphere folded in by iteration.
+     *
+     * The homography is closed form — it decomposes ONE plane-to-image map — so there is nowhere
+     * to hang a per-evaluation bend the way the descent solver has. What there is instead is a
+     * fixed point: lift the landmarks to where the camera we currently believe in would SEE them,
+     * solve the straight-line problem against those, and the camera that falls out is a better
+     * observer to lift about than the one we started from. Two passes is generous: the lift moves
+     * by a small fraction of itself when the camera moves within its own uncertainty, so the
+     * second pass is already a correction to a correction.
+     *
+     * Note this keeps the solver itself straight-line, which is the honest division of labour —
+     * refraction is not a property of the homography. The price of that is that the number it
+     * hands back is about the stand-ins rather than about the landmarks, so it is re-scored
+     * before it leaves here; see below.
+     */
+    fitHomographyRefracted(spec) {
+        let from = new Vector3(spec.initial.position[0], spec.initial.position[1],
+            spec.initial.position[2]);
+        // Refraction off: the lifted points ARE the points, so run it once and change nothing.
+        if (currentTerrestrialLiftContext(from) === null) {
+            return fitCameraByPlaneHomography(spec);
+        }
+        let result = null;
+        for (let pass = 0; pass < 2; pass++) {
+            const lifted = spec.points.map((sp, i) => {
+                const w = this.apparentPointECEF(this.points[i], from);
+                return {px: sp.px, world: [w.x, w.y, w.z]};
+            });
+            const r = fitCameraByPlaneHomography({...spec, points: lifted});
+            // A failure on the first pass is the answer; on the second, keep the first pass's
+            // camera rather than reporting a failure we already had a result for.
+            if (!r.ok) {
+                if (result === null) return r;
+                break;
+            }
+            result = r;
+            from = new Vector3(r.position[0], r.position[1], r.position[2]);
+        }
+        return this.scoreAgainstRealPoints(spec, result);
+    }
+
+    /**
+     * Replace a result's residuals with the same camera scored against the REAL landmarks under
+     * the app's own forward model.
+     *
+     * Needed because the homography scores ITSELF, straight-line, against whatever points it was
+     * handed — which above are lifted stand-ins, and lifted about the PREVIOUS pass's camera at
+     * that. So the rms and per-point residuals it returns answer "how well does this camera
+     * explain those stand-ins", and three places downstream are asking something else:
+     *
+     *   runFit's acceptance gate compares this rms against the current camera scored WITH the
+     *   lift. Two numbers from two different forward models, and the gate decides on the
+     *   difference between them — it could refuse a good fit or apply a bad one.
+     *
+     *   The Residual readout and the dashed per-point lines in the video overlay are drawn from
+     *   perPoint, and a residual line is a claim about a specific landmark.
+     *
+     *   The outer re-solve loop in runFit keeps a pass only when its rms improves, so it too has
+     *   to be comparing like with like.
+     *
+     * Cheap — one projection per point — and it makes every one of those a single metric.
+     */
+    scoreAgainstRealPoints(spec, result) {
+        if (!result || !result.ok) return result;
+        const scored = evaluateCamera({
+            points: spec.points,
+            imageSize: spec.imageSize,
+            localFrame: spec.localFrame,
+            liftFactory: spec.liftFactory,
+            state: {
+                position: result.position, azDeg: result.azDeg, elDeg: result.elDeg,
+                rollDeg: result.rollDeg, vfovDeg: result.vfovDeg,
+            },
+        });
+        return {...result, rms: scored.rms, perPoint: scored.perPoint};
+    }
+
+    /**
      * Solve again, but replay the search instead of jumping to the answer.
      *
      * Re-solves rather than replaying the last fit, so what is shown is always the search that
@@ -998,15 +1231,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
      */
     applyResult(result) {
         const notes = [];
+        const locks = this.effectiveLocks();
         this.applyingFit = true;
         try {
             const camTrack = NodeMan.get("cameraTrackSwitch", false);
-            if (camTrack && !this.lockPosition && camTrack.choice !== "fixedCamera"
+            if (camTrack && !locks.position && camTrack.choice !== "fixedCamera"
                 && camTrack.inputs.fixedCamera !== undefined) {
                 camTrack.selectOption("fixedCamera");
             }
             const fovSwitch = NodeMan.get("fovSwitch", false);
-            if (fovSwitch && !this.lockFOV && fovSwitch.choice !== "userFOV"
+            if (fovSwitch && !locks.fov && fovSwitch.choice !== "userFOV"
                 && fovSwitch.inputs.userFOV !== undefined) {
                 fovSwitch.selectOption("userFOV");
             }
@@ -1022,12 +1256,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             }
             ptz.relative = false;
 
-            if (!this.lockPosition) notes.push(...this.writePosition(result.position));
+            if (!locks.position) notes.push(...this.writePosition(result.position));
 
             ptz.az = result.azDeg;
             ptz.el = result.elDeg;
-            if (!this.lockRoll && ptz.roll !== undefined) ptz.roll = result.rollDeg;
-            if (!this.lockFOV) ptz.fov = result.vfovDeg;
+            if (!locks.roll && ptz.roll !== undefined) ptz.roll = result.rollDeg;
+            if (!locks.fov) ptz.fov = result.vfovDeg;
             ptz.refresh();
         } finally {
             this.applyingFit = false;
@@ -1035,6 +1269,31 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
         notes.push(...this.checkAppliedCamera(result));
         return notes;
+    }
+
+    /**
+     * Which locks the CURRENT solver can actually honour.
+     *
+     * The homography honours none of them: it recovers position, pointing and focal length from
+     * one decomposition, and there is no version of it that holds any of the three fixed. That is
+     * why syncMethodControls() greys the three checkboxes out under this method — but greying a
+     * control out only changes what the user can set, not what applyResult reads, and it went on
+     * reading them.
+     *
+     * The visible consequence was roll, because Lock Roll defaults ON. A homography that solved
+     * roll = 127.6 deg had it silently dropped, so the camera that got applied was not the camera
+     * that had been solved OR scored: measured, 254.9 px reported against 1145.8 px actually
+     * rendered. The residual readout, the per-point lines and the acceptance gate were all
+     * describing a camera the user did not have.
+     *
+     * The saved lockPosition/lockFOV/lockRoll flags are left alone — switching back to the direct
+     * method has to find them as the user left them.
+     */
+    effectiveLocks() {
+        if (this.fitMethod === "homography") {
+            return {position: false, fov: false, roll: false};
+        }
+        return {position: this.lockPosition, fov: this.lockFOV, roll: this.lockRoll};
     }
 
     /**
@@ -1078,6 +1337,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     checkAppliedCamera(result) {
         const node = this.lookCameraNode();
         if (!node) return [];
+        const notes = [];
         node.camera.updateMatrixWorld();
         const applied = node.camera.position;
         const off = Math.hypot(
@@ -1085,9 +1345,25 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             applied.y - result.position[1],
             applied.z - result.position[2],
         );
-        if (off <= 1) return [];
-        return [`camera ended up ${off.toFixed(0)} m from the solution (ground clamp?) — the ` +
-            `residual is for the solution, not the rendered camera`];
+        if (off > 1) {
+            notes.push(`camera ended up ${off.toFixed(0)} m from the solution (ground clamp?) — ` +
+                `the residual is for the solution, not the rendered camera`);
+        }
+
+        // Position is not the only way the applied camera can end up being a different camera:
+        // a lock the solver could not honour, a switch that refused to select, a controller
+        // still driving the pointing. Rather than enumerate the ways, score what actually got
+        // rendered against the same points and compare it with what was solved. One projection
+        // per point, and it is the check that would have caught the homography's solved roll
+        // being dropped on the way out — 254.9 px reported, 1145.8 px rendered.
+        const appliedRms = this.currentResidualPx();
+        if (appliedRms !== null && Number.isFinite(result.rms)
+            && appliedRms > result.rms + APPLIED_RESIDUAL_SLOP
+            && appliedRms > result.rms * (1 + APPLIED_RESIDUAL_FRACTION)) {
+            notes.push(`the camera that was applied scores ${appliedRms.toFixed(1)} px, not the ` +
+                `solved ${result.rms.toFixed(1)} px — something downstream did not take the fit`);
+        }
+        return notes;
     }
 
     updateStatus(text) {

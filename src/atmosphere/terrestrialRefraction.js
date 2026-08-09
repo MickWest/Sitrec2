@@ -295,6 +295,102 @@ export function updateTerrestrialRefractionUniforms(camera, opts = {}) {
         .transformDirection(_viewInverse);
 }
 
+// ---------------------------------------------------------------------------
+// CPU twin
+//
+// The shader below is where the lift actually happens, but the scene is not the
+// only thing that has to agree with it. Anything converting between world space
+// and SCREEN space — a handle drawn over the terrain it was placed on, a click
+// that has to land on the surface being looked at, a solver matching video
+// pixels to landmarks — projects through the PLAIN camera, and the plain camera
+// does not know the ground has been lofted. That silence is invisible at short
+// range and enormous at long: measured on a 38 km sightline from 13 km up, a
+// camera-fit handle sat 57 px off in a 393 px pane, a lane and a half from the
+// feature it had been placed on, and slid further whenever the range changed.
+//
+// So the same arithmetic is available here. It works on the camera-relative
+// ECEF vector rather than in view space, which is the same thing one rotation
+// earlier: view space IS the camera-relative world rotated, the lift direction
+// is carried through that same rotation, and a rotation commutes with all of
+// it. Doing it first lets callers stay in ECEF and hand the result straight to
+// Vector3.project().
+//
+// Both halves route through terrestrialBendAngle/saturateLift, so the formula
+// itself cannot drift between CPU and GPU; only the bookkeeping around it is
+// written twice, and it is written to mirror the chunk line for line.
+// ---------------------------------------------------------------------------
+
+const _liftRel = new Vector3();
+const _liftHoriz = new Vector3();
+
+/**
+ * Everything the lift needs about one observer, resolved once.
+ *
+ * @param {Vector3} observerECEF
+ * @param {object}  opts  same block updateTerrestrialRefractionUniforms takes
+ * @returns {object|null} null when the effect is off or k is zero — callers can
+ *          then skip the whole path rather than multiplying by a no-op, and a
+ *          disabled build behaves EXACTLY as it did before this existed.
+ */
+export function terrestrialLiftContext(observerECEF, opts = {}) {
+    const enabled = opts.enabled ?? TERRESTRIAL_REFRACTION_DEFAULTS.enabled;
+    const k = enabled ? (opts.k ?? TERRESTRIAL_REFRACTION_DEFAULTS.k) : 0;
+    if (!k || !observerECEF) return null;
+    const a = opts.equatorRadius ?? WGS84_A;
+    const b = opts.polarRadius ?? WGS84_B;
+    const zenith = zenithECEFFromPosition(observerECEF, new Vector3(), a, b);
+    return {
+        k,
+        zenith,
+        observer: observerECEF.clone(),
+        obsAlt: ellipsoidAltitude(observerECEF, a, b),
+        // The geodetic zenith's Z component IS sin(latitude), as in the uniform update.
+        R: gaussianRadius(zenith.z, a, b),
+        maxBendRad: opts.maxBendRad ?? TERRESTRIAL_REFRACTION_DEFAULTS.maxBendRad,
+        scaleHeightM: opts.scaleHeightM ?? TERRESTRIAL_REFRACTION_DEFAULTS.scaleHeightM,
+        maxLiftM: opts.maxLiftM ?? TERRESTRIAL_REFRACTION_DEFAULTS.maxLiftM,
+    };
+}
+
+/**
+ * Lift a CAMERA-RELATIVE offset — the primitive both public forms are built on.
+ *
+ * Camera-relative is the natural frame for it, and not only because the shader
+ * works that way (view space IS this vector, rotated). It is also the frame that
+ * keeps the arithmetic honest: an ECEF position is ~6.4e6 m and the lift is a
+ * few metres, so a caller who already has the offset should never have to add it
+ * to a planet-sized number and subtract it again.
+ *
+ * A null context is the identity, so this is safe to call unconditionally.
+ */
+export function liftCameraRelative(ctx, relECEF, target = new Vector3()) {
+    target.copy(relECEF);
+    if (!ctx) return target;
+    const upComponent = target.dot(ctx.zenith);
+    _liftHoriz.copy(target).addScaledVector(ctx.zenith, -upComponent);
+    const d = _liftHoriz.length();
+    if (!(d > 0)) return target;
+    // Height above the ellipsoid, recovered from the rise above the observer's
+    // tangent plane by adding the curvature drop back — see the chunk.
+    const targetAlt = ctx.obsAlt + upComponent + 0.5 * d * d / ctx.R;
+    const kEff = ctx.k * pathDensityFactor(ctx.obsAlt, targetAlt, ctx.scaleHeightM);
+    const lift = saturateLift(
+        terrestrialLift(d, kEff, ctx.R, ctx.maxBendRad), ctx.maxLiftM);
+    return target.addScaledVector(ctx.zenith, lift);
+}
+
+/**
+ * Where a world point APPEARS from that observer — the position the render puts
+ * it at. The CPU twin of applyTerrestrialRefraction_chunk.
+ *
+ * A null context is the identity, so this is safe to call unconditionally.
+ */
+export function liftWorldPoint(ctx, worldECEF, target = new Vector3()) {
+    if (!ctx) return target.copy(worldECEF);
+    _liftRel.copy(worldECEF).sub(ctx.observer);
+    return liftCameraRelative(ctx, _liftRel, target).add(ctx.observer);
+}
+
 // GLSL counterpart. Operates in VIEW space — camera at the origin — deliberately:
 // scene coordinates are ECEF, ~6.4e6 m, where a float32 resolves about half a
 // metre. A 4 m lift added in world space would be quantised into nothing. In

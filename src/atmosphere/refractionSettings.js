@@ -23,6 +23,7 @@ import {
     resolveTerrestrialK,
     sweepTerrestrialRefraction,
     TERRESTRIAL_REFRACTION_DEFAULTS,
+    terrestrialLiftContext,
     terrestrialOptsFrom,
     updateTerrestrialRefractionUniforms,
 } from "./terrestrialRefraction";
@@ -133,6 +134,18 @@ export function currentRefractionOpts() {
         equatorRadius: Globals.equatorRadius,
         polarRadius: Globals.polarRadius,
     };
+}
+
+// The terrestrial half's settings resolved against the live app state, for the
+// CPU twin of the shader lift. Screen-space code — drawing a marker over the
+// terrain it sits on, picking the surface under a click, matching video pixels
+// to landmarks — must project the APPARENT position or it disagrees with the
+// render by the whole bend, which at long range is tens of pixels.
+//
+// Returns null when refraction is off, so every caller's fast path is "no
+// context, no work" rather than an identity transform.
+export function currentTerrestrialLiftContext(observerECEF) {
+    return terrestrialLiftContext(observerECEF, terrestrialOptsFrom(Sit, Globals));
 }
 
 // Grey out whichever of the two ways to set k is not in force, so the folder can

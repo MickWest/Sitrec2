@@ -80,6 +80,9 @@ import {
     pathDensityFactor,
     saturateLift,
     ellipsoidAltitude,
+    terrestrialLiftContext,
+    liftCameraRelative,
+    liftWorldPoint,
 } from "../src/atmosphere/terrestrialRefraction";
 import {MeshBasicMaterial, PerspectiveCamera, ShaderLib, Vector3} from "three";
 import {readFileSync} from "fs";
@@ -569,6 +572,118 @@ describe("uniform update", () => {
     afterAll(() => {
         // leave the shared uniforms in their default-off state
         terrestrialRefractionUniforms.uTerrK.value = 0;
+    });
+});
+
+// The CPU twin exists because SCREEN-space code — a marker drawn over the terrain it names, a
+// click that has to land on the surface being looked at, the camera fit matching video pixels to
+// landmarks — projects through the plain camera and would otherwise miss the scene by the whole
+// bend. Measured before it existed: a fit handle 57 px off in a 393 px pane on a 38 km sightline
+// from 13 km up, which read as a fixed control point sitting a lane and a half from its feature.
+//
+// So what these tests guard is not the physics — that is already covered above — but the AGREEMENT
+// between the two implementations. A divergence here does not throw or look wrong in isolation;
+// it renders the world in one place and reports it in another.
+describe("CPU twin of the shader lift", () => {
+
+    // 13.3 km up over Wyoming, which is the geometry the camera-fit case was measured on.
+    const OBSERVER = new Vector3(-1224689.9, -4641803.2, 4205332.0);
+    const OPTS = {enabled: true, k: 0.13, equatorRadius: WGS84_A, polarRadius: WGS84_B};
+
+    function cameraAt(pos) {
+        const c = new PerspectiveCamera();
+        c.position.copy(pos);
+        c.lookAt(0, 0, 0);          // roughly nadir; any orientation will do
+        c.updateMatrixWorld();
+        return c;
+    }
+
+    test("the context carries the same numbers the uniforms hand the shader", () => {
+        const camera = cameraAt(OBSERVER);
+        updateTerrestrialRefractionUniforms(camera, OPTS);
+        const ctx = terrestrialLiftContext(OBSERVER, OPTS);
+        const u = terrestrialRefractionUniforms;
+
+        expect(ctx.k).toBeCloseTo(u.uTerrK.value, 12);
+        expect(ctx.obsAlt).toBeCloseTo(u.uTerrObsAlt.value, 6);
+        expect(1 / ctx.R).toBeCloseTo(u.uTerrInvR.value, 15);
+        expect(1 / ctx.scaleHeightM).toBeCloseTo(u.uTerrInvH.value, 15);
+        expect(ctx.maxBendRad).toBeCloseTo(u.uTerrMaxBend.value, 15);
+        expect(ctx.maxLiftM).toBeCloseTo(u.uTerrMaxLift.value, 9);
+
+        // The uniform carries the zenith into VIEW space; bring it back and it must be the
+        // world zenith the context holds. This is the one that would silently tilt the bend
+        // axis if either side changed how it resolves the vertical.
+        const backToWorld = u.uTerrZenithView.value.clone().transformDirection(camera.matrixWorld);
+        expect(backToWorld.distanceTo(ctx.zenith)).toBeLessThan(1e-12);
+
+        terrestrialRefractionUniforms.uTerrK.value = 0;
+    });
+
+    test("the lift reproduces the chunk's arithmetic term for term", () => {
+        const camera = cameraAt(OBSERVER);
+        updateTerrestrialRefractionUniforms(camera, OPTS);
+        const ctx = terrestrialLiftContext(OBSERVER, OPTS);
+        const u = terrestrialRefractionUniforms;
+
+        // A landmark 37 km out and 11.4 km below — the control point the bug was found on.
+        const rel = new Vector3(-9995, -13364, -34887);
+
+        // applyTerrestrialRefraction_chunk, transliterated. Rotation-invariant: the shader's
+        // dot products are taken in view space and these in world, and the two frames differ by
+        // a rotation, which leaves every scalar below unchanged.
+        const upComponent = rel.dot(ctx.zenith);
+        const horizontal = rel.clone().addScaledVector(ctx.zenith, -upComponent);
+        const d = horizontal.length();
+        const targetAlt = u.uTerrObsAlt.value + upComponent + 0.5 * d * d * u.uTerrInvR.value;
+        const kEff = u.uTerrK.value
+            * pathDensityFactor(u.uTerrObsAlt.value, targetAlt, 1 / u.uTerrInvH.value);
+        const uu = kEff * d * 0.5 * u.uTerrInvR.value / u.uTerrMaxBend.value;
+        const bend = u.uTerrMaxBend.value * uu / Math.sqrt(1 + uu * uu);
+        const vv = (d * bend) / u.uTerrMaxLift.value;
+        const expected = u.uTerrMaxLift.value * vv / Math.sqrt(1 + vv * vv);
+
+        const out = liftCameraRelative(ctx, rel, new Vector3());
+        const displacement = out.clone().sub(rel);
+        expect(displacement.length()).toBeCloseTo(expected, 9);
+        // and it is along the local vertical, not along anything else
+        expect(displacement.clone().normalize().distanceTo(ctx.zenith)).toBeLessThan(1e-12);
+
+        // Sanity on the scale, so a sign or unit error cannot pass the two checks above: a few
+        // metres of lift, which over 38 km is the ~0.01 deg that put the handle 57 px out.
+        expect(displacement.length()).toBeGreaterThan(3);
+        expect(displacement.length()).toBeLessThan(15);
+
+        terrestrialRefractionUniforms.uTerrK.value = 0;
+    });
+
+    test("no context when the effect is off, and a null context is the identity", () => {
+        expect(terrestrialLiftContext(OBSERVER, {...OPTS, enabled: false})).toBeNull();
+        expect(terrestrialLiftContext(OBSERVER, {...OPTS, k: 0})).toBeNull();
+        expect(terrestrialLiftContext(null, OPTS)).toBeNull();
+
+        // Callers rely on this: they take the context once and apply it unconditionally, so
+        // "refraction off" has to mean "changes nothing" rather than "must not be called".
+        const rel = new Vector3(1000, 2000, 3000);
+        expect(liftCameraRelative(null, rel, new Vector3()).equals(rel)).toBe(true);
+        const world = new Vector3(...OBSERVER.toArray()).add(rel);
+        expect(liftWorldPoint(null, world, new Vector3()).equals(world)).toBe(true);
+    });
+
+    test("liftWorldPoint is liftCameraRelative taken about the observer", () => {
+        const ctx = terrestrialLiftContext(OBSERVER, OPTS);
+        const rel = new Vector3(-9995, -13364, -34887);
+        const viaWorld = liftWorldPoint(ctx, OBSERVER.clone().add(rel), new Vector3());
+        const viaRel = liftCameraRelative(ctx, rel, new Vector3()).add(OBSERVER);
+        // Loose only because the world form adds and subtracts a 6.4e6 m position on the way
+        // through; a millimetre is far below anything this feature is measured in.
+        expect(viaWorld.distanceTo(viaRel)).toBeLessThan(1e-3);
+    });
+
+    test("a target at the observer's own position is not moved", () => {
+        const ctx = terrestrialLiftContext(OBSERVER, OPTS);
+        const out = liftCameraRelative(ctx, new Vector3(0, 0, 0), new Vector3());
+        expect(out.length()).toBe(0);
     });
 });
 
