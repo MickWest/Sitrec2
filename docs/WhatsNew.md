@@ -9,6 +9,23 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.122.0 (2026-08-09)
+
+### New Features
+
+- **Go To** (press **G**): the old *Go to Frame* prompt is now a single *Go To* box that takes a frame number, a date and/or a time, a coordinate in any format, or a place name, and works out for itself which one you typed. A plain number still jumps to that frame and pauses. A date or time — *12pm*, *noon*, *midnight*, *15:20*, *17:33 UTC*, *12/25*, *12/26/2000*, *Jan 6, 2020*, or an ISO date/time pasted straight back in — sets the clock exactly as if you had typed it into the Time menu, and changes only what you actually gave it, so a time keeps the date and a date keeps the time of day. A coordinate or a place name moves the main view to it and brings the terrain with it. Impossible dates are declined rather than quietly rolled forward, so 30 February, or 29 February in a year that has none, does nothing instead of landing you in March. The box now opens blank rather than pre-filled with the current frame, and asking for two places in quick succession always leaves you at the second one. Also listed under Help → Documentation → Keyboard Shortcuts and in the on-screen shortcuts overlay (Help → *[K]eyboard Shortcuts*).
+- **Render Whole Viewport** (Video → Video Render &amp; Export → Render Fade): renders the crossfade over the whole viewport — every visible view, laid out as on screen — instead of only the view picked in *Render Video View*. The fade still runs on the look view's video overlay, so the rest of the viewport plays normally around it. It still needs a video overlaid on the view chosen in *Render Video View*, the overlay is still put back exactly as you left it afterwards, and there is still no audio track — and turning this on does not disturb your *Include Audio* setting.
+
+### Improvements
+
+- **The same coordinate box everywhere** (Camera → Location, Target menu, Terrain menu): every latitude and longitude box now accepts any format — decimal, degrees and decimal minutes, degrees/minutes/seconds, hemisphere letters, degree symbols and MGRS — and a complete pair pasted into either box fills in both. Formats that begin with a letter, such as *N40 26.767* or *S 45.5*, are accepted where they used to be silently ignored; the terrain latitude and longitude boxes accept anything other than a plain number for the first time; and a pair can now be dropped into the longitude box as well as the latitude box. A pair typed by hand is only split once you press Enter or click away, so half-typed text is never grabbed out from under you.
+- Space-separated coordinates now work anywhere a coordinate is accepted — *25.299895° 60.430364°*, *45.5 -122.5*, or a full degrees-minutes-seconds pair — including in the *Lookup* boxes (Camera → Location, Target menu), which recognise them on the spot instead of asking the online place-name service. Anything that is not a coordinate is still looked up as a place.
+- The star catalogue behind the night sky is now credited correctly (Help → Documentation → Third-Party Notices): the roughly 118,000 stars Sitrec actually draws come from the European Space Agency's Hipparcos catalogue, not the Yale Bright Star Catalogue the notices had been crediting — only the binary file format is Yale's.
+
+### Bug Fixes
+
+- Fixed rendered video putting the sim and the video overlay in different places whenever **Match Video Aspect** (Camera menu) is on and the view is not the same shape as the video. The two were offset and scaled apart by exactly that mismatch — near enough to invisible when the view happened to be close to the video's shape, glaring when it was not; on a tall look view over a vertical video the video sat about 50 pixels to the side of the sim. It affected *Render Single View Video*, *Render Viewport Video*, *Render Fullscreen Video* and *Render Fade* alike, along with anything else drawn over such a view. Views that are not letterboxed render exactly as before.
+
 ## Version 2.121.0 (2026-08-09)
 
 ### New Features
