@@ -359,6 +359,31 @@ export function createFadeExportPlan({
     };
 }
 
+// The CSS rect, relative to the view's div, that the view's canvas actually occupies.
+//
+// Normally a canvas fills its div and this is just (0, 0, widthPx, heightPx). But a CNodeView3D
+// with matchVideoAspect LETTERBOXES its canvas inside the div - the "Letterbox CSS" block in
+// renderTargetAndEffects sets explicit px width/height/left/top so the 3D render is centred with
+// black bars, exactly matching how the video overlay pillarboxes itself inside the same div.
+//
+// Export compositing has to honour that inset. Drawing the 3D canvas stretched across the full
+// div (or mapping overlays to the full div when the composite IS the letterboxed canvas) puts
+// the sim and the video in different rectangles, and they drift apart by precisely the
+// window-aspect / video-aspect mismatch - invisible when the view happens to be near the video's
+// aspect, glaring when it is not.
+export function getCanvasDisplayRect(view) {
+    const full = {x: 0, y: 0, width: view.widthPx, height: view.heightPx};
+    const style = view.canvas?.style;
+    // Only the letterbox path sets px sizes; everything else leaves the canvas at "100%".
+    if (!style || !style.width.endsWith("px") || !style.height.endsWith("px")) return full;
+
+    const width = parseFloat(style.width);
+    const height = parseFloat(style.height);
+    if (!(width > 0) || !(height > 0)) return full;
+
+    return {x: parseFloat(style.left) || 0, y: parseFloat(style.top) || 0, width, height};
+}
+
 // The view whose opacity "Render Fade" animates: the video overlay attached to the view being
 // exported (mirrorVideo over the look view). Identified exactly the way the export compositor
 // identifies it - an overlay child carrying a `transparency`, which is what the Vid Overlay
@@ -505,6 +530,7 @@ export class VideoExportManager {
         this.fadeHoldTime = 2;
         this.fadeCount = 2;
         this.fadeHoldFrame = true;
+        this.fadeViewport = false;
     }
 
     async setupMenu(parentFolder, options = {}) {
@@ -664,6 +690,10 @@ export class VideoExportManager {
             .name(t("videoExport.fade.holdFrame.label"))
             .tooltip(t("videoExport.fade.holdFrame.tooltip"));
 
+        fadeFolder.add(this, "fadeViewport")
+            .name(t("videoExport.fade.viewport.label"))
+            .tooltip(t("videoExport.fade.viewport.tooltip"));
+
         fadeFolder.add({
             renderFade: () => this.exportFadeVideo()
         }, "renderFade").name(t("videoExport.fade.render.label"))
@@ -685,7 +715,8 @@ export class VideoExportManager {
             return;
         }
 
-        if (!findFadeOverlayView(ViewMan, view)) {
+        const fadeOverlay = findFadeOverlayView(ViewMan, view);
+        if (!fadeOverlay) {
             showError(`Render Fade needs the video overlay that the "Vid Overlay Trans %" slider controls, and "${this.videoExportView}" does not have one. Load a video, and export a view the video is mirrored onto (normally the look view).`);
             return;
         }
@@ -703,11 +734,27 @@ export class VideoExportManager {
             frame: par.frame,
         });
 
-        console.log(`Starting fade export: ${plan.totalFrames} frames, ${plan.totalSeconds.toFixed(2)}s at ${plan.fps} fps, ${this.fadeCount} fade(s) starting on ${this.fadeStartView}, ${plan.holdFrame ? `holding frame ${par.frame}` : `playing ${Sit.aFrame}-${Sit.bFrame}`}`);
+        console.log(`Starting fade export: ${plan.totalFrames} frames, ${plan.totalSeconds.toFixed(2)}s at ${plan.fps} fps, ${this.fadeCount} fade(s) starting on ${this.fadeStartView}, ${plan.holdFrame ? `holding frame ${par.frame}` : `playing ${Sit.aFrame}-${Sit.bFrame}`}, ${this.fadeViewport ? "whole viewport" : this.videoExportView}`);
 
-        // Audio is left out: the schedule either holds one frame or wraps the clip, so there is
-        // no source timeline for an audio track to follow.
-        await view.exportVideo(this.videoFormat, false, this.waitForBackgroundLoading, { plan });
+        // Both compositing passes skip overlays that are not effectively visible, so a fade asked
+        // for with the overlay hidden would silently render no fade. Force it visible here - the
+        // one place both output paths go through - and put transparency and visibility back after.
+        const savedTransparency = fadeOverlay.transparency;
+        const savedVisible = fadeOverlay.visible;
+        fadeOverlay.setVisibleRaw(true);
+        try {
+            // Audio is left out either way: the schedule holds one frame or wraps the clip, so
+            // there is no source timeline for an audio track to follow.
+            if (this.fadeViewport) {
+                await this.exportViewportVideo({ plan, fadeOverlay, includeAudio: false });
+            } else {
+                await view.exportVideo(this.videoFormat, false, this.waitForBackgroundLoading, { plan, fadeOverlay });
+            }
+        } finally {
+            fadeOverlay.transparency = savedTransparency;
+            if (fadeOverlay.canvas) fadeOverlay.canvas.style.opacity = savedTransparency;
+            fadeOverlay.setVisibleRaw(savedVisible);
+        }
     }
 
     async buildDuplicateFrameSetForExport(videoData, startFrame, endFrame) {
@@ -927,7 +974,9 @@ export class VideoExportManager {
     // options.download=false runs the export programmatically (e.g. from the regression
     // harness): the encoded blob is returned as {filename, size, totalFrames} instead of
     // being downloaded, and errors are rethrown instead of shown in an alert().
-    async exportViewportVideo({ download = true } = {}) {
+    // options.plan supplies a pre-built frame plan (Render Fade) instead of the A-B one, and
+    // options.fadeOverlay is the video overlay whose opacity that plan animates.
+    async exportViewportVideo({ download = true, plan: injectedPlan = null, fadeOverlay = null, includeAudio = null } = {}) {
         const { ViewMan } = await import("./CViewManager");
         const { GlobalDateTimeNode, NodeMan, Sit, Globals, setRenderOne } = await import("./Globals");
         const { par } = await import("./par");
@@ -949,16 +998,28 @@ export class VideoExportManager {
         const scale = this.retinaExport ? (window.devicePixelRatio || 1) : 1;
         const width = Math.round(ViewMan.widthPx * scale);
         const height = Math.round(ViewMan.heightPx * scale);
-        const duplicateFrameSet = await this.buildDuplicateFrameSetForExport(findFirstVideoData(NodeMan), startFrame, endFrame);
-        const plan = createVideoExportFramePlan({
-            startFrame,
-            endFrame,
-            sourceFps: Sit.fps,
-            playbackSpeed: par.playbackSpeed ?? 1,
-            pingPong: par.pingPong,
-            loops: this.videoExportLoops,
-            duplicateFrameSet,
-        });
+        let plan = injectedPlan;
+        if (!plan) {
+            const duplicateFrameSet = await this.buildDuplicateFrameSetForExport(findFirstVideoData(NodeMan), startFrame, endFrame);
+            plan = createVideoExportFramePlan({
+                startFrame,
+                endFrame,
+                sourceFps: Sit.fps,
+                playbackSpeed: par.playbackSpeed ?? 1,
+                pingPong: par.pingPong,
+                loops: this.videoExportLoops,
+                duplicateFrameSet,
+            });
+        }
+        // Drives the fade overlay's opacity - the same 0-1 the Vid Overlay Trans slider writes,
+        // which drawOverlay() below reads back when compositing. canvas.style.opacity is kept in
+        // step only so the on-screen viewport fades along with the render.
+        const setOverlayAlpha = (alpha) => {
+            if (!fadeOverlay) return;
+            fadeOverlay.transparency = alpha;
+            if (fadeOverlay.canvas) fadeOverlay.canvas.style.opacity = alpha;
+        };
+        const fading = !!(fadeOverlay && plan.alphaAt);
         if (plan.totalFrames === 0) {
             const msg = "Video export failed: no unique frames found in the A-B range.";
             if (!download) throw new Error(msg);
@@ -987,7 +1048,7 @@ export class VideoExportManager {
         const savedPaused = par.paused;
         par.paused = true;
 
-        const progress = new ExportProgressWidget('Exporting viewport video...', plan.totalFrames);
+        const progress = new ExportProgressWidget(fading ? 'Exporting viewport fade...' : 'Exporting viewport video...', plan.totalFrames);
         let exportResult = null;
 
         const compositeCanvas = document.createElement('canvas');
@@ -1002,7 +1063,8 @@ export class VideoExportManager {
         let audioDuration = null;
         let originalFps = plan.fps;
 
-        const canIncludeAudio = this.exportAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1 && plan.skippedDuplicateFrames === 0;
+        const wantAudio = includeAudio ?? this.exportAudio;
+        const canIncludeAudio = wantAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1 && plan.skippedDuplicateFrames === 0;
         if (canIncludeAudio) {
             for (const entry of Object.values(NodeMan.list)) {
                 const node = entry.data;
@@ -1019,7 +1081,7 @@ export class VideoExportManager {
                     }
                 }
             }
-        } else if (this.exportAudio) {
+        } else if (wantAudio) {
             console.log("Audio export skipped: playback speed, A-B pingpong, loops, or unique-frame export would desync from video");
         }
 
@@ -1154,9 +1216,14 @@ export class VideoExportManager {
                     // drawImage throws InvalidStateError on a 0-sized source canvas,
                     // which can happen for a view that has not been laid out yet.
                     if (view.canvas && view.canvas.width > 0 && view.canvas.height > 0) {
-                        const x = view.leftPx * scale;
-                        const y = (view.topPx - ViewMan.topPx) * scale;
-                        compositeCtx.drawImage(view.canvas, x, y, view.widthPx * scale, view.heightPx * scale);
+                        // Here the composite is in div space, so it is the 3D canvas that has to
+                        // go into its letterboxed sub-rect - the mirror image of the single-view
+                        // export, where the composite is the canvas and the overlays move. Either
+                        // way the sim and the video overlay must land in the same rectangle.
+                        const rect = getCanvasDisplayRect(view);
+                        const x = (view.leftPx + rect.x) * scale;
+                        const y = (view.topPx + rect.y - ViewMan.topPx) * scale;
+                        compositeCtx.drawImage(view.canvas, x, y, rect.width * scale, rect.height * scale);
                     }
                     // An overlay canvas lives inside its parent's div, so on screen it
                     // stacks with the parent — draw each parent's overlays before the
@@ -1194,6 +1261,7 @@ export class VideoExportManager {
             // (camera aspect from a fresh layout, matchVideoAspect FOV adjustments,
             // letterboxing) can lag a render behind a viewport change, which showed
             // up as a first frame at the wrong zoom/aspect that jumped on frame 2.
+            if (fading) setOverlayAlpha(plan.alphaAt(0));
             for (let w = 0; w < 3; w++) {
                 await renderCompositeFrame(plan.frameAt(0));
             }
@@ -1202,6 +1270,9 @@ export class VideoExportManager {
                 if (progress.shouldStop()) break;
 
                 const frame = plan.frameAt(i);
+                // Set before rendering: drawOverlay() reads transparency as it composites, so a
+                // settle re-render of the same output frame reuses the same alpha.
+                if (fading) setOverlayAlpha(plan.alphaAt(i));
                 await renderCompositeFrame(frame);
                 if (this.waitForBackgroundLoading) {
                     // Wait for async loading and 3D tile visibility churn to settle before encoding the frame.
