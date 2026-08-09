@@ -43,8 +43,16 @@ import {FitSearchPlayback, showTracedCamera} from "../FitSearchPlayback";
 import {drawFitHandle, GRAB_RADIUS, POINT_COLORS} from "../FitHandleDraw";
 import {
     azElRollFromBasis, basisFromAzElRoll, evaluateCamera, fitCameraToPoints, MAX_ABS_EL,
+    projectWorldPoint,
 } from "../CameraPointFit";
 import {fitCameraByPlaneHomography} from "../CameraPlaneHomography";
+import {lensFromVFOV} from "../CameraLens";
+import {KeyframeRegistry} from "../CKeyframeRegistry";
+import {interpolateFitCamera} from "../FitKeyframeMotion";
+import {
+    attachFitPointsMotion, detachFitPointsMotion,
+    FIT_POINTS_FOV_OPTION, FIT_POINTS_HEADING_OPTION, FIT_POINTS_TRACK_OPTION,
+} from "./CNodeFitPointsMotion";
 
 /** Solver choices for the Method dropdown. Values are what gets serialised. */
 export const FIT_METHODS = {
@@ -79,6 +87,22 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.fitFrame = 0;
         this.points = [];
         this.nextId = 1;
+
+        // Fit keyframes. Each is the same landmarks observed at another video frame: the 3D
+        // half of every pair is SHARED (a landmark is a fact about the world, not about a
+        // frame), while the 2D pixel positions are per keyframe, along with the camera the
+        // solver recovered from them. `points` always mirrors the ACTIVE keyframe's 2D
+        // coordinates — the one at fitFrame — so every existing edit/solve/draw path keeps
+        // working on `points` unchanged.
+        //
+        //   {frame, uv: [[vx, vy], ...] index-aligned with points,
+        //    solved: {position:[x,y,z] ECEF, azDeg, elDeg, rollDeg, vfovDeg, fitted} | null}
+        //
+        // `fitted` distinguishes a camera the solver actually produced from one merely seeded
+        // off the live camera when the keyframe was created — a seed is a guess, and the
+        // keyframe readout marks it so the user knows which frames still need a real fit.
+        this.keyframes = [];
+        this.keyframeInfo = "none";
 
         this.lockPosition = false;
         this.lockFOV = false;
@@ -123,7 +147,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             getOccluder: () => this.videoQuadOccluder(),
             getUseTiles: () => this.useTiles,
             onMoved: (id, pos) => this.onMarkerMoved(id, pos),
-            onCommit: () => this.requestFit(),
+            // A 3D drag moved a SHARED landmark, so every keyframe's solution is stale, not
+            // just the active one's.
+            onCommit: () => {
+                this.requestFit();
+                if (this.autoFit) this.refitOtherKeyframes();
+            },
             onCorrectFrame: () => this.onCorrectFrame(),
             onBeginEdit: () => this.beginUndo(),
             onEndEdit: (description) => this.endUndo(description),
@@ -131,6 +160,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
         this.sightLines = new FitPointSightLines3D(() => this.rayDisplay());
         this.playback = new FitSearchPlayback();
+
+        // Fit keyframes on the frame slider, like every other keyframe set: yellow diamonds,
+        // and Shift+,/. steps through them. Pull-based, so this costs nothing to maintain.
+        KeyframeRegistry.register("cameraFit", {
+            getFrames: () => this.keyframes.map((k) => k.frame),
+        });
 
         this._setupGUI();
     }
@@ -141,6 +176,9 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     // Sitrec is: an ECEF triple silently means something different if the earth model changes.
 
     modSerialize() {
+        // The mirror may be newer than the keyframe — a save can land mid-gesture, and the
+        // keyframe entry, not the mirror, is what uv is written from.
+        this.syncActiveKeyframe();
         return {
             ...super.modSerialize(),
             enabled: this.enabled,
@@ -155,7 +193,65 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             points: this.points.map((p) => ({
                 vx: p.vx, vy: p.vy, lat: p.lat, lon: p.lon, alt: p.alt, color: p.color,
             })),
+            // points/fitFrame above keep their pre-keyframe meaning (the active keyframe's 2D
+            // coordinates), so an older build loading this save still gets a working
+            // single-frame fit. The solved camera is stored as geodetic lat/lon with
+            // ELLIPSOIDAL height — the same storage the landmarks use, and it converts back to
+            // ECEF exactly; MSL is only for the user-facing fixedCameraPosition node.
+            keyframes: this.keyframes.map((k) => {
+                let solved = null;
+                if (k.solved) {
+                    const lla = ECEFToLLAVD_radii(new Vector3(...k.solved.position));
+                    solved = {
+                        lla: [lla.x, lla.y, lla.z],
+                        az: k.solved.azDeg, el: k.solved.elDeg,
+                        roll: k.solved.rollDeg, fov: k.solved.vfovDeg,
+                        fitted: k.solved.fitted !== false,
+                    };
+                }
+                return {frame: k.frame, uv: k.uv.map((u) => [u[0], u[1]]), solved};
+            }),
         };
+    }
+
+    /**
+     * Validate a saved keyframes array into runtime shape, atomically: parse the whole thing,
+     * keep only entries that can be trusted, and never let a malformed entry half-apply.
+     *
+     * A keyframe whose uv cannot be matched to the points is dropped WHOLE rather than padded:
+     * padding with another frame's pixels would silently invent observations, which is worse
+     * than losing a keyframe the user can re-add. A malformed solved camera just becomes null —
+     * the observations are still good, and a solve can be re-run from them.
+     */
+    parseKeyframes(raw) {
+        if (!Array.isArray(raw)) return [];
+        const out = [];
+        const seen = new Set();
+        for (const k of raw) {
+            const frame = Math.round(k?.frame);
+            if (!Number.isFinite(frame) || frame < 0 || seen.has(frame)) continue;
+            const uv = Array.isArray(k.uv) ? k.uv : null;
+            if (!uv || uv.length !== this.points.length
+                || !uv.every((u) => Array.isArray(u)
+                    && Number.isFinite(u[0]) && Number.isFinite(u[1]))) {
+                continue;
+            }
+            let solved = null;
+            const s = k.solved;
+            if (s && Array.isArray(s.lla) && s.lla.length === 3 && s.lla.every(Number.isFinite)
+                && [s.az, s.el, s.roll, s.fov].every(Number.isFinite) && s.fov > 0) {
+                const p = LLAToECEF(s.lla[0], s.lla[1], s.lla[2]);
+                solved = {
+                    position: [p.x, p.y, p.z],
+                    azDeg: s.az, elDeg: s.el, rollDeg: s.roll, vfovDeg: s.fov,
+                    fitted: s.fitted !== false,
+                };
+            }
+            seen.add(frame);
+            out.push({frame, uv: uv.map((u) => [u[0], u[1]]), solved});
+        }
+        out.sort((a, b) => a.frame - b.frame);
+        return out;
     }
 
     modDeserialize(v) {
@@ -179,6 +275,37 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (v.autoFit !== undefined) this.autoFit = v.autoFit;
         if (v.showRays !== undefined) this.showRays = v.showRays;
         if (v.useTiles !== undefined) this.useTiles = v.useTiles;
+
+        this.keyframes = this.parseKeyframes(v.keyframes);
+        if (this.keyframes.length === 0 && this.points.length > 0) {
+            // A pre-keyframe save: the points and the frame they belong to ARE one keyframe.
+            // No solved camera is recorded — the fit is deliberately not re-run on load (see
+            // below), and Add Fit Keyframe solves it from these correspondences when a second
+            // keyframe first makes a solution necessary.
+            this.keyframes = [{frame: this.fitFrame, uv: this.pointsUV(), solved: null}];
+        } else if (this.keyframes.length > 0) {
+            // The keyframes are authoritative for which frames exist; make the active frame
+            // one of them and load its observations into the mirror.
+            if (!this.keyframes.some((k) => k.frame === this.fitFrame)) {
+                this.fitFrame = this.keyframes[0].frame;
+            }
+            const kf = this.keyframes.find((k) => k.frame === this.fitFrame);
+            const n = Math.min(this.points.length, kf.uv.length);
+            for (let i = 0; i < n; i++) {
+                this.points[i].vx = kf.uv[i][0];
+                this.points[i].vy = kf.uv[i][1];
+            }
+        }
+        if (this.keyframes.length >= 2) {
+            // Put the "Fit Points" options back into the camera dropdowns NOW, inside the mod
+            // pass: the switches restore a saved "Fit Points" choice through pendingChoice,
+            // which resolves the moment the option is registered, and the manager's post-mod
+            // recalculations re-gate the controllers. The Star Track camera options take
+            // exactly this path; the deferral warning below is about creating VIEWS, which
+            // these are not.
+            attachFitPointsMotion(this);
+        }
+        this.updateKeyframeInfo();
 
         // Restore the points, but NOT the fit. The camera already carries the answer the last fit
         // produced — it was written into fixedCameraPosition/ptzAngles/fovUI and saved with them.
@@ -208,6 +335,21 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             this._pendingEnable = undefined;
             this.setEnabled(on);
         }
+
+        // Scrubbing onto a fit keyframe makes it the one being edited. Only while the gesture
+        // state is fully idle: an activation mid-drag would swap the point set under the
+        // user's cursor and leave one undo entry spanning two keyframes. The open-undo check
+        // covers the 3D handle drags too — they bracket themselves with beginUndo/endUndo.
+        if (this.enabled && !Globals.deserializing && this.keyframes.length > 0
+            && this.pendingAdd === null && this.draggingId === null
+            && this._undoBefore === null && !this.playback.running) {
+            const f0 = Math.round(par.frame);
+            if (f0 !== this.fitFrame && this.keyframes.some((k) => k.frame === f0)) {
+                this.activateKeyframe(f0);
+                this.updateStatus(`Editing fit keyframe at frame ${f0}`);
+            }
+        }
+
         this.stepPlayback();
         this.sightLines.update();
     }
@@ -215,6 +357,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     dispose() {
         this.playback.stop();     // lands the fit rather than abandoning the camera mid-search
         this.setEnabled(false);   // also removes the gesture-cancel listeners
+        KeyframeRegistry.unregister("cameraFit");
         this.markers.dispose();
         this.sightLines.dispose();
         super.dispose();
@@ -291,6 +434,32 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             "solved. Distant landmarks at similar ranges pin the pointing but leave camera " +
             "range and field of view trading off against each other; when that happens the " +
             "unresolvable combination is held at its starting value rather than invented.");
+
+        this.gui.add(this, "addFitKeyframe").name("Add Fit Keyframe")
+            .tooltip("Record this frame as another fit keyframe: the same landmarks, observed " +
+                "again. The video markers start where each landmark would appear if the " +
+                "camera had not moved — drag them to where the landmarks actually are in THIS " +
+                "frame, and the solver recovers where the camera was here. The 3D landmark " +
+                "positions are shared by every keyframe and do not change. Keyframes show as " +
+                "diamonds on the frame slider; scrub onto one to edit it.");
+
+        this.gui.add(this, "deleteFitKeyframe").name("Delete Fit Keyframe")
+            .tooltip("Remove the fit keyframe at the current frame. The landmarks and the " +
+                "other keyframes are untouched.");
+
+        this.gui.add(this, "fitKeyframeMotion").name("Fit Keyframe Motion")
+            .tooltip("Drive the camera from the fit keyframes: Position, Heading and FOV all " +
+                "switch to 'Fit Points', which uses the solved camera at each keyframe and " +
+                "moves in a straight line at constant speed between them. Needs at least two " +
+                "keyframes with FITTED cameras — a keyframe marked '?' has only a seeded " +
+                "guess and is not used for motion until it is solved. Each source can also be " +
+                "selected individually in the Camera menu, and switched back to Manual there " +
+                "at any time.");
+
+        ro("keyframeInfo", "Keyframes",
+            "The fit keyframe frames, and which one is being edited. A frame marked '?' has " +
+            "no solved camera yet — go to it and Fit Now (or edit a point with Fit on Change " +
+            "on) to solve it.");
 
         this.gui.add(this, "useTiles").name("Place on 3D Buildings").listen()
             .onChange(() => setRenderOne(true))
@@ -418,6 +587,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             lla: fixed._LLA.slice(),
             agl: fixed.agl,
             az: ptz.az, el: ptz.el, roll: ptz.roll, fov: ptz.fov,
+            satellite: ptz.satellite,
             choices: {
                 cameraTrackSwitch: NodeMan.get("cameraTrackSwitch", false)?.choice,
                 fovSwitch: NodeMan.get("fovSwitch", false)?.choice,
@@ -433,9 +603,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (!fixed || !ptz) return;
         this.applyingFit = true;
         try {
-            // Switches first, for the same reason applyResult does it: selecting "Manual" fires a
-            // listener that syncs ptzAngles from the live camera, so angles written before the
-            // selection are discarded.
+            // Position VALUE before the position CHOICE: setLLA fires PositionLLA.onChange,
+            // and a setup-time listener yanks cameraTrackSwitch to "fixedCamera" whenever the
+            // fixed position changes while an unrecognised source (like "Fit Points") is
+            // selected. Writing the value first and selecting the choice after lets the
+            // captured choice win.
+            fixed.agl = c.agl;
+            fixed.setLLA(c.lla[0], c.lla[1], c.lla[2]);
+            // The heading CHOICE still goes before the ANGLES, as applyResult does: selecting
+            // "Manual" fires a listener that syncs ptzAngles from the live camera, so angles
+            // written before the selection are discarded.
             for (const [id, choice] of Object.entries(c.choices ?? {})) {
                 const sw = NodeMan.get(id, false);
                 if (sw && choice !== undefined && sw.choice !== choice
@@ -443,9 +620,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                     sw.selectOption(choice);
                 }
             }
-            fixed.agl = c.agl;
-            fixed.setLLA(c.lla[0], c.lla[1], c.lla[2]);
             ptz.relative = false;
+            if (c.satellite !== undefined && ptz.satellite !== c.satellite) {
+                ptz.satellite = c.satellite;
+                ptz.updateSatelliteSliderRanges?.();
+                ptz.updateSatelliteSliderVisibility?.();
+            }
             ptz.az = c.az;
             ptz.el = c.el;
             if (ptz.roll !== undefined) ptz.roll = c.roll;
@@ -457,10 +637,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     }
 
     captureState() {
+        this.syncActiveKeyframe();
         return {
             points: this.points.map((p) => ({...p})),
             nextId: this.nextId,
             fitFrame: this.fitFrame,
+            keyframes: this.keyframes.map((k) => ({
+                frame: k.frame,
+                uv: k.uv.map((u) => u.slice()),
+                solved: k.solved ? {...k.solved, position: k.solved.position.slice()} : null,
+            })),
             camera: this.captureCameraState(),
         };
     }
@@ -469,8 +655,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.points = s.points.map((p) => ({...p}));
         this.nextId = s.nextId;
         this.fitFrame = s.fitFrame;
+        this.keyframes = (s.keyframes ?? []).map((k) => ({
+            frame: k.frame,
+            uv: k.uv.map((u) => u.slice()),
+            solved: k.solved ? {...k.solved, position: k.solved.position.slice()} : null,
+        }));
         this.lastResult = null;
         this.observability = "-";
+        // The dropdown options must exist (or be gone) BEFORE the captured switch choices are
+        // restored — a choice naming a missing option is ignored.
+        this.syncMotionOptions();
         this.restoreCameraState(s.camera);
 
         // Re-measure the restored camera against the restored points. Read-only — it scores what
@@ -478,6 +672,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // would blank out after an undo, which reads as "unknown" when it is in fact known and
         // unchanged.
         this.residual = this.measureCurrentResidual();
+        this.updateKeyframeInfo();
         this.updateStatus(this.points.length ? "Restored" : "Click the video to add a point");
         setRenderOne(true);
     }
@@ -601,7 +796,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
      * controller happens to be driving it — and it means the az/el/roll it reports are the true
      * ones even if ptzAngles is stale because some other heading source is selected.
      */
-    currentCameraState() {
+    currentCameraState(atFrame = this.fitFrame) {
         const node = this.lookCameraNode();
         if (!node) return null;
         const cam = node.camera;
@@ -625,7 +820,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         const fovSwitch = NodeMan.get("fovSwitch", false);
         let vfovDeg = cam.fov;
         if (fovSwitch) {
-            const v = extractFOV(fovSwitch.getValueFrame(this.fitFrame));
+            const v = extractFOV(fovSwitch.getValueFrame(atFrame));
             if (Number.isFinite(v) && v > 0) vfovDeg = v;
         }
 
@@ -721,6 +916,373 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         };
     }
 
+    // ---------- fit keyframes ----------
+    //
+    // One set of landmarks, observed at several frames. `points` mirrors the ACTIVE keyframe's
+    // 2D coordinates so the whole editing surface — handles, solver, renderer, undo — keeps
+    // working on `points` untouched; the keyframe entries are the durable store the mirror is
+    // synced to and loaded from.
+
+    pointsUV() {
+        return this.points.map((p) => [p.vx, p.vy]);
+    }
+
+    activeKeyframe() {
+        return this.keyframes.find((k) => k.frame === this.fitFrame);
+    }
+
+    /** The first point placed creates the first keyframe; the two exist together. */
+    ensureBaseKeyframe() {
+        if (this.points.length > 0 && this.keyframes.length === 0) {
+            this.keyframes.push({frame: this.fitFrame, uv: this.pointsUV(), solved: null});
+            this.updateKeyframeInfo();
+        }
+    }
+
+    /** Write the mirror's current 2D coordinates back into the active keyframe. */
+    syncActiveKeyframe() {
+        const kf = this.activeKeyframe();
+        if (kf) kf.uv = this.pointsUV();
+    }
+
+    /** Make the keyframe at `frame` the one being edited: save the mirror out, load its uv in. */
+    activateKeyframe(frame) {
+        const kf = this.keyframes.find((k) => k.frame === frame);
+        if (!kf) return;
+        this.syncActiveKeyframe();
+        this.fitFrame = frame;
+        const n = Math.min(this.points.length, kf.uv.length);
+        for (let i = 0; i < n; i++) {
+            this.points[i].vx = kf.uv[i][0];
+            this.points[i].vy = kf.uv[i][1];
+        }
+        // Residuals are per-keyframe: the last solve's arrows describe the OLD keyframe's
+        // pixels and would be drawn against the new ones — the most misleading thing this
+        // display could do.
+        this.lastResult = null;
+        this.observability = "-";
+        this.residual = this.measureCurrentResidual();
+        this.updateKeyframeInfo();
+        setRenderOne(true);
+    }
+
+    updateKeyframeInfo() {
+        if (this.keyframes.length === 0) {
+            this.keyframeInfo = "none";
+            return;
+        }
+        const frames = this.keyframes
+            .map((k) => `${k.frame}${k.solved?.fitted === false || !k.solved ? "?" : ""}`)
+            .join(", ");
+        this.keyframeInfo = `${this.keyframes.length} @ ${frames} — editing ${this.fitFrame}`;
+    }
+
+    /** The interpolated camera for any frame — what the three motion nodes serve. */
+    interpolatedState(f) {
+        return interpolateFitCamera(this.keyframes, f);
+    }
+
+    /** Which camera aspects the "Fit Points" motion sources currently own. */
+    motionOwnsAspects() {
+        const pos = NodeMan.get("cameraTrackSwitch", false)?.choice === FIT_POINTS_TRACK_OPTION;
+        const head = NodeMan.get("CameraLOSController", false)?.choice === FIT_POINTS_HEADING_OPTION;
+        const fov = NodeMan.get("fovSwitch", false)?.choice === FIT_POINTS_FOV_OPTION;
+        return {pos, head, fov, any: pos || head || fov};
+    }
+
+    /** Cascade the motion source nodes after keyframe solutions change. */
+    refreshMotionNodes() {
+        NodeMan.get("fitPointsPositionTrack", false)?.recalculateCascade();
+        NodeMan.get("fitPointsFOV", false)?.recalculateCascade();
+        setRenderOne(true);
+    }
+
+    /**
+     * Offer or withdraw the "Fit Points" dropdown options to match the keyframe count.
+     *
+     * Withdrawing while a switch is still ON a fit option first writes the camera the user is
+     * looking at into the manual nodes, so the fallback selection lands exactly where the
+     * camera already is instead of jumping to whatever the manual nodes last held.
+     */
+    syncMotionOptions() {
+        if (this.keyframes.length >= 2) {
+            attachFitPointsMotion(this);
+        } else {
+            if (this.motionOwnsAspects().any) this.landMotionCamera();
+            detachFitPointsMotion();
+        }
+        this.updateKeyframeInfo();
+    }
+
+    /** Write the live camera into the manual position/heading/FOV nodes. See syncMotionOptions. */
+    landMotionCamera() {
+        const state = this.currentCameraState(Math.round(par.frame));
+        if (!state) return;
+        this.applyingFit = true;
+        try {
+            this.writePosition(state.position);
+            const ptz = NodeMan.get("ptzAngles", false);
+            if (ptz) {
+                ptz.relative = false;
+                ptz.az = state.azDeg;
+                ptz.el = state.elDeg;
+                if (ptz.roll !== undefined) ptz.roll = state.rollDeg;
+                ptz.fov = state.vfovDeg;
+                ptz.refresh();
+            }
+        } finally {
+            this.applyingFit = false;
+        }
+    }
+
+    /** {position, azDeg, elDeg, rollDeg, vfovDeg} from a stored keyframe solution. */
+    stateFromSolved(s) {
+        return {
+            position: s.position.slice(),
+            azDeg: s.azDeg, elDeg: s.elDeg, rollDeg: s.rollDeg, vfovDeg: s.vfovDeg,
+        };
+    }
+
+    /** A keyframe solution from a solver result. `fitted` marks it as a real solve. */
+    solvedFromResult(result) {
+        return {
+            position: result.position.slice(),
+            azDeg: result.azDeg, elDeg: result.elDeg,
+            rollDeg: result.rollDeg, vfovDeg: result.vfovDeg,
+            fitted: true,
+        };
+    }
+
+    /** Where a landmark projects in a given camera, in original video pixels, or null. */
+    projectThroughState(state, worldVec, size) {
+        const frame = this.localFrameAt(state.position);
+        const basis = basisFromAzElRoll(
+            frame.up, frame.north, state.azDeg, state.elDeg, state.rollDeg);
+        const px = projectWorldPoint(
+            {position: state.position, focalScale: 1, basis},
+            [worldVec.x, worldVec.y, worldVec.z],
+            lensFromVFOV(state.vfovDeg, size), size);
+        return px && Number.isFinite(px[0]) && Number.isFinite(px[1]) ? px : null;
+    }
+
+    /**
+     * Solve one keyframe from its own observations, headlessly: same solver, same method
+     * choice, same locks and the same is-it-an-improvement gate as the interactive fit, but no
+     * camera-node writes and no status churn. Used for keyframes OTHER than the one being
+     * edited, whose solutions go stale when a shared landmark moves.
+     *
+     * On failure the old solution is kept but demoted to unfitted — it still describes A
+     * camera, but no longer provably the camera for these landmarks, and the keyframe readout
+     * says so.
+     *
+     * @returns {boolean} whether the keyframe now carries a freshly fitted solution
+     */
+    solveKeyframe(kf) {
+        const size = this.videoSize;
+        if (!size || this.points.length === 0) return false;
+        const demote = () => {
+            if (kf.solved) kf.solved.fitted = false;
+        };
+
+        const uv = kf.frame === this.fitFrame ? this.pointsUV() : kf.uv;
+        const solverPoints = this.points.map((p, i) => {
+            const w = this.pointECEF(p);
+            return {px: [uv[i][0], uv[i][1]], world: [w.x, w.y, w.z]};
+        });
+        const initial = kf.solved
+            ? this.stateFromSolved(kf.solved)
+            : this.currentCameraState(kf.frame);
+        if (!initial || Math.abs(initial.elDeg) > MAX_ABS_EL) {
+            demote();
+            return false;
+        }
+        const localFrame = (pos) => this.localFrameAt(pos);
+        const spec = {
+            points: solverPoints,
+            imageSize: size,
+            initial,
+            free: {
+                position: !this.lockPosition,
+                az: true,
+                el: true,
+                roll: !this.lockRoll,
+                fov: !this.lockFOV,
+            },
+            localFrame,
+            // A refit starts from a previous solution, so the full multi-seed search is wasted
+            // work — and this can run for several keyframes in one edit.
+            options: kf.solved ? {seedsToRefine: 1, prefilterIterations: 8} : undefined,
+        };
+        const result = this.fitMethod === "homography"
+            ? fitCameraByPlaneHomography(spec)
+            : fitCameraToPoints(spec);
+        if (!result.ok) {
+            demote();
+            return false;
+        }
+        if (kf.solved) {
+            // The same guard runFit applies: a solve far worse than the solution it would
+            // replace is a bad basin, not an answer.
+            const current = evaluateCamera({
+                points: solverPoints, imageSize: size,
+                state: this.stateFromSolved(kf.solved), localFrame,
+            });
+            const ruinous = this.fitMethod === "homography"
+                ? current.rms * 4 + 20
+                : current.rms + 0.01;
+            if (Number.isFinite(current.rms) && current.behind === 0 && result.rms > ruinous) {
+                demote();
+                return false;
+            }
+        }
+        kf.solved = this.solvedFromResult(result);
+        return true;
+    }
+
+    /** Re-solve every keyframe except the active one (whose solve runs interactively). */
+    refitOtherKeyframes() {
+        if (this.keyframes.length < 2) return;
+        let failed = 0;
+        for (const kf of this.keyframes) {
+            if (kf.frame === this.fitFrame) continue;
+            if (!this.solveKeyframe(kf)) failed++;
+        }
+        this.refreshMotionNodes();
+        this.updateKeyframeInfo();
+        if (failed > 0) {
+            this.updateStatus(`${this.status} · ${failed} other keyframe` +
+                `${failed === 1 ? "" : "s"} failed to refit`);
+        }
+    }
+
+    /** The "Add Fit Keyframe" button. */
+    addFitKeyframe() {
+        if (!this.enabled) {
+            this.updateStatus("Enable Fit before adding keyframes");
+            setRenderOne(true);
+            return;
+        }
+        const size = this.videoSize;
+        if (!size || this.points.length === 0) {
+            this.updateStatus("Click the video to place fit points first");
+            setRenderOne(true);
+            return;
+        }
+        const frame = Math.round(par.frame);
+        if (this.keyframes.some((k) => k.frame === frame)) {
+            this.updateStatus(`Frame ${frame} is already a fit keyframe`);
+            setRenderOne(true);
+            return;
+        }
+        this.ensureBaseKeyframe();
+
+        // The existing keyframe must carry a real solution before motion between keyframes can
+        // mean anything. A loaded sitch restores points but never re-solves (the camera may
+        // have been hand-adjusted since), so solve from the correspondences now — and refuse
+        // the add if that fails, rather than record a keyframe pair that cannot be
+        // interpolated.
+        const active = this.activeKeyframe();
+        if (active && (!active.solved || active.solved.fitted === false)) {
+            if (!this.solveKeyframe(active)) {
+                this.updateStatus(`Could not solve the keyframe at frame ${active.frame} — ` +
+                    `go to it and Fit Now first`);
+                setRenderOne(true);
+                return;
+            }
+        }
+
+        // Seed the new keyframe's markers where each landmark projects through the camera the
+        // user is looking at RIGHT NOW on this frame — visually, the crosshairs open exactly
+        // on where the landmarks would be if the camera had not moved, and dragging them to
+        // where the landmarks really are is what states the motion.
+        const state = this.currentCameraState(frame);
+        const uv = this.points.map((p) => {
+            const px = state ? this.projectThroughState(state, this.pointECEF(p), size) : null;
+            return px ?? [p.vx, p.vy];
+        });
+
+        this.withUndo("Add fit keyframe", () => {
+            this.syncActiveKeyframe();
+            this.keyframes.push({
+                frame,
+                uv,
+                // Provisional: where the camera IS at this frame, recorded so interpolation is
+                // defined immediately — but marked unfitted until a solve replaces it, because
+                // a seeded camera is a guess, not a fit.
+                solved: state ? {...state, position: state.position.slice(), fitted: false} : null,
+            });
+            this.keyframes.sort((a, b) => a.frame - b.frame);
+            this.activateKeyframe(frame);
+            this.syncMotionOptions();
+        });
+        this.updateStatus(`Fit keyframe added at frame ${frame} — drag the video markers to ` +
+            `where the landmarks are in this frame`);
+        setRenderOne(true);
+    }
+
+    /** The "Delete Fit Keyframe" button. */
+    deleteFitKeyframe() {
+        const frame = Math.round(par.frame);
+        const i = this.keyframes.findIndex((k) => k.frame === frame);
+        if (i < 0) {
+            this.updateStatus(`No fit keyframe at frame ${frame}`);
+            setRenderOne(true);
+            return;
+        }
+        if (this.keyframes.length === 1) {
+            this.updateStatus("This is the only fit keyframe — Clear All Points removes the " +
+                "fit entirely");
+            setRenderOne(true);
+            return;
+        }
+        this.withUndo("Delete fit keyframe", () => {
+            const wasActive = this.fitFrame === frame;
+            this.keyframes.splice(i, 1);
+            if (wasActive) {
+                let nearest = this.keyframes[0];
+                for (const k of this.keyframes) {
+                    if (Math.abs(k.frame - frame) < Math.abs(nearest.frame - frame)) nearest = k;
+                }
+                this.activateKeyframe(nearest.frame);
+            }
+            this.syncMotionOptions();
+        });
+        this.updateStatus(`Fit keyframe at frame ${frame} deleted`);
+        setRenderOne(true);
+    }
+
+    /** The "Fit Keyframe Motion" button: select "Fit Points" for position, heading and FOV. */
+    fitKeyframeMotion() {
+        if (this.keyframes.length < 2) {
+            this.updateStatus("Motion needs at least 2 fit keyframes — use Add Fit Keyframe " +
+                "at another frame first");
+            setRenderOne(true);
+            return;
+        }
+        // Motion interpolates FITTED solutions only — a freshly added keyframe still carries
+        // its seeded guess, and flying the camera through a guess would present motion the
+        // landmarks never supported. Refuse until the keyframes have real solves, and say
+        // which ones.
+        const unfitted = this.keyframes.filter((k) => !k.solved || k.solved.fitted === false);
+        if (this.keyframes.length - unfitted.length < 2) {
+            const frames = unfitted.map((k) => k.frame).join(", ");
+            this.updateStatus(`Fit the keyframe${unfitted.length === 1 ? "" : "s"} at frame` +
+                `${unfitted.length === 1 ? "" : "s"} ${frames} first — go there, place the ` +
+                `video markers, and Fit Now`);
+            setRenderOne(true);
+            return;
+        }
+        this.syncActiveKeyframe();
+        if (!attachFitPointsMotion(this, true)) {
+            this.updateStatus("This sitch has no camera source switches to drive");
+            setRenderOne(true);
+            return;
+        }
+        this.refreshMotionNodes();
+        this.updateStatus("Camera position, heading and FOV now follow the fit keyframes");
+        setRenderOne(true);
+    }
+
     // ---------- point management ----------
 
     /** @returns {object|null} the point that was added, so the caller can grab it for a drag. */
@@ -749,6 +1311,23 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             color: POINT_COLORS[this.points.length % POINT_COLORS.length],
         };
         this.points.push(point);
+
+        // Every keyframe carries an observation of every landmark. The other keyframes get
+        // this one seeded where the landmark projects through THEIR stored camera — exactly
+        // consistent with their existing solutions, so nothing about them changes until the
+        // user refines the marker there. Falling back to this frame's pixel when there is no
+        // solution to project through.
+        this.ensureBaseKeyframe();
+        for (const kf of this.keyframes) {
+            if (kf.frame === this.fitFrame) continue;
+            const px = kf.solved
+                ? this.projectThroughState(this.stateFromSolved(kf.solved), world, size)
+                : null;
+            kf.uv.push(px ?? [vx, vy]);
+        }
+        this.syncActiveKeyframe();
+        this.updateKeyframeInfo();
+
         this.updateStatus(`${this.points.length} point${this.points.length === 1 ? "" : "s"} — ` +
             `drag the ground handle to the real location`);
         setRenderOne(true);
@@ -760,7 +1339,15 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (i < 0) return;
         this.withUndo("Delete camera fit point", () => {
             this.points.splice(i, 1);
+            // A landmark is shared by every keyframe; its observation goes with it everywhere.
+            for (const kf of this.keyframes) kf.uv.splice(i, 1);
+            if (this.points.length === 0) {
+                this.keyframes = [];
+                this.syncMotionOptions();
+            }
             this.requestFit();
+            if (this.autoFit) this.refitOtherKeyframes();
+            this.updateKeyframeInfo();
         });
         setRenderOne(true);
     }
@@ -772,6 +1359,8 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             if (!ok) return;
             this.withUndo(`Delete all ${count} camera fit points`, () => {
                 this.points = [];
+                this.keyframes = [];
+                this.syncMotionOptions();
                 this.lastResult = null;
                 this.updateStatus("Click the video to add a point");
             });
@@ -790,6 +1379,9 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
     fitNow() {
         this.runFit(true);
+        // An explicit Fit Now re-solves everything, so the whole keyframe set is consistent
+        // with the landmarks as they now stand.
+        this.refitOtherKeyframes();
     }
 
     /** Fit if auto-fit is on. Every interactive path goes through here. */
@@ -819,7 +1411,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // two have to agree. Refusing is the honest option: scrubbing the timeline for the user
         // would be a surprising side effect of ticking a checkbox.
         if (this.points.length > 0 && !this.onCorrectFrame()) {
-            this.updateStatus(`Points belong to frame ${this.fitFrame} — go to it to fit`);
+            this.updateStatus(this.wrongFrameMessage("fit"));
             setRenderOne(true);
             return;
         }
@@ -905,6 +1497,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
         const land = () => {
             const notes = this.applyResult(result);
+            // The solved camera is also this keyframe's stored solution — the thing "Fit
+            // Keyframe Motion" interpolates between.
+            this.ensureBaseKeyframe();
+            const kf = this.activeKeyframe();
+            if (kf) {
+                kf.solved = this.solvedFromResult(result);
+                this.syncActiveKeyframe();
+                this.refreshMotionNodes();
+                this.updateKeyframeInfo();
+            }
             // Residuals are keyed by point id, not by array index. Add or delete a point after a
             // fit and the indices shift, which would silently draw each residual against the wrong
             // landmark — the most misleading thing this display could do.
@@ -943,6 +1545,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
      */
     showAlgorithmWorking() {
         if (this.playback.running) { this.playback.stop(); return; }
+        // The replay drives the ordinary camera nodes; while Fit Points motion owns any of
+        // them the camera would not follow the search, so there would be nothing to watch.
+        // Solve without the replay instead.
+        if (this.motionOwnsAspects().any) { this.runFit(true, false); return; }
         this.runFit(true, true);
     }
 
@@ -998,20 +1604,26 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
      */
     applyResult(result) {
         const notes = [];
+        // Aspects currently owned by the "Fit Points" motion sources are NOT written here and
+        // their switches are NOT yanked back to the manual options: for those, the stored
+        // keyframe solution (see land()) IS the write-back — the motion nodes read it
+        // directly, and at a keyframe's own frame the interpolated camera is that solution.
+        const owns = this.motionOwnsAspects();
         this.applyingFit = true;
         try {
             const camTrack = NodeMan.get("cameraTrackSwitch", false);
-            if (camTrack && !this.lockPosition && camTrack.choice !== "fixedCamera"
+            if (!owns.pos && camTrack && !this.lockPosition && camTrack.choice !== "fixedCamera"
                 && camTrack.inputs.fixedCamera !== undefined) {
                 camTrack.selectOption("fixedCamera");
             }
             const fovSwitch = NodeMan.get("fovSwitch", false);
-            if (fovSwitch && !this.lockFOV && fovSwitch.choice !== "userFOV"
+            if (!owns.fov && fovSwitch && !this.lockFOV && fovSwitch.choice !== "userFOV"
                 && fovSwitch.inputs.userFOV !== undefined) {
                 fovSwitch.selectOption("userFOV");
             }
             const heading = NodeMan.get("CameraLOSController", false);
-            if (heading && heading.choice !== "Manual" && heading.inputs.Manual !== undefined) {
+            if (!owns.head && heading && heading.choice !== "Manual"
+                && heading.inputs.Manual !== undefined) {
                 heading.selectOption("Manual");
             }
 
@@ -1020,20 +1632,38 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 notes.push("no Manual PTZ controller to write orientation to");
                 return notes;
             }
-            ptz.relative = false;
 
-            if (!this.lockPosition) notes.push(...this.writePosition(result.position));
+            if (!owns.head) {
+                ptz.relative = false;
+                // A fit is an absolute az/el pose. In satellite mode the PTZ controller
+                // rebuilds the camera from its own quaternion and would ignore the solved
+                // angles entirely.
+                if (ptz.satellite) {
+                    ptz.satellite = false;
+                    ptz.updateSatelliteSliderRanges?.();
+                    ptz.updateSatelliteSliderVisibility?.();
+                    notes.push("satellite mode switched off so the fitted pointing applies");
+                }
+                ptz.az = result.azDeg;
+                ptz.el = result.elDeg;
+                if (!this.lockRoll && ptz.roll !== undefined) ptz.roll = result.rollDeg;
+            }
+            if (!owns.pos && !this.lockPosition) notes.push(...this.writePosition(result.position));
+            if (!owns.fov && !this.lockFOV) ptz.fov = result.vfovDeg;
 
-            ptz.az = result.azDeg;
-            ptz.el = result.elDeg;
-            if (!this.lockRoll && ptz.roll !== undefined) ptz.roll = result.rollDeg;
-            if (!this.lockFOV) ptz.fov = result.vfovDeg;
-            ptz.refresh();
+            // refresh() copies ptz.fov into fovUI — the MANUAL FOV store. While Fit Points
+            // owns the FOV that write would clobber the user's manual value with a fit value,
+            // so cascade without it instead.
+            if (!owns.fov) ptz.refresh();
+            else ptz.recalculateCascade();
         } finally {
             this.applyingFit = false;
         }
 
-        notes.push(...this.checkAppliedCamera(result));
+        // The positional cross-check reads the camera as rendered NOW; under Fit Points motion
+        // the position lands via the track on the next frame, so the check would only ever
+        // report a stale camera.
+        if (!owns.pos) notes.push(...this.checkAppliedCamera(result));
         return notes;
     }
 
@@ -1114,9 +1744,20 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         return null;
     }
 
-    /** Only this frame's points may be edited — see the note on fitFrame in the constructor. */
+    /** Only this frame's points may be edited — see the note on fitFrame in the constructor.
+     * With keyframes, scrubbing onto any keyframe frame activates it (see update), so in
+     * practice this answers "is the playhead on a fit keyframe". */
     onCorrectFrame() {
         return Math.round(par.frame) === this.fitFrame;
+    }
+
+    /** Where the points may be edited/fitted, phrased for however many keyframes exist. */
+    wrongFrameMessage(verb) {
+        if (this.keyframes.length > 1) {
+            const frames = this.keyframes.map((k) => k.frame).join(", ");
+            return `Points belong to the fit keyframes (frames ${frames}) — go to one to ${verb}`;
+        }
+        return `Points belong to frame ${this.fitFrame} — go to it to ${verb}`;
     }
 
     /**
@@ -1156,7 +1797,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (e.button !== 0) return false;
 
         if (!this.onCorrectFrame()) {
-            this.updateStatus(`Points belong to frame ${this.fitFrame} — go back to it to edit`);
+            this.updateStatus(this.wrongFrameMessage("edit"));
             setRenderOne(true);
             return false;
         }
@@ -1282,6 +1923,8 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
         if (this.draggingId === null) return;
         this.draggingId = null;
+        // The keyframe entry is the durable store; the drag edited only the mirror.
+        this.syncActiveKeyframe();
         // A 2D drag does not depend on the fitted camera, so unlike the 3D handles it could refit
         // live. It still commits on release: a solve per pointermove would write nodes and
         // cascade the whole graph dozens of times a second for no visible gain.
