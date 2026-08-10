@@ -191,11 +191,14 @@ export class CSituation {
         if (this.nightSky || this.theNightSky) {
             assets = {...assets,...assets2,...NightSkyFiles}
         }
-        if(!isConsole)
-            infoDiv.innerHTML = "Loading<br>"
+        // Deliberately SERIAL: parallelizing this loop (tried 2026-08-09) makes asset
+        // REGISTRATION order equal completion order rather than list order, and
+        // multi-file sitches are order-sensitive downstream — the satellite-mode
+        // regression sitch laid out its views differently on every run. The wire cost
+        // of the waterfall is modest now that the night-sky enrichments are deferred
+        // (see ExtraFiles.js); revisit only with a FileManager that separates fetching
+        // from ordered registration.
         for (let key in assets) {
-//            console.log("++++ Loading asset ", key, " from ", assets[key])
-
             if (key === "KMLTarget")   {
                 console.warn("KMLTarget is deprecated, patching to TargetTrack")
                 // modify the object so that it uses TargetTrack instead of KMLTarget

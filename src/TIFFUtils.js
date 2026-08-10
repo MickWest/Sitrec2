@@ -2,10 +2,11 @@
 // image is a TIFF image loaded by GeoTIFF
 // the data is in an ArrayBufferSource with contains an arrayBuffer
 import {assert} from "./assert";
-import {fromArrayBuffer as geotiffFromArrayBuffer} from 'geotiff';
+import {loadGeoTIFF} from "./geotiffLoader";
 
 export async function convertTiffBufferToBlobURL(buffer) {
-    const tiff = await geotiffFromArrayBuffer(buffer);
+    const {fromArrayBuffer} = await loadGeoTIFF();
+    const tiff = await fromArrayBuffer(buffer);
     const image = await tiff.getImage();
     const width = image.getWidth();
     const height = image.getHeight();

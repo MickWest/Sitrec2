@@ -48,7 +48,6 @@ import {
     TrackManager,
     withTestUser
 } from "./Globals";
-import {fromArrayBuffer as geotiffFromArrayBuffer} from 'geotiff';
 import {DragDropHandler} from "./DragDropHandler";
 import {parseAirdataCSV} from "./ParseAirdataCSV";
 import {parseKLVFile, parseMISB1CSV} from "./MISBUtils";
