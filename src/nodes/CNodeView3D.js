@@ -3502,7 +3502,10 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
 
         if (yc > 1.0001) {
-            this._yCompressIndicator.textContent = `Y-compress=${yc.toFixed(1)}x`;
+            // Two decimals: values like 1.01 are exactly the ones worth surfacing (a 1%
+            // anamorphic squash is invisible to the eye but breaks any video-overlay
+            // comparison), and one decimal displayed them as a reassuring "1.0x".
+            this._yCompressIndicator.textContent = `Y-compress=${yc.toFixed(2)}x`;
             this._yCompressIndicator.style.display = 'block';
         } else {
             this._yCompressIndicator.style.display = 'none';

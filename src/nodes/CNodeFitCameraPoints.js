@@ -1784,6 +1784,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         }
 
         const notes = this.applyResult(result);
+        // The solver models a square-pixel pinhole; the look view's anamorphic Y-compress
+        // is applied AFTER projection and the fit cannot see it. Even 1% is ~5 px of
+        // vertical mismatch at the frame edges when blending the video over the look view,
+        // while displaying as a plausible-looking image — so say it in the status rather
+        // than let the overlay comparison quietly disagree with a correct fit.
+        const lookYc = NodeMan.get("lookView", false)?.yCompress;
+        if (lookYc > 1.0001) {
+            notes.push(`Look Y-comp is ${lookYc.toFixed(2)}x — the fit assumes 1.00, ` +
+                `so the look view will not overlay the video exactly`);
+        }
         // The solved camera is also this keyframe's stored solution — the thing "Fit
         // Keyframe Motion" interpolates between.
         this.ensureBaseKeyframe();

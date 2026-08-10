@@ -9,6 +9,24 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.124.0 (2026-08-10)
+
+### New Features
+
+- **Flat Earth** (Physics → Scenarios → Flat Earth): an experimental rendering mode that redraws the world as a flat disc — the classic flat-earth map, the North Pole at the centre and the continents unwrapped around it — positioned so the terrain around your sitch stays where it is. Only the picture is flattened: tracks, physics, sight lines and every measurement are still computed on the round Earth, and that mismatch is the point — the mode exists to show what actually happens when a globe's worth of data is drawn on a disc. *Flatness* sets how flat, from the true Earth's curvature drop up to perfectly flat (the default), and *Center on Look Camera* recentres the map on the camera instead of the North Pole — the flat-earth map on which distances and directions from the observer are true, following the camera as it moves. Clicking, orbiting and placing the camera still land on the ground you see, terrain detail loads all the way out to the disc's rim, and the mode is saved with the sitch — loading a different sitch switches it off. The sky, shadows and reflections are not remapped, and switching the mode off puts everything back exactly as it was.
+
+### Improvements
+
+- Sitrec starts faster: the sitch catalogue now downloads while sign-in and settings are still on their way rather than after them, and the code for reading GeoTIFF files — needed only for TIFF terrain and imagery — is no longer part of the initial download. The night sky's *Astrometry.net* asterism style (Show → Celestial → *Asterism Style*) now fetches its line set the first time it is chosen instead of at load; switching styles while it downloads always ends on the style you picked, and the star chart fills its lines in as soon as they arrive.
+
+- The AI chat assistant can now point at or lock onto stars by name — *point at Vega* — on sitches without the night sky: the star-name list loads the first time it is needed, where before those names only existed with the night sky on, and one early miss could lock them out for the whole session.
+
+- The on-screen Y-compress readout (shown on the main and look views whenever *Main Y-comp* or *Look Y-comp* is above 1) now shows two decimals, so a squash of 1.01 no longer reads as a reassuring "1.0x". And *Fit Camera to Points* (Camera menu) now says in its status line when the look view has any Y-compress — the fit cannot account for the squash, so even 1% keeps the look view from overlaying the video exactly.
+
+### Bug Fixes
+
+- Fixed the terrain *Flattening* slider (in sitches that have one, such as *Pt Dume → Mt Jacinto*) silently going dead after the terrain rebuilt — changing the map type, or switching *3D Buildings* on or off, left it doing nothing until the sitch was reloaded.
+
 ## Version 2.123.0 (2026-08-09)
 
 ### New Features
