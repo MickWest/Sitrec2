@@ -242,8 +242,10 @@ function _loadIAUStarNames() {
     if (_iauLoaded) return;
     const data = FileManager.get("IAUCSN", false);
     if (!data) {
-        // Deferred night-sky file (ExtraFiles.js): kick the load and stay unlatched so
-        // the next lookup parses it. (Latching before the null check would have frozen
+        // IAU-CSN loads with the sitch assets when Sit.nightSky is on; on a sitch
+        // WITHOUT a night sky it is absent, so kick the load here (ensureNightSkyFiles
+        // resolves the path from the NightSkyFiles table) and stay unlatched so the
+        // next lookup parses it. (Latching before the null check would have frozen
         // "no names" in as the permanent answer.)
         ensureNightSkyFiles("IAUCSN").catch(() => {});
         return;

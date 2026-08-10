@@ -604,7 +604,10 @@ await setupConfigPaths();
 // purpose, with baselines regenerated — not as a loading optimization's side effect.
 if (!isServerless) {
     prefetchedSitchesText = fetch(SITREC_SERVER + "getsitches.php", {mode: "cors"})
-        .then((response) => response.text())
+        // An HTTP error resolves (fetch only rejects on network failure), and its body is
+        // a truthy error page the use site would try to JSON.parse — map it to null so a
+        // transient 5xx falls back to the direct fetch like any other failed prefetch.
+        .then((response) => (response.ok ? response.text() : null))
         .catch(() => null);
 }
 

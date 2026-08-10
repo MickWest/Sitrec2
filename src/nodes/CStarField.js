@@ -123,9 +123,10 @@ export class CStarField {
      * Maps common names to stars using Hipparcos ID for correlation
      */
     loadCommonStarNames() {
-        // IAU-CSN is a deferred night-sky file (ExtraFiles.js): absent on the first call,
-        // topped up by CNodeDisplayNightSky when it arrives. Re-running is idempotent —
-        // it just re-maps the same names onto the same HIP numbers.
+        // IAU-CSN loads with the sitch assets whenever Sit.nightSky is on (NightSkyFiles
+        // in ExtraFiles.js), so it is present by the time the night-sky node builds this
+        // field; the guard is purely defensive — names are an enrichment, and a missing
+        // file should cost labels, not the stars.
         const text = FileManager.get("IAUCSN", false);
         if (!text) return;
         const lines = text.split('\n');
