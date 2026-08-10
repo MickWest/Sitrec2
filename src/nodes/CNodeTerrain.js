@@ -497,7 +497,10 @@ export class CNodeTerrain extends CNode {
         const has3DTiles = !!(this.UI?.buildingsNode);
         const mapDef = this.UI?.mapSources?.[this.UI.mapType];
         const is4326 = mapDef?.mapping === 4326;
-        const visible = Globals.dynamicSubdivision === true && !has3DTiles && !is4326;
+        // Flat Earth rendering flattens the caps into the same plane as the
+        // globe and the tiles, where they z-fight massively — hide them.
+        const visible = Globals.dynamicSubdivision === true && !has3DTiles && !is4326
+            && !Globals.flatEarthRendering;
         for (const cap of [this.polarCapNorth, this.polarCapSouth]) {
             if (cap) cap.visible = visible;
         }

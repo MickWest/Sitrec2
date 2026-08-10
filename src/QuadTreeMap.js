@@ -1519,6 +1519,26 @@ export class QuadTreeMap {
         _cullingSphere.center.set(cx, cy, cz);
         _cullingSphere.radius = radius;
 
+        // Flat Earth rendering (Physics → Scenarios → Flat Earth): cull and
+        // LOD against the tile's RENDERED position on the AEP disc, not its
+        // globe position. The hook warps the sphere centre and inflates the
+        // radius by the projection's east-west stretch, returning true where
+        // the warp is locally rigid (the near field around the disc's tangent
+        // point) — there the globe-space OBB narrow phase and OBB LOD
+        // distance are still valid and stay on, keeping near terrain sharp.
+        // Elsewhere the OBB paths are skipped (a globe OBB is meaningless
+        // after the warp), and the horizon gate is skipped everywhere —
+        // nothing on a flat disc hides below a horizon.
+        const _flatWarp = Globals.flatEarthWarpSphere;
+        let _flatRigid = false;
+        if (_flatWarp) {
+            _flatRigid = _flatWarp(_cullingSphere) === true;
+            cx = _cullingSphere.center.x;
+            cy = _cullingSphere.center.y;
+            cz = _cullingSphere.center.z;
+            radius = _cullingSphere.radius;
+        }
+
         const dx = camera.position.x - cx;
         const dy = camera.position.y - cy;
         const dz = camera.position.z - cz;
@@ -1538,6 +1558,7 @@ export class QuadTreeMap {
         // Inherited bounds produce a fat OBB that false-rejects off-axis
         // children (see _v5UseMeasured rationale above).
         if (_v5Mode === "obb"
+            && (!_flatWarp || _flatRigid)
             && options?.coverageMode !== "coverageSphereOnly"
             && tile.altitudeBounds?.measured === true) {
             const _obb = tile.cullingState?.obb;
@@ -1569,6 +1590,7 @@ export class QuadTreeMap {
             // Fallback to sphere-center distance when OBB is null (z<3).
             let _lodDistance;
             if (_v5Mode === "obb"
+                && (!_flatWarp || _flatRigid)
                 && tile.cullingState?.obb
                 && options?.coverageMode !== "coverageSphereOnly"
                 && tile.altitudeBounds?.measured === true) {
@@ -1585,6 +1607,14 @@ export class QuadTreeMap {
                 // visible, skip the horizon check.
                 visible = true;
                 if (diag) diag.cameraInsideSphere++;
+            } else if (_flatWarp) {
+                // Flat earth: no horizon, no globe occlusion — in-frustum IS
+                // visible. The whole disc can be on screen at once.
+                visible = true;
+                if (diag) {
+                    if (inStrict) diag.inStrictFrustum++;
+                    else diag.inDilatedMargin++;
+                }
             } else {
                 // Cull below-horizon and globe-occluded tiles for distant cases.
                 const cameraAltitude = altitudeAboveSphere(_cameraPositionClone.copy(camera.position));
@@ -1741,6 +1771,11 @@ export class QuadTreeMap {
     anyProspectiveChildVisible(tile, camera) {
         const dilated = camera.dilatedFrustum;
         if (!dilated) return true; // no frustum built yet — don't interfere
+
+        // Flat earth rendering: the child spheres below are globe-space, so
+        // this guard would falsely block subdivision of tiles whose disc image
+        // is on screen. Conservative direction is "don't block".
+        if (Globals.flatEarthWarpSphere) return true;
 
         // Terrain-altitude estimate, identical to calculateTileVisibility's
         // parent-walk. A freshly-created child has highestAltitude 0 and

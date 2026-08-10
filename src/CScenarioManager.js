@@ -158,6 +158,13 @@ ScenarioManager.register({
 });
 
 ScenarioManager.register({
+    id: "flatEarth",
+    // Menu-only: enabling is interactive and the state is not serialized
+    // (an experimental render mode), so no activate/activeInMods.
+    populate: async () => (await import("./scenarios/FlatEarthScenario")).setupFlatEarth(),
+});
+
+ScenarioManager.register({
     id: "floodSim",
     populate: async () => (await import("./scenarios/FloodSimScenario")).setupFloodSim(),
     activate: async () => (await import("./scenarios/FloodSimScenario")).activateFloodSim(),
