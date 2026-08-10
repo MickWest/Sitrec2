@@ -39,7 +39,6 @@ import {getLocalUpVector, getNorthPole} from "../SphericalMath";
 import {extractFOV} from "./CNodeControllerVarious";
 import {FitPointHandles3D, surfaceAlongRay} from "../FitPointHandles3D";
 import {FitPointSightLines3D} from "../FitPointSightLines3D";
-import {FitSearchPlayback, showTracedCamera} from "../FitSearchPlayback";
 import {drawFitHandle, GRAB_RADIUS, POINT_COLORS} from "../FitHandleDraw";
 import {
     azElRollFromBasis, basisFromAzElRoll, evaluateCamera, fitCameraToPoints, MAX_ABS_EL,
@@ -158,6 +157,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.lastResult = null;
         this.applyingFit = false;
         this.draggingId = null;
+        // Whether the current 2D / 3D gesture actually moved anything — a grab-and-release
+        // that didn't must not invalidate solutions on commit.
+        this._dragMoved = false;
+        this._markerMoved = false;
         // A left-press on empty video, held until release decides whether it was a click (add a
         // point) or a pan. See onMouseDown.
         this.pendingAdd = null;
@@ -178,18 +181,24 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             getUseTiles: () => this.useTiles,
             onMoved: (id, pos) => this.onMarkerMoved(id, pos),
             // A 3D drag moved a SHARED landmark, so every keyframe's solution is stale, not
-            // just the active one's.
+            // just the active one's — demote them all first, and let the refits re-earn what
+            // they can. With Fit on Change off the demotion is the whole story, honestly told.
+            // Gated on onMoved having fired: the overlay commits on every release, including a
+            // bare click that grabbed a handle and let go.
             onCommit: () => {
+                if (this._markerMoved) this.invalidateKeyframes("all");
                 this.requestFit();
                 if (this.autoFit) this.refitOtherKeyframes();
             },
             onCorrectFrame: () => this.onCorrectFrame(),
-            onBeginEdit: () => this.beginUndo(),
+            onBeginEdit: () => {
+                this._markerMoved = false;
+                this.beginUndo();
+            },
             onEndEdit: (description) => this.endUndo(description),
         });
 
         this.sightLines = new FitPointSightLines3D(() => this.rayDisplay());
-        this.playback = new FitSearchPlayback();
 
         // Fit keyframes on the frame slider, like every other keyframe set: yellow diamonds,
         // and Shift+,/. steps through them. Pull-based, so this costs nothing to maintain.
@@ -239,7 +248,11 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                         fitted: k.solved.fitted !== false,
                     };
                 }
-                return {frame: k.frame, uv: k.uv.map((u) => [u[0], u[1]]), solved};
+                // The third element marks a seeded (tool-invented) pixel; older builds
+                // validate only the first two and strip the rest, so the shape is compatible
+                // both ways.
+                return {frame: k.frame,
+                    uv: k.uv.map((u) => (u[2] ? [u[0], u[1], 1] : [u[0], u[1]])), solved};
             }),
         };
     }
@@ -278,7 +291,9 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 };
             }
             seen.add(frame);
-            out.push({frame, uv: uv.map((u) => [u[0], u[1]]), solved});
+            // A pre-seeded-flag save has plain pairs; its pixels were all treated as
+            // observations when it was made, and stay observations now.
+            out.push({frame, uv: uv.map((u) => (u[2] ? [u[0], u[1], 1] : [u[0], u[1]])), solved});
         }
         out.sort((a, b) => a.frame - b.frame);
         return out;
@@ -324,6 +339,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             for (let i = 0; i < n; i++) {
                 this.points[i].vx = kf.uv[i][0];
                 this.points[i].vy = kf.uv[i][1];
+                this.points[i].seeded = !!kf.uv[i][2];
             }
         }
         if (this.keyframes.length >= 2) {
@@ -372,7 +388,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // covers the 3D handle drags too — they bracket themselves with beginUndo/endUndo.
         if (this.enabled && !Globals.deserializing && this.keyframes.length > 0
             && this.pendingAdd === null && this.draggingId === null
-            && this._undoBefore === null && !this.playback.running) {
+            && this._undoBefore === null) {
             const f0 = Math.round(par.frame);
             if (f0 !== this.fitFrame && this.keyframes.some((k) => k.frame === f0)) {
                 this.activateKeyframe(f0);
@@ -380,12 +396,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             }
         }
 
-        this.stepPlayback();
         this.sightLines.update();
     }
 
     dispose() {
-        this.playback.stop();     // lands the fit rather than abandoning the camera mid-search
         this.setEnabled(false);   // also removes the gesture-cancel listeners
         KeyframeRegistry.unregister("cameraFit");
         this.markers.dispose();
@@ -505,15 +519,6 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 "affects where new points are dropped and where dragged handles land, not points " +
                 "already placed.");
 
-        this.gui.add(this, "showAlgorithmWorking").name("Show Algorithm Working")
-            .tooltip("Solve again, but replay the search one step per frame instead of jumping " +
-                "straight to the answer. The 3D points fit descends from a rough starting guess " +
-                "and converges. The plane homography instead sweeps the field of view, and " +
-                "because every focal length it tries implies a whole camera, you watch the " +
-                "camera slide along the trade-off — if it travels a long way while the score " +
-                "barely changes, these landmarks do not pin it down. Ends on the same camera an " +
-                "ordinary Fit Now would give.");
-
         this.gui.add(this, "clearAllPoints").name("Clear All Points");
         this.syncMethodControls();
     }
@@ -530,9 +535,6 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     // ---------- enable / disable ----------
 
     setEnabled(on) {
-        // Switching the fit off mid-replay lands it on the solved camera rather than leaving the
-        // camera wherever the search happened to have reached.
-        if (!on) this.playback.stop();
         this.enabled = on;
         this.visible = on;
         this.markers.setEnabled(on);
@@ -714,9 +716,13 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     currentResidualPx() {
         const size = this.videoSize;
         const state = this.currentCameraState();
-        if (!size || !state || this.points.length === 0) return null;
+        // Real observations only, matching the solve: a seeded marker sits wherever some camera
+        // projected it, and measuring the camera against its own projection reports agreement
+        // that means nothing.
+        const kept = this.points.filter((p) => !p.seeded);
+        if (!size || !state || kept.length === 0) return null;
         const r = evaluateCamera({
-            points: this.points.map((p) => {
+            points: kept.map((p) => {
                 const w = this.pointECEF(p);
                 return {px: [p.vx, p.vy], world: [w.x, w.y, w.z]};
             }),
@@ -838,12 +844,6 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 return [out.x, out.y, out.z];
             };
         };
-    }
-
-    /** The apparent (rendered) position of a control point, for the closed-form solvers. */
-    apparentPointECEF(p, cameraECEF) {
-        return liftWorldPoint(currentTerrestrialLiftContext(cameraECEF), this.pointECEF(p),
-            new Vector3());
     }
 
     get videoSize() {
@@ -1054,8 +1054,15 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     // working on `points` untouched; the keyframe entries are the durable store the mirror is
     // synced to and loaded from.
 
+    // A uv entry is [vx, vy] for an observation a person placed, and [vx, vy, 1] for a SEED — a
+    // pixel this tool invented by projecting the landmark through some camera it already believed
+    // in. The distinction is the whole basis of the fitted-solution lifecycle: seeds keep markers
+    // visually attached across keyframes, but they are not evidence, so no solve may consume one
+    // and no solution derived while they existed outlives an edit. The mirror carries the flag as
+    // p.seeded, cleared the moment the user drags that marker (see onMouseDrag).
+
     pointsUV() {
-        return this.points.map((p) => [p.vx, p.vy]);
+        return this.points.map((p) => (p.seeded ? [p.vx, p.vy, 1] : [p.vx, p.vy]));
     }
 
     activeKeyframe() {
@@ -1086,6 +1093,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         for (let i = 0; i < n; i++) {
             this.points[i].vx = kf.uv[i][0];
             this.points[i].vy = kf.uv[i][1];
+            this.points[i].seeded = !!kf.uv[i][2];
         }
         // Residuals are per-keyframe: the last solve's arrows describe the OLD keyframe's
         // pixels and would be drawn against the new ones — the most misleading thing this
@@ -1206,6 +1214,51 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         return px && Number.isFinite(px[0]) && Number.isFinite(px[1]) ? px : null;
     }
 
+    /** How many of a keyframe's pixels a person actually placed — the ones a solve may use. */
+    realObservationCount(kf) {
+        const uv = kf.frame === this.fitFrame ? this.pointsUV() : kf.uv;
+        let n = 0;
+        for (const u of uv) if (!u[2]) n++;
+        return n;
+    }
+
+    /**
+     * The observations changed, so every solution derived from the old ones stops being a
+     * statement about these landmarks. Demote rather than delete: the camera is kept as a seed
+     * for the next solve and a hold for the display, but motion stops flying through it and the
+     * keyframe readout marks it '?' until a solve re-earns it. With Fit on Change on, the refit
+     * that follows the edit re-promotes immediately; with it off, nothing pretends.
+     *
+     * @param {string} scope "active" for an edit that touched only this keyframe's pixels,
+     *                       "all" for one that moved a landmark every keyframe observes
+     */
+    invalidateKeyframes(scope) {
+        let changed = false;
+        let activeChanged = false;
+        for (const kf of this.keyframes) {
+            if (scope === "active" && kf.frame !== this.fitFrame) continue;
+            if (kf.solved && kf.solved.fitted !== false) {
+                kf.solved.fitted = false;
+                changed = true;
+                if (kf.frame === this.fitFrame) activeChanged = true;
+            }
+        }
+        if (changed) {
+            this.refreshMotionNodes();
+            this.updateKeyframeInfo();
+        }
+        // The readouts describe the demoted solve, so they go with it: keeping "Fitted" and the
+        // old residual arrows on screen after the observations changed would be this display
+        // claiming exactly what the demotion just retracted. With Fit on Change on, the solve
+        // that follows immediately overwrites all of this; with it off, this is what remains.
+        if (activeChanged) {
+            this.lastResult = null;
+            this.observability = "-";
+            this.residual = this.measureCurrentResidual();
+            this.updateStatus("Points edited — Fit Now to re-solve");
+        }
+    }
+
     /**
      * Solve one keyframe from its own observations, headlessly: same solver, same method
      * choice, same locks and the same is-it-an-improvement gate as the interactive fit, but no
@@ -1226,8 +1279,33 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         };
 
         const uv = kf.frame === this.fitFrame ? this.pointsUV() : kf.uv;
-        const solverPoints = this.points.map((p, i) => {
-            const w = this.pointECEF(p);
+
+        // Refresh this keyframe's SEEDS first: a seed's only job is to keep the marker visually
+        // on the landmark, and the landmark may be why we are here — re-project it through the
+        // stored camera so the display follows the edit. Never the active keyframe: its markers
+        // are under the user's cursor, and uv there is a copy of the mirror anyway.
+        if (kf.solved && kf.frame !== this.fitFrame) {
+            for (let i = 0; i < uv.length && i < this.points.length; i++) {
+                if (!uv[i][2]) continue;
+                const px = this.projectThroughState(
+                    this.stateFromSolved(kf.solved), this.pointECEF(this.points[i]), size);
+                if (px) { uv[i][0] = px[0]; uv[i][1] = px[1]; }
+            }
+        }
+
+        // Solve from real observations only. A seed is a projection of the very solution being
+        // refit — feeding it back in would let the old camera vote for itself, which is exactly
+        // the circularity that let fabricated pixels masquerade as fitted solutions.
+        const realIdx = [];
+        for (let i = 0; i < uv.length && i < this.points.length; i++) {
+            if (!uv[i][2]) realIdx.push(i);
+        }
+        if (realIdx.length < 2) {
+            demote();
+            return false;
+        }
+        const solverPoints = realIdx.map((i) => {
+            const w = this.pointECEF(this.points[i]);
             return {px: [uv[i][0], uv[i][1]], world: [w.x, w.y, w.z]};
         });
         const initial = kf.solved
@@ -1288,10 +1366,20 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
     /** Re-solve every keyframe except the active one (whose solve runs interactively). */
     refitOtherKeyframes() {
+        // Same gate as runFit: a disabled tool must not rewrite anything, and API paths reach
+        // here without going through the GUI.
+        if (!this.enabled) return;
         if (this.keyframes.length < 2) return;
         let failed = 0;
         for (const kf of this.keyframes) {
             if (kf.frame === this.fitFrame) continue;
+            // A keyframe that is still mostly seeds has nothing real to refit FROM — it is
+            // provisional, not failing. It stays (or becomes) '?' without counting against the
+            // status line.
+            if (this.realObservationCount(kf) < 2) {
+                if (kf.solved) kf.solved.fitted = false;
+                continue;
+            }
             if (!this.solveKeyframe(kf)) failed++;
         }
         this.refreshMotionNodes();
@@ -1341,11 +1429,13 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // Seed the new keyframe's markers where each landmark projects through the camera the
         // user is looking at RIGHT NOW on this frame — visually, the crosshairs open exactly
         // on where the landmarks would be if the camera had not moved, and dragging them to
-        // where the landmarks really are is what states the motion.
+        // where the landmarks really are is what states the motion. Every one is marked as a
+        // seed: none of these pixels was observed on this frame, so none may feed a solve
+        // until the user has placed it (dragging clears the mark).
         const state = this.currentCameraState(frame);
         const uv = this.points.map((p) => {
             const px = state ? this.projectThroughState(state, this.pointECEF(p), size) : null;
-            return px ?? [p.vx, p.vy];
+            return px ? [px[0], px[1], 1] : [p.vx, p.vy, 1];
         });
 
         this.withUndo("Add fit keyframe", () => {
@@ -1432,8 +1522,15 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
     // ---------- point management ----------
 
-    /** @returns {object|null} the point that was added, so the caller can grab it for a drag. */
-    addPointAtVideo(vx, vy) {
+    /**
+     * @param {object|null} worldLLA {lat, lon, alt} (alt is HAE) when the caller — the API —
+     *        already knows where the landmark IS. It must arrive here, not be patched on
+     *        afterwards: everything below that depends on the world position (the seeds pushed
+     *        into the other keyframes above all) has to describe the real landmark, not a
+     *        surface guess that is about to be thrown away.
+     * @returns {object|null} the point that was added, so the caller can grab it for a drag.
+     */
+    addPointAtVideo(vx, vy, worldLLA = null) {
         const size = this.videoSize;
         const state = this.currentCameraState();
         if (!size || !state) return null;
@@ -1447,34 +1544,46 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // are dragged against, so clicking a rooftop seeds on the roof rather than on the street
         // below it and then jumping when first dragged. UNDER THE PIXEL means under it in the
         // rendered image, refraction included — see surfaceUnderVideoPixel.
-        let world = this.surfaceUnderVideoPixel(state, vx, vy, size, origin);
-        if (!world) {
-            const dir = this.rayForVideoPixel(state, vx, vy, size);
-            world = origin.clone().addScaledVector(dir, FALLBACK_RANGE);
+        let world;
+        if (worldLLA) {
+            world = LLAToECEF(worldLLA.lat, worldLLA.lon, worldLLA.alt);
+        } else {
+            world = this.surfaceUnderVideoPixel(state, vx, vy, size, origin);
+            if (!world) {
+                const dir = this.rayForVideoPixel(state, vx, vy, size);
+                world = origin.clone().addScaledVector(dir, FALLBACK_RANGE);
+            }
         }
 
-        const lla = ECEFToLLAVD_radii(world);
+        const lla = worldLLA ?? (() => {
+            const g = ECEFToLLAVD_radii(world);
+            return {lat: g.x, lon: g.y, alt: g.z};
+        })();
         const point = {
             id: this.nextId++,
             vx, vy,
-            lat: lla.x, lon: lla.y, alt: lla.z,
+            lat: lla.lat, lon: lla.lon, alt: lla.alt,
             color: POINT_COLORS[this.points.length % POINT_COLORS.length],
         };
         this.points.push(point);
 
-        // Every keyframe carries an observation of every landmark. The other keyframes get
-        // this one seeded where the landmark projects through THEIR stored camera — exactly
-        // consistent with their existing solutions, so nothing about them changes until the
-        // user refines the marker there. Falling back to this frame's pixel when there is no
-        // solution to project through.
+        // Every keyframe carries a pixel for every landmark. The other keyframes get this one
+        // SEEDED — projected through their stored camera, so the marker sits where that
+        // keyframe's solution says the landmark is, marked as invented so no solve consumes it.
+        // Their existing solutions stay fitted: they still explain every pixel that was actually
+        // observed there, and a seed adds no observation. Falling back to this frame's pixel
+        // when there is no solution to project through — equally a seed.
         this.ensureBaseKeyframe();
         for (const kf of this.keyframes) {
             if (kf.frame === this.fitFrame) continue;
             const px = kf.solved
                 ? this.projectThroughState(this.stateFromSolved(kf.solved), world, size)
                 : null;
-            kf.uv.push(px ?? [vx, vy]);
+            kf.uv.push(px ? [px[0], px[1], 1] : [vx, vy, 1]);
         }
+        // The ACTIVE keyframe gained a real observation, so its solution no longer explains
+        // everything on this frame; the refit that normally follows re-earns it.
+        this.invalidateKeyframes("active");
         this.syncActiveKeyframe();
         this.updateKeyframeInfo();
 
@@ -1495,6 +1604,9 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 this.keyframes = [];
                 this.syncMotionOptions();
             }
+            // Every keyframe may have observed the deleted landmark, so every solution is now
+            // about a point set that no longer exists.
+            this.invalidateKeyframes("all");
             this.requestFit();
             if (this.autoFit) this.refitOtherKeyframes();
             this.updateKeyframeInfo();
@@ -1523,15 +1635,17 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (!p) return;
         const lla = ECEFToLLAVD_radii(pos);
         p.lat = lla.x; p.lon = lla.y; p.alt = lla.z;
+        this._markerMoved = true;
     }
 
     // ---------- the fit ----------
 
     fitNow() {
-        this.runFit(true);
         // An explicit Fit Now re-solves everything, so the whole keyframe set is consistent
-        // with the landmarks as they now stand.
-        this.refitOtherKeyframes();
+        // with the landmarks as they now stand — but only when the active solve actually RAN.
+        // A refusal (tool off, wrong frame, no video) refuses the whole operation: rewriting
+        // the other keyframes after refusing the active one would make "refused" a lie.
+        if (this.runFit(true)) this.refitOtherKeyframes();
     }
 
     /** Fit if auto-fit is on. Every interactive path goes through here. */
@@ -1540,20 +1654,17 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (this.autoFit) this.runFit(false);
     }
 
-    /** @param {boolean} animate replay the search rather than jumping to the answer */
-    runFit(explicit, animate = false) {
-        if (!this.enabled) return;
-        // A replay in progress owns the camera; starting another solve underneath it would have
-        // two things writing the same nodes every frame.
-        if (this.playback.running && !animate) return;
+    /** @returns {boolean} whether a solve actually ran — false on every refusal gate */
+    runFit(explicit) {
+        if (!this.enabled) return false;
 
         // Re-entrancy guard. Applying a fit selects switches and writes nodes, each of which
         // cascades; anything downstream that pokes this node back must not start a second solve
         // inside the first one's write-back.
-        if (this.applyingFit) return;
+        if (this.applyingFit) return false;
 
         const size = this.videoSize;
-        if (!size) { this.updateStatus("No video loaded"); return; }
+        if (!size) { this.updateStatus("No video loaded"); return false; }
 
         // The fit reads the LIVE camera as its starting state, and the live camera is whatever
         // the controllers produce at par.frame. Solving points from frame N against a camera
@@ -1563,15 +1674,15 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (this.points.length > 0 && !this.onCorrectFrame()) {
             this.updateStatus(this.wrongFrameMessage("fit"));
             setRenderOne(true);
-            return;
+            return false;
         }
 
         const state = this.currentCameraState();
-        if (!state) { this.updateStatus("No look camera"); return; }
+        if (!state) { this.updateStatus("No look camera"); return false; }
 
         if (Math.abs(state.elDeg) > MAX_ABS_EL) {
             this.updateStatus(`Camera is within ${90 - MAX_ABS_EL} deg of vertical — cannot fit`);
-            return;
+            return false;
         }
 
         const free = {
@@ -1582,7 +1693,20 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             fov: !this.lockFOV,
         };
 
-        const solverPoints = this.points.map((p) => {
+        // Only observations a person actually placed. A seeded marker is a projection of some
+        // camera this tool already believed in, so solving against it can only tell the solver
+        // what it already thinks — and on a freshly added keyframe, where EVERY marker is still
+        // a seed, it would "converge" instantly on the seeding camera and report a perfect fit
+        // of nothing. See addPointAtVideo/addFitKeyframe for where seeds are made and the drag
+        // handlers for where they become real.
+        const kept = this.points.filter((p) => !p.seeded);
+        if (kept.length < 2 && kept.length < this.points.length) {
+            this.updateStatus("The markers on this frame are still seeded guesses — drag each " +
+                "to its landmark before fitting");
+            setRenderOne(true);
+            return false;
+        }
+        const solverPoints = kept.map((p) => {
             const w = this.pointECEF(p);
             return {px: [p.vx, p.vy], world: [w.x, w.y, w.z]};
         });
@@ -1603,30 +1727,23 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             free,
             localFrame,
             liftFactory,
-            // Only when the user asked to watch. The direct solver takes it through `options`.
-            trace: animate,
-            options: animate ? {trace: true} : undefined,
         };
         const solveFrom = (initial) => (this.fitMethod === "homography"
             ? this.fitHomographyRefracted({...solverSpec, initial})
             : fitCameraToPoints({...solverSpec, initial}));
 
         let result = solveFrom(state);
-        // Re-solve from the answer until the answer stops improving — see SOLVE_PASSES. Not while
-        // animating: "Show Algorithm Working" is showing ONE descent, and splicing several
-        // together would show a search that never happened.
-        if (!animate) {
-            for (let pass = 1; pass < SOLVE_PASSES && result.ok; pass++) {
-                const again = solveFrom({
-                    position: result.position, azDeg: result.azDeg, elDeg: result.elDeg,
-                    rollDeg: result.rollDeg, vfovDeg: result.vfovDeg,
-                });
-                // Judged on RMS, the same metric the acceptance gate below and the Residual
-                // readout use, so a pass is kept exactly when it is an improvement the user
-                // would be shown.
-                if (!again.ok || !(again.rms < result.rms - RESOLVE_EPS)) break;
-                result = again;
-            }
+        // Re-solve from the answer until the answer stops improving — see SOLVE_PASSES.
+        for (let pass = 1; pass < SOLVE_PASSES && result.ok; pass++) {
+            const again = solveFrom({
+                position: result.position, azDeg: result.azDeg, elDeg: result.elDeg,
+                rollDeg: result.rollDeg, vfovDeg: result.vfovDeg,
+            });
+            // Judged on RMS, the same metric the acceptance gate below and the Residual
+            // readout use, so a pass is kept exactly when it is an improvement the user
+            // would be shown.
+            if (!again.ok || !(again.rms < result.rms - RESOLVE_EPS)) break;
+            result = again;
         }
 
         if (!result.ok) {
@@ -1635,7 +1752,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             this.observability = "-";
             this.updateStatus(result.reason);
             setRenderOne(true);
-            return;
+            return true;
         }
 
         // A solver always returns its best LOCAL minimum, and "best local" can be far worse than
@@ -1663,49 +1780,37 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             this.updateStatus(`Rejected: fit ${result.rms.toFixed(1)} px is worse than the ` +
                 `current ${current.rms.toFixed(1)} px — camera left alone`);
             setRenderOne(true);
-            return;
+            return true;
         }
 
-        const land = () => {
-            const notes = this.applyResult(result);
-            // The solved camera is also this keyframe's stored solution — the thing "Fit
-            // Keyframe Motion" interpolates between.
-            this.ensureBaseKeyframe();
-            const kf = this.activeKeyframe();
-            if (kf) {
-                kf.solved = this.solvedFromResult(result);
-                this.syncActiveKeyframe();
-                this.refreshMotionNodes();
-                this.updateKeyframeInfo();
-            }
-            // Residuals are keyed by point id, not by array index. Add or delete a point after a
-            // fit and the indices shift, which would silently draw each residual against the wrong
-            // landmark — the most misleading thing this display could do.
-            result.pointIds = this.points.map((p) => p.id);
-            this.lastResult = result;
-            this.residual = `${result.rms.toFixed(2)} px`;
-            // The homography solver reports its own observability, because what limits it is the
-            // control points' spread in RANGE rather than the parameter conditioning the direct
-            // solver measures.
-            this.observability = result.observability ?? describeObservability(result);
-            // Notes come LAST. They are the reasons the applied camera might not be the solved one,
-            // and an earlier version of this composed them the other way round — so every warning
-            // was overwritten by the word "Fitted" and none of them ever reached the user.
-            this.updateStatus([explicit ? "Fitted" : "Fitted (auto)", ...notes].join(" · "));
-            setRenderOne(true);
-        };
-
-        // Watching it: walk the trace first and apply the real result on arrival, so a replay ends
-        // in exactly the state an ordinary fit would have reached. The apply is deferred rather
-        // than done up front and re-shown, because applyResult selects switches — and selecting a
-        // heading source re-syncs ptzAngles from the live camera, which would fight the playback
-        // on every frame.
-        if (animate && Array.isArray(result.trace) && result.trace.length > 1) {
-            const label = this.fitMethod === "homography" ? "Sweeping FOV" : "Descending";
-            this.playback.start(result.trace, label, land);
-            return;
+        const notes = this.applyResult(result);
+        // The solved camera is also this keyframe's stored solution — the thing "Fit
+        // Keyframe Motion" interpolates between.
+        this.ensureBaseKeyframe();
+        const kf = this.activeKeyframe();
+        if (kf) {
+            kf.solved = this.solvedFromResult(result);
+            this.syncActiveKeyframe();
+            this.refreshMotionNodes();
+            this.updateKeyframeInfo();
         }
-        land();
+        // Residuals are keyed by point id, not by array index — and only the points the solve
+        // actually used get one. Add or delete a point after a fit and the indices shift, and a
+        // seeded marker was never solved against; drawing a residual for either would claim a
+        // disagreement with a landmark nobody measured.
+        result.pointIds = kept.map((p) => p.id);
+        this.lastResult = result;
+        this.residual = `${result.rms.toFixed(2)} px`;
+        // The homography solver reports its own observability, because what limits it is the
+        // control points' spread in RANGE rather than the parameter conditioning the direct
+        // solver measures.
+        this.observability = result.observability ?? describeObservability(result);
+        // Notes come LAST. They are the reasons the applied camera might not be the solved one,
+        // and an earlier version of this composed them the other way round — so every warning
+        // was overwritten by the word "Fitted" and none of them ever reached the user.
+        this.updateStatus([explicit ? "Fitted" : "Fitted (auto)", ...notes].join(" · "));
+        setRenderOne(true);
+        return true;
     }
 
     /**
@@ -1733,8 +1838,14 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         }
         let result = null;
         for (let pass = 0; pass < 2; pass++) {
-            const lifted = spec.points.map((sp, i) => {
-                const w = this.apparentPointECEF(this.points[i], from);
+            // Lift each correspondence's OWN world position. spec.points is compacted — seeded
+            // markers are filtered out before the solver sees anything — so indexing this.points
+            // in parallel would pair pixels with the wrong landmarks whenever a seed sits
+            // between two real observations.
+            const ctx = currentTerrestrialLiftContext(from);
+            const lifted = spec.points.map((sp) => {
+                const w = liftWorldPoint(ctx,
+                    new Vector3(sp.world[0], sp.world[1], sp.world[2]), new Vector3());
                 return {px: sp.px, world: [w.x, w.y, w.z]};
             });
             const r = fitCameraByPlaneHomography({...spec, points: lifted});
@@ -1784,48 +1895,6 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             },
         });
         return {...result, rms: scored.rms, perPoint: scored.perPoint};
-    }
-
-    /**
-     * Solve again, but replay the search instead of jumping to the answer.
-     *
-     * Re-solves rather than replaying the last fit, so what is shown is always the search that
-     * produced the camera you end up with — a stored trace could be from before the points moved.
-     */
-    showAlgorithmWorking() {
-        if (this.playback.running) { this.playback.stop(); return; }
-        // The replay drives the ordinary camera nodes; while Fit Points motion owns any of
-        // them the camera would not follow the search, so there would be nothing to watch.
-        // Solve without the replay instead.
-        if (this.motionOwnsAspects().any) { this.runFit(true, false); return; }
-        this.runFit(true, true);
-    }
-
-    /** Advance a running replay by one step. Called once per frame from update(). */
-    stepPlayback() {
-        if (!this.playback.running) return;
-        const state = this.playback.step();
-        if (!state) return;
-        // Guarded so the cascade this write kicks off cannot re-enter runFit and start a second
-        // solve inside the replay of the first.
-        this.applyingFit = true;
-        try {
-            showTracedCamera(state, (p) => {
-                const lla = ECEFToLLAVD_radii(new Vector3(p[0], p[1], p[2]));
-                // MSL, matching writePosition — the altitude field means orthometric height, and
-                // recalculate() adds the geoid separation back on the way to ECEF.
-                return [lla.x, lla.y, lla.z - meanSeaLevelOffset(lla.x, lla.y)];
-            });
-        } finally {
-            this.applyingFit = false;
-        }
-        // The last step both shows itself AND lands the fit, and land() has already written the
-        // real status by the time step() returns. Writing progress over it here left "Descending"
-        // on screen after the fit had finished.
-        if (!this.playback.running) return;
-        const detail = Number.isFinite(state.rms) ? ` · ${state.rms.toFixed(1)} px`
-            : Number.isFinite(state.score) ? ` · score ${state.score.toExponential(2)}` : "";
-        this.updateStatus(`${this.playback.label} ${this.playback.progress}${detail}`);
     }
 
     /**
@@ -2111,6 +2180,9 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
         if (hit) {
             this.draggingId = hit.id;
+            // Grabbing is not moving: a bare click on a marker states nothing about the
+            // observations and must not invalidate anything on release.
+            this._dragMoved = false;
             this.beginUndo();
             return true;
         }
@@ -2152,6 +2224,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         const [vx, vy] = this.overlayView.canvasToVideoCoordsOriginal(cx, cy);
         p.vx = vx;
         p.vy = vy;
+        // The user has now placed this marker on this frame: it stops being a seed and becomes
+        // an observation the solver may use.
+        p.seeded = false;
+        this._dragMoved = true;
         setRenderOne(true);
     }
 
@@ -2232,6 +2308,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.draggingId = null;
         // The keyframe entry is the durable store; the drag edited only the mirror.
         this.syncActiveKeyframe();
+        // This keyframe's pixels changed, so its stored solution is a statement about the old
+        // ones. Other keyframes are untouched — a 2D drag edits only this frame. Only when the
+        // pixel actually moved: releasing a grabbed marker in place changed nothing.
+        if (this._dragMoved) this.invalidateKeyframes("active");
         // A 2D drag does not depend on the fitted camera, so unlike the 3D handles it could refit
         // live. It still commits on release: a solve per pointermove would write nodes and
         // cascade the whole graph dozens of times a second for no visible gain.

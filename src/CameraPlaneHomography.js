@@ -282,11 +282,9 @@ export function fitCameraByPlaneHomography(spec) {
     const LO = focalFromHFov(170), HI = focalFromHFov(1.0);
     const N = 900;
     let bestF = null, bestS = Infinity;
-    const samples = [];
     for (let i = 0; i <= N; i++) {
         const f = LO * Math.pow(HI / LO, i / N);
         const s = orthonormalityScore(Hm, f, cx, cy);
-        samples.push([f, s]);
         if (s < bestS) { bestS = s; bestF = f; }
     }
     if (bestF === null || !Number.isFinite(bestS)) {
@@ -317,10 +315,9 @@ export function fitCameraByPlaneHomography(spec) {
         add(scale(east, v[0]), add(scale(north, v[1]), scale(up, v[2]))));
 
     /**
-     * One focal length -> one complete camera. Every focal the scan scored implies a whole camera,
-     * not just a field of view — position and pointing fall out of the same decomposition — which
-     * is the thing worth seeing when the sweep is replayed. The answer and every traced step go
-     * through this same function, so the animation shows exactly the cameras that were scored.
+     * One focal length -> one complete camera. Every focal the scan scores implies a whole
+     * camera, not just a field of view — position and pointing fall out of the same
+     * decomposition.
      *
      * @returns {object|null} null when the decomposition puts the camera below the plane
      */
@@ -408,21 +405,6 @@ export function fitCameraByPlaneHomography(spec) {
             maxOffPlane: plane.maxOffPlane,
             heightAbovePlane: state.heightAbovePlane,
         },
-        // Undefined unless spec.trace was set. The sweep itself, subsampled for playback: the
-        // camera each scored focal length implies, ending on the answer. Replaying it walks the
-        // camera along the focal/position trade-off, so a score that barely moves while the
-        // camera travels a long way is visible rather than merely reported by `observability`.
-        trace: !spec.trace ? undefined : (() => {
-            const out = [];
-            const STEPS = Math.min(140, samples.length - 1);
-            for (let i = 0; i <= STEPS; i++) {
-                const [f, s] = samples[Math.round((i * (samples.length - 1)) / STEPS)];
-                const st = cameraAtFocal(f);
-                if (st !== null) out.push({...st, score: s});
-            }
-            out.push({...state, score: bestS});     // finish on the one it settled at
-            return out;
-        })(),
         freeParams: ["homography"],
     };
 }

@@ -45,11 +45,6 @@ import {lensFromVFOV, rayToPixel} from "./CameraLens";
 export const MAX_ABS_EL = 85;
 
 export const CAMERA_FIT_DEFAULTS = {
-    // Record the winning descent, seed included, so the UI can replay it. Off by default: this is
-    // for "Show Algorithm Working" and nothing else, and a solve that nobody is watching should
-    // not pay for it.
-    trace: false,
-
     // Levenberg-Marquardt.
     maxIterations: 120,
     lambda0: 1e-3,
@@ -470,13 +465,7 @@ function rmsOf(r, n) {
 // condition number doing it.
 // -----------------------------------------------------------------------------------------
 
-/**
- * @param {Array|null} trace when given, every accepted step is appended to it, starting with the
- *        seed. Only the winning run's trace is kept (see the refine loop), so "Show Algorithm
- *        Working" replays the descent that actually produced the answer rather than a discarded
- *        one. Null by default and never allocated when off, so the solve is untouched.
- */
-function runLM(seedParams, base, ctx, maxIterations = ctx.options.maxIterations, trace = null) {
+function runLM(seedParams, base, ctx, maxIterations = ctx.options.maxIterations) {
     const {points, lens, imageSize, localFrame, liftFactory, freeIdx, options} = ctx;
     const nFree = freeIdx.length;
     const nPts = points.length;
@@ -495,17 +484,6 @@ function runLM(seedParams, base, ctx, maxIterations = ctx.options.maxIterations,
     const J = new Float64Array(m * nFree);
     let lastSVD = null;
     let lastColScale = null;
-
-    const snap = () => {
-        if (trace === null) return;
-        trace.push({
-            position: state.position.slice(),
-            azDeg: state.azDeg, elDeg: state.elDeg, rollDeg: state.rollDeg,
-            focalScale: state.focalScale,
-            rms: rmsOf(r, nPts),
-        });
-    };
-    snap();     // the seed — the "rough position" the animation starts from
 
     for (let iter = 0; iter < maxIterations; iter++) {
         // Tighten the robust transition once the fit is roughly in place. Starting tight would
@@ -593,7 +571,6 @@ function runLM(seedParams, base, ctx, maxIterations = ctx.options.maxIterations,
                     w = huberWeights(r, nPts, delta);
                     lambda = Math.max(lambda * options.lambdaDown, 1e-12);
                     improved = true;
-                    snap();     // only accepted steps: rejected trials are not where the fit went
                     if (rel < options.tolerance) iter = maxIterations;   // converged
                     break;
                 }
@@ -1017,17 +994,15 @@ export function fitCameraToPoints(spec) {
     // --- refine every seed, keep the best ----------------------------------------------------
 
     let best = null;
-    let bestTrace = null;
     for (const seed of seeds) {
-        const t = options.trace ? [] : null;
-        const fit = runLM(seed, base, ctx, undefined, t);
+        const fit = runLM(seed, base, ctx);
         if (!Number.isFinite(fit.cost)) continue;
         // Cheirality first: a solution with landmarks behind the camera is not a camera, whatever
         // its residual says.
         const better = best === null
             || fit.behind < best.behind
             || (fit.behind === best.behind && fit.cost < best.cost);
-        if (better) { best = fit; bestTrace = t; }
+        if (better) best = fit;
     }
 
     if (best === null) return fail("The solver did not converge from any starting point.");
@@ -1037,17 +1012,13 @@ export function fitCameraToPoints(spec) {
     // See maxRestarts. Only the winner: the losing seeds are in other basins and finishing their
     // descent would not change which basin won.
     for (let restart = 0; restart < options.maxRestarts; restart++) {
-        const t = options.trace ? [] : null;
-        const again = runLM(best.params, base, ctx, undefined, t);
+        const again = runLM(best.params, base, ctx);
         if (!Number.isFinite(again.cost)) break;
         const better = again.behind < best.behind
             || (again.behind === best.behind && again.cost < best.cost);
         if (!better) break;
         const improvedBy = (best.cost - again.cost) / Math.max(best.cost, 1e-300);
         best = again;
-        // The restart's first trace entry IS the previous run's last state, so drop it — an
-        // animated replay should not sit still for a frame at every restart boundary.
-        if (t !== null && bestTrace !== null) bestTrace.push(...t.slice(1));
         if (improvedBy < options.restartTolerance) break;
     }
 
@@ -1090,15 +1061,6 @@ export function fitCameraToPoints(spec) {
         diagnostics: buildDiagnostics(best, options, nPts),
         seedReport,
         freeParams: freeIdx.map((i) => PARAM_NAMES[i]),
-        // Undefined unless options.trace was set. focalScale is what the optimiser actually moves;
-        // it is converted here so a consumer replaying the trace never has to know about the base
-        // lens, and every entry is a complete camera in the same shape as the result itself.
-        trace: bestTrace === null ? undefined : bestTrace.map((s) => ({
-            position: s.position,
-            azDeg: s.azDeg, elDeg: s.elDeg, rollDeg: s.rollDeg,
-            vfovDeg: 2 * Math.atan((imageSize[1] / 2) / (lens.focalPx * s.focalScale)) / DEG,
-            rms: s.rms,
-        })),
     };
 }
 

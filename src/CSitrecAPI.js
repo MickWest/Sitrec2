@@ -251,8 +251,11 @@ class CSitrecAPI {
                     if (world?.error) return world;
                     let point = null;
                     fit.withUndo("Add camera fit point", () => {
-                        point = fit.addPointAtVideo(vx, vy);
-                        if (point && world) Object.assign(point, world);
+                        // The world position goes INTO the add, not on afterwards: the seeds
+                        // the add pushes into the other keyframes are projections of the world
+                        // position, and they must describe the caller's landmark, not a surface
+                        // guess that was about to be discarded.
+                        point = fit.addPointAtVideo(vx, vy, world);
                         if (point) fit.requestFit();
                     });
                     if (!point) return {success: false, error: "could not add the point (no video or no look camera)"};
@@ -287,11 +290,22 @@ class CSitrecAPI {
                         world = {lat: p.lat, lon: p.lon, alt: Number.isFinite(v?.alt)
                             ? v.alt : v.altMSL + meanSeaLevelOffset(p.lat, p.lon)};
                     }
+                    const movedPixel = Number.isFinite(v?.vx) || Number.isFinite(v?.vy);
                     fit.withUndo("Move camera fit point", () => {
                         if (Number.isFinite(v?.vx)) p.vx = v.vx;
                         if (Number.isFinite(v?.vy)) p.vy = v.vy;
+                        // The caller has stated where this landmark is on this frame, exactly
+                        // as a hand drag would — the pixel stops being a seed.
+                        if (movedPixel) p.seeded = false;
                         if (world) Object.assign(p, world);
+                        // Same lifecycle as the UI edits: a pixel edit stales this keyframe's
+                        // solution, a world edit stales every keyframe's, and the refits that
+                        // follow re-earn what they can.
+                        if (movedPixel || world) {
+                            fit.invalidateKeyframes(world ? "all" : "active");
+                        }
                         fit.requestFit();
+                        if (world && fit.autoFit) fit.refitOtherKeyframes();
                     });
                     setRenderOne(true);
                     return {success: true, point: this._fitPointOut(p),
