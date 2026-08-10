@@ -183,10 +183,18 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         const satSig = satNode
             ? `${satNode.norad}/${satNode.array.length}/${satNode.array[0]?.position?.x ?? 0}/${satNode.array[satNode.array.length - 1]?.position?.x ?? 0}`
             : "none";
+        // The line set for the current style is part of the signature AS a load state:
+        // switching to Astrometry starts a fetch (its file is the one deferred night-sky
+        // asset), and a render landing mid-fetch would otherwise cache a signature the
+        // arrival's setRenderOne can no longer distinguish — leaving the chart lineless
+        // until some unrelated input changed the signature.
+        const lineKey = nightSky.constellationStyle === "astrometry"
+            ? "constellationsLinesAstrometry" : "constellationsLines";
         const signature = [w, h, this.devicePixelRatio, this.colorScheme, this.magLimit,
             date.getTime(), lla.x.toFixed(4), lla.y.toFixed(4), lla.z.toFixed(0),
             GlobalDateTimeNode.getTimeZoneOffset(),
-            nightSky.starField?.BSC_NumStars ?? 0, nightSky.constellationStyle, satSig,
+            nightSky.starField?.BSC_NumStars ?? 0, nightSky.constellationStyle,
+            FileManager.exists(lineKey), satSig,
         ].join("|");
         if (signature === this._lastSignature) return;
         this._lastSignature = signature;
