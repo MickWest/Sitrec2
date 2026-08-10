@@ -191,10 +191,13 @@ export class CNodeTerrain extends CNode {
         const capMaterial = new MeshBasicMaterial({ color: 0x808080, side: DoubleSide });
         this.polarCapNorth = new Mesh(createPolarCapGeometry(true), capMaterial);
         this.polarCapSouth = new Mesh(createPolarCapGeometry(false), capMaterial.clone());
-        this.polarCapNorth.visible = Globals.dynamicSubdivision === true;
-        this.polarCapSouth.visible = Globals.dynamicSubdivision === true;
         GlobalScene.add(this.polarCapNorth);
         GlobalScene.add(this.polarCapSouth);
+        // Full visibility logic, not a raw dynamicSubdivision check: the
+        // terrain node is recreated when the map type changes (e.g. enabling
+        // 3D buildings), and a raw assignment here brought the caps back
+        // while Flat Earth rendering had them hidden.
+        this.updateGreySphereVisibility();
 
         // // DEBUG: Create test spheres to verify rendering in VR
         // const testSphereRadius = 10; // 10m radius

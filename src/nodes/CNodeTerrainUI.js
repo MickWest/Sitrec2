@@ -1905,6 +1905,16 @@ export class CNodeTerrainUI extends CNode {
                         preparedViews.push(view);
                     }
                     view.camera.updateMatrixWorld(true);
+                    // Flat Earth rendering: tile selection tests WARPED tile
+                    // spheres (Globals.flatEarthWarpSphere in
+                    // calculateTileVisibility), so the frustums and camera
+                    // distances built from this camera during subdivision
+                    // must come from the warped RENDER pose — the selection
+                    // camera has to live in the same space as the volumes it
+                    // tests. This also folds the warp into the camera
+                    // fingerprint below, so toggling the mode re-opens the
+                    // subdivision grace window. Restored in the finally.
+                    Globals.flatEarthWarpCamera?.(view.camera);
                 }
 
                 let cameraFingerprint = 0;
@@ -2001,6 +2011,9 @@ export class CNodeTerrainUI extends CNode {
                 // Restore in a finally: an exception anywhere in subdivision would otherwise
                 // strand every view's camera in the prepared projection, quietly corrupting the
                 // rendered view rather than just failing this pass.
+                for (const view of views) {
+                    if (view?.camera) Globals.flatEarthRestoreCamera?.(view.camera);
+                }
                 for (const view of preparedViews) view.restoreCameraAfterLOD();
             }
 
@@ -2070,10 +2083,20 @@ export class CNodeTerrainUI extends CNode {
 
 
         let terrainID = "TerrainModel"
-        // remove the old terrain
+        // Remove the old terrain. It may still be WIRED — sitches with a
+        // Flattening slider link a "flattening" GUI node into it
+        // (SituationSetup) — and disposeRemove correctly refuses linked
+        // nodes, so the old direct call asserted on every rebuild (map
+        // change, 3D buildings toggle) in any sitch with flattening.
+        // Unlink first, and remember the inputs so the rebuilt node keeps
+        // them: without the re-wire the Flattening slider silently stopped
+        // working after a rebuild.
+        let oldInputs = null;
         if (this.terrainNode) {
             terrainID = this.terrainNode.id;
-            NodeMan.disposeRemove(this.terrainNode)
+            oldInputs = {...this.terrainNode.inputs};
+            NodeMan.unlinkDisposeRemove(terrainID);
+            this.terrainNode = null;
         }
         // and make a new one
         this.terrainNode = new CNodeTerrain({
@@ -2082,6 +2105,11 @@ export class CNodeTerrainUI extends CNode {
             UINode: this,
             }
         )
+        if (oldInputs) {
+            for (const key of Object.keys(oldInputs)) {
+                this.terrainNode.addInput(key, oldInputs[key]);
+            }
+        }
 
         this.updateTerrainAndOceanVisibility();
     }

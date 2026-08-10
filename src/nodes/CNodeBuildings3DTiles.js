@@ -10,7 +10,7 @@
 import {CNode} from "./CNode";
 import {Globals, markShadowCastersDirty, NodeMan, setRenderOne} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
-import {DoubleSide, Group, Raycaster, Vector2} from "three";
+import {DoubleSide, Group, Matrix4, Raycaster, Sphere, Vector2} from "three";
 import * as LAYER from "../LayerMasks";
 import {TilesRenderer} from "3d-tiles-renderer";
 import {GLTFExtensionsPlugin, TilesFadePlugin} from "3d-tiles-renderer/plugins";
@@ -73,6 +73,148 @@ function applyMeshOpacity(mesh, opacity) {
 /** Scratch for renderer.getSize() in the per-frame settle check — avoids a per-frame alloc. */
 const _tilesSizeTmp = new Vector2();
 
+// ── Flat Earth aware tile selection ─────────────────────────────────
+//
+// Flat Earth rendering (Physics → Scenarios → Flat Earth) warps every tile
+// MESH onto an azimuthal-equidistant disc in the vertex shader, but the
+// library still selected and refined tiles against their unwarped
+// globe-space bounding volumes: descendants whose disc image is on screen
+// were rejected as out of frustum, or refinement stopped on an understated
+// globe-space screen-space error, leaving a loaded coarse (often gray,
+// untextured-glTF) parent as the legal fallback — worst near the disc rim,
+// where the projection stretch is largest.
+//
+// The one seam that controls all of it in 3d-tiles-renderer 0.4.21 is
+// TilesRenderer.calculateTileViewError(tile, target) — traversal culling,
+// refinement, download priority, fade and LRU retention all consume its
+// {inView, error, distanceFromCamera} outputs — so this subclass replaces
+// exactly that method and nothing else. (A plugin cannot host this: the
+// 0.4.x plugin hook of the same name is COMBINED with the base result via
+// max-error/min-distance, it cannot replace it.)
+//
+// Behavior:
+//  - Flat mode off (Globals.flatEarthWarpSphere null): the stock method,
+//    bit-for-bit — this class is a 100% no-op.
+//  - Near field ("locally rigid": the warp moved the tile's bounding
+//    sphere by less than its own radius, with modest stretch): also the
+//    stock method. There the physical camera vs unwarped volumes are a
+//    consistent pair, and the exact OBB frustum test and exact SSE are
+//    strictly better than a sphere approximation.
+//  - Far field: the tile's bounding sphere (derived from whatever volume
+//    type the tileset supplied — box/sphere/region — via getSphere) is
+//    taken to world space through group.matrixWorld, warped through the
+//    same Globals.flatEarthWarpSphere hook the terrain quadtree uses, and
+//    taken back into the tiles-group frame the library's cached camera
+//    frustums and positions live in (projection × matrixWorldInverse ×
+//    group.matrixWorld — see prepareForTraversal). Frustum test and SSE
+//    then run against that warped sphere, with the tile's geometricError
+//    magnified by the sphere's inflation ratio: the AEP stretches
+//    east-west distances (σ = (π/2−lat)/cos lat), and a stretched mesh's
+//    real on-screen error grows by the same factor.
+//
+// The deliberate globe-space OBB skip in the far field mirrors
+// src/QuadTreeMap.js calculateTileVisibility, which pioneered this exact
+// near/far split for Sitrec's own terrain tiles.
+const _feLocalSphere = new Sphere();
+const _feWorldSphere = new Sphere();
+const _feFlatSphere = new Sphere();
+const _feInvGroup = new Matrix4();
+
+class FlatAwareTilesRenderer extends TilesRenderer {
+    calculateTileViewError(tile, target) {
+        const warpSphere = Globals.flatEarthWarpSphere;
+        if (!warpSphere) {
+            return super.calculateTileViewError(tile, target);
+        }
+
+        // Generic sphere for ANY bounding volume type (box → OBB, sphere,
+        // region). tile.engineData is the 0.4.x name; tile.cached is a
+        // deprecated warning-producing alias.
+        const boundingVolume = tile.engineData.boundingVolume;
+        boundingVolume.getSphere(_feLocalSphere);
+        _feWorldSphere.copy(_feLocalSphere).applyMatrix4(this.group.matrixWorld);
+        const originalRadius = _feWorldSphere.radius;
+
+        // Mutates the sphere; true means the warp is locally rigid here.
+        if (warpSphere(_feWorldSphere) === true) {
+            return super.calculateTileViewError(tile, target);
+        }
+
+        // Back into the tiles-group frame the cached cameraInfo lives in.
+        _feInvGroup.copy(this.group.matrixWorld).invert();
+        _feFlatSphere.copy(_feWorldSphere).applyMatrix4(_feInvGroup);
+
+        // The AEP magnifies the mesh along with its bound — scale the
+        // geometric error by the same conservative factor. It also BENDS
+        // the mesh: tile edges that should follow the projection's curved
+        // parallels render as straight chords (linear interpolation across
+        // the tile's triangles), so adjacent tiles at different LODs no
+        // longer stitch and sliver gaps open along the old tile grid —
+        // seen as straight gray bands across the disc. That miss is the
+        // chord sagitta, ~r²/R across the tile at the warp's ~1/R
+        // curvature scale (the /2 dropped as a safety factor since the
+        // local curvature varies with latitude). Folding it into the error
+        // makes continent-scale tiles refine until their chords are
+        // sub-target while leaving city-scale tiles (sagitta ~metres)
+        // untouched.
+        const warpScale = Math.max(1, _feWorldSphere.radius / Math.max(originalRadius, 1e-9));
+        // Two curvature bounds, take the worse:
+        //  - globe-scale: the warp's overall ~1/R nonlinearity across the
+        //    tile's globe-space extent;
+        //  - rim-arc: near the south pole the tile's DISC-space width
+        //    (the warped radius — the east-west stretch is exactly why it
+        //    was inflated) subtends an arc of the rim (radius ≤ π·R0 ≈
+        //    2e7 m), and a straight chord across that arc sags by w²/2ρ.
+        //    This is what forces pole-adjacent, wide-longitude tiles to
+        //    refine until their chords hug the rim instead of slashing
+        //    across the disc — and drives the pole-containing tile down to
+        //    max depth, where the shader's 0.5° singularity cap culls it.
+        const chordSagitta = Math.max(
+            (originalRadius * originalRadius) / 6.37e6,
+            (_feWorldSphere.radius * _feWorldSphere.radius) / 4e7,
+        );
+        const flatGeometricError = tile.geometricError * warpScale + chordSagitta;
+
+        // Stock aggregation semantics (max error / min distance over
+        // in-view cameras; all-camera fallbacks for load priority), with
+        // the warped sphere standing in for the bounding volume.
+        const cameraInfo = this.cameraInfo;
+        let inView = false;
+        let inViewError = 0;
+        let inViewDistance = Infinity;
+        let maxCameraError = 0;
+        let minCameraDistance = Infinity;
+
+        for (let i = 0, l = cameraInfo.length; i < l; i++) {
+            const info = cameraInfo[i];
+            let error;
+            let distance;
+            if (info.isOrthographic) {
+                error = flatGeometricError / info.pixelSize;
+                distance = Infinity;
+            } else {
+                distance = Math.max(_feFlatSphere.distanceToPoint(info.position), 0);
+                error = distance === 0
+                    ? Infinity
+                    : flatGeometricError / (distance * info.sseDenominator);
+            }
+
+            if (info.frustum.intersectsSphere(_feFlatSphere)) {
+                inView = true;
+                inViewError = Math.max(inViewError, error);
+                inViewDistance = Math.min(inViewDistance, distance);
+            }
+
+            maxCameraError = Math.max(maxCameraError, error);
+            minCameraDistance = Math.min(minCameraDistance, distance);
+        }
+
+        target.inView = inView;
+        target.error = inView ? inViewError : maxCameraError;
+        target.distanceFromCamera = inView ? inViewDistance : minCameraDistance;
+    }
+}
+
 // Per-view state: a TilesRenderer instance, its parent group, and the view it tracks.
 class PerViewTiles {
     /**
@@ -94,7 +236,7 @@ class PerViewTiles {
         // already-loaded ones. The fade plugin fades via shader dither, not material.opacity, so
         // these don't fight.
         this.opacity = opacity;
-        this.renderer = new TilesRenderer();
+        this.renderer = new FlatAwareTilesRenderer();
 
         // Raise the tile cache's BYTE budget. The library default (maxBytesSize
         // 0.4GB) is sized for aerial/oblique views; a ground-level Google

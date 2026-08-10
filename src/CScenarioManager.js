@@ -159,9 +159,12 @@ ScenarioManager.register({
 
 ScenarioManager.register({
     id: "flatEarth",
-    // Menu-only: enabling is interactive and the state is not serialized
-    // (an experimental render mode), so no activate/activeInMods.
     populate: async () => (await import("./scenarios/FlatEarthScenario")).setupFlatEarth(),
+    activate: async () => (await import("./scenarios/FlatEarthScenario")).activateFlatEarth(),
+    // Only saves with the mode actually ON re-activate it; a save made
+    // after enabling-then-disabling carries flatEnabled:false and is left
+    // alone (its mods for the missing node are silently dropped).
+    activeInMods: (mods) => mods.FlatEarth?.flatEnabled === true,
 });
 
 ScenarioManager.register({
