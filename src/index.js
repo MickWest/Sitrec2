@@ -1917,6 +1917,7 @@ async function initializeOnce() {
     addGUIFolder("football", "Football", "scenarios");
     addGUIFolder("nimitz", "Nimitz", "scenarios");
     addGUIFolder("floodSim", "Flood Sim", "scenarios");
+    addGUIFolder("flatEarth", "Flat Earth", "scenarios");
 
     // addGUIMenu("missile", "Missile").tooltip("Homing missile parameters\nControls for the missile simulation including mass, thrust, air resistance, and burn time");
 

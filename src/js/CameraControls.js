@@ -277,6 +277,17 @@ class CameraMapControls {
 			this.view._refreshCursorFromMouse(mouseToNDC(this.view, event.clientX, event.clientY));
 		}
 
+		// Flat Earth rendering: zoomBy dollies straight toward the RENDERED
+		// position of the point under the cursor, and moving along the cursor
+		// ray keeps that point under the cursor by itself — the globe
+		// sphere-rotate correction below assumes a spherical ground and would
+		// apply a bogus rotation.
+		if (Globals.flatEarthWarpPoint) {
+			this.zoomBy(Math.sign(event.deltaY));
+			setRenderOne(true);
+			return;
+		}
+
 		const ndc = mouseToNDC(this.view, event.clientX, event.clientY);
 		const raycaster = new Raycaster();
 		raycaster.setFromCamera(ndc, this.camera);
@@ -626,6 +637,13 @@ class CameraMapControls {
 
 		} else {
 
+			// Flat Earth rendering note: this.target is the globe-space
+			// (physics) point under the cursor, and dollying toward it in
+			// globe space is still correct — the render-time camera warp
+			// (FlatEarthScenario) maps the physical camera path C→target to
+			// the on-screen path warp(C)→warp(target), and warp(target) is
+			// exactly the pixel under the cursor. No flat-space anchor
+			// conversion is needed here.
 			var target2Camera = this.camera.position.clone().sub(this.target)
 			var length = target2Camera.length()
 

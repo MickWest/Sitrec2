@@ -63,9 +63,9 @@ class CManager {
             //assert (node.id === key, "Trying to disposeRemove a node with a different id, key="+key+", node.id="+node.id);
 
             // node inputs is an object, it should be empty
-            assert(node.inputs === undefined || Object.keys(node.inputs).length === 0, "Trying to disposeRemove a node with inputs, id="+id);
+            assert(node.inputs === undefined || Object.keys(node.inputs).length === 0, "Trying to disposeRemove a node with inputs, id="+key);
             // node outputs is an array, it should be empty
-            assert(node.outputs === undefined || node.outputs.length === 0, "Trying to disposeRemove a node with outputs, id="+id);
+            assert(node.outputs === undefined || node.outputs.length === 0, "Trying to disposeRemove a node with outputs, id="+key);
 
             if (this.list[key].data.dispose !== undefined) {
 //                console.log("Disposing " + key);

@@ -273,6 +273,12 @@ if (abs(tileOutputGamma - 1.0) > 0.0001) {
 
         mat.setTileOutputGamma(options.tileOutputGamma ?? mat.tileOutputGamma ?? 1.0);
         mat.onBeforeCompile = mat._onBeforeCompile.bind(mat);
+        // Flat Earth rendering: patch at creation so a freshly streamed 3D
+        // tile lands on the disc on its first frame instead of flashing at
+        // its globe position until the 500 ms scene sweep finds it. MUST
+        // come after the onBeforeCompile rebind above, which would clobber
+        // the patch's chained wrapper. Null when the mode is off.
+        Globals.flatEarthPatchMaterial?.(mat);
         mat.needsUpdate = true;
         return mat;
     }

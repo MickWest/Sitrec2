@@ -158,6 +158,16 @@ ScenarioManager.register({
 });
 
 ScenarioManager.register({
+    id: "flatEarth",
+    populate: async () => (await import("./scenarios/FlatEarthScenario")).setupFlatEarth(),
+    activate: async () => (await import("./scenarios/FlatEarthScenario")).activateFlatEarth(),
+    // Only saves with the mode actually ON re-activate it; a save made
+    // after enabling-then-disabling carries flatEnabled:false and is left
+    // alone (its mods for the missing node are silently dropped).
+    activeInMods: (mods) => mods.FlatEarth?.flatEnabled === true,
+});
+
+ScenarioManager.register({
     id: "floodSim",
     populate: async () => (await import("./scenarios/FloodSimScenario")).setupFloodSim(),
     activate: async () => (await import("./scenarios/FloodSimScenario")).activateFloodSim(),

@@ -1,5 +1,5 @@
 import {Raycaster, Vector3} from "three";
-import {NodeMan} from "./Globals";
+import {Globals, NodeMan} from "./Globals";
 import {ECEFToLLAVD_radii, wgs84} from "./LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import * as LAYER from "./LayerMasks";
@@ -36,6 +36,15 @@ import * as LAYER from "./LayerMasks";
 // to choose a flat drag-plane (near surface) over a globe drag-sphere, and a
 // building roof is a near surface just like terrain.
 export function raycastLocalGround(raycaster, camera = undefined) {
+    // Flat Earth rendering (Physics → Scenarios → Flat Earth) warps the
+    // RENDER into an azimuthal-equidistant disc, so the screen ray must be
+    // traced through the warped space and mapped back to globe coordinates.
+    // The scenario installs this hook only while it is enabled; it returns
+    // this function's exact {point, isTerrain}|null contract.
+    if (Globals.flatEarthPickGround) {
+        return Globals.flatEarthPickGround(raycaster.ray.origin, raycaster.ray.direction);
+    }
+
     // Track the nearest concrete-surface hit so a building roof under the
     // cursor beats the terrain behind it.
     let bestPoint = null;
@@ -144,7 +153,7 @@ export function ellipsoidAlongRay(origin, direction) {
 // CNodeTerrain.getPointBelow. Where no elevation data exists (outside the
 // sitch region, tiles still loading, no TerrainModel at all) the surface
 // degrades to the geoid, i.e. sea level, with tileKey "-1/-1/-1".
-function sampleGroundSurface(p, elevationMap, out) {
+export function sampleGroundSurface(p, elevationMap, out) {
     const LLA = ECEFToLLAVD_radii(p);
     const seaLevel = meanSeaLevelOffset(LLA.x, LLA.y);
     let elevation = seaLevel;

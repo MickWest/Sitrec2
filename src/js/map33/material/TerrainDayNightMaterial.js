@@ -456,6 +456,11 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 
     // Tag so consumers can identify a TerrainDayNight material for per-view cloning.
     material.userData.isTerrainDayNight = true;
+    // Flat Earth rendering: patch at creation, not via the 500 ms scene
+    // sweep — a tile activated on an LOD change must land on the disc on
+    // its FIRST frame, or the swap briefly shows a hole where the new tile
+    // still sits at its globe position. Null when the mode is off.
+    Globals.flatEarthPatchMaterial?.(material);
     return material;
 }
 
@@ -506,5 +511,8 @@ export function cloneTerrainDayNightMaterialForView(orig) {
     });
     clone.userData.isTerrainDayNight = true;
     clone.userData.isPerViewClone = true;
+    // See createTerrainDayNightMaterial — per-view clones need the flat
+    // earth patch at creation for the same first-frame reason.
+    Globals.flatEarthPatchMaterial?.(clone);
     return clone;
 }
