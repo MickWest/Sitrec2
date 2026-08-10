@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.125.0 (2026-08-10)
+
+### New Features
+
+- **Ground Grid** (right-click the ground → *Add Ground Grid*): a rectangular measurement grid draped over the terrain, with major and minor lines at set spacings — 1000×1000 with lines every 100 and 10 of your current units by default. Drag its handles to move, resize or rotate it exactly like a ground overlay, with full undo; its settings (in the Objects menu and the floating edit menu) cover size, line spacing, line widths and minor-line brightness, separate major and minor colours with an optional lock, rotation, altitude and opacity. Sizes and spacings are set in your current units (metres or feet) and the grid keeps its real-world size when you switch unit systems; lines hold a constant on-screen width at any distance and fade out rather than shimmer when they get too dense; and grids are saved with a custom sitch.
+
+### Bug Fixes
+
+- Fixed the floating edit menu (the pop-up copy of an object's controls shown while editing a ground overlay or grid) freezing while the object was dragged, resized or rotated with its 3D handles — the values kept updating in the docked Objects menu but not in the floating copy.
+
 ## Version 2.124.0 (2026-08-10)
 
 ### New Features

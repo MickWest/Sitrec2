@@ -5,7 +5,8 @@ import {CManager} from "./CManager";
 import {CNodeSynthBuilding} from "./nodes/CNodeSynthBuilding";
 import {CNodeSynthClouds} from "./nodes/CNodeSynthClouds";
 import {CNodeGroundOverlay} from "./nodes/CNodeGroundOverlay";
-import {Globals, NodeMan, setRenderOne} from "./Globals";
+import {CNodeGroundGrid} from "./nodes/CNodeGroundGrid";
+import {Globals, NodeMan, setRenderOne, Units} from "./Globals";
 import {ViewMan} from "./CViewManager";
 import {screenToNDC} from "./mouseMoveView";
 import {V3} from "./threeUtils";
@@ -293,20 +294,26 @@ export class C3DSynthManager extends CManager {
     }
     
     /**
-     * Add a new ground overlay
+     * Add a new ground overlay (or ground grid, when overlayData.type === "grid")
      * @param {Object} overlayData - Overlay configuration
      * @param {boolean} [overlayData.gotoOnCreate] - If true, camera will go to overlay after creation
      */
     addOverlay(overlayData) {
         this.exitAllEditModes();
-        const id = overlayData.id || `groundOverlay_${this.nextOverlayID++}`;
+        const isGrid = overlayData.type === "grid";
+        const id = overlayData.id || `${isGrid ? "groundGrid" : "groundOverlay"}_${this.nextOverlayID++}`;
         const gotoOnCreate = overlayData.gotoOnCreate;
         delete overlayData.gotoOnCreate;
-        
-        const overlay = new CNodeGroundOverlay({
-            ...overlayData,
-            id: id
-        });
+
+        const overlay = isGrid
+            ? new CNodeGroundGrid({
+                ...overlayData,
+                id: id
+            })
+            : new CNodeGroundOverlay({
+                ...overlayData,
+                id: id
+            });
         
         this.overlaysList[id] = overlay;
         console.log(`Added overlay: ${id}`);
@@ -385,7 +392,33 @@ export class C3DSynthManager extends CManager {
         console.log(`Created overlay: ${overlay.overlayID} at ground point`);
         return overlay;
     }
-    
+
+    /**
+     * Create a ground grid at the given ground point.
+     * Defaults to 1000×1000 current small units, 100 major / 10 minor steps.
+     * @param {Vector3} groundPoint - The ground point (in ECEF coordinates)
+     * @returns {CNodeGroundGrid} The created grid
+     */
+    createGridAtPoint(groundPoint) {
+        const lla = ECEFToLLAVD_radii(groundPoint);
+        const s2m = Units.small2M;
+
+        const grid = this.addOverlay({
+            type: "grid",
+            centerLat: lla.x,
+            centerLon: lla.y,
+            width: 1000 * s2m,
+            height: 1000 * s2m,
+            majorStep: 100 * s2m,
+            minorStep: 10 * s2m,
+            rotation: 0,
+            name: `Grid ${this.nextOverlayID}`
+        });
+
+        console.log(`Created grid: ${grid.overlayID} at ground point`);
+        return grid;
+    }
+
     /**
      * Iterate over all ground overlays
      */
@@ -452,7 +485,9 @@ export class C3DSynthManager extends CManager {
         
         if (data.overlays) {
             data.overlays.forEach(overlayData => {
-                const overlay = CNodeGroundOverlay.deserialize(overlayData);
+                const overlay = overlayData.type === "grid"
+                    ? CNodeGroundGrid.deserialize(overlayData)
+                    : CNodeGroundOverlay.deserialize(overlayData);
                 this.overlaysList[overlay.overlayID] = overlay;
             });
             this.nextOverlayID = data.nextOverlayID || Object.keys(this.overlaysList).length + 1;

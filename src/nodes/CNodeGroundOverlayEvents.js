@@ -928,11 +928,11 @@ export const eventMethods = {
                 
                 if (stateChanged) {
                     const handleType = this.draggingHandle?.type || 'edit';
-                    const actionDescription = handleType === 'rotation' 
-                        ? `Rotate overlay "${this.name}"`
+                    const actionDescription = handleType === 'rotation'
+                        ? `Rotate ${this.kindName} "${this.name}"`
                         : handleType === 'move'
-                        ? `Move overlay "${this.name}"`
-                        : `Resize overlay "${this.name}"`;
+                        ? `Move ${this.kindName} "${this.name}"`
+                        : `Resize ${this.kindName} "${this.name}"`;
                     
                     UndoManager.add({
                         undo: () => {

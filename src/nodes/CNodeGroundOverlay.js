@@ -51,6 +51,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         this.overlayID = v.id;
         this.name = v.name || v.id;
         this.noGUI = v.noGUI || false;
+        this.kindName = "overlay";   // used in user-facing strings; "grid" in CNodeGroundGrid
         
         this.north = v.north !== undefined ? v.north : 0;
         this.south = v.south !== undefined ? v.south : 0;
@@ -1421,7 +1422,9 @@ export class CNodeGroundOverlay extends CNode3DGroup {
      * Delete this overlay with confirmation and undo support
      */
     async deleteOverlay() {
-        if (await showConfirm(`Delete overlay "${this.name}"?`, {title: "Delete Overlay"})) {
+        const kind = this.kindName;
+        const kindTitle = kind.charAt(0).toUpperCase() + kind.slice(1);
+        if (await showConfirm(`Delete ${kind} "${this.name}"?`, {title: `Delete ${kindTitle}`})) {
             if (UndoManager) {
                 const overlayState = this.serialize();
                 const overlayID = this.overlayID;
@@ -1433,7 +1436,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
                     redo: () => {
                         Synth3DManager.removeOverlay(overlayID);
                     },
-                    description: `Delete overlay "${this.name}"`
+                    description: `Delete ${kind} "${this.name}"`
                 });
             }
 

@@ -1017,6 +1017,13 @@ export class CGuiMenuBar {
         this.slots.forEach((gui) => {
             gui.updateListeners();
         })
+
+        // Standalone (floating) menus are independent GUI roots outside the
+        // slots, so their .listen() controllers must be polled here too —
+        // otherwise mirrored edit menus never repaint when code changes the
+        // bound values (e.g. dragging an overlay/grid's 3D handles).
+        this.activePersistentMenu?.updateListeners();
+        this.activeContextMenu?.updateListeners();
     }
 
     show() {

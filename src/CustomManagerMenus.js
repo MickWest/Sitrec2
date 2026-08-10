@@ -559,6 +559,32 @@ export const menuMethods = {
                     console.log(`Created overlay at ground point, now in edit mode`);
                 }
             },
+            addGrid: () => {
+                this.groundContextMenu = null;
+                menu.destroy();
+
+                const grid = Synth3DManager.createGridAtPoint(groundPoint);
+
+                if (grid && UndoManager) {
+                    const gridID = grid.overlayID;
+                    const gridState = grid.serialize();
+
+                    UndoManager.add({
+                        undo: () => {
+                            Synth3DManager.removeOverlay(gridID);
+                        },
+                        redo: () => {
+                            Synth3DManager.addOverlay(gridState);
+                        },
+                        description: `Create ground grid "${grid.name}"`
+                    });
+                }
+
+                if (grid) {
+                    grid.setEditMode(true);
+                    console.log(`Created grid at ground point, now in edit mode`);
+                }
+            },
             googleMapsHere: () => {
                 this.groundContextMenu = null;
                 menu.destroy();
@@ -703,13 +729,15 @@ export const menuMethods = {
         }
         menu.add(menuData, "addClouds").name(t("custom.contextMenu.addClouds"));
 
-        // Add ground overlay options
+        // Add ground overlay/grid options
         if (overlayAtPoint) {
             const overlayLabel = overlayAtPoint.name || overlayAtPoint.id;
-            const menuLabel = overlayAtPoint.editMode ? `Exit Edit: ${overlayLabel}` : `Edit Overlay: ${overlayLabel}`;
+            const kindLabel = overlayAtPoint.kindName === "grid" ? "Grid" : "Overlay";
+            const menuLabel = overlayAtPoint.editMode ? `Exit Edit: ${overlayLabel}` : `Edit ${kindLabel}: ${overlayLabel}`;
             menu.add(menuData, "editOverlay").name(menuLabel);
         }
         menu.add(menuData, "addOverlay").name(t("custom.contextMenu.addGroundOverlay"));
+        menu.add(menuData, "addGrid").name(t("custom.contextMenu.addGroundGrid"));
 
         if (NodeMan.exists("terrainUI")) {
             const terrainUI = NodeMan.get("terrainUI");
