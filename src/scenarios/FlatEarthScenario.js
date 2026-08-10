@@ -389,9 +389,12 @@ function refreshFlatEarthOrigin() {
         }
     }
     if (lat === undefined || lon === undefined) {
+        // Signal failure (and stop any live warp) — applyFlatEarthState
+        // turns the mode fully off on a false return rather than running
+        // with stale or default projection uniforms.
         flatEarthUniforms.uFlatOn.value = 0.0;
         console.warn("Flat Earth: no anchor point (Sit.lat/lon undefined), disabling");
-        return;
+        return false;
     }
     const O = RLLAToECEF_radii(radians(lat), radians(lon), 0);
     const u = flatEarthUniforms;
@@ -431,6 +434,7 @@ function refreshFlatEarthOrigin() {
         u.uFlatMapU.value.copy(east).multiplyScalar(cl).addScaledVector(north, -sl);
         u.uFlatMapV.value.copy(east).multiplyScalar(-sl).addScaledVector(north, -cl);
     }
+    return true;
 }
 
 // ── Render-time camera warp ─────────────────────────────────────────
@@ -881,6 +885,20 @@ class CNodeFlatEarth extends CNode {
         super.modDeserialize(v);
         applyFlatEarthState();
     }
+
+    // A sitch switch disposes every node, including this one — and Flat
+    // Earth must not leak into the next sitch. Turning the mode off here
+    // makes sitch teardown the reset point: a save that was actually using
+    // it re-activates through activeInMods → activate → modDeserialize,
+    // and every other sitch (including saves carrying flatEnabled:false,
+    // whose mods are dropped for the then-missing node) starts clean.
+    dispose() {
+        if (flatEarth.enabled) {
+            flatEarth.enabled = false;
+            applyFlatEarthState();
+        }
+        super.dispose();
+    }
 }
 
 export function activateFlatEarth() {
@@ -910,7 +928,15 @@ function applyFlatEarthState() {
         // already gone. Identical patched materials share a program via
         // the cache key, so this costs no per-tile shader compile.
         Globals.flatEarthPatchMaterial = installFlatEarthOnMaterial;
-        refreshFlatEarthOrigin();
+        if (!refreshFlatEarthOrigin()) {
+            // No anchor point to build the projection from — hard-disable
+            // (one-deep recursion into the else branch below) rather than
+            // warping with stale or default uniforms. Previously the gate
+            // was switched back on right after the refresh's warning.
+            flatEarth.enabled = false;
+            applyFlatEarthState();
+            return;
+        }
         installFlatEarthSceneHook(GlobalScene);
         flatEarthUniforms.uFlatOn.value = 1.0;
         // The slider means what it says: 1 = perfectly FLAT. The shader's
