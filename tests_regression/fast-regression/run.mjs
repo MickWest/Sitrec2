@@ -584,6 +584,55 @@ export async function processSitch(context, sitch) {
             }
         }
 
+        // Pixel-stability gate. The logical settle above reads bookkeeping, and
+        // two real capture races slipped through it into baselines:
+        //   - the hi-res-upgrade stall valve (meant for tiles the server has no
+        //     higher-res for) also opens when cross-lane load STARVES the upgrade
+        //     queue for ~3s, capturing low-res ocean imagery that every later run
+        //     renders sharp (the annotations-test / rocket-launch bad baselines);
+        //   - progressive visuals no counter tracks — the wind field's streamline
+        //     build and its regression-mode dash-phase pinning both happen in
+        //     per-render updates that "under load may not run before the
+        //     screenshot" (CNodeDisplayWindField's own words).
+        // The arbiter that catches every such class is the pixels themselves:
+        // force a render, recapture, and require consecutive byte-identical
+        // captures before the capture counts. Each probe forces a render (the
+        // app renders on demand — unforced screenshots would trivially match),
+        // which is also exactly what gives late per-render work (dash pinning,
+        // streamline build, texture upload) its chance to land. Permanently
+        // stuck tiles render identically every frame, so they still pass.
+        const PIXEL_STABLE_MATCHES = 2;      // consecutive identical recaptures required
+        const PIXEL_PROBE_INTERVAL_MS = 250;
+        const PIXEL_STABILITY_BUDGET_MS = 15000;
+        let pixelMatches = 0, pixelProbes = 0;
+        const pixelStart = Date.now();
+        while (pixelMatches < PIXEL_STABLE_MATCHES && Date.now() - pixelStart < PIXEL_STABILITY_BUDGET_MS) {
+            await page.waitForTimeout(PIXEL_PROBE_INTERVAL_MS);
+            await renderOneFrame(page);
+            const probe = await page.screenshot({clip, timeout: 30000});
+            pixelProbes++;
+            if (probe.equals(buf)) {
+                pixelMatches++;
+            } else {
+                pixelMatches = 0;
+                buf = probe;
+            }
+        }
+        const pixelStable = pixelMatches >= PIXEL_STABLE_MATCHES;
+        if (!pixelStable) {
+            result.note += ` pixelUnstable(${pixelProbes} probes)`;
+            // A still-changing scene must never become a baseline — that is the
+            // exact mechanism that produced the bad captures (same philosophy as
+            // the frame-mismatch hard fail above). A compare against an existing
+            // baseline may proceed: it will fail loudly with diff artifacts.
+            if (CONFIG.update || !existsSync(join(baselineDir, sitch.slug + '.png'))) {
+                result.status = 'error';
+                result.cause = `pixels still changing after ${PIXEL_STABILITY_BUDGET_MS}ms — refusing to write a baseline from an unsettled scene`;
+                result.consoleErrors = consoleErrors.slice(0, 20);
+                return result;
+            }
+        }
+
         const actual = PNG.sync.read(buf);
         result.dims = `${actual.width}x${actual.height}`;
         const baselinePath = join(baselineDir, sitch.slug + '.png');
