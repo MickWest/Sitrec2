@@ -8,7 +8,7 @@
  */
 
 import {cleanCSVText, ExpandKeyframes, getFileExtension} from "./utils";
-import {fromArrayBuffer as geotiffFromArrayBuffer} from "geotiff";
+import {loadGeoTIFF} from "./geotiffLoader";
 import {
     CTrackFile,
     CTrackFileJSON,
@@ -925,7 +925,8 @@ export const parseMethods = {
         const baseName = filename.replace(/\.[^.]+$/, '');
         const fileID = `geotiff_${baseName}_${Date.now()}`;
 
-        const tiff = await geotiffFromArrayBuffer(buffer);
+        const {fromArrayBuffer} = await loadGeoTIFF();
+        const tiff = await fromArrayBuffer(buffer);
         const image = await tiff.getImage();
         const width = image.getWidth();
         const height = image.getHeight();
@@ -1317,7 +1318,8 @@ export const parseMethods = {
                 case "tiff":
                     prom = (async () => {
                         try {
-                            const tiff = await geotiffFromArrayBuffer(buffer);
+                            const {fromArrayBuffer} = await loadGeoTIFF();
+                            const tiff = await fromArrayBuffer(buffer);
                             const image = await tiff.getImage();
                             const bbox = image.getBoundingBox();
                             if (bbox && bbox.length === 4) {

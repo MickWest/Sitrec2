@@ -1,5 +1,6 @@
 import {sitrecAPI} from "./CSitrecAPI";
 import {FileManager, guiMenus} from "./Globals";
+import {ensureNightSkyFiles} from "./ExtraFiles";
 import GUI from "./js/lil-gui.esm";
 import {ModelFiles} from "./nodes/CNode3DObject";
 // number-only mathjs entry (see CNodeMath.js). create(math.all) below would re-pull
@@ -239,10 +240,16 @@ let _iauLoaded = false;
 
 function _loadIAUStarNames() {
     if (_iauLoaded) return;
+    const data = FileManager.get("IAUCSN", false);
+    if (!data) {
+        // Deferred night-sky file (ExtraFiles.js): kick the load and stay unlatched so
+        // the next lookup parses it. (Latching before the null check would have frozen
+        // "no names" in as the permanent answer.)
+        ensureNightSkyFiles("IAUCSN").catch(() => {});
+        return;
+    }
     _iauLoaded = true;
     try {
-        const data = FileManager.get("IAUCSN");
-        if (!data) return;
         for (const line of data.split("\n")) {
             if (line[0] === "#" || line[0] === "$" || line.trim() === "") continue;
             const name = line.substring(0, 18).trim();

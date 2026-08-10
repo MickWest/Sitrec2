@@ -7,6 +7,7 @@ import {Color, Group, Matrix4, Ray, Raycaster, Scene, Sphere, Vector3} from "thr
 import {degrees, radians} from "../utils";
 import {getEnv} from "../envUtils";
 import {FileManager, GlobalDateTimeNode, Globals, guiMenus, guiShowHide, NodeMan, setRenderOne, Sit} from "../Globals";
+import {ensureNightSkyFiles} from "../ExtraFiles";
 import {
     DebugArrow,
     DebugArrowAB,
@@ -661,19 +662,17 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         constellationStyleOptions[t("nightSky.constellationStyle.optionD3")] = "d3celestial";
         constellationStyleOptions[t("nightSky.constellationStyle.optionAstrometry")] = "astrometry";
         this.celestialGUI.add(this, "constellationStyle", constellationStyleOptions).listen().onChange(() => {
-            this.celestialElements.clearConstellationLines(this.constellationsGroup);
-            this.celestialElements.addConstellationLines(
-                this.constellationsGroup,
-                this.constellationStyle === "astrometry" ? "constellationsLinesAstrometry" : "constellationsLines"
-            );
-            setRenderOne(true);
+            this.rebuildConstellationLines();
         }).name(t("nightSky.constellationStyle.label")).tooltip(t("nightSky.constellationStyle.tooltip"))
         this.addSimpleSerial("constellationStyle")
 
-        this.celestialElements.addConstellationLines(
-            this.constellationsGroup,
-            this.constellationStyle === "astrometry" ? "constellationsLinesAstrometry" : "constellationsLines"
-        )
+        // Build the lines and names now, as the pre-deferral code did (even when hidden —
+        // the group's visibility handles that). For the default d3celestial style the data
+        // is already loaded with the sitch assets and the build lands within a microtask;
+        // only a sitch SAVED in the astrometry style takes a real fetch first (that line
+        // set is the one deferred file — see ExtraFiles.js).
+        this._constellationNamesAdded = false;
+        this.rebuildConstellationLines();
 
         this.showStars = (v.showStars !== undefined) ? v.showStars : true;
         this.celestialGUI.add(this, "showStars").listen().onChange(() => {
@@ -682,7 +681,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }).name(t("nightSky.renderStars.label")).tooltip(t("nightSky.renderStars.tooltip"))
         this.addSimpleSerial("showStars")
 
-        this.celestialElements.addConstellationNames(this.constellationsGroup);
+        // (constellation NAMES are added by rebuildConstellationLines, with the lines —
+        // they live in the same group, share its visibility, and their data file is
+        // deferred with the line sets.)
 
         // For the stars to show up in the lookView
         // we need to enable the layer for everything in the celestial sphere.
@@ -880,6 +881,39 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         setRenderOne(2);
     }
 
+
+    /**
+     * (Re)build the constellation lines — and, first time through, the names — for the
+     * current asterism style. Called at setup and on every style switch. The default
+     * d3celestial data is loaded with the sitch assets, so the ensure resolves in a
+     * microtask and the build is effectively synchronous; the astrometry line set is the
+     * one deferred night-sky file (see ExtraFiles.js) and takes a fetch on first use.
+     */
+    rebuildConstellationLines() {
+        const dataKey = this.constellationStyle === "astrometry"
+            ? "constellationsLinesAstrometry" : "constellationsLines";
+        // The LAST selection owns the group, not the last promise to resolve: switching
+        // to Astrometry (a real fetch — it is the one deferred file) and back to D3
+        // before that fetch lands would otherwise let the slower resolve clear and
+        // redraw Astrometry over the style the dropdown now shows.
+        this._constellationRequest = dataKey;
+        ensureNightSkyFiles(dataKey, "constellations").then(() => {
+            if (this._constellationRequest !== dataKey) return;
+            this.celestialElements.clearConstellationLines(this.constellationsGroup);
+            this.celestialElements.addConstellationLines(this.constellationsGroup, dataKey);
+            if (!this._constellationNamesAdded) {
+                this.celestialElements.addConstellationNames(this.constellationsGroup);
+                this._constellationNamesAdded = true;
+            }
+            // Late adds start with default layer masks; re-propagate so the new lines
+            // show in the look view exactly as setup-time adds did.
+            propagateLayerMaskObject(this.celestialSphere);
+            this.updateVis();
+            setRenderOne(true);
+        }).catch((e) => {
+            console.warn("Constellation data failed to load: " + e);
+        });
+    }
 
     updateVis() {
 

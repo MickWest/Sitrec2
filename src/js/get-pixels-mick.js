@@ -76,7 +76,11 @@ class ImageQueueManager {
         this.numWorkers = numWorkers;
         this.workers = [];
         this.workerId = 0;
-        
+
+        // Spawned eagerly on purpose: deferring the pool to the first enqueueImage
+        // (tried 2026-08-09) shifted first-tile decode latency just enough to change
+        // which elevation tiles were in by the regression screenshots — terrain relief
+        // diffs on two sitches. Four idle workers at import is the cheaper price.
         if (this.useWorkerPool) {
             this.initWorkerPool();
         }

@@ -179,6 +179,11 @@ debugLog.init();
 // Uses capture mode (true) so it catches events before other listeners
 // Only allows the native browser context menu when text is selected (for copy/paste)
 let contextMenuWasOpen = false;
+
+// The sitch catalog, prefetched right after setupConfigPaths so its round-trip overlaps
+// login/settings/registration instead of serializing after them. Null when serverless or
+// when the prefetch failed (the use site falls back to its own fetch).
+let prefetchedSitchesText = null;
 document.addEventListener('contextmenu', (event) => {
     if (event.target.tagName === 'CANVAS') {
         event.preventDefault();
@@ -583,6 +588,25 @@ Globals.regression = new URLSearchParams(window.location.search).get("regression
 
 await checkServerlessMode();
 await setupConfigPaths();
+
+// Overlap the sitch-catalog fetch with everything that follows — the login/settings
+// round-trips, node registration, and menu building. It is awaited where its result is
+// USED (the sitch registry below); starting it here turns a serialized wait into a
+// download that rides behind the setup chain. A failed prefetch falls back to the
+// original fetch at the use site.
+//
+// The GEOID is deliberately NOT prefetched here (tried 2026-08-09): asset parsers
+// convert MSL altitudes before SituationSetup's ensureGeoidLoaded gate, and today they
+// do so with the grid still absent (offset 0). Prefetching made the grid arrive in time
+// for PARSE, silently shifting every parse-time altitude by the local geoid offset —
+// tens of metres of rendered change on track sitches. Making parse-time conversions
+// geoid-correct is a real fix worth doing, but it is a behaviour change to make on
+// purpose, with baselines regenerated — not as a loading optimization's side effect.
+if (!isServerless) {
+    prefetchedSitchesText = fetch(SITREC_SERVER + "getsitches.php", {mode: "cors"})
+        .then((response) => response.text())
+        .catch(() => null);
+}
 
 // Check if we're running from file:// protocol and request directory access
 await requestFileSystemAccessIfNeeded();
@@ -1717,13 +1741,17 @@ async function initializeOnce() {
             console.error("Error loading SitCustom.js in serverless mode: " + e);
         }
     } else {
-        // In server mode, fetch text sitches from PHP endpoint
+        // In server mode, fetch text sitches from PHP endpoint. Normally already in
+        // flight since setupConfigPaths (see the prefetch there); the direct fetch is
+        // the fallback for a failed prefetch.
         const sitchesURL = SITREC_SERVER + "getsitches.php";
         console.log("Getting TEXT BASED Sitches from: " + sitchesURL);
-        
-        await fetch(sitchesURL, {mode: 'cors'}).then(response => response.text()).then(data => {
-            textSitches = JSON.parse(data); // will give an object of text based sitches
-        });
+
+        let sitchesText = prefetchedSitchesText ? await prefetchedSitchesText : null;
+        if (sitchesText === null) {
+            sitchesText = await fetch(sitchesURL, {mode: 'cors'}).then(response => response.text());
+        }
+        textSitches = JSON.parse(sitchesText); // an object of text based sitches
     }
 
     registerSitches(textSitches);

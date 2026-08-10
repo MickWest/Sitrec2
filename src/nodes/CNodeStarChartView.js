@@ -14,6 +14,7 @@
 
 import {CNodeTabbedCanvasView} from "./CNodeTabbedCanvasView";
 import {FileManager, GlobalDateTimeNode, guiShowHide, NodeMan, setRenderOne} from "../Globals";
+import {ensureNightSkyFiles} from "../ExtraFiles";
 import {par} from "../par";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {getAzElFromPositionAndForward} from "../SphericalMath";
@@ -78,6 +79,19 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         // signature of the last drawn chart, so a render pass that changes
         // nothing the chart depends on doesn't redraw ~3000 star dots
         this._lastSignature = null;
+
+        // The constellation data files are deferred (ExtraFiles.js) and the draw code
+        // already tolerates their absence — it just draws without lines/names. Kick the
+        // load now so a chart opened before the night sky ever needed them fills in on
+        // the next redraw.
+        ensureNightSkyFiles(
+            this.nightSkyNode?.constellationStyle === "astrometry"
+                ? "constellationsLinesAstrometry" : "constellationsLines",
+            "constellations",
+        ).then(() => {
+            this._lastSignature = null;   // force a redraw with the new data
+            setRenderOne(true);
+        }).catch(() => {});
 
         this.guiFolder = guiShowHide.addFolder("Star Chart").close()
             .tooltip("Whole-sky star chart (Heavens-Above style) for the current time and camera location");

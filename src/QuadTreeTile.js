@@ -12,7 +12,7 @@ import {EventManager} from "./CEventManager";
 import {getLocalDownVector, getLocalNorthVector, getLocalUpVector, pointOnSphereBelow} from "./SphericalMath";
 import {loadTextureWithRetries} from "./js/map33/material/QuadTextureMaterial";
 import {convertTIFFToElevationArray} from "./TIFFUtils";
-import {fromArrayBuffer} from 'geotiff';
+import {loadGeoTIFF} from './geotiffLoader';
 import {getPixels} from "./js/get-pixels-mick";
 import {
     BufferGeometry,
@@ -2222,6 +2222,7 @@ export class QuadTreeTile {
         }
 
         const arrayBuffer = await response.arrayBuffer();
+        const {fromArrayBuffer} = await loadGeoTIFF();
         const tiff = await fromArrayBuffer(arrayBuffer); // Use GeoTIFF library to parse the array buffer
         const image = await tiff.getImage();
 
