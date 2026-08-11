@@ -829,6 +829,24 @@ export class CNodeBuildings3DTiles extends CNode {
         return (pv && pv.treeFlattener) ? pv.renderer.group : null;
     }
 
+    // Walk every currently-loaded tile mesh across ALL per-view renderers. Each
+    // view holds the tiles at its OWN LOD, so the same ground can be loaded twice
+    // with separate geometry AND separate textures — anything that edits loaded
+    // tiles has to visit both or the two views disagree. Used by "Paint On Ground"
+    // (CGroundPainter) to replay its dabs into the tile textures; unlike the tree
+    // flattener this is not gated on the source, since painting imagery is just as
+    // meaningful for Cesium OSM buildings as for Google photogrammetry.
+    forEachLoadedTileMesh(callback) {
+        for (const pv of Object.values(this._perView)) {
+            if (!pv.renderer) continue;
+            pv.renderer.forEachLoadedModel((scene) => {
+                scene.traverse((o) => {
+                    if (o.isMesh && o.geometry) callback(o);
+                });
+            });
+        }
+    }
+
     // Record a manual brush stroke as a persistent dab (world-space sphere). The
     // actual geometry edit is done by the per-frame reapply pass (update()), which
     // also re-applies to tiles as they stream in. Deduped against the previous dab

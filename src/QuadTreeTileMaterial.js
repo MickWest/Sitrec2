@@ -25,6 +25,7 @@ import {createTerrainDayNightMaterial} from "./js/map33/material/TerrainDayNight
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {materialCache, textureLoadPromises} from "./QuadTreeTileCache";
 import {osmTileForTile} from "./OSMWaterTileMapping";
+import {unpaintedTextureImage} from "./GroundPaintState";
 
 // Module-level implementations of the cache-management statics that used to live
 // on the QuadTreeTile class. They're re-exposed as statics on the class from
@@ -491,8 +492,12 @@ export const materialMethods = {
         canvas.height = size;
         const ctx = canvas.getContext('2d');
 
-        // Create a temporary image from the parent texture
-        const img = parentTexture.source.data;
+        // Create a temporary image from the parent texture. Deliberately the
+        // UNPAINTED image: while the parent is painted its texture.image is the
+        // ground-paint canvas, and baking that into the child makes the child's
+        // "original" imagery contain paint that erase/undo/clear could never remove.
+        // See unpaintedTextureImage().
+        const img = unpaintedTextureImage(parentTexture);
         if (!img) {
             console.warn(`Cannot build material from parent for tile ${this.key()}: parent texture has no image`);
             return null;
@@ -563,9 +568,9 @@ export const materialMethods = {
         const regionWidth = 1 / scale; // e.g., 0.25 for scale=4
         const regionHeight = 1 / scale;
 
-        // Get ancestor texture
+        // Get ancestor texture — unpainted, for the same reason as the parent path.
         const ancestorTexture = ancestorTile.mesh.getMap();
-        const img = ancestorTexture.source.data;
+        const img = unpaintedTextureImage(ancestorTexture);
         if (!img) {
             console.warn(`Cannot build material from ancestor for tile ${this.key()}: ancestor texture has no image`);
             return null;

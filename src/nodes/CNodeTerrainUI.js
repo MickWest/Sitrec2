@@ -9,6 +9,7 @@ import {ECEFToLLAVD_radii, LLAToECEF, updateEarthRadii} from "../LLA-ECEF-ENU";
 import {CNodeTerrain} from "./CNodeTerrain";
 import {CNodeBuildings3DTiles} from "./CNodeBuildings3DTiles";
 import {TREE_FLATTEN_DEFS, makeDefaultTreeFlattenParams} from "../TilesTreeFlatten";
+import {CGroundPainter, GROUND_PAINT_DEFS, makeDefaultGroundPaintParams} from "../GroundPaint";
 import {GlobalScene} from "../LocalFrame";
 import {par} from "../par";
 import {addAlignedGlobe, updateAlignedGlobe} from "../Globe";
@@ -763,6 +764,13 @@ export class CNodeTerrainUI extends CNode {
         // with the buildings node and all GUI controls. Serialized as a whole
         // via modSerialize/modDeserialize (merged, not replaced, on load).
         this.treeFlattenParams = makeDefaultTreeFlattenParams();
+        // "Paint On Ground" — same deal: one stable object shared by reference with
+        // the painter and all GUI controls, holding the params AND the ordered dab
+        // list, serialized as a whole (merged, not replaced, on load).
+        this.groundPaintParams = makeDefaultGroundPaintParams();
+        // The painter reads terrainNode / buildingsNode lazily each pass, so it can
+        // be built before either exists.
+        this.groundPainter = new CGroundPainter(this);
         // V5 material modes for buildings: "photo" / "flat" / "halfPhoto".
         // Mode change applies to future tile loads only.
         this.buildingsMaterialMode = v.buildingsMaterialMode ?? "photo";
@@ -881,6 +889,11 @@ export class CNodeTerrainUI extends CNode {
                 this.buildTreeRemovalGUI();
             }
         }
+
+        // "Paint On Ground" — the texture-space sibling of "Remove Geometry".
+        // Deliberately OUTSIDE the 3D-buildings block: it paints the basemap tiles
+        // too, so it needs no API key and no permission group.
+        this.buildGroundPaintGUI();
 
         // Ellipsoid Earth Model toggle (moved here from global settings)
         this.ellipsoidController = this.terrainTweaks.add(Sit, "useEllipsoid")
@@ -1289,13 +1302,58 @@ export class CNodeTerrainUI extends CNode {
             .tooltip("Restore and re-process visible tiles with the current automatic parameters");
     }
 
-    // treeFlattenParams is serialized as a whole object, but MERGED into the
-    // existing instance on load so GUI controllers and the buildings node keep
-    // their shared reference (replacing it would orphan both).
+    // Build the "Paint On Ground" GUI folder, data-driven from GROUND_PAINT_DEFS.
+    // Same shape as "Remove Geometry" (brush toggle, radius, then the master
+    // apply toggle and a reset), but there is no automatic pass to configure — the
+    // strokes are the whole feature, so the folder is flat.
+    buildGroundPaintGUI() {
+        const gp = this.groundPaintParams;
+        const painter = this.groundPainter;
+        const root = this.gui.addFolder("Paint On Ground").close();
+
+        for (const def of GROUND_PAINT_DEFS) {
+            let ctrl;
+            if (def.key === "paintMode") {
+                ctrl = root.add(gp, def.key).name(def.label).onChange(v => painter.setPaintMode(v));
+            } else if (def.key === "applyPaint") {
+                ctrl = root.add(gp, def.key).name(def.label).onChange(v => painter.setApplyPaint(v));
+            } else if (def.type === "color") {
+                // Colour is read live per dab at paint time, so changing it needs no
+                // reapply — strokes already painted keep the colour they were made with.
+                ctrl = root.addColor(gp, def.key).name(def.label);
+            } else if (def.type === "bool") {
+                ctrl = root.add(gp, def.key).name(def.label);
+            } else {
+                ctrl = root.add(gp, def.key, def.min, def.max, def.step).name(def.label);
+            }
+            if (def.tooltip && ctrl.tooltip) ctrl.tooltip(def.tooltip);
+            if (ctrl.listen) ctrl.listen();
+        }
+
+        // Export / Import the strokes as a standalone JSON file. The strokes are
+        // already saved with the sitch; this is for moving them between sitches of
+        // the same place, or keeping them alongside one.
+        root.add({exportPaint: () => painter.exportJSON()}, "exportPaint")
+            .name("Export Paint (JSON)")
+            .tooltip("Save the paint strokes to a JSON file. Stored as geographic positions, so the file survives any change of map source, zoom or tile scheme");
+        root.add({importPaint: () => painter.importJSONPrompted()}, "importPaint")
+            .name("Import Paint (JSON)")
+            .tooltip("Load paint strokes from a JSON file, REPLACING the current ones (undoable with Ctrl/Cmd+Z)");
+
+        root.add({clear: () => painter.clearAllPaint()}, "clear")
+            .name("Clear Paint")
+            .tooltip("Discard every stroke and restore all tiles to their original imagery");
+    }
+
+    // treeFlattenParams and groundPaintParams are serialized as whole objects, but
+    // MERGED into the existing instances on load so GUI controllers, the buildings
+    // node and the painter keep their shared references (replacing them would
+    // orphan all of those).
     modSerialize() {
         return {
             ...super.modSerialize(),
             treeFlattenParams: {...this.treeFlattenParams},
+            groundPaintParams: {...this.groundPaintParams},
         };
     }
 
@@ -1310,6 +1368,15 @@ export class CNodeTerrainUI extends CNode {
                 this.buildingsNode.rebuildDabsWorld();
                 this.buildingsNode.applyTreeFlattenParams();
             }
+        }
+        if (v.groundPaintParams) {
+            Object.assign(this.groundPaintParams, v.groundPaintParams);
+            if (!Array.isArray(this.groundPaintParams.dabs)) this.groundPaintParams.dabs = [];
+            // Rebuild the world-space dab cache, then invalidate so any texture
+            // already painted by the outgoing sitch is reset and replayed with the
+            // loaded strokes instead.
+            this.groundPainter.rebuildDabsWorld();
+            this.groundPainter._invalidate();
         }
     }
 
@@ -1724,6 +1791,10 @@ export class CNodeTerrainUI extends CNode {
             NodeMan.disposeRemove(this.buildingsNode);
             this.buildingsNode = null;
         }
+        if (this.groundPainter) {
+            this.groundPainter.dispose();
+            this.groundPainter = null;
+        }
         this.disposeOceanSurface();
         disposeAttributionOverlay();
         super.dispose();
@@ -2023,6 +2094,11 @@ export class CNodeTerrainUI extends CNode {
             this.rebuildOceanSurfaceTiles();
         }
 
+        // "Paint On Ground": replay the saved strokes onto tiles that have streamed
+        // in or re-textured since the last pass, and refresh the brush cursor.
+        // Returns immediately when the sitch has no paint.
+        this.groundPainter?.update();
+
         // Self-disable the paused keep-alive once the terrain is fully settled, so
         // the render loop can sleep (shouldSleepAnimationLoop needs
         // hasPausedBackgroundWork()===false). Running this node's update() ~60x/sec
@@ -2045,7 +2121,10 @@ export class CNodeTerrainUI extends CNode {
         // sleeps) after a Refresh/detail change on a non-dynamic terrain sitch.
         this.updateWhilePaused = this._subdivGraceFrames > 0
             || texMapPending || elevMapPending
-            || !!this.recalculateSoon || !!this.refresh;
+            || !!this.recalculateSoon || !!this.refresh
+            // Paint Mode needs update() to keep running so the brush cursor tracks
+            // the surface while the camera moves with the pointer held still.
+            || !!this.groundPaintParams.paintMode;
     }
 
     recalculate() {
