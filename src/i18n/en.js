@@ -1970,6 +1970,15 @@ const en = {
             label: "Reset Camera",
             tooltip: "Reset the camera to the default, or to last snapshot position and heading\nAlso Numpad-.",
         },
+        exportCameraKML: {
+            label: "Export Camera as KML (Photo)",
+            tooltip: "Save the look camera as a Google Earth PhotoOverlay (.kmz), with the current\n" +
+                "video frame embedded as the photo. Open it in Google Earth Pro and it flies to\n" +
+                "the camera's position, heading, tilt and field of view, and hangs the frame in\n" +
+                "front of you — so you can check Sitrec's camera against Google's terrain,\n" +
+                "imagery and 3D buildings.\n" +
+                "With no video frame available it writes a plain .kml with just the camera viewpoint.",
+        },
         showMoonShadow: {
             label: "Show Moon's Shadow",
             tooltip: "Toggle the display of Moon's shadow cone for eclipse visualization.",

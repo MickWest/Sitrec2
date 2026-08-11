@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.127.0 (2026-08-11)
+
+### New Features
+
+- **Export Camera as KML (Photo)** (Camera menu): saves the look camera — where it is, which way it is pointing, how it is rolled and how wide its view is — as a Google Earth photo overlay (.kmz) with the current video frame embedded as the photo. Open it in Google Earth Pro and it flies to the camera and hangs the frame in front of you at the right angle and size, so you can check Sitrec's camera solution against Google's own terrain, imagery and 3D buildings — if the camera is right, the photo lines up with the ground behind it. Altitude is converted to height above sea level, which is what Google Earth expects; the roll is measured from the camera itself rather than read off a slider, so it is correct whichever control is driving the camera; and the field of view exported is the one the video frame covers, not the wider one the look view shows when the video is letterboxed. What gets exported is what is on screen, including the Camera Tweaks aim offset and traverse display targeting. If the video window is zoomed in, only that crop is exported and the view angles narrow to match — the balloon says so. The photo is written at the video's native resolution with the video window's rotation and colour adjustments applied, and its balloon lists the position, time, heading, tilt, roll and field of view. With no video frame available it writes a plain .kml with just the camera viewpoint instead. Y-compress on the look view cannot be represented in this format; if it is on, the export says so rather than quietly writing a squashed photo.
+
 ## Version 2.126.0 (2026-08-10)
 
 ### New Features

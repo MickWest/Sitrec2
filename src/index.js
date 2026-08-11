@@ -110,6 +110,7 @@ import {DragDropHandler} from "./DragDropHandler";
 import "./FpsMismatchDialog";
 import {CGuiMenuBar, setupHelpSearch} from "./lil-gui-extras";
 import {exportFOVForEditor} from "./FOVInterchange";
+import {exportCameraAsKML} from "./ExportCameraKML";
 import {initUILogging} from "./UILogging";
 import {assert} from "./assert";
 import {CNodeFactory} from "./nodes/CNodeFactory";
@@ -1959,6 +1960,15 @@ async function initializeOnce() {
     // menuBar.destroy(false); its contents are (re)populated per sitch by the
     // PTZ controller, the lookView, CCustomManager.setup(), and the camera node.
     addGUIFolder("cameraTweaks", "Camera Tweaks", "camera");
+
+    // Ship the whole camera solution — position, heading, tilt, roll, field of view —
+    // out to Google Earth as a PhotoOverlay with the current video frame in it, so the
+    // sitch's camera can be checked against Google's imagery and 3D buildings.
+    // .perm() keeps it across sitch loads, like the FOV export above.
+    guiMenus.camera.add({
+        exportCameraKML: () => exportCameraAsKML(),
+    }, "exportCameraKML").name(t("misc.exportCameraKML.label")).perm()
+        .tooltip(t("misc.exportCameraKML.tooltip"));
 
     addTranslatedGUIMenu("target", "menus.target.title")
         .tooltip(t("menus.target.tooltip"));
