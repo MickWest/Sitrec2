@@ -47,7 +47,7 @@ export class CSitchBrowser {
         // Labels
         this.userLabels = [];    // [{name, color, permanent?}, ...]
         this.sitchLabels = {};   // {sitchName: [labelName, ...]}
-        this.featuredSitches = new Map(); // key -> {name, userID, screenshotUrl} (global, shared)
+        this.featuredSitches = new Map(); // key -> {name, userID, screenshotUrl, date} (global, shared)
         this.activeLabel = null; // sidebar filter, or null = All
 
         // Multi-selection
@@ -116,6 +116,9 @@ export class CSitchBrowser {
                     name: entry.name,
                     userID: entry.userID,
                     screenshotUrl: entry.screenshotUrl || null,
+                    // Only source of a date for sitches we don't own (and for every
+                    // featured sitch when logged out), so date sorting works there.
+                    date: entry.date ? String(entry.date) : "",
                 });
             }
         }
@@ -129,7 +132,7 @@ export class CSitchBrowser {
                 const featuredOnlySitch = {
                     key: sitchKey,
                     name: info.name,
-                    date: "",
+                    date: info.date || "",
                     screenshotUrl: info.screenshotUrl || null,
                     ownerUserID: info.userID,
                     featuredOnly: true,
@@ -2037,6 +2040,7 @@ export class CSitchBrowser {
                         name: sitch.name,
                         userID: sitch.ownerUserID,
                         screenshotUrl: sitch.screenshotUrl || null,
+                        date: sitch.date || "",
                     });
                     added.push(sitch.key);
                 }

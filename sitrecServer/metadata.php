@@ -239,34 +239,159 @@ function buildScreenshotUrl($userID, $sitchName, $version = null, $s3Data = null
     return $url;
 }
 
+/**
+ * Newest version-file modification date per sitch for a user, as 'Y-m-d H:i:s'
+ * keyed by sitch name.
+ *
+ * Mirrors the date logic in getsitches.php?get=myfiles (screenshot.jpg and
+ * metadata.json are ignored, so a thumbnail refresh does not look like a save)
+ * so featured sitches sort by the same "last saved" time as your own sitches.
+ *
+ * Pass $onlySitch to narrow the storage scan to a single sitch.
+ * Callers must not use this on the featured GET path - it hits storage.
+ */
+function sitchDatesForUser($userID, $s3Data = null, $onlySitch = null) {
+    global $useAWS, $UPLOAD_PATH;
+
+    $dates = [];
+    $userID = intval($userID);
+    if ($userID <= 0) return $dates;
+    if ($onlySitch !== null && !isValidSitchName($onlySitch)) return $dates;
+
+    $isVersionFile = function ($file) {
+        return $file !== '' && $file !== 'screenshot.jpg' && $file !== 'metadata.json';
+    };
+
+    if ($useAWS) {
+        if ($s3Data === null) $s3Data = startS3();
+        $base = $userID . '/';
+        $prefix = $base . ($onlySitch !== null ? $onlySitch . '/' : '');
+        $objects = $s3Data['s3']->getIterator('ListObjects', [
+            'Bucket' => $s3Data['aws']['bucket'],
+            'Prefix' => $prefix,
+        ]);
+        foreach ($objects as $object) {
+            $key = $object['Key'];
+            if (strpos($key, $base) !== 0) continue;
+            $rest = substr($key, strlen($base));
+            $slash = strpos($rest, '/');
+            if ($slash === false) continue;
+            $name = substr($rest, 0, $slash);
+            if (!$isVersionFile(substr($rest, $slash + 1))) continue;
+            $date = $object['LastModified']->format('Y-m-d H:i:s');
+            if (!isset($dates[$name]) || $date > $dates[$name]) $dates[$name] = $date;
+        }
+        return $dates;
+    }
+
+    $userDir = $UPLOAD_PATH . $userID;
+    if (!is_dir($userDir)) return $dates;
+    $sitchNames = ($onlySitch !== null) ? [$onlySitch] : (@scandir($userDir) ?: []);
+    foreach ($sitchNames as $name) {
+        if ($name === '.' || $name === '..' || $name === '.DS_Store') continue;
+        $sitchPath = $userDir . '/' . $name;
+        if (!is_dir($sitchPath)) continue;
+        $versions = @scandir($sitchPath) ?: [];
+        $newestTime = 0;
+        foreach ($versions as $v) {
+            if (!$isVersionFile($v) || $v === '.' || $v === '..') continue;
+            if (!is_file($sitchPath . '/' . $v)) continue;
+            $vTime = @filemtime($sitchPath . '/' . $v);
+            if ($vTime > $newestTime) $newestTime = $vTime;
+        }
+        if ($newestTime) $dates[$name] = date('Y-m-d H:i:s', $newestTime);
+    }
+    return $dates;
+}
+
+/**
+ * Fill in the 'date' field on featured entries by scanning storage, one listing
+ * per distinct userID. Only called from the admin featured-list write path.
+ */
+function refreshFeaturedDates(&$sitches, $s3Data = null) {
+    $datesByUser = [];
+    foreach ($sitches as &$entry) {
+        $uid = intval($entry['userID']);
+        if (!isset($datesByUser[$uid])) {
+            $datesByUser[$uid] = sitchDatesForUser($uid, $s3Data);
+        }
+        $found = $datesByUser[$uid][$entry['name']] ?? null;
+        // Keep any previously stored date if the sitch has since been deleted.
+        $entry['date'] = $found !== null ? $found : strval($entry['date'] ?? '');
+    }
+    unset($entry);
+}
+
 // ============================
 // Handle GET - Fetch metadata
 // ============================
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     // GET ?featured=1 — return global featured.json (no auth required beyond login)
-    // Returns [{name, userID, screenshotUrl}] so any user can browse and load featured sitches.
+    // Returns [{name, userID, screenshotUrl, date}] so any user can browse and load featured sitches.
     if (isset($_GET['featured'])) {
         try {
             global $useAWS;
             $s3Data = $useAWS ? startS3() : null;
             $raw = readFeaturedData($s3Data);
-            $sitches = [];
+            // Validated copies of the stored entries, keeping their on-disk shape
+            // ({name, userID, screenshotVersion, date}) so they can be written back.
+            $storedEntries = [];
             if (isset($raw['sitches']) && is_array($raw['sitches'])) {
                 foreach ($raw['sitches'] as $entry) {
                     if (!is_array($entry) || !isset($entry['name']) || !isset($entry['userID'])) continue;
                     $name = basename(strval($entry['name']));
                     $uid = intval($entry['userID']);
                     if ($uid <= 0 || !isValidSitchName($name)) continue;
-                    $version = isset($entry['screenshotVersion']) ? intval($entry['screenshotVersion']) : null;
-                    $sitches[] = [
-                        'name' => $name,
-                        'userID' => $uid,
-                        // Avoid an S3 HEAD per sitch on the hot path. Missing screenshots are
-                        // handled by the browser UI's img.onerror fallback.
-                        'screenshotUrl' => buildScreenshotUrl($uid, $name, $version, $s3Data),
-                    ];
+                    $entry['name'] = $name;
+                    $entry['userID'] = $uid;
+                    $entry['date'] = strval($entry['date'] ?? '');
+                    $storedEntries[] = $entry;
                 }
             }
+
+            // Self-heal entries featured before dates were stored. Admin-only, so an
+            // anonymous request never triggers a storage scan or a write, and it stops
+            // firing as soon as every entry has a date.
+            if (!empty($storedEntries) && isAdmin()) {
+                $missingDates = false;
+                foreach ($storedEntries as $entry) {
+                    if ($entry['date'] === '') { $missingDates = true; break; }
+                }
+                if ($missingDates) {
+                    refreshFeaturedDates($storedEntries, $s3Data);
+                    // Merge the dates back in place rather than replacing the array, so
+                    // this write only ever adds a field - entries skipped as invalid
+                    // above are left exactly as they were.
+                    $datesByKey = [];
+                    foreach ($storedEntries as $entry) {
+                        $datesByKey[$entry['userID'] . ':' . $entry['name']] = $entry['date'];
+                    }
+                    foreach ($raw['sitches'] as &$entry) {
+                        if (!is_array($entry) || !isset($entry['name']) || !isset($entry['userID'])) continue;
+                        $key = intval($entry['userID']) . ':' . basename(strval($entry['name']));
+                        if (isset($datesByKey[$key])) $entry['date'] = $datesByKey[$key];
+                    }
+                    unset($entry);
+                    writeFeaturedData($raw, $s3Data);
+                }
+            }
+
+            $sitches = [];
+            foreach ($storedEntries as $entry) {
+                $version = isset($entry['screenshotVersion']) ? intval($entry['screenshotVersion']) : null;
+                $sitches[] = [
+                    'name' => $entry['name'],
+                    'userID' => $entry['userID'],
+                    // Avoid an S3 HEAD per sitch on the hot path. Missing screenshots are
+                    // handled by the browser UI's img.onerror fallback.
+                    'screenshotUrl' => buildScreenshotUrl($entry['userID'], $entry['name'], $version, $s3Data),
+                    // Stored at write time (see refreshFeaturedDates) so this path never
+                    // probes storage. Logged-out users have no other source of dates, and
+                    // without it the sitch browser cannot sort Featured by date.
+                    'date' => $entry['date'],
+                ];
+            }
+
             $payload = json_encode(['sitches' => $sitches]);
             $etag = '"' . sha1($payload) . '"';
             header('Cache-Control: public, max-age=60, stale-while-revalidate=300');
@@ -362,6 +487,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $uid = intval($entry['userID']);
                         if ($uid !== $user_id || !isset($bumpedNames[$name])) continue;
                         $entry['screenshotVersion'] = intval($entry['screenshotVersion'] ?? 0) + $bumpedNames[$name];
+                        // A bump means this sitch was just saved, so refresh its stored date
+                        // (one prefix-scoped listing) to keep the featured sort current.
+                        $freshDate = sitchDatesForUser($user_id, $s3Data, $name)[$name] ?? null;
+                        if ($freshDate !== null) $entry['date'] = $freshDate;
                         $featuredChanged = true;
                     }
                     unset($entry);
@@ -398,6 +527,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $existingFeatured = readFeaturedData();
             $existingVersions = [];
+            $existingDates = [];
             if (isset($existingFeatured['sitches']) && is_array($existingFeatured['sitches'])) {
                 foreach ($existingFeatured['sitches'] as $existingEntry) {
                     if (!is_array($existingEntry) || !isset($existingEntry['name']) || !isset($existingEntry['userID'])) continue;
@@ -405,22 +535,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $existingUserID = intval($existingEntry['userID']);
                     if ($existingUserID <= 0 || !isValidSitchName($existingName)) continue;
                     $existingVersions[$existingUserID . ':' . $existingName] = intval($existingEntry['screenshotVersion'] ?? 0);
+                    $existingDates[$existingUserID . ':' . $existingName] = strval($existingEntry['date'] ?? '');
                 }
             }
             foreach ($sitches as &$entry) {
                 $key = $entry['userID'] . ':' . $entry['name'];
                 $entry['screenshotVersion'] = $existingVersions[$key] ?? 0;
+                $entry['date'] = $existingDates[$key] ?? '';
             }
             unset($entry);
-            $featuredData = ['sitches' => $sitches];
 
             global $useAWS;
-            if ($useAWS) {
-                $s3Data = startS3();
-                writeFeaturedData($featuredData, $s3Data);
-            } else {
-                writeFeaturedData($featuredData);
-            }
+            $s3Data = $useAWS ? startS3() : null;
+            // Rescan dates for the whole list (one listing per distinct userID). Cheap
+            // enough here - this is an admin-only, infrequent write - and it backfills
+            // entries featured before dates were stored.
+            refreshFeaturedDates($sitches, $s3Data);
+            $featuredData = ['sitches' => $sitches];
+
+            writeFeaturedData($featuredData, $s3Data);
 
             echo json_encode(['success' => true, 'featured' => $featuredData]);
             exit();
