@@ -12,11 +12,12 @@
  * grid keeps its real-world size when the unit system changes.
  */
 import {CNodeGroundOverlay} from "./CNodeGroundOverlay";
-import {Color, DoubleSide, ShaderMaterial} from "three";
+import {Color, DoubleSide, Float32BufferAttribute, ShaderMaterial, Vector2, Vector3} from "three";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 import {CustomManager, guiMenus, setRenderOne, Units} from "../Globals";
-import {LLAToECEF} from "../LLA-ECEF-ENU";
+import {ViewMan} from "../CViewManager";
+import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {scaleF2M} from "../utils";
 import {t} from "../i18n";
 
@@ -36,6 +37,24 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
         this.color = v.color ?? "#ffff00";
         this.minorColor = v.minorColor ?? this.color;
         this.lockColors = v.lockColors ?? true;          // minor color follows major
+
+        // Lat/Lon graticule mode: lines at power-of-10 degree multiples,
+        // auto-promoted/demoted per view so minor spacing stays within
+        // [minPixelSpacing, maxPixelSpacing] on screen.
+        this.latLonGrid = v.latLonGrid ?? false;
+        this.minPixelSpacing = v.minPixelSpacing ?? 10;
+        this.maxPixelSpacing = v.maxPixelSpacing ?? 200;
+        if (this.latLonGrid) this.rotation = 0;
+
+        // Per-view step selection runs in onBeforeRender (each view renders
+        // with its own camera, so a single per-frame update can't serve both).
+        // Plain function so `this` is the mesh being rendered — its per-tile
+        // lat/lon reference feeds the precision-preserving offset uniforms.
+        const grid = this;
+        this._latLonBeforeRender = function(renderer, scene, camera) {
+            grid.updateLatLonUniforms(renderer, camera, this);
+        };
+        this.attachLatLonHooks();
 
         this.updateGridUniforms();
 
@@ -92,13 +111,27 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
                 minorStep: { value: 0 },     // meters, 0 = off
                 majorLineWidth: { value: 1.5 },  // screen pixels
                 minorLineWidth: { value: 1 },    // screen pixels
+                // Lat/Lon graticule mode. Absolute degrees in float32 can't
+                // resolve fine steps at real latitudes, so each vertex carries
+                // its lat/lon RELATIVE to a per-tile reference (aLatLon, baked
+                // in JS doubles), and these per-mesh offsets re-base that
+                // reference onto an origin snapped to a multiple of the current
+                // major step near the camera. Set per mesh in onBeforeRender.
+                latLonMode: { value: 0 },
+                latMinorDeg: { value: 0.001 },
+                lonMinorDeg: { value: 0.001 },
+                tileLatOff: { value: 0 },        // tile lat reference minus lat origin
+                tileLonOff: { value: 0 },        // tile lon reference minus lon origin
                 ...sharedUniforms,
             },
             vertexShader: `
+                attribute vec2 aLatLon;
                 varying vec2 vUv;
+                varying vec2 vLatLon;
                 varying float vDepth;
                 void main() {
                     vUv = uv;
+                    vLatLon = aLatLon;
                     gl_Position = applyTerrestrialRefraction_clip(modelViewMatrix * vec4(position, 1.0));
                     vDepth = gl_Position.w;
                 }
@@ -117,7 +150,13 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
                 uniform float minorStep;
                 uniform float majorLineWidth;
                 uniform float minorLineWidth;
+                uniform float latLonMode;
+                uniform float latMinorDeg;
+                uniform float lonMinorDeg;
+                uniform float tileLatOff;
+                uniform float tileLonOff;
                 varying vec2 vUv;
+                varying vec2 vLatLon;
                 varying float vDepth;
 
                 // Anti-aliased line coverage: distance (meters) to the nearest
@@ -134,10 +173,28 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
 
                 void main() {
                     // Derivatives before the discard: fwidth needs uniform control flow.
-                    float x = vUv.x * gridWidth;
-                    float y = vUv.y * gridHeight;
-                    float pxX = max(fwidth(x), 1e-6);
-                    float pxY = max(fwidth(y), 1e-6);
+                    // Line coordinates: meters in normal mode, origin-relative
+                    // degrees in lat/lon mode (each axis with its own step).
+                    float cx, cy, minStepX, majStepX, minStepY, majStepY;
+                    if (latLonMode > 0.5) {
+                        cx = tileLonOff + vLatLon.y;
+                        cy = tileLatOff + vLatLon.x;
+                        minStepX = lonMinorDeg; majStepX = lonMinorDeg * 10.0;
+                        minStepY = latMinorDeg; majStepY = latMinorDeg * 10.0;
+                    } else {
+                        cx = vUv.x * gridWidth;
+                        cy = vUv.y * gridHeight;
+                        minStepX = minorStep; majStepX = majorStep;
+                        minStepY = minorStep; majStepY = majorStep;
+                    }
+                    float pxX = max(fwidth(cx), 1e-12);
+                    float pxY = max(fwidth(cy), 1e-12);
+
+                    // Border always measures in meters, independent of mode
+                    float bx = vUv.x * gridWidth;
+                    float by = vUv.y * gridHeight;
+                    float bpxX = max(fwidth(bx), 1e-9);
+                    float bpxY = max(fwidth(by), 1e-9);
 
                     if (vUv.x < 0.0 || vUv.x > 1.0 || vUv.y < 0.0 || vUv.y > 1.0) {
                         discard;
@@ -147,20 +204,25 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
                     float halfMajor = 0.5 * majorLineWidth;
 
                     float aMinor = 0.0;
-                    if (minorStep > 0.0) {
-                        aMinor = minorBrightness * max(gridLine(x, minorStep, halfMinor, pxX),
-                                                       gridLine(y, minorStep, halfMinor, pxY));
+                    if (minStepX > 0.0) {
+                        aMinor = gridLine(cx, minStepX, halfMinor, pxX);
                     }
+                    if (minStepY > 0.0) {
+                        aMinor = max(aMinor, gridLine(cy, minStepY, halfMinor, pxY));
+                    }
+                    aMinor *= minorBrightness;
 
                     float aMajor = 0.0;
-                    if (majorStep > 0.0) {
-                        aMajor = max(gridLine(x, majorStep, halfMajor, pxX),
-                                     gridLine(y, majorStep, halfMajor, pxY));
+                    if (majStepX > 0.0) {
+                        aMajor = gridLine(cx, majStepX, halfMajor, pxX);
+                    }
+                    if (majStepY > 0.0) {
+                        aMajor = max(aMajor, gridLine(cy, majStepY, halfMajor, pxY));
                     }
 
                     // Always draw the outline so an empty grid is still visible/draggable
-                    float borderPx = min(min(x, gridWidth - x) / pxX,
-                                         min(y, gridHeight - y) / pxY);
+                    float borderPx = min(min(bx, gridWidth - bx) / bpxX,
+                                         min(by, gridHeight - by) / bpxY);
                     aMajor = max(aMajor, 1.0 - smoothstep(halfMajor - 0.5, halfMajor + 0.5, borderPx));
 
                     // Composite major lines over minor lines so each keeps its color
@@ -230,14 +292,229 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
         u.gridColor.value.set(this.color);
         u.minorColor.value.set(this.lockColors ? this.color : this.minorColor);
         u.opacity.value = this.opacity;
+        u.latLonMode.value = this.latLonGrid ? 1 : 0;
         setRenderOne(true);
     }
 
     updateMesh() {
+        // Lat/lon lines only make sense axis-aligned; the rotation handle and
+        // any stale saved value are neutralized here (called on every edit).
+        if (this.latLonGrid) this.rotation = 0;
+        this._mPerDegCache = null;
         // Bounds may have changed (drag/resize/undo) — keep the shader's
         // world-size uniforms in sync so line spacing stays in real meters.
         this.updateGridUniforms();
         super.updateMesh();
+        this.attachLatLonHooks();
+    }
+
+    // Mesh rebuilds go through the base class; re-attach the per-view hook to
+    // whatever meshes currently exist (idempotent property assignment).
+    attachLatLonHooks() {
+        this.overlayTileMeshes.forEach(entry => {
+            if (entry.mesh) entry.mesh.onBeforeRender = this._latLonBeforeRender;
+            // Skirts share the material, so they too must push their own
+            // tile offsets before drawing or they render with another tile's.
+            if (entry.skirtMesh) entry.skirtMesh.onBeforeRender = this._latLonBeforeRender;
+        });
+        if (this.flatMesh) this.flatMesh.onBeforeRender = this._latLonBeforeRender;
+    }
+
+    /**
+     * Bake per-vertex lat/lon relative to a per-mesh reference (the first
+     * vertex), computed in JS doubles. Small relative values survive float32,
+     * so graticule lines stay pinned at any grid size and zoom; the reference
+     * itself is re-based against the view's origin in onBeforeRender.
+     */
+    bakeLatLonAttribute(mesh, ref) {
+        const geom = mesh?.geometry;
+        const pos = geom?.attributes?.position;
+        if (!pos) return ref;
+        const gp = this.group.position;
+        this._scratchWorld = this._scratchWorld || new Vector3();
+        const arr = new Float32Array(pos.count * 2);
+        for (let i = 0; i < pos.count; i++) {
+            this._scratchWorld.set(pos.getX(i) + gp.x, pos.getY(i) + gp.y, pos.getZ(i) + gp.z);
+            const lla = ECEFToLLAVD_radii(this._scratchWorld);
+            if (!ref) ref = {lat: lla.x, lon: lla.y};
+            arr[i * 2] = lla.x - ref.lat;
+            arr[i * 2 + 1] = lla.y - ref.lon;
+        }
+        geom.setAttribute('aLatLon', new Float32BufferAttribute(arr, 2));
+        mesh.userData.latLonRef = ref;
+        return ref;
+    }
+
+    createOverlayTileFromTerrainTile(tile, mapProjection, layerMask) {
+        super.createOverlayTileFromTerrainTile(tile, mapProjection, layerMask);
+        const entry = this.overlayTileMeshes.get(tile.key());
+        if (!entry) return;
+        const ref = this.bakeLatLonAttribute(entry.mesh, null);
+        this.bakeLatLonAttribute(entry.skirtMesh, ref);
+        if (this._latLonBeforeRender) {
+            if (entry.mesh) entry.mesh.onBeforeRender = this._latLonBeforeRender;
+            if (entry.skirtMesh) entry.skirtMesh.onBeforeRender = this._latLonBeforeRender;
+        }
+    }
+
+    buildFlatMesh() {
+        super.buildFlatMesh();
+        if (!this.flatMesh) return;
+        this.bakeLatLonAttribute(this.flatMesh, null);
+        if (this._latLonBeforeRender) {
+            this.flatMesh.onBeforeRender = this._latLonBeforeRender;
+        }
+    }
+
+    getMetersPerDegreeCached() {
+        if (!this._mPerDegCache) {
+            const centerLat = (this.north + this.south) / 2;
+            const centerLon = (this.east + this.west) / 2;
+            this._mPerDegCache = CNodeGroundGrid.metersPerDegreeAt(centerLat, centerLon);
+        }
+        return this._mPerDegCache;
+    }
+
+    /**
+     * Pick the power-of-10 degree step whose on-screen minor spacing lies
+     * within [minPixelSpacing, maxPixelSpacing]: the smallest power of 10
+     * at least minPixelSpacing wide, demoted once if it overshoots the max
+     * (max wins when the two bounds conflict).
+     */
+    pickPow10(degPerPx) {
+        const minPx = Math.max(1, this.minPixelSpacing);
+        const maxPx = Math.max(1, this.maxPixelSpacing);
+        // Smallest power of 10 at least minPx wide...
+        let n = Math.ceil(Math.log10(minPx * degPerPx));
+        if (Math.pow(10, n) / degPerPx > maxPx) {
+            // ...unless that exceeds the max: then max wins — the largest
+            // power of 10 not wider than maxPx (also covers min > max).
+            n = Math.floor(Math.log10(maxPx * degPerPx));
+        }
+        n = Math.max(-7, Math.min(1, n));
+        return Math.pow(10, n);
+    }
+
+    /**
+     * Per-mesh, per-view (onBeforeRender) selection of the lat/lon steps.
+     * Estimates meters-per-pixel at the grid center for THIS camera, converts
+     * to degrees-per-pixel per axis, picks the power-of-10 steps, and re-bases
+     * the mesh's baked lat/lon reference onto an origin snapped to the major
+     * step near the camera — keeping every number small enough for float32.
+     */
+    updateLatLonUniforms(renderer, camera, mesh) {
+        const u = this.overlayMaterial.uniforms;
+        if (!this.latLonGrid) {
+            u.latLonMode.value = 0;
+            this.hideLatLonLegend(camera);
+            return;
+        }
+        u.latLonMode.value = 1;
+
+        this._scratchSize = this._scratchSize || new Vector2();
+        const heightPx = Math.max(1, renderer.getDrawingBufferSize(this._scratchSize).y);
+
+        this._scratchCam = this._scratchCam || new Vector3();
+        const camPos = camera.getWorldPosition(this._scratchCam);
+
+        let mPerPx;
+        if (camera.isOrthographicCamera) {
+            mPerPx = (camera.top - camera.bottom) / (camera.zoom * heightPx);
+        } else {
+            const dist = camPos.distanceTo(this.group.position);
+            const focalPx = 0.5 * heightPx / Math.tan(0.5 * camera.fov * Math.PI / 180);
+            mPerPx = dist / focalPx;
+        }
+
+        const mPerDeg = this.getMetersPerDegreeCached();
+        const latMinor = this.pickPow10(mPerPx / mPerDeg.lat);
+        const lonMinor = this.pickPow10(mPerPx / mPerDeg.lon);
+
+        // Anchor the origin under the camera (clamped to the grid) so the
+        // offsets are near zero exactly where fine lines are on screen.
+        const camLLA = ECEFToLLAVD_radii(camPos);
+        const anchorLat = Math.min(Math.max(camLLA.x, this.south), this.north);
+        const anchorLon = Math.min(Math.max(camLLA.y, this.west), this.east);
+        const latOrigin = Math.round(anchorLat / (latMinor * 10)) * (latMinor * 10);
+        const lonOrigin = Math.round(anchorLon / (lonMinor * 10)) * (lonMinor * 10);
+
+        const ref = mesh?.userData?.latLonRef;
+        u.latMinorDeg.value = latMinor;
+        u.lonMinorDeg.value = lonMinor;
+        u.tileLatOff.value = ref ? ref.lat - latOrigin : 0;
+        u.tileLonOff.value = ref ? ref.lon - lonOrigin : 0;
+        // Required when changing a shared material's uniforms from
+        // onBeforeRender: without it the draw can reuse the uniform values
+        // uploaded for the previous mesh or view's camera.
+        this.overlayMaterial.uniformsNeedUpdate = true;
+
+        this.updateLatLonLegend(camera, latMinor, lonMinor);
+    }
+
+    findViewForCamera(camera) {
+        let found = null;
+        ViewMan.iterate((id, view) => {
+            if (!found && view.camera === camera && view.div) found = view;
+        });
+        return found;
+    }
+
+    /**
+     * Per-view legend ("Major: 0.001°, Minor: 0.0001°") along the bottom of
+     * each 3D view showing that view's current graticule spacing; lat and lon
+     * are listed separately when they resolve to different powers of 10.
+     */
+    updateLatLonLegend(camera, latMinor, lonMinor) {
+        this._legendEls = this._legendEls || new Map();
+        let entry = this._legendEls.get(camera);
+        if (!entry) {
+            const view = this.findViewForCamera(camera);
+            if (!view || !view.div) return;
+            const el = document.createElement('div');
+            el.style.cssText = "position:absolute;bottom:2px;left:50%;transform:translateX(-50%);" +
+                "pointer-events:none;z-index:50;font:11px monospace;padding:1px 6px;" +
+                "border-radius:3px;background:rgba(0,0,0,0.45);white-space:nowrap;";
+            view.div.appendChild(el);
+            entry = {el, text: ""};
+            this._legendEls.set(camera, entry);
+        }
+        const fmt = v => {
+            const n = Math.round(Math.log10(v));
+            return (n >= 0 ? v.toFixed(0) : v.toFixed(-n)) + "°";
+        };
+        const text = (latMinor === lonMinor)
+            ? `Major: ${fmt(latMinor * 10)}, Minor: ${fmt(latMinor)}`
+            : `Lat Major: ${fmt(latMinor * 10)}, Minor: ${fmt(latMinor)} | Lon Major: ${fmt(lonMinor * 10)}, Minor: ${fmt(lonMinor)}`;
+        if (entry.text !== text) {
+            entry.text = text;
+            entry.el.textContent = text;
+        }
+        entry.el.style.color = this.color;
+        entry.el.style.display = "";
+    }
+
+    hideLatLonLegend(camera) {
+        const entry = this._legendEls?.get(camera);
+        if (entry) entry.el.style.display = "none";
+    }
+
+    hideAllLatLonLegends() {
+        this._legendEls?.forEach(entry => { entry.el.style.display = "none"; });
+    }
+
+    removeLatLonLegends() {
+        this._legendEls?.forEach(entry => entry.el.remove());
+        this._legendEls = null;
+    }
+
+    show(visible = true) {
+        super.show(visible);
+        if (!visible) this.hideAllLatLonLegends();
+    }
+
+    dispose() {
+        this.removeLatLonLegends();
+        super.dispose();
     }
 
     updateGUIControllers() {
@@ -285,10 +562,24 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
             this.majorStep = this.gridParams.majorStep * Units.small2M;
             this.updateGridUniforms();
         });
+        this.majorStepController = majorController;
 
         const minorController = this.guiFolder.add(this.gridParams, 'minorStep', 0, 1000, 1).allowInputExpandMax(true).onChange(() => {
             this.minorStep = this.gridParams.minorStep * Units.small2M;
             this.updateGridUniforms();
+        });
+        this.minorStepController = minorController;
+
+        this.guiFolder.add(this, 'latLonGrid').name(t("groundGrid.latLonGrid.label")).onChange(() => {
+            this.applyLatLonMode();
+        });
+
+        this.minPxController = this.guiFolder.add(this, 'minPixelSpacing', 2, 100, 1).name(t("groundGrid.minPixelSpacing.label")).onChange(() => {
+            setRenderOne(true);
+        });
+
+        this.maxPxController = this.guiFolder.add(this, 'maxPixelSpacing', 20, 1000, 5).name(t("groundGrid.maxPixelSpacing.label")).onChange(() => {
+            setRenderOne(true);
         });
 
         // Line widths are screen pixels, so no small-unit conversion or relabeling
@@ -304,7 +595,7 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
             this.updateGridUniforms();
         });
 
-        this.guiFolder.add(this, 'rotation', -180, 180, 0.1).name(t("groundGrid.rotation.label")).onChange(() => {
+        this.rotationController = this.guiFolder.add(this, 'rotation', -180, 180, 0.1).name(t("groundGrid.rotation.label")).onChange(() => {
             this.updateMesh();
         });
 
@@ -329,6 +620,7 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
             this.applyColorLock();
         });
         this.applyColorLock();
+        this.applyLatLonMode();
 
         this.guiFolder.add(this, 'opacity', 0, 1, 0.01).name(t("groundGrid.opacity.label")).onChange(() => {
             this.updateGridUniforms();
@@ -354,6 +646,38 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
         });
 
         this.guiFolder.close();
+    }
+
+    /**
+     * Apply the Lat/Lon Grid state: step and rotation fields don't apply to a
+     * graticule (steps are auto power-of-10, rotation forced 0), and the pixel
+     * spacing bounds only apply to a graticule. Enable/disable accordingly,
+     * in the source folder and any mirrored edit menus.
+     */
+    applyLatLonMode() {
+        const on = this.latLonGrid;
+        const setEnabled = (ctrl, enabled) => {
+            if (!ctrl) return;
+            if (enabled) {
+                ctrl.enable();
+                ctrl._mirrorControllers?.forEach(m => m.enable());
+            } else {
+                ctrl.disable();
+                ctrl._mirrorControllers?.forEach(m => m.disable());
+            }
+        };
+        setEnabled(this.majorStepController, !on);
+        setEnabled(this.minorStepController, !on);
+        setEnabled(this.rotationController, !on);
+        setEnabled(this.minPxController, on);
+        setEnabled(this.maxPxController, on);
+        if (on) {
+            this.rotation = 0;
+            this.rotationController?.updateDisplay();
+        } else {
+            this.hideAllLatLonLegends();
+        }
+        this.updateMesh();
     }
 
     /**
@@ -428,6 +752,9 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
             color: this.color,
             minorColor: this.minorColor,
             lockColors: this.lockColors,
+            latLonGrid: this.latLonGrid,
+            minPixelSpacing: this.minPixelSpacing,
+            maxPixelSpacing: this.maxPixelSpacing,
             opacity: this.opacity,
         };
     }

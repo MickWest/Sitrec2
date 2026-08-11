@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.126.0 (2026-08-10)
+
+### New Features
+
+- **Lat/Lon Grid** (in a Ground Grid's settings — Objects menu or the floating edit menu): turns the measurement grid into a latitude/longitude grid, with lines locked to exact round coordinates — whole degrees, tenths, hundredths and so on, so a line sits at exactly 28.733° rather than just a step away from its neighbour. As you zoom, each view refines or coarsens the spacing by powers of ten on its own, keeping the lines readable at that view's scale — tune it with the new *Min Pixel Spacing* and *Max Pixel Spacing* controls — and latitude and longitude adjust separately where a degree spans different distances north–south and east–west. A small label at the bottom of each 3D view shows the spacing drawn there, e.g. "Major: 0.001°, Minor: 0.0001°", in the grid's major colour. While the mode is on, the step and rotation controls are disabled and the grid squares up to north–south / east–west (its rotation is cleared); your metre or feet spacings are kept and return when you switch it off. The mode and its pixel-spacing settings are saved with a custom sitch.
+
 ## Version 2.125.0 (2026-08-10)
 
 ### New Features
