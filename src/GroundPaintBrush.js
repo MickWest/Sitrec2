@@ -66,6 +66,12 @@ export class GroundPaintBrush {
         this._sy = 0;
         this._lastFp = null;    // fingerprint of mouse+cameras, to skip idle rebuilds
         this._strokeBefore = null; // dab-list snapshot taken at the start of a stroke
+        // Where the brush last PAINTED, in world space — the anchor a shift-click
+        // draws its line FROM. Updated by every click AND continuously through a
+        // drag, so the anchor is always the end of what you last painted: click,
+        // click chains into a polyline; drag, then shift-click continues the line
+        // from where the drag stopped rather than from where it began.
+        this._lastPaintPoint = null;
 
         // Cursor ring: a unit circle in the XY plane, re-oriented and scaled per
         // hover. depthTest off so it stays visible over the surface it is lying on
@@ -156,8 +162,18 @@ export class GroundPaintBrush {
     // Cheap fingerprint of everything that moves the hit point (pointer + both
     // candidate cameras), so an idle hover doesn't re-pick every frame and keep
     // the render loop awake.
+    // Forget the shift-line anchor. Called when the paint it referred to is gone
+    // (Clear Paint, undo/redo), so a shift-click can't draw a line from a location
+    // that is no longer part of anything on screen.
+    resetPaintAnchor() {
+        this._lastPaintPoint = null;
+    }
+
     _fingerprint() {
-        let fp = this._sx * 7919 + this._sy * 104729 + (this._altKey ? 1 : 0);
+        // brushRadius is in here so the cursor ring resizes as [ / ] are pressed,
+        // not only when the pointer or camera moves.
+        let fp = this._sx * 7919 + this._sy * 104729 + (this._altKey ? 1 : 0)
+            + (this.painter?.params?.brushRadius ?? 0) * 31;
         for (const id of BRUSH_VIEW_IDS) {
             const v = ViewMan.get(id, false);
             if (v && v.camera) {
@@ -183,7 +199,20 @@ export class GroundPaintBrush {
         this.painting = true;
         this._strokeBefore = this.painter.snapshotDabs();
         const point = this.pick(e.clientX, e.clientY);
-        if (point) this.applyAt(point);
+        if (point) {
+            // Shift-click draws a straight line from wherever the brush last painted
+            // instead of a single dab — deliberately only on the CLICK, so a drag
+            // still paints freehand exactly as before (and a shift-DRAG is just a
+            // line to the press point followed by a normal freehand stroke on from
+            // there, which also leaves the anchor at the drag's end).
+            if (e.shiftKey && this._lastPaintPoint) {
+                this.painter.applyBrushLine(this._lastPaintPoint, point,
+                    this.painter.params.brushRadius, this._erasing());
+            } else {
+                this.applyAt(point);
+            }
+            this._lastPaintPoint = point.clone();
+        }
         setRenderOne(true);
         e.stopPropagation();
         e.preventDefault();
@@ -203,7 +232,15 @@ export class GroundPaintBrush {
         const point = this.pick(e.clientX, e.clientY);
         this._setRing(point);
         if (this.painting) {
-            if (point) this.applyAt(point);
+            if (point) {
+                this.applyAt(point);
+                // Carry the shift-line anchor along with the drag, so it ends up at
+                // the end of the stroke. Set from the picked point rather than only
+                // when a dab is actually appended: applyAt may dedupe a dab that is
+                // within 0.3 * radius of the previous one, but the brush was still
+                // there, and that is what "where I last painted" means.
+                this._lastPaintPoint = point.clone();
+            }
             e.stopPropagation();
         }
         setRenderOne(true);

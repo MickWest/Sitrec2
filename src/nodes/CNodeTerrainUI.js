@@ -56,6 +56,15 @@ const BUILD_TIME_TOKENS = {
  * Returns true if no token is required, or if the token is set to a real value.
  * Tokens that are missing, empty, or set to "EXAMPLEKEY" are treated as absent.
  */
+// Deep copy of a brush dab list ({lla:[..], r, ...} objects) for serialization in
+// either direction. Both the "Remove Geometry" and "Paint On Ground" lists are
+// mutated IN PLACE by their brushes (append) and by their reset (length = 0), so a
+// shallow copy of the containing params object would leave the serialized blob
+// sharing the live array.
+function copyDabs(dabs) {
+    return Array.isArray(dabs) ? dabs.map(d => ({...d, lla: [...d.lla]})) : [];
+}
+
 function hasRequiredToken(sourceDef) {
     if (!sourceDef.requiredToken) return true;
     const token = getEnv(sourceDef.requiredToken, BUILD_TIME_TOKENS[sourceDef.requiredToken]);
@@ -1349,11 +1358,15 @@ export class CNodeTerrainUI extends CNode {
     // MERGED into the existing instances on load so GUI controllers, the buildings
     // node and the painter keep their shared references (replacing them would
     // orphan all of those).
+    // The dab lists are DEEP copied. A plain spread copies `dabs` by reference, so
+    // the returned blob would alias live state: anything that holds it across a
+    // later stroke, undo or Clear Paint (which truncates the array in place) would
+    // silently see its "snapshot" change underneath it.
     modSerialize() {
         return {
             ...super.modSerialize(),
-            treeFlattenParams: {...this.treeFlattenParams},
-            groundPaintParams: {...this.groundPaintParams},
+            treeFlattenParams: {...this.treeFlattenParams, dabs: copyDabs(this.treeFlattenParams.dabs)},
+            groundPaintParams: {...this.groundPaintParams, dabs: copyDabs(this.groundPaintParams.dabs)},
         };
     }
 
@@ -1361,7 +1374,9 @@ export class CNodeTerrainUI extends CNode {
         super.modDeserialize(v);
         if (v.treeFlattenParams) {
             Object.assign(this.treeFlattenParams, v.treeFlattenParams);
-            if (!Array.isArray(this.treeFlattenParams.dabs)) this.treeFlattenParams.dabs = [];
+            // Deep copy for the same reason as modSerialize, in the other direction:
+            // a later edit must not write through into the blob we were handed.
+            this.treeFlattenParams.dabs = copyDabs(v.treeFlattenParams.dabs);
             if (this.buildingsNode) {
                 // Rebuild the world-space dab cache from the loaded lat/lon/alt
                 // list so the saved manual edits re-apply as tiles load.
@@ -1371,7 +1386,7 @@ export class CNodeTerrainUI extends CNode {
         }
         if (v.groundPaintParams) {
             Object.assign(this.groundPaintParams, v.groundPaintParams);
-            if (!Array.isArray(this.groundPaintParams.dabs)) this.groundPaintParams.dabs = [];
+            this.groundPaintParams.dabs = copyDabs(v.groundPaintParams.dabs);
             // Rebuild the world-space dab cache, then invalidate so any texture
             // already painted by the outgoing sitch is reset and replayed with the
             // loaded strokes instead.

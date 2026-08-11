@@ -2,9 +2,12 @@
 // we use this for the CNodeViewUI and the (upcoming) CNodeVideoView
 // passing in an "overlayView" parameter will attache
 import {CNodeView} from "./CNodeView";
-import {guiMenus} from "../Globals";
+import {guiMenus, setRenderOne} from "../Globals";
 import {CNodeGUIValue} from "./CNodeGUIValue";
 import {isKeyHeld} from "../KeyBoardHandler";
+
+// Largest possible RGB distance, sqrt(3 * 255^2) — the 100% end of Key Tolerance.
+const MAX_RGB_DISTANCE = Math.sqrt(3 * 255 * 255);
 
 
 export class CNodeViewCanvas extends CNodeView {
@@ -53,6 +56,39 @@ export class CNodeViewCanvas extends CNodeView {
                     this.canvas.style.opacity = this.transparency;
                 }
             }, guiMenus.view)
+
+            // COLOUR KEY. The overlay blend above is uniform: the whole video canvas
+            // is drawn over the look view at one opacity, so anything in the 3D view
+            // is at best a ghost. The key punches specific colours back through at
+            // full strength — every pixel of the UNDERLYING view within tolerance of
+            // the key colour is copied on top of the video.
+            //
+            // Why that reads as full strength at ANY transparency: CSS composites
+            // this canvas as t*overlay + (1-t)*underlying, and a keyed pixel has the
+            // SAME colour in both (we copied it from the view below), so the two
+            // terms sum back to that colour whatever t is.
+            //
+            // The intended use is annotation: paint magenta on the ground with
+            // "Paint On Ground", key on magenta, and the painted region shows solid
+            // over the video while everything else stays a faint blend. Tolerance
+            // matters because the 3D view SHADES the paint (day/night lighting), so
+            // the rendered pixels sit near the paint colour rather than on it.
+            this.keyColor = v.keyColor ?? 0xff00ff;   // magenta: rare in real imagery
+            this.addSimpleSerial("keyColor");
+            guiMenus.view.addColor(this, "keyColor")
+                .name("Key Color")
+                .tooltip("Colour in the look view that comes through the video overlay at full strength. Works with Key Tolerance — at 0 tolerance nothing is keyed")
+                .listen()
+                .onChange(() => setRenderOne(true));
+
+            // 0 = off, and off is free: the key pass returns before touching a pixel.
+            this.keyToleranceNode = new CNodeGUIValue({
+                id: this.id + "_keyTolerance",
+                value: v.keyTolerance ?? 0, start: 0, end: 100, step: 0.5,
+                desc: "Key Tolerance %",
+                tip: "How far from Key Color a look-view pixel may be and still come through onto the video overlay, as a percentage of the largest possible colour difference. 0 = off. Raise it until the shaded/antialiased edges of the keyed area fill in",
+                onChange: () => setRenderOne(true),
+            }, guiMenus.view)
         }
 
 
@@ -65,6 +101,130 @@ export class CNodeViewCanvas extends CNodeView {
         super.dispose()
         this.div.removeChild(this.canvas)
         this.canvas = null;
+        this._keyCanvas = null;
+        this._keyCtx = null;
+        this._keyImageData = null;
+    }
+
+    // Copy every pixel of the UNDERLYING view that is within Key Tolerance of Key
+    // Color on top of whatever this overlay canvas already holds. Call it LAST in a
+    // subclass's renderCanvas, once the frame is fully drawn.
+    //
+    // The underlying view is a WebGL canvas with no preserveDrawingBuffer, so its
+    // drawing buffer is only readable inside the animation frame that drew it. That
+    // holds here: every view's renderCanvas runs in one frame (see indexRender), and
+    // an overlay's parent is created before it, so the parent has already rendered.
+    // If it ever hadn't, the read would come back empty and this would simply key
+    // nothing — never an error.
+    //
+    // ALIGNMENT is measured, never assumed. The two canvases share a div but do NOT
+    // generally cover the same rectangle: a 3D view is letterboxed inside its div to
+    // hold the video's aspect ratio (e.g. canvas.style.left = 31px, 773 of the div's
+    // 835 CSS px), the backing resolutions are unrelated (880x495 vs 1670x870 at
+    // DPR 2), and the overlay's 2D context carries its own transform. Assuming a
+    // full-canvas-to-full-canvas map stretched the keyed layer by the letterbox
+    // ratio and shifted it by the inset, which showed up as a visible DOUBLE image
+    // of anything keyed.
+    //
+    // So the mapping is derived from the two canvases' on-screen bounding rects,
+    // converted into this canvas's BACKING pixels, and the composite is then done at
+    // the identity transform 1:1. That is correct for any letterbox, any device
+    // pixel ratio, any pair of backing resolutions, and whatever transform the
+    // caller drew its frame with. It also covers the look view's video-matched
+    // "pixel zoom" for free: that canvas holds the DISPLAYED magnified crop, and its
+    // bounding rect is where that crop lands on screen.
+    applyColorKeyFromUnderlyingView() {
+        const tolerancePct = this.keyToleranceNode?.v0 ?? 0;
+        if (!(tolerancePct > 0)) return;                 // off — costs nothing
+        const source = this.overlayView?.canvas;
+        if (!source || !source.width || !source.height) return;
+        const w = this.canvas?.width, h = this.canvas?.height;
+        if (!w || !h) return;
+
+        // Screen geometry of both canvases, and the source's placement within this
+        // canvas expressed in backing pixels.
+        const dstRect = this.canvas.getBoundingClientRect();
+        const srcRect = source.getBoundingClientRect();
+        if (dstRect.width <= 0 || dstRect.height <= 0) return;
+        if (srcRect.width <= 0 || srcRect.height <= 0) return;
+        const scaleX = w / dstRect.width;
+        const scaleY = h / dstRect.height;
+        const dx = (srcRect.left - dstRect.left) * scaleX;
+        const dy = (srcRect.top - dstRect.top) * scaleY;
+        const dw = srcRect.width * scaleX;
+        const dh = srcRect.height * scaleY;
+
+        // Scratch canvas + ImageData, reused across frames — this runs per frame, and
+        // reallocating a screen-sized buffer each time is what makes naive
+        // per-pixel canvas work slow.
+        if (!this._keyCanvas || this._keyCanvas.width !== w || this._keyCanvas.height !== h) {
+            this._keyCanvas = document.createElement("canvas");
+            this._keyCanvas.width = w;
+            this._keyCanvas.height = h;
+            this._keyCtx = this._keyCanvas.getContext("2d", {willReadFrequently: true});
+            this._keyImageData = null;
+        }
+        const keyCtx = this._keyCtx;
+        if (!keyCtx) return;
+
+        keyCtx.setTransform(1, 0, 0, 1, 0, 0);
+        keyCtx.clearRect(0, 0, w, h);
+        // Nearest-neighbour on purpose: every key-canvas pixel then holds one real
+        // rendered colour. Interpolation would invent blends of the key colour and
+        // its surroundings along every edge, which the tolerance test cannot tell
+        // apart from genuinely-near-key pixels, so the keyed area would creep
+        // outwards as tolerance is raised to cope with lighting.
+        keyCtx.imageSmoothingEnabled = false;
+        try {
+            keyCtx.drawImage(source, 0, 0, source.width, source.height, dx, dy, dw, dh);
+        } catch (e) {
+            return; // source canvas not readable this frame
+        }
+
+        // Only the sub-rect the source actually landed in needs testing; the
+        // letterbox margins around it were cleared and must stay transparent.
+        const ix = Math.max(0, Math.floor(dx));
+        const iy = Math.max(0, Math.floor(dy));
+        const iw = Math.min(w - ix, Math.ceil(dx + dw) - ix);
+        const ih = Math.min(h - iy, Math.ceil(dy + dh) - iy);
+        if (iw <= 0 || ih <= 0) return;
+
+        const imageData = keyCtx.getImageData(ix, iy, iw, ih);
+        const data = imageData.data;
+        const key = this.keyColor & 0xffffff;
+        const kr = (key >> 16) & 255, kg = (key >> 8) & 255, kb = key & 255;
+        const threshold = (tolerancePct / 100) * MAX_RGB_DISTANCE;
+        const threshold2 = threshold * threshold;
+
+        // Knock out everything that ISN'T the key colour. Squared Euclidean distance
+        // in RGB, with a per-channel box test first: the box rejects the overwhelming
+        // majority of pixels in one comparison, and only survivors pay for the
+        // multiplies.
+        const box = threshold;
+        for (let i = 0; i < data.length; i += 4) {
+            const dr = data[i] - kr;
+            if (dr > box || dr < -box) { data[i + 3] = 0; continue; }
+            const dg = data[i + 1] - kg;
+            if (dg > box || dg < -box) { data[i + 3] = 0; continue; }
+            const db = data[i + 2] - kb;
+            if (db > box || db < -box) { data[i + 3] = 0; continue; }
+            if (dr * dr + dg * dg + db * db > threshold2) data[i + 3] = 0;
+        }
+        keyCtx.putImageData(imageData, ix, iy);
+
+        // Composite the surviving pixels over the video, 1:1 in backing pixels so
+        // nothing is resampled a second time. Identity transform and neutral state
+        // defensively: the caller drew the frame with its own transform / filter /
+        // alpha, and any of those leaking in would misplace or tint the keyed layer.
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.filter = "none";
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(this._keyCanvas, ix, iy, iw, ih, ix, iy, iw, ih);
+        ctx.restore();
     }
 
     ignoreMouseEvents() {

@@ -54,7 +54,8 @@
 
 import {Matrix4, Vector3} from "three";
 import {saveAs} from "file-saver";
-import {Sit, setRenderOne} from "./Globals";
+import {NodeMan, Sit, setRenderOne} from "./Globals";
+import {isKeyCodeHeld} from "./KeyBoardHandler";
 import {ECEFToLLAVD_radii, RLLAToECEF_radii} from "./LLA-ECEF-ENU";
 import {getLocalEastVector, getLocalNorthVector} from "./SphericalMath";
 import {undoManager as UndoManager} from "./UndoManager";
@@ -80,6 +81,12 @@ const MIN_DAB_PIXELS = 0.35;
 // How many textures (basemap tiles / 3D-tile meshes) may be brought up to date per
 // reapply pass, so a big backlog spreads over frames instead of stalling one.
 const REAPPLY_BUDGET = 8;
+
+// Ceiling on the dabs one shift-click line may generate. Refused rather than
+// silently truncated or thinned — the guard exists because a shift-click after
+// panning to another continent would otherwise ask for millions of dabs and wedge
+// the browser. At 0.4 * radius spacing this allows a line ~800x the brush radius.
+const MAX_LINE_DABS = 2000;
 
 const _gpInv = new Matrix4();
 const _gpLocal = new Vector3();
@@ -111,9 +118,9 @@ for (let i = 0; i < DISC_SIDES; i++) {
 // ---------------------------------------------------------------------------
 export const GROUND_PAINT_DEFS = [
     {key: "paintMode", type: "bool", default: false,
-        label: "Paint Mode", tooltip: "Paint the colour below onto the ground textures. While on, left-click-dragging over the terrain or the 3D tiles paints under the brush; a ring shows the footprint. Strokes are undoable (Ctrl/Cmd+Z). Hold Option/Alt while painting to ERASE back to the original imagery"},
+        label: "Paint Mode", tooltip: "Paint the colour below onto the ground textures. While on, left-click-dragging over the terrain or the 3D tiles paints under the brush; a ring shows the footprint. SHIFT-CLICK draws a straight line from wherever you last painted — the end of your last drag, or your last click — so shift-clicks chain into a polyline and continue on from a freehand stroke. [ and ] shrink and grow the brush. Strokes are undoable (Ctrl/Cmd+Z). Hold Option/Alt while painting to ERASE back to the original imagery"},
     {key: "brushRadius", type: "num", default: 8, min: 0.5, max: 200, step: 0.5,
-        label: "Brush Radius (m)", tooltip: "World-space radius of the paint brush, in metres. Held in metres (not pixels) so a stroke covers the same ground however far the tiles later subdivide"},
+        label: "Brush Radius (m)", tooltip: "World-space radius of the paint brush, in metres. Held in metres (not pixels) so a stroke covers the same ground however far the tiles later subdivide. [ and ] adjust it while Paint Mode is on"},
     {key: "color", type: "color", default: 0x6b7a52,
         label: "Paint Color", tooltip: "Colour applied by the brush. Stored per dab, so changing it does not restyle strokes already painted"},
     {key: "applyPaint", type: "bool", default: true,
@@ -202,16 +209,94 @@ export class CGroundPainter {
         this._lastDab = this._dabsWorld.length ? this._dabsWorld[this._dabsWorld.length - 1] : null;
     }
 
-    // Record a brush dab and apply it to everything currently loaded. Deduped
-    // against the previous dab so a drag doesn't store hundreds of near-identical
-    // circles; 0.3 * radius spacing still leaves a smooth continuous stroke.
+    // Record a brush dab and apply it to everything currently loaded.
     applyBrush(worldCenter, radius, erase) {
+        if (!this._pushDab(worldCenter, radius, erase)) return 0;
+        // Apply now for immediate feedback. Idempotent via the applied-count stamps,
+        // so the per-frame pass won't double-apply.
+        const painted = this.reapplyAll(Infinity);
+        setRenderOne(true);
+        return painted;
+    }
+
+    // Shift-click line: lay a run of dabs from `startWorld` to `endWorld`, so a
+    // shift-click continues from the previous click in a straight line.
+    //
+    // The line is EXPANDED INTO ORDINARY DABS rather than stored as a segment
+    // record. A segment would be more compact, but it would need its own rasterizer
+    // in both painters — a capsule-plane intersection is a stadium, not the disc the
+    // 3D-tile path clips against — and this way the line serializes, erases, undoes
+    // and replays through exactly the same code as every other dab, with no new
+    // geometry to get wrong.
+    //
+    // Interpolated in LAT/LON/ALT, not by lerping the ECEF endpoints: a straight
+    // chord through the earth sags below the surface (~2 m over 10 km, ~49 m over
+    // 50 km), which would drop the 3D-tile spheres under the ground they are meant
+    // to paint. Each step's altitude is then snapped to the terrain, so a line
+    // crossing a valley follows it instead of flying over it.
+    applyBrushLine(startWorld, endWorld, radius, erase) {
+        const dist = startWorld.distanceTo(endWorld);
+        const spacing = Math.max(0.05, radius * 0.4);   // > the 0.3r dedupe gate
+        const steps = Math.ceil(dist / spacing);
+        if (steps > MAX_LINE_DABS) {
+            showError(`That shift-click line is too long for a ${radius} m brush ` +
+                `(${Math.round(dist)} m needs ${steps} dabs, limit ${MAX_LINE_DABS}). ` +
+                `Use a bigger Brush Radius, or paint it in shorter runs.`);
+            return 0;
+        }
+        if (steps < 1) return this.applyBrush(endWorld, radius, erase);
+
+        const a = ECEFToLLAVD_radii(startWorld);
+        const b = ECEFToLLAVD_radii(endWorld);
+        // Longitude difference taken the SHORT way round. Straight subtraction turns a
+        // 20 km line across the antimeridian (179.9 -> -179.9) into a 359.8-degree trip
+        // the other way around the planet — and because `steps` came from the true
+        // (short) ECEF distance, the dabs would be smeared into a sparse dotted ring
+        // round the world instead of the local line asked for.
+        let deltaLon = b.y - a.y;
+        if (deltaLon > 180) deltaLon -= 360;
+        else if (deltaLon < -180) deltaLon += 360;
+
+        const terrain = NodeMan.get("TerrainModel", false);
+        let added = 0;
+        // From i=1: the previous click already painted the start.
+        for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const lat = a.x + (b.x - a.x) * t;
+            // May land outside [-180,180] one step past the antimeridian; harmless,
+            // because RLLAToECEF_radii is periodic in longitude and _pushDab derives
+            // the STORED lat/lon back from the resulting ECEF point, which normalises
+            // it via atan2.
+            const lon = a.y + deltaLon * t;
+            const alt = a.z + (b.z - a.z) * t;
+            let p = RLLAToECEF_radii(lat * DEG2RAD, lon * DEG2RAD, alt);
+            // Snap to the ground. getPointBelow's default path is an elevation-map
+            // lookup, not a mesh raycast — cheap enough to do per step, and its
+            // few-metre error is well inside the brush radius.
+            if (terrain?.getPointBelow) {
+                const g = terrain.getPointBelow(p);
+                if (g) p = g;
+            }
+            if (this._pushDab(p, radius, erase)) added++;
+        }
+        if (added === 0) return 0;
+        const painted = this.reapplyAll(Infinity);
+        setRenderOne(true);
+        return painted;
+    }
+
+    // Append one dab to the list + world cache. Returns false when it was deduped
+    // against the previous dab, so a drag doesn't store hundreds of near-identical
+    // circles; 0.3 * radius spacing still leaves a smooth continuous stroke. Split
+    // out of applyBrush so a shift-line can append many dabs and then replay ONCE
+    // instead of re-running the whole reapply pass per dab.
+    _pushDab(worldCenter, radius, erase) {
         const last = this._lastDab;
         const color = this.params.color & 0xffffff;
         if (last && last.erase === !!erase && last.r === radius
             && (erase || last.css === colorToCSS(color))
             && last.center.distanceTo(worldCenter) < radius * 0.3) {
-            return 0; // too close to the previous dab — skip
+            return false; // too close to the previous dab — skip
         }
         const lla = ECEFToLLAVD_radii(worldCenter);
         const dab = {
@@ -237,19 +322,48 @@ export class CGroundPainter {
         };
         this._dabsWorld.push(entry);
         this._lastDab = entry;
-        // Apply now for immediate feedback. Idempotent via the applied-count stamps,
-        // so the per-frame pass won't double-apply.
-        const painted = this.reapplyAll(Infinity);
-        setRenderOne(true);
-        return painted;
+        return true;
     }
 
     // Per-frame pass: bring newly-streamed tiles up to date with the dab list.
     // Free when there is no paint in the sitch and none has ever been applied.
     update() {
+        this.handleBrushSizeKeys();
         if (this.brush) this.brush.refreshPreview();
         if (this.dabs.length === 0 && !this._anyPainted) return;
         this.reapplyAll(REAPPLY_BUDGET);
+    }
+
+    // [ and ] shrink / grow the brush, the same keys and the same polled, repeat-
+    // delayed shape as the video mask brush (CNodeMaskOverlay.handleBrushSizeKeys).
+    // Only while Paint Mode is on, so the keys stay free for everything else.
+    //
+    // The step is PROPORTIONAL rather than the mask's sqrt curve: this radius is in
+    // metres over 0.5..200, so a fixed step either crawls at the top of the range or
+    // overshoots the bottom. 15% per press crosses the whole range in ~40 presses at
+    // any size. Bounds come from the GUI definition, so the keys can never drive the
+    // value off the end of its own slider.
+    handleBrushSizeKeys() {
+        if (!this.params.paintMode) return;
+        const left = isKeyCodeHeld("BracketLeft");
+        const right = isKeyCodeHeld("BracketRight");
+        if (!left && !right) return;
+        const now = performance.now();
+        if (now - (this._lastBrushKeyMs ?? 0) < 50) return;
+
+        const def = GROUND_PAINT_DEFS.find(d => d.key === "brushRadius");
+        const radius = this.params.brushRadius;
+        const step = Math.max(def?.step ?? 0.5, radius * 0.15);
+        let next = radius + (right ? step : 0) - (left ? step : 0);
+        next = Math.min(def?.max ?? 200, Math.max(def?.min ?? 0.5, next));
+        // Keep it on the slider's own increments so the readout stays tidy.
+        const grain = def?.step ?? 0.5;
+        next = Math.round(next / grain) * grain;
+        if (next === radius) return;
+
+        this.params.brushRadius = next;
+        this._lastBrushKeyMs = now;
+        setRenderOne(true);
     }
 
     // Apply the outstanding tail of the dab list to both ground surfaces.
@@ -275,7 +389,7 @@ export class CGroundPainter {
 
     // "Clear Paint" — drop every stroke and restore the original imagery.
     clearAllPaint() {
-        if (this.brush) this.brush.hidePreview();
+        if (this.brush) { this.brush.hidePreview(); this.brush.resetPaintAnchor(); }
         this.dabs.length = 0;
         this._dabsWorld = [];
         this._lastDab = null;
@@ -306,7 +420,7 @@ export class CGroundPainter {
     }
 
     restoreDabsState(snapshot) {
-        if (this.brush) this.brush.hidePreview();
+        if (this.brush) { this.brush.hidePreview(); this.brush.resetPaintAnchor(); }
         this.params.dabs = snapshot.map(d => ({...d, lla: [...d.lla]}));
         this.rebuildDabsWorld();
         this._invalidate();

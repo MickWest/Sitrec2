@@ -2322,6 +2322,11 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         }
 
+        // LAST, over the finished frame: let anything in the view underneath that
+        // matches the Key Color come through the overlay blend at full strength.
+        // No-op unless Key Tolerance is above zero.
+        this.applyColorKeyFromUnderlyingView();
+
         this.drawCrosshairIfKeyHeld();
     }
 
