@@ -38,7 +38,8 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         // 3 = Lat/Long DM (DD°MM.MMM') — degrees & decimal minutes
         this.acftPosMode = v.acftPosMode ?? 0;
         this.targetPosMode = v.targetPosMode ?? 0;
-        // Altitude mode (0 = MSL, 1 = HAT)
+        // Altitude mode (0 = MSL ft, 1 = HAT ft, 2 = MSL m, 3 = HAT m)
+        // Feet stay at 0/1 so previously saved sitches keep the units they were saved with
         this.acftAltMode = v.acftAltMode ?? 0;
         this.targetAltMode = v.targetAltMode ?? 0;
         // Distance mode (0 = M, 1 = KM, 2 = NM)
@@ -75,8 +76,8 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         // ACFT position rows - clickable to cycle MGRS/LatLon/DMS
         this.acftZone = this.addGridText(60, 6, "38S KC", '#FFFFFF', 'right', 'acftPos');
         this.acftEasting = this.addGridText(60, 7, "00000 00000", '#FFFFFF', 'right', 'acftPos');
-        // ACFT altitude - clickable to cycle MSL/HAT
-        this.acftAlt = this.addGridText(60, 8, "00000 MSL", '#FFFFFF', 'right', 'acftAlt');
+        // ACFT altitude - clickable to cycle MSL/HAT in feet then meters
+        this.acftAlt = this.addGridText(60, 8, "00000FT MSL", '#FFFFFF', 'right', 'acftAlt');
 
         // Right side middle (dummy - grey, right aligned)
         this.addGridText(60, 12, "LST", grey, 'right');
@@ -208,8 +209,8 @@ export class   CNodeMQ9UI extends CNodeViewUI {
                 this.targetPosMode = (this.targetPosMode + 1) % 4;
                 break;
             case 'acftAlt':
-                // Cycle: 0=MSL, 1=HAT
-                this.acftAltMode = (this.acftAltMode + 1) % 2;
+                // Cycle: 0=MSL ft, 1=HAT ft, 2=MSL m, 3=HAT m
+                this.acftAltMode = (this.acftAltMode + 1) % 4;
                 break;
             case 'slr':
                 // Cycle: 0=M, 1=KM, 2=NM
@@ -287,6 +288,26 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         }
     }
 
+    // Format altitude based on mode (0=MSL ft, 1=HAT ft, 2=MSL m, 3=HAT m)
+    // Datum: lla.z is HAE (height above the WGS84 ellipsoid). MSL subtracts the geoid
+    // undulation, as CNodeWescamMXUI, CNodeLabels3D and CNode3DObject all do. HAT subtracts
+    // the terrain elevation, which getTerrainElevation reports in that same HAE datum, so
+    // the ellipsoid cancels out and HAT needs no geoid term of its own.
+    // Units: rounded to the nearest foot or meter, with thousands separators
+    formatAltitude(lla, mode) {
+        const isHAT = (mode === 1 || mode === 3);
+        const inMeters = (mode === 2 || mode === 3);
+        let alt = lla.z;
+        if (isHAT) {
+            alt -= this.getTerrainElevation(lla);
+        } else {
+            alt -= meanSeaLevelOffset(lla.x, lla.y);
+        }
+        // 1 meter = 3.28084 feet
+        const value = Math.round(inMeters ? alt : alt * 3.28084);
+        return `${value.toLocaleString()}${inMeters ? "M" : "FT"} ${isHAT ? "HAT" : "MSL"}`;
+    }
+
     // Get terrain elevation at a lat/lon position (returns meters)
     getTerrainElevation(lla) {
         const terrainNode = NodeMan.get("TerrainModel", false);
@@ -351,21 +372,8 @@ export class   CNodeMQ9UI extends CNodeViewUI {
             this.acftEasting.text = this.formatLonDM(lla.y);
         }
 
-        // Format ACFT altitude based on display mode
-        // Altitude is in meters, convert to feet (1 meter = 3.28084 feet)
-        // Use toLocaleString() to add commas for thousands
-        const altMSL = lla.z;
-        const altFeetMSL = Math.round(altMSL * 3.28084);
-        if (this.acftAltMode === 0) {
-            // MSL: Mean Sea Level altitude
-            this.acftAlt.text = `${altFeetMSL.toLocaleString()} MSL`;
-        } else {
-            // HAT: Height Above Terrain = altitude - terrain elevation
-            const terrainElevation = this.getTerrainElevation(lla);
-            const hatMeters = altMSL - terrainElevation;
-            const hatFeet = Math.round(hatMeters * 3.28084);
-            this.acftAlt.text = `${hatFeet.toLocaleString()} HAT`;
-        }
+        // Format ACFT altitude based on display mode (MSL/HAT datum, feet/meters units)
+        this.acftAlt.text = this.formatAltitude(lla, this.acftAltMode);
 
         // Update target mode text
         const targetModeLabels = ['TARGET', 'GROUND'];
