@@ -27,12 +27,14 @@
 //
 //   2. The Google Photorealistic 3D tile textures. Those have arbitrary glTF UVs,
 //      so there is no rectangle to draw into: the dab sphere has to be rasterized
-//      through the mesh. For every triangle the sphere touches we clip the
-//      triangle against the sphere (linear interpolation of the distance field
-//      along each edge — the standard convex single-plane clip) and add the
-//      resulting 3- or 4-gon to ONE path in UV space. A single fill per dab per
-//      mesh then avoids the hairline seams that per-triangle fills leave along
-//      shared edges from antialiased blending.
+//      through the mesh. That is done PER TRIANGLE PLANE — intersect the sphere
+//      with the triangle's plane for a true disc of radius sqrt(r^2 - d^2), then
+//      clip the triangle against that disc — and each resulting polygon is added
+//      to ONE path in UV space, so a single fill per dab per mesh avoids the
+//      hairline seams that per-triangle fills leave along shared edges from
+//      antialiased blending. See _paintMeshDab for why the cheaper-looking
+//      alternative (interpolating the sphere's distance field along each edge) is
+//      wrong on adaptive photogrammetry meshes.
 //
 // STATE + IDEMPOTENCE. Painted state hangs off the objects themselves, so it dies
 // with them and needs no registry (which would keep disposed textures alive):
