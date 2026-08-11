@@ -349,33 +349,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 }
             }
 
-            // Self-heal entries featured before dates were stored. Admin-only, so an
-            // anonymous request never triggers a storage scan or a write, and it stops
-            // firing as soon as every entry has a date.
-            if (!empty($storedEntries) && isAdmin()) {
-                $missingDates = false;
-                foreach ($storedEntries as $entry) {
-                    if ($entry['date'] === '') { $missingDates = true; break; }
-                }
-                if ($missingDates) {
-                    refreshFeaturedDates($storedEntries, $s3Data);
-                    // Merge the dates back in place rather than replacing the array, so
-                    // this write only ever adds a field - entries skipped as invalid
-                    // above are left exactly as they were.
-                    $datesByKey = [];
-                    foreach ($storedEntries as $entry) {
-                        $datesByKey[$entry['userID'] . ':' . $entry['name']] = $entry['date'];
-                    }
-                    foreach ($raw['sitches'] as &$entry) {
-                        if (!is_array($entry) || !isset($entry['name']) || !isset($entry['userID'])) continue;
-                        $key = intval($entry['userID']) . ':' . basename(strval($entry['name']));
-                        if (isset($datesByKey[$key])) $entry['date'] = $datesByKey[$key];
-                    }
-                    unset($entry);
-                    writeFeaturedData($raw, $s3Data);
-                }
-            }
-
+            // This path only ever reads. Entries stored before dates existed report an
+            // empty date until the next featured-list edit, which rescans them all
+            // (see refreshFeaturedDates). Backfilling here instead would mean writing
+            // featured.json from a cacheable GET, and the storage scan it needs is slow
+            // enough that a concurrent featured edit or screenshot bump would be lost.
             $sitches = [];
             foreach ($storedEntries as $entry) {
                 $version = isset($entry['screenshotVersion']) ? intval($entry['screenshotVersion']) : null;
