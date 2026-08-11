@@ -684,6 +684,23 @@ export class CVideoAudioOnly extends CVideoAndAudio {
         this.drawWaveform(ctx, frame);
         return canvas;
     }
+
+    // Deliberately does NOT extend the base implementation: an audio file has no picture, so
+    // every field the base reports is an artefact of this class rather than a fact about the
+    // file. videoWidth/videoHeight are the waveform visualisation canvas (640x360 above), and
+    // frames comes from originalFps, a synthetic 30fps invented to give the timeline something
+    // to step through. Reporting those as media metadata would be simply untrue.
+    getMediaInfo() {
+        const buffer = this.audioHandler?.audioBuffer;
+        const audioTrack = this.demuxer?.audioTrack;
+        return {
+            durationSeconds: buffer?.duration ?? this.demuxer?.source?.durationInSeconds,
+            audioCodec: audioTrack?.codec,
+            audioBitrate: audioTrack?.bitrate,
+            audioSampleRate: buffer?.sampleRate ?? audioTrack?.audio?.sample_rate,
+            audioChannels: buffer?.numberOfChannels ?? audioTrack?.audio?.channel_count,
+        };
+    }
     
     /**
      * Update method - handles audio playback state

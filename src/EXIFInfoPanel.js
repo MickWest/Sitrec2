@@ -1,4 +1,4 @@
-import {blockViewEvents, makeDraggable} from "./DragResizeUtils";
+import {blockViewEvents, clampBelowMenuBar, makeDraggable} from "./DragResizeUtils";
 import {setRenderOne} from "./Globals";
 
 function getDockContainer() {
@@ -28,9 +28,70 @@ function formatImportMetadataValue(value, digits = 2) {
     return `${value}`;
 }
 
-function buildEXIFInspectorHTML(metadata) {
+// Bit rates arrive in bits/second, straight from the container, and span three orders of
+// magnitude between an audio track and a 4K video track — so pick the unit per value.
+function formatBitrate(bitsPerSecond) {
+    if (!(bitsPerSecond > 0)) return undefined;
+    if (bitsPerSecond >= 1e6) return `${(bitsPerSecond / 1e6).toFixed(2)} Mbps`;
+    if (bitsPerSecond >= 1e3) return `${Math.round(bitsPerSecond / 1e3)} kbps`;
+    return `${Math.round(bitsPerSecond)} bps`;
+}
+
+function formatBytes(bytes) {
+    if (!(bytes > 0)) return undefined;
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${bytes} bytes`;
+}
+
+function formatDuration(seconds) {
+    if (!(seconds > 0)) return undefined;
+    if (seconds < 60) return `${seconds.toFixed(2)} s`;
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds - minutes * 60;
+    return `${minutes}:${rest < 10 ? "0" : ""}${rest.toFixed(2)} (${seconds.toFixed(1)} s)`;
+}
+
+function sectionHeaderHTML(title) {
+    return `<div style="margin:10px 0 4px; padding-bottom:3px; border-bottom:1px solid rgba(255,255,255,0.14); opacity:0.7; text-transform:uppercase; letter-spacing:0.06em; font-size:10px;">${escapeHTML(title)}</div>`;
+}
+
+// The container/stream facts — what the file IS, as opposed to what the camera recorded.
+// Available for every video and image; EXIF usually is not.
+function buildMediaHTML(media) {
+    if (!media) return "";
+
+    const rows = [];
+    const pushRow = (label, value) => {
+        if (value === undefined || value === null || value === "" || value === "-") return;
+        rows.push(`<div><strong>${escapeHTML(label)}:</strong> ${escapeHTML(value)}</div>`);
+    };
+
+    if (media.width && media.height) pushRow("Size", `${media.width} x ${media.height}`);
+    pushRow("Duration", formatDuration(media.durationSeconds));
+    // A still image is one frame with no frame rate — saying "Frames: 1" is just noise.
+    if (media.frames > 1) pushRow("Frames", media.frames);
+    if (media.fps) pushRow("Frame Rate", `${formatImportMetadataValue(media.fps, 2)} fps`);
+    pushRow("Container", media.container);
+    pushRow("Video Codec", media.videoCodec);
+    pushRow("Video Bitrate", formatBitrate(media.videoBitrate));
+    pushRow("Video Track Size", formatBytes(media.videoBytes));
+    pushRow("Audio Codec", media.audioCodec);
+    pushRow("Audio Bitrate", formatBitrate(media.audioBitrate));
+    if (media.audioSampleRate) {
+        const channels = media.audioChannels ? `, ${media.audioChannels} ch` : "";
+        pushRow("Audio Format", `${media.audioSampleRate} Hz${channels}`);
+    }
+
+    if (rows.length === 0) return "";
+    return sectionHeaderHTML("Media") + rows.join("");
+}
+
+function buildEXIFInspectorHTML(metadata, media) {
+    const mediaHTML = buildMediaHTML(media);
+
     if (!metadata) {
-        return "<div>No EXIF metadata available</div>";
+        return mediaHTML || "<div>No metadata available</div>";
     }
 
     const rows = [];
@@ -64,22 +125,23 @@ function buildEXIFInspectorHTML(metadata) {
     pushRow("ISO", optics.iso);
 
     if (rows.length === 0) {
-        return "<div>No usable EXIF metadata</div>";
+        return mediaHTML || "<div>No usable EXIF metadata</div>";
     }
 
-    return rows.join("");
+    return mediaHTML + sectionHeaderHTML("EXIF") + rows.join("");
 }
 
-function buildRawEXIFHTML(metadata) {
-    if (!metadata) {
-        return "<div>No EXIF metadata available</div>";
+function buildRawEXIFHTML(metadata, media) {
+    if (!metadata && !media) {
+        return "<div>No metadata available</div>";
     }
 
     try {
-        const rawSource = metadata.raw ?? metadata;
+        // Both halves, so "Copy Raw" is still worth having on a video with no EXIF at all.
+        const rawSource = {media: media ?? null, exif: metadata?.raw ?? metadata ?? null};
         return `<pre style="margin:0; white-space:pre-wrap; word-break:break-word; user-select:text; -webkit-user-select:text;">${escapeHTML(JSON.stringify(rawSource, null, 2))}</pre>`;
     } catch (error) {
-        return `<div>Unable to render raw EXIF metadata: ${escapeHTML(error.message)}</div>`;
+        return `<div>Unable to render raw metadata: ${escapeHTML(error.message)}</div>`;
     }
 }
 
@@ -106,9 +168,10 @@ async function copyText(text) {
 
 export class EXIFInfoPanel {
     constructor(options = {}) {
-        this.title = options.title ?? "Image EXIF";
+        this.title = options.title ?? "EXIF/Metadata";
         this.onVisibilityChange = options.onVisibilityChange ?? null;
         this.metadata = null;
+        this.media = null;
         this.filename = "";
         this.visible = false;
         this.mode = "compact";
@@ -231,6 +294,10 @@ export class EXIFInfoPanel {
             handle: this.titleRow,
             excludeElements: [this.closeButton, this.toolbar],
         });
+
+        // Render up front: the panel can be opened (or restored from a save) before any
+        // media has loaded, and would otherwise come up blank instead of "no EXIF".
+        this.renderContent();
     }
 
     createActionButton(label, onClick) {
@@ -309,8 +376,8 @@ export class EXIFInfoPanel {
     renderContent() {
         this.titleElement.textContent = this.filename ? `${this.title}: ${this.filename}` : this.title;
         this.content.innerHTML = this.mode === "raw"
-            ? buildRawEXIFHTML(this.metadata)
-            : buildEXIFInspectorHTML(this.metadata);
+            ? buildRawEXIFHTML(this.metadata, this.media)
+            : buildEXIFInspectorHTML(this.metadata, this.media);
         this.modeButton.textContent = this.mode === "raw" ? "Show Compact" : "Show Raw";
         this.copyGPSButton.disabled = !this.getGPSValue();
         this.copyTimeButton.disabled = !this.getCaptureTimeValue();
@@ -320,23 +387,48 @@ export class EXIFInfoPanel {
         this.copyRawButton.style.opacity = this.copyRawButton.disabled ? "0.5" : "1";
     }
 
-    setMetadata(metadata, filename = "") {
+    // Note the panel does NOT close itself when the metadata goes away — it is a
+    // persistent window that simply reports what it has, so it can be opened (and
+    // restored from a save) before any media has loaded. `media` is the container/stream
+    // info from CVideoData.getMediaInfo(); EXIF is often absent but that almost never is.
+    setMetadata(metadata, filename = "", media = null) {
         this.metadata = metadata ?? null;
+        this.media = media ?? null;
         this.filename = filename ?? "";
         this.setStatus("");
         this.renderContent();
+    }
 
-        if (!this.metadata) {
-            this.hide();
-        }
+    // Pull the window back inside its container. Geometry restored from a save was measured
+    // in whatever window the save was made in, so a sitch saved on a wide screen and opened
+    // on a narrow one can place the panel completely outside the viewport — and the title bar
+    // is the only drag handle, so an off-screen panel cannot be dragged back. Clamped on every
+    // show(), which also covers a window that has since been made smaller.
+    clampIntoView(margin = 16) {
+        const container = getDockContainer();
+        // `||` not `??`: a container that hasn't been laid out yet reports 0, which is not a
+        // usable bound — fall back to the window in that case rather than pinning to the corner.
+        const containerWidth = container?.clientWidth || window.innerWidth;
+        const containerHeight = container?.clientHeight || window.innerHeight;
+
+        const width = this.panel.offsetWidth || parseFloat(this.panel.style.width) || 0;
+        const left = parseFloat(this.panel.style.left) || 0;
+        const maxLeft = Math.max(margin, containerWidth - width - margin);
+        this.panel.style.left = `${Math.min(Math.max(left, margin), maxLeft)}px`;
+
+        // Vertically it is enough that the header stays reachable — that is the drag handle,
+        // and it carries Close. clampBelowMenuBar then has the final say on the top edge.
+        const headerHeight = this.header.offsetHeight || 60;
+        const top = parseFloat(this.panel.style.top) || 0;
+        const maxTop = Math.max(0, containerHeight - headerHeight - margin);
+        if (top > maxTop) this.panel.style.top = `${maxTop}px`;
+        clampBelowMenuBar(this.panel);
     }
 
     show() {
-        if (!this.metadata) {
-            return;
-        }
         this.visible = true;
         this.panel.style.display = "flex";
+        this.clampIntoView();   // a restored or stale position must not strand it off-screen
         this.onVisibilityChange?.(true);
         setRenderOne(true);
     }
@@ -354,6 +446,31 @@ export class EXIFInfoPanel {
         } else {
             this.show();
         }
+    }
+
+    // Save/restore of the floating window itself. Geometry is read straight back out of
+    // the inline styles, which is where createPanel(), makeDraggable() and the CSS
+    // `resize: both` handle all write it.
+    getState() {
+        return {
+            visible: this.visible,
+            mode: this.mode,
+            left: this.panel.style.left,
+            top: this.panel.style.top,
+            width: this.panel.style.width,
+            height: this.panel.style.height,
+        };
+    }
+
+    setState(state) {
+        if (!state) return;
+        if (state.left) this.panel.style.left = state.left;
+        if (state.top) this.panel.style.top = state.top;
+        if (state.width) this.panel.style.width = state.width;
+        if (state.height) this.panel.style.height = state.height;
+        if (state.mode === "raw" || state.mode === "compact") this.mode = state.mode;
+        this.renderContent();
+        if (state.visible) this.show(); else this.hide();
     }
 
     destroy() {

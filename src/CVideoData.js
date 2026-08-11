@@ -142,6 +142,19 @@ export class CVideoData {
         this.stabilizationData = null;
     }
 
+    // Container/stream facts about this media, for display in the EXIF/Metadata panel.
+    // Everything a plain image can answer lives here; the codec-backed subclasses add
+    // codec, bitrate, duration and audio. Undefined fields are simply not shown, so a
+    // subclass only has to report what it actually knows.
+    getMediaInfo() {
+        return {
+            width: this.videoWidth,
+            height: this.videoHeight,
+            frames: this.frames,
+            fps: this.fps,
+        };
+    }
+
     // virtual functions
     getImage(frame) {
         assert(0, "CVideoData: getImage: not implemented")

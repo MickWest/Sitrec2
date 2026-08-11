@@ -661,6 +661,29 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
         }
     }
 
+    // Container/stream facts for the EXIF/Metadata panel. MP4Box has already parsed all of
+    // this at onReady, so it is a read of retained state, not a re-parse. Note fps comes from
+    // the demuxer's measured samples/duration (this.fps is not set on this class), and the
+    // track bitrate/size are MP4Box's per-track figures rather than the whole-file size.
+    getMediaInfo() {
+        const source = this.demuxer?.source;
+        const videoTrack = this.demuxer?.videoTrack;
+        const audioTrack = this.demuxer?.audioTrack;
+        return {
+            ...super.getMediaInfo(),
+            fps: this.originalFps ?? source?.fps,
+            durationSeconds: source?.durationInSeconds,
+            container: source?.info?.brands?.[0],
+            videoCodec: videoTrack?.codec ?? this.config?.codec,
+            videoBitrate: videoTrack?.bitrate,
+            videoBytes: videoTrack?.size,
+            audioCodec: audioTrack?.codec,
+            audioBitrate: audioTrack?.bitrate,
+            audioSampleRate: audioTrack?.audio?.sample_rate,
+            audioChannels: audioTrack?.audio?.channel_count,
+        };
+    }
+
     /**
      * Override config info to show MP4-specific properties
      */

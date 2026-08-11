@@ -166,8 +166,13 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.lockToInFrameController = null;
         this.exifInfoButtonController = null;
         this.exifInfoPanel = new EXIFInfoPanel({
+            title: "EXIF/Metadata" + this.viewMenuSuffix(),
             onVisibilityChange: () => this.updateEXIFInfoButton(),
         });
+        // Apply any panel state stashed by an early modDeserialize (see applyEXIFPanelState).
+        // The menu button itself only appears once this view holds media, which is normally
+        // later — refreshEXIFUI() adds it when the video finishes loading.
+        this.applyEXIFPanelState();
         this._elaPendingKey = null;
         this._elaResultKey = null;
         this._elaResultCanvas = null;
@@ -783,8 +788,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             );
         }
 
-        this.updateEXIFPositionButton();
-        this.updateEXIFInfoButton();
+        // Refresh from whichever video is actually SELECTED, not necessarily the one that just
+        // finished. Restore loads complete out of order (see _preCreateRestoreSlots), so a late
+        // completion for a non-selected slot would otherwise repaint the panel with that clip's
+        // size/codec/bitrate under the selected clip's filename. vd is the fallback for the case
+        // documented below — this.videoData isn't assigned yet when the first media loads.
+        this.refreshEXIFUI(this.videoData ?? vd);
 
         // Handle pending multi-video restore
         // Pass vd (the videoData from callback parameter) since this.videoData may not be set yet
@@ -1328,7 +1337,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     modSerialize() {
         const result = {
             ...super.modSerialize(),
-            ...this.simpleSerialize(this.toSerializeCNodeVideoView)
+            ...this.simpleSerialize(this.toSerializeCNodeVideoView),
+            exifPanel: this.exifInfoPanel.getState(),
         };
         if (this.videos && this.videos.length > 1) {
             result.currentVideoIndex = this.currentVideoIndex;
@@ -1343,6 +1353,21 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (v.currentVideoIndex !== undefined && this.videos && this.videos.length > 1) {
             this.selectVideo(v.currentVideoIndex);
         }
+        // Floating EXIF panel state (open/closed, position, size, compact/raw). Only
+        // STASHED here, because CNodeView's constructor calls applyEarlyMods(), which
+        // dispatches to this override before our own constructor body has created
+        // exifInfoPanel — touching the panel here would abort construction. Whichever
+        // runs second (this call on the normal path, or the constructor) applies it.
+        if (v.exifPanel !== undefined) this.exifPanelState = v.exifPanel;
+        this.applyEXIFPanelState();
+    }
+
+    // Restoring the panel is safe before the media has loaded: it just reads "no EXIF"
+    // until loadedCallback's refreshEXIFUI() feeds it the image's metadata.
+    applyEXIFPanelState() {
+        if (!this.exifInfoPanel) return;    // early modDeserialize, panel not built yet
+        this.exifInfoPanel.setState(this.exifPanelState);
+        this.updateEXIFInfoButton();
     }
 
     disposeVideoData() {
@@ -1435,8 +1460,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         this.updateVideoSelector();
         this.updateRotationDropdown();
-        this.updateEXIFPositionButton();
-        this.updateEXIFInfoButton();
+        this.refreshEXIFUI();
     }
 
     getVideoDisplayName(entry, index) {
@@ -1492,8 +1516,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.updateVideoSelector();
             this.setupRotationDropdown();
             this.setupLockToInFrameControl();
-            this.updateEXIFPositionButton();
-            this.updateEXIFInfoButton();
+            this.refreshEXIFUI();
         } else if (retries > 0) {
             setTimeout(() => this.ensureVideoSelectorUpdated(retries - 1), 100);
         }
@@ -1536,6 +1559,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 }
             });
     }
+
+    // True for views that just re-show another view's videoData (see CNodeMirrorVideoView).
+    // A prototype getter rather than an instance flag, so it is already answerable while the
+    // base constructor runs. Such a view has no media of its own, so it must not add its own
+    // copies of the shared Video-menu controls.
+    get isMirrorView() { return false; }
 
     // Suffix used to distinguish this view's controls in the shared Video menu.
     // Empty for the primary "video" view, " (2)" etc. for secondary views.
@@ -1599,8 +1628,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             ...applied,
         };
 
-        this.updateEXIFPositionButton();
-        this.updateEXIFInfoButton();
+        this.refreshEXIFUI();
     }
 
     toggleEXIFInfoPanel() {
@@ -1608,27 +1636,57 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.exifInfoPanel.toggle();
     }
 
-    syncEXIFInfoPanel() {
-        const metadata = this.getCurrentImportMetadata();
+    // Push the given media's EXIF and container/stream info into the panel. Defaults to the
+    // currently selected video, but loadedCallback passes its own videoData explicitly
+    // because this.videoData isn't necessarily assigned yet at that point.
+    syncEXIFInfoPanel(videoData = this.videoData) {
         this.exifInfoPanel.setMetadata(
-            metadata,
-            this.fileName ?? this.videoData?.filename ?? ""
+            videoData?.importMetadata ?? null,
+            this.fileName ?? videoData?.filename ?? "",
+            videoData?.getMediaInfo?.() ?? null
         );
     }
 
+    // True once this view actually holds a video or image. The Video menu is shared by every
+    // video view, so an empty one must not contribute an entry to it.
+    hasMedia() {
+        return this.videos?.length > 0 || !!this.videoData;
+    }
+
+    // Unlike the EXIF-GPS button, this one is NOT gated on the media having EXIF — every video
+    // has size/fps/codec/bitrate to show even when it carries no EXIF at all. It IS gated on
+    // the view holding media. While it exists the controller is relabelled in place rather
+    // than recreated, so toggling the panel doesn't shuffle its position in the menu.
     updateEXIFInfoButton() {
         if (!guiMenus.video) return;
+        if (this.isMirrorView) return;   // the view it mirrors already owns this button
 
-        if (this.exifInfoButtonController) {
-            this.exifInfoButtonController.destroy();
-            this.exifInfoButtonController = null;
+        if (!this.hasMedia()) {
+            if (this.exifInfoButtonController) {
+                this.exifInfoButtonController.destroy();
+                this.exifInfoButtonController = null;
+            }
+            return;
         }
 
-        const metadata = this.getCurrentImportMetadata();
-        if (!metadata) return;
+        const label = (this.exifInfoPanel.visible ? "Hide EXIF/Metadata" : "Show EXIF/Metadata")
+            + this.viewMenuSuffix();
+
+        if (this.exifInfoButtonController) {
+            this.exifInfoButtonController.name(label);
+            return;
+        }
 
         this.exifInfoButtonController = guiMenus.video.add(this, "toggleEXIFInfoPanel")
-            .name(this.exifInfoPanel.visible ? "Hide EXIF Panel" : "Show EXIF Panel");
+            .name(label);
+    }
+
+    // Single convergence point for the EXIF UI: an open panel follows the currently
+    // selected media, and both Video-menu entries follow from that.
+    refreshEXIFUI(videoData = this.videoData) {
+        this.syncEXIFInfoPanel(videoData);
+        this.updateEXIFPositionButton();
+        this.updateEXIFInfoButton();
     }
 
     updateEXIFPositionButton() {
@@ -1704,8 +1762,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         this.invalidateELAResult();
         this.updateVideoSelector();
-        this.updateEXIFPositionButton();
-        this.updateEXIFInfoButton();
+        this.refreshEXIFUI();
         this.dispatchVideoAvailabilityChanged();
     }
 
@@ -1719,8 +1776,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.videos = [];
         this.currentVideoIndex = -1;
         this.videoData = null;
-        this.updateEXIFPositionButton();
-        this.updateEXIFInfoButton();
+        this.refreshEXIFUI();
         this.invalidateELAResult();
         this.updateVideoSelector();
         this.dispatchVideoAvailabilityChanged();
@@ -1760,6 +1816,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.disposeAllVideos();
         this.disposeELAWorker();
         this.exifInfoPanel.destroy();
+        // The button outlives the media now, so it has to be taken down with the view
+        // (node disposal runs before the menu bar is torn down on a sitch change).
+        if (this.exifInfoButtonController) {
+            this.exifInfoButtonController.destroy();
+            this.exifInfoButtonController = null;
+        }
         // Call parent dispose
         super.dispose();
     }

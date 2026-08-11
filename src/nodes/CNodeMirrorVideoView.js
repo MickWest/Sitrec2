@@ -1,6 +1,10 @@
 import {CNodeVideoView} from "./CNodeVideoView";
 
 export class CNodeMirrorVideoView extends CNodeVideoView {
+    // Answered from the prototype so it is already true while the base constructor runs,
+    // before this.in.mirror has been wired up. See CNodeVideoView.isMirrorView.
+    get isMirrorView() { return true; }
+
     constructor(v) {
         super(v);
         this.input("mirror")

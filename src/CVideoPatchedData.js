@@ -172,6 +172,17 @@ export class CVideoPatchedData extends CVideoData {
         return this.source.hasRealFramePTS();
     }
 
+    // Codec/bitrate facts belong to the wrapped source, but the frame count and fps are this
+    // wrapper's whole point — it presents a uniform-cadence virtual timeline over a VFR file —
+    // so those come from here.
+    getMediaInfo() {
+        return {
+            ...this.source.getMediaInfo(),
+            frames: this.frames,
+            fps: this.fps,
+        };
+    }
+
     isFrameLoaded(frame) {
         return this.source.isFrameLoaded(this.virtualToSource(frame));
     }
