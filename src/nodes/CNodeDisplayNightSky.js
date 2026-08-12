@@ -50,6 +50,7 @@ import {CNodeViewUI} from "./CNodeViewUI";
 import {CNodeViewEphemeris} from "./CNodeViewEphemeris";
 import {CNodeSkyPlotView} from "./CNodeSkyPlotView";
 import {CNodeStarChartView} from "./CNodeStarChartView";
+import {viewMenuKey} from "../ViewUIBarMenus";
 //import { eci_to_geodetic } from '../../pkg/eci_convert';
 // npm install satellite.js --save-dev
 // installed with
@@ -284,7 +285,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 }
             })
             .name(t("nightSky.vectorsInLookView.label"))
-            .tooltip(t("nightSky.vectorsInLookView.tooltip"));
+            .tooltip(t("nightSky.vectorsInLookView.tooltip"))
+            .shareAs(viewMenuKey("lookView", "celestialVectors"));
 
 
         this.flareRegionGroup = new Group();
@@ -636,14 +638,19 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.equatorialSphereGroup = new Group();
         this.celestialSphere.add(this.equatorialSphereGroup);
         this.celestialElements.addCelestialSphereLines(this.equatorialSphereGroup, 10);
-        this.showEquatorialGrid = (v.showEquatorialGrid !== undefined) ? v.showEquatorialGrid : true;
+        // Two INDEPENDENT per-view flags, matching showLabelsMain/showLabelsLook and the rest of
+        // the "…in Main" / "…in Look" pairs. This used to be a master ("Equatorial Grid") plus a
+        // look include ("Equatorial Grid in Look View"): the look row could be ticked and do
+        // nothing because the master was off, which reads as a control that lies. Legacy saves
+        // carrying the old master key are converted in modDeserialize.
+        this.showEquatorialGridMain = v.showEquatorialGridMain ?? v.showEquatorialGrid ?? true;
 
-
-        this.celestialGUI.add(this, "showEquatorialGrid").listen().onChange(() => {
+        this.celestialGUI.add(this, "showEquatorialGridMain").listen().onChange(() => {
             setRenderOne(true);
             this.updateVis()
-        }).name(t("nightSky.equatorialGrid.label")).tooltip(t("nightSky.equatorialGrid.tooltip"))
-        this.addSimpleSerial("showEquatorialGrid")
+        }).name(t("nightSky.equatorialGridMain.label")).tooltip(t("nightSky.equatorialGridMain.tooltip"))
+            .shareAs(viewMenuKey("mainView", "equatorialGrid"))
+        this.addSimpleSerial("showEquatorialGridMain")
 
 
         this.constellationsGroup = new Group();
@@ -704,6 +711,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             this.updateVis()
 
         }).name(t("nightSky.equatorialGridLook.label")).tooltip(t("nightSky.equatorialGridLook.tooltip"))
+            .shareAs(viewMenuKey("lookView", "equatorialGrid"))
         this.addSimpleSerial("showEquatorialGridLook")
 
         // same for the flare region
@@ -917,14 +925,16 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
     updateVis() {
 
-        this.equatorialSphereGroup.visible = this.showEquatorialGrid;
         this.constellationsGroup.visible = this.showConstellations;
         if (this.starSprites) {
             this.starSprites.visible = this.showStars;
         }
 
-        // equatorial lines might not want to be in the look view
-        this.equatorialSphereGroup.layers.mask = this.showEquatorialGridLook ? LAYER.MASK_MAINRENDER : LAYER.MASK_HELPERS;
+        // The grid's two view flags are independent, so the mask is built from both rather than
+        // one gating the other. See perViewLayerMask for why this is not MASK_MAINRENDER.
+        const equatorialMask = LAYER.perViewLayerMask(this.showEquatorialGridMain, this.showEquatorialGridLook);
+        this.equatorialSphereGroup.visible = equatorialMask !== 0;
+        this.equatorialSphereGroup.layers.mask = equatorialMask;
 
         this.sunArrowGroup.visible = this.showSunArrows;
         this.VenusArrowGroup.show(this.showVenusArrow);
@@ -959,6 +969,16 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
     modDeserialize(v) {
         super.modDeserialize(v);
+
+        // Legacy saves carry the old MASTER flag "showEquatorialGrid" (on = visible, with
+        // showEquatorialGridLook deciding whether the look view got it too). The pair is two
+        // independent per-view flags now, so a save with the master off meant "nowhere",
+        // whatever the look flag said — reproduce that rather than switching the grid on.
+        if (v.showEquatorialGridMain === undefined && v.showEquatorialGrid !== undefined) {
+            this.showEquatorialGridMain = v.showEquatorialGrid;
+            if (!v.showEquatorialGrid) this.showEquatorialGridLook = false;
+            this.updateVis();
+        }
 
         // Copy satellite properties from the deserialized values to the satellites object
         var satSerials = this.getSatelliteSerials();

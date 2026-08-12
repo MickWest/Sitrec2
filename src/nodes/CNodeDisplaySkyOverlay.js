@@ -9,6 +9,7 @@ import {intersectSphere2, V3} from "../threeUtils";
 import {Ray, Raycaster, Sphere, Vector3} from "three";
 import {calculateAltitude} from "../threeExt";
 import {getHUDColor} from "../HUDColor";
+import {viewControlLabel, viewMenuKey} from "../ViewUIBarMenus";
 
 const registeredLabels = new Set();
 
@@ -38,15 +39,24 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             this.syncVideoZoom = true;
         }
 
-        gui.add(this, "showStarNames").onChange(() => {
+        // These two are per-view by construction — there is one sky overlay per 3D view — so the
+        // Show ▸ Celestial rows have to name the view. Composed rather than translated because
+        // the set of views is not known up front; viewControlLabel keeps them to the same
+        // "<Thing> in Main" / "<Thing> in Look" shape as every other per-view row. The header
+        // menus mirror the same controllers and drop the suffix, since the menu names the view.
+        const starNames = gui.add(this, "showStarNames").onChange(() => {
             setRenderOne(true);
-        }).name(this.overlayView.id + " Star names").tooltip("Show star name labels in this view").listen();
+        }).name(viewControlLabel(this.overlayView.id, "Star Names"))
+            .tooltip("Show star name labels in this view").listen();
         this.addSimpleSerial("showStarNames");
+        starNames.shareAs(viewMenuKey(this.overlayView.id, "starNames"));
 
-        gui.add(this, "onlyLabelPlanets").onChange(() => {
+        const onlyPlanets = gui.add(this, "onlyLabelPlanets").onChange(() => {
             setRenderOne(true);
-        }).name(this.overlayView.id + " Only label planets").tooltip("When checked, suppress star labels but always show planet names").listen();
+        }).name(viewControlLabel(this.overlayView.id, "Only Label Planets"))
+            .tooltip("When checked, suppress star labels but always show planet names").listen();
         this.addSimpleSerial("onlyLabelPlanets");
+        onlyPlanets.shareAs(viewMenuKey(this.overlayView.id, "onlyPlanets"));
 
     }
 

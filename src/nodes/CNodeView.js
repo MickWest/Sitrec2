@@ -10,7 +10,8 @@ import {assert} from "../assert";
 import {ViewMan} from "../CViewManager";
 import {LayoutMan} from "../CLayoutManager";
 import {makeDraggable, makeResizable, removeDraggable, removeResizable, VIEW_EDIT_KEY, clampBelowMenuBar} from "../DragResizeUtils";
-import {CUIBar} from "../CUIBar";
+import {CUIBar, hudClipPath} from "../CUIBar";
+import {FRIENDLY_VIEW_NAMES, populateViewUIBarMenu} from "../ViewUIBarMenus";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {par} from "../par";
 import {
@@ -32,11 +33,6 @@ const CLOSE_OFF_TOP_PX = -5;
 
 // Friendly, capitalised view names for the per-view header (UIBar). Falls back to the
 // view's menuName, then a prettified id ("altitudeGraphView" → "Altitude Graph").
-const FRIENDLY_VIEW_NAMES = {
-    mainView: "Main", lookView: "Look", video: "Video", video2: "Video 2",
-    chatView: "Assistant",
-};
-
 // The big content views default to an UNpinned (hover-reveal) header — a persistent bar is
 // intrusive there. Other views (editors/panels) default pinned. The state is serialized;
 // old sitches (no serialized value) assume off (see modDeserialize).
@@ -394,6 +390,12 @@ class CNodeView extends CNode {
         bar.addCloseIcon(() => this.closeViewWithUndo(title));
         this.uiBar = bar;
 
+        // Fill the title menu with this view's own controls, mirrored from the global menus.
+        // A no-op for views with no registry entry, and order-independent: controls created
+        // later in the sitch load (night sky, video) drop in when they appear.
+        populateViewUIBarMenu(this);
+        bar.onMenuStateChange = () => this._updateHeaderShown();
+
         // The header bar is a DRAG HANDLE: drag it to move the view (no modifier — the bar is
         // an explicit affordance). Interactive children (menus, icons) stopPropagation on
         // pointerdown so they don't start a drag. Coexists with the Phase-1 Q-drag-anywhere.
@@ -449,7 +451,34 @@ class CNodeView extends CNode {
     }
 
     _updateHeaderShown() {
-        if (this.uiBar) this.uiBar.setShown(this.headerPinned || this._headerHovering || this._headerDragging);
+        if (this.uiBar) {
+            // An OPEN menu latches the bar visible. Its dropdown hangs BELOW the strip, so
+            // moving the pointer down to click a row leaves the bar's hover region — without
+            // this the menu fades out from under the click. The latch releases when the menu
+            // closes (title tap, or a press anywhere outside the bar).
+            this.uiBar.setShown(this.headerPinned || this._headerHovering
+                || this._headerDragging || this.uiBar.hasOpenMenu());
+        }
+        this._clipHUDsBelowHeader();
+    }
+
+    // A view's HUD companions — the compass, the MQ-9 / Wescam OSD frames, the video-info
+    // panel — are separate views positioned `relativeTo` this one: SIBLING divs with a higher
+    // z-index (updateZOrder stacks by area, and they are the same size). The header lives
+    // inside THIS view's stacking context, so no z-index on the bar can climb above them, and
+    // they paint over the header and its open menu. They are already pointer-transparent, so
+    // the header still receives the clicks — this is purely about what you can see.
+    //
+    // So clip the shape the header chrome occupies out of any companion that reaches into it.
+    // Nothing is lost: that shape is exactly what the opaque header is already covering. It is
+    // measured per companion, because clip-path is relative to each one's own box — a corner
+    // compass well below the bar is left untouched rather than beheaded.
+    _clipHUDsBelowHeader() {
+        const chrome = this.uiBar?.shown ? this.uiBar.chromeRect() : null;
+        ViewMan.iterate((id, view) => {
+            if (view.in?.relativeTo !== this || !view.div) return;
+            view.div.style.clipPath = chrome ? hudClipPath(chrome, view.div.getBoundingClientRect()) : "";
+        });
     }
 
     // A header drag must keep the bar visible for the whole gesture, even if the pointer
@@ -607,6 +636,7 @@ class CNodeView extends CNode {
         if (this.uiBar) {
             this.uiBar.dispose();
             this.uiBar = null;
+            this._clipHUDsBelowHeader();   // hand the HUD companions their full box back
         }
 
         // if it's an overlay view, then we don't want to remove the div

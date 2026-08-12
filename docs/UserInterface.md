@@ -59,6 +59,22 @@ You can modify a view in various ways:
 `Q` is what separates "I am editing the layout" from "I am flying the camera" — without it, dragging inside a 3D view navigates the camera instead. Holding it highlights the edges of every movable view, and moves and resizes snap to their neighbours.
 
 These layout changes are stored with the sitch when you save it (**File → Save**, **Save As**, or **Save Local** — see [Saving and Loading Sitches](SavingAndLoading.md)).
+
+## The View Header
+
+Move the mouse to the top edge of a view and a thin header bar fades in, with the view's name on the left and a few icons on the right (fullscreen, pop out, 📌 pin, and ✕ close). Pin it if you would rather it stayed put. The header is also the drag handle: drag it to move the view, no `Q` needed.
+
+The name on the left is a menu, and it holds the controls that only affect *that* view:
+
+- **Main** — Measurements, Labels, Features, Field of View, Y-Compress, and a Night Sky group (star names, planet labels, equatorial grid).
+- **Look** — the same first three plus All Tracks, North Up and Y-Compress, a Night Sky group (star names, planet labels, equatorial grid, celestial vectors), and a Video Overlay group (transparency, colour key, ground video).
+- **Video** — Zoom, Rotation, Video Info, Grid, Annotations, EXIF/Metadata, an Adjustments group (effects, brightness, contrast) and a Masking group.
+
+These are the *same* controls as the ones in the Show, View and Video menus, not copies: changing one changes the other, and only one of them is saved with the sitch. The header simply puts them where they apply, under short names — "Measurements in Look" is just "Measurements" under **Look**, and the original wording is still in the tooltip. An item that does not apply to the current sitch (no video loaded, no night sky) is left out rather than shown greyed.
+
+## Per-view controls
+
+Anything that can be shown in one view but not another is a **pair** of controls, named the same way throughout: "Labels in Main" and "Labels in Look", "Equatorial Grid in Main" and "Equatorial Grid in Look", and so on. The two are independent — neither is a master switch for the other — so a ticked box always means the thing is on in that view. In the view's own header menu the "in Main" / "in Look" is dropped, because the menu you opened already says which view it is.
  
 # Time and Date User Interface
 

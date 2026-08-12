@@ -54,6 +54,7 @@ import {CNodeTerrainUI} from "./nodes/CNodeTerrainUI";
 import {showError} from "./showError";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
 import {meanSeaLevelOffset, ensureGeoidLoaded} from "./EGM96Geoid";
+import {viewMenuKey} from "./ViewUIBarMenus";
 
 export async function SituationSetup(runDeferred = false) {
     console.log("++++++ SituationSetup")
@@ -548,7 +549,8 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             guiMenus.view.add(cameraNode.camera, 'fov', 0.35, 80, 0.01).onChange(value => {
                 cameraNode.camera.updateProjectionMatrix()
             }).listen().name(t("situationSetup.mainFov.label"))
-                .tooltip(t("situationSetup.mainFov.tooltip"));
+                .tooltip(t("situationSetup.mainFov.tooltip"))
+                .shareAs(viewMenuKey("mainView", "fov"));
 
             node = cameraNode;
             break;
@@ -761,12 +763,13 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             //    assert(videoFile !== undefined, "videoView needs a video file")
 
             if (!NodeMan.exists("videoZoom")) {
-                new CNodeGUIValue({
+                const zoomNode = new CNodeGUIValue({
                     id: "videoZoom",
                     value: 100, start: 5, end: 2000, step: 1,
                     desc: "Video Zoom %",
                     tip: "Zoom in on the center of the video. Will also zoom the 'lookView' camera to match, if linked",
                 }, guiMenus.view)
+                zoomNode.guiEntry.shareAs(viewMenuKey("video", "zoom"));
             }
 
 

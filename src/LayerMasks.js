@@ -36,3 +36,15 @@ export const MASK_TARGETRENDER = MASK_TARGET;  // for the target-only window
 
 
 
+
+// The layer mask for something switchable INDEPENDENTLY per view — the pattern behind the
+// "… in Main" / "… in Look" pairs (labels, features, measurements, the equatorial grid).
+//
+// Only two bits distinguish the two renders: HELPERS is in MAINRENDER alone, LOOK in LOOKRENDER
+// alone. WORLD and TARGET are in BOTH, which is the trap — masking with MASK_MAINRENDER to mean
+// "main only" actually leaks into the look view, because the look camera tests WORLD and TARGET
+// too. A zero result means "in neither"; the caller should clear .visible as well, since an
+// object with a zero mask is skipped but its children are still walked.
+export function perViewLayerMask(inMain, inLook) {
+    return (inMain ? MASK_HELPERS : 0) | (inLook ? MASK_LOOK : 0);
+}

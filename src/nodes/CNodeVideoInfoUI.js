@@ -3,6 +3,7 @@ import {CustomManager, GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit} 
 import {par} from "../par";
 import {t} from "../i18n";
 import {getDisplayFilename} from "../FilenameUtils";
+import {viewMenuKey} from "../ViewUIBarMenus";
 
 const DEFAULT_X = 50;
 const DEFAULT_Y = 8;
@@ -972,7 +973,8 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         folder.add(this, "showInfo").name(t("videoInfo.showVideoInfo.label"))
             .tooltip(t("videoInfo.showVideoInfo.tooltip"))
             .listen()
-            .onChange(() => this.updateVisibility());
+            .onChange(() => this.updateVisibility())
+            .shareAs(viewMenuKey("video", "videoInfo"));
 
         folder.add(this, "showFilename").name(t("videoInfo.filename.label"))
             .tooltip(t("videoInfo.filename.tooltip"))

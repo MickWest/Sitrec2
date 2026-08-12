@@ -13,6 +13,7 @@ import {mouseToCanvas} from "../ViewUtils";
 import {undoManager} from "../UndoManager";
 import {assert} from "../assert";
 import {CNodeVideoView} from "./CNodeVideoView";
+import {viewMenuKey} from "../ViewUIBarMenus";
 
 const TOOLS = ["select", "pencil", "brush", "line", "arrow", "rect", "ellipse", "text", "image", "eraser"];
 
@@ -151,7 +152,8 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
             // user re-enables Edit explicitly.
             this._updateToolbarVisibility();
             setRenderOne(true);
-        }).tooltip("Master switch. When off, annotations are hidden, the toolbar disappears, mouse passes through, and editing is suppressed.");
+        }).tooltip("Master switch. When off, annotations are hidden, the toolbar disappears, mouse passes through, and editing is suppressed.")
+            .shareAs(viewMenuKey("video", "annotations"));
 
         this.gui.add(this, "editing").name("Edit Mode").listen().onChange(() => {
             // Editing implies the strokes you're drawing must be visible.

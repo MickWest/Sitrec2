@@ -950,7 +950,7 @@ const en = {
         showHide: {
             keyboardShortcuts: { label: "[K]eyboard Shortcuts", tooltip: "Show or hide the keyboard shortcuts overlay" },
             toggleExtendToGround: { label: "Toggle ALL [E]xtend To Ground", tooltip: "Toggle 'Extend to Ground' for all tracks\nWill set all off if any are on\nWill set all on if none are on" },
-            showAllTracksInLook: { label: "Show All Tracks in Look View", tooltip: "Display all aircraft tracks in the look/camera view" },
+            showAllTracksInLook: { label: "All Tracks in Look", tooltip: "Display all aircraft tracks in the look/camera view" },
             showCompassElevation: { label: "Show Compass Elevation", tooltip: "Show compass elevation (angle above the local ground plane) in addition to bearing (azimuth)" },
             filterTracks: { label: "Filter Tracks", tooltip: "Show/hide tracks based on altitude, direction, or frustum intersection" },
             removeAllTracks: { label: "Remove All Tracks", tooltip: "Remove all tracks from the scene\nThis will not remove the objects, just the tracks\nYou can add them back later by dragging and dropping the files again" },
@@ -1045,7 +1045,7 @@ const en = {
         sunAngleArrows: { label: "Sun Angle Arrows", tooltip: "When glare is detected, show arrows from camera to satellite, and then satellite to sun" },
         celestialFolder: { tooltip: "night sky related things" },
         vectorsOnTraverse: { label: "Vectors On Traverse", tooltip: "If checked, the vectors are shown relative to the traverse object. Otherwise they are shown relative to the look camera." },
-        vectorsInLookView: { label: "Vectors in Look View", tooltip: "If checked, the vectors are shown in the Look View Otherwise just the main view." },
+        vectorsInLookView: { label: "Celestial Vectors in Look", tooltip: "Show the celestial direction vectors in the look/camera view as well as the main view" },
         showSatellitesGlobal: { label: "Show Satellites (Global)", tooltip: "Master toggle: show or hide all satellites" },
         showStarlink: { label: "Starlink", tooltip: "Show SpaceX Starlink satellites" },
         showISS: { label: "ISS", tooltip: "Show the International Space Station" },
@@ -1073,7 +1073,7 @@ const en = {
         flareBrightness: { label: "Flare Brightness", tooltip: "Scale factor for the additional brightness of flaring satellites. 0 is nothing" },
         satCutOff: { label: "Sat Cut-Off", tooltip: "Satellites dimmed to this level or less will not be displayed" },
         displayRange: { label: "Display Range (km)", tooltip: "Satellites beyond this distance will not have their names or arrows displayed" },
-        equatorialGrid: { label: "Equatorial Grid", tooltip: "Show the celestial equatorial coordinate grid" },
+        equatorialGridMain: { label: "Equatorial Grid in Main", tooltip: "Show the celestial equatorial coordinate grid in the main 3D view" },
         constellationLines: { label: "Constellation Lines", tooltip: "Show lines connecting stars in constellations" },
         constellationStyle: {
             label: "Asterism Style",
@@ -1082,7 +1082,7 @@ const en = {
             optionAstrometry: "Astrometry.net",
         },
         renderStars: { label: "Render Stars", tooltip: "Show stars in the night sky" },
-        equatorialGridLook: { label: "Equatorial Grid in Look View", tooltip: "Show the equatorial grid in the look/camera view" },
+        equatorialGridLook: { label: "Equatorial Grid in Look", tooltip: "Show the celestial equatorial coordinate grid in the look/camera view" },
         flareRegionLook: { label: "Flare Region in Look View", tooltip: "Show the flare region cone in the look camera view" },
         satelliteEphemeris: { label: "Satellite Ephemeris" },
         skyPlot: { label: "Sky Plot" },
@@ -1780,7 +1780,7 @@ const en = {
             tooltip: "Project the video onto the ground",
         },
         groundVideoInLookView: {
-            label: "Ground Video in Look View",
+            label: "Ground Video in Look",
             tooltip: "Show the ground-projected video in the look view",
         },
         matchVideoAspect: {
@@ -1811,12 +1811,53 @@ const en = {
             tooltip: "Show track/object labels in the look/camera view",
         },
         featuresInMain: {
-            label: "Features/Pins in Main",
+            label: "Features in Main",
             tooltip: "Show feature markers (pins) in the main 3D view",
         },
         featuresInLook: {
             label: "Features in Look",
             tooltip: "Show feature markers in the look/camera view",
+        },
+    },
+
+    // Short labels for the per-view header menus (src/ViewUIBarMenus.js). These name the SAME
+    // controllers as the long-form entries elsewhere in this file — a header row is a mirror of
+    // a global-menu row, not a second control. They can be shorter because the menu you opened
+    // already names the view: "Measurements in Look" is just "Measurements" under Look. The
+    // tooltip is inherited from the original control, so the full explanation is still there.
+    // Keys are slot names from VIEW_UIBAR_MENUS, shared across views where the meaning is.
+    viewMenus: {
+        measurements: "Measurements",
+        labels: "Labels",
+        features: "Features",
+        allTracks: "All Tracks",
+        northUp: "North Up",
+        yCompress: "Y-Compress",
+        fov: "Field of View",
+        starNames: "Star Names",
+        onlyPlanets: "Only Label Planets",
+        equatorialGrid: "Equatorial Grid",
+        celestialVectors: "Celestial Vectors",
+        overlayTransparency: "Transparency %",
+        overlayKeyColor: "Key Color",
+        overlayKeyTolerance: "Key Tolerance %",
+        groundVideo: "Ground Video",
+        zoom: "Zoom %",
+        rotation: "Rotation",
+        videoInfo: "Video Info",
+        grid: "Grid",
+        annotations: "Annotations",
+        exifPanel: "EXIF / Metadata",
+        effects: "Enable Effects",
+        brightness: "Brightness",
+        contrast: "Contrast",
+        mask: "Enable Mask",
+        maskEdit: "Edit Mask",
+        folders: {
+            nightSky: "Night Sky",
+            videoOverlay: "Video Overlay",
+            adjustments: "Adjustments",
+            masking: "Masking",
         },
     },
 

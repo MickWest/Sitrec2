@@ -73,6 +73,7 @@ import {CNodeVideoCurvesView} from "./CNodeVideoCurvesView";
 import {CNodeVideoLevelsView} from "./CNodeVideoLevelsView";
 import {CNodeAudioSpectrumView} from "./CNodeAudioSpectrumView";
 import {rightClickWasClaimed} from "../ViewUtils";
+import {viewMenuKey} from "../ViewUIBarMenus";
 
 // Re-export for external consumers (e.g. CMotionAnalysis).
 export {addFiltersToVideoNode, applyConvolution} from "./CNodeVideoViewFilters";
@@ -1558,6 +1559,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                     setRenderOne(true);
                 }
             });
+        // Re-registering under the same key rebuilds the header row rather than adding a second
+        // one — this controller is destroyed and rebuilt on every video load (above).
+        this.rotationController.shareAs(viewMenuKey(this.id, "rotation"));
     }
 
     // True for views that just re-show another view's videoData (see CNodeMirrorVideoView).
@@ -1679,6 +1683,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         this.exifInfoButtonController = guiMenus.video.add(this, "toggleEXIFInfoPanel")
             .name(label);
+        this.exifInfoButtonController.shareAs(viewMenuKey(this.id, "exifPanel"));
     }
 
     // Single convergence point for the EXIF UI: an open panel follows the currently
