@@ -117,6 +117,13 @@ let threshSigmaController = null;
 // Whether params.minArea currently holds a MEASURED value rather than a user-chosen one - it
 // must fall with the calibration it came from, or teardown leaves a half-calibrated set.
 let minAreaCalibrated = false;
+// Whether params.minArea was CHOSEN - hand-edited, or picked and verified by the adjustment
+// optimizer - as opposed to measured or left at its default. Three states are needed, not two:
+// an untouched default must still be calibrated by a chained Detect Star Size, a measured value
+// may be re-measured freely, and a chosen one must survive until somebody asks for a measurement
+// explicitly. Without this, pressing Optimize and then Full Analysis silently discarded the blob
+// size the optimizer had just verified, and the analysis differed from the one it promised.
+let minAreaChosen = false;
 // Monotonic ticket for calibration runs: only the newest request may publish. Two clicks in
 // quick succession race their decoder waits, and video-identity checks cannot see that - both
 // requests belong to the same video, but the older result describes the wrong frame.
@@ -286,23 +293,12 @@ async function frameImage(view, globalFrame, ctx, drivePlayhead = true) {
     return vd.getImage(f);
 }
 
-// One canvas for every frame readback, not one per frame: the analysis pass calls this hundreds
-// of times, and a fresh canvas each call is pure allocator churn. Safe to share because the
-// draw-and-read below is a single synchronous block - nothing can interleave between the
-// drawImage and the getImageData - and assigning width/height resets the canvas to the same
-// blank state a new one starts in, even when the size is unchanged.
-let pixelCanvas = null;
-let pixelCtx = null;
-
 /**
  * Read one frame's RGBA pixels, or null. Shared by the analysis pass and the calibration.
  *
- * With ctx.applyAdjustments set, the pixels are the DISPLAYED frame rather than the raw decode:
- * the same Video Adjustments the video view draws with, obtained from the view's own pipeline so
- * there is one definition of "adjusted" rather than a second one that drifts from it. The pipeline
- * hands back canvases it OWNS and reuses (the convolution canvas, the source-filter canvas), so
- * the draw below must stay synchronous with the call that produced them - the live render loop
- * overwrites those same canvases for its own frame the moment this function awaits.
+ * With ctx.applyAdjustments set, the pixels are the DISPLAYED frame rather than the raw decode.
+ * The readback itself belongs to the video view, so that this and "Optimize For Star Tracking"
+ * measure through one definition of "adjusted" rather than two that can drift apart.
  */
 async function framePixels(view, globalFrame, ctx, drivePlayhead = true) {
     // Echo accumulates the PRECEDING frames, and getImage() purges outside a 30-frame window -
@@ -320,39 +316,158 @@ async function framePixels(view, globalFrame, ctx, drivePlayhead = true) {
 
     const img = await frameImage(view, globalFrame, ctx, drivePlayhead);
     if (!img || !img.width) return null;
-    if (!pixelCanvas) {
-        pixelCanvas = document.createElement("canvas");
-        pixelCtx = pixelCanvas.getContext("2d", {willReadFrequently: true});
-    }
+    // The SOURCE frame, matching what renderCanvas passes - the filter caches key on it, and a
+    // global frame here would make an In-locked view re-filter every already-filtered frame.
+    return view.getFramePixels(img, sourceFrameOf(ctx, globalFrame), !!ctx.applyAdjustments);
+}
 
-    // Every stage preserves the source dimensions, so the readback size is the decode's.
-    let source = img;
-    let filter = "";
-    let overlay = null;
-    if (ctx.applyAdjustments && typeof view.getAdjustedVideoFrameSource === "function") {
-        // The SOURCE frame, matching what renderCanvas passes - the filter caches key on it, and
-        // a global frame here would make an In-locked view re-filter every already-filtered frame.
-        const adjusted = view.getAdjustedVideoFrameSource(img, sourceFrameOf(ctx, globalFrame));
-        if (adjusted) {
-            source = adjusted.sourceImage || img;
-            filter = adjusted.filter || "";
-            overlay = adjusted.fullABOverlay || null;
-        }
-    }
+/**
+ * The detection settings the analysis would run with right now, for a frame of W x H.
+ *
+ * Exported so "Optimize For Star Tracking" scores candidate adjustments with the SAME detector and
+ * the SAME accept/reject policy the Star Tracker will later apply to them. Optimising against a
+ * different threshold, blob gate or calibration would tune the picture for a detector that is never
+ * going to look at it.
+ */
+export function starTrackerDetectOptions(W, H) {
+    return {
+        threshSigma: params.threshSigma,
+        minArea: params.minArea,
+        // The "too big to be a star" bound scales with sensor area, exactly as it does in the
+        // analysis - the same expression, because a mismatch here is a silent disagreement about
+        // which blobs count.
+        maxArea: Math.round(STAR_DETECT_DEFAULTS.maxArea * Math.max(1, (W * H) / (1276 * 720))),
+        ...(calibration ? {
+            apertureRadius: calibration.apertureRadius,
+            annulusInner: calibration.annulusInner,
+            annulusOuter: calibration.annulusOuter,
+        } : {}),
+    };
+}
 
-    // Assigning width/height resets the context, so the filter is set after the resize.
-    pixelCanvas.width = img.width;
-    pixelCanvas.height = img.height;
-    pixelCtx.filter = filter || "none";
-    pixelCtx.drawImage(source, 0, 0, img.width, img.height);
-    if (overlay) {
-        pixelCtx.filter = "none";
-        pixelCtx.globalAlpha = overlay.opacity;
-        pixelCtx.drawImage(overlay.image, 0, 0, img.width, img.height);
-        pixelCtx.globalAlpha = 1;
+/**
+ * The video mask an analysis would apply right now, refreshed, or null when it would apply none.
+ *
+ * Exported for the same reason as starTrackerDetectOptions: scoring candidate adjustments against
+ * detections the analysis is going to DISCARD tunes the picture for foliage and rooftops - exactly
+ * the things the mask exists to keep out of the answer.
+ */
+export function starTrackerVideoMask() {
+    const maskNode = params.useMask ? NodeMan.get("videoMask", false) : null;
+    if (maskNode?.maskCanvas) maskNode.updateMaskImageData();
+    return (maskNode?.maskCanvas && maskNode.maskImageData) ? maskNode : null;
+}
+
+/** Whether an analysis would measure the adjusted frame - reported by the adjustment optimizer. */
+export function starTrackerAppliesAdjustments() {
+    return !!params.applyAdjustments;
+}
+
+// The adjustment optimizer's menu builder, registered by StarAdjustOptimize at load.
+//
+// A registration hook rather than an import, because that module already imports THIS one for the
+// detector settings, the mask and the identification score - importing it back would close a cycle,
+// and the same shape is what CMotionAnalysisShared uses between its own two halves.
+let starOptimizeMenuBuilder = null;
+
+export function setStarOptimizeMenuBuilder(fn) {
+    starOptimizeMenuBuilder = fn;
+}
+
+/**
+ * Whether the detection threshold is re-derived from the footage before every analysis.
+ *
+ * The optimizer asks because a threshold it searched for would be overwritten by the next Full
+ * Analysis, so with this on there is no point sweeping one - and every reason not to report one.
+ */
+export function starTrackerAutoSigma() {
+    return !!params.autoSigma;
+}
+
+/**
+ * The searchable detection tweaks, and a way to set them with the sliders following along.
+ *
+ * The snapshot carries minAreaCalibrated because that flag is the value's PROVENANCE - whether a
+ * later Detect Star Size may overwrite it. Restoring a hand-edited minArea through a setter that
+ * always marks it "measured" would quietly convert the user's own choice into something the app
+ * feels free to discard, which is a strange thing for an Abort to do.
+ */
+export function getStarTrackerTweaks() {
+    return {threshSigma: params.threshSigma, minArea: params.minArea,
+        minAreaCalibrated, minAreaChosen};
+}
+
+export function setStarTrackerTweaks({threshSigma, minArea,
+    minAreaCalibrated: calibrated, minAreaChosen: chosen}) {
+    if (threshSigma !== undefined) {
+        params.threshSigma = threshSigma;
+        threshSigmaController?.updateDisplay();
     }
-    pixelCtx.filter = "none";
-    return {data: pixelCtx.getImageData(0, 0, img.width, img.height).data, W: img.width, H: img.height};
+    if (minArea !== undefined) {
+        params.minArea = minArea;
+        // A searched value is a CHOICE, not a measurement: it was verified against the catalog,
+        // and the chained Detect Star Size inside Full Analysis must leave it alone or the
+        // analysis differs from the one the search just proved. A restore passes both flags back
+        // and keeps whatever they were.
+        minAreaCalibrated = calibrated ?? false;
+        minAreaChosen = chosen ?? true;
+        minAreaController?.updateDisplay();
+    }
+}
+
+/**
+ * Snapshot / restore the PUBLISHED analysis, for a tool that runs analyses of its own.
+ *
+ * The adjustment optimizer runs a dozen single-frame analyses to score candidates, and each one
+ * replaces the result the overlay draws, the result Identify and Sync act on, and Globals'
+ * published copy. Without this, pressing Optimize would silently demote a completed whole-clip
+ * analysis to a one-frame one - and Abort, which promises the state you started with, could not
+ * give it back.
+ *
+ * The camera is re-baked from the restored solve rather than left alone: a synced camera drives
+ * from its bake, so restoring the result without the bake would leave the view pointing by one
+ * analysis while the menu describes another.
+ */
+export function captureStarTrackerResult() {
+    return {result, quads: liveQuads, status: params.status};
+}
+
+export function restoreStarTrackerResult(snapshot) {
+    if (!snapshot) return;
+    result = snapshot.result;
+    liveQuads = snapshot.quads ?? [];
+    Globals.starTrackerResult = snapshot.result ?? undefined;
+    params.status = snapshot.status;
+    const ctrl = NodeMan.get("starTrackCameraController", false);
+    if (ctrl?.poseTrack && snapshot.result?.identify && ctrl.bakeFrom(snapshot.result)) {
+        attachStarTrackCamera(ctrl, false);
+    }
+    setRenderOne();
+}
+
+/**
+ * Run the pipeline on the CURRENT frame alone and report how well the sky identified.
+ *
+ * This is the objective the tweak search optimises, and it is deliberately the END of the pipeline
+ * rather than the middle of it. Measured on the reference still: adjustments tuned purely for
+ * detection quality lifted usable detections from 16 to 47 and drove identification from 8 stars to
+ * ZERO - the extra detections have no catalog counterpart, so they are clutter in the quad search
+ * and the identifier's anti-chance guard correctly threw the whole solve out. Counting detections
+ * cannot see that happen. Counting identified stars cannot miss it.
+ *
+ * Returns matched-star count, with a sub-integer tie-break favouring the tighter fit, or 0 when the
+ * identification failed or refused.
+ */
+export async function scoreStarTrackerIdentification() {
+    const analysis = await runStarTracker({singleFrame: true, quiet: true});
+    if (!analysis) return {score: 0, matched: 0, rmsPx: 0};
+    await identifyStars({scoring: true});
+    const solved = analysis.identify?.solved;
+    if (!solved || !solved.matches) return {score: 0, matched: 0, rmsPx: 0};
+    const rmsPx = solved.rmsPx ?? 0;
+    // The tie-break stays well under one match: a better fit breaks a tie, it never outvotes a
+    // star. rms is a few pixels at worst, so 0.01x it cannot reach 1.
+    return {score: solved.matches.length - 0.01 * rmsPx, matched: solved.matches.length, rmsPx};
 }
 
 /**
@@ -372,6 +487,9 @@ function dropCalibrationForOtherVideo(videoData) {
         minAreaCalibrated = false;
         if (minAreaController) minAreaController.updateDisplay();
     }
+    // A blob size chosen for the PREVIOUS video is not a choice about this one, so it stops
+    // shielding itself from measurement. The value itself stays, exactly as a hand-set one does.
+    minAreaChosen = false;
 }
 
 /**
@@ -389,7 +507,12 @@ function dropCalibrationForOtherVideo(videoData) {
  * that went unchecked would let a click's analysis and camera sync land on a video the user
  * swapped in AFTER clicking.
  */
-export async function detectStarSize() {
+export async function detectStarSize(opts = {}) {
+    // opts.measure marks the button - an explicit "measure it for me", which overwrites the blob
+    // size whatever its provenance. The Full Analysis chain calls this WITHOUT it, because there
+    // the user asked to run an analysis with the settings they have, not to have one of them
+    // silently re-derived.
+    const measureRequested = !!opts.measure;
     const view = videoView();
     if (!view || !view.videoData || running) return false;
     const generation = Globals.loadGeneration;
@@ -453,12 +576,20 @@ export async function detectStarSize() {
         }
         calibration = cal;
         calibrationVideoData = videoData;
-        params.minArea = cal.minArea;
-        minAreaCalibrated = true;
-        if (minAreaController) minAreaController.updateDisplay();
+        // The apertures are always taken - they are pure measurement, and nothing chooses them.
+        // The blob size is only taken when it is not somebody's deliberate choice, or when a
+        // measurement was explicitly asked for.
+        const takeMinArea = measureRequested || !minAreaChosen;
+        if (takeMinArea) {
+            params.minArea = cal.minArea;
+            minAreaCalibrated = true;
+            minAreaChosen = false;
+            if (minAreaController) minAreaController.updateDisplay();
+        }
         params.status = autoNote
             + `${cal.count} blobs, median ${cal.medianArea} px, r ~${cal.rPsf.toFixed(1)} px`
-            + ` -> min area ${cal.minArea}, aperture ${cal.apertureRadius}`;
+            + ` -> min area ${params.minArea}${takeMinArea ? "" : " (kept)"}`
+            + `, aperture ${cal.apertureRadius}`;
         return true;
     } catch (e) {
         // The button fires this without awaiting it, so a throw anywhere above would otherwise
@@ -1150,7 +1281,10 @@ function pointSourceStats(track) {
     return out;
 }
 
-export async function identifyStars() {
+export async function identifyStars(opts = {}) {
+    // opts.scoring marks a run whose ONLY purpose is to produce a number for a search. It still
+    // identifies - that is the number - but it must not steer the user's camera while doing it.
+    const scoring = !!opts.scoring;
     if (!result) {
         params.status = "run Analyze first";
         return;
@@ -1276,6 +1410,10 @@ export async function identifyStars() {
             return identified;
         };
         const refreshSyncedCamera = () => {
+            // A scoring run's solve covers ONE frame and is thrown away moments later. Re-baking a
+            // camera the user synced from a whole clip onto it would swing their view for every
+            // candidate a search tries, and leave it pointing at the last one.
+            if (scoring) return;
             // A previously-synced camera keeps driving from its BAKE, so a re-identification
             // (say, after toggling stars off) must RE-BAKE it whole. Refreshing only the live
             // FOV array - the old behaviour - left the heading and the serialized vfovDeg/
@@ -1468,8 +1606,17 @@ export async function identifyStars() {
  *
  * The window comes from abFrameRange, the same authority every other Sitrec analysis uses, so
  * moving the In/Out markers changes what this analyses in the way the user expects.
+ *
+ * opts.singleFrame analyses ONLY the frame on screen, on the same terms a still image is analysed:
+ * one exposure of the sky, every detection presumed a star, nothing to classify as moving. It
+ * exists for the tweak optimizer, which needs an answer per candidate in seconds - a full pass over
+ * a 900-frame clip per candidate would be an afternoon. opts.quiet suppresses the blocking progress
+ * overlay, which the same caller needs: it runs this repeatedly, and an input blocker flashing up
+ * ten times would take the user's own Abort button away from them.
  */
-export async function runStarTracker() {
+export async function runStarTracker(opts = {}) {
+    const singleFrame = !!opts.singleFrame;
+    const quiet = !!opts.quiet;
     const view = videoView();
     if (!view || !view.videoData || running) return null;
     running = true;
@@ -1564,7 +1711,13 @@ export async function runStarTracker() {
             || view.videoData !== videoData,
     };
 
-    const {frame0, frame1} = abFrameRange(Sit.frames, 1);
+    const ab = abFrameRange(Sit.frames, 1);
+    // A single-frame run analyses the frame on screen, clamped into the A-B window so it cannot
+    // measure a frame the rest of the run would refuse to look at.
+    const frame0 = singleFrame
+        ? Math.max(ab.frame0, Math.min(ab.frame1, Math.floor(par.frame)))
+        : ab.frame0;
+    const frame1 = singleFrame ? frame0 : ab.frame1;
     const total = frame1 - frame0 + 1;
     const savedFrame = par.frame;
 
@@ -1573,7 +1726,10 @@ export async function runStarTracker() {
     // answer, and with no motion there is nothing to solve or classify: every detected point
     // is presumed a star, which is all a single exposure of the sky can honestly claim.
     // Established before the progress UI, which offers "Enough" only for a real multi-frame pass.
-    const still = videoData instanceof CVideoImageData;
+    //
+    // A deliberate single-frame run is the same situation arrived at by choice rather than by the
+    // source's nature - one exposure, nothing to compare it against - so it takes the same path.
+    const still = videoData instanceof CVideoImageData || singleFrame;
 
     const wasPaused = par.paused;
     // The previous identification's quads describe the previous solve. A new analysis replaces
@@ -1594,16 +1750,21 @@ export async function runStarTracker() {
         par.paused = true;
         par.pausedLock = true;
 
-        initProgress({
-            title: "Star Tracker",
-            filename: `Analyzing frames ${frame0}-${frame1}`,
-            showAbort: true,
-            onAbort: () => { aborted = true; },
-            // Only worth offering when there is more than one frame to stop short of.
-            showEnough: !still && total > 1,
-            onEnough: () => { enough = true; },
-            enoughLabel: "Enough (solve what we have)",
-        });
+        // The later updateProgress calls need no guard: with no overlay shown they write to
+        // hidden elements and do nothing. Only initProgress blocks input, and only hideProgress
+        // un-blocks it, so those are the two that a quiet run must not make.
+        if (!quiet) {
+            initProgress({
+                title: "Star Tracker",
+                filename: `Analyzing frames ${frame0}-${frame1}`,
+                showAbort: true,
+                onAbort: () => { aborted = true; },
+                // Only worth offering when there is more than one frame to stop short of.
+                showEnough: !still && total > 1,
+                onEnough: () => { enough = true; },
+                enoughLabel: "Enough (solve what we have)",
+            });
+        }
 
         const perFrame = [];
         let videoW = 0, videoH = 0;
@@ -2176,7 +2337,7 @@ export async function runStarTracker() {
         // render below, or the preview's last frame would sit on screen over the real answer.
         liveDetections = null;
         liveStage = null;
-        hideProgress();
+        if (!quiet) hideProgress();
         // Release before touching par.paused, or the lock refuses our own restore.
         par.pausedLock = false;
         if (Globals.loadGeneration === generation) {
@@ -2186,7 +2347,9 @@ export async function runStarTracker() {
             par.frame = completed ? frame0 : savedFrame;
         }
         // Stay paused after a completed run. Restoring "was playing" would immediately run the
-        // video away from the frame we just parked on, which is the opposite of useful.
+        // video away from the frame we just parked on, which is the opposite of useful. This holds
+        // for a quiet scoring run too: analysis is a "stop and look at this frame" operation, and
+        // that is as true when a search asked for it as when the user did.
         if (!completed) par.paused = wasPaused;
         setRenderOne();
     }
@@ -2842,6 +3005,7 @@ export function disposeStarTracker() {
         params.minArea = STAR_DETECT_DEFAULTS.minArea;
         minAreaCalibrated = false;
     }
+    minAreaChosen = false;
     minAreaController = null;
     threshSigmaController = null;
     // A calibration still in flight belongs to the departing sitch; without this, the next
@@ -2894,6 +3058,11 @@ export function setupStarTrackerMenu() {
 
     folder.add({all: () => { runFullStarTracker(); }}, "all")
         .name("Full Analysis");
+    // The same optimization the Video Adjustments folder offers, reachable from here as well: it
+    // tunes the picture FOR this analysis, so this is where somebody about to run one looks for it.
+    // The builder adds its own Enough / Abort / status alongside, so a run started here can also be
+    // stopped here.
+    starOptimizeMenuBuilder?.(folder, "Optimize Adjustments for Frame");
     const statusController = folder.add(params, "status").name("Status").listen().disable();
     // Status strings routinely outgrow the readout ("identify failed: round-0 rematch
     // collapsed" shows as "identify failed: round-...") so the full text rides the row's
@@ -2970,6 +3139,9 @@ export function setupStarTrackerMenu() {
     minAreaController = tweaks.add(params, "minArea", 2, 40, 1).name("Min blob area (px)")
         .onFinishChange(() => {
             minAreaCalibrated = false;
+            // Deliberate, so a Full Analysis will now run with it rather than quietly measuring
+            // over it. Pressing Detect Star Size still overwrites it - that is what it is for.
+            minAreaChosen = true;
             calibrationRequest++;
             // The cancelled request may never return; its "measuring" status is now ours to
             // clear, or it sits there describing work that no longer exists.
@@ -2980,7 +3152,10 @@ export function setupStarTrackerMenu() {
         });
     // Blob sizes depend on resolution, zoom and exposure, so the pixel-scale settings are
     // measurable rather than guessable - this measures them from the frame on screen.
-    tweaks.add({cal: () => { detectStarSize(); }}, "cal").name("Detect Star Size (current frame)");
+    // measure:true - pressing this IS the request to re-measure, so it overwrites a blob size
+    // however it was arrived at. The chained call inside Full Analysis deliberately does not.
+    tweaks.add({cal: () => { detectStarSize({measure: true}); }}, "cal")
+        .name("Detect Star Size (current frame)");
     tweaks.add(params, "minObservations", 3, 40, 1).name("Min detections per track");
     tweaks.add(params, "driftSignificance", 2, 20, 0.5).name("Moving: significance");
     tweaks.add(params, "driftMinSigmas", 2, 40, 1).name("Moving: min drift (sigma)");

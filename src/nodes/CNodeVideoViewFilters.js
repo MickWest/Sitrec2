@@ -17,6 +17,7 @@ import {CNodeGUIFlag, CNodeGUIValue} from "./CNodeGUIValue";
 import {CNodeConstant} from "./CNode";
 import {CNodeGridOverlay} from "./CNodeGridOverlay";
 import {EventManager} from "../CEventManager";
+import {addStarOptimizeControls} from "../starTrack/StarAdjustOptimize";
 
 // Top-level GUI folders are shared across CNodeVideoView instances — the first
 // node through addFiltersToVideoNode creates them; the class methods in
@@ -403,6 +404,10 @@ export function addFiltersToVideoNode(videoNode) {
     updateLevelsControlVisibility();
     updateCurvesControlVisibility();
     updateELAExpandControlVisibility();
+
+    // Added last so it sits below the adjustments it searches, and only once however many video
+    // nodes pass through here - the folder is shared, the button is not per-video.
+    addStarOptimizeControls(guiVideoEffectsFolder);
 
 
     videoNode.addMoreInputs({

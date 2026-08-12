@@ -2048,6 +2048,56 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         };
     }
 
+    /**
+     * One decoded frame's RGBA pixels, with the Video Adjustments applied - the pixels a tool
+     * should MEASURE when it wants to measure what the user is actually looking at.
+     *
+     * The adjustment stages hand back canvases this view OWNS and reuses, which the render loop
+     * overwrites for its own frame, so the draw is deliberately synchronous with the call that
+     * produced them: nothing may await between getAdjustedVideoFrameSource() and the readback.
+     *
+     * One canvas for every readback, not one per call - the Star Tracker's analysis pass runs
+     * this hundreds of times and a fresh canvas each time is pure allocator churn. Assigning
+     * width/height resets it to the same blank state a new one starts in, even when the size is
+     * unchanged, and that reset is also why the filter is set AFTER the resize.
+     */
+    getFramePixels(image, frame, applyAdjustments = true) {
+        if (!image || !image.width) return null;
+
+        let source = image;
+        let filter = "";
+        let overlay = null;
+        if (applyAdjustments) {
+            const adjusted = this.getAdjustedVideoFrameSource(image, frame);
+            if (adjusted) {
+                source = adjusted.sourceImage || image;
+                filter = adjusted.filter || "";
+                overlay = adjusted.fullABOverlay || null;
+            }
+        }
+
+        if (!this._readbackCanvas) {
+            this._readbackCanvas = document.createElement("canvas");
+            this._readbackCtx = this._readbackCanvas.getContext("2d", {willReadFrequently: true});
+        }
+        // Every adjustment stage preserves the source dimensions, so this is the decode's size.
+        const W = image.width;
+        const H = image.height;
+        const ctx = this._readbackCtx;
+        this._readbackCanvas.width = W;
+        this._readbackCanvas.height = H;
+        ctx.filter = filter || "none";
+        ctx.drawImage(source, 0, 0, W, H);
+        if (overlay) {
+            ctx.filter = "none";
+            ctx.globalAlpha = overlay.opacity;
+            ctx.drawImage(overlay.image, 0, 0, W, H);
+            ctx.globalAlpha = 1;
+        }
+        ctx.filter = "none";
+        return {data: ctx.getImageData(0, 0, W, H).data, W, H};
+    }
+
     getClipWarningMask(image, adjusted) {
         if (!this.showShadowClipMask && !this.showHighlightClipMask) return null;
 

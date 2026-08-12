@@ -80,6 +80,7 @@ The Star Tracker folder lives under **Video**.
 | Control | What it does |
 |---|---|
 | **Full Analysis** | The one-click path: run all four stages in order. Each stage checks what the previous one actually produced, so a failure after the first stops the chain with its own error still on screen rather than being overwritten by the next stage complaining. (*Measure* is the exception — see [Stage 0](#stage-0--measure-the-star-size)) |
+| **Optimize Adjustments for Frame** | Tune the picture for this analysis — the same thing as *Optimize For Star Tracking* under Video Adjustments, offered here because this is where you are when you want it. See [Optimize For Star Tracking](#optimize-for-star-tracking). Its *Enough* / *Abort* controls appear in whichever folder you can see, so a run started here can be stopped here |
 | **Status** | What the last stage did, or what it found |
 | **Fit lens from stars** | Measure the camera's actual optics from the star field, and judge motion on a sphere rather than with a flat model. Reasonable to leave on: it declines when the clip does not constrain a lens, and says so. See [why this matters](#why-fitting-the-lens-matters) |
 | **Lens** | The fitted lens, e.g. `custom, 96 deg, rms 0.15 px`, or why it declined |
@@ -100,9 +101,9 @@ Most clips need none of these. They are here for footage the defaults do not sui
 
 | Control | Range | What it does |
 |---|---|---|
-| **Detect Star Size (current frame)** | — | Measure the star blob size on the frame currently shown, and scale the detection settings to it |
-| **Detect threshold (sigma)** | 3–10 | How far above the local sky a pixel must be to count, in multiples of the sky's *brightness* noise. Lower finds fainter stars and more false ones |
-| **Min blob area (px)** | 2–40 | Smallest blob accepted. Editing it cancels a measurement already in flight, but a *subsequent* **Detect Star Size** will overwrite your value — so set it after measuring, not before |
+| **Detect Star Size (current frame)** | — | Measure the star blob size on the frame currently shown, and scale the detection settings to it. Pressing it replaces *Min blob area* whatever it was set to; the copy that runs inside **Full Analysis** leaves a value you chose alone |
+| **Detect threshold (sigma)** | 3–10 | How far above the local sky a pixel must be to count, in multiples of the sky's *brightness* noise. Lower finds fainter stars and more false ones. Tuned automatically by [Optimize For Star Tracking](#optimize-for-star-tracking) |
+| **Min blob area (px)** | 2–40 | Smallest blob accepted. Once you set it by hand — or [Optimize For Star Tracking](#optimize-for-star-tracking) sets it — it is yours: **Full Analysis** runs with it rather than quietly measuring over it. Pressing **Detect Star Size** still replaces it, because that button *is* the request to measure |
 | **Min detections per track** | 3–40 | How many frames a point must appear in before it is judged at all. Below this it is `short` |
 | **Moving: significance** | 2–20 | How *confident* the drift must be — how many times larger than its own uncertainty. Raise it if slow-drifting stars are being called movers |
 | **Moving: min drift (sigma)** | 2–40 | How *far* it must actually move, in multiples of this clip's position noise. Raise it to ignore small real motions and only catch obvious ones |
@@ -110,6 +111,109 @@ Most clips need none of these. They are here for footage the defaults do not sui
 | **Identify Stars (catalog)** | — | Run the catalog match against the last analysis |
 | **Sync Camera to Star Field** | — | Point Sitrec's camera the way the identification says the real one was pointing |
 | **Make Star Chart (PNG)** | — | Export a chart of the solved field |
+
+## Optimize For Star Tracking
+
+**Video → Video Adjustments → Optimize For Star Tracking** tunes the picture, and then the
+detector, for the frame you are looking at. Press it on a representative frame with the sky
+visible; it works on the current frame only. The same button is in the Star Tracker folder as
+**Optimize Adjustments for Frame** — one feature, two places to reach it, and its *Enough* /
+*Abort* controls appear in both while it runs.
+
+It finishes by identifying the stars for the settings it chose, so the run **ends with the stars
+named on screen** rather than leaving you to press *Full Analysis* to find out what it found.
+
+It runs in two stages, and you can stop it at any point with **Enough (Accept)** — which keeps the
+best settings found so far — or **Abort (Reset)**, which puts every slider back exactly as it was.
+
+**Stage 1 — the picture (about 10 seconds).** A genetic search over *Brightness*, *Contrast*,
+*Shadows*, *Highlights*, *Dehaze* and *Blur*.
+
+Before the search starts, Sitrec measures the frame **with those six controls at neutral** and
+keeps the result as a fixed yardstick — a map of how statistically significant every part of the
+picture is against its own noise. A candidate's detections are then credited by what that *fixed*
+map says is at each location.
+
+That indirection is the whole trick, and it is worth understanding, because the obvious approach
+fails badly. The detector decides what is a star by comparing each blob against the **local noise**.
+So if you crush the blacks hard enough, the measured noise collapses, and every surviving speck of
+sensor noise starts looking like a brilliant star. An earlier version of this feature scored
+candidates on their own pixels and did exactly that: it drove contrast up, "found" 58 stars, and
+identified **none** of them. Letting the candidate supply its own yardstick means the search can
+always cheat. Letting it move detections around a yardstick it cannot touch means it cannot.
+
+Each candidate is then scored on three things:
+
+- **Anchor quality** — the best 25 detections, credited by the fixed evidence at their positions
+  and by how point-like they are. Twenty-five because that is exactly how many the catalog matcher
+  uses to build its quads, so past 25 a tail of extra detections adds nothing at all.
+- **Purity** — the share of detections the evidence map actually supports. Detections with nothing
+  behind them now *cost* something rather than being free.
+- **Tonal integrity** — clipping and noise-floor collapse measured against the neutral frame. This
+  prices the cheat directly.
+
+Masked detections are not counted at all, or it would optimise for whatever makes the *trees*
+brightest. Your current settings are always tried first, so it can honestly answer "already
+optimal", and it can never return something worse than what you started with.
+
+**Stage 2 — the detector (ten seconds or so).** Everything here is scored on how many stars the
+**catalog actually identifies** — the real end of the pipeline, not a proxy for it. It:
+
+1. measures what the settings you arrived with identify, as the baseline to beat;
+2. re-scores stage 1's best few candidates the same way, because stage 1 judges a *picture* and
+   this judges the *answer*;
+3. sweeps *Detect threshold* and *Min blob area* from
+   [Star Tracker Tweaks](#star-tracker-tweaks) for whichever candidate wins;
+4. and, if none of that identifies more stars than you already had, **puts everything back and
+   tells you so**. The button cannot leave you worse off than when you pressed it.
+
+The second stage exists because extracting *more* detections only helps up to the depth of the star
+catalog. Past that, the extra detections have no catalog counterpart, they become clutter in the
+quad search, and identification collapses entirely — on the reference still, 47 detections
+identified **zero** stars where the same picture at a higher threshold gave 15 detections and 8
+identified. Counting detections cannot see that happen; counting identified stars cannot miss it.
+
+Measured on the reference still, five consecutive runs from the same starting point:
+
+| | detections | identified |
+|---|---|---|
+| Untouched | 16 | 8 |
+| Optimized | 20–28 | **14, 15, 15, 25, 27** |
+
+Note what the winning settings look like: the search typically *lowers* contrast or lifts the
+highlights gently, and leaves detections in the twenties rather than the sixties. A modest,
+well-separated star field identifies far better than a crowded one.
+
+The search is stochastic, so runs differ; pressing it twice is reasonable if a result looks
+unambitious. If a run genuinely cannot beat your settings it says "Kept your settings" and changes
+nothing.
+
+**The number it reports is the number you get.** Run **Full Analysis** afterwards and it reproduces
+the identification the optimizer promised, because the settings it chose are the settings the
+analysis runs with — including *Min blob area*, which the chained *Detect Star Size* would
+otherwise have silently re-measured. With **Auto detect threshold** on, the threshold is
+re-measured before every analysis, so the optimizer does not sweep one; it tunes the picture and
+the blob size and leaves the threshold to the automation you asked for.
+
+Three things worth knowing:
+
+- It refuses to run unless the Star Tracker's **Apply adjustments** is on — with it off the
+  analysis reads the raw frame, so anything this found would be tuned for a picture the Star
+  Tracker is never going to look at.
+- The settings are tuned for *one* frame. On a clip whose exposure or sky brightness changes, check
+  a frame from each part before trusting them across the whole thing.
+- On a video, stage 2 judges each candidate by analysing the **current frame alone**, so it stays a
+  half-minute job on a clip of any length. The adjustments it picks are still applied to the whole
+  clip when you run the analysis.
+- When it applies new settings it leaves *their* analysis on screen, stars named. On a video that
+  is a single-frame analysis where a whole-clip one may have been — run **Full Analysis** to get
+  the clip back, and it will reproduce these numbers. When it changes nothing (aborted, or it could
+  not beat your settings) your previous analysis and synced camera are restored untouched.
+
+One limitation worth knowing: the yardstick is measured from the neutral frame, so it sees what is
+*statistically* present rather than what is visible — a star too faint to see still counts. But if
+the footage is so crushed that the neutral frame holds no signal at all, there is nothing for the
+reference to find, and the search will under-credit adjustments that genuinely recover it.
 
 ## Masking out the ground
 
