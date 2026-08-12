@@ -8,7 +8,7 @@
 //   moveTerrainTo()          - re-centre the terrain tiles
 //   goToLatLon()             - move the main camera (and terrain) to a location
 
-import {parseLatLonPair, parseSingleCoordinate} from "./CoordinateParser";
+import {parseLatLonAlt, parseLatLonPair, parseSingleCoordinate} from "./CoordinateParser";
 import {customLocationFunction} from "./runtimeConfig";
 import {NodeMan} from "./Globals";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
@@ -35,8 +35,9 @@ export function isPlainNumber(text) {
  *
  * @param {object} controller - lil-gui controller with a $input text field
  * @param {object} [handlers]
- * @param {(lat:number, lon:number) => number} [handlers.setPair] - apply a
- *        pasted pair; returns the value this field should now show.
+ * @param {(lat:number, lon:number, alt:number|undefined) => number} [handlers.setPair] -
+ *        apply a pasted pair; returns the value this field should now show. alt
+ *        is only defined for the formats that carry one (ECEF).
  * @param {(value:number) => void} [handlers.setSingle] - apply a single
  *        coordinate. Defaults to controller.setValue(), which fires the
  *        controller's normal onChange.
@@ -69,7 +70,7 @@ export function attachCoordinateInput(controller, {setPair, setSingle} = {}) {
                 // going. Only split (and rewrite the box out from under them)
                 // once they paste it in one go or commit with Enter/blur.
                 if (!committed) return;
-                $input.value = setPair(pair.lat, pair.lon);
+                $input.value = setPair(pair.lat, pair.lon, pair.alt);
                 // The field now holds a plain number, so a following
                 // change/blur is a no-op rather than a repeat application.
                 entered = $input.value;
@@ -104,41 +105,45 @@ export function attachCoordinateInput(controller, {setPair, setSingle} = {}) {
  *
  * @param {object} latController
  * @param {object} lonController
- * @param {(lat:number, lon:number) => void} [onPair] - extra work after a pair
- *        lands (e.g. kicking off a terrain reload)
+ * @param {(lat:number, lon:number, alt:number|undefined) => void} [onPair] -
+ *        extra work after a pair lands (e.g. kicking off a terrain reload, or
+ *        applying the altitude an ECEF paste came with — there is no altitude
+ *        controller here, so a caller that has one handles it).
  */
 export function attachLatLonInputs(latController, lonController, onPair) {
-    const setBoth = (lat, lon) => {
+    const setBoth = (lat, lon, alt) => {
         latController.setValue(lat);
         lonController.setValue(lon);
-        if (onPair) onPair(lat, lon);
+        if (onPair) onPair(lat, lon, alt);
     };
-    attachCoordinateInput(latController, {setPair: (lat, lon) => (setBoth(lat, lon), lat)});
-    attachCoordinateInput(lonController, {setPair: (lat, lon) => (setBoth(lat, lon), lon)});
+    attachCoordinateInput(latController, {setPair: (lat, lon, alt) => (setBoth(lat, lon, alt), lat)});
+    attachCoordinateInput(lonController, {setPair: (lat, lon, alt) => (setBoth(lat, lon, alt), lon)});
 }
 
 /**
- * Turn whatever the user typed into a lat/lon. Every coordinate format the
+ * Turn whatever the user typed into a location. Every coordinate format the
  * parser knows is tried first — decimal degrees, D M, D M S, hemisphere
- * letters, degree symbols, MGRS, and whitespace-separated pairs — and only if
- * none of them match do we spend a network round trip asking the geocoder to
- * look it up as a place name.
+ * letters, degree symbols, MGRS, whitespace-separated pairs, "lat, lon, alt"
+ * triples and ECEF x,y,z — and only if none of them match do we spend a network
+ * round trip asking the geocoder to look it up as a place name.
  *
  * @param {string} text
- * @returns {Promise<{lat:number, lon:number, isCoordinate:boolean}|null>}
+ * @returns {Promise<{lat:number, lon:number, alt:number|undefined, isCoordinate:boolean}|null>}
+ *   alt is undefined unless the text carried one, so callers can tell "on the
+ *   ground" from "no altitude given, use the terrain".
  */
 export async function resolveLocationString(text) {
     if (typeof text !== "string" || !text.trim()) return null;
 
-    const pair = parseLatLonPair(text, {loose: true});
-    if (pair) return {lat: pair.lat, lon: pair.lon, isCoordinate: true};
+    const located = parseLatLonAlt(text, {loose: true});
+    if (located) return {lat: located.lat, lon: located.lon, alt: located.alt, isCoordinate: true};
 
     // Serverless builds have no geocoder, so a non-coordinate is simply unknown.
     if (customLocationFunction === undefined) return null;
 
     const location = await customLocationFunction(text.trim());
     if (!location) return null;
-    return {lat: location[0], lon: location[1], isCoordinate: false};
+    return {lat: location[0], lon: location[1], alt: undefined, isCoordinate: false};
 }
 
 // Re-centre the terrain tiles on a location. Without this, going somewhere far
@@ -153,12 +158,25 @@ export function moveTerrainTo(lat, lon) {
 }
 
 /**
- * Move the main camera to look at a lat/lon, bringing the terrain with it.
+ * Move the main camera to look at a location, bringing the terrain with it.
  * Defaults match the "Go To" button in the position menus.
+ *
+ * @param {number} lat
+ * @param {number} lon
+ * @param {number} [above] - metres above the target to put the camera
+ * @param {number} [back] - metres south of it
+ * @param {number} [alt] - altitude of the target itself; 0 is ground level
  */
-export function goToLatLon(lat, lon, above = 100000, back = 100) {
+export function goToLatLon(lat, lon, above, back, alt = 0) {
     moveTerrainTo(lat, lon);
+    // A location that came with an altitude (an ECEF or lat/lon/alt paste) is a
+    // point in the air, so frame it closely. Without one the target is ground
+    // level and the default is the familiar fly-up-and-look-down view — 100 km
+    // up, which would leave a point at its own altitude a speck.
+    const framed = alt !== 0;
+    above ??= framed ? 1000 : 100000;
+    back ??= framed ? 1000 : 100;
     // Tolerant lookup: the Go To key is global, and not every sitch has a main
     // camera to fly.
-    NodeMan.get("mainCamera", false)?.goToPoint?.(LLAToECEF(lat, lon, 0), above, back);
+    NodeMan.get("mainCamera", false)?.goToPoint?.(LLAToECEF(lat, lon, alt), above, back);
 }

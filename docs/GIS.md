@@ -152,6 +152,18 @@ Sitrec uses several coordinate systems internally:
 
 The conversion chain is: **LLA <-> ECEF <-> ENU**, implemented in `LLA-ECEF-ENU.ts`. The LLA-to-ECEF conversion depends on the Earth model (sphere or WGS84 ellipsoid) because geodetic latitude and altitude are defined relative to that surface. ECEF itself is just Cartesian — no ellipsoid needed to interpret the coordinates.
 
+### Pasting an ECEF position
+
+Anywhere Sitrec takes a coordinate — the `G` (Go To) prompt, the **Lookup** box, the Lat/Lon boxes, or a paste onto the app — an `x, y, z` triple in **metres** is recognised as ECEF and converted to a location.
+
+Nothing in the numbers themselves says "ECEF", so the test is where they land: the triple is converted and kept only if the result sits between 1 km below the ellipsoid and 1000 km above it. Three small numbers (a DMS coordinate, say) come out thousands of km from the surface and are rejected.
+
+The triple is read as **WGS84**, which is what ECEF means everywhere outside Sitrec (EPSG:4978). That choice matters because a sitch defaults to a **spherical** Earth (`useEllipsoid: false`), and the two models name the same point 0.19° of latitude (21 km on the ground) and 10.7 km of altitude apart at 45°.
+
+The current model is tried only as a fallback, when WGS84 fails the altitude test. That ordering is deliberate: for any given point the WGS84 altitude is always the higher of the two, so WGS84 can only fail by reading *too high*, and the fallback only fires near the top of the window — where the alternative is rejecting the triple outright. Tried the other way round, a WGS84 point 10 km up reads as 730 m underground on the sphere, passes the test, and lands 21 km from where it belongs.
+
+`lat, lon, altitude` triples are read as LLA first — a real ECEF `x` is millions of metres and can never pass for a latitude.
+
 ## 3D Tiles (Cesium / Google)
 
 Cesium Ion and Google Photorealistic 3D Tiles are delivered as 3D Tiles in Cartesian coordinates. For global geospatial tilesets this is typically WGS84 ECEF (often EPSG:4978 per the 3D Tiles spec). Sitrec uses these directly in ECEF (`CNodeBuildings3DTiles.js`). No geoid correction is needed because there is no separate "MSL altitude" field to reinterpret.

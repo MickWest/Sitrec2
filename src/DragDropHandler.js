@@ -19,6 +19,7 @@ import {isDvidsVideoPageURL, resolveDvidsVideoURL} from "./DVIDSUtils";
 import {isWarGovUFOPageURL, resolveWarGovUFOVideoURL} from "./WarGovUFOUtils";
 import {isMetabunkThreadURL, resolveMetabunkThreadVideoURL} from "./MetabunkThreadUtils";
 import {showError, showConfirm, showChoice} from "./showError";
+import {applyGoToString} from "./GoTo";
 
 // Image file extensions
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'jp2', 'j2k', 'jpx', 'jpc', 'j2c', 'heic', 'heif'];
@@ -1118,22 +1119,23 @@ class CDragDropHandler {
         }
     }
 
-    // dragged in a text snippet
-    // check if it's a lat, lon, alt or just a lat, lon
-    // 38.73,-120.56,100000 , or 38.73,-120.56
-    uploadText(text) {
-        // most likely LL or LLA
-        const numbers = text.split(/[\s,]+/).map(parseFloat);
-        if (numbers.length === 2) {
-            // it's a lat, lon
-            this.droppedLLA(numbers[0], numbers[1], 0);
-        } else
-        if (numbers.length === 3) {
-            // it's a lat, lon, alt
-            this.droppedLLA(numbers[0], numbers[1], numbers[2]);
-        } else {
-            console.log("Unhandled text snippet: " + text);
+    // A text snippet was pasted or dropped onto the app (a URL or a file would
+    // have been handled before we got here). It goes to the same parser as the
+    // "G" (Go To) prompt, so anything you can type there works as a paste too: a
+    // frame number, a date and/or time, a coordinate in any supported format
+    // — "38.73,-120.56", "38.73,-120.56,100000", DMS, MGRS, ECEF x,y,z — or a
+    // place name.
+    async uploadText(text) {
+        try {
+            if (await applyGoToString(text)) return;
+        } catch (error) {
+            showError("Error handling pasted text: " + error.message, error);
+            return;
         }
+        // Long enough to show a coordinate or an address in full, short enough
+        // that a stray paste of a whole document doesn't fill the screen.
+        const shown = text.length > 120 ? text.slice(0, 120) + "…" : text;
+        showError(`"${shown}" is not a frame number, a date/time, a coordinate, or a place we could find.`);
     }
 
 

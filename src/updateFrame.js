@@ -4,45 +4,12 @@ import {isKeyHeld, keyHeldTime, KeyMan} from "./KeyBoardHandler";
 import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 import {UpdatePRFromEA} from "./JetStuff";
 import {Frame2Az, Frame2El} from "./JetUtils";
-import {clampSitFrameRange, lastSitFrame} from "./UpdateSitFrames";
+import {clampSitFrameRange} from "./UpdateSitFrames";
 import {showError, showPrompt} from "./showError";
-import {EventManager} from "./CEventManager";
-import {goToLatLon, resolveLocationString} from "./CoordinateInput";
-import {applyDateTimeString} from "./DateTimeParser";
+import {applyGoToString} from "./GoTo";
 
 
 let hookedKeys = false;
-
-// A single bare number - anything else the Go To prompt treats as a location,
-// not a frame. Decimals are accepted (and truncated) because the old number-only
-// prompt did the same.
-const BARE_NUMBER = /^[-+]?\d+(\.\d+)?$/;
-
-// Bumped for each Go To that reaches a place lookup, so a slow one can tell it
-// has been superseded (see the Go To handler).
-let locationRequestSeq = 0;
-
-// Jump to a frame and pause there.
-function goToFrame(f) {
-    if (!Number.isFinite(f)) return;
-    // Clamp to the sitch's frame count (can't scrub past the sitch).
-    f = Math.max(0, Math.min(f, lastSitFrame()));
-    // Expand the In/Out range if the target frame falls outside it.
-    const abChanged = f < Sit.aFrame || f > Sit.bFrame;
-    if (f < Sit.aFrame) Sit.aFrame = f;
-    if (f > Sit.bFrame) Sit.bFrame = f;
-    par.frame = f;
-    par.paused = true;
-    GlobalDateTimeNode.liveMode = false;
-    updateFrameSlider();
-    // The A-B-windowed live fit nodes refresh on this event — mutating
-    // Sit.aFrame/bFrame without it leaves them rendering the previous window
-    // (same contract as the frame slider's marker drag and the I/O keys).
-    if (abChanged) {
-        EventManager.dispatchEvent("abFrameChanged");
-    }
-    setRenderOne(true);
-}
 
 // given the elapsed time since this was last called,
 // update the frame number and time based on the current state of the controls
@@ -80,34 +47,9 @@ export function updateFrame(elapsed) {
                 }).then(async (result) => {
                     if (result === null || result.trim() === "") return;
                     const text = result.trim();
-
-                    // A single bare number can only be a frame — every other form
-                    // has two values, or letters/symbols, in it.
-                    if (BARE_NUMBER.test(text)) {
-                        goToFrame(parseInt(text, 10));
-                        return;
-                    }
-
-                    // A date and/or time, applied as if typed into the Time menu.
-                    // Safe to try before coordinates: the parser requires the whole
-                    // string to be date/time tokens, and no coordinate format is
-                    // (they all carry °, ′, ″, N/S/E/W or several decimals).
-                    if (applyDateTimeString(text, GlobalDateTimeNode)) return;
-
-                    // A place name costs a network round trip, so two Go Tos in
-                    // quick succession can resolve out of order and leave the
-                    // camera at the FIRST place instead of the second. Only the
-                    // newest location request is allowed to land. Frame and
-                    // date/time commands never take a ticket, so they don't
-                    // cancel a place lookup the user also asked for.
-                    const ticket = ++locationRequestSeq;
-                    const location = await resolveLocationString(text);
-                    if (ticket !== locationRequestSeq) return;
-                    if (location === null) {
+                    if (!await applyGoToString(text)) {
                         showError(`Go To: "${text}" is not a frame number, a date/time, a coordinate, or a place we could find.`);
-                        return;
                     }
-                    goToLatLon(location.lat, location.lon);
                 });
             });
 

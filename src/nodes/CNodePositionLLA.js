@@ -48,7 +48,7 @@ export class CNodePositionLLA extends CNodeTrack {
                this.guiLat = new CNodeGUIValue({
                    id: id + " Lat",
                    desc: name + " Lat",
-                   tooltip: this.tipName + " latitude in degrees. Paste a full 'lat, lon' (any format) to set both.",
+                   tooltip: this.tipName + " latitude in degrees. Paste a full 'lat, lon' (any format, or ECEF x,y,z in metres) to set both.",
                    value: this._LLA[0],
                    start: -90, end: 90, step: 0.01,
                    stepExplicit: false, // prevent snapping
@@ -76,9 +76,17 @@ export class CNodePositionLLA extends CNodeTrack {
                 }, v.gui)
 
                // Both boxes accept any coordinate format (decimal, D M, D M S,
-               // hemisphere letters, degree symbols, MGRS); a complete pair
-               // dropped into either one fills in both.
-               attachLatLonInputs(this.guiLat.guiEntry, this.guiLon.guiEntry)
+               // hemisphere letters, degree symbols, MGRS, ECEF x,y,z); a
+               // complete pair dropped into either one fills in both.
+               attachLatLonInputs(this.guiLat.guiEntry, this.guiLon.guiEntry, (lat, lon, alt) => {
+                   // Only the formats that carry an altitude (ECEF) set this;
+                   // a plain lat/lon leaves the altitude box alone.
+                   if (alt === undefined) return;
+                   this._LLA[2] = alt;
+                   this.guiAlt.setValueWithUnits(alt, "metric", "small", true);
+                   this.recalculateCascade();
+                   EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id});
+               })
 
                // The elastic range here will be increased to the default sitch altitude
                 // (currently 1000 feet?)
@@ -137,22 +145,28 @@ export class CNodePositionLLA extends CNodeTrack {
                                     showError("No results found for " + this.lookupString);
                                     return;
                                 }
-                                const {lat, lon} = location;
+                                const {lat, lon, alt} = location;
 
                                 this.guiLat.value = lat;
                                 this.guiLon.value = lon;
                                 this._LLA[0] = lat;
                                 this._LLA[1] = lon;
-                                this._LLA[2] = 0;
+                                this._LLA[2] = alt ?? 0;
                                 this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small", true);
                                 this.recalculateCascade();
                                 EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id});
 
-                                const altitude = await customAltitudeFunction(lat, lon);
-                                if (altitude > 0) {
-                                    this._LLA[2] = altitude;
-                                    this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small", true);
-                                    this.recalculateCascade();
+                                // Only look up the ground when the text didn't say
+                                // how high: an ECEF or "lat, lon, alt" entry is a
+                                // point in the air, and dropping it to the terrain
+                                // would throw away what the user pasted.
+                                if (alt === undefined) {
+                                    const altitude = await customAltitudeFunction(lat, lon);
+                                    if (altitude > 0) {
+                                        this._LLA[2] = altitude;
+                                        this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small", true);
+                                        this.recalculateCascade();
+                                    }
                                 }
 
                                 this.goTo();

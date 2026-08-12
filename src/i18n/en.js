@@ -1876,7 +1876,7 @@ const en = {
         },
         lookup: {
             label: "Lookup",
-            tooltip: "Enter coordinates in any format (decimal, degrees/minutes/seconds, N/S/E/W, MGRS) or a place name to move to",
+            tooltip: "Enter coordinates in any format (decimal, degrees/minutes/seconds, N/S/E/W, MGRS, lat/lon/altitude, or ECEF x,y,z in metres) or a place name to move to",
         },
         geolocate: {
             label: "Geolocate from browser",

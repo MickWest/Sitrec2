@@ -1,16 +1,30 @@
 import {toPoint as mgrsToPoint} from "mgrs";
+import {ECEFToLLA, ECEFToLLA_radii} from "./LLA-ECEF-ENU";
+import {degrees} from "./mathUtils";
 
 // The three degree glyphs that turn up in pasted coordinates: DEGREE SIGN,
 // RING ABOVE, and MASCULINE ORDINAL INDICATOR (Word/Excel like to substitute
 // the latter two).
 const DEGREE_CHARS = "°˚º";
 
+// A plain decimal number, exponent notation included — ECEF metres are often
+// written as 4.51e6.
+const NUMBER_TOKEN = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+
+// Nothing in an x,y,z triple says "these are metres from the Earth's centre", so
+// the only test available is to convert it and see where it lands: a real ECEF
+// position sits near the surface, while an unrelated triple of numbers lands
+// thousands of km off. Deliberately loose — a sanity check, not a filter.
+const ECEF_MIN_ALT = -1000;      // metres below the ellipsoid
+const ECEF_MAX_ALT = 1000000;    // metres above it (past the bottom of LEO)
+
 /**
  * @typedef {object} ParseOptions
- * @property {boolean} [loose] - Also accept bare whitespace-separated pairs
- *   ("25.299895 60.430364", "40 26 46 79 58 56"). Only safe for a string the
- *   user has finished and submitted (the Lookup box, the Go To prompt) — never
- *   for live typing in a latitude field, where "45 30" means 45°30'.
+ * @property {boolean} [loose] - Also accept bare whitespace-separated pairs and
+ *   triples ("25.299895 60.430364", "40 26 46 79 58 56", "4510000 -2300000
+ *   3800000"). Only safe for a string the user has finished and submitted (the
+ *   Lookup box, the Go To prompt, a paste) — never for live typing in a latitude
+ *   field, where "45 30" means 45°30'.
  */
 
 export function parseCoordinate(input, options = {}) {
@@ -20,13 +34,108 @@ export function parseCoordinate(input, options = {}) {
     const mgrs = parseMGRS(trimmed);
     if (mgrs) return mgrs;
 
-    const pair = parseLatLonPair(trimmed, options);
-    if (pair) return pair;
+    const located = parseLatLonAlt(trimmed, options);
+    if (located) return located;
 
     const single = parseSingleCoordinate(trimmed);
     if (single !== null) return {value: single};
 
     return null;
+}
+
+/**
+ * A location that may carry an altitude, for the callers that can use one: an
+ * ECEF x,y,z triple, a "lat, lon, alt" triple, or any of the lat/lon forms
+ * parseLatLonPair() handles.
+ *
+ * @param {string} input
+ * @param {ParseOptions} [options]
+ * @returns {{lat:number, lon:number, alt:number|undefined}|null} alt is
+ *   undefined when the text carried no altitude — which is not the same as an
+ *   altitude of zero, and callers that fall back to ground level rely on it.
+ */
+export function parseLatLonAlt(input, options = {}) {
+    if (typeof input !== "string" || !input.trim()) return null;
+    const trimmed = input.trim();
+
+    // LLA before ECEF. Only one string can be read as either — a lat/lon with an
+    // absurd altitude ("38.7, -120.5, 6378137") is also a valid ECEF z — and a
+    // real ECEF x is millions of metres, so it can never pass for a latitude.
+    const lla = parseLLATriple(trimmed, options.loose === true);
+    if (lla) return lla;
+
+    // parseLatLonPair covers MGRS, ECEF, and every lat/lon form.
+    const pair = parseLatLonPair(trimmed, options);
+    if (!pair) return null;
+    return {lat: pair.lat, lon: pair.lon, alt: pair.alt};
+}
+
+/**
+ * Recognise an ECEF x,y,z triple in metres ("4510000, -2300000, 3800000") and
+ * return the geodetic position it describes.
+ *
+ * WGS84 is the interpretation, because that is what ECEF means to everyone
+ * outside Sitrec (EPSG:4978 — GPS, the 3D Tiles spec, every geodetic tool), and
+ * Sitrec never displays a raw x,y,z anywhere for the user to copy back in. It
+ * matters because sitches default to a spherical earth (Sit.useEllipsoid is
+ * false) and the two models name the same point very differently: at 45° they
+ * disagree by 0.19° of latitude (21 km on the ground) and 10.7 km of altitude.
+ *
+ * Sitrec's own model is then tried as a fallback, which can only ever rescue a
+ * triple WGS84 rejected. That is safe in a way the reverse order was not: for
+ * any given point the WGS84 altitude is always the HIGHER of the two (the
+ * ellipsoid radius never exceeds the equatorial radius), so WGS84 can only fail
+ * the window by reading too high, and the fallback only fires near the top of
+ * it — where the alternative is rejecting the triple outright, not misplacing
+ * it. Ordered the other way, a WGS84 point 10 km up reads as 730 m underground
+ * on the sphere, passes the window, and lands 21 km from where it belongs.
+ *
+ * @param {string} input
+ * @param {ParseOptions} [options]
+ * @returns {{lat:number, lon:number, alt:number}|null}
+ */
+export function parseECEF(input, options = {}) {
+    const xyz = splitNumericTriple(input, options.loose === true);
+    if (!xyz) return null;
+    const [x, y, z] = xyz;
+
+    return ecefToLocation(ECEFToLLA(x, y, z))
+        ?? ecefToLocation(ECEFToLLA_radii(x, y, z));
+}
+
+// [lat, lon, alt] in radians/metres -> a location in degrees/metres, or null if
+// the altitude says this triple was never a position on the Earth. Written as a
+// range test rather than two comparisons so a NaN (x=y=z=0 gives one) fails.
+function ecefToLocation(lla) {
+    const alt = lla[2];
+    if (!(alt >= ECEF_MIN_ALT && alt <= ECEF_MAX_ALT)) return null;
+    return {lat: degrees(lla[0]), lon: degrees(lla[1]), alt};
+}
+
+// "38.73, -120.56, 100000" - a lat/lon pair with an altitude in metres.
+function parseLLATriple(input, loose) {
+    const values = splitNumericTriple(input, loose);
+    if (!values) return null;
+    const [lat, lon, alt] = values;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 360) return null;
+    return {lat, lon, alt};
+}
+
+// "x, y, z" / "x; y; z" -> [x, y, z]. Bare whitespace only separates for callers
+// that opt in, for the same reason a pair needs {loose}: "45 30 30" read as three
+// values is also degrees-minutes-seconds. That form is not a usable location on
+// its own, so nothing that works today changes meaning — but a live-typing field
+// must not start reinterpreting a half-typed DMS coordinate.
+function splitNumericTriple(input, loose = false) {
+    const trimmed = input.trim();
+    if (!loose && !/[,;]/.test(trimmed)) return null;
+
+    const tokens = trimmed.split(/[\s,;]+/).filter(t => t !== "");
+    if (tokens.length !== 3) return null;
+    if (!tokens.every(t => NUMBER_TOKEN.test(t))) return null;
+
+    const values = tokens.map(Number);
+    return values.every(Number.isFinite) ? values : null;
 }
 
 export function parseMGRS(input) {
@@ -114,11 +223,17 @@ function parseDMSorDM(input) {
 /**
  * @param {string} input
  * @param {ParseOptions} [options]
- * @returns {{lat:number, lon:number}|null}
+ * @returns {{lat:number, lon:number, alt:number|undefined}|null} alt is set only
+ *   for the forms that carry one (currently ECEF).
  */
 export function parseLatLonPair(input, options = {}) {
     const mgrs = parseMGRS(input);
     if (mgrs) return mgrs;
+
+    // Before the pair splitters: an ECEF paste splits at its first comma into
+    // lat="4510000", which is then thrown out for being past the poles.
+    const ecef = parseECEF(input, options);
+    if (ecef) return ecef;
 
     const trimmed = input.trim();
     const parts = splitLatLon(trimmed, options.loose === true);
