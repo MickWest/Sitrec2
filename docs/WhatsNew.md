@@ -9,6 +9,33 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.129.0 (2026-08-12)
+
+### New Features
+
+- **Per-view menus in the view headers** (the view's name in its header bar — *Main*, *Look*, *Video*): move the mouse to the top edge of a view and click its name, and you get just the controls that affect that view. **Main** has Measurements, Labels, Features, Field of View and Y-Compress, plus a *Night Sky* group (star names, planet labels, equatorial grid). **Look** adds All Tracks and North Up, and has *Night Sky* and *Video Overlay* (transparency, colour key, ground video) groups. **Video** has Zoom, Rotation, Video Info, Grid, Annotations and EXIF/Metadata, plus *Adjustments* and *Masking* groups. These are the **same** controls as the ones in the Show, View and Video menus, not copies — change one and the other follows, and only one setting is saved with your sitch. The names are shorter because the menu you opened already says which view it is (*Measurements in Look* is simply *Measurements* under **Look**), and the original wording is still in the tooltip. Anything the current sitch does not have — no video loaded, no night sky — is left out rather than shown greyed, groups only appear once something goes in them, only one menu is open per header at a time, a click anywhere else closes it, and a menu on a view docked low on screen scrolls instead of running off the bottom.
+
+- **Optimize For Star Tracking** (Video → Video Adjustments, and as *Optimize Adjustments for Frame* in Video → Star Tracker): tunes the picture, and then the detector, for the frame you are looking at. It first searches *Brightness*, *Contrast*, *Shadows*, *Highlights*, *Dehaze* and *Blur* for the settings that bring out the most real evidence — judged against a fixed measurement of the untouched frame, so a candidate can never vote on whether its own detections are real. It then re-judges the best few on how many stars the **catalog actually identifies**, and sweeps *Detect threshold* and *Min blob area* to match. **It cannot leave you worse off**: your current settings are tried first, and if nothing beats them everything goes back and it says so. Stop it at any point with *Enough (Accept)*, which keeps the best found so far and still checks it, or *Abort (Reset)*, which puts every slider back. It ends by identifying the stars for the settings it chose, so the run finishes with the stars named on screen; on a video that leaves a single-frame analysis, so run *Full Analysis* to get the whole clip back. It takes twenty seconds or so, works on the current frame only, and is worth pressing twice, since the search is random and runs differ. On the test still, 8 identified stars became 14–29.
+
+- **ECEF x, y, z coordinates accepted anywhere Sitrec takes a coordinate**: type or paste a triple in metres into the **G** (Go To) prompt, a position's *Lookup* box, its *Lat*/*Lon* boxes, or straight onto the app, and Sitrec goes there. It is read the way every geodetic tool means ECEF, and a triple is only accepted as one if it lands between 1 km below the Earth's surface and 1000 km above it, so three small numbers — a degrees/minutes/seconds coordinate, say — are not mistaken for a position. `lat, lon, altitude` triples work too, including the awkward ones that could be read either way, such as the poles. An altitude you supply is now **kept** rather than dropped to the terrain, and the camera frames a point in the air closely instead of flying 100 km up and leaving it a speck. Text pasted or dropped onto Sitrec now goes through the same chain as Go To — a frame number, a date and/or time, a coordinate in any supported format, or a place name — so anything you can type there works as a paste.
+
+### Improvements
+
+- **Star Tracker analyses the frame you can see** (Video → Star Tracker → *Apply adjustments*, after *Use mask*): the analysis now measures each frame with your Video Adjustments applied — levels, curves, sharpen, blur, brightness, invert, echo — so it can no longer report stars that are not visible on screen, or miss ones that only the adjustments bring out. On by default, and it does nothing unless you have set some adjustments; turn it off to go back to analysing the raw decoded frame.
+- Text pasted or dropped onto Sitrec that is not a frame, a date/time, a coordinate or a place it can find now says so, instead of silently doing nothing.
+- Controls that can be on in one view and off in another are now named the same way throughout — *All Tracks in Look*, *Celestial Vectors in Look*, *Features in Main*, *Ground Video in Look*, *Star Names in Main* — rather than each having its own wording.
+
+### Bug Fixes
+
+- Fixed *Equatorial Grid in Look* (Show → Celestial) doing nothing while the main-view grid was switched off. The two are now independent, like every other pair, so a ticked box always means the grid is on in that view. Sitches saved before this release come back looking exactly as they did.
+- Fixed colour swatches, sliders and drop-downs in the floating *Edit:* menus coming up as plain text boxes. This only ever happened in the released version of Sitrec, never in a local development build, which is why it went unnoticed.
+- Fixed tooltips missing from controls in the floating *Edit:* menus.
+- Fixed a view's overlays — the MQ-9 and Wescam HUD frames, the video info panel, the compass — painting over that view's header bar and over an open header menu.
+- Fixed controls in floating menus not keeping up with changes made any way other than by clicking them — loading a sitch, a script, or dragging an object's 3D handles — when the menu was not the most recently opened one.
+- Fixed the *North Up* checkbox (View menu) still showing the previous setting after loading a sitch that changed it.
+- Fixed *Full Analysis* (Video → Star Tracker) quietly measuring over a *Min blob area* you had set yourself, so the analysis ran with a different value than the one on the slider. Pressing *Detect Star Size (current frame)* still replaces it — that button is the request to measure.
+- Fixed pasting or dropping two or three words of ordinary text onto Sitrec sending the camera to an invalid position.
+
 ## Version 2.128.0 (2026-08-11)
 
 ### New Features
