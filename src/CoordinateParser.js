@@ -58,13 +58,31 @@ export function parseLatLonAlt(input, options = {}) {
     if (typeof input !== "string" || !input.trim()) return null;
     const trimmed = input.trim();
 
-    // LLA before ECEF. Only one string can be read as either — a lat/lon with an
-    // absurd altitude ("38.7, -120.5, 6378137") is also a valid ECEF z — and a
-    // real ECEF x is millions of metres, so it can never pass for a latitude.
+    // The same altitude window that decides whether a triple is ECEF also
+    // separates the two readings, so nothing has to be preferred over anything.
+    // An x,y,z triple only reaches the surface if its magnitude is ~6400 km, and
+    // one whose x and y are small enough to pass for a lat and a lon can only do
+    // that along z — so its altitude AS a lat/lon comes out around 6400 km,
+    // outside the window, and this test declines it. Conversely a lat/lon
+    // altitude inside the window leaves the triple far too short to be a
+    // position on Earth. The overlap the two would otherwise fight over is real:
+    // "0, 0, 6356752" is the north pole and also a lat/lon 6356 km up.
     const lla = parseLLATriple(trimmed, options.loose === true);
+    if (lla && plausibleAltitude(lla.alt)) return lla;
+
+    const ecef = parseECEF(trimmed, options);
+    if (ecef) return ecef;
+
+    // Not a position on Earth either, so an out-of-window altitude is simply a
+    // lat/lon with an unusual altitude — a geostationary subsatellite point at
+    // 35,786 km, say. Returned rather than dropped, because the alternative is
+    // parseLatLonPair below splitting it at the first comma and reading the rest
+    // as degrees and minutes, which silently invents a longitude.
     if (lla) return lla;
 
-    // parseLatLonPair covers MGRS, ECEF, and every lat/lon form.
+    // parseLatLonPair covers MGRS and every lat/lon form. It has to come after
+    // the triple: it splits "45, 30, 20" at the first comma and reads the rest
+    // as degrees and minutes, which would swallow a lat/lon/alt.
     const pair = parseLatLonPair(trimmed, options);
     if (!pair) return null;
     return {lat: pair.lat, lon: pair.lon, alt: pair.alt};
@@ -103,13 +121,17 @@ export function parseECEF(input, options = {}) {
         ?? ecefToLocation(ECEFToLLA_radii(x, y, z));
 }
 
+// Written as a range test rather than two comparisons so a NaN fails it
+// (converting x=y=z=0 produces one).
+function plausibleAltitude(alt) {
+    return alt >= ECEF_MIN_ALT && alt <= ECEF_MAX_ALT;
+}
+
 // [lat, lon, alt] in radians/metres -> a location in degrees/metres, or null if
-// the altitude says this triple was never a position on the Earth. Written as a
-// range test rather than two comparisons so a NaN (x=y=z=0 gives one) fails.
+// the altitude says this triple was never a position on the Earth.
 function ecefToLocation(lla) {
-    const alt = lla[2];
-    if (!(alt >= ECEF_MIN_ALT && alt <= ECEF_MAX_ALT)) return null;
-    return {lat: degrees(lla[0]), lon: degrees(lla[1]), alt};
+    if (!plausibleAltitude(lla[2])) return null;
+    return {lat: degrees(lla[0]), lon: degrees(lla[1]), alt: lla[2]};
 }
 
 // "38.73, -120.56, 100000" - a lat/lon pair with an altitude in metres.

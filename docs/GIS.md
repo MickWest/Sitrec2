@@ -162,7 +162,9 @@ The triple is read as **WGS84**, which is what ECEF means everywhere outside Sit
 
 The current model is tried only as a fallback, when WGS84 fails the altitude test. That ordering is deliberate: for any given point the WGS84 altitude is always the higher of the two, so WGS84 can only fail by reading *too high*, and the fallback only fires near the top of the window — where the alternative is rejecting the triple outright. Tried the other way round, a WGS84 point 10 km up reads as 730 m underground on the sphere, passes the test, and lands 21 km from where it belongs.
 
-`lat, lon, altitude` triples are read as LLA first — a real ECEF `x` is millions of metres and can never pass for a latitude.
+The same altitude test separates ECEF from a `lat, lon, altitude` triple, so neither has to be preferred over the other. A triple only reaches the surface if its magnitude is ~6400 km, and one whose `x` and `y` are small enough to pass for a lat/lon can only manage that along `z` — so read as a lat/lon its altitude comes out around 6400 km, outside the window, and the LLA reading is declined. Conversely, a lat/lon altitude inside the window leaves the triple far too short to be a position on Earth.
+
+That overlap is not hypothetical: `0, 0, 6356752` is the north pole *and* a lat/lon 6356 km up, and at a pole the "ECEF numbers are far too big to be degrees" intuition fails outright, because `x` and `y` are zero there. An altitude outside the window that is not a position on Earth either — a geostationary subsatellite point at 35,786 km — stays a lat/lon.
 
 ## 3D Tiles (Cesium / Google)
 

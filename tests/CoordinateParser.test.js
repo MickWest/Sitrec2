@@ -579,14 +579,43 @@ describe("parseLatLonAlt", () => {
         expect(result.alt).toBeCloseTo(3000, 3);
     });
 
-    test("an absurd altitude stays a lat/lon rather than becoming an ECEF z", () => {
-        // Read as ECEF this is a valid position; read as LLA it is a lat/lon
-        // 6378 km up. LLA wins, because a real ECEF x is millions of metres and
-        // so can never pass for a latitude in the first place.
-        const result = parseLatLonAlt("38.7, -120.5, 6378137");
+    test("a polar ECEF triple is not mistaken for a lat/lon", () => {
+        // x and y are ~0 at a pole, so this passes the lat/lon bounds check too -
+        // the one place the "ECEF numbers are far too big to be degrees"
+        // intuition fails. What separates them is the altitude: 6356 km is not a
+        // plausible one for a lat/lon. Longitude is undefined at a pole, so it is
+        // not asserted.
+        const north = parseLatLonAlt(wgs84ECEF(90, 0, 0));
+        expect(north.lat).toBeCloseTo(90, 5);
+        expect(north.alt).toBeCloseTo(0, 3);
+
+        const south = parseLatLonAlt(wgs84ECEF(-90, 0, 0));
+        expect(south.lat).toBeCloseTo(-90, 5);
+        expect(south.alt).toBeCloseTo(0, 3);
+    });
+
+    test("the pole written as a lat/lon still reads as one", () => {
+        const result = parseLatLonAlt("90, 0, 0");
+        expect(result.lat).toBeCloseTo(90, 5);
+        expect(result.alt).toBe(0);
+    });
+
+    test("an altitude too high to be an ECEF position stays a lat/lon", () => {
+        // A geostationary subsatellite point. Outside the altitude window, but
+        // not a position on Earth either, so there is nothing to confuse it with.
+        const result = parseLatLonAlt("0, -100, 35786000");
+        expect(result.lat).toBeCloseTo(0, 5);
+        expect(result.lon).toBeCloseTo(-100, 5);
+        expect(result.alt).toBeCloseTo(35786000, 5);
+    });
+
+    test("an altitude below the window is still a lat/lon, not a mangled pair", () => {
+        // Falling through to the pair splitter would read "-120.5, -2000" as
+        // degrees and minutes and invent a longitude of -153.8.
+        const result = parseLatLonAlt("38.7, -120.5, -2000");
         expect(result.lat).toBeCloseTo(38.7, 5);
         expect(result.lon).toBeCloseTo(-120.5, 5);
-        expect(result.alt).toBeCloseTo(6378137, 5);
+        expect(result.alt).toBeCloseTo(-2000, 5);
     });
 
     test("MGRS still works, with no altitude", () => {
