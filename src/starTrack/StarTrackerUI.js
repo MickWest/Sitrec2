@@ -152,6 +152,12 @@ const params = {
     showStarNames: true,
     showDuringAnalysis: true,
     useMask: true,
+    // Analyse the frame the user is LOOKING at, not the raw decode. Levels, curves, sharpen,
+    // blur and the rest of Video Adjustments are what the footage looks like on screen, so an
+    // analysis of the raw frame can report stars the user cannot see, or miss ones they can.
+    // On by default: with no adjustments set this is a no-op, and when they ARE set the
+    // adjusted frame is the honest thing to measure.
+    applyAdjustments: true,
     chartTracks: true,
     status: "not run",
 };
@@ -239,6 +245,18 @@ function videoView() {
 }
 
 /**
+ * The video's own frame index for a global playhead frame.
+ *
+ * The frame mapping comes from the SNAPSHOT, not from live state. A view locked to the In point
+ * maps the global frame to a source frame by subtracting Sit.aFrame, and reading that live means
+ * dragging the In marker mid-run silently re-bases the mapping part-way through - the first half
+ * of the clip analysed at one offset and the second half at another.
+ */
+function sourceFrameOf(ctx, globalFrame) {
+    return ctx.lockToInFrame ? Math.max(0, globalFrame - ctx.aFrame) : globalFrame;
+}
+
+/**
  * The decoded image for a frame, waiting until the decoder has genuinely produced it.
  *
  * getImage() alone returns the nearest ALREADY-DECODED frame when the requested one is not ready,
@@ -254,13 +272,7 @@ function videoView() {
 async function frameImage(view, globalFrame, ctx, drivePlayhead = true) {
     const vd = view.videoData;
     if (drivePlayhead) par.frame = globalFrame;
-    // The frame mapping comes from the SNAPSHOT, not from live state. A view locked to the In
-    // point maps the global frame to a source frame by subtracting Sit.aFrame, and reading that
-    // live means dragging the In marker mid-run silently re-bases the mapping part-way through -
-    // the first half of the clip analysed at one offset and the second half at another.
-    const f = ctx.lockToInFrame
-        ? Math.max(0, globalFrame - ctx.aFrame)
-        : globalFrame;
+    const f = sourceFrameOf(ctx, globalFrame);
     const cached = () => (typeof vd.isFrameCached === "function") ? vd.isFrameCached(f)
         : (typeof vd.isFrameLoaded === "function") ? vd.isFrameLoaded(f) : false;
     for (let tries = 0; tries < 10 && !cached(); tries++) {
@@ -282,17 +294,64 @@ async function frameImage(view, globalFrame, ctx, drivePlayhead = true) {
 let pixelCanvas = null;
 let pixelCtx = null;
 
-/** Read one frame's RGBA pixels, or null. Shared by the analysis pass and the calibration. */
+/**
+ * Read one frame's RGBA pixels, or null. Shared by the analysis pass and the calibration.
+ *
+ * With ctx.applyAdjustments set, the pixels are the DISPLAYED frame rather than the raw decode:
+ * the same Video Adjustments the video view draws with, obtained from the view's own pipeline so
+ * there is one definition of "adjusted" rather than a second one that drifts from it. The pipeline
+ * hands back canvases it OWNS and reuses (the convolution canvas, the source-filter canvas), so
+ * the draw below must stay synchronous with the call that produced them - the live render loop
+ * overwrites those same canvases for its own frame the moment this function awaits.
+ */
 async function framePixels(view, globalFrame, ctx, drivePlayhead = true) {
+    // Echo accumulates the PRECEDING frames, and getImage() purges outside a 30-frame window -
+    // shorter than the 100 frames echo can be set to. renderCanvas widens that window by declaring
+    // echoFramesNeeded, but only while the view is actually rendering, so the declaration is made
+    // here too or a purged frame is silently skipped and the analysis measures a shorter echo than
+    // the display shows. Declared BEFORE the decode below, which is what does the purging, and
+    // only ever RAISED: lowering it would evict frames the video view still wants.
+    if (ctx.applyAdjustments) {
+        const wantEcho = (view.in.echoMin?.value || view.in.echoMax?.value)
+            && (view.in.enableVideoEffects ? view.in.enableVideoEffects.v0 : true);
+        const needed = wantEcho ? Math.round(view.in.echoFrames?.v0 ?? 10) : 0;
+        if (needed > (view.videoData.echoFramesNeeded || 0)) view.videoData.echoFramesNeeded = needed;
+    }
+
     const img = await frameImage(view, globalFrame, ctx, drivePlayhead);
     if (!img || !img.width) return null;
     if (!pixelCanvas) {
         pixelCanvas = document.createElement("canvas");
         pixelCtx = pixelCanvas.getContext("2d", {willReadFrequently: true});
     }
+
+    // Every stage preserves the source dimensions, so the readback size is the decode's.
+    let source = img;
+    let filter = "";
+    let overlay = null;
+    if (ctx.applyAdjustments && typeof view.getAdjustedVideoFrameSource === "function") {
+        // The SOURCE frame, matching what renderCanvas passes - the filter caches key on it, and
+        // a global frame here would make an In-locked view re-filter every already-filtered frame.
+        const adjusted = view.getAdjustedVideoFrameSource(img, sourceFrameOf(ctx, globalFrame));
+        if (adjusted) {
+            source = adjusted.sourceImage || img;
+            filter = adjusted.filter || "";
+            overlay = adjusted.fullABOverlay || null;
+        }
+    }
+
+    // Assigning width/height resets the context, so the filter is set after the resize.
     pixelCanvas.width = img.width;
     pixelCanvas.height = img.height;
-    pixelCtx.drawImage(img, 0, 0);
+    pixelCtx.filter = filter || "none";
+    pixelCtx.drawImage(source, 0, 0, img.width, img.height);
+    if (overlay) {
+        pixelCtx.filter = "none";
+        pixelCtx.globalAlpha = overlay.opacity;
+        pixelCtx.drawImage(overlay.image, 0, 0, img.width, img.height);
+        pixelCtx.globalAlpha = 1;
+    }
+    pixelCtx.filter = "none";
     return {data: pixelCtx.getImageData(0, 0, img.width, img.height).data, W: img.width, H: img.height};
 }
 
@@ -341,6 +400,7 @@ export async function detectStarSize() {
     const ctx = {
         lockToInFrame: !!view.lockToInFrame,
         aFrame: Sit.aFrame ?? 0,
+        applyAdjustments: !!params.applyAdjustments,
         stale: () => Globals.loadGeneration !== generation
             || videoView() !== view || view.videoData !== videoData,
     };
@@ -1497,6 +1557,7 @@ export async function runStarTracker() {
         })(),
         lockToInFrame: !!view.lockToInFrame,
         aFrame: Sit.aFrame ?? 0,
+        applyAdjustments: !!params.applyAdjustments,
         stale: () => aborted
             || Globals.loadGeneration !== generation
             || videoView() !== view
@@ -2869,6 +2930,11 @@ export function setupStarTrackerMenu() {
             + "Masking. Foliage, rooftops and OSD graphics detect as hundreds of bright blobs "
             + "that the solver would otherwise treat as stars. Masked detections are counted as "
             + "rejections, so nothing goes missing silently.");
+    folder.add(params, "applyAdjustments").name("Apply adjustments")
+        .tooltip("Analyse the frame as you SEE it, with the Video Adjustments applied - levels, "
+            + "curves, sharpen, blur, brightness and the rest. Off analyses the raw decoded "
+            + "frame instead, which can find stars that are not visible on screen, or miss ones "
+            + "that only the adjustments bring out. Does nothing when no adjustments are set.");
     folder.add(params, "fitLens").name("Fit lens from stars")
         .tooltip("Fit the camera lens from the star field and judge motion on the sphere instead "
             + "of with a flat 2D model. On a wide-angle clip the flat model is biased at the frame "
