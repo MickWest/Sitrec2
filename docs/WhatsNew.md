@@ -31,6 +31,7 @@ lockstep with docs/WhatsNew-Details.md.
 - Fixed a second, empty video view adding a duplicate EXIF/Metadata entry to the Video menu.
 - Fixed the EXIF/Metadata panel opening completely off-screen after loading a sitch saved on a larger display, where it could not be dragged back into view.
 - Fixed an open EXIF/Metadata panel showing stale data — with several videos loaded, it could show one clip's size, codec and bit rate under another clip's filename.
+- Fixed some saved sitches failing to load part of their content — a 3D model, a track, night-sky data — with a network error reported in the browser console. A sitch records the full web address of every file it uses, so one saved from a test or development copy of Sitrec pointed at that copy, which no other installation can reach and which stops existing altogether once it is deleted. Those addresses are now redirected to the matching file in whichever installation is doing the loading. Previously only saves from a standard development setup were redirected. Sitches already saved this way are repaired as they load, so they do not need re-saving.
 
 ## Version 2.127.0 (2026-08-11)
 

@@ -2022,6 +2022,39 @@ export class CFileManager extends CManager {
                         break;
                     }
                 }
+
+                // The bases above only cover an app served at "/sitrec/". A BRANCH or
+                // worktree build is served at "/<branch>/" (see config-install.js), so a
+                // sitch saved from one embeds e.g.
+                //   https://local.metabunk.org/shadows/data/nightsky/constellations.lines.astrometry.json
+                // which matches no base, is never rewritten, and then 404s on every other
+                // install — permanently, once that branch build is deleted. Measured: that
+                // exact URL 404s while the identical file serves fine from "/sitrec/data/".
+                //
+                // For app DATA the identity of the asset is the part from "data/" onwards;
+                // the app path in front of it is an artefact of wherever it happened to be
+                // saved, and carries no information this install needs. So re-root any
+                // ".../data/..." URL onto this install's SITREC_APP. Gated on a known dev
+                // HOST (with any path) so a third-party URL that merely contains "/data/"
+                // is never touched.
+                if (!resolvedFilename.startsWith(SITREC_APP)) {
+                    try {
+                        const parsed = new URL(resolvedFilename);
+                        const devHosts = ["localhost", "local.metabunk.org"];
+                        if (localhostEnv) devHosts.push(localhostEnv);
+                        // Compare against host (with port) AND hostname, since LOCALHOST
+                        // may or may not carry a port.
+                        const isDevHost = devHosts.some(h => parsed.host === h || parsed.hostname === h);
+                        const dataAt = parsed.pathname.indexOf("/data/");
+                        if (isDevHost && dataAt >= 0) {
+                            const rewritten = SITREC_APP + parsed.pathname.slice(dataAt + 1) + parsed.search;
+                            console.log("Redirecting branch-build asset URL to " + rewritten);
+                            resolvedFilename = rewritten;
+                        }
+                    } catch (e) {
+                        // Not a parseable absolute URL — leave it exactly as it was.
+                    }
+                }
             }
 
             Globals.parsing++;
