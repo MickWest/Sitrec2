@@ -26,6 +26,7 @@ import {assert} from "../assert";
 import {intersectSphere2} from "../threeUtils";
 import {CNodeGUIValue} from "./CNodeGUIValue";
 import {t} from "../i18n";
+import {viewMenuKey} from "../ViewUIBarMenus";
 
 export class CNodeDisplayCameraFrustumATFLIR extends CNode3DGroup {
     constructor(v) {
@@ -116,7 +117,7 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         guiShowHide.add(this, "showGroundVideoInLookView").name(t("cameraFrustum.groundVideoInLookView.label")).tooltip(t("cameraFrustum.groundVideoInLookView.tooltip")).listen().onChange((v) => {
             this.updateGroundVideoLayerMask();
             setRenderOne(true);
-        })
+        }).shareAs(viewMenuKey("lookView", "groundVideo"))
         this.addSimpleSerial("showGroundVideoInLookView")
 
 

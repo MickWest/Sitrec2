@@ -5,6 +5,7 @@ import {CNodeView} from "./CNodeView";
 import {guiMenus, setRenderOne} from "../Globals";
 import {CNodeGUIValue} from "./CNodeGUIValue";
 import {isKeyHeld} from "../KeyBoardHandler";
+import {viewMenuKey} from "../ViewUIBarMenus";
 
 // Largest possible RGB distance, sqrt(3 * 255^2) — the 100% end of Key Tolerance.
 const MAX_RGB_DISTANCE = Math.sqrt(3 * 255 * 255);
@@ -44,9 +45,14 @@ export class CNodeViewCanvas extends CNodeView {
         this._pendingCanvasResize = false;
 
         if (v.transparency !== undefined) {
+            // The three overlay controls belong to the view this canvas is drawn OVER (the look
+            // view, for the mirrorVideo overlay), not to the overlay canvas itself — that is
+            // the view whose picture they change, and whose header menu they appear in.
+            const hostViewId = this.overlayView?.id ?? this.id;
+
             this.transparency = v.transparency;
             this.canvas.style.opacity = this.transparency;
-            new CNodeGUIValue({
+            const transparencyNode = new CNodeGUIValue({
                 id: this.id+"_transparency",
                 value: this.transparency, start: 0, end: 1, step: 0.01,
                 desc: "Vid Overlay Trans %",
@@ -56,6 +62,7 @@ export class CNodeViewCanvas extends CNodeView {
                     this.canvas.style.opacity = this.transparency;
                 }
             }, guiMenus.view)
+            transparencyNode.guiEntry.shareAs(viewMenuKey(hostViewId, "overlayTransparency"));
 
             // COLOUR KEY. The overlay blend above is uniform: the whole video canvas
             // is drawn over the look view at one opacity, so anything in the 3D view
@@ -79,7 +86,8 @@ export class CNodeViewCanvas extends CNodeView {
                 .name("Key Color")
                 .tooltip("Colour in the look view that comes through the video overlay at full strength. Works with Key Tolerance — at 0 tolerance nothing is keyed")
                 .listen()
-                .onChange(() => setRenderOne(true));
+                .onChange(() => setRenderOne(true))
+                .shareAs(viewMenuKey(hostViewId, "overlayKeyColor"));
 
             // 0 = off, and off is free: the key pass returns before touching a pixel.
             this.keyToleranceNode = new CNodeGUIValue({
@@ -89,6 +97,7 @@ export class CNodeViewCanvas extends CNodeView {
                 tip: "How far from Key Color a look-view pixel may be and still come through onto the video overlay, as a percentage of the largest possible colour difference. 0 = off. Raise it until the shaded/antialiased edges of the keyed area fill in",
                 onChange: () => setRenderOne(true),
             }, guiMenus.view)
+            this.keyToleranceNode.guiEntry.shareAs(viewMenuKey(hostViewId, "overlayKeyTolerance"));
         }
 
 

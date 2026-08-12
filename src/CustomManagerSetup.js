@@ -94,6 +94,7 @@ import {
 import {estimateWindFromConstantAirspeed} from "./WindFromConstantAirspeed";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
 import {CNodeSAPage} from "./nodes/CNodeSAPage";
+import {viewMenuKey} from "./ViewUIBarMenus";
 import {
     gimbalStepAirTrack,
     gimbalStepAirTrackDisplay,
@@ -1360,7 +1361,7 @@ export const setupMethods = {
         guiMenus.showhide.add(Globals, "showAllTracksInLook").name(t("custom.showHide.showAllTracksInLook.label")).tooltip(t("custom.showHide.showAllTracksInLook.tooltip")).onChange(() => {
             this.refreshLookViewTracks();
 
-        }).listen();
+        }).listen().shareAs(viewMenuKey("lookView", "allTracks"));
 
         if (GlobalScene.showCompassElevation === undefined) {
             Globals.showCompassElevation = false;

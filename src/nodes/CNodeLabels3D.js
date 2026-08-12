@@ -18,6 +18,7 @@ import {assert} from "../assert";
 import {V2, V3} from "../threeUtils";
 import {EventManager} from "../CEventManager";
 import {registerLabel3D, unregisterLabel3D} from "./CNodeDisplaySkyOverlay";
+import {viewMenuKey} from "../ViewUIBarMenus";
 import {t} from "../i18n";
 
 
@@ -123,16 +124,21 @@ export function setupMeasurementUI() {
 
     refreshMeasurementVisibility();
 
+    // Each of these six is a per-view toggle that happens to live in the (global) Show menu.
+    // .shareAs() also surfaces it in that view's own header menu — the SAME controller,
+    // so there is no second copy of the flag and no second onChange. See src/ViewUIBarMenus.js.
     measurementUIVars.controller =  guiShowHide.add(Globals, "showMeasurements").name(t("labels3d.measurements.label")).tooltip(t("labels3d.measurements.tooltip")).listen().onChange( (value) => {
 //        console.warn("%%%%%%% showMeasurements changed to " + value)
         refreshMeasurementVisibility();
         setRenderOne(true);
     })
+    measurementUIVars.controller.shareAs(viewMenuKey("mainView", "measurements"));
 
     measurementUIVars.controllerLook = guiShowHide.add(Globals, "showMeasurementsLook").name(t("labels3d.measurementsInLook.label")).tooltip(t("labels3d.measurementsInLook.tooltip")).listen().onChange( (value) => {
         refreshMeasurementVisibility();
         setRenderOne(true);
     })
+    measurementUIVars.controllerLook.shareAs(viewMenuKey("lookView", "measurements"));
 
     Globals.showLabelsMain = true;
     Globals.showLabelsLook = false;
@@ -151,6 +157,9 @@ export function setupMeasurementUI() {
         setRenderOne(true);
     })
 
+    labelsControllerMain.shareAs(viewMenuKey("mainView", "labels"));
+    labelsControllerLook.shareAs(viewMenuKey("lookView", "labels"));
+
     refreshLabelVisibility();
 
     Globals.showFeaturesMain = true;
@@ -165,6 +174,9 @@ export function setupMeasurementUI() {
         refreshFeatureVisibility();
         setRenderOne(true);
     })
+
+    featuresControllerMain.shareAs(viewMenuKey("mainView", "features"));
+    featuresControllerLook.shareAs(viewMenuKey("lookView", "features"));
 
     refreshFeatureVisibility();
 

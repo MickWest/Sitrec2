@@ -84,6 +84,7 @@ import {mouseMethods} from "./CNodeView3DMouse";
 import {cloneTerrainDayNightMaterialForView} from "../js/map33/material/TerrainDayNightMaterial";
 import {installStableShadowReceivers, setStableShadowReceiverLight} from "../StableShadowReceiver";
 import {getLocalUpVector} from "../SphericalMath";
+import {viewMenuKey} from "../ViewUIBarMenus";
 
 
 function linearToSrgb(color) {
@@ -178,10 +179,14 @@ export class CNodeView3D extends CNodeViewCanvas {
 
         this.northUp = v.northUp ?? false;
         if (this.id === "lookView") {
-            guiMenus.view.add(this, "northUp").name(t("view3d.northUp.label")).onChange(value => {
+            // .listen() because northUp is serialized (addSimpleSerial below): loading a sitch
+            // writes the flag straight onto the view, so without polling the checkbox — and
+            // every mirror of it — keeps showing the value from before the load.
+            guiMenus.view.add(this, "northUp").name(t("view3d.northUp.label")).listen().onChange(value => {
                 this.recalculate();
             })
                 .tooltip(t("view3d.northUp.tooltip"))
+                .shareAs(viewMenuKey("lookView", "northUp"))
 
             // Atmosphere flag + tweaks now live under Lighting (peer to the
             // Shadows / Shadow tweaks pair) instead of Effects. The master
@@ -256,7 +261,8 @@ export class CNodeView3D extends CNodeViewCanvas {
                     this.updateYCompressIndicator();
                     setRenderOne(true);
                 })
-                .tooltip("Vertically expand this view's frustum to pack more into the same height (distorts the view). 1 = off.");
+                .tooltip("Vertically expand this view's frustum to pack more into the same height (distorts the view). 1 = off.")
+                .shareAs(viewMenuKey(this.id, "yCompress"));
             this.addSimpleSerial("yCompress");
             this.updateYCompressIndicator();
         }

@@ -18,6 +18,7 @@ import {CNodeConstant} from "./CNode";
 import {CNodeGridOverlay} from "./CNodeGridOverlay";
 import {EventManager} from "../CEventManager";
 import {addStarOptimizeControls} from "../starTrack/StarAdjustOptimize";
+import {viewMenuKey} from "../ViewUIBarMenus";
 
 // Top-level GUI folders are shared across CNodeVideoView instances — the first
 // node through addFiltersToVideoNode creates them; the class methods in
@@ -405,6 +406,14 @@ export function addFiltersToVideoNode(videoNode) {
     updateCurvesControlVisibility();
     updateELAExpandControlVisibility();
 
+    // The three adjustments worth reaching without opening the (very deep) Video menu. Done
+    // here rather than at each `new CNodeGUIValue` because the nodes are shared singletons:
+    // the branch above either creates them or looks them up, and both paths land on these
+    // locals. See src/ViewUIBarMenus.js.
+    enableVideoEffects?.guiEntry.shareAs(viewMenuKey("video", "effects"));
+    brightness?.guiEntry.shareAs(viewMenuKey("video", "brightness"));
+    contrast?.guiEntry.shareAs(viewMenuKey("video", "contrast"));
+
     // Added last so it sits below the adjustments it searches, and only once however many video
     // nodes pass through here - the folder is shared, the button is not per-video.
     addStarOptimizeControls(guiVideoEffectsFolder);
@@ -468,7 +477,7 @@ export function addFiltersToVideoNode(videoNode) {
 
         gridFolder.add(gridOverlay, "gridShow").name(t("videoView.gridShow.label")).listen().onChange((value) => {
             gridOverlay.setShow(value);
-        }).tooltip(t("videoView.gridShow.tooltip"));
+        }).tooltip(t("videoView.gridShow.tooltip")).shareAs(viewMenuKey("video", "grid"));
 
         gridFolder.add(gridOverlay, "gridSize", 1, 128, 0.1).name(t("videoView.gridSize.label")).listen().onChange(() => {
             setRenderOne(true);

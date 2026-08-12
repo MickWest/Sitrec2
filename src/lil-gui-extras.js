@@ -27,6 +27,8 @@ import {
     toggleControlsVisibility
 } from "./PageStructure";
 import {getTextWidth} from "./lil-gui-slider-settings";
+import {updateGUIRootListeners} from "./GUIRootRegistry";
+import "./MenuMirror";      // installs Controller.shareAs/mirrorTo + GUI.addMirror/mirrorFolderFrom
 
 // Issue with lil-gui, the OptionController options() method adds a
 // _names array to the controller object, and a _values array
@@ -255,6 +257,11 @@ Controller.prototype.setLabelColor = function (color) {
 
 // adding a tooltip to a controller
 Controller.prototype.tooltip = function (tooltip) {
+    // Keep the text as readable state as well as a DOM attribute: the two mirroring paths
+    // (MenuMirror, CustomManagerMirror) copy a control's tooltip onto its twin, and both read
+    // it from here. Without this they saw undefined and quietly produced tooltip-less mirrors.
+    this._tooltip = tooltip;
+
     // Find the label element within the controller's DOM
     const label = this.$name;
     if (label) {
@@ -1024,6 +1031,11 @@ export class CGuiMenuBar {
         // bound values (e.g. dragging an overlay/grid's 3D handles).
         this.activePersistentMenu?.updateListeners();
         this.activeContextMenu?.updateListeners();
+
+        // Every OTHER root that wants .listen() to mean something — per-view header menus,
+        // mirrored popups — registers itself instead of being special-cased here.
+        // See src/GUIRootRegistry.js.
+        updateGUIRootListeners();
     }
 
     show() {

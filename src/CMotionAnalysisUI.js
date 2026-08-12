@@ -38,6 +38,7 @@ import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {startMaskGroundPick, applyQuadTreeGroundMask} from "./SkyMaskTool";
 import {maskGroundWithAI} from "./SkyMaskAI";
 import {BRUSH_MAX_AT_720} from "./nodes/CNodeMaskOverlay";
+import {viewMenuKey} from "./ViewUIBarMenus";
 import {showError} from "./showError";
 import {
     applyVideoEffectsToCanvas,
@@ -2551,6 +2552,12 @@ function createMaskingFolder(parentFolder) {
             syncBrushSliderMax();
         })
         .tooltip("Click and drag to paint mask (Alt/Option to erase)");
+
+    // Also reachable from the video view's own header menu. These two are .perm(), so unlike
+    // most mirror sources they are registered ONCE at startup and survive every sitch load —
+    // clearMenuMirrors() keeps permanent sources for exactly this case.
+    maskEnabledController.shareAs(viewMenuKey("video", "mask"));
+    editMaskController.shareAs(viewMenuKey("video", "maskEdit"));
 
     const brushSizeController = maskFolder.add(maskParams, 'brushSize', 5, BRUSH_MAX_AT_720, 1)
         .name("Brush Size").perm()
