@@ -2484,6 +2484,29 @@ class CSitrecAPI {
     // by its visibility, or null if `path` isn't a toggleable 3D object.
     _resolveObjectControl(path) {
         const node = NodeMan.get(path, false);
+
+        // A light (CNode3DLight) presented as ONE control that takes either a boolean or
+        // a brightness, so a script can address a light directly by node id:
+        //     hide RedBow_ob_PointLight              turn it off
+        //     set  WhiteStern_ob_PointLight 6000     ...and make it brilliant
+        // rather than threading a nested menu path through the object folder, the Lights
+        // folder and the model's internal light name. Reading back the intensity (0 when
+        // off) means the scripted-settings snapshot/restore round-trips correctly.
+        if (node && node.light && typeof node.setIntensity === "function") {
+            return { success: true, controller: {
+                object: node,
+                initialValue: node.lightVisible ? node.light.intensity : 0,
+                getValue: () => (node.lightVisible ? node.light.intensity : 0),
+                setValue: (v) => {
+                    if (typeof v === "boolean") { node.setLightVisible(v); return; }
+                    const n = Number(v);
+                    if (!isFinite(n)) return;
+                    if (n > 0) node.setIntensity(n);
+                    node.setLightVisible(n > 0);
+                },
+            }};
+        }
+
         if (node && typeof node.show === "function" && node.group) {
             return { success: true, controller: {
                 object: node,

@@ -135,6 +135,27 @@ export class CNode3DLight extends CNode3D {
 
     }
 
+    // Set the light's brightness. Intensity also drives the billboard's world size
+    // (intensity/100), which is what makes a bright light read as a bigger glow rather
+    // than just a whiter pixel. Public so a script can drive it — see
+    // _resolveObjectControl, which lets `set <lightNodeId> 6000` reach here.
+    setIntensity(value) {
+        const v = Number(value);
+        if (!isFinite(v) || v < 0) return;
+        this.light.intensity = v;
+        this._object.material.uniforms.uIntensity.value = v;
+        const newSize = v / 100;
+        this._object.geometry.dispose();
+        this._object.geometry = new PlaneGeometry(newSize, newSize);
+        if (this.intensityControl) this.intensityControl.value = v;
+    }
+
+    // Show/hide the light (billboard + illumination), as `show`/`hide` do from a script.
+    setLightVisible(visible) {
+        this.lightVisible = !!visible;
+        this.updateVisibility();
+    }
+
     createGUIControls() {
         // Light Visible control (controls both light and billboard visibility)
         this.lightVisibleControl = new CNodeGUIValue({
@@ -172,14 +193,7 @@ export class CNode3DLight extends CNode3D {
             start: 0,
             end: 10000,
             step: 1,
-            onChange: (value) => {
-                this.light.intensity = value;
-                this._object.material.uniforms.uIntensity.value = value;
-                // Update size based on intensity
-                const newSize = value / 100;
-                this._object.geometry.dispose();
-                this._object.geometry = new PlaneGeometry(newSize, newSize);
-            }
+            onChange: (value) => this.setIntensity(value),
         }, this.gui);
 
         // Color control
