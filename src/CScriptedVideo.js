@@ -33,6 +33,7 @@ import {par} from "./par";
 import {CustomManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "./Globals";
 import {ViewMan} from "./CViewManager";
 import {clamp, smooth} from "./scriptedVideo/ScriptMath";
+import {uniformTimeMap} from "./scriptedVideo/ScriptTimeMap";
 import {VIEW_MAP, layoutForViewEvent, isSettingEvent} from "./scriptedVideo/ScriptCommands";
 import {runScriptViaWorker} from "./scriptedVideo/ScriptRunnerClient";
 import {sitrecAPI} from "./CSitrecAPI";
@@ -276,12 +277,41 @@ class CScriptedVideoManager {
         }, 400);
     }
 
-    // map a scripted-time t (seconds) to a fractional sitch frame
+    // Map a scripted-time t (seconds) to a fractional sitch frame.
+    //
+    // This used to BE the mapping — one global straight line from the start of the script
+    // to the end of the sitch. It is now a lookup into a compiled ScriptTimeMap, so a
+    // script can hold, slow, freeze or replay a moment, and re-timing one shot no longer
+    // re-times the others. Until shots declare explicit source windows the compiled map
+    // is a single uniform segment, which is identical to the old line except that it now
+    // honours Sit.aFrame/bFrame (the old one always spanned the whole sitch).
+    //
+    // The map rebuilds itself whenever its inputs change, so callers need do nothing.
     sitFrameAt(t) {
+        return this.timeMap().frameAt(t);
+    }
+
+    // Source frames per screen second at t: 0 while frozen, negative if reversed.
+    // Commands wanting PLAYBACK velocity (rather than the world tangent at a frame) must
+    // scale by this — see follow/ride in docs/ScriptedVideo-Redesign.md.
+    sitFrameRateAt(t) {
+        return this.timeMap().rateAt(t);
+    }
+
+    // The compiled map, rebuilt on demand when the script duration or the sitch's
+    // length/in-out points have changed since it was last built.
+    timeMap() {
         const frames = (Sit && Sit.frames) ? Sit.frames : 1;
-        if (this.totalDuration <= 0) return 0;
-        const progress = clamp(t / this.totalDuration, 0, 1);
-        return clamp(progress * (frames - 1), 0, frames - 1);
+        const aFrame = Sit ? Sit.aFrame : undefined;
+        const bFrame = Sit ? Sit.bFrame : undefined;
+        const k = this._timeMapKey;
+        if (!this._timeMap || !k
+            || k.frames !== frames || k.dur !== this.totalDuration
+            || k.a !== aFrame || k.b !== bFrame) {
+            this._timeMap = uniformTimeMap(this.totalDuration, frames, aFrame, bFrame);
+            this._timeMapKey = {frames, dur: this.totalDuration, a: aFrame, b: bFrame};
+        }
+        return this._timeMap;
     }
 
     // the view event active at time t (last view cut at or before t), or null
@@ -760,7 +790,7 @@ class CScriptedVideoManager {
         this._settingSnapshots = new Map();
         this._appliedSettings = new Map();
         for (const e of this._settingEvents) {
-            e._key = (e.menu || "") + " " + e.path;
+            e._key = (e.menu || "") + "\u0000" + e.path;
             if (!this._settingSnapshots.has(e._key)) {
                 const r = sitrecAPI._getMenuValue(e.menu, e.path);
                 if (r.success) this._settingSnapshots.set(e._key, {menu: e.menu, path: e.path, value: r.value});

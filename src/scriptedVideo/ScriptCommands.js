@@ -152,6 +152,44 @@ export const COMMANDS = {
         finish: finishViewCommand,
     },
 
+    // Declare which slice of WORLD time a shot covers. Attach it to a shot with `&`:
+    //
+    //     track UFO 4
+    //     & world 23:04:39..23:04:49        # 10 s of world in 4 s of screen
+    //     & world 23:04:44                  # ...or freeze on one instant
+    //
+    // Screen duration (the shot's own secs) and world window are independent, which is
+    // what gives dwell, slow motion, freeze and replay. Endpoints may be seconds into the
+    // sitch, "f<frame>", a wall clock, or an absolute instant — see parseSourceTime.
+    // Every shot needs one: there is deliberately no implicit default, so nothing about
+    // one shot's timing can be derived from, and silently perturbed by, another's.
+    world: {
+        cameraBeat: false,
+        color: "#3d9970",
+        label: (e) => (e.from === e.to) ? `hold ${e.from}` : `world ${e.from}..${e.to}`,
+        args: [
+            {name: "range", type: "string", required: true, field: "from"},
+            {name: "to", type: "string", field: "to"},
+        ],
+        finish(e, error) {
+            // one-token form: "A..B" (the tokenizer keeps it whole, dots and colons and all)
+            if ((e.to === null || e.to === undefined) && typeof e.from === "string"
+                && e.from.includes("..")) {
+                const parts = e.from.split("..");
+                if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+                    return error(`world — bad range "${e.from}", expected from..to`);
+                }
+                e.from = parts[0].trim();
+                e.to = parts[1].trim();
+            }
+            // `world A` with no end freezes the world at A for the shot's duration
+            if (e.to === null || e.to === undefined) e.to = e.from;
+            e.dur = 0;              // a marker on the shot, it consumes no time itself
+            return e;
+        },
+        overflowHint: "use `world from..to`, `world from to`, or `world at` to freeze",
+    },
+
     text: {
         cameraBeat: false,
         color: "#d05a8c",

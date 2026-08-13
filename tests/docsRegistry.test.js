@@ -151,6 +151,7 @@ describe("docs on disk", () => {
         "DroneControlFitReview-R1",
         "FitPointsAPI",
         "localFileSystemPlan",
+        "ScriptedVideo-Redesign",
         "sitrec-MCP-plan-FINAL",
         "StarTracker-PriorWork",
         "synth-objects-refactoring-plan",
