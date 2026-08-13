@@ -151,6 +151,10 @@ export const ModelFiles = {
     "Saucer":               { file: 'data/models/saucer01a.glb',},
     "TR-3B":               { file: 'data/models/tr-3b.glb',},
     "TR-3B (lit)":         { file: 'data/models/tr-3b-lit.glb',},   // bright corner lights + black metallic hull, for night scenes
+    // Nothing but a punctual point light, so it comes in as a CNode3DLight billboard and
+    // stays visible at any range - a geometry sphere drops below a pixel after a few km.
+    // Colour and intensity are per-object GUI controls. See tools/make_point_light_glb.py
+    "Point Light":         { file: 'data/models/point-light.glb',},
     "LCS":                 { file: 'data/models/LCS.glb',},
 
 }
