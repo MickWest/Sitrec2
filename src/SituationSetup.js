@@ -1034,6 +1034,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
                 node.addController("ObjectTilt", {
                     track: trackId,
                     tiltType: data.tiltType ?? "none",
+                    fixedHeading: data.fixedHeading,
                     wind: data.wind,
                     airTrack: data.airTrack,
                 });

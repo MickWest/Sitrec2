@@ -2057,6 +2057,10 @@ const en = {
             label: "Banking",
             tooltip: "How the object banks/tilts during turns",
         },
+        fixedHeading: {
+            label: "Fixed Heading°",
+            tooltip: "Compass heading (true) the model points at in 'Fixed Heading' mode, instead of pointing along its track. Use it for an object that translates without turning — crabbing sideways, drifting, or holding an attitude while it moves.",
+        },
         angularTraverse: {
             label: "Angular Traverse",
         },
