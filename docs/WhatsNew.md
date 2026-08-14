@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.129.2 (2026-08-14)
+
+### Bug Fixes
+
+- Fixed the *AI Model* drop-down in the Assistant view's header menu flashing open and closing again the moment you clicked it, so the model could not be changed from there. The same setting under Sitrec → Settings → *AI Model* was never affected.
+
+---
+
 ## Version 2.129.1 (2026-08-14)
 
 ### Bug Fixes
