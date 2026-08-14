@@ -7,7 +7,7 @@ import {indexedDBManager} from "./IndexedDBManager";
 import {isServerless} from "./configUtils";
 import {assert} from "./assert";
 import {getEnvBool} from "./envUtils";
-import {hasAnyKey as byokHasAnyKey, primeKeyCache} from "./BYOKKeyStore";
+import {primeKeyCache} from "./BYOKKeyStore";
 
 // Environment variable flags for storage methods (default to false if not specified)
 // Set to 'true', 'false', '1', '0', 'yes', or 'no'
@@ -349,10 +349,15 @@ export async function initializeSettings() {
     // settings-load path below. It must be computed BEFORE any early returns
     // so the value is correct in every mode (regression, serverless, server).
     try {
-        // Prime the synchronous key cache first: terrain and tile code reads a provider key
-        // on a synchronous construction path and cannot await IndexedDB.
-        await primeKeyCache();
-        Globals.hasByokKeys = await byokHasAnyKey();
+        // Prime the synchronous key cache: terrain and tile code reads a provider key on a
+        // synchronous construction path and cannot await IndexedDB.
+        //
+        // ONE await, deliberately. primeKeyCache() already reads every stored key, so the
+        // count comes back from it rather than calling hasAnyKey() and re-reading
+        // IndexedDB. That keeps this to a single await and a single read — the same shape
+        // as before the cache existed. Startup ordering here has historically been
+        // sensitive, so it is worth not adding awaits to this path casually.
+        Globals.hasByokKeys = (await primeKeyCache()) > 0;
     } catch (e) {
         Globals.hasByokKeys = false;
     }
