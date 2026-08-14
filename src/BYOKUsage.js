@@ -55,6 +55,157 @@ const CACHE_WRITE_MULTIPLIER = 1.25;
 // costUSD is part of the accumulated record, not just a display-time derivation: it is
 // banked at the rate in effect when the tokens were actually spent, so a later price
 // change (or a promotion lapsing) cannot retroactively rewrite what past turns cost.
+// ─── Provider-level accounting (tile and data providers) ─────────────────────────────
+//
+// The AI accounting above is token-based and priced per model. Tile and data providers
+// expose no per-request cost, so all we can observe is a request count. The maintainer's
+// rule is "usage is spend where possible": we therefore turn counts into money using a
+// rate the USER supplies, rather than shipping a guessed list price. Tile pricing varies
+// by plan, region and free-tier allowance, so a hardcoded figure would be confidently
+// wrong; with no rate set we show counts and no dollar figure.
+//
+// Neither key starts with "byok_" — that prefix is enumerated by BYOKKeyStore as stored
+// credentials (see the note at the top of this file).
+const PROVIDER_USAGE_KEY = 'sitrecProviderUsage';   // {providerId: {requests}}
+const PROVIDER_CONFIG_KEY = 'sitrecProviderConfig'; // {providerId: {unitPricePer1000, limits}}
+
+async function readStore(key) {
+    try {
+        const stored = await indexedDBManager.getSetting(key);
+        return (stored && typeof stored === 'object') ? stored : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+async function writeStore(key, value) {
+    try {
+        await indexedDBManager.setSetting(key, value);
+    } catch (e) {
+        // Accounting is reporting, not behaviour — never let it break the thing being counted.
+        console.warn(`Failed to persist ${key}:`, e);
+    }
+}
+
+export async function getProviderUsage() {
+    return readStore(PROVIDER_USAGE_KEY);
+}
+
+// Local date, not UTC: the user's "today" is the one they can reason about, and this
+// counter exists for their benefit, not to reconcile with a provider's billing day.
+function todayKey() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// `amount` is whatever that provider is metered in — sessions for Google 3D, bytes for
+// Cesium, requests for everything else. The running total is lifetime; dailyCount resets
+// on the first record of a new day, which is what the daily caps are checked against.
+export async function recordProviderUsage(providerId, amount = 1) {
+    if (!providerId || !amount) return;
+    const all = await getProviderUsage();
+    const entry = all[providerId] || {total: 0, day: todayKey(), dailyCount: 0};
+    const today = todayKey();
+    if (entry.day !== today) {
+        entry.day = today;
+        entry.dailyCount = 0;
+    }
+    entry.total = (entry.total || 0) + amount;
+    entry.dailyCount = (entry.dailyCount || 0) + amount;
+    all[providerId] = entry;
+    await writeStore(PROVIDER_USAGE_KEY, all);
+    await refreshBlockedState(providerId);
+}
+
+// How much of today's allowance is already spent (0 when the stored day is stale).
+export async function getDailyUsage(providerId) {
+    const all = await getProviderUsage();
+    const entry = all[providerId];
+    if (!entry || entry.day !== todayKey()) return 0;
+    return entry.dailyCount || 0;
+}
+
+// True when the user set a daily cap for this provider and today's usage has reached it.
+// A null/absent limit means unlimited, which is the default whenever the user is spending
+// their own money — Sitrec's tiered caps exist to protect its SHARED key, not the user's.
+export async function isOverDailyLimit(providerId, limitName, scale = 1) {
+    const limit = await getLimit(providerId, limitName);
+    if (limit === null) return false;
+    const used = await getDailyUsage(providerId);
+    return used >= limit * scale;
+}
+
+// ─── Synchronous over-limit state ─────────────────────────────────────────────────────
+// Enforcement has to happen on the fetch path, which is synchronous, and the limit lives
+// in IndexedDB. So the async check above maintains this Set, and callers read it without
+// awaiting. It is refreshed after every recorded unit and on demand (dialog close, load).
+const blockedProviders = new Set();
+
+export function isProviderBlocked(providerId) {
+    return blockedProviders.has(providerId);
+}
+
+// Re-evaluate one provider's daily cap. Called after each recorded unit, so the block
+// takes effect on the request AFTER the one that crosses the line — the caps are a budget
+// guard, not a hard transactional limit, and overshooting by one session is acceptable
+// where blocking a request mid-render is not.
+export async function refreshBlockedState(providerId) {
+    const {getProvider, LIMIT_DEFS} = await import('./BYOKProviders');
+    const provider = getProvider(providerId);
+    if (!provider || !provider.limits || provider.limits.length === 0) return;
+    let blocked = false;
+    for (const limitName of provider.limits) {
+        const scale = LIMIT_DEFS[limitName]?.scale ?? 1;
+        if (await isOverDailyLimit(providerId, limitName, scale)) {
+            blocked = true;
+            break;
+        }
+    }
+    if (blocked) blockedProviders.add(providerId);
+    else blockedProviders.delete(providerId);
+}
+
+export async function resetProviderUsage(providerId = null) {
+    if (providerId === null) {
+        await writeStore(PROVIDER_USAGE_KEY, {});
+        return;
+    }
+    const all = await getProviderUsage();
+    delete all[providerId];
+    await writeStore(PROVIDER_USAGE_KEY, all);
+}
+
+export async function getProviderConfig() {
+    return readStore(PROVIDER_CONFIG_KEY);
+}
+
+// Merge a patch into one provider's config: {unitPricePer1000, limits:{name:value|null}}.
+export async function setProviderConfig(providerId, patch) {
+    if (!providerId) return;
+    const all = await getProviderConfig();
+    const current = all[providerId] || {};
+    const next = {...current, ...patch};
+    if (patch && patch.limits) {
+        next.limits = {...(current.limits || {}), ...patch.limits};
+    }
+    all[providerId] = next;
+    await writeStore(PROVIDER_CONFIG_KEY, all);
+}
+
+// null means "unlimited" — the default whenever the user is spending their own money.
+export async function getLimit(providerId, limitName) {
+    const all = await getProviderConfig();
+    const value = all[providerId]?.limits?.[limitName];
+    return (typeof value === 'number' && isFinite(value) && value > 0) ? value : null;
+}
+
+// Estimated spend for a request-counting provider, or null when no rate is configured.
+export function estimateProviderSpendUSD(usage, config) {
+    const rate = config?.unitPricePer1000;
+    if (typeof rate !== 'number' || !isFinite(rate) || rate <= 0) return null;
+    return ((usage?.requests || 0) / 1000) * rate;
+}
+
 export function emptyUsage() {
     return {inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, requests: 0, costUSD: 0};
 }

@@ -1,5 +1,6 @@
 import {CesiumIonAuthPlugin, GoogleCloudAuthPlugin} from "3d-tiles-renderer/plugins";
 import {TileUsageTracker} from "./TileUsageTracker";
+import {isProviderBlocked} from "./BYOKUsage";
 
 const GOOGLE_3D_TILES_HOSTNAME = "tile.googleapis.com";
 const GOOGLE_3D_TILES_ROOT_PATH = "/v1/3dtiles/root.json";
@@ -121,6 +122,16 @@ export class SharedGoogleCloudAuthPlugin extends GoogleCloudAuthPlugin {
         const cacheKey = getRootCacheKey(normalizedUri);
         let rootRequest = this.sharedState.rootTilesetRequests.get(cacheKey);
         if (!rootRequest) {
+            // A cache miss here means we are about to mint a NEW Google session, which is
+            // the billable unit. If the user set their own daily session cap and has
+            // reached it, stop before spending their money. Cached roots are unaffected,
+            // so an already-loaded view keeps working — only new sessions are refused.
+            if (isProviderBlocked("google-maps")) {
+                throw new Error(
+                    "Google 3D daily session limit reached. You set this cap in Settings → "
+                    + "API Keys; raise or clear it there, or wait until tomorrow."
+                );
+            }
             TileUsageTracker.trackGoogle3DRootSession();
             rootRequest = Promise.resolve(this.auth.fetch(normalizedUri, options))
                 .then(result => normalizeRootTilesetResponse(result, normalizedUri))

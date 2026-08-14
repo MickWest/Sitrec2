@@ -20,10 +20,68 @@ jest.mock('../src/IndexedDBManager', () => {
 import { indexedDBManager } from '../src/IndexedDBManager';
 import {
     getKey, setKey, deleteKey, getAllProviders, hasAnyKey,
+    primeKeyCache, getCachedKey, hasCachedKey,
 } from '../src/BYOKKeyStore';
 
 beforeEach(() => {
     indexedDBManager._reset();
+});
+
+// Obfuscation at rest. This is explicitly NOT security — the passphrase ships in the
+// public bundle — so these tests assert the two things it genuinely buys: a stored value
+// is not casually readable, and an existing plaintext key keeps working.
+describe('BYOKKeyStore obfuscation at rest', () => {
+    test('the stored value does not contain the key in plain text', async () => {
+        await setKey('anthropic', 'sk-ant-SUPERSECRET-abcdef123456');
+        const stored = indexedDBManager._internal.get('byok_anthropic');
+        expect(typeof stored).toBe('string');
+        expect(stored).not.toContain('sk-ant-SUPERSECRET-abcdef123456');
+        expect(stored).not.toContain('SUPERSECRET');
+        expect(stored.startsWith('sitrec-obf-v1:')).toBe(true);
+    });
+
+    test('round-trips a key unchanged', async () => {
+        await setKey('anthropic', 'sk-ant-round-trip-test');
+        expect(await getKey('anthropic')).toBe('sk-ant-round-trip-test');
+    });
+
+    test('round-trips a username/password credential', async () => {
+        // Space-Track uses a pair rather than a single key, so the envelope has to carry
+        // an object, not just a string.
+        await setKey('spacetrack', {username: 'someone', password: 'p@ss word'});
+        expect(await getKey('spacetrack')).toEqual({username: 'someone', password: 'p@ss word'});
+    });
+
+    test('two saves of the same key produce different ciphertext', async () => {
+        await setKey('anthropic', 'sk-ant-same');
+        const first = indexedDBManager._internal.get('byok_anthropic');
+        await setKey('anthropic', 'sk-ant-same');
+        const second = indexedDBManager._internal.get('byok_anthropic');
+        // A fresh random IV per write, so identical keys are not recognisable as identical.
+        expect(first).not.toBe(second);
+        expect(await getKey('anthropic')).toBe('sk-ant-same');
+    });
+
+    test('a key stored before obfuscation existed still works', async () => {
+        // Written the old way, straight into the store with no envelope.
+        await indexedDBManager.setSetting('byok_anthropic', 'sk-ant-legacy-plaintext');
+        expect(await getKey('anthropic')).toBe('sk-ant-legacy-plaintext');
+        expect(await hasAnyKey()).toBe(true);
+    });
+
+    test('a corrupted stored value reads as unset rather than as garbage', async () => {
+        // Better to tell the user no key is set than to send a mangled string to a provider.
+        await indexedDBManager.setSetting('byok_anthropic', 'sitrec-obf-v1:bm90:cmVhbGx5');
+        expect(await getKey('anthropic')).toBeNull();
+    });
+
+    test('the primed cache holds usable plaintext', async () => {
+        await setKey('google-maps', 'AIza-test-key');
+        await primeKeyCache();
+        expect(getCachedKey('google-maps')).toBe('AIza-test-key');
+        expect(hasCachedKey('google-maps')).toBe(true);
+        expect(getCachedKey('mapbox')).toBeNull();
+    });
 });
 
 describe('BYOKKeyStore', () => {

@@ -1,4 +1,5 @@
 import {CNode} from "./CNode";
+import {getCachedKey} from "../BYOKKeyStore";
 import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {assert} from "../assert";
@@ -77,6 +78,16 @@ const OCEAN_SURFACE_WATER_THRESHOLD_METERS = 2;
 const OCEAN_SURFACE_REFRESH_MS = 1200;
 const OCEAN_SURFACE_FIXED_DATUM = "egm96-msl";
 
+// Resolve a tile-provider credential, preferring the user's own key over Sitrec's
+// shared one. Returns {value, isOwn}.
+//
+// isOwn matters beyond bookkeeping: the canUse3DBuildings permission exists to protect
+// Sitrec's SHARED key from being spent by everyone. A user who supplied their own key is
+// spending their own money, so that gate does not apply to them.
+function providerCredential(byokId, sharedValue) {
+    const own = getCachedKey(byokId);
+    return {value: own || sharedValue || null, isOwn: !!own};
+}
 export class CNodeTerrainUI extends CNode {
     constructor(v) {
 
@@ -805,10 +816,12 @@ export class CNodeTerrainUI extends CNode {
         const hasGroupPermission = userGroups.some(group => allowed3DBuildingGroups.includes(group));
         this.canUse3DBuildings = Globals.userData?.canUse3DBuildings ?? hasGroupPermission;
 
-        const cesiumToken = Globals.userData?.CESIUM_ION_TOKEN;
-        const googleKey = Globals.userData?.GOOGLE_MAPS_API_KEY;
-        const hasCesium = this.canUse3DBuildings && !!cesiumToken;
-        const hasGoogle = this.canUse3DBuildings && !!googleKey;
+        const cesium = providerCredential("cesium-ion", Globals.userData?.CESIUM_ION_TOKEN);
+        const google = providerCredential("google-maps", Globals.userData?.GOOGLE_MAPS_API_KEY);
+        const cesiumToken = cesium.value;
+        const googleKey = google.value;
+        const hasCesium = (this.canUse3DBuildings || cesium.isOwn) && !!cesiumToken;
+        const hasGoogle = (this.canUse3DBuildings || google.isOwn) && !!googleKey;
 
         // Only enable showBuildings if user has permission and at least one API key;
         // otherwise force it off so we don't serialize an unusable state.
@@ -1181,8 +1194,8 @@ export class CNodeTerrainUI extends CNode {
         }
 
         if (show && !this.buildingsNode) {
-            const cesiumToken = Globals.userData?.CESIUM_ION_TOKEN;
-            const googleKey = Globals.userData?.GOOGLE_MAPS_API_KEY;
+            const cesiumToken = providerCredential("cesium-ion", Globals.userData?.CESIUM_ION_TOKEN).value;
+            const googleKey = providerCredential("google-maps", Globals.userData?.GOOGLE_MAPS_API_KEY).value;
             if (!cesiumToken && !googleKey) {
                 this.showBuildings = false;
                 return;

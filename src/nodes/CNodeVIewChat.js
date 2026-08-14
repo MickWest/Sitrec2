@@ -1,5 +1,5 @@
 import {CNodeViewText} from "./CNodeViewText";
-import {CustomManager, GlobalDateTimeNode, Globals, guiMenus, markSitchDirty, withTestUser} from "../Globals";
+import {GlobalDateTimeNode, Globals, guiMenus, markSitchDirty, withTestUser} from "../Globals";
 import {SITREC_APP, SITREC_SERVER} from "../configUtils";
 import {sitrecAPI} from "../CSitrecAPI";
 import {getEnvBool} from "../envUtils";
@@ -503,7 +503,6 @@ class CNodeViewChat extends CNodeViewText {
             if (result.usage) {
                 this.addDebugMessage(formatTurnUsage(model, result.usage));
                 recordUsage(model, result.usage)
-                    .then(() => CustomManager?.refreshByokUsageLabel?.())
                     .catch(e => console.warn('BYOK usage not recorded:', e));
             }
 

@@ -1,6 +1,8 @@
 import {isServerless, SITREC_SERVER} from "./configUtils";
 import {withTestUser} from "./Globals";
 import {getEnvBool} from "./envUtils";
+import {hasCachedKey} from "./BYOKKeyStore";
+import {recordProviderUsage} from "./BYOKUsage";
 
 export const TILE_USAGE_SERVICES = Object.freeze({
     GOOGLE_3D_ROOT: "google_3d_root",
@@ -117,7 +119,22 @@ class TileUsageTrackerClass {
         this.trackService(service, 1);
     }
 
+    // A Google 3D "root session" is one request to /v1/3dtiles/root.json, and it is the
+    // unit Google actually bills — every tile fetched afterwards rides on it. That is why
+    // the server caps google_3d_root daily (tile_usage.php) while leaving google_3d_tiles
+    // effectively unlimited.
+    //
+    // When the user supplied their own Google key, the session is billed to THEM, so it
+    // must not be reported to Sitrec's server: it neither consumes nor should be counted
+    // against Sitrec's shared quota, and their private usage is not Sitrec's business. It
+    // is still recorded locally so the key dialog can show them what they are spending —
+    // and unlike trackService(), that local record is NOT suppressed in serverless builds,
+    // where a user on their own key is exactly who needs the number.
     trackGoogle3DRootSession() {
+        if (hasCachedKey("google-maps")) {
+            recordProviderUsage("google-maps", 1).catch(() => {});
+            return;
+        }
         this.trackService(TILE_USAGE_SERVICES.GOOGLE_3D_ROOT, 1);
     }
 
@@ -132,6 +149,12 @@ class TileUsageTrackerClass {
     trackCesiumOSM3DBytes(bytes) {
         const safeBytes = Math.max(0, Number(bytes) || 0);
         if (safeBytes <= 0) return;
+        // Same split as the Google root session above: a user's own Ion token is billed to
+        // them, so it is counted locally and not reported against Sitrec's byte quota.
+        if (hasCachedKey("cesium-ion")) {
+            recordProviderUsage("cesium-ion", safeBytes).catch(() => {});
+            return;
+        }
         this.trackService(TILE_USAGE_SERVICES.CESIUM_OSM_3D_BYTES, safeBytes);
     }
 

@@ -200,6 +200,33 @@ module.exports = (env = {}) => ({
         new HtmlWebpackPlugin({
             title: "Sitrec - Metabunk's Situation Recreation Tool",
             meta: {
+                // ── Content-Security-Policy (partial, deliberately) ──────────────────
+                // Only the directives that are genuinely safe for Sitrec are enforced.
+                // Each was checked against the codebase first:
+                //   object-src 'none'  — Sitrec creates no <object>/<embed>; kills a
+                //                        legacy script-execution vector outright.
+                //   base-uri 'self'    — Sitrec never sets a <base> tag. Without this, an
+                //                        injected <base> silently repoints every relative
+                //                        URL on the page, which turns a small HTML
+                //                        injection into full script control.
+                //   form-action 'self' — no form posts off-origin, so an injected form
+                //                        cannot be used to POST page data elsewhere.
+                //
+                // The two directives that would actually stop an exfiltration —
+                // script-src and connect-src — are NOT set, because they would break core
+                // features rather than attackers:
+                //   - connect-src cannot be restricted while `?custom=<any URL>` loads a
+                //     sitch from an arbitrary origin (src/index.js), and while map tiles
+                //     come from a long, growing list of hosts. It would have to be '*'.
+                //   - script-src would need 'unsafe-eval' anyway for Scripted Video's
+                //     AsyncFunction and for OpenCV's WASM, plus 'unsafe-inline'; with both
+                //     present it stops very little.
+                // Tightening either needs the arbitrary-URL sitch loader reworked first.
+                // See docs/APIKeys.md, which tells users this gap exists.
+                'Content-Security-Policy': {
+                    'http-equiv': 'Content-Security-Policy',
+                    content: "object-src 'none'; base-uri 'self'; form-action 'self'",
+                },
                 'Cache-Control': { 'http-equiv': 'Cache-Control', content: 'no-cache, no-store, must-revalidate' },
                 'Pragma': { 'http-equiv': 'Pragma', content: 'no-cache' },
                 'Expires': { 'http-equiv': 'Expires', content: '0' },

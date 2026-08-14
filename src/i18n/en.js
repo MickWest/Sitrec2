@@ -133,6 +133,7 @@ const en = {
                 gimbalRecreate: "Recreating Gimbal Step-by-Step",
                 nimitz: "Nimitz / Tic Tac Case Study",
                 football: "Football and Cable Cam",
+                apiKeys: "Your API Keys: Storage & Security",
                 localCustomSitches: "Local Custom Sitches (JSON)",
                 sections: {
                     start: "Start Here",
@@ -937,6 +938,13 @@ const en = {
             msaaSamples: { label: "Antialiasing (MSAA)", tooltip: "Multisample antialiasing on the 3D viewport. Off = fastest, removes the multisample resolve pass. Higher = smoother edges but slower." },
             performancePreset: { label: "Performance Preset", tooltip: "One-click performance presets. Quality = native res + 4x MSAA. Fast/Potato cut render scale, MSAA, terrain detail and fps cap for low-spec laptops. Switches to Custom when you tweak any sub-setting." },
             aiModel: { label: "AI Model", tooltip: "Select the AI model for the chat assistant" },
+            apiKeys: {
+                label: "API Keys…",
+                tooltip: "Use your own accounts instead of Sitrec's shared quota — the AI assistant, "
+                    + "map and terrain providers, and data feeds. Keys are stored only in this browser, "
+                    + "are never sent to the Sitrec server, and are never shown back to you once saved. "
+                    + "Per-provider usage and spending limits live here too.",
+            },
             byokKey: {
                 title: "Anthropic API Key",
                 labelUnset: "AI Key: using Sitrec's",
