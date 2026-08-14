@@ -65,7 +65,10 @@ import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
-import {showError, showConfirm} from "./showError";
+import {showError, showConfirm, showPrompt} from "./showError";
+import {getKey as byokGetKey, setKey as byokSetKey, deleteKey as byokDeleteKey} from "./BYOKKeyStore";
+import {BYOK_MODELS, BYOK_PROVIDER} from "./CDirectLLMClient";
+import {formatCostUSD, formatUsageReport, resetUsage} from "./BYOKUsage";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
@@ -611,6 +614,26 @@ export class CCustomManager {
         // The mirror stays in sync with this dropdown — value, option list, and onChange.
         registerMirrorSource("chatModel", this.chatModelController);
 
+        // BYOK (Bring Your Own Key): store an Anthropic key locally and let the assistant
+        // talk to Anthropic directly, bypassing chatbot.php. Only shown where there is an
+        // assistant to configure — the chat view hides itself on the same flag.
+        if (getEnvBool("CHATBOT_ENABLED", process.env.CHATBOT_ENABLED)) {
+            this.byokKeyController = settingsFolder
+                .add({setKey: () => this.promptForByokKey()}, "setKey")
+                .name(t("custom.settings.byokKey.labelUnset"))
+                .tooltip(t("custom.settings.byokKey.tooltip"));
+            // Running usage/cost for the user's own key. The provider bills them
+            // directly, so this readout is the only feedback they get before the invoice.
+            this.byokUsageController = settingsFolder
+                .add({showUsage: () => this.showByokUsage()}, "showUsage")
+                .name(t("custom.settings.byokUsage.labelEmpty"))
+                .tooltip(t("custom.settings.byokUsage.tooltip"));
+
+            // IndexedDB reads are async; the labels start blank and correct themselves.
+            this.refreshByokKeyLabel();
+            this.refreshByokUsageLabel();
+        }
+
         // Add Center Sidebar toggle
         settingsFolder.add(Globals.settings, "centerSidebar")
             .name(t("custom.settings.centerSidebar.label"))
@@ -665,9 +688,16 @@ export class CCustomManager {
     updateChatModelSelector() {
         if (!this.chatModelController) return;
 
+        // The server's per-tier models, plus the user's own-key models when a BYOK key is
+        // stored. Both kinds live in one dropdown; the "(your key)" labels and the distinct
+        // byok-anthropic provider token keep them apart, so picking one never silently
+        // changes who is paying.
+        const selectable = [...this.availableChatModels];
+        if (Globals.hasByokKeys) selectable.push(...BYOK_MODELS);
+
         // Build options object: {label: "provider:model", ...}
         const options = {};
-        for (const model of this.availableChatModels) {
+        for (const model of selectable) {
             options[model.label] = `${model.provider}:${model.model}`;
         }
 
@@ -685,9 +715,9 @@ export class CCustomManager {
         if (savedModel && validValues.includes(savedModel)) {
             // Saved model is valid, use it - just refresh the display
             this.chatModelController.updateDisplay();
-        } else if (this.availableChatModels.length > 0) {
+        } else if (selectable.length > 0) {
             // Saved model invalid or empty, use first available
-            const firstModel = this.availableChatModels[0];
+            const firstModel = selectable[0];
             Globals.settings.chatModel = `${firstModel.provider}:${firstModel.model}`;
             this.chatModelController.updateDisplay();
             this.saveGlobalSettings(true);
@@ -697,6 +727,94 @@ export class CCustomManager {
         // dropdown (e.g. the Assistant header "AI Model") would keep showing the old value.
         // Re-align all mirrors to the now-current chatModel.
         syncMirroredSource("chatModel");
+    }
+
+    // Re-read the stored BYOK key and update both the button label and the dropdown.
+    // Globals.hasByokKeys is the flag everything else keys off, so it is refreshed here
+    // rather than only at settings-load time.
+    async refreshByokKeyLabel() {
+        if (!this.byokKeyController) return;
+        const key = await byokGetKey("anthropic");
+        Globals.hasByokKeys = !!key;
+        // Constant labels only — never any part of the key. See the note on byokKey.labelSet:
+        // menu labels are enumerated into the system prompt and POSTed to the server.
+        this.byokKeyController.name(
+            key
+                ? t("custom.settings.byokKey.labelSet")
+                : t("custom.settings.byokKey.labelUnset")
+        );
+        this.updateChatModelSelector();
+    }
+
+    // Update the Settings readout with the running BYOK spend. Called after every BYOK
+    // chat turn (via CustomManager from the chat view) as well as on menu construction.
+    async refreshByokUsageLabel() {
+        if (!this.byokUsageController) return;
+        const {totalCost, totalRequests} = await formatUsageReport();
+        this.byokUsageController.name(
+            totalRequests === 0
+                ? t("custom.settings.byokUsage.labelEmpty")
+                : t("custom.settings.byokUsage.label", {
+                    cost: formatCostUSD(totalCost),
+                    requests: totalRequests,
+                })
+        );
+    }
+
+    // Show the per-model breakdown, and offer to reset the counters.
+    async showByokUsage() {
+        const {lines, totalCost, totalRequests} = await formatUsageReport();
+        const body = lines.join("\n")
+            + (totalRequests > 0 ? `\n\nTotal: approx ${formatCostUSD(totalCost)} over ${totalRequests} requests.` : "")
+            + "\n\n" + t("custom.settings.byokUsage.estimateNote");
+
+        if (totalRequests === 0) {
+            await showConfirm(body, {title: t("custom.settings.byokUsage.title"), yesLabel: "OK", noLabel: "Close"});
+            return;
+        }
+        const reset = await showConfirm(
+            body + "\n\n" + t("custom.settings.byokUsage.resetAsk"),
+            {title: t("custom.settings.byokUsage.title"), yesLabel: t("custom.settings.byokUsage.reset"), noLabel: "Close"}
+        );
+        if (reset) {
+            await resetUsage();
+            await this.refreshByokUsageLabel();
+        }
+    }
+
+    // Ask for an Anthropic key. Uses showPrompt (never the native prompt(), which blocks
+    // the render loop and freezes MCP sessions), with a password field so the key is not
+    // shown in the clear or left in the DOM as readable text.
+    async promptForByokKey() {
+        const existing = await byokGetKey("anthropic");
+        const entered = await showPrompt(
+            existing
+                ? t("custom.settings.byokKey.promptReplace")
+                : t("custom.settings.byokKey.promptSet"),
+            {
+                title: t("custom.settings.byokKey.title"),
+                defaultValue: "",
+                okLabel: t("custom.settings.byokKey.save"),
+                inputType: "password",
+            }
+        );
+        if (entered === null) return;   // cancelled — leave any existing key alone
+
+        const trimmed = entered.trim();
+        if (trimmed === "") {
+            if (!existing) return;
+            await byokDeleteKey("anthropic");
+        } else {
+            await byokSetKey("anthropic", trimmed);
+        }
+
+        // If the removed key was the one backing the current selection, fall back to a
+        // server model so the assistant does not sit on a dead selection.
+        if (trimmed === "" && (Globals.settings.chatModel || "").startsWith(BYOK_PROVIDER + ":")) {
+            Globals.settings.chatModel = "";
+        }
+        await this.refreshByokKeyLabel();
+        this.saveGlobalSettings(true);
     }
 
     // Upgrade legacy camera smoothing tracks to dynamic smoothing controls.

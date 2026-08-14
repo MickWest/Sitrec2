@@ -937,6 +937,29 @@ const en = {
             msaaSamples: { label: "Antialiasing (MSAA)", tooltip: "Multisample antialiasing on the 3D viewport. Off = fastest, removes the multisample resolve pass. Higher = smoother edges but slower." },
             performancePreset: { label: "Performance Preset", tooltip: "One-click performance presets. Quality = native res + 4x MSAA. Fast/Potato cut render scale, MSAA, terrain detail and fps cap for low-spec laptops. Switches to Custom when you tweak any sub-setting." },
             aiModel: { label: "AI Model", tooltip: "Select the AI model for the chat assistant" },
+            byokKey: {
+                title: "Anthropic API Key",
+                labelUnset: "AI Key: using Sitrec's",
+                // Deliberately carries no part of the key. lil-gui labels are enumerated by
+                // CSitrecAPI.getMenuSummary(), which is POSTed to chatbot.php on every
+                // server-path chat turn and embedded in the system prompt sent to whichever
+                // provider that tier uses — so any key material here would travel exactly
+                // where the tooltip promises it never goes.
+                labelSet: "AI Key: your own",
+                save: "Save",
+                tooltip: "Optionally use your own Anthropic API key. The assistant then talks to Anthropic directly and the usage is billed to you. The key is stored only in this browser — it is never sent to the Sitrec server.",
+                promptSet: "Paste an Anthropic API key (starts with 'sk-ant-').\n\nThe assistant will then call Anthropic directly with your key, and Anthropic will bill you for that usage. Your key is stored only in this browser and is never sent to the Sitrec server.\n\nNew '(your key)' entries will appear in the AI Model list.",
+                promptReplace: "A key is already stored in this browser.\n\nPaste a new key to replace it, or leave the box empty and press Save to remove it and go back to using Sitrec's own AI access.",
+            },
+            byokUsage: {
+                title: "Your AI Usage",
+                labelEmpty: "AI Usage: none yet",
+                label: "AI Usage: ~{{cost}} ({{requests}} req)",
+                reset: "Reset counters",
+                resetAsk: "Reset these counters to zero?",
+                tooltip: "Estimated tokens and cost billed to your own API key since the counters were last reset. Click for a per-model breakdown.",
+                estimateNote: "Estimated from published list prices — your provider's bill is the authority. Cached input is billed at a reduced rate and is counted as such.",
+            },
             centerSidebar: { label: "Center Sidebar", tooltip: "Enable center sidebar between split views (drag menus to the divider line)" },
             showAttribution: { label: "Show Attribution", tooltip: "Show map and elevation data source attribution overlay" },
             showFilename: { label: "Show Filename", tooltip: "Show the current video filename centered at the bottom of the viewport and exported videos" },

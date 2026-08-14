@@ -12,73 +12,75 @@
 // that performs tool execution (normally sitrecAPI.handleAPICall). This keeps
 // the client unit-testable and cleanly separated from the chat UI.
 
+import promptFileText from '../sitrecServer/chatbotSystemPrompt.txt';
+import {emptyUsage} from './BYOKUsage';
+
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
 
-// Ported from chatbot.php:559-622. Keep in sync with the PHP version to
-// preserve behavior parity between server-proxied and BYOK paths.
-const BASE_SYSTEM_PROMPT = `You are a helpful assistant for the Sitrec app.
+// Provider token for "call Anthropic directly with the user's own key". It is
+// deliberately NOT plain "anthropic": the chat model setting is a single
+// "provider:model" string, so a distinct token lets the chat view tell a BYOK
+// selection from a server-proxied one without guessing. A user who has both a
+// Sitrec account and a stored key keeps their existing server selection — and its
+// billing — untouched, and only pays for their own key when they pick a
+// "(your key)" entry.
+export const BYOK_PROVIDER = 'byok-anthropic';
 
-You should reply in the same language as the user's prompt, unless instructed otherwise.
+// Models offered in the AI Model dropdown once an Anthropic key is stored. The
+// user is paying for these directly, so the list spans the current price/capability
+// range rather than being capped the way the server's per-tier table is.
+export const BYOK_MODELS = [
+    {provider: BYOK_PROVIDER, model: 'claude-opus-5', label: 'Claude Opus 5 (your key)'},
+    {provider: BYOK_PROVIDER, model: 'claude-sonnet-5', label: 'Claude Sonnet 5 (your key)'},
+    {provider: BYOK_PROVIDER, model: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (your key)'},
+];
 
-You are NOT automatically given the current real-world (wall-clock) date and time. If a request depends on the actual present moment (e.g. "right now", "tonight", "in an hour"), or you need the user's local timezone, call the getCurrentDateTime function — it returns the real date/time as an ISO 8601 string with the user's timezone offset. (Keeping this out of the prompt by default lets the request prefix be cached; fetch it on demand.)
+// ── SINGLE SOURCE OF TRUTH FOR THE SYSTEM PROMPT ─────────────────────────────
+// chatbotSystemPrompt.txt holds the one copy of the assistant's prompt prose,
+// split into @@SECTION blocks. sitrecServer/chatbot.php reads that same file at
+// runtime with the same parsing rules; webpack inlines it here at build time (see
+// the asset/source rule in webpack.common.js) so the serverless and desktop
+// builds carry the prompt with no PHP server present.
+//
+// It lives under sitrecServer/ because that directory is copied wholesale into
+// every deployed build and mounted directly in Docker dev, so the text is always
+// present next to the PHP that reads it.
+//
+// This replaced two hand-synced copies that had already drifted apart: the
+// browser copy was missing the camera point-vs-lock rules, the multi-part-request
+// rule, the whole "[Tool Results]" handling section, and the help-doc link
+// instruction. Only genuinely dynamic formatting (the menu/doc loops in
+// buildSystemPrompt below) lives in code now.
+const promptSections = (() => {
+    const sections = {};
+    // Split keeping the captured names: [preamble, name, body, name, body, ...]
+    //
+    // Anchored on (?:^|\n) rather than the /m flag on purpose: in JavaScript, /m's ^ also
+    // matches after a lone \r, U+2028 and U+2029, while PCRE's (used by chatbot.php) matches
+    // only after \n. With /m, a stray U+2028 pasted into the prompt file would silently
+    // split a section in the browser but not on the server — the two would ship different
+    // prompts, defeating the single-source-of-truth guarantee this file exists to provide.
+    const parts = promptFileText.split(/(?:^|\n)@@SECTION[ \t]+(\w+)[ \t]*\r?\n/);
+    for (let i = 1; i + 1 < parts.length; i += 2) {
+        sections[parts[i]] = parts[i + 1].replace(/\r?\n$/, '');
+    }
+    return sections;
+})();
 
-The current SIMULATION date/time is: {{simDateTime}}. This is the date the app is showing - satellites are loaded for this date. If this changes between requests, the user may need to reload satellites.
+function section(name) {
+    const text = promptSections[name];
+    // A malformed prompt file would otherwise mean asking the model to act with no
+    // instructions at all, so surface it instead of sending an empty prompt.
+    if (text === undefined) throw new Error(`chatbotSystemPrompt.txt: missing @@SECTION ${name}`);
+    return text;
+}
 
-When giving a time, always use the user's local time, unless they specify UTC or another timezone.
-
-When setting a time in conjunction with a location and date, use that location's time
-
-You can answer questions about Sitrec and call functions to control the application.
-
-Sitrec is a Situation Recreation application written by Mick West. It can:
-- Show satellite positions in the sky (Starlink, ISS, LEO satellites, etc.)
-- Show ADS-B aircraft positions from loaded track files
-- Show astronomy objects (stars, planets, Sun, Moon, constellations)
-- Visualize 3D terrain with various map and elevation sources
-- Overlay video footage for comparison with the simulated view
-- Set camera position, orientation, and field of view
-- Display 3D objects (aircraft models, geometric shapes) along tracks
-- Calculate and display lines of sight and traverse paths
-The primary use is for resolving UAP sightings and other events by showing what was in the sky at a given time.
-
-SATELLITE LOADING:
-- "load satellites" or general satellite requests → use satellitesLoadLEO
-- "load current starlink" specifically → use satellitesLoadCurrentStarlink
-- After loading, filter with: showStarlink, showISS, showBrightest, showOtherSatellites
-
-VISIBILITY CONTROLS:
-- The "satellites" menu has "showSatelliteNames" (for look view) and "showSatelliteNamesMain" (for main view) to toggle satellite name labels.
-- When the user asks to show satellite labels "in look" or "in the look view", use setMenuValue on the satellites menu with showSatelliteNames = true.
-- Stars visibility: use setMenuValue on "showhide" menu with "Show Stars".
-- Terrain/ground visibility: check the "terrain" menu for map type and elevation options.
-
-3D OBJECTS:
-- Use listAvailableModels to see aircraft/object models (jets, helicopters, drones, etc.)
-- Use setObjectModel to set a specific object to use a 3D model
-- Use setObjectGeometry to use procedural shapes (sphere, box, superegg, etc.)
-- Use listAvailableGeometries to see geometry types and their dimension parameters
-- Objects are organized in the "objects" menu with folders like "cameraObject", "targetObject"
-
-LIGHTING:
-- The "lighting" menu controls scene lighting (ambient, directional, sun position)
-- "Ambient Only" mode available for silhouette-style views
-
-When the user asks you to DO something (set, change, move, show, hide, point, go to, etc.):
-- If you know the correct function or menu control, call it immediately.
-- The system uses FLEXIBLE MATCHING - partial names and keywords work. For example, "frustum off" can use setMenuValue with path "frustum" and the system will find "Camera View Frustum".
-- When the user uses a keyword that likely matches a control (like "frustum", "LOS", "labels"), TRY IT - the flexible matching will find the right control.
-- Only say you don't know if you truly have no idea what the user is asking for.
-
-CRITICAL RULE - MUST FOLLOW: When the user requests an action (like "load sats"), you MUST call the appropriate function. Do NOT just respond with text like "Loading..." - you must actually invoke the function tool. Even if you see the same request in the history, you MUST call the function again. The conversation history does NOT mean the action persists - each request requires a new function call.
-
-If the user confirms with "yes", "ok", "sure", "do it", etc., EXECUTE the action you proposed by calling the function.
-
-ALWAYS provide a brief text response describing what you did or are doing, even when making function calls. For example: "Loading LEO satellites..." or "Turned on satellite labels in look view." Never return an empty response.
-
-Keep responses brief. Focus on being helpful.
-
-Do not discuss anything unrelated to Sitrec, including people, events, or politics. But you can talk about Mick West.`;
+// Substitute a {{placeholder}} with a literal value. Uses a replacer function so a
+// value containing "$&" or "$1" is inserted literally, matching PHP's str_replace.
+function fill(template, placeholder, value) {
+    return template.replace(new RegExp(`\\{\\{${placeholder}\\}\\}`, 'g'), () => value);
+}
 
 // Ported from chatbot.php:358-518. Builds OpenAI-format tool schemas from the
 // client-side sitrecAPI.getDocumentation() + menuSummary data. The schemas
@@ -257,30 +259,30 @@ export function buildSystemPrompt({ simDateTime, menuSummary, availableDocs }) {
     // the cached prefix every request. The AI fetches it on demand via getCurrentDateTime.
     // simDateTime stays (it changes infrequently and is core context); when it does change
     // it invalidates the cache for that turn only.
-    let prompt = BASE_SYSTEM_PROMPT
-        .replace('{{simDateTime}}', simDateTime || '');
+    let prompt = fill(section('base'), 'simDateTime', simDateTime || '');
 
-    // Menu controls appendix (matches chatbot.php:537-557 formatting).
+    // Menu controls appendix. Only the glue newlines and the loop live here — the
+    // prose is shared, and this assembly mirrors chatbot.php's exactly.
     if (menuSummary && Object.keys(menuSummary).length > 0) {
-        prompt += '\n\nAVAILABLE MENU CONTROLS:\n';
+        prompt += '\n\n' + section('menuHeader') + '\n';
         for (const [menuId, controls] of Object.entries(menuSummary)) {
             if (!controls || controls.length === 0) continue;
-            prompt += `\nMenu '${menuId}':\n`;
+            prompt += '\n' + fill(section('menuGroup'), 'menuId', menuId) + '\n';
             for (const control of controls) {
-                prompt += `  - ${control}\n`;
+                prompt += fill(section('menuItem'), 'control', control) + '\n';
             }
         }
-        prompt += "\nUse setMenuValue with menu ID and control path (e.g., 'Flow Orbs/Visible' for nested). Use listMenuControls to see all controls in a menu.\n";
+        prompt += '\n' + section('menuFooter') + '\n';
     }
 
-    // Help docs appendix (matches chatbot.php:633-640).
+    // Help docs appendix. Same shape as the menu one above.
     if (availableDocs && Object.keys(availableDocs).length > 0) {
-        prompt += '\n\nAVAILABLE HELP DOCUMENTATION:\n';
-        prompt += 'Use getHelpDoc to read these docs when answering questions about features or how to do things:\n';
+        prompt += '\n\n' + section('docsHeader') + '\n';
         for (const [name, desc] of Object.entries(availableDocs)) {
-            prompt += `- ${name}: ${desc}\n`;
+            // {{name}} appears twice in the template (label and doc link path).
+            prompt += fill(fill(section('docsItem'), 'name', name), 'description', desc) + '\n';
         }
-        prompt += "\nFor questions like 'what's new' or 'how do I do X', use getHelpDoc to get accurate information.\n";
+        prompt += '\n' + section('docsFooter') + '\n';
     }
 
     return prompt;
@@ -408,7 +410,9 @@ export async function chat({
     executeCall,
     maxIterations = 5,
 }) {
-    if (provider !== 'anthropic') {
+    // Accept both the bare provider name and the BYOK dropdown token, so callers can
+    // pass through whatever was stored in Globals.settings.chatModel unchanged.
+    if (provider !== 'anthropic' && provider !== BYOK_PROVIDER) {
         throw new Error(`BYOK provider '${provider}' not supported. Only Anthropic is currently supported.`);
     }
     if (!apiKey) throw new Error('API key missing');
@@ -423,9 +427,19 @@ export async function chat({
 
     let finalText = '';
     const executedCalls = [];
+    // Accumulated across every iteration of the tool loop — one user turn can be up to
+    // maxIterations round trips, and the user is paying for all of them, so reporting
+    // only the last response's usage would understate a tool-heavy turn several-fold.
+    const usage = emptyUsage();
 
     for (let iter = 0; iter < maxIterations; iter++) {
         const response = await callAnthropic({ apiKey, systemPrompt, messages, tools, model });
+        const u = response.usage || {};
+        usage.requests += 1;
+        usage.inputTokens += u.input_tokens || 0;
+        usage.outputTokens += u.output_tokens || 0;
+        usage.cacheReadTokens += u.cache_read_input_tokens || 0;
+        usage.cacheWriteTokens += u.cache_creation_input_tokens || 0;
         const content = Array.isArray(response.content) ? response.content : [];
 
         for (const block of content) {
@@ -466,5 +480,5 @@ export async function chat({
         messages.push({ role: 'user', content: resultBlocks });
     }
 
-    return { text: finalText, executedCalls };
+    return { text: finalText, executedCalls, usage };
 }

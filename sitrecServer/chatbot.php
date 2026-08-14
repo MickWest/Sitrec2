@@ -233,6 +233,13 @@ $available3DModels = $data['availableModels'] ?? [];
 $availableDocs = $data['availableDocs'] ?? [];
 $date = $data['dateTime'] ?? date('Y-m-d H:i:s');
 $simDateTime = $data['simDateTime'] ?? null;
+// Client-supplied, so pin the type. It is substituted into the prompt with str_replace(),
+// which in PHP 8 raises a fatal TypeError on a non-string replacement — a request body of
+// {"simDateTime":[]} would 500 the endpoint. The old heredoc merely warned and inlined
+// "Array", so this became reachable when the prompt moved out of the heredoc.
+if (!is_string($simDateTime)) {
+    $simDateTime = null;
+}
 $requestedProvider = $data['provider'] ?? null;
 $requestedModel = $data['model'] ?? null;
 
@@ -600,120 +607,104 @@ function callGemini($apiKey, $systemPrompt, $history, $tools, $model = 'gemini-2
 
 $tools = buildToolsFromDoc($sitrecDoc, $menuSummary);
 
+// ── SINGLE SOURCE OF TRUTH FOR THE SYSTEM PROMPT ─────────────────────────────
+// Every line of prompt prose lives in chatbotSystemPrompt.txt, split into
+// @@SECTION blocks. The browser's BYOK path (src/CDirectLLMClient.js) parses the
+// same file with the same rules, so the two cannot drift. They previously held
+// hand-synced copies and had already diverged: the browser copy was missing the
+// camera point-vs-lock rules, the multi-part-request rule, the whole
+// "[Tool Results]" handling section, and the help-doc link instruction.
+// Only genuinely dynamic formatting (loops over menus/docs) lives in code.
+// A prompt-configuration fault is a deploy problem, not a user problem, and carrying on
+// would ask the model to act with no instructions at all. Bail out — but in the shape
+// this endpoint always returns. The chat view reads `response.text` and checks neither
+// `res.ok` nor an `error` field, so an off-contract body would leave the user staring at
+// silence with no clue anything failed. Specifics go to the server log, not the response.
+function failPromptConfig($detail) {
+    error_log("chatbot.php prompt configuration error: $detail");
+    if (!headers_sent()) {
+        header('Content-Type: application/json');
+        http_response_code(500);
+    }
+    echo json_encode([
+        'text' => 'The AI assistant is unavailable (server configuration problem).',
+        'apiCalls' => [],
+        'debug' => ['error' => 'prompt_configuration'],
+    ]);
+    exit;
+}
+
+function promptSection($name) {
+    static $sections = null;
+    if ($sections === null) {
+        $raw = @file_get_contents(__DIR__ . '/chatbotSystemPrompt.txt');
+        if ($raw === false) {
+            failPromptConfig('chatbotSystemPrompt.txt could not be read');
+        }
+        $sections = [];
+        // Anchored (?:^|\n) with NO /m flag, matching src/CDirectLLMClient.js character for
+        // character. JS's /m anchor also matches after a lone \r, U+2028 and U+2029, which
+        // PCRE's does not — so /m on both sides would still let a stray separator split a
+        // section in the browser but not here. This form consumes the newline preceding the
+        // marker, so both parsers must (and do) apply the same single trailing-newline strip.
+        $parts = preg_split('/(?:^|\n)@@SECTION[ \t]+(\w+)[ \t]*\r?\n/', $raw, -1, PREG_SPLIT_DELIM_CAPTURE);
+        // $parts = [preamble, name, body, name, body, ...]
+        for ($i = 1; $i + 1 < count($parts); $i += 2) {
+            $sections[$parts[$i]] = preg_replace('/\r?\n$/', '', $parts[$i + 1]);
+        }
+    }
+    // Require a non-empty body, not merely a present key. A deploy truncated mid-file
+    // (an interrupted scp, a partial write) can leave a section marker with nothing
+    // after it — isset() would accept that and we would hand the model an empty prompt,
+    // which is the exact failure this function exists to prevent.
+    if (!isset($sections[$name]) || trim($sections[$name]) === '') {
+        failPromptConfig("prompt section '$name' is missing or empty");
+    }
+    return $sections[$name];
+}
+
 // Build menu documentation for system prompt (limit size to avoid token limits)
 $menuDocForPrompt = "";
 if (!empty($menuSummary)) {
-    $menuDocForPrompt = "\n\nAVAILABLE MENU CONTROLS:\n";
+    $menuDocForPrompt = "\n\n" . promptSection('menuHeader') . "\n";
     $totalControls = 0;
     $maxControls = 9999; // Limit to prevent huge prompts (temporarily high for debugging)
     
     foreach ($menuSummary as $menuId => $controls) {
         if (!empty($controls) && $totalControls < $maxControls) {
-            $menuDocForPrompt .= "\nMenu '$menuId':\n";
+            $menuDocForPrompt .= "\n" . str_replace('{{menuId}}', $menuId, promptSection('menuGroup')) . "\n";
             foreach ($controls as $control) {
                 if ($totalControls >= $maxControls) {
+                    // Server-only truncation guard — the browser path applies no cap,
+                    // so this line has no counterpart to drift against.
                     $menuDocForPrompt .= "  - (more controls available - use listMenuControls)\n";
                     break;
                 }
-                $menuDocForPrompt .= "  - $control\n";
+                $menuDocForPrompt .= str_replace('{{control}}', $control, promptSection('menuItem')) . "\n";
                 $totalControls++;
             }
         }
     }
-    $menuDocForPrompt .= "\nUse setMenuValue with menu ID and control path (e.g., 'Flow Orbs/Visible' for nested). Use listMenuControls to see all controls in a menu.\n";
+    $menuDocForPrompt .= "\n" . promptSection('menuFooter') . "\n";
 }
 
-$systemPrompt = <<<EOT
-You are a helpful assistant for the Sitrec app. 
-
-You should reply in the same language as the user's prompt, unless instructed otherwise.
-
-You are NOT automatically given the current real-world (wall-clock) date and time. If a request depends on the actual present moment (e.g. "right now", "tonight", "in an hour"), or you need the user's local timezone, call the getCurrentDateTime function — it returns the real date/time as an ISO 8601 string with the user's timezone offset. (Keeping this out of the prompt by default lets the request prefix be cached; fetch it on demand.)
-
-The current SIMULATION date/time is: {$simDateTime}. This is the date the app is showing - satellites are loaded for this date. If this changes between requests, the user may need to reload satellites.
-
-When giving a time, always use the user's local time, unless they specify UTC or another timezone.
-
-When setting a time in conjunction with a location and date, use that location's time
-
-You can answer questions about Sitrec and call functions to control the application.
-
-Sitrec is a Situation Recreation application written by Mick West. It can:
-- Show satellite positions in the sky (Starlink, ISS, LEO satellites, etc.)
-- Show ADS-B aircraft positions from loaded track files
-- Show astronomy objects (stars, planets, Sun, Moon, constellations)
-- Visualize 3D terrain with various map and elevation sources
-- Overlay video footage for comparison with the simulated view
-- Set camera position, orientation, and field of view
-- Display 3D objects (aircraft models, geometric shapes) along tracks
-- Calculate and display lines of sight and traverse paths
-The primary use is for resolving UAP sightings and other events by showing what was in the sky at a given time.
-
-CAMERA POINTING vs LOCKING (read carefully — these are NOT interchangeable):
-- "point at" / "look at" / "show me" / "aim at" = ONE-SHOT pointing. Camera moves once and stays still. MUST use pointCameraAtNamedObject (planets/Sun/Moon) or pointCameraAtRaDec (stars/deep-sky). NEVER use a lock* function for these phrases.
-- "lock on" / "lock onto" / "track" / "follow" / "keep on" = CONTINUOUS tracking. Camera follows the object as time advances. MUST use lockCameraOnObject (planets/Sun/Moon) or lockCameraOnRaDec (stars/deep-sky). NEVER use a point* function for these phrases.
-- "unlock" / "stop tracking" / "release" = stop any active lock. Use unlockCamera.
-- Picking the wrong family (point vs lock) is a serious error. If the user says "point" but you call lock*, the camera will track the target instead of staying still — that is wrong. When in doubt, default to point*.
-- For stars/asterisms/constellations/galaxies/nebulae the user names that you don't have coordinates memorized for, recall the RA/Dec from your knowledge and call the appropriate RaDec variant. Examples: M45 (Pleiades) RA=3h47m Dec=+24d07m; Orion (Betelgeuse) RA=5h55m Dec=+7d24m; Polaris RA=2h32m Dec=+89d16m; Sirius RA=6h45m Dec=-16d43m; Phoenix constellation (center) RA=1h00m Dec=-48d00m.
-- RA is in hours (0-24), Dec is in degrees (-90 to +90). Both pointCameraAtRaDec and lockCameraOnRaDec accept decimal or sexagesimal ("3h47m", "3:47", "+24d07m"). Double-check the sign on Dec — southern-sky objects (Phoenix, Sirius, etc.) have NEGATIVE declination.
-
-SATELLITE LOADING:
-- "load satellites" or general satellite requests → use satellitesLoadLEO
-- "load current starlink" specifically → use satellitesLoadCurrentStarlink
-- After loading, filter with: showStarlink, showISS, showBrightest, showOtherSatellites
-
-VISIBILITY CONTROLS:
-- The "satellites" menu has "showSatelliteNames" (for look view) and "showSatelliteNamesMain" (for main view) to toggle satellite name labels.
-- When the user asks to show satellite labels "in look" or "in the look view", use setMenuValue on the satellites menu with showSatelliteNames = true.
-- Stars visibility: use setMenuValue on "showhide" menu with "Show Stars".
-- Terrain/ground visibility: check the "terrain" menu for map type and elevation options.
-
-3D OBJECTS:
-- Use listAvailableModels to see aircraft/object models (jets, helicopters, drones, etc.)
-- Use setObjectModel to set a specific object to use a 3D model
-- Use setObjectGeometry to use procedural shapes (sphere, box, superegg, etc.)
-- Use listAvailableGeometries to see geometry types and their dimension parameters
-- Objects are organized in the "objects" menu with folders like "cameraObject", "targetObject"
-
-LIGHTING:
-- The "lighting" menu controls scene lighting (ambient, directional, sun position)
-- "Ambient Only" mode available for silhouette-style views
-
-When the user asks you to DO something (set, change, move, show, hide, point, go to, etc.):
-- If you know the correct function or menu control, call it immediately.
-- The system uses FLEXIBLE MATCHING - partial names and keywords work. For example, "frustum off" can use setMenuValue with path "frustum" and the system will find "Camera View Frustum".
-- When the user uses a keyword that likely matches a control (like "frustum", "LOS", "labels"), TRY IT - the flexible matching will find the right control.
-- Only say you don't know if you truly have no idea what the user is asking for.
-
-CRITICAL RULE - MUST FOLLOW: When the user makes a NEW request for an action (like "load sats"), you MUST call the appropriate function. Do NOT just respond with text like "Loading..." - you must actually invoke the function tool. If the user repeats a previous request as a NEW user message, call the function again — the conversation history alone does not mean the action persists.
-
-MULTI-PART REQUESTS (CRITICAL): A single user message often asks for MORE THAN ONE action, e.g. "12:21pm today, New York" = (1) set the date/time AND (2) move the camera. You MUST perform ALL parts. Emit ALL the needed function calls together in one turn when you can. Never report the task as done while any part is still unperformed — check the user's request against the calls you have actually made before writing your final confirmation.
-
-HOW TO READ "[Tool Results]" MESSAGES (CRITICAL — read carefully):
-- A user-role message that begins with "[Tool Results]" is NOT a new user request. It is a system-generated report of what happened when you previously called a tool. Treat it as informational only.
-- When you see "[Tool Results]\nTool X returned: {\"success\":true,...}", that means THAT call succeeded. DO NOT call X again with the same args. But a tool result does NOT mean you should stop: if other parts of the user's request are still unperformed (a query tool like getCurrentDateTime returning is NOT the task being done), CONTINUE by calling the remaining functions now. Only when every part of the request has a successful tool result do you respond with brief confirmation TEXT (one sentence, no tool calls) — for example "Pointed at the Phoenix asterism." or "Done."
-- When you see "[Tool Results]\nTool X returned: {\"success\":false,\"error\":\"...\"}", the action failed. You may either (a) try a corrected call (different args) ONCE, or (b) respond with a brief text apology explaining the failure. Do not retry with the SAME args — that will just fail the same way.
-- NEVER emit the same fn + args combination as the most recent tool call you see in the history. That is always wrong: either it already succeeded (so respond with text) or it already failed (so try different args or give up with text).
-
-If the user confirms with "yes", "ok", "sure", "do it", etc., EXECUTE the action you proposed by calling the function.
-
-ALWAYS provide a brief text response describing what you did or are doing, even when making function calls. For example: "Loading LEO satellites..." or "Turned on satellite labels in look view." Never return an empty response.
-
-Keep responses brief. Focus on being helpful.
-
-Do not discuss anything unrelated to Sitrec, including people, events, or politics. But you can talk about Mick West.
-EOT;
+// The prompt text itself lives in chatbotSystemPrompt.txt (@@SECTION base),
+// shared verbatim with the browser BYOK path. See promptSection() above.
+$systemPrompt = str_replace('{{simDateTime}}', $simDateTime ?? '', promptSection('base'));
 
 $systemPrompt .= $menuDocForPrompt;
 
 if (!empty($availableDocs)) {
-    $systemPrompt .= "\n\nAVAILABLE HELP DOCUMENTATION:\n";
-    $systemPrompt .= "Use getHelpDoc to read these docs when answering questions about features or how to do things. Each doc's link is shown in parentheses:\n";
+    $systemPrompt .= "\n\n" . promptSection('docsHeader') . "\n";
+    $docsItem = promptSection('docsItem');
     foreach ($availableDocs as $docName => $description) {
-        $systemPrompt .= "- $docName (docs/$docName.html): $description\n";
+        $systemPrompt .= str_replace(
+            ['{{name}}', '{{description}}'],
+            [$docName, $description],
+            $docsItem
+        ) . "\n";
     }
-    $systemPrompt .= "\nFor questions like 'what's new' or 'how do I do X', use getHelpDoc to get accurate information.\n";
-    $systemPrompt .= "When your answer uses or refers to one of these docs, include its link (the docs/<Name>.html path shown above) as a plain URL — inline where you first mention the doc, and again in a short 'See also:' list at the end of your answer. Use the exact path from the list; never invent a link or link to a doc that is not listed.\n";
+    $systemPrompt .= "\n" . promptSection('docsFooter') . "\n";
 }
 
 // Call OpenAI API

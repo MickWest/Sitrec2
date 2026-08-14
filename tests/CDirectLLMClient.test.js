@@ -96,7 +96,26 @@ describe('buildSystemPrompt', () => {
             availableDocs: { WhatsNew: 'Recent changes' },
         });
         expect(prompt).toContain('AVAILABLE HELP DOCUMENTATION');
-        expect(prompt).toContain('- WhatsNew: Recent changes');
+        // Each doc carries its link so the assistant can cite it — {{name}} appears
+        // twice in the shared docsItem template, so both must be substituted.
+        expect(prompt).toContain('- WhatsNew (docs/WhatsNew.html): Recent changes');
+        expect(prompt).not.toContain('{{');
+    });
+
+    // Guards the DRY refactor: the prompt text now lives in the single shared file
+    // sitrecServer/chatbotSystemPrompt.txt, parsed identically by chatbot.php. If a
+    // section is renamed or dropped, buildSystemPrompt must fail loudly rather than
+    // quietly sending the model a prompt with a hole in it.
+    test('carries the full shared prompt, including sections the old browser copy had lost', () => {
+        const prompt = buildSystemPrompt({simDateTime: 'y', menuSummary: {}, availableDocs: {}});
+        // These four were present server-side but missing from the hand-synced JS copy.
+        expect(prompt).toContain('CAMERA POINTING vs LOCKING');
+        expect(prompt).toContain('MULTI-PART REQUESTS (CRITICAL)');
+        expect(prompt).toContain('HOW TO READ "[Tool Results]" MESSAGES');
+        expect(prompt).toContain('lockCameraOnRaDec');
+        // No unsubstituted placeholders and no stray section markers leaked through.
+        expect(prompt).not.toContain('@@SECTION');
+        expect(prompt).not.toContain('{{');
     });
 });
 
@@ -122,6 +141,42 @@ function mockFetchSequence(responses) {
 describe('chat (tool loop)', () => {
     beforeEach(() => {
         jest.resetAllMocks();
+    });
+
+    test('takes OpenAI-shaped tools and converts them exactly once', async () => {
+        // Regression guard. callAnthropic() runs convertToolsForAnthropic() itself, so
+        // callers must hand chat() the OpenAI shape from buildTools(). Passing already
+        // converted tools threw on `t.function` of an Anthropic-shaped tool and no BYOK
+        // request could be sent — invisible to the rest of this suite because every
+        // other chat() test passes an empty tool list, which converts to [] either way.
+        const fetchMock = mockFetchSequence([
+            { body: { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' } },
+        ]);
+
+        await chat({
+            apiKey: 'sk-ant-test',
+            provider: 'anthropic',
+            model: 'claude-opus-5',
+            systemPrompt: 'you are a bot',
+            history: [],
+            userText: 'hi',
+            tools: [{
+                type: 'function',
+                function: {
+                    name: 'setMenuValue',
+                    description: 'Set a menu control',
+                    parameters: { type: 'object', properties: { path: { type: 'string' } } },
+                },
+            }],
+            executeCall: async () => ({ success: true }),
+        });
+
+        const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+        expect(sent.tools).toEqual([{
+            name: 'setMenuValue',
+            description: 'Set a menu control',
+            input_schema: { type: 'object', properties: { path: { type: 'string' } } },
+        }]);
     });
 
     test('returns final text and executes no tools when model ends turn directly', async () => {

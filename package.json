@@ -93,6 +93,7 @@
       "<rootDir>/tests_regression/",
       "<rootDir>/test_other/",
       "<rootDir>/dist-standalone/",
+      "<rootDir>/dist-serverless/",
       "<rootDir>/benchmarks/",
       "<rootDir>/tools/SitrecBridge/"
     ],
@@ -105,7 +106,8 @@
       "json"
     ],
     "transform": {
-      "\\.[jt]s$": "babel-jest"
+      "\\.[jt]s$": "babel-jest",
+      "\\.txt$": "<rootDir>/tests/rawTextTransform.js"
     },
     "transformIgnorePatterns": [
       "node_modules/(?!(3d-tiles-renderer)/)"

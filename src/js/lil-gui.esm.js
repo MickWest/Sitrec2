@@ -141,7 +141,14 @@ class Controller {
          * @type {string}
          */
         this._name = name;
-        this.$name.innerHTML = name;
+        // SITREC PATCH (security): textContent, not innerHTML. Controller names are
+        // routinely built from untrusted data — track names from a loaded KML/CSV, object
+        // and graph titles from a sitch loaded via ?custom=<any URL> — so innerHTML here is
+        // a DOM XSS sink reachable by anyone who can get a user to click a link. Nothing in
+        // Sitrec passes markup to .name(); the only HTML-looking value is the literal
+        // "<no desc>" placeholder, which innerHTML silently swallowed as an unknown tag and
+        // textContent now renders correctly. Re-apply this when upgrading lil-gui.
+        this.$name.textContent = name;
         return this;
     }
 
@@ -1760,7 +1767,10 @@ class OptionController extends Controller {
 
         this._names.forEach( name => {
             const $option = document.createElement( 'option' );
-            $option.innerHTML = name;
+            // SITREC PATCH (security): textContent, not innerHTML — see the note in name().
+            // Dropdown option labels are data-derived (e.g. per-track and per-object lists
+            // built from loaded files). Re-apply this when upgrading lil-gui.
+            $option.textContent = name;
             this.$select.appendChild( $option );
         } );
 
@@ -1775,7 +1785,10 @@ class OptionController extends Controller {
         if ( value !== this._lastDisplayedValue ) {
             const index = this._values.indexOf( value );
             this.$select.selectedIndex = index;
-            this.$display.innerHTML = index === -1 ? value : this._names[ index ];
+            // SITREC PATCH (security): textContent, not innerHTML — see the note in name().
+            // Both branches are attacker-reachable: `value` is the raw selected value and
+            // `_names[]` are data-derived labels. Re-apply this when upgrading lil-gui.
+            this.$display.textContent = index === -1 ? value : this._names[ index ];
             this._lastDisplayedValue = value;
         }
         return this;
@@ -2772,7 +2785,11 @@ class GUI {
          * @type {string}
          */
         this._title = title;
-        this.$title.innerHTML = title;
+        // SITREC PATCH (security): textContent, not innerHTML — see the note in name().
+        // Folder titles carry untrusted data too: a sitch's customGraphs[].title reaches
+        // guiMenus.showhidegraphs.addFolder(), and loaded track filenames reach
+        // guiMenus.contents.addFolder(). Re-apply this when upgrading lil-gui.
+        this.$title.textContent = title;
         return this;
     }
 

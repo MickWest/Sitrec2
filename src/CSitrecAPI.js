@@ -22,6 +22,7 @@ import {showError} from "./showError";
 import GUI from "./js/lil-gui.esm";
 import {Vector3} from "three";
 import {ModelFiles, CNode3DObject} from "./nodes/CNode3DObject";
+import {refuseExternalURLParams, sanitizeLabelForPrompt} from "./PromptSafety";
 import {LLAToECEF, ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {getLocalUpVector, altitudeHAE} from "./SphericalMath";
 import {Raycaster} from "three";
@@ -2301,15 +2302,16 @@ class CSitrecAPI {
         const controls = [];
         for (const child of gui.children) {
             if (child instanceof GUI) {
-                controls.push(...this._getControlSummary(child, prefix + child._title + '/'));
+                const title = sanitizeLabelForPrompt(child._title);
+                controls.push(...this._getControlSummary(child, prefix + title + '/'));
             } else {
                 const type = child.constructor.name.replace('Controller', '').toLowerCase();
-                let info = `${prefix}${child._name} (${type})`;
+                let info = `${prefix}${sanitizeLabelForPrompt(child._name)} (${type})`;
                 if (child._min !== undefined && child._max !== undefined) {
                     info += ` [${child._min}-${child._max}]`;
                 }
                 if (child._values && child._values.length <= 5) {
-                    info += ` options: ${child._values.join('|')}`;
+                    info += ` options: ${child._values.map(v => sanitizeLabelForPrompt(v)).join('|')}`;
                 }
                 controls.push(info);
             }
@@ -3528,6 +3530,10 @@ class CSitrecAPI {
         if (source === "chat" && apiFn.llmCallable === false) {
             console.warn(`Refusing chat-sourced call to non-LLM-callable function: ${call.fn}`);
             return { success: false, fn: call.fn, error: `Function ${call.fn} is not callable from chat` };
+        }
+        if (source === "chat") {
+            const refusal = refuseExternalURLParams(call);
+            if (refusal) return refusal;
         }
         try {
             const args = this._coerceArgs(call.args, apiFn.params);

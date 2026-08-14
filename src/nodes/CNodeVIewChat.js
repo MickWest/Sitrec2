@@ -1,14 +1,22 @@
 import {CNodeViewText} from "./CNodeViewText";
-import {GlobalDateTimeNode, Globals, guiMenus, markSitchDirty, withTestUser} from "../Globals";
-import {SITREC_SERVER} from "../configUtils";
+import {CustomManager, GlobalDateTimeNode, Globals, guiMenus, markSitchDirty, withTestUser} from "../Globals";
+import {SITREC_APP, SITREC_SERVER} from "../configUtils";
 import {sitrecAPI} from "../CSitrecAPI";
 import {getEnvBool} from "../envUtils";
 import {ModelFiles} from "./CNode3DObject";
 import {clientNLU} from "../CClientNLU";
 import {t} from "../i18n";
-import {getChatAvailableDocs} from "../docsRegistry";
+import {AI_DOC_CHAR_LIMIT, getChatAvailableDocs} from "../docsRegistry";
 import {linkifyToHTML} from "../linkify";
 import {mirrorMenuItem} from "../MenuMirror";
+import {getKey as byokGetKey} from "../BYOKKeyStore";
+import {formatTurnUsage, recordUsage} from "../BYOKUsage";
+import {
+    BYOK_PROVIDER,
+    buildSystemPrompt,
+    buildTools,
+    chat as chatDirect,
+} from "../CDirectLLMClient";
 
 class CNodeViewChat extends CNodeViewText {
     constructor(v) {
@@ -348,6 +356,14 @@ class CNodeViewChat extends CNodeViewText {
                 ? chatModelSetting.split(':')
                 : [null, null];
 
+            // BYOK: the user picked a "(your key)" model, so go straight to Anthropic
+            // from the browser instead of proxying through chatbot.php. The distinct
+            // provider token makes this an explicit user choice, never an inference.
+            if (provider === BYOK_PROVIDER) {
+                await this.sendToLLMDirect(text, model, simDate);
+                return;
+            }
+
             const history = this.chatHistory.slice(-10);
             // Help docs the AI assistant may read via the getHelpDoc tool to answer
             // "how do I..." / UI / feature questions. The list (and its descriptions)
@@ -382,7 +398,7 @@ class CNodeViewChat extends CNodeViewText {
             if (response.text) this.addSystemMessage(response.text);
             if (response.apiCalls && response.apiCalls.length > 0) {
                 this.addDebugMessage(`API calls: ${JSON.stringify(response.apiCalls)}`);
-                const {toolResults, changesSerializedState} = this.handleAPICalls(response.apiCalls);
+                const {toolResults, changesSerializedState} = await this.handleAPICalls(response.apiCalls);
                 if (changesSerializedState) {
                     markSitchDirty();
                 }
@@ -398,6 +414,147 @@ class CNodeViewChat extends CNodeViewText {
         } catch (e) {
             this.addSystemMessage("[error contacting server]");
             console.error(e);
+        }
+    }
+
+    // BYOK path: browser → Anthropic directly, using the user's own stored key.
+    //
+    // Differences from the server path above, all deliberate:
+    //  - CDirectLLMClient.chat() owns the whole tool loop, so there is no
+    //    sessionContinue round-trip and no continueSession() recursion here.
+    //  - Nothing is POSTed to logNLU.php. A user who supplied their own key is
+    //    asking to talk to Anthropic and not to us; quietly copying their prompts
+    //    to the Sitrec server would break that expectation.
+    //  - The system prompt and tools are built client-side, from the same shared
+    //    chatbotSystemPrompt.txt the server uses, so the assistant behaves the same.
+    async sendToLLMDirect(text, model, simDate) {
+        const apiKey = await byokGetKey("anthropic");
+        if (!apiKey) {
+            this.addSystemMessage("[No Anthropic API key stored. Add one under Settings → AI Key, or choose a different AI Model.]");
+            return;
+        }
+
+        let changesSerializedState = false;
+        const executedForLog = [];
+
+        // The caller pushes the user's message into chatHistory *before* dispatching,
+        // and chat() appends userText itself — so trim that duplicate tail or the model
+        // sees the current request twice and may repeat the action. The server path
+        // relies on the same convention from the other side: chatbot.php builds its
+        // messages from `history` alone and uses `prompt` only for logging and length
+        // validation, never appending it.
+        const priorHistory = this.chatHistory.slice();
+        const lastEntry = priorHistory[priorHistory.length - 1];
+        if (lastEntry && lastEntry.role === 'user' && lastEntry.text === text) {
+            priorHistory.pop();
+        }
+
+        try {
+            const menuSummary = sitrecAPI.getMenuSummary();
+            // Hoisted: the prompt advertises these docs and fetchHelpDoc() below uses the
+            // same object as its allowlist, so the two can never disagree about what the
+            // model was told it may read.
+            const availableDocs = getChatAvailableDocs();
+            const result = await chatDirect({
+                apiKey,
+                provider: BYOK_PROVIDER,
+                model,
+                systemPrompt: buildSystemPrompt({
+                    simDateTime: simDate,
+                    menuSummary,
+                    availableDocs,
+                }),
+                history: priorHistory.slice(-10),
+                userText: text,
+                // OpenAI-shaped on purpose: callAnthropic() runs convertToolsForAnthropic()
+                // itself, so converting here too would double-convert and throw on t.function.
+                tools: buildTools(sitrecAPI.getLLMDocumentation(), menuSummary),
+                executeCall: async (call) => {
+                    // getHelpDoc is implemented in chatbot.php, not in CSitrecAPI, so on the
+                    // BYOK path it has to be served locally — otherwise the model, which the
+                    // shared prompt actively tells to use it, burns a tool-loop iteration on
+                    // a guaranteed "Unknown API function".
+                    if (call.fn === "getHelpDoc") {
+                        return await this.fetchHelpDoc(call.args?.docName, availableDocs);
+                    }
+
+                    // "chat" source, exactly as the server path uses, so llmCallable:false
+                    // entries (e.g. the JS-executing scripted-video functions) stay refused.
+                    // handleAPICall is async — without the await, every check below would
+                    // inspect a pending Promise instead of a result, so markSitchDirty()
+                    // would never fire and tool errors would never surface to the user.
+                    const callResult = await sitrecAPI.handleAPICall(call, "chat");
+                    if (sitrecAPI.callChangesSerializedState(call, callResult)) {
+                        changesSerializedState = true;
+                    }
+                    const payload = callResult.result ?? callResult;
+                    if (payload && typeof payload === 'object' && payload.success === false) {
+                        this.addSystemMessage(`Error: ${payload.error}`);
+                    }
+                    executedForLog.push({fn: call.fn, args: call.args});
+                    // Returning the inner result lets the client set is_error correctly.
+                    return payload;
+                },
+            });
+
+            // The user is billed directly for this turn, so surface what it cost and add
+            // it to the running total shown in Settings. Failures here must never take
+            // down the chat turn itself.
+            if (result.usage) {
+                this.addDebugMessage(formatTurnUsage(model, result.usage));
+                recordUsage(model, result.usage)
+                    .then(() => CustomManager?.refreshByokUsageLabel?.())
+                    .catch(e => console.warn('BYOK usage not recorded:', e));
+            }
+
+            if (executedForLog.length > 0) {
+                this.addDebugMessage(`API calls: ${JSON.stringify(executedForLog)}`);
+            }
+            if (changesSerializedState) {
+                markSitchDirty();
+            }
+            if (result.text) {
+                this.addSystemMessage(result.text);
+            } else if (executedForLog.length === 0) {
+                this.addSystemMessage("[no response]");
+            }
+        } catch (e) {
+            // Surface the provider's own message — an invalid or expired key is the
+            // most likely cause and the user is the only one who can fix it.
+            this.addSystemMessage(`[Anthropic error: ${e && e.message ? e.message : e}]`);
+            console.error(e);
+        }
+    }
+
+    // Client-side getHelpDoc for the BYOK path. Mirrors getHelpDocContent() in
+    // chatbot.php: same name-shape allowlist, same availableDocs membership check, same
+    // comment stripping and character limit. The docName comes from the model, so both
+    // checks are load-bearing — the shape test blocks path traversal ("../../config"),
+    // and the membership test keeps it to docs we chose to expose.
+    async fetchHelpDoc(docName, availableDocs) {
+        if (typeof docName !== "string" || !/^[A-Za-z0-9_-]+$/.test(docName)) {
+            return {success: false, error: `Invalid doc name: ${docName}`};
+        }
+        if (!availableDocs || !availableDocs[docName]) {
+            return {
+                success: false,
+                error: `Unknown doc: ${docName}. Available: ${Object.keys(availableDocs || {}).join(", ")}`,
+            };
+        }
+        try {
+            const res = await fetch(`${SITREC_APP}docs/${docName}.md`);
+            if (!res.ok) {
+                return {success: false, error: `Doc file not found: ${docName} (HTTP ${res.status})`};
+            }
+            let content = (await res.text()).replace(/<!--[\s\S]*?-->/g, "");
+            if (content.length > AI_DOC_CHAR_LIMIT) {
+                content = content.slice(0, AI_DOC_CHAR_LIMIT)
+                    + `\n\n[Content truncated - showing first ${AI_DOC_CHAR_LIMIT} characters of this document.`
+                    + ` Tell the user that your answer may be incomplete and point them at the full document.]`;
+            }
+            return {success: true, content};
+        } catch (e) {
+            return {success: false, error: `Could not read doc ${docName}: ${e && e.message ? e.message : e}`};
         }
     }
 
@@ -425,13 +582,17 @@ class CNodeViewChat extends CNodeViewText {
     }
 
     // Process any API calls returned by the server - returns results for session continuation
-    handleAPICalls(calls) {
+    async handleAPICalls(calls) {
         const toolResults = [];
         let changesSerializedState = false;
         for (const call of calls) {
             // "chat" source: these calls came from the LLM, so llmCallable:false entries
             // (e.g. the JS-executing scripted-video functions) are refused (B1).
-            const result = sitrecAPI.handleAPICall(call, "chat");
+            // handleAPICall is async: without the await, `result` is a pending Promise, so
+            // `result.result ?? result` yields the Promise itself and every tool result was
+            // JSON.stringify'd to "{}" on its way back to the model — and both the
+            // dirty-state check and the error message below silently read undefined.
+            const result = await sitrecAPI.handleAPICall(call, "chat");
             toolResults.push({ fn: call.fn, args: call.args, result: result.result ?? result });
             if (sitrecAPI.callChangesSerializedState(call, result)) {
                 changesSerializedState = true;
@@ -474,7 +635,7 @@ class CNodeViewChat extends CNodeViewText {
             if (response.text) this.addSystemMessage(response.text);
             if (response.apiCalls && response.apiCalls.length > 0) {
                 this.addDebugMessage(`Continue API calls: ${JSON.stringify(response.apiCalls)}`);
-                const {toolResults: newResults, changesSerializedState} = this.handleAPICalls(response.apiCalls);
+                const {toolResults: newResults, changesSerializedState} = await this.handleAPICalls(response.apiCalls);
                 if (changesSerializedState) {
                     markSitchDirty();
                 }

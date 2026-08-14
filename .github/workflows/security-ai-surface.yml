@@ -1,0 +1,141 @@
+# Focused security review for the AI assistant / BYOK surface.
+#
+# This is deliberately narrow rather than a whole-repo scan: it only runs when a change
+# touches the files where a mistake has security consequences — the code that holds a
+# user's provider API key, the code that builds the model's system prompt, the code that
+# executes the model's tool calls, and the GUI library those all render labels through.
+#
+# Two layers:
+#   1. `guards` — deterministic, no secrets, always runs. Unit tests plus a scanner that
+#      encodes the specific invariants a security review established, so a later change
+#      (or a dependency upgrade) cannot quietly undo them.
+#   2. `ai-review` — an LLM reviewer for the judgement calls a regex cannot make. Needs a
+#      repository secret; skipped cleanly when it is absent or the PR is from a fork.
+
+name: AI/BYOK Surface Security
+
+on:
+  pull_request:
+    paths:
+      # Key storage, usage accounting, and the direct-to-provider client
+      - 'src/BYOKKeyStore.js'
+      - 'src/BYOKUsage.js'
+      - 'src/CDirectLLMClient.js'
+      # Prompt construction, tool dispatch, and the injection defenses
+      - 'src/PromptSafety.js'
+      - 'src/CSitrecAPI.js'
+      - 'src/nodes/CNodeVIewChat.js'
+      - 'src/CustomSupport.js'
+      # The shared system prompt and the server that reads it
+      - 'sitrecServer/chatbotSystemPrompt.txt'
+      - 'sitrecServer/chatbot.php'
+      # The GUI library every untrusted label is rendered through
+      - 'src/js/lil-gui.esm.js'
+      # This workflow and its scanner
+      - '.github/workflows/security-ai-surface.yml'
+      - 'scripts/security-scan-ai-surface.mjs'
+      - 'tests/lilGuiXssPatch.test.js'
+      - 'tests/promptInjectionDefenses.test.js'
+  workflow_dispatch:   # run the full check on demand
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  guards:
+    name: Deterministic guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: use node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.4'
+      - name: config script setup
+        # Same shape as ci.yml — the repo's config files are gitignored.
+        run: |
+          cp config/config.js.example config/config.js
+          cp config/config-install.js.example config/config-install.js
+          cp config/shared.env.example config/shared.env
+          cp config/config.php.example config/config.php
+      - name: install deps
+        run: npm install
+      - name: security unit tests
+        # These pin the fixes for the issues found in review: the lil-gui XSS patch, the
+        # prompt-injection defenses, and the BYOK key/usage storage invariants.
+        run: >
+          npx jest
+          tests/lilGuiXssPatch.test.js
+          tests/promptInjectionDefenses.test.js
+          tests/BYOKKeyStore.test.js
+          tests/BYOKUsage.test.js
+          tests/CDirectLLMClient.test.js
+      - name: AI/BYOK surface scan
+        # Cross-file invariants unit tests cannot express, including a cross-language
+        # check that the PHP and JS system-prompt parsers still agree (php is preinstalled
+        # on ubuntu runners).
+        run: node scripts/security-scan-ai-surface.mjs
+
+  ai-review:
+    name: LLM security review
+    runs-on: ubuntu-latest
+    # Fork PRs cannot read secrets, and a missing secret should not look like a failure.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: check for API key
+        id: haskey
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ANTHROPIC_API_KEY not set — skipping the LLM review. The deterministic guards still ran."
+          fi
+      - name: focused security review
+        if: steps.haskey.outputs.present == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Security-review ONLY the changes in this pull request, and only for the
+            AI-assistant / BYOK surface. Do not review style, naming, or performance,
+            and do not comment on files outside the diff.
+
+            Context you should assume as established (do not re-derive):
+            - Users may store their own LLM provider API key in IndexedDB
+              (src/BYOKKeyStore.js, "byok_<provider>" keys). The browser then calls the
+              provider directly with that key.
+            - The assistant's system prompt is a single shared file,
+              sitrecServer/chatbotSystemPrompt.txt, parsed by BOTH sitrecServer/chatbot.php
+              and src/CDirectLLMClient.js. The two parsers must stay byte-identical.
+            - GUI labels are built from untrusted data (track names from loaded KML/CSV,
+              titles from a sitch fetched via ?custom=<arbitrary URL>) and are interpolated
+              into the system prompt by CSitrecAPI.getMenuSummary(). src/PromptSafety.js
+              flattens them; src/js/lil-gui.esm.js is patched to use textContent, not
+              innerHTML.
+            - Model-chosen tool calls execute via sitrecAPI.handleAPICall(call, "chat"),
+              which refuses llmCallable:false entries and external URLs in
+              CHAT_DENIED_URL_PARAMS.
+
+            Report only findings you can tie to a concrete exploit path in THIS diff:
+            1. Any new way the stored API key could reach the Sitrec server, a log, the
+               DOM, saved settings, an exported sitch, or a third party.
+            2. Any new untrusted string reaching the system prompt without going through
+               sanitizeLabelForPrompt, or any new innerHTML/eval-style sink.
+            3. Any newly LLM-callable function that can fetch an attacker-chosen URL,
+               write to disk/server, or share user data — i.e. a new exfiltration primitive.
+            4. Any change that makes the PHP and JS prompt parsers diverge.
+
+            For each finding give file:line, the exploit path, a severity, and a concrete
+            fix. If you find nothing real, say so plainly in one line — do not pad the
+            review. Post the result as a single PR comment.
+          claude_args: '--max-turns 25'

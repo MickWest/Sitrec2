@@ -159,6 +159,15 @@ module.exports = (env = {}) => ({
                     'css-loader',
                 ],
             },
+            {
+                // The AI assistant's system prompt is shared verbatim between the PHP
+                // server (sitrecServer/chatbot.php reads it at runtime) and the browser
+                // BYOK path (src/CDirectLLMClient.js imports it, inlined here at build
+                // time so serverless/desktop builds work with no server). Deliberately
+                // scoped to this one file rather than all *.txt.
+                test: /chatbotSystemPrompt\.txt$/,
+                type: 'asset/source',
+            },
         ],
     },
     resolve: {
