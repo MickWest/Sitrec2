@@ -91,4 +91,71 @@ describe('chat-sourced external URL refusal', () => {
             fn: 'setCameraAltitude', args: {altitude: 1000},
         })).toBeNull();
     });
+
+    // The guard has to test the string that will actually be FETCHED, not the string as
+    // written. CSitrecAPI._normalizeMediaSource strips a leading "!" and "data/", and
+    // "!https://evil.example/x" resolves as a same-origin *relative path* (a leading "!"
+    // is not a URL scheme) — so an un-normalized check calls it safe and the callee then
+    // strips the "!" and fetches the external URL.
+    test('a "!"-prefixed external URL cannot smuggle past the origin check', () => {
+        expect(refuseExternalURLParams({
+            fn: 'importMedia', args: {file: '!https://evil.example/x?d=secret'},
+        })).not.toBeNull();
+        // Both prefixes strip in sequence, so "!data/" peels down to a bare external URL.
+        expect(refuseExternalURLParams({
+            fn: 'importMedia', args: {file: '!data/https://evil.example/x'},
+        })).not.toBeNull();
+    });
+
+    // The converse: "data/!https://..." normalizes to "!https://...", which stays a
+    // relative path and is never fetched externally — so refusing it would be a false
+    // positive. The guard must mirror the callee's normalization exactly, not just
+    // pattern-match on suspicious-looking prefixes.
+    test('a prefix combination that stays relative is still allowed', () => {
+        expect(refuseExternalURLParams({
+            fn: 'importMedia', args: {file: 'data/!https://evil.example/x'},
+        })).toBeNull();
+    });
+
+    // importMedia fires an immediate fetch and honours three argument names, only one of
+    // which is documented.
+    test.each(['file', 'filename', 'url'])('importMedia refuses an external %s', (param) => {
+        expect(refuseExternalURLParams({
+            fn: 'importMedia', args: {[param]: 'https://evil.example/x?d=secret'},
+        })).not.toBeNull();
+    });
+
+    test('importMedia still allows local media', () => {
+        for (const file of ['data/videos/clip.mp4', '!data/videos/clip.mp4', 'clip.mp4']) {
+            expect(refuseExternalURLParams({fn: 'importMedia', args: {file}})).toBeNull();
+        }
+    });
+
+    // A (function, top-level param) shape would miss a URL nested in a patch object.
+    test('an overlay URL nested in updateSynthElement.patch is refused', () => {
+        expect(refuseExternalURLParams({
+            fn: 'updateSynthElement',
+            args: {type: 'overlay', id: 'o1', patch: {imageURL: 'https://evil.example/x?d=secret'}},
+        })).not.toBeNull();
+    });
+
+    test('updateSynthElement with no URL in its patch is unaffected', () => {
+        expect(refuseExternalURLParams({
+            fn: 'updateSynthElement', args: {type: 'overlay', id: 'o1', patch: {opacity: 0.5}},
+        })).toBeNull();
+    });
+
+    // Fail CLOSED on non-strings: the browser coerces an array to its element, so
+    // String(['https://evil/x']) is the bare URL and TextureLoader/img.src accept it.
+    // Treating "not a string" as "not a URL, therefore safe" would hand over the bypass.
+    test.each([
+        [['https://evil.example/x']],
+        [{toString: () => 'https://evil.example/x'}],
+        [123],
+        [true],
+    ])('a non-string denied param is refused, not waved through: %p', (value) => {
+        expect(refuseExternalURLParams({
+            fn: 'createSynthOverlay', args: {imageURL: value},
+        })).not.toBeNull();
+    });
 });

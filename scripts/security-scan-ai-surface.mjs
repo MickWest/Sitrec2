@@ -114,7 +114,62 @@ const ok = [];
     }
 }
 
-// ─── Rule 5: the shared system prompt parses identically in JS and PHP ────────────────
+// ─── Rule 5: no NEW un-triaged URL-taking function on the LLM tool surface ────────────
+// The model's context must be assumed attacker-influenced (untrusted names reach the
+// system prompt, and tool results carry untrusted free text such as sitch Notes). So the
+// real boundary is not sanitising the input — it is that a model-chosen URL is never
+// fetched. Any API entry taking a URL/file/path is therefore a potential exfiltration
+// primitive and must be consciously classified. This rule fails on anything new, forcing
+// that decision instead of letting it land unnoticed.
+{
+    const file = 'src/CSitrecAPI.js';
+    // Entries already triaged. Add to the right list ONLY after deciding which it is.
+    const GUARDED = ['createSynthOverlay', 'updateSynthElement', 'importMedia']; // in CHAT_DENIED_URL_PARAMS
+    const REVIEWED_SAFE = [
+        'setObjectModel',        // model name, matched against the fixed ModelFiles list
+        'listAvailableModels',   // read-only, returns the fixed list
+        'getHelpDoc',            // name-shape allowlist + availableDocs membership
+        'listLoadedFiles',       // read-only
+        'getShareLink',          // returns a same-origin link; does not fetch
+        // These three take a MENU path ("Flow Orbs/Visible"), not a URL or a file path.
+        // They are core to the assistant working at all, so they cannot be denied — and
+        // the value they set is resolved against existing controls, never fetched here.
+        // Residual: a menu control that itself holds a URL would be settable this way, so
+        // do not add a URL-valued control to a chat-reachable menu without re-checking.
+        'setMenuValue',
+        'getMenuValue',
+        'executeMenuButton',
+    ];
+    if (exists(file)) {
+        const src = read(file);
+        // API entries look like:  name: {  doc: "...", params: { ... }
+        const entries = [...src.matchAll(/^\s{12}(\w+):\s*\{\s*\n\s*doc:\s*"([^"]*)"[\s\S]{0,900}?\n\s{12}\},/gm)];
+        const suspicious = [];
+        for (const [block, name, doc] of entries) {
+            if (GUARDED.includes(name) || REVIEWED_SAFE.includes(name)) continue;
+            if (/llmCallable:\s*false/.test(block)) continue;
+            // A param named like a URL, or documented as one.
+            const paramsBlock = (block.match(/params:\s*\{([\s\S]*?)\}/) || [])[1] || '';
+            if (/\b(url|uri|href|src|file|filename|path)\b/i.test(paramsBlock) ||
+                /\bURL\b/.test(doc)) {
+                suspicious.push(name);
+            }
+        }
+        if (suspicious.length) {
+            fail('untriaged-url-param',
+                'LLM-callable function(s) take a URL/file/path but are not triaged: ' +
+                suspicious.join(', ') + '\n' +
+                '    A model-chosen URL that the browser fetches is an exfiltration channel.\n' +
+                '    Either add it to CHAT_DENIED_URL_PARAMS in src/PromptSafety.js, or mark\n' +
+                '    it llmCallable:false, or add it to REVIEWED_SAFE in this script with a\n' +
+                '    one-line reason.');
+        } else {
+            ok.push(`no un-triaged URL-taking LLM-callable functions (${GUARDED.length} guarded, ${REVIEWED_SAFE.length} reviewed)`);
+        }
+    }
+}
+
+// ─── Rule 6: the shared system prompt parses identically in JS and PHP ────────────────
 // The prompt is a single file read by both sitrecServer/chatbot.php and
 // src/CDirectLLMClient.js. If the two parsers disagree, the server and the browser ship
 // different instructions to the model — the exact failure the shared file exists to

@@ -72,7 +72,15 @@ function section(name) {
     const text = promptSections[name];
     // A malformed prompt file would otherwise mean asking the model to act with no
     // instructions at all, so surface it instead of sending an empty prompt.
-    if (text === undefined) throw new Error(`chatbotSystemPrompt.txt: missing @@SECTION ${name}`);
+    //
+    // The empty check matters as much as the missing one, and must match chatbot.php's
+    // promptSection(): a deploy truncated after a section marker leaves the key present
+    // with a zero-length body. Without this the server would fail closed (500) while the
+    // browser quietly shipped a prompt with a hole in it — the two diverging on exactly
+    // the failure the shared file exists to prevent.
+    if (text === undefined || text.trim() === '') {
+        throw new Error(`chatbotSystemPrompt.txt: @@SECTION ${name} is missing or empty`);
+    }
     return text;
 }
 

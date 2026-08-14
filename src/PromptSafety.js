@@ -43,18 +43,44 @@ export function sanitizeLabelForPrompt(text) {
 // the exfiltration — put data in the query string and it leaves with the fetch. This is
 // what closes the reported saveSitch -> getShareLink -> createSynthOverlay chain.
 // UI-sourced calls (buttons, MCP bridge, programmatic call()) are unaffected.
+// Paths use dots for nested object arguments, because some functions take a `patch`
+// object rather than a flat URL argument — a (function, top-level param) shape would let
+// updateSynthElement({type:'overlay', patch:{imageURL:...}}) walk straight past the guard.
 export const CHAT_DENIED_URL_PARAMS = {
+    // Loads a texture from the URL.
     createSynthOverlay: ['imageURL'],
+    // Same overlay field, reached through a patch object. Not an immediate fetch, but the
+    // URL persists on the node and is fetched on the next texture load — including after
+    // a save/reload, so an injected URL survives the session.
+    updateSynthElement: ['patch.imageURL', 'imageURL'],
+    // Fetches immediately via newVideo(). `file` is the only documented parameter, but the
+    // implementation also honours `filename` and `url`, so all three must be covered.
+    importMedia: ['file', 'filename', 'url'],
 };
 
+// Mirrors CSitrecAPI._normalizeMediaSource. The guard has to test the string that will
+// actually be fetched: "!https://evil.example/x" resolves as a same-origin *relative path*
+// (a leading "!" is not a URL scheme), so an un-normalized check calls it safe — and then
+// the callee strips the "!" and fetches the external URL.
+function normalizeForCheck(value) {
+    let s = String(value).trim();
+    if (s.startsWith('!')) s = s.substring(1);
+    if (s.startsWith('data/')) s = s.substring(5);
+    return s;
+}
+
 // Same-origin and relative URLs are fine: they cannot carry data to a third party.
+// Note this answers "is this string safe", and deliberately says nothing about non-strings
+// — refuseExternalURLParams handles those, because failing open on them is a bypass.
 export function isSameOriginOrRelative(url) {
-    if (typeof url !== 'string' || url === '') return true;
+    if (typeof url !== 'string') return false;
+    const s = normalizeForCheck(url);
+    if (s === '') return true;
     const base = (typeof window !== 'undefined' && window.location)
         ? window.location.href
         : 'http://localhost/';
     try {
-        const resolved = new URL(url, base);
+        const resolved = new URL(s, base);
         if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return false;
         return resolved.origin === new URL(base).origin;
     } catch (e) {
@@ -62,19 +88,34 @@ export function isSameOriginOrRelative(url) {
     }
 }
 
+function valueAtPath(args, dottedPath) {
+    let node = args;
+    for (const key of dottedPath.split('.')) {
+        if (node === null || typeof node !== 'object') return undefined;
+        node = node[key];
+    }
+    return node;
+}
+
 // Returns a refusal result to hand straight back to the caller, or null to allow.
 export function refuseExternalURLParams(call) {
     const denied = CHAT_DENIED_URL_PARAMS[call?.fn];
     if (!denied || !call.args) return null;
     for (const param of denied) {
-        const value = call.args[param];
-        if (value !== undefined && value !== null && !isSameOriginOrRelative(value)) {
-            console.warn(`Refusing chat-sourced external URL for ${call.fn}.${param}: ${value}`);
+        const value = valueAtPath(call.args, param);
+        if (value === undefined || value === null) continue;
+        // Fail CLOSED on anything that is not a plain string. An array or object reaching a
+        // URL sink is coerced by the browser (`String(['https://evil/x'])` is the bare URL,
+        // and img.src / TextureLoader accept it), so treating a non-string as "not a URL,
+        // therefore safe" hands an attacker the bypass.
+        const allowed = typeof value === 'string' && isSameOriginOrRelative(value);
+        if (!allowed) {
+            console.warn(`Refusing chat-sourced external URL for ${call.fn}.${param}:`, value);
             return {
                 success: false,
                 fn: call.fn,
                 error: `'${param}' cannot be set to an external URL from chat. `
-                    + `Tell the user to set that image via the UI instead.`,
+                    + `Tell the user to set it via the UI instead.`,
             };
         }
     }
