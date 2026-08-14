@@ -473,8 +473,10 @@ export const menuMethods = {
                     }
                 });
 
-                // Open the editing menu with focus on the text field
-                FeatureManager.showFeatureEditMenu(featureNode, mouseX, mouseY, true);
+                // Open the editing menu with focus on the text field. The view is
+                // where the pin can then be dragged around.
+                FeatureManager.showFeatureEditMenu(featureNode, mouseX, mouseY, true,
+                    sourceViewID ? ViewMan.get(sourceViewID, false) : null);
 
                 console.log(`Created feature ${featureID} at ${lat}, ${lon}, ${alt}m`);
             },
