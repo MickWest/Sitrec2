@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.129.1 (2026-08-14)
+
+### Bug Fixes
+
+- **Fixed the per-view header menus each opening at a different width** (`src/CUIBar.js`, `CUIBar.addMenu()`: `gui.$children.style.width = 'var(--width, 245px)'` replacing `min-width: 180px`, which arrived with the header menus in `28188b7a` and shipped in 2.129.0). The docked global menus are plain lil-gui roots in `#menuBar` slots (`CGuiMenuBar`, `src/lil-gui-extras.js`), created with no width option, and lil-gui's own stylesheet sizes `.lil-gui.root { width: var(--width, 245px) }` (`src/js/lil-gui.esm.js:1875`) — nothing in Sitrec sets `--width`, so every docked dropdown is 245px, inherited from the root box its in-flow `$children` fills. A header menu cannot inherit that. `addMenu` deliberately overrides the ROOT to `width: max-content` so the title tab fits its own text — at lil-gui's 245px the title overflows a narrow view's bar and shoves the pin and close icons off the right edge — and the dropdown is `position: absolute` so it is out of that flow. It was therefore shrink-to-fit on its own content with only `min-width: 180px` as a floor, and *Main*, *Look* and *Video* each came out as wide as their own longest row. The dropdown now asks for the width from the same source the docked menus take it from, instead of inheriting it, so it matches them exactly (measured 245px against the Terrain menu's 245px in a built tree) and still follows a `--width` override should a theme ever set one. Nothing else moves: `DROPDOWN_MIN_PX` (80) is unrelated — it clamps dropdown *height* in `fitDropdownToWindow` — and `chromeRect()` measures the live `$children` rect, so the HUD clip-path column (`hudClipPath()`, `CNodeView._clipHUDsBelowHeader`) tracks the new width with no further change. `tests/CUIBarChrome.test.js`, `tests/ViewUIBarMenus.test.js` and `tests/MenuMirror.test.js` pass unchanged; none assert the dropdown width.
+
+---
+
 ## Version 2.129.0 (2026-08-12)
 
 ### New Features

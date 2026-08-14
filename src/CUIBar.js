@@ -138,7 +138,7 @@ export class CUIBar {
         // Fit the title to its TEXT, not lil-gui's fixed 245px default width. The left/right bar
         // sections are flex:0 0 auto (don't shrink), so a 245px title overflows a narrow view and
         // shoves the icons off the right edge; max-content lets the icons abut the title instead.
-        // (The dropdown is absolute with its own min-width, so it's unaffected.)
+        // (The dropdown is absolute with its own width, so it's unaffected.)
         gui.domElement.style.width = 'max-content';
         gui.close();
 
@@ -148,7 +148,11 @@ export class CUIBar {
         gui.$children.style.position = 'absolute';
         gui.$children.style.top = '100%';
         gui.$children.style.left = '0';
-        gui.$children.style.minWidth = '180px';
+        // Same width as the docked menu-bar dropdowns, from the same source: lil-gui sizes a
+        // root with `width: var(--width, 245px)` and the main menus take that default. Here the
+        // root box is title-fit (above), so the dropdown asks for the width itself instead of
+        // inheriting it — content-fitting made every header menu a different width.
+        gui.$children.style.width = 'var(--width, 245px)';
         gui.$children.style.zIndex = '70';
         gui.$children.addEventListener('pointerdown', (e) => e.stopPropagation());
 

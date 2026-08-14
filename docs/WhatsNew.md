@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.129.1 (2026-08-14)
+
+### Bug Fixes
+
+- Fixed the *Main*, *Look* and *Video* menus in the view headers each opening at a different width, set by whatever their longest entry happened to be. They now all open at the same width as the menus in the main menu bar.
+
+---
+
 ## Version 2.129.0 (2026-08-12)
 
 ### New Features
