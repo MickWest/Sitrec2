@@ -59,6 +59,10 @@ export const BYOK_PROVIDERS = [
         // lever: it would throttle rendering without touching the bill.
         usage: 'sessions',
         unitLabel: 'sessions',
+        // How the user is asked for their rate. Providers quote in different denominations,
+        // and a generic "per 1000 <unit>" produced "per 1000 bytes" for Cesium, which is
+        // meaningless — nobody prices bytes by the thousand.
+        rate: {label: 'Your rate per 1000 sessions (USD)', per: 1000, placeholder: 'e.g. 6.00'},
         unitPrice: null,
         limits: ['dailyRootSessions'],
     },
@@ -74,6 +78,7 @@ export const BYOK_PROVIDERS = [
         // tier) rather than cesium_osm_3d_tiles.
         usage: 'bytes',
         unitLabel: 'bytes',
+        rate: {label: 'Your rate per GB (USD)', per: 1024*1024*1024, placeholder: 'e.g. 0.50'},
         unitPrice: null,
         limits: ['dailyBytes'],
     },
@@ -86,8 +91,9 @@ export const BYOK_PROVIDERS = [
         unlocks: 'Mapbox satellite and terrain tiles.',
         signupURL: 'https://account.mapbox.com/access-tokens/',
         usage: 'requests',
+        rate: {label: 'Your rate per 1000 requests (USD)', per: 1000, placeholder: 'e.g. 0.50'},
         unitPrice: null,
-        limits: ['maxTileRequests'],
+        limits: [],   // no consumer wired yet
     },
     {
         id: 'maptiler',
@@ -97,8 +103,9 @@ export const BYOK_PROVIDERS = [
         unlocks: 'MapTiler map and terrain tiles.',
         signupURL: 'https://cloud.maptiler.com/account/keys/',
         usage: 'requests',
+        rate: {label: 'Your rate per 1000 requests (USD)', per: 1000, placeholder: 'e.g. 0.50'},
         unitPrice: null,
-        limits: ['maxTileRequests'],
+        limits: [],   // no consumer wired yet
     },
     {
         id: 'spacetrack',
@@ -108,6 +115,7 @@ export const BYOK_PROVIDERS = [
         unlocks: 'Your own Space-Track account for satellite element sets, with your own rate limit.',
         signupURL: 'https://www.space-track.org/auth/createAccount',
         usage: 'requests',
+        rate: {label: 'Your rate per 1000 requests (USD)', per: 1000, placeholder: 'e.g. 0.50'},
         unitPrice: null,
         limits: [],
     },
@@ -119,6 +127,7 @@ export const BYOK_PROVIDERS = [
         unlocks: 'Live and historical ADS-B aircraft data from your own subscription.',
         signupURL: 'https://www.adsbexchange.com/data/',
         usage: 'requests',
+        rate: {label: 'Your rate per 1000 requests (USD)', per: 1000, placeholder: 'e.g. 0.50'},
         unitPrice: null,
         limits: [],
     },

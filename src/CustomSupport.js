@@ -66,7 +66,7 @@ import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
 import {showError, showConfirm} from "./showError";
-import {hasAnyKey as byokHasAnyKey, primeKeyCache} from "./BYOKKeyStore";
+import {hasAnyKey as byokHasAnyKey, hasCachedKey, primeKeyCache} from "./BYOKKeyStore";
 import {showKeyDialog} from "./BYOKKeyDialog";
 import {BYOK_MODELS, BYOK_PROVIDER} from "./CDirectLLMClient";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
@@ -722,14 +722,29 @@ export class CCustomManager {
     // keys exist: the synchronous cache terrain reads at construction time, and the AI
     // model dropdown, which only offers "(your key)" entries when a key is stored.
     async showApiKeyDialog() {
-        await showKeyDialog();
-        await primeKeyCache();
-        try {
-            Globals.hasByokKeys = await byokHasAnyKey();
-        } catch (e) {
-            Globals.hasByokKeys = false;
-        }
-        this.updateChatModelSelector();
+        // Passed as the dialog's per-change callback AND run again once it closes. Per
+        // change matters because the dialog can sit open while the rest of the app holds
+        // stale state — clearing a key otherwise left hasByokKeys true and the model
+        // dropdown still offering "(your key)" entries backed by nothing.
+        const resync = async () => {
+            await primeKeyCache();
+            try {
+                Globals.hasByokKeys = await byokHasAnyKey();
+            } catch (e) {
+                Globals.hasByokKeys = false;
+            }
+            // A selection can outlive the key that made it valid. Drop back to a server
+            // model rather than leaving the assistant pointed at a provider we have no
+            // credential for; updateChatModelSelector then picks the first available.
+            if (!hasCachedKey("anthropic")
+                && (Globals.settings.chatModel || "").startsWith(BYOK_PROVIDER + ":")) {
+                Globals.settings.chatModel = "";
+                this.saveGlobalSettings(true);
+            }
+            this.updateChatModelSelector();
+        };
+        await showKeyDialog(resync);
+        await resync();
     }
 
     // Upgrade legacy camera smoothing tracks to dynamic smoothing controls.

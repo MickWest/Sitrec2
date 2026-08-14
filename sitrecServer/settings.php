@@ -150,6 +150,10 @@ function sanitizeSettings($settings) {
         $sanitized['showAttribution'] = boolval($settings['showAttribution']);
     }
 
+    if (isset($settings['showFilename'])) {
+        $sanitized['showFilename'] = boolval($settings['showFilename']);
+    }
+
     if (isset($settings['language'])) {
         $language = strtolower(strval($settings['language']));
         if (preg_match('/^[a-z]{2}$/', $language)) {

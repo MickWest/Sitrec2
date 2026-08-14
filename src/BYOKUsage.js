@@ -200,10 +200,18 @@ export async function getLimit(providerId, limitName) {
 }
 
 // Estimated spend for a request-counting provider, or null when no rate is configured.
-export function estimateProviderSpendUSD(usage, config) {
+// `per` is how many metered units the user's rate covers — 1000 sessions, or one GB for a
+// byte-metered provider. It comes from the provider registry, because a single hardcoded
+// "per 1000" produced a nonsensical "per 1000 bytes" for Cesium.
+//
+// Reads usage.total: recordProviderUsage stores {total, day, dailyCount}. An earlier
+// version read usage.requests, a field that store never writes, so every estimate came
+// out as zero however the rate was set.
+export function estimateProviderSpendUSD(usage, config, per = 1000) {
     const rate = config?.unitPricePer1000;
     if (typeof rate !== 'number' || !isFinite(rate) || rate <= 0) return null;
-    return ((usage?.requests || 0) / 1000) * rate;
+    if (!per || per <= 0) return null;
+    return ((usage?.total || 0) / per) * rate;
 }
 
 export function emptyUsage() {

@@ -83,7 +83,15 @@ function numberField(value, placeholder, onCommit) {
     return input;
 }
 
-export async function showKeyDialog() {
+// Resolves when the dialog CLOSES, not when it finishes rendering — the caller has
+// resync work (re-priming the key cache, refreshing the AI model list) that is only
+// correct once the user has finished making changes.
+//
+// `onKeysChanged` is additionally invoked after every individual add/remove, because the
+// dialog can be left open indefinitely while the rest of the app holds stale state: with
+// only the on-close callback, clearing a key left Globals.hasByokKeys true and the model
+// dropdown still offering "(your key)" entries backed by nothing.
+export async function showKeyDialog(onKeysChanged = null) {
     const overlay = el('div', 'position:fixed; top:0; left:0; width:100%; height:100%;'
         + 'background:rgba(0,0,0,0.5); z-index:10000; display:flex; align-items:center;'
         + 'justify-content:center;');
@@ -92,7 +100,13 @@ export async function showKeyDialog() {
         + 'box-shadow:0 4px 20px rgba(0,0,0,0.3); font-family:Arial, sans-serif;');
     overlay.appendChild(modal);
 
-    const close = () => { if (overlay.parentNode) document.body.removeChild(overlay); };
+    let resolveClosed;
+    const closed = new Promise(r => { resolveClosed = r; });
+    const close = () => {
+        if (overlay.parentNode) document.body.removeChild(overlay);
+        resolveClosed();
+    };
+    const changed = async () => { if (onKeysChanged) await onKeysChanged(); };
 
     // Repaint from storage after every mutation — simpler and less bug-prone than patching
     // individual rows, and the dialog is small.
@@ -153,11 +167,13 @@ export async function showKeyDialog() {
                     } else {
                         await setKey(provider.id, value);
                     }
+                    await changed();
                     await render();
                 }, 'primary'));
                 if (isSet) {
                     head.appendChild(BTN('Clear', async () => {
                         await deleteKey(provider.id);
+                        await changed();
                         await render();
                     }, 'danger'));
                 }
@@ -185,7 +201,7 @@ export async function showKeyDialog() {
                         : 'Usage: approx ' + formatCostUSD(aiReport.totalCost)
                           + ' over ' + aiReport.totalRequests + ' requests';
                 } else if (provider.usage !== 'none') {
-                    const spend = estimateProviderSpendUSD(usage, cfg);
+                    const spend = estimateProviderSpendUSD(usage, cfg, provider.rate?.per ?? 1000);
                     usageLine.textContent = 'Usage: ' + formatTokens(usage.total || 0) + ' ' + unit
                         + ' (' + formatTokens(usage.dailyCount || 0) + ' today)'
                         + (spend === null ? '' : ' — approx ' + formatCostUSD(spend));
@@ -198,8 +214,9 @@ export async function showKeyDialog() {
                 if (provider.usage !== 'spend' && provider.usage !== 'none') {
                     const rateRow = el('div', 'display:flex; align-items:center; gap:6px; margin-top:6px;');
                     rateRow.appendChild(el('span', 'font-size:12px; color:#555;',
-                        'Your rate per 1000 ' + unit + ' (USD)'));
-                    rateRow.appendChild(numberField(cfg.unitPricePer1000 ?? null, 'e.g. 6.00', async v => {
+                        provider.rate?.label || ('Your rate per 1000 ' + unit + ' (USD)')));
+                    rateRow.appendChild(numberField(cfg.unitPricePer1000 ?? null,
+                            provider.rate?.placeholder || 'e.g. 1.00', async v => {
                         await setProviderConfig(provider.id, {unitPricePer1000: v});
                         await render();
                     }));
@@ -260,4 +277,5 @@ export async function showKeyDialog() {
 
     await render();
     document.body.appendChild(overlay);
+    await closed;
 }
