@@ -220,6 +220,11 @@ class CNodeViewChat extends CNodeViewText {
 
         // Add click handler to the main div to focus input box when clicking in the chat area
         this.div.addEventListener('click', (e) => {
+            // The header bar is a child of this div, so its controls click through to here. Taking
+            // focus off one breaks it: a <select> loses its open drop-down list the moment it
+            // blurs, so the "AI Model" menu flashed up and closed again. One contains() covers the
+            // title, the icons and the open menu — the dropdown is a descendant of the bar.
+            if (this.uiBar && this.uiBar.bar.contains(e.target)) return;
             // Only focus if we're not clicking on interactive elements and no text is selected
             const selection = window.getSelection();
             const hasSelection = selection && selection.toString().length > 0;
