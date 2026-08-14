@@ -233,7 +233,13 @@ export class CNodeViewUI extends CNodeViewCanvas2D {
         Object.keys(this.textElements).forEach(key => {
             const t = this.textElements[key]
 
+            // Always run the listener/update callback, even for a hidden element:
+            // that callback is what decides whether the element should be visible
+            // this frame (see AddTimeDisplayToUI), so skipping it would latch the
+            // element off forever.
             t.checkListener()
+
+            if (t.visible === false) return;
 
             // const x = t.x * this.widthPx
             // const y = t.y * this.heightPx

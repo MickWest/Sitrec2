@@ -280,8 +280,11 @@ class CNodeView extends CNode {
                 menu = guiShowHideGraphs;
             }
 
-            // menu entry to show/hide this view
-            menu.add(this, 'visible').listen().name(name).onChange(value => {
+            // menu entry to show/hide this view. Kept as a member so a subclass can
+            // publish it somewhere else as well — the compass mirrors it into its host
+            // view's header menu (CNodeCompassUI), which is the SAME controller, not a
+            // second copy of the flag.
+            this.showHideController = menu.add(this, 'visible').listen().name(name).onChange(value => {
                 this.visible = undefined; // force update
                 this.setVisible(value);
                 if (value) {
@@ -1697,6 +1700,13 @@ class CUIText {
         this.boxed = false;
         this.boxGap = 2;  // gap between text BBox and display BBox
         this.alwaysUpdate = false;
+        // Per-element visibility. The whole overlay node can be hidden with
+        // setVisible(), but a single overlay often mixes independently
+        // toggleable readouts (e.g. labelVideo holds both the date/time display
+        // and the PTZ alt/az/pitch lines), so each element gets its own flag.
+        // CNodeViewUI.renderCanvas still runs the listener/update callback for a
+        // hidden element — that is how a callback can turn itself back on.
+        this.visible = true;
 
     }
 

@@ -9,6 +9,7 @@ import {arModeManager} from "../ARMode";
 
 import {windSourceShortLabels} from "./WindSources";
 import {getHUDColor} from "../HUDColor";
+import {viewMenuKey} from "../ViewUIBarMenus";
 
 export class   CNodeCompassUI extends CNodeViewUI {
 
@@ -43,6 +44,17 @@ export class   CNodeCompassUI extends CNodeViewUI {
         
         // Enable pointer events for compass interactions (overrides parent's ignoreMouseEvents)
         this.canvas.style.pointerEvents = 'auto';
+
+        // The compass is a `relativeTo` child of a big view, so it already has a
+        // Show ▸ Views row for its own visibility. Mirror THAT controller into the
+        // host view's header menu, where a user looking for "is the compass on?"
+        // expects to find it. Same controller, so no second flag and no onChange to
+        // keep in step. Only the views listed in VIEW_UIBAR_MENUS ask for the slot,
+        // so publishing under the host id is enough — see src/ViewUIBarMenus.js.
+        const hostView = this.in.relativeTo;
+        if (hostView && this.showHideController) {
+            this.showHideController.shareAs(viewMenuKey(hostView.id, "compass"));
+        }
         
         // Add touch event listeners for mobile support
         if (Globals.isMobile) {

@@ -1851,6 +1851,15 @@ const en = {
         },
     },
 
+    // The two-line UTC + local date/time readout overlaid on the look view
+    // (src/UIHelpers.js). Only the NOUN is translated: the row name is composed at
+    // runtime as "<thing> in <view>", because the overlay follows whichever view
+    // the sitch attached it to.
+    timeDisplay: {
+        thing: "Time Display",
+        tooltip: "Show the UTC and local date/time readout overlaid on this view",
+    },
+
     // Short labels for the per-view header menus (src/ViewUIBarMenus.js). These name the SAME
     // controllers as the long-form entries elsewhere in this file — a header row is a mirror of
     // a global-menu row, not a second control. They can be shorter because the menu you opened
@@ -1862,6 +1871,8 @@ const en = {
         labels: "Labels",
         features: "Features",
         allTracks: "All Tracks",
+        compass: "Compass",
+        timeDisplay: "Time Display",
         northUp: "North Up",
         yCompress: "Y-Compress",
         fov: "Field of View",

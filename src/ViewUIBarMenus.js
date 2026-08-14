@@ -90,6 +90,8 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "labels", name: "Labels"},
         {slot: "features", name: "Features"},
         {slot: "allTracks", name: "All Tracks"},
+        {slot: "compass", name: "Compass"},
+        {slot: "timeDisplay", name: "Time Display"},
         {slot: "northUp", name: "North Up"},
         {slot: "yCompress", name: "Y-Compress"},
         {slot: "starNames", name: "Star Names", folder: "nightSky"},
