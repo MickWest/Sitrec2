@@ -39,10 +39,13 @@ writes the result into the ordinary camera nodes (`fixedCameraPosition`, `ptzAng
 
 ## The agent workflow
 
-1. `fitPointsConfigure {enabled: true, useTiles: true}` — `useTiles` makes points land
-   on the 3D building geometry (roofs, walls) instead of the elevation surface, which
-   has no buildings on it. The Google 3D tiles must have streamed in first (~30 s after
-   load, and only where a view is looking).
+1. `fitPointsConfigure {enabled: true}` — `useTiles` is already on by default, which
+   makes points land on the 3D building geometry (roofs, walls) instead of the
+   elevation surface, which has no buildings on it. The Google 3D tiles must have
+   streamed in first (~30 s after load, and only where a view is looking); until then,
+   and anywhere they do not cover, the pick falls back to the elevation surface. Pass
+   `useTiles: false` to force that fallback everywhere — the right choice when every
+   landmark *is* the ground (a river bend, a shoreline, a track).
 2. Screenshot the **video view**; identify recognisable features — building corners,
    roof tops. Convert each to `fx`/`fy` fractions of the video frame.
 3. Find each feature's real position. Screenshot the **main view**, find the same
@@ -53,8 +56,9 @@ writes the result into the ordinary camera nodes (`fixedCameraPosition`, `ptzAng
    the highest hit. The look view faces the scene the way the video does, so matching
    a feature's left/right corners there is unambiguous; the result's `canvas` values
    let you cross-check your screenshot-to-fraction mapping.
-4. `fitPointsAdd {fx, fy, lat, lon, alt}` per pair. With `autoFit` on, each add
-   re-solves; set `autoFit: false` to place everything first.
+4. `fitPointsAdd {fx, fy, lat, lon, alt}` per pair. `autoFit` is off by default, so
+   place the whole set first and solve once; set `autoFit: true` if you want every add
+   and move to re-solve as it happens.
 5. `fitPointsSolve`, then screenshot the look view next to the video view and compare.
    Iterate with `fitPointsMove` on the worst pair.
 

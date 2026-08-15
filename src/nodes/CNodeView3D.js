@@ -3424,7 +3424,11 @@ export class CNodeView3D extends CNodeViewCanvas {
     addEffects(effects) {
         if (effects) {
 
-            this.effectsEnabled = true;
+            // Off by default. A sitch's effects chain is an interpretation of the scene
+            // (blur, glare, IR looks), not part of it, so the view starts showing what is
+            // actually there and the analyst opts in. Saves keep whatever they stored —
+            // modDeserialize below only overwrites this when the key is present.
+            this.effectsEnabled = false;
             guiTweaks.add(this, "effectsEnabled").name(t("view3d.effects.label")).onChange(() => {
                 setRenderOne(true)
             }).tooltip(t("view3d.effects.tooltip"))

@@ -142,14 +142,20 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // control points apart from one caused by the choice of method.
         this.fitMethod = "direct";
 
-        this.autoFit = true;
+        // Re-solve on every point move. OFF by default: placing the first points is the part of
+        // the workflow where the solution is least constrained, so fitting as you go spends the
+        // time on answers nobody wants and swings the camera about between them. Place the set,
+        // then Fit Now.
+        this.autoFit = false;
         this.showRays = true;
         // Place control points against the 3D tile geometry — roofs, walls, trees — rather than
-        // the elevation surface. Off by default because the elevation surface is the right one
-        // for landmarks that ARE the ground, and because it is the one that is always there:
-        // both surfaces stream, but elevation tiles cover the whole planet at some zoom while the
-        // photorealistic 3D tiles cover a fraction of it and may not be enabled at all.
-        this.useTiles = false;
+        // the elevation surface. On by default: the tiles are the surface the analyst is actually
+        // looking at, and a rooftop corner placed against the elevation map instead lands at
+        // street level. A landmark on bare ground still lands on bare ground, because the tilesets
+        // carry their own ground, so this costs nothing where there is nothing built. Where the
+        // 3D tiles are absent or not yet streamed the pick falls back to the elevation surface
+        // (surfaceAlongRay), which is the whole-planet one.
+        this.useTiles = true;
         this.status = "Off";
         this.residual = "-";
         this.observability = "-";
@@ -429,8 +435,8 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 "any gap you can see is that point's residual, drawn in 3D.");
 
         this.gui.add(this, "autoFit").name("Fit on Change").listen()
-            .tooltip("Re-solve the camera whenever a point is moved. Turn off to place several " +
-                "points first and fit once with the button below.");
+            .tooltip("Re-solve the camera every time a control point moves. Off by default: " +
+                "place the whole set first, then fit once with the button below.");
 
         this.gui.add(this, "fitNow").name("Fit Now")
             .tooltip("Solve the camera from the current control points.");
