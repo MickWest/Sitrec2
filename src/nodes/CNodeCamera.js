@@ -33,6 +33,14 @@ export class CNodeCamera extends CNode3D {
         // Assigned to the backing field directly: the setter does view wiring that
         // must not run this early. Default off.
         this._freeLook = v.freeLook ?? false;
+        // Registered HERE and not beside the GUI it belongs to, because
+        // applyEarlyMods() below already deserializes this node — simpleDeserialize
+        // walks simpleSerials as it stands at that moment, so a serial added later in
+        // the constructor is silently skipped and the saved value lost. It also must
+        // not depend on a menu existing: addFreeLookGUI() returns early on cut-down
+        // menu setups, which would otherwise make what a sitch SAVES depend on what
+        // GUI happens to be present.
+        this.addSimpleSerial("freeLook");
 
         this.addInput("altAdjust", "altAdjust", true);
 
@@ -372,10 +380,9 @@ export class CNodeCamera extends CNode3D {
             .shareAs(viewMenuKey("lookView", "freeLook"));
         setTimeout(() => this.freeLookController.moveToFirst(), 0);
 
-        // Serialized so a sitch saved in Free Look reloads in it. The pose itself
-        // already round-trips: modSerialize writes the camera's CURRENT position and
-        // heading as startPosLLA/lookAtLLA, which is exactly where the user left it.
-        this.addSimpleSerial("freeLook");
+        // (freeLook is serialized — registered in the constructor, see the note there.
+        // The pose itself already round-trips: modSerialize writes the camera's CURRENT
+        // position and heading as startPosLLA/lookAtLLA, i.e. where the user left it.)
     }
 
 

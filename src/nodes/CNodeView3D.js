@@ -3424,11 +3424,25 @@ export class CNodeView3D extends CNodeViewCanvas {
     addEffects(effects) {
         if (effects) {
 
-            // Off by default. A sitch's effects chain is an interpretation of the scene
-            // (blur, glare, IR looks), not part of it, so the view starts showing what is
-            // actually there and the analyst opts in. Saves keep whatever they stored —
-            // modDeserialize below only overwrites this when the key is present.
-            this.effectsEnabled = false;
+            // Off by default IN THE CUSTOM SITCH ONLY. There an effects chain is an
+            // interpretation laid over the scene — blur, focus — and a sitch the user is
+            // building from scratch should start by showing what is actually there.
+            //
+            // Built-in sitches keep it on, because in several of them the effects chain IS
+            // the picture rather than a look laid over it: Aguadilla, Chilean, Jellyfish,
+            // SWR and Model Inspector all run a FLIRShader pass, and for the isIR ones the
+            // render path gates BOTH that pass and the IR ambient-light swap
+            // (lightingNode.setIR) on this flag — so defaulting it off would load them as
+            // ordinary visible-light views. Of the eight sitches that define effects at
+            // all, SitCustom is the only one that is isCustom, so the other seven are
+            // untouched. (Gimbal, GimbalCustom and Starlink are isCustom but define no
+            // effects, so addEffects never runs for them.)
+            //
+            // Existing sitches of either kind are unaffected regardless: they stored
+            // effectsEnabled in their mods, and modDeserialize below restores it. Sit can
+            // be undefined for a view built before any sitch loads, which falls through to
+            // `true` — the long-standing behaviour.
+            this.effectsEnabled = !(Sit?.isCustom ?? false);
             guiTweaks.add(this, "effectsEnabled").name(t("view3d.effects.label")).onChange(() => {
                 setRenderOne(true)
             }).tooltip(t("view3d.effects.tooltip"))
