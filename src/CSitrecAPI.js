@@ -258,6 +258,7 @@ class CSitrecAPI {
                     enabled: "Turn the tool on/off (bool, optional)",
                     useTiles: "Place points against the 3D building geometry rather than the elevation surface (bool, optional)",
                     autoFit: "Re-solve the camera after every point change (bool, optional)",
+                    syncLookCamera: "Lock the look view to the video's framing - Match Video Aspect on, and look-view wheel/drag zoom and pan the video instead of moving the camera. A fit turns this on (bool, optional)",
                     lockPosition: "Keep the camera position, solve pointing/FOV only (bool, optional)",
                     lockFOV: "Keep the current field of view (bool, optional)",
                     lockRoll: "Hold camera roll at its current value (bool, optional)",
@@ -269,6 +270,7 @@ class CSitrecAPI {
                     if (typeof v?.enabled === "boolean") fit.setEnabled(v.enabled);
                     if (typeof v?.useTiles === "boolean") fit.useTiles = v.useTiles;
                     if (typeof v?.autoFit === "boolean") fit.autoFit = v.autoFit;
+                    if (typeof v?.syncLookCamera === "boolean") fit.setSyncLookCamera(v.syncLookCamera);
                     if (typeof v?.lockPosition === "boolean") fit.lockPosition = v.lockPosition;
                     if (typeof v?.lockFOV === "boolean") fit.lockFOV = v.lockFOV;
                     if (typeof v?.lockRoll === "boolean") fit.lockRoll = v.lockRoll;
@@ -2312,6 +2314,7 @@ class CSitrecAPI {
         }
         return {
             enabled: fit.enabled, useTiles: fit.useTiles, autoFit: fit.autoFit,
+            syncLookCamera: fit.syncLookCamera,
             fitMethod: fit.fitMethod, lockPosition: fit.lockPosition,
             lockFOV: fit.lockFOV, lockRoll: fit.lockRoll,
             fitFrame: fit.fitFrame, currentFrame: par.frame,

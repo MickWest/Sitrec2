@@ -16,7 +16,7 @@ writes the result into the ordinary camera nodes (`fixedCameraPosition`, `ptzAng
 | Function | What it does |
 |---|---|
 | `fitPointsStatus` | Full tool state: settings, points, status/residual, current camera. Read-only. |
-| `fitPointsConfigure` | Set `enabled`, `useTiles`, `autoFit`, `lockPosition`, `lockFOV`, `lockRoll`, `method` (`direct`/`homography`). |
+| `fitPointsConfigure` | Set `enabled`, `useTiles`, `autoFit`, `syncLookCamera`, `lockPosition`, `lockFOV`, `lockRoll`, `method` (`direct`/`homography`). |
 | `fitPointsAdd` | Add a pair: video pixel (`vx`/`vy` or `fx`/`fy`) + optional world position (`lat`, `lon`, `alt`/`altMSL`). |
 | `fitPointsMove` | Change either half of a pair by `id`. |
 | `fitPointsRemove` | Delete a pair by `id`. |

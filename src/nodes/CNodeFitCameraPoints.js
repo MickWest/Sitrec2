@@ -147,6 +147,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // time on answers nobody wants and swings the camera about between them. Place the set,
         // then Fit Now.
         this.autoFit = false;
+
+        // Tie the look view's framing to the video's — see setSyncLookCamera. Off until the
+        // first fit turns it on, because until there is a solved camera there is nothing to
+        // compare and the lock only costs the user their 3D navigation.
+        this.syncLookCamera = false;
+
         this.showRays = true;
         // Place control points against the 3D tile geometry — roofs, walls, trees — rather than
         // the elevation surface. On by default: the tiles are the surface the analyst is actually
@@ -233,6 +239,11 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             lockRoll: this.lockRoll,
             fitMethod: this.fitMethod,
             autoFit: this.autoFit,
+            syncLookCamera: this.syncLookCamera,
+            // What Match Video Aspect was before the sync took it, so unticking the sync after a
+            // reload puts back the same value it would have before one. undefined (dropped by
+            // JSON) is the real state "we did not change it, so it is not ours to change back".
+            restoreMatchVideoAspect: this._restoreMatchVideoAspect,
             showRays: this.showRays,
             useTiles: this.useTiles,
             points: this.points.map((p) => ({
@@ -324,6 +335,19 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             this.syncMethodControls();
         }
         if (v.autoFit !== undefined) this.autoFit = v.autoFit;
+        // Restored as plain flags, deliberately without re-forcing Match Video Aspect: the
+        // frustum node serializes that itself, so a save made with the sync on already comes
+        // back with it on, and forcing it here would only race that. Carrying the restore value
+        // across too is what makes unticking the sync behave the same before and after a reload
+        // — the alternative is guessing at a value the user may have chosen deliberately.
+        // A save with no syncLookCamera key predates the flag, and back then the sync WAS
+        // Enable Fit — so that is what it meant, and reading it any other way would silently
+        // drop a lock the sitch was saved with. No restore value is invented for those: it was
+        // never written, and the old code lost it across a reload too.
+        this.syncLookCamera = v.syncLookCamera !== undefined ? v.syncLookCamera : !!v.enabled;
+        if (v.restoreMatchVideoAspect !== undefined) {
+            this._restoreMatchVideoAspect = v.restoreMatchVideoAspect;
+        }
         if (v.showRays !== undefined) this.showRays = v.showRays;
         if (v.useTiles !== undefined) this.useTiles = v.useTiles;
 
@@ -407,6 +431,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
     dispose() {
         this.setEnabled(false);   // also removes the gesture-cancel listeners
+        this.setSyncLookCamera(false);   // and hands Match Video Aspect back
         KeyframeRegistry.unregister("cameraFit");
         this.markers.dispose();
         this.sightLines.dispose();
@@ -425,6 +450,15 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             .tooltip("Show the control points and allow editing. When off this feature does " +
                 "nothing at all — the camera keeps whatever the last fit gave it. Saved points " +
                 "are kept either way.");
+
+        this.gui.add(this, "syncLookCamera").name("Sync Look Camera").listen()
+            .onChange((on) => this.setSyncLookCamera(on))
+            .tooltip("Lock the look view to the video's framing: Match Video Aspect goes on, and " +
+                "the wheel and left drag over the look view zoom and pan the VIDEO instead of " +
+                "moving the 3D camera, so the two pictures stay comparable. A fit turns this on, " +
+                "because a fit is only worth looking at side by side. Turn it off to fly the 3D " +
+                "camera again — the control points stay put, and the next fit turns it back on. " +
+                "Independent of Enable Fit: switching the fit off leaves this as you set it.");
 
         this.gui.add(this, "showRays").name("Show Sight Lines").listen()
             .onChange(() => setRenderOne(true))
@@ -547,16 +581,6 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.sightLines.setEnabled(on);
         this.cancelGesture();
 
-        // See setMatchVideoAspect: while editing a fit the look view must frame the 3D the way
-        // the video is framed, or the preview the user is judging by is not comparable.
-        if (on) {
-            const was = this.setMatchVideoAspect(true);
-            if (was === false) this._restoreMatchVideoAspect = false;
-        } else if (this._restoreMatchVideoAspect !== undefined) {
-            this.setMatchVideoAspect(this._restoreMatchVideoAspect);
-            this._restoreMatchVideoAspect = undefined;
-        }
-
         // Only listened for while the feature is on, so a disabled fit really does cost nothing.
         if (on && !this._cancelListener) {
             this._cancelListener = () => this.cancelGesture();
@@ -592,14 +616,38 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             // own it.
             if (this.points.length === 0) this.fitFrame = Math.round(par.frame);
             setRenderOne(true);
-            // Say when we changed a setting out from under the user, rather than leaving them to
-            // notice a checkbox ticking itself.
-            const forced = this._restoreMatchVideoAspect === false
-                ? " · Match Video Aspect on, so the look view frames the 3D like the video" : "";
-            this.updateStatus(
-                (this.points.length ? "Ready" : "Click the video to add a point") + forced);
+            this.updateStatus(this.points.length ? "Ready" : "Click the video to add a point");
         } else {
             this.updateStatus("Off");
+        }
+        setRenderOne(true);
+    }
+
+    /**
+     * Tie the look view to the video's framing, or let it go.
+     *
+     * Two things together make the look view a second window onto the video rather than an
+     * independent camera: Match Video Aspect, which makes it render the 3D at the video's
+     * aspect and field (see setMatchVideoAspect), and FitViewSync, which sends its wheel and
+     * left drag to the video's zoom and pan instead of to the camera. Both are gated on this
+     * one flag, so the two halves can never end up half on.
+     *
+     * It is deliberately NOT tied to Enable Fit. Placing points and judging the result want the
+     * lock; reading the scene, checking what is behind a building, or lining up the next
+     * keyframe want the camera back — and those happen with the fit still on. Equally, turning
+     * the fit off is not a reason to unframe a comparison the user is still looking at. So a
+     * fit turns this on (runFit), and only the user turns it off.
+     */
+    setSyncLookCamera(on) {
+        this.syncLookCamera = on;
+        if (on) {
+            const was = this.setMatchVideoAspect(true);
+            // Only remember a value worth putting back. If it was already on, the user chose it
+            // and it is not ours to switch off later.
+            if (was === false) this._restoreMatchVideoAspect = false;
+        } else if (this._restoreMatchVideoAspect !== undefined) {
+            this.setMatchVideoAspect(this._restoreMatchVideoAspect);
+            this._restoreMatchVideoAspect = undefined;
         }
         setRenderOne(true);
     }
@@ -686,6 +734,18 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 solved: k.solved ? {...k.solved, position: k.solved.position.slice()} : null,
             })),
             camera: this.captureCameraState(),
+            // A fit switches this on by itself (see runFit), exactly as it selects the camera
+            // switches captureCameraState records — and for the same reason it is captured here.
+            // With Fit on Change, one point drag flips it; an undo that put the points back but
+            // left the look view locked would not be an undo of what the user did.
+            //
+            // All THREE parts, because they are independent: the checkbox, the Match Video Aspect
+            // it drives (which the user can also drive directly), and the value the sync owes
+            // back. Restoring the first two from the third would be inference, and the inference
+            // is wrong whenever the sync was off with Match Video Aspect on, or vice versa.
+            syncLookCamera: this.syncLookCamera,
+            matchVideoAspect: this.frustumNode()?.matchVideoAspect,
+            restoreMatchVideoAspect: this._restoreMatchVideoAspect,
         };
     }
 
@@ -704,6 +764,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // restored — a choice naming a missing option is ignored.
         this.syncMotionOptions();
         this.restoreCameraState(s.camera);
+        // Written back component by component rather than through setSyncLookCamera, because
+        // this is a restore of a state and not a transition into one: the setter would re-derive
+        // Match Video Aspect from the flag, and the whole point of capturing all three is that
+        // the third is not derivable. Snapshots taken before this was captured leave all of it
+        // alone — the old behaviour, rather than a guess at values they never held.
+        if (s.syncLookCamera !== undefined) {
+            this.syncLookCamera = s.syncLookCamera;
+            this._restoreMatchVideoAspect = s.restoreMatchVideoAspect;
+            if (s.matchVideoAspect !== undefined) this.setMatchVideoAspect(s.matchVideoAspect);
+        }
 
         // Re-measure the restored camera against the restored points. Read-only — it scores what
         // is there, it does not solve — so undo stays an exact inverse. Without it the residual
@@ -1790,6 +1860,13 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         }
 
         const notes = this.applyResult(result);
+        // A fit exists to be checked against the footage, so put the look view alongside it.
+        // RE-ASSERTED, not merely flipped: Match Video Aspect is also a checkbox of its own, and
+        // switching that off by hand leaves the sync ticked but no longer synced. Only the change
+        // is announced, so a refit does not go on repeating a lock already in force.
+        const wasSynced = this.syncLookCamera;
+        this.setSyncLookCamera(true);
+        if (!wasSynced) notes.push("Sync Look Camera on");
         // The solver models a square-pixel pinhole; the look view's anamorphic Y-compress
         // is applied AFTER projection and the fit cannot see it. Even 1% is ~5 px of
         // vertical mismatch at the frame edges when blending the video over the look view,

@@ -26,11 +26,16 @@ const WHEEL_SCALE = 0.9;
  * doing nothing. And a videoZoom node is required because that is where the zoom actually lives;
  * the pos-based fallback path in CNodeVideoView zooms by moving the view's own rectangle, which the
  * 3D has no way to follow.
+ *
+ * The switch is "Sync Look Camera", not "Enable Fit". Taking the 3D camera away is the right
+ * default while judging a fit and the wrong one while reading the scene, and those alternate
+ * within a single session with the fit left on throughout — so the user gets a control for it.
+ * See CNodeFitCameraPoints.setSyncLookCamera.
  */
 export function fitViewSyncActive(view) {
     if (!view || view.id !== "lookView" || !view.syncVideoZoom) return false;
     const fit = NodeMan.get("fitCameraPoints", false);
-    if (!fit || !fit.enabled) return false;
+    if (!fit || !fit.syncLookCamera) return false;
     if (!NodeMan.exists("videoZoom")) return false;
     const video = NodeMan.get("video", false);
     return !!video && video.videoWidth > 0 && video.videoHeight > 0;
@@ -39,9 +44,9 @@ export function fitViewSyncActive(view) {
 /**
  * Where the pointer is in the video frame, as a fraction of the full video in each axis.
  *
- * Mapped through renderedRect, not through the pane, because the fit forces Match Video Aspect on
- * and that letterboxes the rendered image inside the pane. Measured on one 767x435 look view: the
- * canvas sat 2px down and 4px short. Using pane coordinates would put the zoom anchor off the
+ * Mapped through renderedRect, not through the pane, because Sync Look Camera forces Match Video
+ * Aspect on and that letterboxes the rendered image inside the pane. Measured on one 767x435 look
+ * view: the canvas sat 2px down and 4px short. Using pane coordinates would put the zoom anchor off the
  * feature the user is pointing at, by more the further from centre they are — which is exactly
  * where they are when they have zoomed in to place a point.
  *
