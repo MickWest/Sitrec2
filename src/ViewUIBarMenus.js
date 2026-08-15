@@ -86,6 +86,7 @@ export const VIEW_UIBAR_MENUS = {
     ],
 
     lookView: [
+        {slot: "freeLook", name: "Free Look"},
         {slot: "measurements", name: "Measurements"},
         {slot: "labels", name: "Labels"},
         {slot: "features", name: "Features"},

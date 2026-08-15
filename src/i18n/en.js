@@ -1868,6 +1868,7 @@ const en = {
     // tooltip is inherited from the original control, so the full explanation is still there.
     // Keys are slot names from VIEW_UIBAR_MENUS, shared across views where the meaning is.
     viewMenus: {
+        freeLook: "Free Look",
         measurements: "Measurements",
         labels: "Labels",
         features: "Features",
@@ -2046,6 +2047,16 @@ const en = {
     },
 
     misc: {
+        freeLookCamera: {
+            label: "Free Look Camera",
+            tooltip: "Fly the look camera by hand, exactly like the main view camera.\n" +
+                "Left-drag moves the world, middle-drag orbits the point under the cursor,\n" +
+                "right-drag looks around, the wheel zooms in and out, and WASD walks.\n" +
+                "While this is on, the Location, Heading and FOV sources are suspended.\n" +
+                "Where you fly to is written into the camera's Location as you go, so\n" +
+                "turning this off locks the camera in at the new position and heading.\n" +
+                "An 'above ground level' camera keeps its AGL height and only moves horizontally.",
+        },
         snapshotCamera: {
             label: "Snapshot Camera",
             tooltip: "Save the current camera position and heading for use with 'Reset Camera'",

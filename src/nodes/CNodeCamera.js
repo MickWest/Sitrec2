@@ -16,6 +16,9 @@ import {applyRefractionToDirection} from "../atmosphere/refraction";
 import {currentRefractionOpts} from "../atmosphere/refractionSettings";
 import {t} from "../i18n";
 import {raycastLocalGround} from "../raycastGround";
+import {ViewMan} from "../CViewManager";
+import {viewMenuKey} from "../ViewUIBarMenus";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 export class CNodeCamera extends CNode3D {
     constructor(v, camera = null) {
@@ -23,6 +26,13 @@ export class CNodeCamera extends CNode3D {
 
         this.isCamera = true;
         this.celestialLock = null; // {type:"named", object:"Moon"} or {type:"radec", ra:hours, dec:degrees}
+
+        // "Free Look Camera" - the user flies this camera by hand with the view's own
+        // map controls, exactly as they fly the main camera. While it is on, NOTHING
+        // computed is allowed to write the pose (see applyControllers and update).
+        // Assigned to the backing field directly: the setter does view wiring that
+        // must not run this early. Default off.
+        this._freeLook = v.freeLook ?? false;
 
         this.addInput("altAdjust", "altAdjust", true);
 
@@ -85,6 +95,7 @@ export class CNodeCamera extends CNode3D {
 
         if (this.id === "lookCamera") {
             this.addGroundTrackSwitchGUI();
+            this.addFreeLookGUI();
         }
 
         this.addCameraTweaksControls();
@@ -219,6 +230,152 @@ export class CNodeCamera extends CNode3D {
         this._groundTrackSwitchCachedFrame = null;
         this._groundTrackSwitchCachedTarget = null;
         this._groundTrackSwitchWarned = false;
+    }
+
+    // ── Free Look ───────────────────────────────────────────────────────────────
+    //
+    // Turning this on hands the camera to the view it is rendered in, so it flies
+    // exactly like the main camera: left-drag moves the world, middle-drag orbits
+    // the point under the cursor, right-drag looks around, the wheel dollies in and
+    // out, and WASD walks. Three things make that true, and all three are needed:
+    //
+    //   1. applyControllers() below stops every computed source (Location, Heading,
+    //      FOV, Tracking Wobble, ...) from writing the pose, so a hand-flown camera
+    //      is not snapped back on the next node update.
+    //   2. update() below suspends the other pose writers on this node for the
+    //      same reason.
+    //   3. CameraControls' getInteractivePTZController() reports no PTZ controller
+    //      while this is on, which is what makes the gestures fall through to the
+    //      plain main-camera set instead of the PTZ pan/zoom ones.
+    //
+    // The flown position does not just float free, though: syncFreeLookPosition()
+    // publishes it back into the camera's Manual position node on every move, which is
+    // what turns the mode into a way of CHOOSING a camera position — fly to where you
+    // want to be, switch Free Look off, and you stay there.
+    //
+    // It is a property with a setter (rather than a plain field) so the GUI, a
+    // deserialized save and any API caller all go through the same wiring.
+    get freeLook() {
+        return this._freeLook;
+    }
+
+    set freeLook(value) {
+        const on = !!value;
+        const changed = (on !== this._freeLook);
+
+        // Leaving Free Look locks in where the user flew to. The POSITION is already
+        // published (syncFreeLookPosition runs on every move), so the final call here
+        // only catches a last movement in the same tick. The ORIENTATION is not
+        // published anywhere, and the Heading source is about to take the camera back,
+        // so hand it to the manual PTZ angles — a Heading of "Manual" then keeps
+        // looking where the user left it instead of spinning back. For any other
+        // Heading source this changes nothing that is visible: keeping the PTZ angles
+        // warm against the live camera is exactly what the custom sitch's
+        // postApplyControllers already does whenever PTZ is not the thing driving.
+        if (changed && !on) {
+            this.syncFreeLookPosition();
+            NodeMan.get("ptzAngles", false)?.syncFromCamera(this.camera);
+        }
+
+        this._freeLook = on;
+
+        // A fresh session must publish its first move even if the camera happens to be
+        // exactly where the last one ended.
+        if (changed && on) this._freeLookSyncedPos = null;
+
+        // Most look views already carry map controls - SituationSetup adds them
+        // unless the sitch asked for noOrbitControls, as the Gimbal pod views do.
+        // Those are the only ones that need them made here, and once made we keep
+        // them switched off whenever Free Look is off, so turning the mode on and
+        // back off leaves such a view navigating exactly as it did before.
+        const view = this.getRenderingView();
+        if (view) {
+            if (on && !view.controls) {
+                view.addOrbitControls();
+                this._freeLookAddedControls = true;
+            }
+            if (this._freeLookAddedControls && view.controls) {
+                view.controls.enabled = on;
+            }
+        }
+
+        if (changed) setRenderOne(true);
+    }
+
+    // Publish the hand-flown position into the camera's Manual position node. Called
+    // once per rendered frame from CameraMapControls.update(), which is downstream of
+    // every gesture — drag, orbit, pan, wheel, WASD, touch — so one call site covers
+    // them all, and it is the same place (and the same frequency) at which the WASD
+    // walker already writes that node.
+    //
+    // Two things follow from the write. The Location folder's Lat/Lon/Alt track the
+    // flight, so you can read off where you are; and CCustomManager's
+    // PositionLLA.onChange listener promotes the Location source to Manual, so
+    // switching Free Look off leaves the camera where you flew it rather than snapping
+    // back to whatever was driving it before.
+    //
+    // Altitude follows the WASD walker's rule: written as MSL for an absolute-altitude
+    // node, and left alone for an AGL one — there "N metres above the ground" is the
+    // user's standing instruction and outranks the height they happened to fly at, so
+    // only the horizontal move is kept.
+    syncFreeLookPosition() {
+        if (!this._freeLook) return;
+
+        const pos = this.camera.position;
+        // Sub-millimetre moves are float noise, not navigation; skipping them keeps a
+        // parked free-look camera from cascading a recalculate every frame.
+        if (this._freeLookSyncedPos && this._freeLookSyncedPos.distanceToSquared(pos) < 1e-6) return;
+
+        const fixedCamera = NodeMan.get("fixedCameraPosition", false);
+        if (!fixedCamera) return;
+
+        (this._freeLookSyncedPos ??= new Vector3()).copy(pos);
+
+        if (fixedCamera.agl) {
+            fixedCamera.setFromECEF(pos);
+        } else {
+            const lla = ECEFToLLAVD_radii(pos);
+            // setLLA wants MSL; ECEFToLLAVD_radii returns HAE (h = H + N).
+            fixedCamera.setLLA(lla.x, lla.y, lla.z - meanSeaLevelOffset(lla.x, lla.y));
+        }
+    }
+
+    // The view this camera is rendered in, if any. There is normally exactly one.
+    getRenderingView() {
+        let found = null;
+        ViewMan.iterate((id, view) => {
+            if (!found && view.cameraNode === this && view.addOrbitControls !== undefined) {
+                found = view;
+            }
+        });
+        return found;
+    }
+
+    addFreeLookGUI() {
+        // Lives in Camera ▸ Camera Tweaks alongside the other per-camera mode
+        // switches (Orthographic, the ground-track switch), with the same fallback
+        // to the Camera menu itself on cut-down menu setups.
+        const menu = guiMenus.cameraTweaks ?? guiMenus.camera;
+        if (!menu) return;
+
+        // First in the folder, because it overrides everything else in the Camera
+        // menu: while it is on, the Location / Heading / FOV sources are suspended.
+        // Also mirrored into the look view's own header menu (src/ViewUIBarMenus.js),
+        // which is where you want it when you are flying the camera and not looking
+        // at the menu bar. shareAs comes last: registration captures the source's
+        // onChange as it stands, so it has to follow the whole naming chain.
+        this.freeLookController = menu.add(this, "freeLook")
+            .name(t("misc.freeLookCamera.label"))
+            .listen()
+            .tooltip(t("misc.freeLookCamera.tooltip"))
+            .moveToFirst()
+            .shareAs(viewMenuKey("lookView", "freeLook"));
+        setTimeout(() => this.freeLookController.moveToFirst(), 0);
+
+        // Serialized so a sitch saved in Free Look reloads in it. The pose itself
+        // already round-trips: modSerialize writes the camera's CURRENT position and
+        // heading as startPosLLA/lookAtLLA, which is exactly where the user left it.
+        this.addSimpleSerial("freeLook");
     }
 
 
@@ -374,10 +531,27 @@ export class CNodeCamera extends CNode3D {
         cam.updateProjectionMatrix();
     }
 
+    // Free Look suspends every computed source that would otherwise write this
+    // camera's pose - Location, Heading, FOV, Tracking Wobble, all of them - so the
+    // hand-flown pose survives the frame it was set in. Gating here rather than on
+    // each controller's own `enabled` flag deliberately: those flags belong to the
+    // source switches, which turn them on and off as the choice changes, so a
+    // second owner would just fight them.
+    applyControllers(f, depth = 0) {
+        if (this.freeLook) return;
+        super.applyControllers(f, depth);
+    }
+
     update(f) {
         super.update(f);
 
-        if (this.in.altAdjust !== undefined) {
+        // The pose writers below are suspended by Free Look for the same reason the
+        // controllers are. altAdjust in particular: it RAISES the current position
+        // rather than setting one, so with no controller re-seeding the position
+        // each frame it would compound, and the camera would climb away.
+        const poseIsComputed = !this.freeLook;
+
+        if (poseIsComputed && this.in.altAdjust !== undefined) {
             // raise or lower the position
             this.camera.position.copy(raisePoint(this.camera.position, f2m(this.in.altAdjust.v())))
         }
@@ -387,7 +561,7 @@ export class CNodeCamera extends CNode3D {
         // or camera.lookAt(), because CNodeLOSFromCamera calls cameraNode.update()
         // from within getValueFrame(), causing infinite recursion if we modify the
         // camera or trigger any node evaluation from here.
-        if (this.celestialLock) {
+        if (poseIsComputed && this.celestialLock) {
             let dir = null;
             if (this.celestialLock.type === "named") {
                 dir = getCelestialDirection(this.celestialLock.object, GlobalDateTimeNode.dateNow);
@@ -422,8 +596,10 @@ export class CNodeCamera extends CNode3D {
             }
         }
 
+        // The frame-range refresh is GUI-only, so it runs either way; the aim itself
+        // is a pose write, so Free Look suspends it.
         this.updateGroundTrackSwitchFrameRange();
-        this.applyGroundTrackSwitch(f);
+        if (poseIsComputed) this.applyGroundTrackSwitch(f);
 
         // Maintain the per-camera near plane (main camera owns it; the look camera's
         // near is driven by its PTZ controller) and the orthographic projection.

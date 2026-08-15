@@ -197,22 +197,36 @@ class CameraMapControls {
 		// maintained for backwards compatibility with other Three.js controls
 
 
-		// zooming with the keyboard + and - keys
-		const zoomSpeed = 0.03
+		// The keyboard navigation below obeys `enabled` for the same reason the mouse
+		// handlers do: everything that clears it (image-set export, feature editing,
+		// point dragging, flood sim, ground overlays, synth clouds, and the look view's
+		// own Free Look wiring) means "the user is not driving this camera right now".
+		// The measure arrow is display upkeep, not navigation, so it always runs.
+		if (this.enabled) {
 
-		if (isKeyHeld("-")) {
-			this.zoomBy(zoomSpeed)
-		}
-		// + key is actually the = key (shifted to +) on main keyboard
-		// but the + key on the numeric keypad
-		if (isKeyHeld("=") || isKeyHeld("+")) {
-			this.zoomBy(-zoomSpeed)
-		}
+			// zooming with the keyboard + and - keys
+			const zoomSpeed = 0.03
 
-		// WASD walking controls (terrain-following)
-		// Only active for lookView
-		if (this.view && this.view.id === "lookView") {
-			this.updateWASDWalking();
+			if (isKeyHeld("-")) {
+				this.zoomBy(zoomSpeed)
+			}
+			// + key is actually the = key (shifted to +) on main keyboard
+			// but the + key on the numeric keypad
+			if (isKeyHeld("=") || isKeyHeld("+")) {
+				this.zoomBy(-zoomSpeed)
+			}
+
+			// WASD walking controls (terrain-following)
+			// Only active for lookView
+			if (this.view && this.view.id === "lookView") {
+				this.updateWASDWalking();
+			}
+
+			// Free Look: publish whatever the gestures have done to the camera back into
+			// its position source. Here, rather than in each handler, because every
+			// gesture — drag, orbit, pan, wheel, WASD, touch — lands here once per
+			// rendered frame. No-op unless Free Look is on.
+			this.view?.cameraNode?.syncFreeLookPosition?.();
 		}
 
 		this.updateMeasureArrow();
@@ -262,7 +276,7 @@ class CameraMapControls {
 			return;
 		}
 
-		const ptzControls = getPTZController(this.view.cameraNode);
+		const ptzControls = getInteractivePTZController(this.view.cameraNode);
 		if (ptzControls !== undefined) {
 			this.zoomBy(Math.sign(event.deltaY));
 			setRenderOne(true);
@@ -617,7 +631,7 @@ class CameraMapControls {
 	zoomBy(delta) {
 		if (!this.zoomGestures || !this.enableZoom) return;
 
-		const ptzControls = getPTZController(this.view.cameraNode);
+		const ptzControls = getInteractivePTZController(this.view.cameraNode);
 
 		if (ptzControls !== undefined) {
 
@@ -705,7 +719,7 @@ class CameraMapControls {
 		if (this.justRotate) this.state = STATE.ROTATE;
 
 		// if we have a PTZ UI controller, then all buttons just pan
-		if (getPTZController(this.view.cameraNode) !== undefined) this.state = STATE.PAN;
+		if (getInteractivePTZController(this.view.cameraNode) !== undefined) this.state = STATE.PAN;
 
 
 	}
@@ -995,7 +1009,7 @@ class CameraMapControls {
 
 		//		console.log(x+","+y+","+vdump(this.mouseDelta))
 
-		const ptzControls = getPTZController(this.view.cameraNode);
+		const ptzControls = getInteractivePTZController(this.view.cameraNode);
 
 
 		var xAxis = new Vector3()
@@ -1238,7 +1252,7 @@ class CameraMapControls {
 		// including roll. fixUp's lookAt(pointInFront) would clobber that roll on
 		// every mousemove, causing the view to alternate between rolled (RAF) and
 		// un-rolled (mousemove) frames during a pan. Only fix up for non-PTZ cameras.
-		if (getPTZController(this.view.cameraNode) === undefined) {
+		if (getInteractivePTZController(this.view.cameraNode) === undefined) {
 			this.fixUp() // fixup on any mouse move
 		}
 
@@ -1386,13 +1400,34 @@ class CameraMapControls {
 		// The horizontal target after this step.
 		const newPos = currentPos.add(movement);
 
-		const fixedCamera = NodeMan.get("fixedCameraPosition");
-
 		// We want the walker to ride a fixed eye height above the actual 3D tile
 		// surface directly below — the rendered Google Photorealistic / OSM geometry,
 		// NOT the smooth elevation map (which ignores buildings and often disagrees
 		// with the tiles).
 		const tileGround = getTilesPointBelow(newPos);
+
+		// Free Look walks the CAMERA. Normally WASD writes the step into the position
+		// node and the position controller carries it to the camera on the next update,
+		// but Free Look suspends that controller (see CNodeCamera.applyControllers), so
+		// a write there would move nothing. The direction of travel is simply reversed:
+		// step the camera here, and syncFreeLookPosition() — called right after this, in
+		// update() — publishes the result back to the position node. Same tile-surface
+		// ride either way.
+		if (this.view.cameraNode?.freeLook) {
+			if (tileGround !== null) {
+				const upAtGround = getLocalUpVector(tileGround);
+				this.camera.position.copy(tileGround.add(upAtGround.multiplyScalar(WASD_EYE_HEIGHT)));
+			} else {
+				this.camera.position.copy(newPos);
+			}
+			this.camera.updateMatrix();
+			this.camera.updateMatrixWorld();
+			setRenderOne(true);
+			return;
+		}
+
+		const fixedCamera = NodeMan.get("fixedCameraPosition");
+
 		if (fixedCamera.agl) {
 			// AGL camera: just move horizontally and let recalculate() hold it the
 			// user's AGL height above the ground — which, via _aglGroundPoint, is now
@@ -1572,6 +1607,23 @@ class CameraMapControls {
 
 
 
+}
+
+// The PTZ controller that MOUSE AND TOUCH GESTURES should drive, if any.
+//
+// Free Look suspends every computed controller on the camera (see
+// CNodeCamera.applyControllers), so while it is on the gestures must fall through
+// to the plain main-camera set - left drag moves the world, middle orbits, right
+// looks around, the wheel dollies - rather than the PTZ pan/zoom ones, which would
+// write az/el/fov into a controller that is no longer being applied.
+//
+// Kept separate from getPTZController() rather than folded into it, because that
+// function's other callers want the controller object itself whether or not it is
+// currently driving anything: SitNightSky's URL save/restore reads and writes its
+// az/el/fov and asserts it is present.
+function getInteractivePTZController(cameraNode) {
+	if (NodeMan.get(cameraNode).freeLook) return undefined;
+	return getPTZController(cameraNode);
 }
 
 export function getPTZController(cameraNode) {
