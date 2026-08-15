@@ -15,7 +15,7 @@
 
 import {deleteKey, getKey, setKey} from './BYOKKeyStore';
 import {
-    BYOK_PROVIDERS, LIMIT_DEFS, PROVIDER_CATEGORIES, providersByCategory,
+    LIMIT_DEFS, PROVIDER_CATEGORIES, providersByCategory, visibleProviders,
 } from './BYOKProviders';
 import {
     estimateProviderSpendUSD, formatCostUSD, formatTokens, formatUsageReport,
@@ -127,14 +127,15 @@ export async function showKeyDialog(onKeysChanged = null) {
         intro.appendChild(details);
         modal.appendChild(intro);
 
+        const shown = visibleProviders();
         const [keys, usageByProvider, config, aiReport] = await Promise.all([
-            Promise.all(BYOK_PROVIDERS.map(p => getKey(p.id))),
+            Promise.all(shown.map(p => getKey(p.id))),
             getProviderUsage(),
             getProviderConfig(),
             formatUsageReport(),
         ]);
         const hasKey = {};
-        BYOK_PROVIDERS.forEach((p, i) => { hasKey[p.id] = !!keys[i]; });
+        shown.forEach((p, i) => { hasKey[p.id] = !!keys[i]; });
 
         const grouped = providersByCategory();
         for (const [catId, catLabel] of Object.entries(PROVIDER_CATEGORIES)) {

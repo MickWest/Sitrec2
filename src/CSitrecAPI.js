@@ -18,11 +18,14 @@ import {
     withTestUser,
 } from "./Globals";
 import {isLocal, isServerless, SITREC_SERVER} from "./configUtils";
-import {showError} from "./showError";
+import {showChoice, showError} from "./showError";
 import GUI from "./js/lil-gui.esm";
 import {Vector3} from "three";
 import {ModelFiles, CNode3DObject} from "./nodes/CNode3DObject";
-import {refuseExternalURLParams, sanitizeLabelForPrompt} from "./PromptSafety";
+import {
+    CHAT_FENCED_RESULT_FIELDS, fenceUntrustedText, refuseExternalURLParams, sanitizeLabelForPrompt,
+} from "./PromptSafety";
+import {getSitchSourceLabel, isSitchExternal, trustCurrentSitch} from "./SitchProvenance";
 import {LLAToECEF, ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {getLocalUpVector, altitudeHAE} from "./SphericalMath";
 import {Raycaster} from "three";
@@ -70,6 +73,73 @@ function parseDec(input) {
     }
     return null;
 }
+
+// Calls that do not change the sitch's serialized state. Used for two different
+// questions, which mostly coincide but not entirely — hence the second set below.
+const TRANSIENT_CALLS = new Set([
+    "getCameraLLA",
+    "setCameraAltitude",
+    "setDateTime",
+    "getCurrentDateTime",
+    "pointCameraAtRaDec",
+    "pointCameraAtNamedObject",
+    "lockCameraOnObject",
+    "lockCameraOnRaDec",
+    "unlockCamera",
+    "getFrame",
+    "setFrame",
+    "getMenuValue",
+    "listMenus",
+    "listMenuControls",
+    "listObjectFolders",
+    "listAvailableModels",
+    "listAvailableGeometries",
+    "listSynthElements",
+    "getSynthElement",
+    "gotoLLA",
+    "play",
+    "pause",
+    "toggleDebug",
+    "getNearbyWeatherBalloons",
+    "compareSondeTrajectory",
+    "pickWorldPoint",
+    "fitPointsStatus",
+    "listViews",
+    "showView",
+    "hideView",
+    "setViewPosition",
+    "setLayout",
+    "hideMenu",
+    "showMenu",
+    "hideTimeline",
+    "showTimeline",
+    "hideChrome",
+    "showChrome",
+    "toggleFullscreen",
+    "listLayoutTemplates",
+    "getNotes",
+    "listSitches",
+    "getShareLink",
+    "getSitchState",
+    "exportSitchState",
+]);
+
+// The same list read as a SECURITY question: "is this safe to run, unattended, on behalf
+// of a sitch whose contents a stranger wrote?" TRANSIENT_CALLS was written to answer "does
+// this dirty the sitch?", and the two questions diverge on exactly one entry.
+//
+// getShareLink is transient for serialization — it changes nothing locally — but it
+// UPLOADS the current state and returns a public link. Under an untrusted sitch that is
+// the propagation step: steer the model into sharing, and the victim's own browser mints
+// the artifact the attacker wanted. It is therefore treated as a write.
+//
+// The remaining entries were audited against the same question and stand: they are reads,
+// or view changes (camera, time, layout, playback) that are recoverable and carry nothing
+// off the machine. Gating those would tax the exact workflow this is meant to protect —
+// reading a shared recreation and asking the assistant about it.
+export const CHAT_READ_ONLY_CALLS = new Set(
+    [...TRANSIENT_CALLS].filter(fn => fn !== "getShareLink")
+);
 
 class CSitrecAPI {
     constructor() {
@@ -3517,6 +3587,57 @@ class CSitrecAPI {
         return coerced;
     }
 
+    // When the loaded sitch came from an untrusted channel (see src/SitchProvenance.js), the
+    // model's context contains text a stranger wrote — Notes, track names, object titles. The
+    // boundary that matters is therefore not what the model READS but what it can DO.
+    //
+    // Reads run untouched, so the workflow this exists to protect — open a shared recreation
+    // and ask the assistant about it — gains no friction at all. Anything that changes saved
+    // state or sends data outward asks once.
+    //
+    // Returns a refusal result to hand back to the model, or null to proceed.
+    async _confirmWriteInExternalSitch(call) {
+        if (!isSitchExternal()) return null;
+        if (CHAT_READ_ONLY_CALLS.has(call.fn)) return null;
+
+        const source = getSitchSourceLabel();
+        const choice = await showChoice(
+            `The assistant wants to run "${call.fn}", which changes saved state or sends data.\n\n`
+            + `This sitch was loaded from somewhere else`
+            + (source ? `:\n${source}\n\n` : `.\n\n`)
+            + `Its notes and labels were written by whoever shared it, so the request may have `
+            + `come from that text rather than from you. Reading and analysing it is unaffected `
+            + `either way.`,
+            {
+                title: "Allow this change?",
+                options: [
+                    {label: "Allow once", value: "once"},
+                    // The escape hatch lives here, where the friction is, rather than as a
+                    // setting nobody finds. It consents to CAPABILITY, which is a real
+                    // decision — unlike consenting to reading, which people click through
+                    // because reading is why they opened the sitch.
+                    {label: "Trust this sitch", value: "trust"},
+                    {label: "Don't allow", value: "deny", cancel: true},
+                ],
+            }
+        );
+
+        if (choice === "trust") {
+            trustCurrentSitch();
+            return null;
+        }
+        if (choice === "once") return null;
+
+        console.warn(`Declined chat-sourced "${call.fn}" in an externally-sourced sitch.`);
+        return {
+            success: false,
+            fn: call.fn,
+            // Phrased so the model reports it and stops, rather than retrying around it.
+            error: `The user declined "${call.fn}". This sitch came from an external source, so `
+                + `changes need confirmation. Do not retry; tell the user what you were trying to do.`,
+        };
+    }
+
     // source: "ui" (default, trusted — UI buttons, MCP bridge, programmatic call())
     //         or "chat" (untrusted — issued by the LLM/chatbot, subject to prompt injection).
     // Chat calls are refused for any entry tagged llmCallable:false, so a guessed name can't
@@ -3534,14 +3655,39 @@ class CSitrecAPI {
         if (source === "chat") {
             const refusal = refuseExternalURLParams(call);
             if (refusal) return refusal;
+
+            const denied = await this._confirmWriteInExternalSitch(call);
+            if (denied) return denied;
         }
         try {
             const args = this._coerceArgs(call.args, apiFn.params);
             const result = await apiFn.fn(args);
-            return { success: true, fn: call.fn, result };
+            return {
+                success: true,
+                fn: call.fn,
+                result: source === "chat" ? this._fenceUntrustedResultFields(call.fn, result) : result,
+            };
         } catch (e) {
             return { success: false, fn: call.fn, error: e.message };
         }
+    }
+
+    // Some tool results carry free text that came from the sitch rather than from the user —
+    // sitch Notes above all, which in a shared sitch are whatever the sender typed. Wrap those
+    // fields so the model reads them as material, not as instructions.
+    //
+    // Applied to chat-sourced calls only: a UI or MCB caller wants the raw value, and fencing
+    // it there would corrupt what the app itself displays.
+    _fenceUntrustedResultFields(fn, result) {
+        const fields = CHAT_FENCED_RESULT_FIELDS[fn];
+        if (!fields || !result || typeof result !== "object") return result;
+        const out = {...result};
+        for (const field of fields) {
+            if (typeof out[field] === "string" && out[field].length > 0) {
+                out[field] = fenceUntrustedText(out[field], "sitch notes");
+            }
+        }
+        return out;
     }
 
     callChangesSerializedState(call, apiResult) {
@@ -3554,53 +3700,7 @@ class CSitrecAPI {
             return false;
         }
 
-        const transientCalls = new Set([
-            "getCameraLLA",
-            "setCameraAltitude",
-            "setDateTime",
-            "getCurrentDateTime",
-            "pointCameraAtRaDec",
-            "pointCameraAtNamedObject",
-            "lockCameraOnObject",
-            "lockCameraOnRaDec",
-            "unlockCamera",
-            "getFrame",
-            "setFrame",
-            "getMenuValue",
-            "listMenus",
-            "listMenuControls",
-            "listObjectFolders",
-            "listAvailableModels",
-            "listAvailableGeometries",
-            "listSynthElements",
-            "getSynthElement",
-            "gotoLLA",
-            "play",
-            "pause",
-            "toggleDebug",
-            "getNearbyWeatherBalloons",
-            "compareSondeTrajectory",
-            "pickWorldPoint",
-            "fitPointsStatus",
-            "listViews",
-            "showView",
-            "hideView",
-            "setViewPosition",
-            "setLayout",
-            "hideMenu",
-            "showMenu",
-            "hideTimeline",
-            "showTimeline",
-            "hideChrome",
-            "showChrome",
-            "toggleFullscreen",
-            "listLayoutTemplates",
-            "getNotes",
-            "listSitches",
-            "getShareLink",
-            "getSitchState",
-            "exportSitchState",
-        ]);
+        const transientCalls = TRANSIENT_CALLS;
 
         return !transientCalls.has(call.fn);
     }

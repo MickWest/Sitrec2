@@ -14,7 +14,8 @@
 //      saveSitch -> getShareLink -> createSynthOverlay(imageURL) exfiltration chain.
 
 import {
-    PROMPT_LABEL_MAX, refuseExternalURLParams, sanitizeLabelForPrompt,
+    PROMPT_LABEL_MAX, UNTRUSTED_TEXT_MAX, fenceUntrustedText, refuseExternalURLParams,
+    sanitizeLabelForPrompt,
 } from '../src/PromptSafety';
 
 
@@ -157,5 +158,43 @@ describe('chat-sourced external URL refusal', () => {
         expect(refuseExternalURLParams({
             fn: 'createSynthOverlay', args: {imageURL: value},
         })).not.toBeNull();
+    });
+});
+
+// Fencing is the third mitigation: wrap sitch-authored free text so the model reads it as
+// material rather than instructions. It is advisory by nature — a determined injection is
+// still text the model can be steered by — so these tests pin the mechanical properties it
+// does guarantee, not an effectiveness claim it cannot make.
+describe('fencing untrusted text', () => {
+    test('the original text survives intact inside the fence', () => {
+        // The captions workflow quotes Notes verbatim, so fencing must not alter a character.
+        const notes = 'Witness: "it moved left, then stopped."\n\nAssume 30 ft object.';
+        expect(fenceUntrustedText(notes)).toContain(notes);
+    });
+
+    test('it tells the model the text is data, not instructions', () => {
+        const fenced = fenceUntrustedText('hello');
+        expect(fenced).toMatch(/never as instructions/i);
+        expect(fenced).toMatch(/report/i);
+    });
+
+    test('the delimiter is unpredictable, so injected text cannot close the fence', () => {
+        // The attacker writes their payload before this token exists, so they cannot type
+        // the closing marker and continue outside it.
+        const a = fenceUntrustedText('x');
+        const b = fenceUntrustedText('x');
+        expect(a).not.toBe(b);
+    });
+
+    test('oversized text is capped and the model is told', () => {
+        const huge = 'y'.repeat(UNTRUSTED_TEXT_MAX + 5000);
+        const fenced = fenceUntrustedText(huge);
+        expect(fenced.length).toBeLessThan(huge.length);
+        expect(fenced).toMatch(/Truncated/);
+    });
+
+    test('empty and nullish text do not become the strings "null"/"undefined"', () => {
+        expect(fenceUntrustedText(null)).not.toMatch(/null/);
+        expect(fenceUntrustedText(undefined)).not.toMatch(/undefined/);
     });
 });

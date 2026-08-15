@@ -9,6 +9,36 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.130.0 (2026-08-14)
+
+### New Features
+
+- **Use your own API keys** (Sitrec → Settings → *API Keys…*): one dialog manages every credential you supply. An Anthropic key runs the AI assistant on your own account — new *(your key)* entries appear in the *AI Model* list — and a Google key runs Photorealistic 3D tiles and buildings without Sitrec's shared quota. Keys are stored only in this browser, are never sent to the Sitrec server, and are never shown back to you once saved, not even the last few characters.
+
+- **Per-provider usage, limits and spend estimates** (Sitrec → Settings → *API Keys…*): each provider shows what you have used since the counters were last reset, takes an optional daily limit, and — if you enter your own rate — estimates what you have spent. Usage on your own key is counted only on your own machine and is not reported to Sitrec. Full details of how keys are stored and what protects them are in *Details…* in the dialog, and under Help → Documentation → *Your API Keys: Storage &amp; Security*.
+
+- **The clock over the look view can now be turned off** (Show → *Time Display in Look*, or the Look view's own header menu → *Time Display*): the UTC and local date/time readout is on by default, exactly as before, and the setting is saved with a custom sitch. The **Compass** now also has a row in the Look view's header menu.
+
+### Bug Fixes
+
+- Fixed the camera stopping short when you zoomed towards a place on Google Photorealistic 3D tiles, as though something invisible were in the way, and clicks on the ground landing in mid-air there.
+
+- Fixed the *Show Filename* setting (Sitrec → Settings) never being saved to your account, so it did not follow you to another browser or device.
+
+- Fixed the AI assistant receiving an empty answer back from every action it performed, so it could not report or build on what it had just done.
+
+### Security
+
+- The assistant now asks before making any change when you have opened a sitch from someone else's link. Reading and analysing a shared sitch is unaffected; only actions that change saved state or send data out ask first, and you can allow one action or trust the sitch for the rest of the session.
+
+- Notes and labels written by whoever shared a sitch are now clearly marked to the assistant as material to read and quote, never as instructions to follow.
+
+- Closed several ways a shared sitch could have made the assistant fetch an outside web address on your behalf.
+
+- Fixed track names, sitch titles and other loaded text being able to run code when shown in a menu.
+
+---
+
 ## Version 2.129.2 (2026-08-14)
 
 ### Bug Fixes

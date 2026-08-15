@@ -9,6 +9,8 @@
 // Storage lives in BYOKKeyStore under "byok_<id>"; usage and limits live in BYOKUsage and
 // BYOKLimits keyed by the same id. Keep ids stable — they are persisted.
 
+import {isAdmin} from "./configUtils";
+
 export const PROVIDER_CATEGORIES = {
     ai: 'AI assistant',
     terrain: 'Maps & terrain',
@@ -84,6 +86,9 @@ export const BYOK_PROVIDERS = [
     },
     {
         id: 'mapbox',
+        // No consumer reads this key yet — hidden from non-admins so nobody stores a
+        // credential that silently does nothing. Drop this line when it is wired up.
+        adminOnly: true,
         label: 'Mapbox',
         category: 'terrain',
         auth: 'key',
@@ -97,6 +102,9 @@ export const BYOK_PROVIDERS = [
     },
     {
         id: 'maptiler',
+        // No consumer reads this key yet — hidden from non-admins so nobody stores a
+        // credential that silently does nothing. Drop this line when it is wired up.
+        adminOnly: true,
         label: 'MapTiler',
         category: 'terrain',
         auth: 'key',
@@ -109,6 +117,9 @@ export const BYOK_PROVIDERS = [
     },
     {
         id: 'spacetrack',
+        // No consumer reads this key yet — hidden from non-admins so nobody stores a
+        // credential that silently does nothing. Drop this line when it is wired up.
+        adminOnly: true,
         label: 'Space-Track',
         category: 'data',
         auth: 'userpass',
@@ -121,6 +132,9 @@ export const BYOK_PROVIDERS = [
     },
     {
         id: 'adsbx',
+        // No consumer reads this key yet — hidden from non-admins so nobody stores a
+        // credential that silently does nothing. Drop this line when it is wired up.
+        adminOnly: true,
         label: 'ADSB Exchange',
         category: 'data',
         auth: 'key',
@@ -164,10 +178,19 @@ export function getProvider(id) {
     return BYOK_PROVIDERS.find(p => p.id === id) || null;
 }
 
+// Providers the current user should be offered. `adminOnly` entries are registered and fully
+// functional as far as storage, usage and limits go, but nothing reads their key yet — showing
+// them would invite a user to paste a credential that then does nothing, which is worse than
+// not offering it. Admins still see them so the plumbing can be exercised end to end.
+export function visibleProviders() {
+    const admin = isAdmin();
+    return BYOK_PROVIDERS.filter(p => admin || !p.adminOnly);
+}
+
 export function providersByCategory() {
     const grouped = {};
     for (const key of Object.keys(PROVIDER_CATEGORIES)) grouped[key] = [];
-    for (const p of BYOK_PROVIDERS) {
+    for (const p of visibleProviders()) {
         (grouped[p.category] = grouped[p.category] || []).push(p);
     }
     return grouped;

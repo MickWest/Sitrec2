@@ -46,6 +46,7 @@ import {
     Sit,
     SitchMan,
     TrackManager,
+    getEffectiveUserID,
 } from "./Globals";
 import {disableScroll, f2m, stripComments, updateDocumentTitle} from './utils'
 import {CSituation} from "./CSituation";
@@ -154,6 +155,7 @@ import {getEnvBool} from "./envUtils";
 import {FeatureManager} from "./CFeatureManager";
 import {CustomGraphManager} from "./CCustomGraphManager";
 import {GraphDataManager} from "./CGraphDataManager";
+import {classifyProvenance, setSitchProvenance} from "./SitchProvenance";
 import {
     encodeShareParam,
     extractUserIdFromSitrecReference,
@@ -725,7 +727,19 @@ if (fromAppParams !== null) {
     Sit.initialDropZoneAnimation = false;
     markSitrecReady();
 } else if (customSitch !== null) {
-    if (isResolvableSitrecReference(customSitch)) {
+    // Decide, BEFORE fetching, whether this sitch's contents can be trusted. ?custom=
+    // accepts any URL, so the words inside may have been written by whoever sent the link
+    // rather than by the person clicking it — and those words reach the AI assistant.
+    // Classified from the delivery channel only; never from the payload we are about to
+    // download. See src/SitchProvenance.js.
+    const resolvable = isResolvableSitrecReference(customSitch);
+    const ownerId = resolvable ? extractUserIdFromSitrecReference(customSitch) : null;
+    setSitchProvenance(
+        classifyProvenance({resolvable, ownerId, viewerId: getEffectiveUserID()}),
+        resolvable ? ("shared sitch from user " + ownerId) : customSitch
+    );
+
+    if (resolvable) {
         // Resolve to a temporary fetch URL for this session while preserving a stable canonical ref.
         const resolvedCustom = await resolveSitrecReference(customSitch);
         customSitchRef = resolvedCustom.ref;

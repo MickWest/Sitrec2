@@ -4,6 +4,56 @@ import {ECEFToLLAVD_radii, wgs84} from "./LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import * as LAYER from "./LayerMasks";
 
+// Intersections with a subtree, nearest first, skipping anything the renderer is
+// not DRAWING.
+//
+// NOT raycaster.intersectObject(group, true): Three.js's raycaster ignores
+// .visible, and 3DTilesRenderer keeps every loaded tile in the scene graph,
+// hiding the LOD levels it is not showing by clearing visible on their tile
+// group. A coarse ancestor tile spans a whole region on a few hundred vertices,
+// so it interpolates the basin floor from the high ground around it: over Los
+// Angeles one sat 1.66 km ABOVE Torrance airport. As the nearest hit that
+// invisible tile then won every pick, and because zoom dollies TOWARD the picked
+// point — cutting the remaining distance by a fixed fraction each notch — the
+// camera converged on a point in mid-air and the airport never got any closer.
+// That is what "something is in the way" looks like from the outside.
+//
+// Pruning invisible subtrees is also cheaper than the recursive intersect, since
+// it skips geometry that will never be drawn.
+function intersectDisplayed(object, raycaster) {
+    const intersects = [];
+    gatherDisplayed(object, raycaster, intersects);
+    intersects.sort((a, b) => a.distance - b.distance);
+    return intersects;
+}
+
+// The recursion behind intersectDisplayed.
+//
+// Only objects that carry geometry are raycast, never the containers. That is
+// load-bearing, not tidiness: 3DTilesRenderer's TilesGroup overrides raycast()
+// with its own recursive descent, so calling it re-enters the library walk and
+// re-introduces every hidden tile this function just pruned. Skipping
+// geometry-less nodes leaves the recursion entirely to us. (An earlier version
+// of this called object.raycast unconditionally, mirroring Three.js's own
+// intersectObject walk, and pruned nothing at all.)
+//
+// The test is `geometry !== undefined` rather than `isMesh` so it also covers
+// the Points that 3DTilesRenderer builds for PNTS point-cloud tiles. Sitrec's
+// configured sources (Google Photorealistic, Cesium OSM) are all mesh, and
+// InstancedMesh / BatchedMesh are Meshes, so isMesh would be enough today —
+// but a leaf with geometry is the property that actually matters here, and
+// there is no container in the tiles tree that has one.
+function gatherDisplayed(object, raycaster, intersects) {
+    if (object.visible === false) return;
+    if (object.geometry !== undefined && object.layers.test(raycaster.layers)) {
+        object.raycast(raycaster, intersects);
+    }
+    const children = object.children;
+    for (let i = 0; i < children.length; i++) {
+        gatherDisplayed(children[i], raycaster, intersects);
+    }
+}
+
 // Cast a Raycaster's ray at "the ground," in order of preference:
 //
 //   1. The NEAREST concrete surface the ray reaches: the terrain mesh AND —
@@ -65,7 +115,7 @@ export function raycastLocalGround(raycaster, camera = undefined) {
             const savedFirstHit = raycaster.firstHitOnly;
             raycaster.layers.mask = camera.layers.mask;
             raycaster.firstHitOnly = true;
-            const hits = raycaster.intersectObject(group, true);
+            const hits = intersectDisplayed(group, raycaster);
             raycaster.layers.mask = savedMask;
             raycaster.firstHitOnly = savedFirstHit;
             if (hits.length > 0) {
