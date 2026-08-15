@@ -1,39 +1,27 @@
 # BOT Bench — synthetic scenario families for bearings-only tracking (BOT) evaluation
 
-STATUS: v2 — AGREED CONTRACT (Claude + Codex, 2026-07-22). Supersedes the v1 draft.
-Negotiation history: Claude drafted v1; Codex reviewed against the codebase and the
-verbatim brief (two passes); all Codex corrections were accepted; Codex's block
-design, schemas, and protocols below are its own text, lightly edited for layout.
+STATUS: v2 — AGREED CONTRACT (2026-07-22). Supersedes the v1 draft. A v1 draft
+was reviewed against the codebase in two passes; all review corrections were
+accepted; the block design, schemas, and protocols below are the reviewed text,
+lightly edited for layout.
 
-## Original brief (Mick, verbatim — the authoritative statement of intent)
+## Purpose and scope
 
-> Work with Codex on creating a suite of test sitches for the traverse
-> analysis. The platforms will be fixed wing aircraft, usually with very
-> powerful zoom (like <1° FOV). The target will be 1) windblow balloons
-> [rising party balloon, stable party balloons, rising weather baloons, stable
-> HAB, any other useful), 2) birds, 3) Aircraft, 4) Venus, 5) anomalous
-> objects (sudden impossible accelerations). The sitch can be from 5 to 120
-> seconds. The platform can be in an orbit arouna point, in an orbit around
-> the rough direction of the object, flying a curve, flying normal cruise
-> straight line, flying an S-curve towards or perpendicular to the object.
-> Wind for ballons can be zero, ideal fixed, data based (UWYO, GFS, etc), and
-> with or without varaiblity. The tracking can have the automated operator
-> wobble. Background Terrain can be ocean, high (Denver), or mountains
-> (Cheyanne Mountain). Initially work on auto generating the families of
-> sitches (seems like there are a lot of permutations, so start out light,
-> shorter tracks). Our eventual goal it to contribute to a paper on bearings
-> only trackins (BOT) with detailed metrics on how well each algoritthm does
-> in each situation. Collapse similar sets where possible. For the first
-> round, just do the contant veleocy and Kalman smoother (and then maybe any
-> others that run very fast for small datasets). Given the large problem and
-> solution spaces, we might want to go for local compute as a solution. Start
-> by checking you can communicate with Codex, and then collapborate initial
-> plan. When you agreed (leave me out of it unless really necessary)
-> implement the plan. Iterate to get a good set of sitechs (which can all be
-> generated, we don't need to save them yet) and the initial analysis with
-> the limited set of solvers across the problem space. Things to discover are
-> which solvers work best for what sitiuation, and how to determine that, as
-> well as general metrics for how well practical situations can be recovered.
+Build an auto-generated suite of test scenarios for the traverse analysis. The
+platform is a fixed-wing aircraft with a narrow field of view (<1°), flying an
+orbit around a point, an orbit around the object's rough direction, a curve, a
+straight cruise, or an S-curve toward or perpendicular to the object. Targets:
+wind-blown balloons (rising party, stable party, rising weather, stable HAB),
+birds, aircraft, Venus, and anomalous objects with sudden impossible
+accelerations. Clips run 5 to 120 seconds. Wind for balloons: zero, ideal
+fixed, or data-based, with or without variability. Pointing can carry simulated
+operator wobble. Sites: ocean, high plain (Denver), and mountain (Cheyenne
+Mountain). Scenario families are generated on demand, not saved; similar sets
+collapse where possible. Round 1 uses the constant-velocity solver, the Kalman
+smoother, and other fast solvers only. The goal is a paper on bearings-only
+tracking (BOT) with detailed metrics: which solvers work in which situations,
+how to determine that from observables, and how well practical situations can
+be recovered at all.
 
 ## The five paper-facing questions
 
@@ -167,7 +155,7 @@ vertical shear. HAB block uses u=20, v=8 m/s, no gust.
 | `RATE-30HZ` | platforms {orbit-point, straight, s-curve-perp} × ranges {2,20} km × durations {15,60} s; party-neutral, seed 101, white σ=0.03°, 30 Hz | 12 | Q1,Q2 robustness |
 | `DURATION-120S` | platforms {orbit-point, straight, s-curve-perp} × targets {party-neutral, bird, aircraft-cruise, venus}; seed 101, white σ=0.03°, 10 Hz, 120 s | 12 | Q1,Q2,Q4 robustness |
 | `SITE-PROXY` | sites {ocean, denver, cheyenne-mountain} × targets {party-rising, hab-19km, venus}; orbit-point, 15 s, seed 501, white σ=0.03° | 9 | Q2/Q4 invariance sentinel |
-| `RECOVERABLE-NOISE` (round 1.1, Codex R3) | platforms {orbit-point, curve} × targets {party-neutral, bird, aircraft-turn} × range 2 km × 60 s / 10 Hz × wind fixed × obs {clean, wobble, matched-white} (FOV 0.90°) × seeds {601–605} | 90 | Q1, Q3 in the RECOVERABLE regime |
+| `RECOVERABLE-NOISE` (round 1.1, audit R3) | platforms {orbit-point, curve} × targets {party-neutral, bird, aircraft-turn} × range 2 km × 60 s / 10 Hz × wind fixed × obs {clean, wobble, matched-white} (FOV 0.90°) × seeds {601–605} | 90 | Q1, Q3 in the RECOVERABLE regime |
 
 Site sentinels (all still flat elevation; no result may be described as a
 terrain result): `ocean` 35°, −125°, 0 m; `denver` 39.7392°, −104.9903°,
@@ -538,7 +526,7 @@ tests/botbench/generator.test.js             # fast CI smoke: determinism, feasi
   fetches, no DE physics fits, no real terrain, Venus ephemeris computed once
   per scenario block and interpolated.
 
-## Post-audit amendments (2026-07-22, Codex findings review — all agreed)
+## Post-audit amendments (2026-07-22, findings review — all agreed)
 
 Round 1 total is now **855** scenarios (765 + RECOVERABLE-NOISE). Fixes and
 explicit deviations from the original contract text:
@@ -604,9 +592,9 @@ explicit deviations from the original contract text:
   records; paper-facing tables and figures.
 - **M4 (Mick, 2026-07-22)** — a USER-FACING document with diagrams and tables
   explaining what was done and the results, written after the current tasks
-  (M1/M2 sweep + initial analysis) are complete. DONE 2026-07-22 (after Codex
-  "M4-GO"): benchmarks/botbench/analysis/BOTBench-Report.html — also published
-  as a private artifact.
+  (M1/M2 sweep + initial analysis) are complete. DONE 2026-07-22 (after the
+  audit's "M4-GO"): benchmarks/botbench/analysis/BOTBench-Report.html — also
+  published as a private artifact.
 - **Round 2 (deferred, recorded)** — physics/spline solvers on interesting
   cells; UWYO/GFS wind fixtures; burst/superpressure balloons; real terrain
   in-app; sitch-JSON bridge for visual MCP inspection of selected scenarios.
