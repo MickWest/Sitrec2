@@ -408,7 +408,10 @@ class CSitrecAPI {
                     + " it beats the camera it started from — 'Rejected' in the status means the"
                     + " camera was left alone. Points can only be solved on the frame they were"
                     + " placed on: off it, the status says which frame to go to and nothing is"
-                    + " changed.",
+                    + " changed. Free Look Camera also blocks a solve and says so in the status,"
+                    + " because it suspends the camera sources a fit writes to, so the camera"
+                    + " could not move; switch it off first with setMenuValue {menu: 'camera',"
+                    + " path: 'Camera Tweaks/Free Look Camera', value: false}.",
                 fn: () => {
                     const fit = this._fitNode();
                     if (!fit) return {success: false, error: "no fitCameraPoints node (needs a custom sitch with a video)"};

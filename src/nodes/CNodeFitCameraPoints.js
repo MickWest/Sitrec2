@@ -183,10 +183,13 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this._undoBefore = null;
         this._pendingEnable = undefined;
         this._restoreMatchVideoAspect = undefined;
-        // The "go to the nearest fit keyframe?" prompt: whether one is up, and whether the thing
-        // it interrupted was a fit that should resume on arrival. See offerNearestKeyframe.
+        // The two prompts that stand between a Fit Now and a fit — "go to the nearest fit
+        // keyframe?" and "clear Free Look?" — and the fit they interrupted, resumed a tick after
+        // whichever of them is accepted. One pending flag for both, because they chain: clearing
+        // Free Look re-enters fitNow, which may then raise the keyframe prompt in its turn.
         this._keyframePromptOpen = false;
-        this._pendingFitAfterJump = false;
+        this._freeLookPromptOpen = false;
+        this._pendingFit = false;
 
         this.markers = new FitPointHandles3D({
             getPoints: () => this.points.map((p) => ({
@@ -419,13 +422,14 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             this.setEnabled(on);
         }
 
-        // The fit that was interrupted by the "not on a fit keyframe" prompt, resumed now that
-        // the graph has recalculated for the frame the prompt moved us to. Re-checked rather
-        // than assumed: between the click and this tick the user may have scrubbed away again,
-        // and fitNow() would then raise a second prompt for a fit nobody asked for twice.
-        if (this._pendingFitAfterJump) {
-            this._pendingFitAfterJump = false;
-            if (this.enabled && this.onCorrectFrame()) this.fitNow();
+        // The fit a prompt interrupted, resumed now that the graph has recalculated for whatever
+        // the prompt changed — the frame it moved to, or the controllers it handed the camera
+        // back to. Back through fitNow() rather than straight to runFit, so its own gates get
+        // another look: clearing Free Look off a keyframe lands here and raises the keyframe
+        // prompt in turn, which is how the two chain when both stand in the way.
+        if (this._pendingFit) {
+            this._pendingFit = false;
+            if (this.enabled) this.fitNow();
         }
 
         // Scrubbing onto a fit keyframe makes it the one being edited. Only while the gesture
@@ -1733,10 +1737,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     // ---------- the fit ----------
 
     /**
-     * @param {boolean} offerFrameJump ask about moving to a keyframe when off one. False for
-     *        callers with nobody to ask — see the API note below.
+     * @param {boolean} offerFixes offer to clear whatever stands between here and a fit —
+     *        Free Look, or being off a fit keyframe — instead of just refusing. False for
+     *        callers with nobody to ask; see the API note below.
      */
-    fitNow(offerFrameJump = true) {
+    fitNow(offerFixes = true) {
+        // Free Look first, because it is the one that would otherwise look like it worked: the
+        // solve succeeds and the camera ignores every part of the answer. Asked before the
+        // keyframe question so the user is not moved to another frame only to be told the fit
+        // could not be applied there either.
+        if (offerFixes && !this.offerClearFreeLook()) return;
         // Off a keyframe, offer to go to one and fit there rather than simply refusing. Asked
         // HERE, on the explicit button, and not down in runFit: requestFit reaches runFit on
         // every point nudge with Fit on Change on, and a dialog raised by a drag nobody thought
@@ -1746,7 +1756,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // The API passes false. A modal there would put a dialog on screen with nobody in front
         // of it, and hand the caller a summary of a fit that had not happened; runFit's own
         // refusal reaches it as a status string, which is what fitPointsSolve already reported.
-        if (offerFrameJump && this.points.length > 0
+        if (offerFixes && this.points.length > 0
             && !this.offerNearestKeyframe("fit the camera", true)) {
             return;
         }
@@ -1774,6 +1784,16 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
         const size = this.videoSize;
         if (!size) { this.updateStatus("No video loaded"); return false; }
+
+        // Free Look would make this a fit that appears to work and does nothing — see
+        // freeLookOn(). Refused here so every path is covered, and OFFERED as a choice on the
+        // Fit Now button, the same division of labour the wrong-frame gate uses.
+        if (this.freeLookOn()) {
+            this.updateStatus("Free Look is on, so the fit could not move the camera — " +
+                "switch it off and fit again");
+            setRenderOne(true);
+            return false;
+        }
 
         // The fit reads the LIVE camera as its starting state, and the live camera is whatever
         // the controllers produce at par.frame. Solving points from frame N against a camera
@@ -2262,6 +2282,68 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         return `Points belong to frame ${this.fitFrame} — go to it to ${verb}`;
     }
 
+    /**
+     * Is the look camera being hand-flown, so a fit could not move it?
+     *
+     * Free Look suspends every computed source that writes the camera's pose —
+     * CNodeCamera.applyControllers returns before running any of them. A fit still SOLVES
+     * correctly under it, because it reads the live camera and the hand-flown pose is a real
+     * pose; what it cannot do is apply the answer. fixedCameraPosition, ptzAngles and fovUI
+     * would all be written and every one of them ignored, and the fit would report a residual
+     * and a "Fitted" status over a camera that had not moved — which is the worst kind of
+     * failure this tool can have, because the camera IS the output.
+     */
+    freeLookOn() {
+        return !!this.lookCameraNode()?.freeLook;
+    }
+
+    /**
+     * Free Look is on and a fit was asked for: offer to switch it off and go ahead.
+     *
+     * Switching it off is not a discard — the setter publishes the flown position into the
+     * Manual position node and hands the orientation to the PTZ angles, so the camera stays
+     * exactly where it was flown to. That is what makes this offer safe to accept: the fit then
+     * starts from the pose the user chose, rather than from wherever the camera was before they
+     * started flying.
+     *
+     * @returns {boolean} true when Free Look is already off and the caller may just proceed
+     */
+    offerClearFreeLook() {
+        if (!this.freeLookOn()) return true;
+        if (this._freeLookPromptOpen) return false;
+
+        this._freeLookPromptOpen = true;
+        showChoice("Free Look needs to be off to fit points.", {
+            title: "Free Look Is On",
+            options: [
+                {label: "Clear Lock, then Do Fit", value: true, primary: true, color: "#1976d2"},
+                {label: "Cancel Fit", value: false, cancel: true, color: "#757575"},
+            ],
+        }).then((clear) => {
+            this._freeLookPromptOpen = false;
+            if (!clear) {
+                this.updateStatus("Fit cancelled — Free Look is still on");
+                setRenderOne(true);
+                return;
+            }
+            const cam = this.lookCameraNode();
+            // Through the GUI controller the camera node keeps a handle to, so the checkbox
+            // follows rather than silently disagreeing with the state. Straight to the property
+            // if the menu was never built — the setter does all the real work either way, and
+            // the mirrored copy in the look view's header menu follows through shareAs.
+            if (cam?.freeLookController) cam.freeLookController.setValue(false);
+            else if (cam) cam.freeLook = false;
+            // Deferred for the same reason the keyframe jump is: switching Free Look off hands
+            // the flown pose to the position and angle nodes and lets the controllers drive
+            // again, and the fit's write-back should land on a camera those controllers are
+            // already posing. update() picks it up next tick.
+            this._pendingFit = true;
+            this.updateStatus("Free Look off — fitting");
+            setRenderOne(true);
+        });
+        return false;
+    }
+
     /** The fit keyframe closest to the playhead, or the active frame when there are none yet. */
     nearestKeyframeFrame() {
         const f = Math.round(par.frame);
@@ -2323,7 +2405,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             // not produced yet, because the graph has not recalculated for the frame set on the
             // line above. Fitting now would solve this keyframe's points against the camera pose
             // of the frame the user was just looking at. update() picks it up next tick.
-            this._pendingFitAfterJump = thenFit;
+            this._pendingFit = thenFit;
             this.updateStatus(`Moved to fit keyframe ${target}`);
             setRenderOne(true);
         });
