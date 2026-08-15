@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.131.1 (2026-08-15)
+
+### New Features
+
+- **Place on 3D Objects** (Camera → Fit Camera to Points): fit control points can now land on the scene's own 3D objects — an aircraft, a balloon, a sphere — as well as on the terrain and the 3D buildings, so aiming at an aircraft puts the point on the aircraft instead of on the ground half a kilometre beyond it. Whatever is nearest the camera wins, so an object hidden behind a building is not picked through it and a click past an object still lands on the ground. Objects that are switched off cannot be hit, and the camera's own marker never is. On by default, saved with the sitch, and like *Place on 3D Buildings* it affects where new points are dropped and where dragged handles land, not points already placed.
+
+### Bug Fixes
+
+- Fixed doing a fit switching *Match Video Aspect* (Camera menu) back on. *Sync Look Camera* (Camera → Fit Camera to Points) no longer touches that checkbox in either direction, so unticking it now stays unticked through the next fit and every fit after it. The look view still follows the video's zoom and pan while the sync is on — *Match Video Aspect* only decides whether the extra picture around the video's frame is cropped away or left as a margin, and a fit is often easier to judge with it visible.
+
+- Fixed the wheel and left drag over the look view zooming and panning the video away from the point you were pointing at whenever the look view was not cropped to the video's shape — reachable in 2.131.0 by unticking *Match Video Aspect* (Camera menu), and the normal state now that a fit no longer switches it on. Zooming now holds whatever is under the cursor under the cursor, including during a fast trackpad flick.
+
+---
+
 ## Version 2.131.0 (2026-08-15)
 
 ### New Features
