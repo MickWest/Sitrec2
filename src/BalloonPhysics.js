@@ -7,6 +7,9 @@ import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "./Spher
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {mulberry32} from "./DifferentialEvolution";
 
+// "This track lives on a flat plane; MSL and HAE are the same thing here."
+export const FLAT_GEOID = () => 0;
+
 // Integrate the balloon's per-frame ECEF positions.
 //
 // params:
@@ -20,6 +23,11 @@ import {mulberry32} from "./DifferentialEvolution";
 //   seed                 PRNG seed — same seed → identical flight
 //   frames               number of frames to generate
 //   dt                   sim seconds per frame (Sit.simSpeed / Sit.fps)
+//   geoidOffset          (lat, lon) → geoid undulation N in metres, used to move
+//                        between MSL and HAE. Defaults to the real EGM96 lookup.
+//                        A flat-plane caller (the BOT Bench generator, unit tests)
+//                        passes FLAT_GEOID to say "no geoid here" explicitly,
+//                        rather than relying on the grid happening not to be loaded.
 //
 // windAt(lat, lon, altMSL, f) → {u, v} wind in m/s (u = east, v = north).
 //
@@ -37,6 +45,7 @@ export function integrateBalloonPositions(params, windAt) {
         seed = 1,
         frames,
         dt,
+        geoidOffset = meanSeaLevelOffset,
     } = params;
 
     const rand = mulberry32((seed >>> 0) || 1);
@@ -45,7 +54,7 @@ export function integrateBalloonPositions(params, windAt) {
     let lat = startLat;
     let lon = startLon;
     let altMSL = startAltMSL;
-    let pos = LLAToECEF(lat, lon, altMSL + meanSeaLevelOffset(lat, lon));
+    let pos = LLAToECEF(lat, lon, altMSL + geoidOffset(lat, lon));
 
     // smooth gust state (m/s, ENU)
     let gustU = 0, gustV = 0;
@@ -93,7 +102,7 @@ export function integrateBalloonPositions(params, windAt) {
         const lla = ECEFToLLAVD_radii(pos);
         lat = lla.x;
         lon = lla.y;
-        altMSL = lla.z - meanSeaLevelOffset(lat, lon);
+        altMSL = lla.z - geoidOffset(lat, lon);
     }
     return out;
 }

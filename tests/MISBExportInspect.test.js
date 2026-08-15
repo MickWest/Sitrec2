@@ -12,6 +12,17 @@
  */
 
 jest.mock("../src/showError", () => ({showError: jest.fn()}));
+// The production geoid loader fetches its grid over the network, which isn't
+// available under Jest, so the synchronous accessor would return 0 and warn.
+// Delegate to egm96-universal (bit-identical values) so the exporter's HAE->MSL
+// conversion is exercised for real. Same pattern as tests/nodes/CNodeTrack.test.js.
+jest.mock("../src/EGM96Geoid", () => {
+    const {meanSeaLevel} = require("egm96-universal");
+    return {
+        meanSeaLevelOffset: (lat, lon) => meanSeaLevel(Math.max(-90, Math.min(90, lat)), lon),
+        ensureGeoidLoaded: () => Promise.resolve(),
+    };
+});
 jest.mock("file-saver", () => ({saveAs: jest.fn()}));
 jest.mock("../src/Globals", () => {
     const actual = jest.requireActual("../src/Globals");

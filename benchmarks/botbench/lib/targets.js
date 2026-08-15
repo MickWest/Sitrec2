@@ -12,7 +12,7 @@
 // equations, NOT TraverseAnalysis.simulateAircraft, so the physics fitters
 // stay benchmarkable later without an inverse crime.
 
-import {integrateBalloonPositions} from "../../../src/BalloonPhysics";
+import {FLAT_GEOID, integrateBalloonPositions} from "../../../src/BalloonPhysics";
 import {ecefDisplacementToENU} from "../../../src/TrackExportMath";
 import {makeStream} from "./rng";
 
@@ -36,6 +36,12 @@ function balloonTrack({site, n, fps, windSeed, wind, startAGL, ascentRate}) {
         seed: windSeed,
         frames: n,
         dt: 1 / fps,
+        // Scenarios are generated on a flat plane (altitude = Z + groundElevationMSL),
+        // so there is no geoid here by construction. Stating it keeps the set
+        // reproducible: the altMSL fed back to windAt drives the layered wind
+        // profile, and a real N (-40.7 m at the ocean site) would move every
+        // balloon truth track.
+        geoidOffset: FLAT_GEOID,
     }, wind.windAt);
 
     const origin = ecef[0].position;
