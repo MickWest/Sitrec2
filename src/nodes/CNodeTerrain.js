@@ -921,7 +921,33 @@ export class CNodeTerrain extends CNode {
         // however, we can use raycasting if we want more accurate results
         // that match the actual polygons
         // this is useful for things like building that sit on the terrain
-        if (raycast) {
+        // Not while Google Photorealistic 3D tiles own the ground. Two reasons, and
+        // the first is fatal on its own:
+        //
+        //   1. Under imagery suppression the tiles keep a shared PLACEHOLDER material
+        //      with no .uniforms, so QuadTreeMap's readiness predicates (which require
+        //      material.uniforms?.map) never pass, so the suppression-only reconciler
+        //      never retires an ancestor, so no tile layer bits are ever cleared. The
+        //      group ends up holding its ENTIRE quadtree pyramid, all active: one
+        //      vertical column at Torrance hit 13 meshes spanning 9 km to 12,756 km
+        //      (the zoom-0 whole-globe tile). getClosestIntersect takes nearest-to-
+        //      origin and the origin is 100 km UP, so it returns the HIGHEST — +70 m
+        //      HAE where the ground, and the finest tile, are at -5.5 m.
+        //   2. Even with that fixed, matching "the visible polygons" is meaningless
+        //      here: the terrain is not what is on screen, the 3D tiles are.
+        //
+        // Note this cannot be filtered by .visible (0 of 514 terrain meshes are
+        // hidden), by the camera's layer mask (same 13 hits), or by isRenderingForView
+        // (it fails CLOSED — the uniforms gate passes for 2 meshes in the whole
+        // terrain). Falling through to the elevation map is also contractually safe:
+        // the branch below already falls through whenever the ray misses.
+        //
+        // The tile surface is deliberately NOT consulted here. It is a single draped
+        // mesh with no street under a building, so it would answer with rooftops, and
+        // this function promises buildings-free terrain.
+        const imagerySuppressed = this.UI?.suppressMapImagery?.() === true;
+
+        if (raycast && !imagerySuppressed) {
             // we are going to use a ray from 100000m above the point to
             const B = pointAbove(A, 100000)
             const BtoA = A.clone().sub(B).normalize()

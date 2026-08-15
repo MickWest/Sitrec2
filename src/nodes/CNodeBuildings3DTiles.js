@@ -22,6 +22,7 @@ import {TreeManualBrush} from "../TreeManualBrush";
 import {ECEFToLLAVD_radii, RLLAToECEF_radii} from "../LLA-ECEF-ENU";
 import {getLocalUpVector} from "../SphericalMath";
 import {getPointBelow} from "../threeExt";
+import {intersectDisplayed} from "../raycastGround";
 import {undoManager as UndoManager} from "../UndoManager";
 import {excludeFromTerrestrialRefraction} from "../atmosphere/terrestrialRefraction";
 
@@ -934,7 +935,8 @@ export class CNodeBuildings3DTiles extends CNode {
     //   - LOWEST dips through a building's watertight shell to a sub-surface skirt
     //     polygon BELOW the surrounding tarmac → an AGL witness / WASD walker ends up
     //     inside or under the building.
-    //   - HIGHEST grabs a building ROOF.
+    //   - HIGHEST grabs a building ROOF — though see the caveat below: over a
+    //     building footprint the roof is the ONLY hit, so nothing can avoid it.
     //   - Worst of all, 3D tiles stream coarse→fine: a coarse ancestor tile covering a
     //     continent-scale region is ~planar and, sampled away from its centre, sits
     //     TENS OF KILOMETRES below the true surface (measured: −50 km at Copenhagen).
@@ -944,6 +946,21 @@ export class CNodeBuildings3DTiles extends CNode {
     // is the reliable anchor: pick the tile hit nearest it, and REJECT entirely if even
     // the nearest is implausibly far (coarse-tile garbage / a tall roof). When a real
     // fine tile is loaded the tarmac is within a metre or two and still wins on detail.
+    //
+    // BUT BE PRECISE ABOUT WHAT THIS RETURNS. Google photogrammetry is a SINGLE DRAPED
+    // mesh: a building is a bump in the surface, with no street underneath. Measured
+    // over Torrance, a straight-down ray returned exactly ONE hit at all 144 points
+    // sampled. So over a building footprint there is no street hit to prefer, the
+    // arbitration above degenerates to "return the only hit", and GROUND_TOLERANCE
+    // then accepts any structure shorter than 40 m. This is really
+    // "visible surface below", not "ground below", and the tolerance rejects gross
+    // coarse-LOD error, NOT buildings.
+    //
+    // That is the RIGHT answer for the callers here — the draped surface is the only
+    // OCCUPIABLE surface, so a WASD walker crossing a footprint should rise onto the
+    // roof, and "true ground" would put them inside the watertight shell (the LOWEST
+    // failure above). AGL then reads as radar-altimeter clearance above the first
+    // visible surface. Just never wire this into something promising bare terrain.
     //
     // this.group recursively holds every loaded tile mesh for all per-view
     // TilesRenderers, so intersectObject(group, true) covers them all.
@@ -966,7 +983,17 @@ export class CNodeBuildings3DTiles extends CNode {
         _groundRaycaster.set(origin, up.clone().negate());
         _groundRaycaster.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
         _groundRaycaster.firstHitOnly = false; // we need every hit to pick the best
-        const hits = _groundRaycaster.intersectObject(this.group, true);
+        // intersectDisplayed, NOT intersectObject(group, true): the group also holds
+        // the LOD levels the renderer has stopped drawing (measured: 107 of 618 tiles
+        // hidden in the main view, 99 of 407 in the look view), and Three.js raycasting
+        // ignores .visible. The elevation-map arbitration below rejects the gross cases
+        // — a hidden hit 4,920 m underground was correctly thrown out — but it only
+        // establishes PLAUSIBLE ground, not DISPLAYED ground: a hidden coarse ancestor
+        // that happens to sit nearer the elevation map than the displayed fine tile
+        // would win, and within GROUND_TOLERANCE nothing would catch it. Since what
+        // this function actually returns is the visible surface below (see the header),
+        // geometry that is not being drawn has no business in the hit list.
+        const hits = intersectDisplayed(this.group, _groundRaycaster);
         if (hits.length === 0) return null;
 
         // Reference: the smooth elevation-map ground at this column (buildings-free).

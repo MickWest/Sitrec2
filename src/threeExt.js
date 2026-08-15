@@ -831,10 +831,13 @@ export function getPointBelowLL(lat, lon) {
 
 // Ground directly below an ECEF point taken from the actual loaded 3D building
 // tiles (the rendered Google Photorealistic / OSM geometry), or null if there are
-// no 3D tiles, none loaded directly below yet, or only implausible (coarse-stream /
-// roof) geometry there. Unlike getPointBelow() — which uses the smooth elevation map
+// no 3D tiles, none loaded directly below yet, or only implausible (coarse-stream)
+// geometry there. Unlike getPointBelow() — which uses the smooth elevation map
 // and ignores buildings — this raycasts the real tile polygons and returns the hit
-// nearest the elevation-map ground (the walkable street surface). NOTE: query from
+// nearest the elevation-map ground. That is the walkable street surface in the open,
+// but over a building footprint it is the ROOF: the tiles are a single draped mesh
+// with no street beneath, so the roof is the only hit and any structure under 40 m
+// is accepted. NOTE: query from
 // NEAR the surface, not 100 km up — a high query point's local-up differs from the
 // surface normal and biases the column sideways. See CNodeBuildings3DTiles.groundBelow.
 export function getTilesPointBelow(A) {
@@ -867,6 +870,34 @@ function tilesGroundTolerance() {
     return NodeMan.get("buildings3DTiles").groundTolerance ?? 0;
 }
 
+// THE ground the user can actually SEE under `point`, or null when that is just
+// the elevation map and the caller should use getPointBelow() as usual.
+//
+// Only the Google 3D tiles can disagree with the elevation map about where the
+// ground is, and they only ARE the ground while the terrain basemap is hidden.
+// groundBelow() is the authority for the tile surface; null means "nothing
+// better than the elevation map is available".
+//
+// Be precise about what that surface IS: Google photogrammetry is a single
+// DRAPED mesh, so a building is a bump in it with no street surface underneath
+// (measured over Torrance: a downward ray returns exactly ONE hit at all 144
+// points sampled). groundBelow() therefore cannot tell roof from street — its
+// "nearest the elevation map" arbitration degenerates to "the only hit", and its
+// 40 m tolerance accepts any structure shorter than that. It is really
+// "visible surface below", not "ground below".
+//
+// That is the RIGHT answer for the caller this exists for — someone pointing at
+// a pixel wants the surface they pointed at, roof included — but it is why this
+// must not be wired into a query that promises buildings-free terrain.
+//
+// Deliberately the single encoding of that rule: clampAboveGround() and
+// adjustHeightAboveGround() both need it and differ only in what they do with
+// the answer — clamp toward it, or set from it.
+function visibleGroundBelow(point) {
+    if (!terrainBasemapHidden()) return null;
+    return getTilesPointBelow(point);
+}
+
 // given a point in ECEF, ensure it is at least "height" meters above the ground
 // accounting for terrain.
 // useVisibleGround opts in to clamping against the Google 3D-tile surface (see
@@ -893,9 +924,11 @@ export function clampAboveGround(point, height, useVisibleGround = false) {
     // clamping to it either parks the object in mid-air over the visible street —
     // its height stops responding while the AGL readout bottoms out well above
     // zero — or buries it under one. Clamp to the tile surface in BOTH directions
-    // instead; groundBelow() is the authority there and already rejects roofs and
-    // coarse-LOD tiles by returning null, in which case the elevation map is still
-    // the best ground available.
+    // instead; groundBelow() is the authority there and rejects coarse-LOD tiles by
+    // returning null, in which case the elevation map is still the best ground
+    // available. It does NOT reject roofs — over a building footprint the roof is the
+    // only hit — but clamping something the user placed to the visible surface it
+    // stands on is the intended behaviour here.
     if (useVisibleGround && terrainBasemapHidden()) {
         // Skipping the raycast is only sound while the point sits too high for any
         // ACCEPTED tile ground to reach it — groundBelow() takes tile hits within
@@ -903,7 +936,7 @@ export function clampAboveGround(point, height, useVisibleGround = false) {
         if (pointAlt - groundAlt > height + tilesGroundTolerance()) {
             return point;
         }
-        const tileGround = getTilesPointBelow(point);
+        const tileGround = visibleGroundBelow(point);
         if (tileGround !== null) {
             const tileAlt = calculateAltitude(tileGround);
             return (pointAlt - tileAlt > height) ? point : pointAbove(tileGround, height);
@@ -927,9 +960,34 @@ export function pointAbove(point, height) {
     return raisePoint(point, height);
 }
 
-export function adjustHeightAboveGround (point, height, raycast = false) {
-    const ground = getPointBelow(point, raycast);
-    return pointAbove(ground, height);
+// Put `point` AT `height` above the ground. A SET, not a clamp — contrast
+// clampAboveGround(), which leaves a point that is already high enough alone.
+//
+// `options` is {raycast, useVisibleGround}. A bare boolean is still accepted and
+// means {raycast}, which is how every pre-existing call reads.
+//
+// useVisibleGround matters only while Google Photorealistic 3D tiles are the
+// rendered ground, because there the elevation map is NOT the surface on screen:
+// measured in one Athens block it sits ~12 m above the tile ground in most
+// columns and up to ~6 m below it in a fifth of them. Anything the user places by
+// pointing AT the screen wants the surface they pointed at. It is off by default
+// because it costs a tile raycast (~0.2 ms) that bulk callers — which sit on the
+// ground by construction — do not need.
+//
+// When asked for, the tile ground is resolved FIRST: on success the terrain is
+// never consulted, so `raycast` cannot spend a millisecond raycasting a basemap
+// that is hidden anyway. It remains the fallback for when no tile ground there
+// is acceptable.
+export function adjustHeightAboveGround (point, height, options = false) {
+    const {raycast = false, useVisibleGround = false} =
+        (typeof options === "boolean") ? {raycast: options} : (options ?? {});
+
+    if (useVisibleGround) {
+        const visible = visibleGroundBelow(point);
+        if (visible !== null) return pointAbove(visible, height);
+    }
+
+    return pointAbove(getPointBelow(point, raycast), height);
 }
 
 export function adjustHeightHAE(point, height) {

@@ -5,7 +5,8 @@ import {meanSeaLevelOffset} from "./EGM96Geoid";
 import * as LAYER from "./LayerMasks";
 
 // Intersections with a subtree, nearest first, skipping anything the renderer is
-// not DRAWING.
+// not DRAWING. Exported: every ray that means "what is the user looking at"
+// should come through here rather than raycaster.intersectObject(group, true).
 //
 // NOT raycaster.intersectObject(group, true): Three.js's raycaster ignores
 // .visible, and 3DTilesRenderer keeps every loaded tile in the scene graph,
@@ -18,9 +19,12 @@ import * as LAYER from "./LayerMasks";
 // camera converged on a point in mid-air and the airport never got any closer.
 // That is what "something is in the way" looks like from the outside.
 //
-// Pruning invisible subtrees is also cheaper than the recursive intersect, since
-// it skips geometry that will never be drawn.
-function intersectDisplayed(object, raycaster) {
+// This is a correctness change, not a speed one: measured over the Torrance
+// tiles (339 displayed meshes, 206 hidden) a ray costs ~0.04 ms through
+// intersectObject and ~0.06 ms through this walk. The BVH rejects a hidden tile
+// about as fast as the traversal skips it, so pruning pays for itself in the
+// answer, not the clock.
+export function intersectDisplayed(object, raycaster) {
     const intersects = [];
     gatherDisplayed(object, raycaster, intersects);
     intersects.sort((a, b) => a.distance - b.distance);

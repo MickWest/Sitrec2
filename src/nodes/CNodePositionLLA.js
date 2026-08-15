@@ -389,7 +389,13 @@ export class CNodePositionLLA extends CNodeTrack {
                     const eyeLevel = f2m(7); // ~2.13m
                     // Get the point at eye level above local ground.
                     // ECEFToLLAVD_radii returns ellipsoid height (HAE), but _LLA[2] stores MSL.
-                    const groundPoint = adjustHeightAboveGround(cursorPos, eyeLevel, true);
+                    //
+                    // useVisibleGround because cursorPos came from the user pointing at a
+                    // pixel: under Google 3D tiles the elevation map is not the surface they
+                    // clicked, so measuring eye level from it put the position ~12 m out.
+                    // raycast stays on as the fallback for when no tile ground is acceptable.
+                    const groundPoint = adjustHeightAboveGround(cursorPos, eyeLevel,
+                        {useVisibleGround: true, raycast: true});
                     const groundPointLLA = ECEFToLLAVD_radii(groundPoint);
                     const geoidOffset = meanSeaLevelOffset(groundPointLLA.x, groundPointLLA.y);
                     const groundAltMSL = groundPointLLA.z - geoidOffset;
@@ -432,7 +438,10 @@ export class CNodePositionLLA extends CNodeTrack {
         // ground keeps the tile column directly below the camera.
         const elevGround = this.getPointBelowCached(terrainNode, pos, 0, frame);
         // Ride the 3D-tile surface when a believable tile is loaded directly below
-        // (groundBelow() rejects coarse-streaming garbage and roofs); otherwise fall
+        // (groundBelow() rejects coarse-streaming garbage — NOT roofs: the tiles are a
+        // single draped mesh with no street under a building, so over a footprint the
+        // roof is the only hit and anything under 40 m is accepted. Riding the roof is
+        // correct here, since that surface is the only occupiable one). Otherwise fall
         // back to the smooth elevation map. update() re-anchors as finer tiles stream
         // in (see _refineAGLToTiles) so we converge onto the final settled tile.
         const tilesGround = getTilesPointBelow(elevGround);

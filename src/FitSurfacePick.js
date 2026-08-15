@@ -17,7 +17,7 @@
 import {Raycaster, Vector3} from "three";
 import {NodeMan} from "./Globals";
 import {renderedRect, withDisplayedCamera} from "./ViewUtils";
-import {ellipsoidAlongRay, raycastGroundElevationFast} from "./raycastGround";
+import {ellipsoidAlongRay, intersectDisplayed, raycastGroundElevationFast} from "./raycastGround";
 import {liftWorldPoint} from "./atmosphere/terrestrialRefraction";
 import {currentTerrestrialLiftContext} from "./atmosphere/refractionSettings";
 
@@ -67,7 +67,12 @@ export function surfaceAlongRay(origin, direction, useTiles, camera) {
             // firstHitOnly asks the tiles' BVH for just the nearest hit, and is ignored by
             // non-BVH meshes where the sorted hits[0] is the nearest anyway.
             raycaster.firstHitOnly = true;
-            const hits = raycaster.intersectObject(group, true);
+            // intersectDisplayed, NOT intersectObject(group, true): the tiles group still holds
+            // the LOD levels the renderer is not drawing, and Three.js raycasting ignores
+            // .visible. Over Torrance a hidden coarse tile floats 1.6 km up, and taking the
+            // strict nearest hit put a picked point there — 3.4 km from the pixel's actual
+            // ground and 1650 m above it. See raycastGround.js for the full mechanism.
+            const hits = intersectDisplayed(group, raycaster);
             if (hits.length > 0) return hits[0].point.clone();
         }
     }

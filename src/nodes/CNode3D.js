@@ -23,13 +23,18 @@ export class CNode3D extends CNode {
         this.noteShadowCasterState("transform");
     }
 
+    // traverseVisible, not traverse: it stops at any node with visible===false, so a
+    // caster under a hidden INTERMEDIATE group no longer counts. The old walk tested
+    // the root's own visible and each child's own visible, but nothing in between —
+    // and Three.js will not render a child whose ancestor is hidden, so those casters
+    // were invalidating the shadow map for geometry that never reaches the screen.
+    // traverseVisible also subsumes the old root-visibility early-out.
     hasVisibleShadowCaster() {
-        if (!this._object?.traverse || !this._object.visible) return false;
+        if (!this._object?.traverseVisible) return false;
 
         let found = false;
-        this._object.traverse(child => {
-            if (found) return;
-            if (child.visible !== false && child.castShadow === true) {
+        this._object.traverseVisible(child => {
+            if (child.castShadow === true) {
                 found = true;
             }
         });

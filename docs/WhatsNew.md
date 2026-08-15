@@ -9,6 +9,22 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.130.1 (2026-08-15)
+
+### Improvements
+
+- **Drag a pin to move it** (right-click a pin, or right-click the ground → *Drop Pin / Add Feature*): a pin's edit menu is now a proper edit mode. It stays open while you work instead of vanishing at the first click elsewhere, and while it is open you can drag the pin around the view, dropping it on whatever surface is under the cursor — terrain, or a Google 3D-tile rooftop where those are loaded. The location readout updates as you drag, the move can be undone, and you leave edit mode with *Done*, Escape, or a double-click on the menu title.
+
+### Bug Fixes
+
+- Fixed control points in *Fit Camera to Points* (Camera menu) landing in mid-air over Google Photorealistic 3D tiles — the same invisible-tile problem fixed elsewhere in 2.130.0, at a place that fix missed. At one Torrance pixel a point landed 3.4 km away and 1.65 km above the ground it should have hit.
+
+- Fixed dropping a position at eye level above the ground over Google Photorealistic 3D tiles placing it far too high — measured 76 m up at Torrance — and, separately, measuring that height from the smooth underlying elevation map rather than from the surface you actually clicked.
+
+- Fixed hidden 3D objects forcing the shadows to be redrawn from scratch, costing frame rate for geometry that is not on screen.
+
+---
+
 ## Version 2.130.0 (2026-08-14)
 
 ### New Features
