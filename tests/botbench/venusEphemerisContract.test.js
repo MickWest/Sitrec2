@@ -68,7 +68,7 @@ describe("celestial ephemeris contract", () => {
 
             for (const r of celestial) {
                 const sj = JSON.parse(fs.readFileSync(
-                    path.join(rel.challengeDir, "input", `${r.name}.scenario.json`), "utf8"));
+                    path.join(rel.challengeDir, "Input",`${r.name}.scenario.json`), "utf8"));
                 const [lat, lon, alt] = sj.frame.originLLA;
                 // The frame contract must be stated, not left to be guessed.
                 expect(sj.frame.directionBasis).toBe("originLLA");
@@ -77,7 +77,7 @@ describe("celestial ephemeris contract", () => {
                 const o = LLAToECEF(lat, lon, alt);
                 const {east, north, up} = enuBasisAt(lat, lon);
                 const rows = fs.readFileSync(
-                    path.join(rel.answersDir, "truth", `${r.name}.truth.csv`), "utf8")
+                    path.join(rel.answersDir, "Truth",`${r.name}.truth.csv`), "utf8")
                     .trim().split("\n").slice(1);
 
                 let maxDeg = 0;
@@ -107,7 +107,7 @@ describe("celestial ephemeris contract", () => {
         let sawDirection = false, sawPosition = false;
         for (const r of rel.index) {
             const g = JSON.parse(fs.readFileSync(
-                path.join(rel.answersDir, "truth", `${r.name}.truth.json`), "utf8")).geometry;
+                path.join(rel.answersDir, "Truth",`${r.name}.truth.json`), "utf8")).geometry;
 
             // Applicability must track the structural fact, not be set by hand.
             expect(g.cvConditioningApplicable).toBe(g.rangeDefined);
@@ -158,12 +158,12 @@ describe("celestial ephemeris contract", () => {
         });
         for (const r of rel.index.filter((x) => x.truthKind === "direction")) {
             const sj = JSON.parse(fs.readFileSync(
-                path.join(rel.challengeDir, "input", `${r.name}.scenario.json`), "utf8"));
+                path.join(rel.challengeDir, "Input",`${r.name}.scenario.json`), "utf8"));
             const [lat, lon, alt] = sj.frame.originLLA;
             const o = LLAToECEF(lat, lon, alt);
             const {east, north, up} = enuBasisAt(lat, lon);
             const i0 = fs.readFileSync(
-                path.join(rel.challengeDir, "input", `${r.name}.input.csv`), "utf8")
+                path.join(rel.challengeDir, "Input",`${r.name}.input.csv`), "utf8")
                 .split("\n")[1].split(",");
             const [sE, sN, sU] = [Number(i0[4]), Number(i0[5]), Number(i0[6])];
             const sEcef = new Vector3(
@@ -175,7 +175,7 @@ describe("celestial ephemeris contract", () => {
             const d = getCelestialDirection("Venus", new Date(Date.parse(sj.epochISO)), sEcef);
 
             const t0 = fs.readFileSync(
-                path.join(rel.answersDir, "truth", `${r.name}.truth.csv`), "utf8")
+                path.join(rel.answersDir, "Truth",`${r.name}.truth.csv`), "utf8")
                 .split("\n")[1].split(",");
             const shipped = [Number(t0[2]), Number(t0[3]), Number(t0[4])];
             const sensorBasis = angleDeg(
