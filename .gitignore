@@ -43,11 +43,9 @@ AGENTS.md
 /tests_regression/snapshots-diffs/
 /tests_regression/snapshots-baseline/
 /analysis/
-# BOT Bench local sweep output — results are regenerated locally; only the
-# harness is tracked. The design contract (PLAN.md) is kept local by request:
-# it contains an AI working brief, which does not belong in version control.
+# BOT Bench local sweep output (benchmarks/botbench/PLAN.md) — results are
+# regenerated locally; only the harness + plan are tracked
 /benchmarks/botbench/results/
-/benchmarks/botbench/PLAN.md
 # Local code-review / audit reports (not part of the codebase)
 /CODE-REVIEW-*.md
 
