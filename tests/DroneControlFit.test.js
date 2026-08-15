@@ -124,7 +124,14 @@ async function fitControls(scene, K = 4, optOverrides = {}) {
 }
 
 async function fitFreeQuad(scene) {
-    const fit = await fitPhysicsModel(scene.dataset, new Set(), new QuadcopterModel(), OPTS);
+    // fitMaxDt coarsens the integration used to SCORE candidates during the search; the
+    // trajectory that comes back is always re-integrated at the model's own maxDt
+    // (LOSFitting.js), so every assertion below still sees a full-resolution result. This
+    // mirrors what the shipped code already does for a quadcopter — TraverseBattery.js
+    // passes fitMaxDt: 0.5 for exactly this model — so the test now exercises the
+    // production search settings rather than a slower configuration nothing else uses.
+    const fit = await fitPhysicsModel(scene.dataset, new Set(), new QuadcopterModel(),
+        {...OPTS, fitMaxDt: 0.5});
     if (!fit || !fit.positions) return null;
     return {
         errDeg: fit.params.errDeg,

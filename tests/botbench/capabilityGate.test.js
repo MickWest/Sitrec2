@@ -14,6 +14,7 @@
 import {setSit} from "../../src/Globals";
 import {generateScenario} from "../../benchmarks/botbench/lib/generateScenario";
 import {rangeFamilyExceedance, capabilityVerdict, isValidCalibration,
+    measureCapability, applyCapabilityCalibration,
     S2_POSITIVE_ENABLED, CAPABILITY_THRESHOLD_CALIBRATED} from "../../benchmarks/botbench/lib/capabilityDetect";
 import {resolveDetectorConfig, configKey} from "../../benchmarks/botbench/lib/envelopeFeasibility";
 
@@ -120,8 +121,18 @@ describe("capability α̂ claim gate (fail-closed)", () => {
             wind: {kind: "zero"}, observation: {kind: "clean", fovFullDeg: 0.9},
         }, {scenarioSeed: 701});
 
+        // All four cases below ask the SAME question of the same scenario and differ only in
+        // the calibration artifact, which the measurement does not depend on. Measuring once
+        // and gating four times is therefore the identical test at a quarter of the solve
+        // cost — four multi-seed Nelder-Mead searches become one. It also makes the point
+        // sharper: every case now provably shares one α̂, so any difference in the verdicts
+        // is attributable to the artifact and nothing else.
+        const {feas, runningKey: measuredKey} = await measureCapability(scenario, "quad", "air3");
+        const gateWith = (calibration) =>
+            applyCapabilityCalibration(feas, "quad", "air3", measuredKey, calibration);
+
         // default: no calibration passed => measurement only
-        const v = await capabilityVerdict(scenario, "quad", "air3");
+        const v = gateWith(null);
         expect(v.calibrated).toBe(false);
         expect(v.exceedanceForced).toBeNull();
         expect(v.claimStatus).toBe("uncalibrated-measurement");
@@ -131,23 +142,20 @@ describe("capability α̂ claim gate (fail-closed)", () => {
         expect(typeof runningKey).toBe("string");
 
         // a MALFORMED calibration (no provenance) must also fail closed
-        const vBad = await capabilityVerdict(scenario, "quad", "air3",
-            {calibration: {alphaThreshold: 1.1, family: "quad", catalogId: "air3",
-                nControls: 25, detectorConfigKey: runningKey}});
+        const vBad = gateWith({alphaThreshold: 1.1, family: "quad", catalogId: "air3",
+            nControls: 25, detectorConfigKey: runningKey});
         expect(vBad.exceedanceForced).toBeNull();
 
         // a CONFIG-MISMATCHED artifact (right shape, wrong config key) fails closed
-        const vMismatch = await capabilityVerdict(scenario, "quad", "air3",
-            {calibration: {alphaThreshold: 1.1, family: "quad", catalogId: "air3",
-                nControls: 25, provenance: "x", detectorConfigKey: "wrong-config-key"}});
+        const vMismatch = gateWith({alphaThreshold: 1.1, family: "quad", catalogId: "air3",
+            nControls: 25, provenance: "x", detectorConfigKey: "wrong-config-key"});
         expect(vMismatch.calibrated).toBe(false);
         expect(vMismatch.exceedanceForced).toBeNull();
 
         // a VALID, CONFIG-BOUND artifact opens the gate — proving the disable is
         // the gate, not a dead code path (synthetic artifact for the test only).
-        const vGood = await capabilityVerdict(scenario, "quad", "air3",
-            {calibration: {alphaThreshold: 1.1, family: "quad", catalogId: "air3",
-                nControls: 25, provenance: "unit-test-synthetic", detectorConfigKey: runningKey}});
+        const vGood = gateWith({alphaThreshold: 1.1, family: "quad", catalogId: "air3",
+            nControls: 25, provenance: "unit-test-synthetic", detectorConfigKey: runningKey});
         expect(vGood.calibrated).toBe(true);
         expect(typeof vGood.exceedanceForced).toBe("boolean");
         expect(vGood.calibrationProvenance).toBe("unit-test-synthetic");

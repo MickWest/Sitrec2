@@ -29,8 +29,24 @@ function detectClip(scene) {
     return {perFrame: out, truth};
 }
 
+// Building a clip is the expensive part of this file: rendering and detecting 24 frames and
+// then running the full three-pass solve costs ~15s, and thirteen tests ask for one. Seven of
+// them ask for the SAME default clip, and the inputs are fully deterministic (fixed seed, no
+// clock, no randomness outside mulberry32), so the result is a pure function of the overrides
+// and can be computed once and shared.
+//
+// Sharing is only safe because no test mutates what it gets back — every sort in this file is
+// on a fresh array (a.slice().sort, .map().sort, [...solved.classified].sort). Keep it that
+// way: if a test ever needs to mutate a clip, have it build its own rather than making this
+// return deep copies, which would give back the cost this is here to avoid.
+const clipCache = new Map();
+
 /** A synthetic clip solved end to end, shared across the tests that need one. */
 function solvedClip(overrides = {}) {
+    // Key on the overrides with sorted keys so argument order cannot split the cache.
+    const key = JSON.stringify(Object.keys(overrides).sort().map((k) => [k, overrides[k]]));
+    if (clipCache.has(key)) return clipCache.get(key);
+
     const scene = buildScene({
         width: W, height: H, frames: 24, seed: 4242,
         laser: false, ...DENSE, ...overrides,
@@ -38,7 +54,9 @@ function solvedClip(overrides = {}) {
     const {perFrame, truth} = detectClip(scene);
     const chain = solveFrameChain(perFrame);
     const solved = solveStarField(perFrame, chain.cumulative);
-    return {scene, perFrame, truth, chain, solved};
+    const clip = {scene, perFrame, truth, chain, solved};
+    clipCache.set(key, clip);
+    return clip;
 }
 
 describe("StarSolve global refinement", () => {

@@ -82,7 +82,15 @@ export function isValidCalibration(cal, family, catalogId, runningConfigKey) {
 // options.calibration (optional): a validated calibration artifact. ONLY when
 // present and valid is a binary exceedanceForced claim emitted. Absent =>
 // measurement only (fail closed).
-export async function capabilityVerdict(scenario, family, catalogId, options = {}) {
+// The MEASUREMENT half: solve for α̂. This is the expensive part — minEnvelopeScale runs a
+// multi-seed Nelder-Mead search — and it depends only on the scenario, the envelope and the
+// detector config. Crucially it does NOT depend on the calibration artifact, so asking the
+// same question of several artifacts need only measure once.
+//
+// Split out so a caller comparing calibration artifacts against one scenario can measure once
+// and gate many times; capabilityVerdict below is still the whole answer in one call, and is
+// what production uses.
+export async function measureCapability(scenario, family, catalogId, options = {}) {
     const env = family === "quad" ? quadcopterById(catalogId) : fixedWingById(catalogId);
     const trav = toTraverseDataset(scenario);
     // Resolve the config ONCE and pass it to the solver, so the key that binds
@@ -90,8 +98,18 @@ export async function capabilityVerdict(scenario, family, catalogId, options = {
     const cfg = resolveDetectorConfig(options);
     const runningKey = configKey(cfg);
     const feas = await minEnvelopeScale(trav, env, family, {...options, _resolvedConfig: cfg});
+    return {feas, runningKey};
+}
 
-    const cal = options.calibration ?? null;
+// The GATING half: decide what a measurement means given a calibration artifact. Pure — no
+// solving, no I/O — so it is cheap to apply repeatedly to one measurement.
+//
+// The fail-closed rule lives here and nowhere else: exceedanceForced stays null unless
+// isValidCalibration accepts the artifact, which requires the artifact's detectorConfigKey to
+// equal the key of the config that actually produced this α̂. A malformed artifact (no
+// provenance) and a config-mismatched artifact both fall through to null by that one check.
+export function applyCapabilityCalibration(feas, family, catalogId, runningKey, calibration) {
+    const cal = calibration ?? null;
     const calibrated = isValidCalibration(cal, family, catalogId, runningKey);
     const exceedanceForced = calibrated ? feas.alphaStar > cal.alphaThreshold : null;
 
@@ -111,6 +129,13 @@ export async function capabilityVerdict(scenario, family, catalogId, options = {
         gRatio: feas.gRatio,
         K: feas.K, bandwidthSec: feas.bandwidthSec,
     };
+}
+
+// Measure, then gate. Unchanged behaviour and the only form production calls: the split above
+// exists so a caller can reuse one measurement, not to make callers assemble the two halves.
+export async function capabilityVerdict(scenario, family, catalogId, options = {}) {
+    const {feas, runningKey} = await measureCapability(scenario, family, catalogId, options);
+    return applyCapabilityCalibration(feas, family, catalogId, runningKey, options.calibration);
 }
 
 const DE_OPTS = {optimizer: "de", dePop: 30, deGens: 40, sampleStride: 2};
