@@ -77,11 +77,11 @@ $extraPaths = implode(':', array_filter([
 ]));
 
 $cmd = sprintf(
-    'export PATH=%s:$PATH && python3 %s --date %s --hour %d --level %s --output %s 2>&1',
+    'export PATH=%s:$PATH && python3 %s --date %s --hour %s --level %s --output %s 2>&1',
     escapeshellarg($extraPaths),
     escapeshellarg($script),
     escapeshellarg($date),
-    $cycleHour,
+    escapeshellarg((string)(int)$cycleHour),
     escapeshellarg($level),
     escapeshellarg($cacheDir)
 );
