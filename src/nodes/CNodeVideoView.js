@@ -78,6 +78,21 @@ import {viewMenuKey} from "../ViewUIBarMenus";
 // Re-export for external consumers (e.g. CMotionAnalysis).
 export {addFiltersToVideoNode, applyConvolution} from "./CNodeVideoViewFilters";
 
+// Fraction of the way along something, clipped to the ends. Used by
+// getSourceAndDestCoords to clip the displayed video image to the pane.
+const clamp01 = (x) => x < 0 ? 0 : (x > 1 ? 1 : x);
+
+// Where the leading edge of a displayed image of size `full` sits inside a pane of size
+// `pane`, given where the pan wants to put it — held to what the image can actually cover.
+// Big enough to fill the pane: never let an edge come inside it. Not big enough: centred.
+//
+// This is the same limit clampPanOffset applies, but expressed as a property of the current
+// geometry rather than of when a mouse handler last ran. It has to be, because a pane RESIZE
+// moves the limit with no mouse involved (and so does deserializing a pan saved against a
+// differently-shaped pane) — a stale offset would otherwise open a black gap at one edge.
+const coveredEdge = (full, pane, wanted) =>
+    full >= pane ? Math.min(0, Math.max(pane - full, wanted)) : (pane - full) / 2;
+
 // True if `img` is a usable, already-decoded drawable (HTMLImageElement, canvas,
 // or ImageBitmap) — i.e. something CVideoImageData can read width/height from and
 // draw. A raw ArrayBuffer, null/undefined, or a not-yet-loaded Image (width 0) all
@@ -2481,10 +2496,71 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.panOffsetY = 0;
             return;
         }
-        // At zoom z, visible fraction is 1/z. Max panOffset = (1 - 1/z) / 2
-        const maxPan = (1 - 1 / zoom) / 2;
-        this.panOffsetX = Math.max(-maxPan, Math.min(maxPan, this.panOffsetX));
-        this.panOffsetY = Math.max(-maxPan, Math.min(maxPan, this.panOffsetY));
+        let maxPanX, maxPanY;
+        if (this.lockedToVideoAspect()) {
+            // Crop-only mode: the visible fraction is 1/zoom in BOTH axes whatever the pane's
+            // aspect, so the image edge arrives at the same offset either way.
+            maxPanX = maxPanY = (1 - 1 / zoom) / 2;
+        } else {
+            // Fill mode: the visible fraction is however much of the magnified image the pane
+            // covers, and that differs per axis. Along the letterboxed axis the pane covers MORE
+            // of the image than 1/zoom, so there is LESS pan headroom there than the symmetric
+            // limit allows — using it would let a black bar back in at the far edge of a pan.
+            const [sourceW, sourceH] = this.videoSourceSize();
+            const {baseW, baseH} = this.videoFitInPane(sourceW, sourceH);
+            const fullW = baseW * zoom;
+            const fullH = baseH * zoom;
+            maxPanX = fullW > 0 ? (1 - Math.min(1, this.widthPx / fullW)) / 2 : 0;
+            maxPanY = fullH > 0 ? (1 - Math.min(1, this.heightPx / fullH)) / 2 : 0;
+        }
+        this.panOffsetX = Math.max(-maxPanX, Math.min(maxPanX, this.panOffsetX));
+        this.panOffsetY = Math.max(-maxPanY, Math.min(maxPanY, this.panOffsetY));
+    }
+
+    /**
+     * The video's dimensions, falling back to the pane's before a frame has decoded.
+     */
+    videoSourceSize() {
+        const w = this.videoWidth, h = this.videoHeight;
+        if (!(w > 0) || !(h > 0)) return [this.widthPx, this.heightPx];
+        return [w, h];
+    }
+
+    /**
+     * The size in pane pixels the video occupies AT ZOOM 1: scaled to fit entirely inside the
+     * pane ("contain"), which leaves black bars on two sides whenever the video and the pane
+     * disagree on aspect. Everything else here is this rectangle scaled by the zoom, so the
+     * drawn image and the pan limits are derived from one definition rather than two.
+     */
+    videoFitInPane(sourceW, sourceH) {
+        const aspectSource = sourceW / sourceH;
+        const aspectView = this.widthPx / this.heightPx;
+        return aspectSource > aspectView
+            ? {baseW: this.widthPx, baseH: this.widthPx / aspectSource}
+            : {baseW: this.heightPx * aspectSource, baseH: this.heightPx};
+    }
+
+    /**
+     * Is the look view currently framing the 3D exactly like the video — "Match Video Aspect"?
+     *
+     * That option is a contract between the two panes: CNodeView3D letterboxes the look view's
+     * CANVAS to the video's aspect and points a camera through it that sees precisely the video's
+     * centred 1/zoom crop. So the video pane has to hold that same aspect for the two pictures to
+     * be a like-for-like comparison — filling the pane there would show image the 3D beside it
+     * does not have.
+     *
+     * With it OFF the look view instead fills its div and widens the camera's vertical field by
+     * 1/fovCoverage, which means the WHOLE pane already corresponds to the whole displayed video
+     * image, and the video pane is free to fill.
+     *
+     * Read through the same node under the same conditions CNodeView3D uses, so the two can never
+     * disagree about which mode is in force.
+     */
+    lockedToVideoAspect() {
+        const look = NodeMan.get("lookView", false);
+        if (!look || !look.cameraNode) return false;
+        const frustum = NodeMan.get(look.cameraNode.id + "_Frustum", false);
+        return !!(frustum && frustum.matchVideoAspect && frustum.videoAspect);
     }
 
 
@@ -2497,39 +2573,100 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
 
         // videoWidth and videoHeight are the original video dimensions
-        let sourceW = this.videoWidth;
-        let sourceH = this.videoHeight
-
-        if (sourceW <= 0 || sourceH <= 0) {
-            sourceW = this.widthPx;
-            sourceH = this.heightPx;
-        }
-
-        const aspectSource = sourceW / sourceH
-        const aspectView = this.widthPx / this.heightPx
+        const [sourceW, sourceH] = this.videoSourceSize();
 
         if (this.in.zoom !== undefined) {
             const zoom = this.in.zoom.v0 / 100;
+            const {baseW, baseH} = this.videoFitInPane(sourceW, sourceH);
 
-            this.sWidth = sourceW / zoom;
-            this.sHeight = sourceH / zoom;
+            // fovCoverage is the vertical fraction of the pane the video covers AT ZOOM 1, and is
+            // deliberately zoom-INdependent: the look view applies the same zoom separately, as
+            // camera.zoom, so folding it in here would apply it twice. What it actually is, is the
+            // scale factor that makes one pane pixel mean the same angle in both views.
+            //
+            // The zero-height guard is not theoretical: a hidden pane reports clientHeight 0, and
+            // the look view DIVIDES its camera FOV by this (CNodeView3D), testing only for
+            // undefined — so a NaN here becomes a NaN field of view for that frame.
+            this.fovCoverage = this.heightPx > 0 ? baseH / this.heightPx : 1;
 
-            // Apply pan offset (panOffsetX/Y are fractions of video dimensions, 0 = centered)
-            this.sx = (sourceW - this.sWidth) / 2 + this.panOffsetX * sourceW;
-            this.sy = (sourceH - this.sHeight) / 2 + this.panOffsetY * sourceH;
-
-            if (aspectSource > aspectView) {
-                this.fovCoverage = (this.widthPx / aspectSource) / this.heightPx;
-                this.dx = 0;
-                this.dy = (this.heightPx - this.widthPx / aspectSource) / 2;
-                this.dWidth = this.widthPx;
-                this.dHeight = this.widthPx / aspectSource;
+            if (this.lockedToVideoAspect()) {
+                // Crop only, keeping the video's own aspect and its letterbox — see
+                // lockedToVideoAspect() for why the pane is not free to fill in this mode.
+                // panOffsetX/Y are fractions of the video dimensions, 0 = centered.
+                this.sWidth = sourceW / zoom;
+                this.sHeight = sourceH / zoom;
+                this.sx = (sourceW - this.sWidth) / 2 + this.panOffsetX * sourceW;
+                this.sy = (sourceH - this.sHeight) / 2 + this.panOffsetY * sourceH;
+                this.dx = (this.widthPx - baseW) / 2;
+                this.dy = (this.heightPx - baseH) / 2;
+                this.dWidth = baseW;
+                this.dHeight = baseH;
             } else {
-                this.fovCoverage = 1;
-                this.dx = (this.widthPx - this.heightPx * aspectSource) / 2;
-                this.dy = 0;
-                this.dWidth = this.heightPx * aspectSource;
-                this.dHeight = this.heightPx;
+                // Free to fill. Zoom magnifies the whole displayed image about the pane centre
+                // (offset by the pan) and the pane shows whichever part of it lands inside — so
+                // once the zoom passes the ratio of the two aspects the black bars are pushed off
+                // the pane entirely and the video covers all of it. That is the point: past that
+                // zoom there IS image for every pane pixel, and a fixed letterbox threw it away.
+                //
+                // This stays aligned with the 3D for free rather than by a second calculation.
+                // With Match Video Aspect off the look view's camera is widened by 1/fovCoverage
+                // and zoomed by camera.zoom, so its full pane height spans exactly the displayed
+                // image height fullH — the same mapping used here.
+                const fullW = baseW * zoom;
+                const fullH = baseH * zoom;
+
+                if (!(fullW > 0) || !(fullH > 0)) {
+                    // Pane not laid out yet (a hidden div reports zero size). Draw nothing rather
+                    // than divide by it — same nothing the old code drew.
+                    this.sx = 0;
+                    this.sy = 0;
+                    this.sWidth = sourceW;
+                    this.sHeight = sourceH;
+                    this.dx = 0;
+                    this.dy = 0;
+                    this.dWidth = 0;
+                    this.dHeight = 0;
+                } else {
+                    // Top-left of the displayed image in pane pixels. The pan is a fraction of the
+                    // video, so as a pane offset it scales with the displayed image.
+                    let imgX = (this.widthPx - fullW) / 2 - this.panOffsetX * fullW;
+                    let imgY = (this.heightPx - fullH) / 2 - this.panOffsetY * fullH;
+
+                    // Hold it to what the image covers, and write back the pan that implies so a
+                    // later drag carries on from what is on screen instead of unwinding a stale
+                    // offset first. Only on a real correction, so the common case never makes a
+                    // round trip through the division.
+                    const heldX = coveredEdge(fullW, this.widthPx, imgX);
+                    if (heldX !== imgX) {
+                        imgX = heldX;
+                        this.panOffsetX = ((this.widthPx - fullW) / 2 - imgX) / fullW;
+                    }
+                    const heldY = coveredEdge(fullH, this.heightPx, imgY);
+                    if (heldY !== imgY) {
+                        imgY = heldY;
+                        this.panOffsetY = ((this.heightPx - fullH) / 2 - imgY) / fullH;
+                    }
+
+                    // Clip in FRACTIONS of the displayed image, and derive both rectangles from
+                    // the same pair. Clipping the two rectangles separately would let rounding
+                    // put a scale error between them; more usefully, a fraction lands on exactly
+                    // 0 and exactly 1 when the image is wholly inside the pane, which makes the
+                    // whole zoom-1 case bit-for-bit what it was before this fill mode existed.
+                    const fx0 = clamp01(-imgX / fullW);
+                    const fx1 = clamp01((this.widthPx - imgX) / fullW);
+                    const fy0 = clamp01(-imgY / fullH);
+                    const fy1 = clamp01((this.heightPx - imgY) / fullH);
+
+                    this.dx = imgX + fx0 * fullW;
+                    this.dy = imgY + fy0 * fullH;
+                    this.dWidth = (fx1 - fx0) * fullW;
+                    this.dHeight = (fy1 - fy0) * fullH;
+
+                    this.sx = fx0 * sourceW;
+                    this.sy = fy0 * sourceH;
+                    this.sWidth = (fx1 - fx0) * sourceW;
+                    this.sHeight = (fy1 - fy0) * sourceH;
+                }
             }
         } else {
             this.sx = 0;
