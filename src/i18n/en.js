@@ -483,6 +483,7 @@ const en = {
         arrowColor: "Arrow Color",
         textColor: "Text Color",
         deleteFeature: "Delete Feature",
+        done: "Done",
     },
     panoramaExport: {
         exportLookPanorama: {
