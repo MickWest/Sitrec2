@@ -869,7 +869,11 @@ sitch = {
 
 // Standard useful things, eventually have them more configurable
 
-    mirrorVideo: { transparency: 0.0, autoClear:false},
+    // autoClear/autoFill are left to CNodeVideoView's overlay defaults (clear, do not fill).
+    // The explicit `autoClear: false` that used to be here was harmless only while the overlay
+    // also filled itself black every frame; with the fill gone it would leave the previous,
+    // larger frame smeared around a zoomed-out video.
+    mirrorVideo: { transparency: 0.0},
 
     frustumColor: {
         kind: "GUIColor",

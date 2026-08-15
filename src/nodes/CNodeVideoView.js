@@ -146,7 +146,27 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.setupSpectrumView();
 
         this.positioned = false;
-        this.autoFill = v.autoFill ?? true; // default to autofill
+
+        // An OVERLAY video view draws over another view, so the part of its canvas the video
+        // does not reach has to stay transparent — the letterbox is a property of a pane the
+        // video is being shown IN, and this one is not a pane, it is a layer. Filled black and
+        // composited at the Vid Overlay Trans opacity, those bars are a sheet of grey paint over
+        // the 3D: at 0.69 the whole look view came back at 31% brightness with only a bright
+        // rectangle where the video was. Freestanding video views keep the bars, which is what
+        // makes their own pane read as a screen.
+        //
+        // Clearing is the other half of the same default, and only overlays need it. A
+        // freestanding view repaints its whole canvas every frame, but an overlay leaves
+        // whatever it did not draw over — so without the clear, zooming the video OUT smears
+        // the previous, larger frame around the new one. The three gimbal sitches have always
+        // passed `autoClear: true, autoFill: false` by hand; that is this default, written out
+        // longhand at each of the call sites that happened to notice.
+        const isOverlay = this.overlayView !== undefined;
+        this.autoFill = v.autoFill ?? !isOverlay;
+        // Whether that was OUR choice. An overlay's fill also has to answer to whether a video
+        // is loaded at all (see renderCanvas), and varying it must not overrule a sitch that
+        // asked for a particular value.
+        this._autoFillIsDefault = v.autoFill === undefined;
         // Phase 1: the window-move gesture is unified to the edit key (Q) in CNodeView.
         // The old `this.shiftDrag = true` override is removed — it was already dead
         // (CNodeView wires makeDraggable with requiredKey "Q", which takes precedence
@@ -154,7 +174,17 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         this.scrubFrame = 0; // storing fractiona accumulation of frames while scrubbing
 
-        this.autoClear = (v.autoClear !== undefined) ? v.autoClear : false;
+        this.autoClear = (v.autoClear !== undefined) ? v.autoClear : isOverlay;
+        // Not clearing is only safe when something else repaints every pixel, and the only thing
+        // that does is the fill. So this is a derivation, not an override of the caller: a view
+        // that does neither shows last frame's leftovers wherever this frame draws nothing.
+        //
+        // It has to be derived rather than left to the definitions, because `autoClear: false`
+        // is baked into every custom sitch ALREADY SAVED. It was correct in those saves — the
+        // overlay filled itself black back then, so clearing first was pure cost — and a saved
+        // sitch overrides the sitch definition, so correcting data/custom/SitCustom.js only
+        // reaches new ones.
+        if (!this.autoFill) this.autoClear = true;
 
         this.input("zoom", true); // zoom input is optional
 
@@ -2242,6 +2272,17 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     }
 
     renderCanvas(frame = 0) {
+        // An overlay with NO video is documented to act as a black screen, so that Vid Overlay
+        // Trans still does something before a video is loaded (see the slider's tooltip in
+        // CNodeViewCanvas). Once there is a video, the fill has to go, or the letterbox around
+        // it becomes a sheet of paint over the 3D — which is the whole point of the autoFill
+        // default above. Both are the same rule: fill exactly the area the overlay is standing
+        // in for. The choice can only be made here because videoData arrives, and can go away
+        // again, long after construction.
+        if (this.overlayView !== undefined && this._autoFillIsDefault) {
+            this.autoFill = !this.videoData;
+        }
+
         super.renderCanvas(frame); // needed for setting window size
 
         if (!this.visible) return;

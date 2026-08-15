@@ -127,7 +127,8 @@ sitch = {
 
     //  MirrorVideoView:{id: "mirrorView", mirror: "video", overlayView: "lookView", transparency: 0.15},
 
-    mirrorVideo: {transparency: 0.15, autoClear: false},
+    // autoClear/autoFill left to CNodeVideoView's overlay defaults — see SitCustom.js.
+    mirrorVideo: {transparency: 0.15},
     //   mirrorVideo2: { kind: "mirrorVideo", overlayView:"lookView2", transparency: 0.15, autoClear:false},
 
     // startTime:  "auto", // auto means we get it from the data file, ie, the first frame of the camera track
