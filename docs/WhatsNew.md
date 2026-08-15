@@ -9,6 +9,32 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.131.0 (2026-08-15)
+
+### New Features
+
+- **Free Look Camera** (Camera → Camera Tweaks → *Free Look Camera*, or the Look view's own header menu → *Free Look*): fly the look camera by hand exactly as you fly the main view camera — left-drag moves the world, middle-drag orbits the point under the cursor, right-drag looks around, the wheel zooms, and WASD walks. While it is on, the camera's Location, Heading and FOV sources are suspended, and where you fly is written into the camera's Location as you go, so switching it off locks the camera in at the new position and heading instead of snapping back. A camera set to a height above ground level keeps that height and only moves horizontally, and the setting is saved with a custom sitch.
+
+- **Sync Look Camera** (Camera → Fit Camera to Points → *Sync Look Camera*): locking the look view to the video's framing is now a switch of its own instead of coming with *Enable Fit*. While it is on, the look view is cropped to the video's shape and the wheel and left drag over it zoom and pan the video rather than moving the camera, so the two pictures stay comparable; turn it off to fly the 3D camera again with the fit still on and your control points still in place. A successful fit turns it back on.
+
+### Improvements
+
+- **Off a fit keyframe, Sitrec now offers to take you to one** (Camera → Fit Camera to Points): clicking *Fit Now*, or reaching for a control point in any view, on a frame the points do not belong to used to simply refuse and tell you which frame to go to. It now asks — *Go To Frame N* or *Cancel* — and on accepting moves there, running the fit as well when a fit is what you asked for. Clicking empty video off a keyframe still refuses quietly rather than raising a dialog, so panning around is unaffected.
+
+- **A zoomed video now fills its pane** (View → *Video Zoom %*): the black bars around a video whose shape differs from its window used to stay exactly where they were however far you zoomed in — up to half the pane thrown away with plenty of image in hand to cover it. Zoom in far enough now and the bars are pushed off the pane entirely. Framing is unchanged when *Match Video Aspect* (Camera menu) is on, where the video pane has to letterbox exactly as the look view does for the two to be comparable.
+
+- **Better starting settings for *Fit Camera to Points*** (Camera → Fit Camera to Points): *Fit on Change* now starts off, so you can place a whole set of points and then solve once with *Fit Now* instead of re-solving after every point; and *Place on 3D Buildings* now starts on, so a rooftop corner lands on the roof rather than at street level. Where the 3D buildings are absent or still loading, points land on the same terrain surface as before. Sitches you have already saved keep whatever they were set to.
+
+- **A new custom sitch now starts with *Effects* off** (Effects → *Effects*): a sitch's effects — blur, glare — are an interpretation laid over the scene rather than part of it, so a sitch you are building starts by showing what is actually there, and you turn them on when you want them. Built-in sitches are unchanged, including the infrared ones where the effects are the picture rather than a look over it, and sitches you have already saved keep their own setting.
+
+### Bug Fixes
+
+- Fixed the video overlay dimming the whole look view: the area around the video was being painted black over the 3D behind it, so with the overlay part-way transparent the entire view came back dark with one bright rectangle where the video was. Worst with the video zoomed out, and worst of all at the end of a *Render Fade* to the video, which used to fade the surrounding scene to black. An overlay with no video loaded still shows black, as its transparency slider describes.
+
+- Fixed fit control points looking editable in one view but not another: on a frame the points do not belong to, they are now faded in the main and look views too, matching how they have always been drawn on the video.
+
+---
+
 ## Version 2.130.1 (2026-08-15)
 
 ### Improvements
