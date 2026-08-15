@@ -3438,11 +3438,19 @@ export class CNodeView3D extends CNodeViewCanvas {
             // untouched. (Gimbal, GimbalCustom and Starlink are isCustom but define no
             // effects, so addEffects never runs for them.)
             //
-            // Existing sitches of either kind are unaffected regardless: they stored
-            // effectsEnabled in their mods, and modDeserialize below restores it. Sit can
-            // be undefined for a view built before any sitch loads, which falls through to
-            // `true` — the long-standing behaviour.
-            this.effectsEnabled = !(Sit?.isCustom ?? false);
+            // A DEFAULT, not an assignment: CNodeView's constructor has already run
+            // applyEarlyMods() by the time we get here, so on a saved sitch effectsEnabled
+            // may already hold the value the user stored, and overwriting it here would
+            // change what their save renders. (That is a pre-existing hazard, not a new
+            // one — the unconditional `= true` this replaces clobbered a saved `false` the
+            // same way; a later deserialize pass happened to restore it for custom saves,
+            // which is exactly the kind of order-dependence not worth relying on.)
+            //
+            // Sit can be undefined for a view built before any sitch loads, which falls
+            // through to `true` — the long-standing behaviour.
+            if (this.effectsEnabled === undefined) {
+                this.effectsEnabled = !(Sit?.isCustom ?? false);
+            }
             guiTweaks.add(this, "effectsEnabled").name(t("view3d.effects.label")).onChange(() => {
                 setRenderOne(true)
             }).tooltip(t("view3d.effects.tooltip"))

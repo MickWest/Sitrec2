@@ -291,23 +291,40 @@ export class CNodeCamera extends CNode3D {
         // exactly where the last one ended.
         if (changed && on) this._freeLookSyncedPos = null;
 
-        // Most look views already carry map controls - SituationSetup adds them
-        // unless the sitch asked for noOrbitControls, as the Gimbal pod views do.
-        // Those are the only ones that need them made here, and once made we keep
-        // them switched off whenever Free Look is off, so turning the mode on and
-        // back off leaves such a view navigating exactly as it did before.
-        const view = this.getRenderingView();
-        if (view) {
-            if (on && !view.controls) {
-                view.addOrbitControls();
-                this._freeLookAddedControls = true;
-            }
-            if (this._freeLookAddedControls && view.controls) {
-                view.controls.enabled = on;
-            }
-        }
+        this._freeLookWired = false;
+        this.wireFreeLookView();
 
         if (changed) setRenderOne(true);
+    }
+
+    // Give the view whatever Free Look needs from it, and record whether the view was
+    // there to give it to.
+    //
+    // Most look views already carry map controls — SituationSetup adds them unless the
+    // sitch asked for noOrbitControls, as the Gimbal pod views do — so this only makes
+    // them for those. Once made we keep them switched off whenever Free Look is off, so
+    // turning the mode on and back off leaves such a view navigating exactly as it did
+    // before.
+    //
+    // This can legitimately run before there is a view: restoring a saved sitch drives
+    // freeLook through the setter while this camera node is still being constructed, and
+    // its view is not built until later in SituationSetup. update() retries until it
+    // lands, rather than leaving it to a subsequent deserialize pass — depending on one
+    // of those is what stopped freeLook persisting at all.
+    wireFreeLookView() {
+        const view = this.getRenderingView();
+        if (!view) return false;
+
+        if (this._freeLook && !view.controls) {
+            view.addOrbitControls();
+            this._freeLookAddedControls = true;
+        }
+        if (this._freeLookAddedControls && view.controls) {
+            view.controls.enabled = this._freeLook;
+        }
+
+        this._freeLookWired = true;
+        return true;
     }
 
     // Publish the hand-flown position into the camera's Manual position node. Called
@@ -551,6 +568,11 @@ export class CNodeCamera extends CNode3D {
 
     update(f) {
         super.update(f);
+
+        // Free Look restored from a save reaches the setter before this camera has a
+        // view to wire — see wireFreeLookView(). Retry until it lands; one boolean test
+        // a frame afterwards.
+        if (this._freeLook && !this._freeLookWired) this.wireFreeLookView();
 
         // The pose writers below are suspended by Free Look for the same reason the
         // controllers are. altAdjust in particular: it RAISES the current position
