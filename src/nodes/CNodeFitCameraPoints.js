@@ -39,7 +39,7 @@ import {getLocalUpVector, getNorthPole} from "../SphericalMath";
 import {extractFOV} from "./CNodeControllerVarious";
 import {FitPointHandles3D, surfaceAlongRay} from "../FitPointHandles3D";
 import {FitPointSightLines3D} from "../FitPointSightLines3D";
-import {drawFitHandle, GRAB_RADIUS, POINT_COLORS} from "../FitHandleDraw";
+import {drawFitHandle, GRAB_RADIUS, OFF_FRAME_ALPHA, POINT_COLORS} from "../FitHandleDraw";
 import {
     azElRollFromBasis, basisFromAzElRoll, evaluateCamera, fitCameraToPoints, MAX_ABS_EL,
     projectWorldPoint,
@@ -60,7 +60,7 @@ export const FIT_METHODS = {
     "3D points (direct)": "direct",
     "Plane homography": "homography",
 };
-import {showConfirm} from "../showError";
+import {showChoice, showConfirm} from "../showError";
 
 /** Movement below this many canvas pixels still counts as a click, not a drag. */
 const CLICK_SLOP = 4;
@@ -183,6 +183,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this._undoBefore = null;
         this._pendingEnable = undefined;
         this._restoreMatchVideoAspect = undefined;
+        // The "go to the nearest fit keyframe?" prompt: whether one is up, and whether the thing
+        // it interrupted was a fit that should resume on arrival. See offerNearestKeyframe.
+        this._keyframePromptOpen = false;
+        this._pendingFitAfterJump = false;
 
         this.markers = new FitPointHandles3D({
             getPoints: () => this.points.map((p) => ({
@@ -203,6 +207,9 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 if (this.autoFit) this.refitOtherKeyframes();
             },
             onCorrectFrame: () => this.onCorrectFrame(),
+            // Reaching for a handle in a 3D view asks the same question as reaching for one on
+            // the video, so it gets the same answer.
+            onWrongFrame: () => this.offerNearestKeyframe("move them"),
             onBeginEdit: () => {
                 this._markerMoved = false;
                 this.beginUndo();
@@ -410,6 +417,15 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             const on = this._pendingEnable;
             this._pendingEnable = undefined;
             this.setEnabled(on);
+        }
+
+        // The fit that was interrupted by the "not on a fit keyframe" prompt, resumed now that
+        // the graph has recalculated for the frame the prompt moved us to. Re-checked rather
+        // than assumed: between the click and this tick the user may have scrubbed away again,
+        // and fitNow() would then raise a second prompt for a fit nobody asked for twice.
+        if (this._pendingFitAfterJump) {
+            this._pendingFitAfterJump = false;
+            if (this.enabled && this.onCorrectFrame()) this.fitNow();
         }
 
         // Scrubbing onto a fit keyframe makes it the one being edited. Only while the gesture
@@ -1716,7 +1732,24 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
     // ---------- the fit ----------
 
-    fitNow() {
+    /**
+     * @param {boolean} offerFrameJump ask about moving to a keyframe when off one. False for
+     *        callers with nobody to ask — see the API note below.
+     */
+    fitNow(offerFrameJump = true) {
+        // Off a keyframe, offer to go to one and fit there rather than simply refusing. Asked
+        // HERE, on the explicit button, and not down in runFit: requestFit reaches runFit on
+        // every point nudge with Fit on Change on, and a dialog raised by a drag nobody thought
+        // of as "attempting a fit" would be an ambush. runFit still refuses on its own, so the
+        // rule is enforced in one place and merely offered in this one.
+        //
+        // The API passes false. A modal there would put a dialog on screen with nobody in front
+        // of it, and hand the caller a summary of a fit that had not happened; runFit's own
+        // refusal reaches it as a status string, which is what fitPointsSolve already reported.
+        if (offerFrameJump && this.points.length > 0
+            && !this.offerNearestKeyframe("fit the camera", true)) {
+            return;
+        }
         // An explicit Fit Now re-solves everything, so the whole keyframe set is consistent
         // with the landmarks as they now stand — but only when the active solve actually RAN.
         // A refusal (tool off, wrong frame, no video) refuses the whole operation: rewriting
@@ -2229,6 +2262,74 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         return `Points belong to frame ${this.fitFrame} — go to it to ${verb}`;
     }
 
+    /** The fit keyframe closest to the playhead, or the active frame when there are none yet. */
+    nearestKeyframeFrame() {
+        const f = Math.round(par.frame);
+        if (this.keyframes.length === 0) return this.fitFrame;
+        let best = this.keyframes[0];
+        for (const k of this.keyframes) {
+            if (Math.abs(k.frame - f) < Math.abs(best.frame - f)) best = k;
+        }
+        return best.frame;
+    }
+
+    /**
+     * Off a fit keyframe, ask whether to go to the nearest one — and do it if so.
+     *
+     * The refusals this replaces were correct and useless in the same breath. Points belong to
+     * the frame they were observed on (see fitFrame), so editing or fitting from anywhere else
+     * has to be refused; but "go to frame 214" left the user to find frame 214, when the tool
+     * knew the number and could just as well go there. Every refusal here is one keypress from
+     * being the thing the user wanted, so it is offered as that instead.
+     *
+     * @param {string} verb what the caller was trying to do, as an infinitive that reads after
+     *                 "go to it to ..." — it is used in the prompt and in the status line the
+     *                 refusal leaves behind, so it has to fit both
+     * @param {boolean} thenFit re-run the fit on arrival — set when a fit is what was refused
+     * @returns {boolean} true when already on a keyframe and the caller may just proceed
+     */
+    offerNearestKeyframe(verb, thenFit = false) {
+        if (this.onCorrectFrame()) return true;
+        // One dialog at a time. Without this a press held over a handle, or a second click while
+        // the first prompt is up, stacks modals the user has to dismiss one by one.
+        if (this._keyframePromptOpen) return false;
+
+        const target = this.nearestKeyframeFrame();
+        const plural = this.keyframes.length > 1 ? " nearest" : "";
+        this._keyframePromptOpen = true;
+        showChoice(
+            `Camera fit points can only be edited on the frame they were placed on. ` +
+            `Go to the${plural} fit keyframe at frame ${target} to ${verb}?`,
+            {
+                title: "Not On A Fit Keyframe",
+                options: [
+                    {label: `Go To Frame ${target}`, value: true, primary: true, color: "#1976d2"},
+                    {label: "Cancel", value: false, cancel: true, color: "#757575"},
+                ],
+            },
+        ).then((go) => {
+            this._keyframePromptOpen = false;
+            if (!go) {
+                this.updateStatus(this.wrongFrameMessage(verb));
+                setRenderOne(true);
+                return;
+            }
+            par.frame = target;
+            // No-op unless target really is a keyframe (it is, unless there are none yet, in
+            // which case fitFrame already IS the frame we just moved to).
+            this.activateKeyframe(target);
+            // Deferred, never run here: the fit reads the LIVE camera as its starting state, and
+            // the live camera is whatever the controllers produce at par.frame — which they have
+            // not produced yet, because the graph has not recalculated for the frame set on the
+            // line above. Fitting now would solve this keyframe's points against the camera pose
+            // of the frame the user was just looking at. update() picks it up next tick.
+            this._pendingFitAfterJump = thenFit;
+            this.updateStatus(`Moved to fit keyframe ${target}`);
+            setRenderOne(true);
+        });
+        return false;
+    }
+
     /**
      * Abandon any half-finished gesture.
      *
@@ -2265,19 +2366,30 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         }
         if (e.button !== 0) return false;
 
-        if (!this.onCorrectFrame()) {
-            this.updateStatus(this.wrongFrameMessage("edit"));
-            setRenderOne(true);
-            return false;
-        }
-
         if (hit) {
+            // Reaching for a point on the wrong frame: offer to go to the keyframe it lives on.
+            // Checked here rather than ahead of the hit test, so that a press on empty video —
+            // which is a pan as often as it is an add — keeps its quiet status message and never
+            // raises a dialog just for panning around off-keyframe.
+            if (!this.onCorrectFrame()) {
+                this.offerNearestKeyframe("move them");
+                return false;
+            }
             this.draggingId = hit.id;
             // Grabbing is not moving: a bare click on a marker states nothing about the
             // observations and must not invalidate anything on release.
             this._dragMoved = false;
             this.beginUndo();
             return true;
+        }
+
+        // Empty video off-keyframe: refuse quietly, as before. An add here would be an
+        // observation of a frame these points do not belong to, but the press is at least as
+        // likely to be a pan, so it gets a status line rather than a dialog.
+        if (!this.onCorrectFrame()) {
+            this.updateStatus(this.wrongFrameMessage("edit"));
+            setRenderOne(true);
+            return false;
         }
 
         // Empty video. This press is either a CLICK, which adds a point, or the start of a PAN,
@@ -2432,9 +2544,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             const [cx, cy] = this.canvasPosOf(p);
             if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
 
-            // Off-frame points are drawn faintly rather than hidden: seeing that the fit's points
-            // exist somewhere else in the timeline is more useful than them vanishing.
-            const alpha = onFrame ? 1 : 0.3;
+            // Off-frame points are drawn faintly rather than hidden — see OFF_FRAME_ALPHA. The
+            // 3D handles fade by the same amount, so the same point never looks live in one view
+            // and faded in the other.
+            const alpha = onFrame ? 1 : OFF_FRAME_ALPHA;
 
             // Where this point's ground position actually projects, and a line to it. That line
             // IS the residual — it shows the direction and size of the disagreement the solver

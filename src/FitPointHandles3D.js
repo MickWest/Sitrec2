@@ -21,7 +21,7 @@ import {CNodeViewUI} from "./nodes/CNodeViewUI";
 import {NodeMan, setRenderOne} from "./Globals";
 import {ViewMan} from "./CViewManager";
 import {mouseToCanvas} from "./ViewUtils";
-import {drawFitHandle, GRAB_RADIUS} from "./FitHandleDraw";
+import {drawFitHandle, GRAB_RADIUS, OFF_FRAME_ALPHA} from "./FitHandleDraw";
 
 /** The 3D views a handle is offered in. */
 const HANDLE_VIEWS = ["mainView", "lookView"];
@@ -121,12 +121,16 @@ class CFitHandleOverlay extends CNodeViewUI {
     renderCanvas(frame) {
         super.renderCanvas(frame);
         if (!this.owner.enabled || !this.ctx) return;
+        // Faded off-keyframe, the same as the video's own handles. These are the SAME points, so
+        // they have to answer the "can I edit this here?" question the same way in every view —
+        // solid in one and faded in another said the two were different things.
+        const alpha = this.owner.onCorrectFrame() ? 1 : OFF_FRAME_ALPHA;
         for (const h of this.projected()) {
-            drawFitHandle(this.ctx, h.cx, h.cy, h.color, String(h.index + 1));
+            drawFitHandle(this.ctx, h.cx, h.cy, h.color, String(h.index + 1), alpha);
         }
         // Last, so a video point stays readable where it lands on top of its own ground handle —
         // which is exactly what a well-fitted near landmark looks like from behind the camera.
-        if (this.hostId === RAY_VIEW) this.drawVideoPlaneHandles();
+        if (this.hostId === RAY_VIEW) this.drawVideoPlaneHandles(alpha);
     }
 
     /**
@@ -136,21 +140,22 @@ class CFitHandleOverlay extends CNodeViewUI {
      * straight through its own marker on its way to the ground point. Drawn as the same handle the
      * user places on the video, because it IS that point — seen from outside the camera that saw it.
      */
-    drawVideoPlaneHandles() {
+    drawVideoPlaneHandles(alpha = 1) {
         const host = this.host;
         const display = this.owner.getRayDisplay();
         if (!host || !display) return;
         for (const p of display.points) {
             if (p.image === null) continue;
             const at = projectToCanvas(host, p.image);
-            if (at !== null) drawFitHandle(this.ctx, at[0], at[1], p.color, String(p.index + 1));
+            if (at !== null) {
+                drawFitHandle(this.ctx, at[0], at[1], p.color, String(p.index + 1), alpha);
+            }
         }
     }
 
     onMouseDown(e, mouseX, mouseY) {
         this.draggingId = null;
         if (!this.owner.enabled || e.button !== 0) return false;
-        if (!this.owner.onCorrectFrame()) return false;
 
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
         let hit = null;
@@ -158,6 +163,16 @@ class CFitHandleOverlay extends CNodeViewUI {
             if (Math.hypot(cx - h.cx, cy - h.cy) <= GRAB_RADIUS) hit = h;   // last = topmost
         }
         if (!hit) return false;
+
+        // Tested AFTER the hit, not before. Off-keyframe this offers to go to the nearest one,
+        // and that offer belongs to a press on a HANDLE — the user reaching for a point. Asked
+        // before the hit test, every press anywhere in a 3D view would raise a dialog, which
+        // would make the view unorbitable off-keyframe. Not claimed either way, so a press that
+        // happens to land on a faded handle still orbits, as it does with the fit switched off.
+        if (!this.owner.onCorrectFrame()) {
+            this.owner.onWrongFrame();
+            return false;
+        }
 
         this.draggingId = hit.id;
         this.owner.beginUndo();
@@ -216,6 +231,7 @@ class CFitHandleOverlay extends CNodeViewUI {
  * @param {Function} v.onMoved       (id, Vector3) => void, continuously during a drag
  * @param {Function} v.onCommit      (id) => void, once on release
  * @param {Function} v.onCorrectFrame () => boolean
+ * @param {Function} v.onWrongFrame  () => void, a handle was grabbed on the wrong frame
  * @param {Function} v.onBeginEdit   () => void, opens an undo span at the start of a drag
  * @param {Function} v.onEndEdit     (description) => void, closes it on release
  */
@@ -228,6 +244,7 @@ export class FitPointHandles3D {
         this.onMoved = v.onMoved ?? (() => {});
         this.onCommit = v.onCommit ?? (() => {});
         this.onCorrectFrame = v.onCorrectFrame ?? (() => true);
+        this.onWrongFrame = v.onWrongFrame ?? (() => {});
         this.onBeginEdit = v.onBeginEdit ?? (() => {});
         this.onEndEdit = v.onEndEdit ?? (() => {});
         this.enabled = false;

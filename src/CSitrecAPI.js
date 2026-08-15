@@ -406,12 +406,16 @@ class CSitrecAPI {
                     + " report the result: status, RMS residual in original video pixels,"
                     + " observability, and the camera the fit produced. A solve only applies if"
                     + " it beats the camera it started from — 'Rejected' in the status means the"
-                    + " camera was left alone.",
+                    + " camera was left alone. Points can only be solved on the frame they were"
+                    + " placed on: off it, the status says which frame to go to and nothing is"
+                    + " changed.",
                 fn: () => {
                     const fit = this._fitNode();
                     if (!fit) return {success: false, error: "no fitCameraPoints node (needs a custom sitch with a video)"};
                     if (!fit.enabled) return {success: false, error: "fit tool is off — call fitPointsConfigure {enabled: true} first"};
-                    fit.fitNow();
+                    // No frame-jump prompt: there is nobody here to answer it. Off a fit
+                    // keyframe this refuses, and says so in the returned status.
+                    fit.fitNow(false);
                     return {success: true, ...this._fitSummary(fit)};
                 }
             },

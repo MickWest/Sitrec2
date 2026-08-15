@@ -18,6 +18,16 @@ export const HANDLE_RADIUS = 9;
 export const GRAB_RADIUS = 12;
 
 /**
+ * Opacity of a handle whose keyframe is not the frame on screen.
+ *
+ * Drawn faintly rather than hidden: seeing that the fit's points exist somewhere else in the
+ * timeline is more useful than them vanishing, and the fade is also the signal that they are
+ * not editable here. Shared so the video and the 3D views fade by the same amount — a point
+ * that looked live in one view and faded in the other was the confusing part.
+ */
+export const OFF_FRAME_ALPHA = 0.3;
+
+/**
  * Draw one handle at a canvas position.
  *
  * Stroked twice — a dark halo, then the colour — because these sit over video and terrain of
