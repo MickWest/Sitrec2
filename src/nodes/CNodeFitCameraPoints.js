@@ -162,6 +162,11 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // 3D tiles are absent or not yet streamed the pick falls back to the elevation surface
         // (surfaceAlongRay), which is the whole-planet one.
         this.useTiles = true;
+        // Place points on the scene's own 3D objects too — an aircraft, a balloon, a sphere.
+        // On by default for the same reason useTiles is: when one is in the shot it is almost
+        // always the thing being pointed at, and a point aimed at an aircraft that silently
+        // landed on the ground half a kilometre beyond it would be a hard error to spot.
+        this.useObjects = true;
         this.status = "Off";
         this.residual = "-";
         this.observability = "-";
@@ -182,7 +187,6 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // Snapshot taken when an undoable edit opens; see beginUndo.
         this._undoBefore = null;
         this._pendingEnable = undefined;
-        this._restoreMatchVideoAspect = undefined;
         // The two prompts that stand between a Fit Now and a fit — "go to the nearest fit
         // keyframe?" and "clear Free Look?" — and the fit they interrupted, resumed a tick after
         // whichever of them is accepted. One pending flag for both, because they chain: clearing
@@ -198,6 +202,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             getRayDisplay: () => this.rayDisplay(),
             getOccluder: () => this.videoQuadOccluder(),
             getUseTiles: () => this.useTiles,
+            getUseObjects: () => this.useObjects,
             onMoved: (id, pos) => this.onMarkerMoved(id, pos),
             // A 3D drag moved a SHARED landmark, so every keyframe's solution is stale, not
             // just the active one's — demote them all first, and let the refits re-earn what
@@ -250,12 +255,9 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             fitMethod: this.fitMethod,
             autoFit: this.autoFit,
             syncLookCamera: this.syncLookCamera,
-            // What Match Video Aspect was before the sync took it, so unticking the sync after a
-            // reload puts back the same value it would have before one. undefined (dropped by
-            // JSON) is the real state "we did not change it, so it is not ours to change back".
-            restoreMatchVideoAspect: this._restoreMatchVideoAspect,
             showRays: this.showRays,
             useTiles: this.useTiles,
+            useObjects: this.useObjects,
             points: this.points.map((p) => ({
                 vx: p.vx, vy: p.vy, lat: p.lat, lon: p.lon, alt: p.alt, color: p.color,
             })),
@@ -345,21 +347,17 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             this.syncMethodControls();
         }
         if (v.autoFit !== undefined) this.autoFit = v.autoFit;
-        // Restored as plain flags, deliberately without re-forcing Match Video Aspect: the
-        // frustum node serializes that itself, so a save made with the sync on already comes
-        // back with it on, and forcing it here would only race that. Carrying the restore value
-        // across too is what makes unticking the sync behave the same before and after a reload
-        // — the alternative is guessing at a value the user may have chosen deliberately.
+        // Restored as a plain flag. Match Video Aspect is not touched here and is not this
+        // node's to touch — the frustum node serializes its own value and brings it back itself.
         // A save with no syncLookCamera key predates the flag, and back then the sync WAS
         // Enable Fit — so that is what it meant, and reading it any other way would silently
-        // drop a lock the sitch was saved with. No restore value is invented for those: it was
-        // never written, and the old code lost it across a reload too.
+        // drop a lock the sitch was saved with. A `restoreMatchVideoAspect` key from 2.131.0 is
+        // ignored: nothing owes Match Video Aspect a value any more, so there is nothing to
+        // restore, and a saved one would only re-apply a coupling that no longer exists.
         this.syncLookCamera = v.syncLookCamera !== undefined ? v.syncLookCamera : !!v.enabled;
-        if (v.restoreMatchVideoAspect !== undefined) {
-            this._restoreMatchVideoAspect = v.restoreMatchVideoAspect;
-        }
         if (v.showRays !== undefined) this.showRays = v.showRays;
         if (v.useTiles !== undefined) this.useTiles = v.useTiles;
+        if (v.useObjects !== undefined) this.useObjects = v.useObjects;
 
         this.keyframes = this.parseKeyframes(v.keyframes);
         if (this.keyframes.length === 0 && this.points.length > 0) {
@@ -451,7 +449,6 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
     dispose() {
         this.setEnabled(false);   // also removes the gesture-cancel listeners
-        this.setSyncLookCamera(false);   // and hands Match Video Aspect back
         KeyframeRegistry.unregister("cameraFit");
         this.markers.dispose();
         this.sightLines.dispose();
@@ -473,12 +470,13 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
         this.gui.add(this, "syncLookCamera").name("Sync Look Camera").listen()
             .onChange((on) => this.setSyncLookCamera(on))
-            .tooltip("Lock the look view to the video's framing: Match Video Aspect goes on, and " +
-                "the wheel and left drag over the look view zoom and pan the VIDEO instead of " +
-                "moving the 3D camera, so the two pictures stay comparable. A fit turns this on, " +
+            .tooltip("Point the look view's controls at the video: the wheel and left drag over " +
+                "the look view zoom and pan the VIDEO instead of moving the 3D camera, so the " +
+                "two pictures stay framed together while you place points. A fit turns this on, " +
                 "because a fit is only worth looking at side by side. Turn it off to fly the 3D " +
                 "camera again — the control points stay put, and the next fit turns it back on. " +
-                "Independent of Enable Fit: switching the fit off leaves this as you set it.");
+                "Independent of Enable Fit: switching the fit off leaves this as you set it. " +
+                "Does not touch Match Video Aspect, which is yours to set in the Camera menu.");
 
         this.gui.add(this, "showRays").name("Show Sight Lines").listen()
             .onChange(() => setRenderOne(true))
@@ -579,6 +577,19 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 "affects where new points are dropped and where dragged handles land, not points " +
                 "already placed.");
 
+        this.gui.add(this, "useObjects").name("Place on 3D Objects").listen()
+            .onChange(() => setRenderOne(true))
+            .tooltip("Put control points on the scene's own 3D objects — an aircraft, a balloon, " +
+                "a sphere — as well as on the terrain and buildings. Aim at the aircraft and the " +
+                "point lands on the aircraft, instead of passing through it onto the ground " +
+                "beyond. Whichever the ray reaches FIRST wins, so an object hidden behind a " +
+                "building is not picked through it, and clicking past an object still lands on " +
+                "the ground. Only objects that are switched on can be hit, and the camera's own " +
+                "marker never is — it sits where the fit says the camera is, so a point on it " +
+                "would move every time you solved. Like the option above, this affects where " +
+                "new points are dropped and where dragged handles land, not points already " +
+                "placed.");
+
         this.gui.add(this, "clearAllPoints").name("Clear All Points");
         this.syncMethodControls();
     }
@@ -644,31 +655,31 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     }
 
     /**
-     * Tie the look view to the video's framing, or let it go.
+     * Hand the look view's wheel and left drag to the video's zoom and pan, or give them back.
      *
-     * Two things together make the look view a second window onto the video rather than an
-     * independent camera: Match Video Aspect, which makes it render the 3D at the video's
-     * aspect and field (see setMatchVideoAspect), and FitViewSync, which sends its wheel and
-     * left drag to the video's zoom and pan instead of to the camera. Both are gated on this
-     * one flag, so the two halves can never end up half on.
+     * That is ALL this does. It deliberately does not touch **Match Video Aspect**, which is a
+     * checkbox of the user's own: cropping the look view to the video's shape is a different
+     * decision from choosing what the wheel does, and the two want different answers. Judging a
+     * fit at a glance often wants the wider field, so that the building you are checking is
+     * visible along with its surroundings.
      *
-     * It is deliberately NOT tied to Enable Fit. Placing points and judging the result want the
-     * lock; reading the scene, checking what is behind a building, or lining up the next
-     * keyframe want the camera back — and those happen with the fit still on. Equally, turning
-     * the fit off is not a reason to unframe a comparison the user is still looking at. So a
-     * fit turns this on (runFit), and only the user turns it off.
+     * Nothing is lost by the separation, because the look view ALREADY follows the video's zoom
+     * and pan without it: the view is built with `syncVideoZoom`, and CNodeView3D widens the
+     * camera by 1/fovCoverage and applies the video's zoom and pan offset every frame. Match
+     * Video Aspect only decides whether the extra field around the video's frame is shown or
+     * cropped away. So the two pictures stay comparable either way — one just has margins.
+     *
+     * An earlier version of this forced Match Video Aspect on, and a fit re-asserted it, so
+     * unticking that box by hand did not survive the next fit. That is the behaviour this
+     * replaces.
+     *
+     * Not tied to Enable Fit either. Placing points and judging the result want the wheel on the
+     * video; reading the scene, checking what is behind a building, or lining up the next
+     * keyframe want the camera back — and those happen with the fit still on. So a fit turns
+     * this on (runFit), and only the user turns it off.
      */
     setSyncLookCamera(on) {
         this.syncLookCamera = on;
-        if (on) {
-            const was = this.setMatchVideoAspect(true);
-            // Only remember a value worth putting back. If it was already on, the user chose it
-            // and it is not ours to switch off later.
-            if (was === false) this._restoreMatchVideoAspect = false;
-        } else if (this._restoreMatchVideoAspect !== undefined) {
-            this.setMatchVideoAspect(this._restoreMatchVideoAspect);
-            this._restoreMatchVideoAspect = undefined;
-        }
         setRenderOne(true);
     }
 
@@ -757,15 +768,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             // A fit switches this on by itself (see runFit), exactly as it selects the camera
             // switches captureCameraState records — and for the same reason it is captured here.
             // With Fit on Change, one point drag flips it; an undo that put the points back but
-            // left the look view locked would not be an undo of what the user did.
+            // left the wheel still driving the video would not be an undo of what the user did.
             //
-            // All THREE parts, because they are independent: the checkbox, the Match Video Aspect
-            // it drives (which the user can also drive directly), and the value the sync owes
-            // back. Restoring the first two from the third would be inference, and the inference
-            // is wrong whenever the sync was off with Match Video Aspect on, or vice versa.
+            // Match Video Aspect is NOT captured with it. The fit no longer touches that box, so
+            // it is the user's setting and not part of the edit — restoring it would mean an
+            // undo of a point move silently reverting a checkbox the user had ticked since.
             syncLookCamera: this.syncLookCamera,
-            matchVideoAspect: this.frustumNode()?.matchVideoAspect,
-            restoreMatchVideoAspect: this._restoreMatchVideoAspect,
         };
     }
 
@@ -784,16 +792,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // restored — a choice naming a missing option is ignored.
         this.syncMotionOptions();
         this.restoreCameraState(s.camera);
-        // Written back component by component rather than through setSyncLookCamera, because
-        // this is a restore of a state and not a transition into one: the setter would re-derive
-        // Match Video Aspect from the flag, and the whole point of capturing all three is that
-        // the third is not derivable. Snapshots taken before this was captured leave all of it
-        // alone — the old behaviour, rather than a guess at values they never held.
-        if (s.syncLookCamera !== undefined) {
-            this.syncLookCamera = s.syncLookCamera;
-            this._restoreMatchVideoAspect = s.restoreMatchVideoAspect;
-            if (s.matchVideoAspect !== undefined) this.setMatchVideoAspect(s.matchVideoAspect);
-        }
+        // Snapshots taken before this was captured leave the flag alone. A 2.131.0 snapshot may
+        // also carry matchVideoAspect / restoreMatchVideoAspect; both are ignored, for the same
+        // reason captureState no longer records them.
+        if (s.syncLookCamera !== undefined) this.setSyncLookCamera(s.syncLookCamera);
 
         // Re-measure the restored camera against the restored points. Read-only — it scores what
         // is there, it does not solve — so undo stays an exact inverse. Without it the residual
@@ -861,35 +863,6 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.beginUndo();
         fn();
         this.endUndo(description);
-    }
-
-    // ---------- Match Video Aspect ----------
-
-    /**
-     * Force the look view to frame the 3D scene exactly as the video is framed, for as long as
-     * the fit is being edited.
-     *
-     * The fit itself does not care — it is solved entirely in video-pixel space, and toggling
-     * this leaves the residual and the solved camera byte-identical. What it changes is whether
-     * the PREVIEW means anything. With it off the look view renders at its own aspect while the
-     * video has another, so the 3D and the footage are framed differently and a control point can
-     * sit exactly on its landmark while appearing not to. Since the entire way a user judges this
-     * tool is "does the sphere sit on the feature in the look view", a preview that lies is worse
-     * than no preview.
-     *
-     * The previous value is returned so switching the fit off puts it back.
-     */
-    setMatchVideoAspect(on) {
-        const frustum = this.frustumNode();
-        if (!frustum) return undefined;
-        const was = frustum.matchVideoAspect;
-        if (was === on) return was;
-        // Through the GUI controller where there is one, so the checkbox follows the change
-        // rather than silently disagreeing with the state.
-        const controller = findGuiController(frustum, "matchVideoAspect");
-        if (controller) controller.setValue(on);
-        else frustum.matchVideoAspect = on;
-        return was;
     }
 
     // ---------- geometry helpers ----------
@@ -1058,7 +1031,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         let found = null;
         for (let i = 0; i < SEED_ITERATIONS; i++) {
             const dir = this.rayForVideoPixel(state, aimX, aimY, size);
-            const hit = surfaceAlongRay(origin, dir, this.useTiles, camera);
+            const hit = surfaceAlongRay(origin, dir, this.useTiles, camera, this.useObjects);
             // Aimed off the world: keep the last real surface rather than discarding a good
             // answer because a correction overshot the horizon.
             if (!hit) return found;
@@ -1913,10 +1886,11 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         }
 
         const notes = this.applyResult(result);
-        // A fit exists to be checked against the footage, so put the look view alongside it.
-        // RE-ASSERTED, not merely flipped: Match Video Aspect is also a checkbox of its own, and
-        // switching that off by hand leaves the sync ticked but no longer synced. Only the change
-        // is announced, so a refit does not go on repeating a lock already in force.
+        // A fit exists to be checked against the footage, so put the look view's controls on the
+        // video. Only the change is announced, so a refit does not go on repeating it. (This was
+        // written as a deliberate RE-ASSERT when the sync also forced Match Video Aspect, to
+        // repair that box being unticked by hand; it no longer owns that box, so with the sync
+        // already on this is now simply a no-op.)
         const wasSynced = this.syncLookCamera;
         this.setSyncLookCamera(true);
         if (!wasSynced) notes.push("Sync Look Camera on");
@@ -2686,27 +2660,3 @@ function describeObservability(result) {
     return `Weak: ${worst} ${verb} by these points — held near its previous value`;
 }
 
-/**
- * Find the lil-gui controller bound to obj[prop], anywhere under the menu bar.
- *
- * Setting a flag directly would work but would leave its checkbox showing the old state, which
- * reads as the app ignoring you. Going through the controller keeps the two in step.
- */
-function findGuiController(obj, prop) {
-    const search = (gui) => {
-        if (!gui) return null;
-        for (const c of gui.controllers ?? []) {
-            if (c.object === obj && c.property === prop) return c;
-        }
-        for (const f of gui.folders ?? []) {
-            const found = search(f);
-            if (found) return found;
-        }
-        return null;
-    };
-    for (const key of Object.keys(guiMenus)) {
-        const found = search(guiMenus[key]);
-        if (found) return found;
-    }
-    return null;
-}

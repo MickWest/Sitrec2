@@ -53,8 +53,69 @@ const MAX_GROUND_RANGE = 400000;
  *                          layers, so the raycaster has to borrow a camera's layer mask
  * @returns {Vector3|null}
  */
-export function surfaceAlongRay(origin, direction, useTiles, camera) {
+export function surfaceAlongRay(origin, direction, useTiles, camera, useObjects = false) {
     const dir = direction.clone().normalize();
+    const surface = surfaceIgnoringObjects(origin, dir, useTiles, camera);
+    if (!useObjects) return surface;
+
+    // NEAREST wins between the object and whatever surface would otherwise have been chosen,
+    // rather than the strict priority the surfaces use among themselves. The reason the surfaces
+    // need priority is that one of them can be INVISIBLE and in front — the elevation height
+    // field draped over the building you are aiming at. An object has no such problem: it is
+    // solid, drawn, and occludes what is behind it, so if the ray reaches it first then it is
+    // what the clicked pixel shows. Taking it unconditionally would be the mistake, because an
+    // object standing behind a building is not on screen at that pixel and must not be picked.
+    const object = objectAlongRay(origin, dir, camera);
+    if (object === null) return surface;
+    if (surface === null) return object;
+    return origin.distanceToSquared(object) < origin.distanceToSquared(surface) ? object : surface;
+}
+
+/**
+ * Objects that are never landmarks, however solid they look.
+ *
+ * "cameraObject" is the marker sphere sitting at the camera's own position, moved along
+ * cameraTrackSwitchSmooth. It is not a thing in the world: it is a picture of the answer, and
+ * the answer is what the fit is solving for. A control point placed on it would be pinned to a
+ * target that moves every time the fit succeeds, so each solve would chase the landmark it just
+ * displaced. Excluded by id, which is how the rest of the codebase addresses this node too.
+ */
+const NEVER_A_LANDMARK = new Set(["cameraObject"]);
+
+/**
+ * The nearest placeable 3D object along the ray — an aircraft, a balloon, a sphere — or null.
+ *
+ * Found through `userData.is3DObject`, stamped on the group by CNode3DObject; see the note there
+ * for why a flag rather than an `instanceof`. Only the groups are collected, from NodeMan's flat
+ * dictionary rather than by traversing the scene, so the cost is one cheap pass over the node
+ * list and a raycast against the handful of meshes that are actually objects — never against the
+ * terrain, which has no BVH and costs about a millisecond a ray.
+ *
+ * Hidden objects are skipped explicitly: Three.js raycasting ignores `.visible`, so without this
+ * a switched-off object would still catch the pick, which from the user's side is a point landing
+ * on nothing at all.
+ */
+function objectAlongRay(origin, dir, camera) {
+    const groups = [];
+    NodeMan.iterate((id, node) => {
+        if (NEVER_A_LANDMARK.has(id)) return;
+        const g = node.group;
+        if (g && g.visible && g.userData?.is3DObject) groups.push(g);
+    });
+    if (groups.length === 0) return null;
+
+    const raycaster = new Raycaster(origin.clone(), dir);
+    raycaster.far = MAX_GROUND_RANGE;
+    // Same reason as the tiles pass: object groups sit on the look/main render layers, so the
+    // raycaster has to borrow a camera's mask or it matches nothing.
+    if (camera) raycaster.layers.mask = camera.layers.mask;
+    raycaster.firstHitOnly = true;
+    const hits = raycaster.intersectObjects(groups, true);
+    return hits.length > 0 ? hits[0].point.clone() : null;
+}
+
+/** The original tiles/elevation/ellipsoid answer, unchanged — see surfaceAlongRay's header. */
+function surfaceIgnoringObjects(origin, dir, useTiles, camera) {
     if (!useTiles) return raycastGroundElevationFast(origin, dir, MAX_GROUND_RANGE);
 
     // 1. The 3D geometry, if any is loaded under this ray.
@@ -118,7 +179,7 @@ export function projectToCanvas(view, world) {
 }
 
 /** The surface the GEOMETRIC ray through a canvas pixel meets, or null if it meets none. */
-function surfaceUnderCanvasRay(view, r, cx, cy, useTiles) {
+function surfaceUnderCanvasRay(view, r, cx, cy, useTiles, useObjects) {
     const ray = withDisplayedCamera(view, (cam) => {
         const ndcX = ((cx - r.x) / r.w) * 2 - 1;
         const ndcY = -(((cy - r.y) / r.h) * 2 - 1);
@@ -129,7 +190,7 @@ function surfaceUnderCanvasRay(view, r, cx, cy, useTiles) {
     if (!ray || !Number.isFinite(ray.dir.x)) return null;
     // view.camera, not the LOD-prepared one: prepareCameraForLOD changes fov, aspect and offsets
     // but never the layer mask, which is the only thing the tiles pass reads.
-    return surfaceAlongRay(ray.origin, ray.dir, useTiles, view.camera);
+    return surfaceAlongRay(ray.origin, ray.dir, useTiles, view.camera, useObjects);
 }
 
 /** Movement below this many canvas pixels counts as landing on the cursor. */
@@ -157,7 +218,7 @@ const PICK_ITERATIONS = 4;
  * With refraction off the first pass lands exactly on the cursor and the loop exits immediately,
  * leaving the original single-cast behaviour untouched.
  */
-export function groundUnderCanvasPoint(view, cx, cy, useTiles = false) {
+export function groundUnderCanvasPoint(view, cx, cy, useTiles = false, useObjects = false) {
     if (!view || !view.camera || !(view.widthPx > 0)) return null;
     const r = renderedRect(view, view.widthPx, view.heightPx);
     if (!(r.w > 0) || !(r.h > 0)) return null;
@@ -165,7 +226,7 @@ export function groundUnderCanvasPoint(view, cx, cy, useTiles = false) {
     let aimX = cx, aimY = cy;
     let found = null;
     for (let i = 0; i < PICK_ITERATIONS; i++) {
-        const hit = surfaceUnderCanvasRay(view, r, aimX, aimY, useTiles);
+        const hit = surfaceUnderCanvasRay(view, r, aimX, aimY, useTiles, useObjects);
         // Aimed off the world (into the sky, past the horizon): keep the last real surface
         // rather than throwing away a good answer because a correction overshot.
         if (!hit) return found;

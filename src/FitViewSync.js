@@ -44,20 +44,44 @@ export function fitViewSyncActive(view) {
 /**
  * Where the pointer is in the video frame, as a fraction of the full video in each axis.
  *
- * Mapped through renderedRect, not through the pane, because Sync Look Camera forces Match Video
- * Aspect on and that letterboxes the rendered image inside the pane. Measured on one 767x435 look
- * view: the canvas sat 2px down and 4px short. Using pane coordinates would put the zoom anchor off the
- * feature the user is pointing at, by more the further from centre they are — which is exactly
- * where they are when they have zoomed in to place a point.
+ * Asked of the mirrorVideo overlay wherever there is one, because that overlay shares the look
+ * view's div and its canvasToVideoCoords IS the mapping the video was drawn with. That makes the
+ * answer right in every mode without this module having to know which is in force — Match Video
+ * Aspect on or off, letterbox or pillarbox, cropped or filling the pane.
+ *
+ * Which matters now that Sync Look Camera no longer forces Match Video Aspect (see
+ * CNodeFitCameraPoints.setSyncLookCamera). With it off the look view shows a WIDER field than
+ * the video's own frame — CNodeView3D divides the camera's field by fovCoverage — so the pane
+ * spans 1/(fovCoverage*zoom) of the video vertically rather than 1/zoom. The fallback below
+ * still assumes 1/zoom, which is exact only while the rendered rect is the video's frame; it is
+ * kept for the case where no mirror overlay exists, where it is the best available guess.
  *
  * @returns {[number, number]|null} null when the geometry is not yet usable
  */
 function videoFractionUnderPointer(view, clientX, clientY, zoom, video) {
-    const r = renderedRect(view, view.widthPx, view.heightPx);
-    if (!(r.w > 0) || !(r.h > 0) || !(zoom > 0)) return null;
+    if (!(zoom > 0)) return null;
     const [vx, vy] = mouseToView(view, clientX, clientY);
+
+    const mirror = NodeMan.get("mirrorVideo", false);
+    if (mirror?.canvasToVideoCoords && mirror.videoWidth > 0 && mirror.videoHeight > 0) {
+        // Bring the mirror up to date FIRST. It copies the video's pan in its own update(), once
+        // per rendered frame, and a trackpad delivers wheel events a good deal faster than that:
+        // the second event of a flick would otherwise map the cursor through the pan the first
+        // one had already superseded, and the zoom would walk away from the pointer. update() is
+        // the defined "make the mirror current" operation and is cheap and idempotent, so it is
+        // used rather than re-copying the two fields here — this cannot then fall behind if the
+        // mirror ever starts mirroring more state.
+        mirror.update();
+        const [px, py] = mirror.canvasToVideoCoords(vx, vy);
+        if (Number.isFinite(px) && Number.isFinite(py)) {
+            return [px / mirror.videoWidth, py / mirror.videoHeight];
+        }
+    }
+
+    const r = renderedRect(view, view.widthPx, view.heightPx);
+    if (!(r.w > 0) || !(r.h > 0)) return null;
     // Fraction across the rendered image, then back out through the current zoom and pan. The
-    // visible region is 1/zoom of the video, centred on 0.5 + panOffset.
+    // visible region is taken to be 1/zoom of the video, centred on 0.5 + panOffset.
     const u = (vx - r.x) / r.w;
     const v = (vy - r.y) / r.h;
     return [
@@ -98,15 +122,30 @@ export function fitViewSyncPan(view, dxPx, dyPx) {
     const zoom = zoomNode.v0 / 100;
     if (!(zoom > 0)) return;
 
-    const r = renderedRect(view, view.widthPx, view.heightPx);
-    if (!(r.w > 0) || !(r.h > 0)) return;
-
-    // Negated so the picture goes with the pointer rather than away from it — grabbing and pulling
-    // the image is the gesture, the same one the video view itself implements. A drag right across
-    // the whole frame moves by the visible fraction, 1/zoom, which is what makes the two views move
-    // together by construction rather than by a tuned constant.
-    video.panOffsetX -= (dxPx / r.w) / zoom;
-    video.panOffsetY -= (dyPx / r.h) / zoom;
+    // Negated so the picture goes with the pointer rather than away from it — grabbing and
+    // pulling the image is the gesture, the same one the video view itself implements.
+    //
+    // Through the mirror overlay's own drawn rectangle where there is one, which is the same
+    // conversion CNodeVideoView's left-drag uses: (px / dWidth) * (sWidth / videoWidth) is
+    // exactly px / (the displayed image's width in pane pixels). Right in every mode, and in
+    // particular with Match Video Aspect off, where the pane no longer spans 1/zoom of the
+    // video vertically. The fallback keeps the old 1/zoom assumption for the no-mirror case.
+    //
+    // No mirror.update() needed here, unlike the wheel path: what is read is the RATIO
+    // sWidth/dWidth, which is sourceW/fullW — a function of the zoom and the pane, not of the
+    // pan. Clipping shrinks both terms together, so a stale pan cannot bias it.
+    const mirror = NodeMan.get("mirrorVideo", false);
+    if (mirror?.dWidth > 0 && mirror?.dHeight > 0
+        && mirror.videoWidth > 0 && mirror.videoHeight > 0) {
+        mirror.getSourceAndDestCoords();
+        video.panOffsetX -= (dxPx / mirror.dWidth) * (mirror.sWidth / mirror.videoWidth);
+        video.panOffsetY -= (dyPx / mirror.dHeight) * (mirror.sHeight / mirror.videoHeight);
+    } else {
+        const r = renderedRect(view, view.widthPx, view.heightPx);
+        if (!(r.w > 0) || !(r.h > 0)) return;
+        video.panOffsetX -= (dxPx / r.w) / zoom;
+        video.panOffsetY -= (dyPx / r.h) / zoom;
+    }
     video.clampPanOffset();
     setRenderOne(true);
 }

@@ -185,7 +185,8 @@ class CFitHandleOverlay extends CNodeViewUI {
     onMouseDrag(e, mouseX, mouseY) {
         if (this.draggingId === null) return;
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
-        const ground = groundUnderCanvasPoint(this.host, cx, cy, this.owner.getUseTiles());
+        const ground = groundUnderCanvasPoint(this.host, cx, cy,
+                                              this.owner.getUseTiles(), this.owner.getUseObjects());
         // No surface under the cursor (dragged into the sky, or past the horizon): leave the point
         // where it is rather than inventing a position at some arbitrary range.
         if (!ground) return;
@@ -228,6 +229,7 @@ class CFitHandleOverlay extends CNodeViewUI {
  *                                   ground: Vector3, image: Vector3|null}]} | null
  * @param {Function} v.getOccluder   () => {worldToQuad: Matrix4} | null
  * @param {Function} v.getUseTiles   () => boolean — place against 3D geometry, not the elevation
+ * @param {Function} v.getUseObjects () => boolean — also place against the scene's 3D objects
  * @param {Function} v.onMoved       (id, Vector3) => void, continuously during a drag
  * @param {Function} v.onCommit      (id) => void, once on release
  * @param {Function} v.onCorrectFrame () => boolean
@@ -241,6 +243,7 @@ export class FitPointHandles3D {
         this.getRayDisplay = v.getRayDisplay ?? (() => null);
         this.getOccluder = v.getOccluder ?? (() => null);
         this.getUseTiles = v.getUseTiles ?? (() => false);
+        this.getUseObjects = v.getUseObjects ?? (() => false);
         this.onMoved = v.onMoved ?? (() => {});
         this.onCommit = v.onCommit ?? (() => {});
         this.onCorrectFrame = v.onCorrectFrame ?? (() => true);

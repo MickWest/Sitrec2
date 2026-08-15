@@ -177,6 +177,13 @@ export class CNode3DObject extends CNode3DGroup {
         this.color = v.color;
         this.layers = v.layers; // usually undefined, as the camera handles layers
 
+        // Marks this group as a placeable OBJECT for "Place on 3D Objects" (FitSurfacePick).
+        // A flag in userData rather than an `instanceof` at the far end, because that module is
+        // deliberately a leaf — see its header, where importing back into the view graph closed
+        // a cycle through CNodeViewUI. Data crosses that boundary where a class cannot, and
+        // userData survives minification where a class name would not.
+        this.group.userData.is3DObject = true;
+
         // Folder label: drop the internal "_ob" object-node id suffix (every object
         // in this menu is an object, so it's redundant noise), then middle-truncate
         // long names so BOTH the start and end stay visible — the distinguishing part

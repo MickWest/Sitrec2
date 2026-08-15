@@ -204,7 +204,9 @@ class CSitrecAPI {
                 doc: "Where a pixel of a 3D view lands in the world. Casts a ray from the named"
                     + " view's camera through the pixel and returns the surface point it hits as"
                     + " lat/lon/altitude — against the 3D building tiles by default, so picking a"
-                    + " rooftop returns the roof, not the street under it. fx/fy are fractions"
+                    + " rooftop returns the roof, not the street under it, and against the"
+                    + " scene's own 3D objects, so picking an aircraft returns the aircraft"
+                    + " rather than the ground beyond it. fx/fy are fractions"
                     + " (0-1) across the view's rendered image, so they can be read straight off"
                     + " a screenshot of that view: the centre is fx 0.5, fy 0.5.",
                 params: {
@@ -214,6 +216,7 @@ class CSitrecAPI {
                     cx: "Canvas x in pixels, alternative to fx (float, optional)",
                     cy: "Canvas y in pixels, alternative to fy (float, optional)",
                     useTiles: "Prefer the 3D tile geometry (roofs, walls, trees) over the bare elevation surface (bool, optional, default true)",
+                    useObjects: "Also hit the scene's own 3D objects — aircraft, balloons, spheres — taking whichever the ray reaches first (bool, optional, default true)",
                 },
                 fn: (v) => {
                     const viewName = v?.view ?? "mainView";
@@ -229,7 +232,8 @@ class CSitrecAPI {
                         cy = r.y + v.fy * r.h;
                     }
                     const useTiles = v?.useTiles ?? true;
-                    const world = groundUnderCanvasPoint(view, cx, cy, useTiles);
+                    const useObjects = v?.useObjects ?? true;
+                    const world = groundUnderCanvasPoint(view, cx, cy, useTiles, useObjects);
                     if (!world) return {success: false, error: "the ray hit no surface (was that pixel sky?)"};
                     const lla = ECEFToLLAVD_radii(world);
                     const geoid = meanSeaLevelOffset(lla.x, lla.y);
@@ -257,8 +261,9 @@ class CSitrecAPI {
                 params: {
                     enabled: "Turn the tool on/off (bool, optional)",
                     useTiles: "Place points against the 3D building geometry rather than the elevation surface (bool, optional)",
+                    useObjects: "Place points on the scene's own 3D objects (aircraft, balloons, spheres) too, taking whichever the ray reaches first. The camera's own marker is never hit (bool, optional)",
                     autoFit: "Re-solve the camera after every point change (bool, optional)",
-                    syncLookCamera: "Lock the look view to the video's framing - Match Video Aspect on, and look-view wheel/drag zoom and pan the video instead of moving the camera. A fit turns this on (bool, optional)",
+                    syncLookCamera: "Point the look view's controls at the video: its wheel and left drag zoom and pan the VIDEO instead of moving the camera. Does not touch Match Video Aspect. A fit turns this on (bool, optional)",
                     lockPosition: "Keep the camera position, solve pointing/FOV only (bool, optional)",
                     lockFOV: "Keep the current field of view (bool, optional)",
                     lockRoll: "Hold camera roll at its current value (bool, optional)",
@@ -269,6 +274,7 @@ class CSitrecAPI {
                     if (!fit) return {success: false, error: "no fitCameraPoints node (needs a custom sitch with a video)"};
                     if (typeof v?.enabled === "boolean") fit.setEnabled(v.enabled);
                     if (typeof v?.useTiles === "boolean") fit.useTiles = v.useTiles;
+                    if (typeof v?.useObjects === "boolean") fit.useObjects = v.useObjects;
                     if (typeof v?.autoFit === "boolean") fit.autoFit = v.autoFit;
                     if (typeof v?.syncLookCamera === "boolean") fit.setSyncLookCamera(v.syncLookCamera);
                     if (typeof v?.lockPosition === "boolean") fit.lockPosition = v.lockPosition;
@@ -2320,7 +2326,8 @@ class CSitrecAPI {
                 azDeg: state.azDeg, elDeg: state.elDeg, rollDeg: state.rollDeg, vfovDeg: state.vfovDeg};
         }
         return {
-            enabled: fit.enabled, useTiles: fit.useTiles, autoFit: fit.autoFit,
+            enabled: fit.enabled, useTiles: fit.useTiles, useObjects: fit.useObjects,
+            autoFit: fit.autoFit,
             syncLookCamera: fit.syncLookCamera,
             fitMethod: fit.fitMethod, lockPosition: fit.lockPosition,
             lockFOV: fit.lockFOV, lockRoll: fit.lockRoll,
