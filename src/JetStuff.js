@@ -597,7 +597,9 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             value: Sit.startDistance,
             start: Sit.startDistanceMin,
             end: Sit.startDistanceMax,
-            maxMax: 30,
+            // No explicit maxMax: it defaults to `end`, so re-ranging the
+            // slider can always reach the range the sitch declared. A fixed 30
+            // sat BELOW the default ceiling and quietly capped it there.
             step: 0.001,
             desc: "Tgt Start Dist",
             color: "#FFC0C0",
