@@ -4,6 +4,7 @@
 // and the tractability runner. See realSegments.js for the loader contract.
 
 import {loadSegment, registerSegment} from "./realSegments";
+import {DEFAULT_SITE} from "./generateScenario";
 
 const RADIOSONDE = "balloon_radiosonde_Y1333892.csv";   // Oakland, full flight
 const HEXAROTOR = "drone_px4_36634f3e.csv";             // slow (<6 m/s), 18 min
@@ -132,7 +133,7 @@ export function buildRealSpec(def, segKey) {
         epochISO: "2025-02-01T20:00:00Z",   // noon PST: daylight at the ocean site
         durationSeconds: def.segment.durationSeconds, fps: def.segment.fps,
         initialHorizontalRangeM: def.rangeM,
-        siteId: "ocean",
+        siteId: DEFAULT_SITE,
         platform: def.platform,
         target: {kind: "real-segment", family: "real", parameters: {
             segmentKey: segKey, label: def.label,

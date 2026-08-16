@@ -25,6 +25,7 @@
 
 import fs from "fs";
 import path from "path";
+import {DEFAULT_SITE, SITES} from "./generateScenario";
 
 // The columns of the three interchange shapes (BOT-Interchange-Format.html).
 // Matched case-insensitively after trimming, like the app-side importer.
@@ -129,7 +130,11 @@ export function readInterchangeScenario(dir, id) {
         }
     }
 
-    const [originLat, originLon] = sidecar.frame?.originLLA ?? [35, -125, 0];
+    // Falls back to the DEFAULT_SITE rather than a literal, so moving the
+    // benchmark's ground cannot leave this reading the old one.
+    const fallback = SITES[DEFAULT_SITE];
+    const [originLat, originLon] = sidecar.frame?.originLLA
+        ?? [fallback.latDeg, fallback.lonDeg, fallback.groundElevationMSL];
 
     return {
         scenarioId: id,

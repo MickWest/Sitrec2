@@ -4,6 +4,7 @@
 // (orbiting sensor), so results are about the shape, not about collapse.
 
 import {MANEUVER_ANOMALOUS} from "./maneuverTargets";
+import {DEFAULT_SITE} from "./generateScenario";
 
 const ORBIT = {kind: "orbit-point", speedMS: 70, altitudeAGL: 3000};
 
@@ -29,7 +30,7 @@ export function maneuverSpecFor(kind) {
         epochISO: "2025-02-01T20:00:00Z",   // noon PST: daylight at the ocean site
         durationSeconds: c.durationSeconds, fps: 10,
         initialHorizontalRangeM: c.rangeM,
-        siteId: "ocean",
+        siteId: DEFAULT_SITE,
         platform: {...ORBIT},
         // The interchange truth flag reads spec.target.parameters.anomalous,
         // so the spec must declare it; the table keeps spec and generator in

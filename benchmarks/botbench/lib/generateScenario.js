@@ -20,10 +20,26 @@ import {cvDesignConditioning, conditioningStack, sensorPathStats, losSeriesFeatu
 
 export const SITES = {
     "flat-reference":    {latDeg: 40,       lonDeg: -105,      groundElevationMSL: 0},
+    // The DEFAULT generation site. Land, deliberately: an over-water site put
+    // every scenario somewhere a viewer has nothing to look at, no terrain to
+    // check a track against and no imagery to judge scale by, which made the
+    // scenes useless to open and inspect even though the geometry was fine.
+    //
+    // groundElevationMSL is MEAN SEA LEVEL, which is what the flat-plane rule
+    // adds to Z. The same point is -4.9 m on the WGS84 ellipsoid, the geoid
+    // separation here being -32.5 m. Recorded because that difference is a
+    // standing trap: anything converting a scenario altitude to HAE must apply
+    // it, and a conversion that quietly skips it puts a track tens of metres
+    // from where it was computed.
+    "central-valley":    {latDeg: 37.244358, lonDeg: -120.738187, groundElevationMSL: 27.6},
     "ocean":             {latDeg: 35,       lonDeg: -125,      groundElevationMSL: 0},
     "denver":            {latDeg: 39.7392,  lonDeg: -104.9903, groundElevationMSL: 1609},
     "cheyenne-mountain": {latDeg: 38.744,   lonDeg: -104.846,  groundElevationMSL: 2900},
 };
+
+// The site every scenario set uses unless it is deliberately testing another.
+// Named once so moving the benchmark's ground is one edit rather than a search.
+export const DEFAULT_SITE = "central-valley";
 
 // Stable stringify with sorted keys (canonical spec hashing).
 export function canonical(obj) {

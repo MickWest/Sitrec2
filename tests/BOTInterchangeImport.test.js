@@ -87,17 +87,25 @@ describe("BOT interchange detection", () => {
 describe("BOT coordinate conversion", () => {
     test("Z is altitude directly, at any range (flat-plane rule)", () => {
         // The whole point of the flat-plane reading: no curvature term is
-        // subtracted, so a 20 km MSL balloon 50 km away is still at 20 km.
-        expect(botENUToLLA(0, 0, 500)[2]).toBeCloseTo(500, 9);
-        expect(botENUToLLA(0, 50000, 20000)[2]).toBeCloseTo(20000, 9);
-        expect(botENUToLLA(30000, 40000, 3000)[2]).toBeCloseTo(3000, 9);
+        // subtracted, so a 20 km balloon 50 km away is still 20 km above the
+        // site's ground rather than 196 m lower.
+        //
+        // Written against the ORIGIN'S ground rather than a literal 0, because
+        // the default site is not at sea level and hardcoding its elevation
+        // here would turn a later move of the site into a puzzling failure
+        // instead of a passing test.
+        const g = BOT_DEFAULT_ORIGIN.groundElevationMSL;
+        expect(botENUToLLA(0, 0, 500)[2]).toBeCloseTo(500 + g, 9);
+        expect(botENUToLLA(0, 50000, 20000)[2]).toBeCloseTo(20000 + g, 9);
+        expect(botENUToLLA(30000, 40000, 3000)[2]).toBeCloseTo(3000 + g, 9);
     });
 
     test("horizontal offsets map to the expected lat/lon", () => {
         const [lat, lon] = botENUToLLA(SENSOR[0], SENSOR[1], SENSOR[2]);
-        // 5 km south of 35N: ~0.045 deg of latitude, longitude unchanged.
+        // 5 km due south: about 0.045 deg of latitude, longitude unchanged.
+        // Relative to the origin, so the site can move without editing this.
         expect(lat).toBeLessThan(BOT_DEFAULT_ORIGIN.latDeg);
-        expect(lat).toBeCloseTo(34.9549, 3);
+        expect(BOT_DEFAULT_ORIGIN.latDeg - lat).toBeCloseTo(5000 / 6371000 / DEG, 2);
         expect(lon).toBeCloseTo(BOT_DEFAULT_ORIGIN.lonDeg, 9);
     });
 });
@@ -239,7 +247,11 @@ describe("BOT MISB output", () => {
         const [sLat, sLon] = botENUToLLA(...SENSOR);
         expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(sLat, 9);
         expect(misb[0][MISB.SensorLongitude]).toBeCloseTo(sLon, 9);
-        expect(misb[0][MISB.SensorTrueAltitude]).toBeCloseTo(3000, 9);
+        // SENSOR[2] above the site's GROUND, not above sea level — the flat-plane
+        // rule adds the origin's elevation. Written relative to the origin so
+        // moving the site does not need this file edited.
+        expect(misb[0][MISB.SensorTrueAltitude])
+            .toBeCloseTo(3000 + BOT_DEFAULT_ORIGIN.groundElevationMSL, 9);
 
         // TrackManager gates the ENTIRE angles pipeline on PlatformPitchAngle being
         // a finite number. If this stops being 0, no "<name> angles" LOS is built
@@ -258,7 +270,8 @@ describe("BOT MISB output", () => {
         const f = new CTrackFileBOT(allCsv(4));
         const misb = f.toMISB(1);
         expect(misb.length).toBe(4);
-        expect(misb[0][MISB.SensorTrueAltitude]).toBeCloseTo(500, 9);
+        expect(misb[0][MISB.SensorTrueAltitude])
+            .toBeCloseTo(500 + BOT_DEFAULT_ORIGIN.groundElevationMSL, 9);
         // Truth is a position, not a sensor: giving it angles would create a second
         // camera-like LOS pointing nowhere in particular.
         expect(misb[0][MISB.PlatformPitchAngle]).toBeNull();
