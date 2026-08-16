@@ -88,6 +88,28 @@ function providerCredential(byokId, sharedValue) {
     const own = getCachedKey(byokId);
     return {value: own || sharedValue || null, isOwn: !!own};
 }
+
+// Which 3D-building sources this user can actually reach: the permission gate, plus
+// whichever provider credential is available (Sitrec's shared one, or their own).
+//
+// Exported because the Settings menu offers a "3D Buildings" startup preference, and it
+// must be hidden from exactly the users whose Terrain menu would not show the toggle
+// either - otherwise the preference is a switch wired to nothing.
+export function buildingSourceAvailability() {
+    const allowed3DBuildingGroups = [3, 2, 9, 14, 19]; // Admin, Registered, Verified, Sitrec Members, Sitrec Plus
+    const userGroups = Array.isArray(Globals.userData?.userGroups) ? Globals.userData.userGroups : [];
+    const hasGroupPermission = userGroups.some(group => allowed3DBuildingGroups.includes(group));
+    const canUse3DBuildings = Globals.userData?.canUse3DBuildings ?? hasGroupPermission;
+
+    const cesium = providerCredential("cesium-ion", Globals.userData?.CESIUM_ION_TOKEN);
+    const google = providerCredential("google-maps", Globals.userData?.GOOGLE_MAPS_API_KEY);
+
+    return {
+        canUse3DBuildings,
+        hasCesium: (canUse3DBuildings || cesium.isOwn) && !!cesium.value,
+        hasGoogle: (canUse3DBuildings || google.isOwn) && !!google.value,
+    };
+}
 export class CNodeTerrainUI extends CNode {
     constructor(v) {
 
@@ -811,17 +833,8 @@ export class CNodeTerrainUI extends CNode {
         this.oceanSurfaceNextRefreshAtMs = 0;
 
         // Determine available building sources based on API keys and user permission.
-        const allowed3DBuildingGroups = [3, 2, 9, 14, 19]; // Admin, Registered, Verified, Sitrec Members, Sitrec Plus
-        const userGroups = Array.isArray(Globals.userData?.userGroups) ? Globals.userData.userGroups : [];
-        const hasGroupPermission = userGroups.some(group => allowed3DBuildingGroups.includes(group));
-        this.canUse3DBuildings = Globals.userData?.canUse3DBuildings ?? hasGroupPermission;
-
-        const cesium = providerCredential("cesium-ion", Globals.userData?.CESIUM_ION_TOKEN);
-        const google = providerCredential("google-maps", Globals.userData?.GOOGLE_MAPS_API_KEY);
-        const cesiumToken = cesium.value;
-        const googleKey = google.value;
-        const hasCesium = (this.canUse3DBuildings || cesium.isOwn) && !!cesiumToken;
-        const hasGoogle = (this.canUse3DBuildings || google.isOwn) && !!googleKey;
+        const {canUse3DBuildings, hasCesium, hasGoogle} = buildingSourceAvailability();
+        this.canUse3DBuildings = canUse3DBuildings;
 
         // Only enable showBuildings if user has permission and at least one API key;
         // otherwise force it off so we don't serialize an unusable state.

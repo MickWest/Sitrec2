@@ -161,6 +161,36 @@ function sanitizeSettings($settings) {
         }
     }
 
+    // ---- New-sitch startup preferences ----
+
+    if (isset($settings['startupUnits'])) {
+        $units = strtolower(strval($settings['startupUnits']));
+        if (in_array($units, ['nautical', 'imperial', 'metric', 'feet'])) {
+            $sanitized['startupUnits'] = $units;
+        }
+    }
+
+    if (isset($settings['startupLocation'])) {
+        $sanitized['startupLocation'] = boolval($settings['startupLocation']);
+    }
+
+    if (isset($settings['startupLat'])) {
+        $sanitized['startupLat'] = max(-90, min(90, floatval($settings['startupLat'])));
+    }
+
+    if (isset($settings['startupLon'])) {
+        $sanitized['startupLon'] = max(-180, min(180, floatval($settings['startupLon'])));
+    }
+
+    if (isset($settings['startupAlt'])) {
+        // Metres above ground, so 0 is the floor.
+        $sanitized['startupAlt'] = max(0, min(100000, floatval($settings['startupAlt'])));
+    }
+
+    if (isset($settings['startupBuildings'])) {
+        $sanitized['startupBuildings'] = boolval($settings['startupBuildings']);
+    }
+
     return $sanitized;
 }
 

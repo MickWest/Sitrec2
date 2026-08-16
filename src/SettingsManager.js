@@ -129,6 +129,48 @@ export function sanitizeSettings(settings) {
         }
     }
 
+    // ---- New-sitch startup preferences (see applyStartupDefaults in StartupDefaults.js) ----
+
+    if (settings.startupUnits !== undefined) {
+        // Keys of SELECTABLE_UNITS in CUnits.js
+        const allowed = ["nautical", "imperial", "metric", "feet"];
+        const units = String(settings.startupUnits).toLowerCase();
+        if (allowed.includes(units)) {
+            sanitized.startupUnits = units;
+        }
+    }
+
+    if (settings.startupLocation !== undefined) {
+        sanitized.startupLocation = Boolean(settings.startupLocation);
+    }
+
+    if (settings.startupLat !== undefined) {
+        const lat = Number(settings.startupLat);
+        if (Number.isFinite(lat)) {
+            sanitized.startupLat = Math.max(-90, Math.min(90, lat));
+        }
+    }
+
+    if (settings.startupLon !== undefined) {
+        const lon = Number(settings.startupLon);
+        if (Number.isFinite(lon)) {
+            sanitized.startupLon = Math.max(-180, Math.min(180, lon));
+        }
+    }
+
+    if (settings.startupAlt !== undefined) {
+        // Metres ABOVE GROUND, so 0 (ground level) is the floor. The ceiling is
+        // arbitrary but keeps a fat-fingered paste from starting the camera in orbit.
+        const alt = Number(settings.startupAlt);
+        if (Number.isFinite(alt)) {
+            sanitized.startupAlt = Math.max(0, Math.min(100000, alt));
+        }
+    }
+
+    if (settings.startupBuildings !== undefined) {
+        sanitized.startupBuildings = Boolean(settings.startupBuildings);
+    }
+
     return sanitized;
 }
 
@@ -342,6 +384,17 @@ export async function initializeSettings() {
             showAttribution: true, // Show map/elevation data source attribution overlay
             showFilename: true, // Show the current video filename in the bottom overlay
             language: "en", // UI language
+
+            // How a NEW sitch starts. These are applied to Sit before setup runs
+            // (see StartupDefaults.js) and are never part of a sitch, so loading a
+            // saved sitch always restores that sitch's own units and camera.
+            // The defaults below reproduce the old hard-coded startup exactly.
+            startupUnits: "nautical",   // nautical / imperial / metric / feet
+            startupLocation: false,     // false = use the sitch's own start location
+            startupLat: 34,             // only used when startupLocation is true
+            startupLon: -118.3,
+            startupAlt: 0,              // metres ABOVE GROUND. 0 = standing on the ground
+            startupBuildings: false,    // 3D buildings on at startup (needs permission + a provider key)
         };
     }
 

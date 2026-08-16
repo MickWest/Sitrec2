@@ -972,6 +972,16 @@ const en = {
             centerSidebar: { label: "Center Sidebar", tooltip: "Enable center sidebar between split views (drag menus to the divider line)" },
             showAttribution: { label: "Show Attribution", tooltip: "Show map and elevation data source attribution overlay" },
             showFilename: { label: "Show Filename", tooltip: "Show the current video filename centered at the bottom of the viewport and exported videos" },
+            startup: {
+                title: "New Sitch Startup",
+                tooltip: "How a NEW sitch begins. These do not change the sitch you are looking at, and a saved sitch always restores its own units and camera.",
+            },
+            startupUnits: { label: "Units", tooltip: "Unit system a new sitch starts in, for speed, distance and altitude. A sitch that specifies its own units keeps them." },
+            startupLocation: { label: "Use Start Location", tooltip: "Start a new sitch at the latitude/longitude/altitude below instead of the sitch's own start position. Loading a track still moves you to the track." },
+            startupLat: { label: "Start Latitude", tooltip: "Latitude a new sitch starts at. Accepts decimal degrees, D M S, hemisphere letters or MGRS — you can also paste a whole \"lat, lon\" pair here." },
+            startupLon: { label: "Start Longitude", tooltip: "Longitude a new sitch starts at." },
+            startupAlt: { label: "Start Altitude (m)", tooltip: "Camera height in METRES above the ground at the start location. 0 = standing on the ground." },
+            startupBuildings: { label: "3D Buildings", tooltip: "Turn 3D buildings on when a new sitch starts. Uses your 3D tile quota as soon as the sitch loads." },
         },
         balloons: {
             count: { label: "Count", tooltip: "Number of nearby stations to import" },

@@ -43,3 +43,57 @@ describe('sanitizeSettings', () => {
         expect(sanitizeSettings({}).showAttribution).toBeUndefined();
     });
 });
+
+describe('sanitizeSettings - new sitch startup preferences', () => {
+    test('accepts the four unit systems and rejects anything else', () => {
+        expect(sanitizeSettings({startupUnits: 'nautical'}).startupUnits).toBe('nautical');
+        expect(sanitizeSettings({startupUnits: 'imperial'}).startupUnits).toBe('imperial');
+        expect(sanitizeSettings({startupUnits: 'metric'}).startupUnits).toBe('metric');
+        expect(sanitizeSettings({startupUnits: 'feet'}).startupUnits).toBe('feet');
+        expect(sanitizeSettings({startupUnits: 'furlongs'}).startupUnits).toBeUndefined();
+    });
+
+    test('unit system is case insensitive, since sitches spell it "Nautical"', () => {
+        expect(sanitizeSettings({startupUnits: 'Nautical'}).startupUnits).toBe('nautical');
+    });
+
+    test('startupLocation is coerced to a boolean', () => {
+        expect(sanitizeSettings({startupLocation: true}).startupLocation).toBe(true);
+        expect(sanitizeSettings({startupLocation: 0}).startupLocation).toBe(false);
+    });
+
+    test('latitude and longitude are clamped to the globe', () => {
+        expect(sanitizeSettings({startupLat: 34.05}).startupLat).toBeCloseTo(34.05);
+        expect(sanitizeSettings({startupLat: 200}).startupLat).toBe(90);
+        expect(sanitizeSettings({startupLat: -200}).startupLat).toBe(-90);
+        expect(sanitizeSettings({startupLon: -118.24}).startupLon).toBeCloseTo(-118.24);
+        expect(sanitizeSettings({startupLon: 400}).startupLon).toBe(180);
+        expect(sanitizeSettings({startupLon: -400}).startupLon).toBe(-180);
+    });
+
+    test('non-numeric coordinates are dropped rather than stored as NaN', () => {
+        expect(sanitizeSettings({startupLat: 'north'}).startupLat).toBeUndefined();
+        expect(sanitizeSettings({startupLon: 'west'}).startupLon).toBeUndefined();
+    });
+
+    test('altitude is metres above ground, so it cannot go negative', () => {
+        expect(sanitizeSettings({startupAlt: 0}).startupAlt).toBe(0);
+        expect(sanitizeSettings({startupAlt: 1.5}).startupAlt).toBeCloseTo(1.5);
+        expect(sanitizeSettings({startupAlt: -100}).startupAlt).toBe(0);
+        expect(sanitizeSettings({startupAlt: 1e9}).startupAlt).toBe(100000);
+        expect(sanitizeSettings({startupAlt: 'high'}).startupAlt).toBeUndefined();
+    });
+
+    test('startupBuildings is coerced to a boolean', () => {
+        expect(sanitizeSettings({startupBuildings: 1}).startupBuildings).toBe(true);
+        expect(sanitizeSettings({startupBuildings: false}).startupBuildings).toBe(false);
+    });
+
+    test('none of them appear when not provided', () => {
+        const result = sanitizeSettings({});
+        for (const key of ['startupUnits', 'startupLocation', 'startupLat',
+                           'startupLon', 'startupAlt', 'startupBuildings']) {
+            expect(result[key]).toBeUndefined();
+        }
+    });
+});
