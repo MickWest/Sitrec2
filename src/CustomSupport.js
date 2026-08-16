@@ -104,6 +104,9 @@ import {CNodeSwitch} from "./nodes/CNodeSwitch";
 import {getNearbyWeatherBalloons, importSoundingDialog} from "./SondeFetch";
 import {WIND_SOURCES, windSourceLabelsToKeys, windSourceByKey} from "./nodes/WindSources";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
+import {SELECTABLE_UNITS} from "./CUnits";
+import {attachLatLonInputs} from "./CoordinateInput";
+import {buildingSourceAvailability} from "./nodes/CNodeTerrainUI";
 import {CNodeSAPage} from "./nodes/CNodeSAPage";
 import {updateFilenameOverlay} from "./AttributionOverlay";
 import {
@@ -657,8 +660,94 @@ export class CCustomManager {
 
         updateFilenameOverlay();
 
+        this.setupStartupSettings(settingsFolder);
+
         // Fetch available models from server
         this.fetchAvailableChatModels();
+    }
+
+    /**
+     * "New Sitch Startup" — the handful of settings that describe how a sitch you
+     * START should begin, rather than how the app behaves. Nothing here touches the
+     * sitch already on screen; they are read by applyStartupDefaults() (and by the
+     * CSituation constructor, for units) the next time a sitch is started.
+     *
+     * @param {object} settingsFolder - the parent Settings folder
+     */
+    setupStartupSettings(settingsFolder) {
+        const startupFolder = settingsFolder.addFolder(t("custom.settings.startup.title"))
+            .tooltip(t("custom.settings.startup.tooltip"))
+            .close();
+
+        startupFolder.add(Globals.settings, "startupUnits", SELECTABLE_UNITS)
+            .name(t("custom.settings.startupUnits.label"))
+            .tooltip(t("custom.settings.startupUnits.tooltip"))
+            .onChange(() => this.saveGlobalSettings(true))
+            .listen();
+
+        startupFolder.add(Globals.settings, "startupLocation")
+            .name(t("custom.settings.startupLocation.label"))
+            .tooltip(t("custom.settings.startupLocation.tooltip"))
+            .onChange((value) => {
+                Globals.settings.startupLocation = Boolean(value);
+                this.saveGlobalSettings(true);
+            })
+            .listen();
+
+        // Typed/pasted, never dragged, so no slider — and snap off (the last add()
+        // argument) so the step does not round a coordinate you paste in. Same
+        // treatment the Lat/Lon boxes in the Camera menu get.
+        // The number fields save DEBOUNCED on change and immediately on commit: a
+        // lil-gui number box fires onChange on every keystroke, so an immediate save
+        // there would be one server round trip per character typed. onChange still has
+        // to save at all, because a pasted lat/lon pair arrives via setValue() and
+        // never reaches onFinishChange.
+        const saveNumber = () => this.saveGlobalSettings();
+        const saveNumberNow = () => this.saveGlobalSettings(true);
+
+        const latController = startupFolder.add(Globals.settings, "startupLat", -90, 90, 0.0001, false)
+            .noSlider()
+            .name(t("custom.settings.startupLat.label"))
+            .tooltip(t("custom.settings.startupLat.tooltip"))
+            .onChange(saveNumber)
+            .onFinishChange(saveNumberNow)
+            .listen();
+
+        const lonController = startupFolder.add(Globals.settings, "startupLon", -180, 180, 0.0001, false)
+            .noSlider()
+            .name(t("custom.settings.startupLon.label"))
+            .tooltip(t("custom.settings.startupLon.tooltip"))
+            .onChange(saveNumber)
+            .onFinishChange(saveNumberNow)
+            .listen();
+
+        // So these boxes take the same formats as every other coordinate box in
+        // Sitrec — D M S, hemisphere letters, MGRS, or a whole "lat, lon" pair
+        // pasted into the latitude field.
+        attachLatLonInputs(latController, lonController);
+
+        startupFolder.add(Globals.settings, "startupAlt", 0, 100000, 1, false)
+            .noSlider()
+            .name(t("custom.settings.startupAlt.label"))
+            .tooltip(t("custom.settings.startupAlt.tooltip"))
+            .onChange(saveNumber)
+            .onFinishChange(saveNumberNow)
+            .listen();
+
+        // Only offered to users whose Terrain menu would show the buildings toggle
+        // at all — i.e. with the permission and a usable provider key. For anyone
+        // else this would be a switch wired to nothing.
+        const buildings = buildingSourceAvailability();
+        if (buildings.hasCesium || buildings.hasGoogle) {
+            startupFolder.add(Globals.settings, "startupBuildings")
+                .name(t("custom.settings.startupBuildings.label"))
+                .tooltip(t("custom.settings.startupBuildings.tooltip"))
+                .onChange((value) => {
+                    Globals.settings.startupBuildings = Boolean(value);
+                    this.saveGlobalSettings(true);
+                })
+                .listen();
+        }
     }
 
     async fetchAvailableChatModels() {

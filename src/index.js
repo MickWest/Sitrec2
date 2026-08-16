@@ -174,6 +174,7 @@ import {
     windowChanged,
 } from "./indexRender";
 import {setupHUDColor} from "./HUDColor";
+import {applyStartupDefaults, setSitchStartLocation} from "./StartupDefaults";
 
 // Initialize debug log capture BEFORE any console output
 debugLog.init();
@@ -815,6 +816,9 @@ if (fromAppParams !== null) {
     selectInitialSitch();
 }
 
+// The user's saved "New Sitch Startup" preferences (Settings menu). Applied before the
+// URL parameters below so anything explicit in the URL still wins.
+applyStartupDefaults();
 
 // handle parames like latlon=34.2334,-118.4354
 
@@ -845,27 +849,7 @@ if (latlon) {
 
             // the sitch has not been set up
             // so we jsut override the value in Sit
-
-            Sit.TerrainModel.lat = lat;
-            Sit.TerrainModel.lon = lon;
-            Sit.TerrainModel.zoom = 15;
-            Sit.TerrainModel.nTiles = 8
-
-            Sit.mainCamera.startCameraPositionLLA = [
-                    lat-3, lon, 250000,
-                ]
-
-            Sit.mainCamera.startCameraTargetLLA = [
-                    lat , lon, 0,
-                ]
-
-            Sit.fixedCameraPosition.LLA = [
-                lat, lon, alt
-            ]
-
-            // set the mode to AGL
-            Sit.fixedCameraPosition.agl = true;
-
+            setSitchStartLocation(lat, lon, alt);
 
             setSitchEstablished(true); // so loading tracks won't set the Lat/Lon time again
 
@@ -1544,6 +1528,10 @@ async function newSitch(situation, customSetup = false ) {
     if (!customSetup) {
         // if it's not custom, then "situation" is a name of a default sitch
         selectInitialSitch(situation);
+        // Starting a sitch fresh from the menu, so the user's saved "New Sitch Startup"
+        // preferences apply. NOT in the branch below: that one is a sitch loaded from a
+        // file, which brings its own camera and terrain.
+        applyStartupDefaults();
     } else {
         // if it's custom, then "situation" is a sitch data file
         // i.e. the text of a text based sitch

@@ -705,7 +705,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // }).name("Day/Night Sky")
 
 
-        this.showEquatorialGridLook = (v.showEquatorialGridLook !== undefined) ? v.showEquatorialGridLook : true;
+        // OFF unless the sitch asks for it. The look view is the one you match against a
+        // photo or video frame, and a coordinate grid drawn over that is in the way far
+        // more often than it is wanted. (The main view keeps its own default, above.)
+        this.showEquatorialGridLook = (v.showEquatorialGridLook !== undefined) ? v.showEquatorialGridLook : false;
         this.celestialGUI.add(this, "showEquatorialGridLook").listen().onChange(() => {
             setRenderOne(true);
             this.updateVis()

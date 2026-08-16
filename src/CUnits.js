@@ -8,6 +8,16 @@
 import {guiPhysics, NodeMan} from "./Globals";
 import {assert} from "./assert";
 
+// The unit systems a user can pick, as {menu label: internal key}. Shared with the
+// "Units" startup preference in the Settings menu, so the two lists cannot drift.
+// Treat as read-only — every CUnits instance shares this one object.
+export const SELECTABLE_UNITS = {
+    "Nautical": "nautical",
+    "Imperial/US": "imperial",
+    "Metric": "metric",
+    "Feet only": "feet",
+};
+
 export class CUnits {
     constructor(_units = "metric", gui) {
 
@@ -104,7 +114,7 @@ export class CUnits {
         }
 
         this.units = _units.toLowerCase();
-        this.selectableUnits = {"Nautical":"nautical", "Imperial/US":"imperial",  "Metric": "metric","Feet only":"feet"};
+        this.selectableUnits = SELECTABLE_UNITS;
         this.changeUnits(this.units);
         if(guiPhysics)
             guiPhysics.add(this, "unitsName", this.selectableUnits).name("Units")
