@@ -9,6 +9,30 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.134.0 (2026-08-16)
+
+### New Features
+
+- **Global Radius Resize** (Objects menu): one slider resizes every marker in the scene whose only dimension is a radius — spheres, and shapes like the truth marker — so a cluster of candidate reconstructions metres apart can be shrunk from airliner-sized blobs to something readable in one drag. Shapes with a second length (capsules, cones, toruses) and 3D models are left alone, and the slider quietly follows the largest marker present so it always shows a true number; it only acts when you move it. It replaces the old *Target Sphere size ft* control, which had no effect at all.
+
+- **Open a BOTBench scenario in a new window** (File → File Analysis → *BOTBench...*): the filename in each results row is now a link that opens that scenario in a fresh Sitrec window — even though the file only exists inside the dialog it was picked or dropped into. The new window loads the scenario's tracks, puts everything its companion data says into the Notes panel (the known answer appears only for files that carry one), and frames the camera on the tracks. The handoff survives reloading the new window and expires on its own after an hour.
+
+- **Open tracks in new window** (Traverse → Analyze Traverse Methods...): a new button in the results gallery opens every consistent candidate still in play as ordinary tracks in a new window of the same sitch, so you can finally see whether two candidates sit 5 metres apart or 5 kilometres apart — the one question the gallery tiles cannot answer. Candidates you set aside are not brought back by this door, the camera track and any truth track come along so there is something to view from, and the camera arrives framed on the closest marker.
+
+### Improvements
+
+- **The BOTBench results table now shows the answer, and warns when a number cannot be trusted** (File → File Analysis → *BOTBench...*): new *Target* and *Platform* columns say what the object actually was and what the sensor flew, straight from each scenario's answer key — never shown to the analysis itself — with scenarios that are designed to be unresolvable flagged so a correct "unresolved" no longer reads as a failure. The fit-error column now shows each error beside the best error a perfect answer could possibly score, a new *Best* column shows how close any method came (so "the answer was found, then out-ranked" is visible at a glance), winners whose distance comes from an assumption rather than the data are flagged, and filenames are no longer clipped down to the one part that every generated file shares.
+
+- **Track markers read as solid bodies**: imported-track markers now catch the light instead of reading as flat discs — which matters most when several sit close together at different depths — and the floating name over a track now uses the same shortened form as the Objects menu, instead of stretching a full 90-character filename across the scene.
+
+- **Tgt Start Dist slider** (Traverse menu): the range is now 0.01 to 50 (in the sitch's distance unit) instead of 0 to 80 — the old floor of exactly zero put the object on top of the camera, and most of the old range was distances nothing is ever solved at. Stretching the slider's range can now always reach whatever ceiling the sitch itself sets.
+
+- **Benchmark scenarios open over land**: bearings-only scenario files now place their scene over Central Valley farmland instead of open ocean, so there is terrain to judge a track against and imagery to judge scale by when a scenario is opened in a window.
+
+### Bug Fixes
+
+- Fixed the known-answer (truth) track of a bearings-only scenario having no visible marker at all. Ground truth now gets its own unmistakable marker — a lime-green twenty-sided solid — so the answer key can never be confused with one more candidate, and it resizes together with the spheres under *Global Radius Resize*.
+
 ## Version 2.133.0 (2026-08-16)
 
 ### New Features
