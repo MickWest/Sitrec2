@@ -2132,6 +2132,10 @@ export class CNodeView3D extends CNodeViewCanvas {
                     height = this.heightPx;
                 }
 
+                // Height of the render target BEFORE Match Video Aspect narrows it, so the
+                // fraction it ends up keeping can be published below for adjustPointScale.
+                const heightBeforeMatch = height;
+
                 // When matchVideoAspect is on, adjust the camera to show exactly
                 // the video's aspect ratio. Two cases:
                 // - Letterbox (video wider): preserve hFOV, narrow vFOV, reduce height
@@ -2168,6 +2172,21 @@ export class CNodeView3D extends CNodeViewCanvas {
                     this._matchVideoAspectFOV = undefined;
                     this._matchVideoAspectAspect = undefined;
                 }
+
+                // The vertical fraction of the render target Match Video Aspect actually
+                // draws into, published for adjustPointScale — camera.fov has narrowed to
+                // match, so the pixel count it is paired with has to narrow with it or the
+                // point sprites change size when the box is ticked.
+                //
+                // Taken from the render target rather than the canvas CSS box on purpose.
+                // The two are NOT interchangeable: scripted-video rendering overrides
+                // widthPx/heightPx to the output size and leaves the div at the live pane
+                // size (ScriptRenderer.js renderViewAt), so a CSS-derived fraction would
+                // describe a letterbox the exported frame never had. This form is a ratio of
+                // two numbers from the same code path, so it is correct for the live pane,
+                // canvasWidth targets and scripted output alike, and is exactly 1 when Match
+                // Video Aspect is off.
+                this.letterboxScaleY = heightBeforeMatch > 0 ? height / heightBeforeMatch : 1;
 
                 // Letterbox CSS: center the canvas within its div when aspect doesn't match
                 if (this._matchVideoAspect && !this._wasMatchingVideoAspect) {

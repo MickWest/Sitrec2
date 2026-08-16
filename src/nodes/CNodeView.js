@@ -1135,8 +1135,33 @@ class CNodeView extends CNode {
             veticalCanvasPx = view.heightPx;
         }
 
+        // Match Video Aspect renders the 3D into a letterboxed sub-rect of the pane rather
+        // than the whole of it, so the pane height overstates the pixels the sprites land
+        // in — while camera.fov below has ALREADY narrowed to the letterboxed value.
+        // Measured on an 871 px pane letterboxed to 741, stars and satellites both jumped
+        // 14.5% brighter the moment the box was ticked.
+        //
+        // letterboxScaleY is the fraction of the RENDER TARGET's height the match kept,
+        // published by the render that applied it. Deliberately not measured off the canvas
+        // CSS box: that would cost a forced reflow per view per frame, and scripted-video
+        // output overrides widthPx/heightPx while leaving the div alone, so the CSS box can
+        // describe a letterbox the rendered frame never had.
+        //
+        // Skipped while XR is presenting: there the frame goes to the headset framebuffer
+        // and none of this pane geometry describes it.
+        if (!(view.isXRPresenting && view.isXRPresenting())) {
+            veticalCanvasPx *= view.letterboxScaleY ?? 1;
+        }
+
         scale *= (veticalCanvasPx / view.nominalViewHeight)
-        scale *= 45/view.camera.fov; // 45 is the default FOV, so we scale by that
+
+        // Pixels per unit angle is height / (2*tan(fov/2)), not height/fov. The old
+        // 45/fov was a small-angle stand-in for that: exact at the 45 degree reference
+        // and drifting either side of it (~2.5% at 30 degrees, ~21% at 90). It has to be
+        // the true tangent ratio for a sprite to hold its size across a FOV change, which
+        // is precisely what Match Video Aspect does — it narrows the FOV and shrinks the
+        // render target together, and those two have to cancel exactly.
+        scale *= Math.tan(45 * Math.PI / 360) / Math.tan(view.camera.fov * Math.PI / 360);
 
         // calculations here:
         // infoDiv.innerHTML += " - Adjusted Scale = "+scale+"<br>";

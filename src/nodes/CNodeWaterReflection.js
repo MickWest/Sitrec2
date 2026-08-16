@@ -593,7 +593,10 @@ export class CNodeWaterReflection extends CNode {
             let scale = 1.4 / 1.78 * 2 * Sit.starScale / window.devicePixelRatio;
             scale *= skyFactor;
             scale *= this.cubeResolution / view.nominalViewHeight;
-            scale *= 45 / 90;
+            // Tangent ratio, matching adjustPointScale's FOV term. Was 45/90, the
+            // small-angle stand-in — and 90 deg is exactly where that is worst, so the
+            // reflected stars came out ~17% brighter than the sky they reflect.
+            scale *= Math.tan(45 * Math.PI / 360) / Math.tan(90 * Math.PI / 360);
             scale /= 2;
             cloud.material.uniforms.baseScale.value = scale * this.starBoost;
             cloud.material.uniforms.cameraFOV.value = 90;
