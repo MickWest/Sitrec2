@@ -9,6 +9,7 @@
 
 import {GUI, NumberController} from "./js/lil-gui.esm";
 import {Globals} from "./Globals";
+import {armBigSlider} from "./BigSlider";
 
 const textWidths = {};
 
@@ -180,30 +181,10 @@ NumberController.prototype.displayZeroThreshold = function(threshold) {
     return this;
 };
 
-const originalUpdateDisplay = NumberController.prototype.updateDisplay;
-NumberController.prototype.updateDisplay = function() {
-    if (this._isLog) {
-        const linearValue = this.object[this.property];
-        
-        if (this.$fill) {
-            let percent = (linearValue - this._min) / (this._max - this._min);
-            percent = Math.max(0, Math.min(percent, 1));
-            this.$fill.style.width = percent * 100 + '%';
-        }
-        
-        if (!this._inputFocused) {
-            const logValue = Math.pow(10, linearValue);
-            if (this._displayZeroThreshold !== undefined && logValue <= this._displayZeroThreshold) {
-                this.$input.value = '0';
-            } else {
-                this.$input.value = this._decimals === undefined ? logValue : logValue.toFixed(this._decimals);
-            }
-        }
-        
-        return this;
-    }
-    return originalUpdateDisplay.call(this);
-};
+// NumberController.updateDisplay used to be overridden here to handle log sliders.
+// It no longer needs to be: the base version now asks _fillPercent() for the knob
+// position (which reads the raw, log-space value) and displayText() for the input
+// text (which honours _displayZeroThreshold), so one implementation covers both.
 
 const originalInitSlider = NumberController.prototype._initSlider;
 NumberController.prototype._initSlider = function() {
@@ -231,6 +212,8 @@ NumberController.prototype._initSlider = function() {
     if (this.$slider) {
         this.$slider.addEventListener('mousedown', handleRightClick);
         this.$slider.addEventListener('contextmenu', suppressContextMenu);
+        // Resting on the slider for a few seconds brings up the full-width version.
+        armBigSlider(this);
     }
 
     // Also allow right-click on the name/label

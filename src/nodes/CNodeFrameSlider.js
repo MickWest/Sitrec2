@@ -5,6 +5,7 @@ import {getControlsContainer} from "../PageStructure";
 import {EventManager} from "../CEventManager";
 import {KeyframeRegistry} from "../CKeyframeRegistry";
 import {lastSitFrame} from "../UpdateSitFrames";
+import {CValueBox} from "../CValueBox";
 
 export class CNodeFrameSlider extends CNode {
     constructor(v) {
@@ -310,21 +311,9 @@ export class CNodeFrameSlider extends CNode {
         });
         this.resizeObserver.observe(this.canvas);
 
-        // Create frame display box
-        this.frameDisplayBox = document.createElement('div');
-        this.frameDisplayBox.style.position = 'absolute';
-        this.frameDisplayBox.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
-        this.frameDisplayBox.style.color = 'white';
-        this.frameDisplayBox.style.padding = '4px 8px';
-        this.frameDisplayBox.style.borderRadius = '4px';
-        this.frameDisplayBox.style.fontSize = '12px';
-        this.frameDisplayBox.style.fontFamily = 'monospace';
-        this.frameDisplayBox.style.zIndex = '1004';
-        this.frameDisplayBox.style.pointerEvents = 'none';
-        this.frameDisplayBox.style.display = 'none'; // Initially hidden
-        this.frameDisplayBox.style.transform = 'translateX(-50%)'; // Center horizontally
-        this.frameDisplayBox.style.bottom = '45px'; // Position above the slider
-        document.body.appendChild(this.frameDisplayBox);
+        // Create frame display box - the shared read-out that floats above a slider
+        // cursor. The big slider popup uses the same box with its own text.
+        this.frameDisplayBox = new CValueBox({bottom: '45px', zIndex: 1004});
 
         // Add mouse event handlers for dragging A and B limits
         this.setupLimitDragging();
@@ -882,7 +871,7 @@ export class CNodeFrameSlider extends CNode {
         }
         // Remove the frame display box
         if (this.frameDisplayBox) {
-            this.frameDisplayBox.remove();
+            this.frameDisplayBox.dispose();
             this.frameDisplayBox = null;
         }
         // Clear any pending fade out timer
@@ -967,17 +956,12 @@ export class CNodeFrameSlider extends CNode {
         }
 
         // Continuously update frame display when hovering over slider
-        if (this.isHoveringSlider && this.frameDisplayBox && this.frameDisplayBox.style.display === 'block') {
+        if (this.isHoveringSlider && this.frameDisplayBox && this.frameDisplayBox.visible) {
             const currentFrame = parseInt(this.sliderInput.value, 10);
             // Only update if the frame has changed to avoid unnecessary DOM updates
             if (currentFrame !== this.lastDisplayedFrame) {
                 this.lastDisplayedFrame = currentFrame;
-                this.frameDisplayBox.textContent = this.getFrameDisplayText(currentFrame);
-                
-                // Update position based on current frame
-                const sliderRect = this.sliderDiv.getBoundingClientRect();
-                const framePosition = this.getFramePixelPosition(currentFrame);
-                this.frameDisplayBox.style.left = (sliderRect.left + framePosition) + 'px';
+                this.updateFrameDisplay(currentFrame);
             }
         }
 
@@ -1450,36 +1434,29 @@ export class CNodeFrameSlider extends CNode {
         return line1 + '\n' + line2;
     }
 
+    // Where the box sits for a given frame: over the slider thumb, not the mouse
+    frameDisplayX(frame) {
+        return this.sliderDiv.getBoundingClientRect().left + this.getFramePixelPosition(frame);
+    }
+
     // Show frame display box
     showFrameDisplay(frame, mouseX) {
         if (this.frameDisplayBox) {
-            this.frameDisplayBox.textContent = this.getFrameDisplayText(frame);
-            this.frameDisplayBox.style.display = 'block';
-            this.frameDisplayBox.style.whiteSpace = 'pre'; // Preserve line breaks
-            
-            // Calculate position based on frame position on slider, not mouse position
-            const sliderRect = this.sliderDiv.getBoundingClientRect();
-            const framePosition = this.getFramePixelPosition(frame);
-            this.frameDisplayBox.style.left = (sliderRect.left + framePosition) + 'px';
+            this.frameDisplayBox.show(this.getFrameDisplayText(frame), this.frameDisplayX(frame));
         }
     }
 
     // Hide frame display box
     hideFrameDisplay() {
         if (this.frameDisplayBox) {
-            this.frameDisplayBox.style.display = 'none';
+            this.frameDisplayBox.hide();
         }
     }
 
     // Update frame display position and content
     updateFrameDisplay(frame, mouseX) {
-        if (this.frameDisplayBox && this.frameDisplayBox.style.display === 'block') {
-            this.frameDisplayBox.textContent = this.getFrameDisplayText(frame);
-            
-            // Calculate position based on frame position on slider, not mouse position
-            const sliderRect = this.sliderDiv.getBoundingClientRect();
-            const framePosition = this.getFramePixelPosition(frame);
-            this.frameDisplayBox.style.left = (sliderRect.left + framePosition) + 'px';
+        if (this.frameDisplayBox) {
+            this.frameDisplayBox.update(this.getFrameDisplayText(frame), this.frameDisplayX(frame));
         }
     }
 

@@ -331,5 +331,70 @@ html, body {
     -webkit-user-select: text;
 }
 
+/* ============================================================================
+   BIG SLIDER  (src/BigSlider.js)
+   Pops up when the pointer rests on a lil-gui slider. The backdrop is invisible
+   on purpose: it exists to catch the dismissing click, and dimming it would hide
+   the very thing the user is dragging the slider to watch.
+   ============================================================================ */
+.sitrec-bigslider-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9500;
+    background: transparent;
+}
+
+.sitrec-bigslider-panel {
+    position: absolute;
+    left: 2vw;
+    width: 96vw;
+    bottom: 70px;
+    box-sizing: border-box;
+    padding: 8px 10px 6px 10px;
+    background: var(--sitrec-bg-panel);
+    border: 1px solid var(--sitrec-border);
+    border-radius: var(--sitrec-radius);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    color: var(--sitrec-text);
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.sitrec-bigslider-title {
+    font-size: 13px;
+    color: var(--sitrec-text-strong);
+    text-align: center;
+    margin-bottom: 6px;
+}
+
+.sitrec-bigslider-track {
+    position: relative;
+    height: 54px;
+    background: var(--sitrec-bg-widget);
+    border-radius: 3px;
+    overflow: hidden;
+    cursor: ew-resize;
+    touch-action: none;
+}
+
+.sitrec-bigslider-track.active {
+    background: var(--sitrec-hover);
+}
+
+.sitrec-bigslider-fill {
+    height: 100%;
+    box-sizing: content-box;
+    background: rgba(44, 201, 255, 0.25);
+    border-right: 4px solid var(--sitrec-accent);
+}
+
+.sitrec-bigslider-ends {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--sitrec-text-dim);
+}
 
 `;
