@@ -2,12 +2,14 @@ import {Vector3} from "three";
 import {ViewMan} from "./CViewManager";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {meanSeaLevelOffset, ensureGeoidLoaded} from "./EGM96Geoid";
-import {GlobalDateTimeNode, NodeMan, setRenderOne} from "./Globals";
+import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne} from "./Globals";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {intersectSurface} from "./threeExt";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
-import {atan, degrees, m2f, radians} from "./utils";
+import {atan, degrees, m2f, radians, tan} from "./utils";
 import {applyExifUtcOffset, pickExifUtcOffset} from "./exifCaptureTime";
+import {showChoice} from "./showError";
+import {EventManager} from "./CEventManager";
 
 let exifrPromise;
 
@@ -89,33 +91,61 @@ function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
 }
 
+// The long side of the 36x24mm full-frame gate that every "35mm equivalent" is quoted against.
+// Matches FULL_FRAME_LONG_MM in CNodeControllerPTZUI, which anchors the slider the same way.
+const FULL_FRAME_LONG_MM = 36;
+
+/**
+ * Millimetres per FocalPlaneResolutionUnit, accepting BOTH the raw EXIF code and the
+ * human-readable string exifr substitutes for it.
+ *
+ * exifr translates enum tags to strings by default and we do not turn that off, so unit 2
+ * arrives as "Inch", not 2. Reading it as a number therefore failed for every camera that
+ * reports its field of view this way — Canon bodies write FocalPlane* and no
+ * FocalLengthIn35mmFormat, so they silently lost their FOV entirely on import.
+ *
+ * Both forms have to be handled, because exifr's dictionary only covers 1–3. Units 4 and 5
+ * have no entry there and still come through as plain numbers.
+ */
+function focalPlaneUnitToMm(rawUnit) {
+    if (typeof rawUnit === "string") {
+        switch (rawUnit.trim().toLowerCase()) {
+            case "inch":
+            case "inches":
+                return 25.4;
+            case "centimeter":
+            case "centimetre":
+                return 10;
+            case "millimeter":
+            case "millimetre":
+                return 1;
+            case "micrometer":
+            case "micrometre":
+                return 0.001;
+            default:
+                // Includes "No absolute unit of measurement" (unit 1), which cannot size a sensor.
+                return null;
+        }
+    }
+
+    switch (toFiniteNumber(rawUnit)) {
+        case 2: return 25.4;
+        case 3: return 10;
+        case 4: return 1;
+        case 5: return 0.001;
+        default: return null;
+    }
+}
+
 function deriveSensorSize(raw) {
     const xResolution = toFiniteNumber(raw?.FocalPlaneXResolution);
     const yResolution = toFiniteNumber(raw?.FocalPlaneYResolution);
     const imageWidth = toFiniteNumber(raw?.ExifImageWidth);
     const imageHeight = toFiniteNumber(raw?.ExifImageHeight);
-    const unit = toFiniteNumber(raw?.FocalPlaneResolutionUnit);
+    const mmPerUnit = focalPlaneUnitToMm(raw?.FocalPlaneResolutionUnit);
 
-    if (!xResolution || !yResolution || !imageWidth || !imageHeight || !unit) {
+    if (!xResolution || !yResolution || !imageWidth || !imageHeight || !mmPerUnit) {
         return null;
-    }
-
-    let mmPerUnit;
-    switch (unit) {
-        case 2:
-            mmPerUnit = 25.4;
-            break;
-        case 3:
-            mmPerUnit = 10;
-            break;
-        case 4:
-            mmPerUnit = 1;
-            break;
-        case 5:
-            mmPerUnit = 0.001;
-            break;
-        default:
-            return null;
     }
 
     return {
@@ -125,13 +155,55 @@ function deriveSensorSize(raw) {
     };
 }
 
-function deriveVerticalFov(raw, optics) {
+/**
+ * The aspect ratio of the frame AS DISPLAYED, from the stored pixel dimensions and the rotation.
+ * Undefined when the file does not say.
+ */
+function displayedAspect(raw, dimensionSwapped) {
+    const w = toFiniteNumber(raw?.ExifImageWidth);
+    const h = toFiniteNumber(raw?.ExifImageHeight);
+    if (!(w > 0) || !(h > 0)) return undefined;
+    return dimensionSwapped ? h / w : w / h;
+}
+
+function deriveVerticalFov(raw, optics, dimensionSwapped = false) {
     const zoomRatio = optics.digitalZoomRatio ?? 1;
     const focal35 = optics.focalLength35mm;
     if (focal35 !== undefined && focal35 > 0) {
         const effectiveFocal35 = focal35 * zoomRatio;
+
+        // A 35mm-equivalent focal length describes the frame's LONG axis against the 36mm long
+        // side of the full-frame gate — the same convention the FOV sliders use. It does NOT
+        // describe the vertical unless the frame happens to be 3:2, which is what reading it
+        // against the gate's 24mm height silently assumed.
+        //
+        // That assumption is worst on cropped frames, which is most drone footage: a DJI Air 2S
+        // wide crop is 5472x2472 (2.21:1) and still reports 22mm, because the crop takes height
+        // off the same lens and leaves the full width. Read against the height it produced a
+        // 100.7 degree horizontal field where 78.6 is right — a 22 degree error.
+        //
+        // Limitation worth naming: this is exact when the long axis is the one that was NOT
+        // cropped, which covers uncropped frames of either orientation and every letterbox or
+        // pillarbox crop. A crop that eats into both axes cannot be recovered from EXIF at all,
+        // since nothing in the file says how much was taken.
+        const longAxisFovDeg = degrees(2 * atan(FULL_FRAME_LONG_MM / (2 * effectiveFocal35)));
+        const aspect = displayedAspect(raw, dimensionSwapped);
+
+        let verticalFovDeg;
+        if (aspect === undefined) {
+            // No pixel dimensions to go on. Fall back to the old 3:2 reading rather than nothing;
+            // it is right for the commonest frame shape and no worse than before.
+            verticalFovDeg = degrees(2 * atan(24 / (2 * effectiveFocal35)));
+        } else if (aspect >= 1) {
+            // Landscape: the long axis is horizontal, so convert across to the vertical.
+            verticalFovDeg = degrees(2 * atan(tan(radians(longAxisFovDeg) / 2) / aspect));
+        } else {
+            // Portrait: the long axis already IS the vertical one.
+            verticalFovDeg = longAxisFovDeg;
+        }
+
         return {
-            verticalFovDeg: degrees(2 * atan(24 / (2 * effectiveFocal35))),
+            verticalFovDeg,
             source: "35mmEquivalent"
         };
     }
@@ -140,10 +212,19 @@ function deriveVerticalFov(raw, optics) {
     const sensor = deriveSensorSize(raw);
     if (focalLength !== undefined && focalLength > 0 && sensor?.sensorHeightMm) {
         const effectiveFocalLength = focalLength * zoomRatio;
+        // deriveSensorSize describes the sensor AS READ OUT, which is always landscape. A photo
+        // shot in portrait carries an Orientation of 90 or 270 degrees and is displayed rotated,
+        // so the axis that ends up vertical on screen is the sensor's WIDTH, not its height.
+        // Reading the height regardless made an 85mm portrait frame report 16.07 degrees where
+        // 23.91 is correct - half the vertical field missing, and every reconstruction from it
+        // wrong by that much.
+        const verticalMm = dimensionSwapped ? sensor.sensorWidthMm : sensor.sensorHeightMm;
         return {
-            verticalFovDeg: degrees(2 * atan(sensor.sensorHeightMm / (2 * effectiveFocalLength))),
-            sensorWidthMm: sensor.sensorWidthMm,
-            sensorHeightMm: sensor.sensorHeightMm,
+            verticalFovDeg: degrees(2 * atan(verticalMm / (2 * effectiveFocalLength))),
+            // Report the pair the way it is displayed too, so anything downstream that pairs
+            // these with the image dimensions agrees with what is on screen.
+            sensorWidthMm: dimensionSwapped ? sensor.sensorHeightMm : sensor.sensorWidthMm,
+            sensorHeightMm: verticalMm,
             source: sensor.source
         };
     }
@@ -372,7 +453,200 @@ function applyImportedImageCameraPositionInternal(metadata, filename = "", optio
         console.log(`[EXIF] Applied EXIF camera position for ${filename}: ${locationSummary}`);
     }
 
+    offerRelativeAltitude(placement, filename);
+
     return applied;
+}
+
+// ---------------------------------------------------------------------------------------------
+// "Use Relative Altitude"
+//
+// A drone's absolute altitude is barometric, seeded from GPS at takeoff, and drifts. A DJI Mini
+// 3 Pro shot measured here reported 239.9m while the terrain under it was 256.9m — the camera
+// landed 17m UNDERGROUND, and 59m below where the file's own RelativeAltitude (42m above the
+// takeoff point) said it was.
+//
+// We still place the camera exactly where the file says. Silently substituting a guessed
+// altitude is how a reconstruction stops being checkable. So instead we say so, and offer the
+// alternative as one click that the user chooses to make.
+// ---------------------------------------------------------------------------------------------
+
+let relativeAltitudeButton = null;
+let relativeAltitudeOffer = null;
+
+/**
+ * Ground elevation in MSL directly below an ECEF point, or undefined if the elevation for this
+ * spot has not loaded yet.
+ *
+ * The "not loaded yet" case is the whole reason this goes through getPointBelowWithTileInfo
+ * rather than getPointBelow. With no elevation tile, the terrain quietly answers SEA LEVEL, and
+ * a photo taken over ground 250m up would look like it was 250m in the air. tileZ is -1 until a
+ * real tile is in, which is the only honest way to tell "the ground is at zero here" apart from
+ * "I do not know where the ground is yet".
+ */
+function groundMSLBelow(ecefPoint) {
+    const terrain = NodeMan.get("TerrainModel", false);
+    if (!terrain?.getPointBelowWithTileInfo) return undefined;
+    const info = terrain.getPointBelowWithTileInfo(ecefPoint.clone(), 0);
+    if (!info || info.tileZ < 0) return undefined;
+    const lla = ECEFToLLAVD_radii(info.point);   // (lat, lon, HAE)
+    return lla.z - meanSeaLevelOffset(lla.x, lla.y);
+}
+
+/**
+ * Wait for the elevation around the camera to STOP CHANGING, then measure the ground under it.
+ *
+ * The camera has just jumped to a new part of the world, and tiles stream in coarse first, fine
+ * later. Measuring on the first tile that arrives is not merely early, it is wrong: the coarse
+ * pass over this Libyan oasis reported the ground at 460m where the loaded terrain settles at
+ * 257m, which would have accused a correctly-placed camera of being 220m underground.
+ *
+ * "No higher-zoom tile loaded" cannot tell finest from not-yet-arrived, so it does not help here.
+ * The terrain does announce every elevation change though, so the honest test is quiescence: once
+ * nothing has changed for a beat, what we can read is what we are going to get.
+ */
+function waitForGroundMSLBelow(cameraNode, {quietMs = 2000, timeoutMs = 30000} = {}) {
+    return new Promise((resolve) => {
+        let quietTimer = null;
+        let hardTimer = null;
+        let settled = false;
+
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(quietTimer);
+            clearTimeout(hardTimer);
+            EventManager.removeEventListener("elevationChanged", onElevationChanged);
+            resolve(cameraNode?.camera ? groundMSLBelow(cameraNode.camera.position) : undefined);
+        };
+        const armQuietTimer = () => {
+            clearTimeout(quietTimer);
+            quietTimer = setTimeout(finish, quietMs);
+        };
+        const onElevationChanged = () => armQuietTimer();
+
+        EventManager.addEventListener("elevationChanged", onElevationChanged);
+        hardTimer = setTimeout(finish, timeoutMs);
+        armQuietTimer();
+    });
+}
+
+function applyRelativeAltitude() {
+    const offer = relativeAltitudeOffer;
+    if (!offer) return;
+
+    const cameraNode = NodeMan.get("lookCamera", false) ?? NodeMan.get("mainCamera", false);
+    const positionNode = findAuthoritativeCameraPositionNode();
+    if (!cameraNode?.camera || !positionNode) return;
+
+    const groundMSL = groundMSLBelow(cameraNode.camera.position);
+    if (groundMSL === undefined) {
+        console.warn("[EXIF] Use Relative Altitude: no terrain loaded here yet, so there is " +
+            "nothing to measure the height against. Try again once the ground has drawn in.");
+        return;
+    }
+
+    const newAltitudeMSL = groundMSL + offer.relativeAltitude;
+    positionNode.setLLA(offer.latitude, offer.longitude, newAltitudeMSL);
+    setRenderOne(true);
+    console.log(`[EXIF] Camera altitude set from RelativeAltitude: ground ` +
+        `${groundMSL.toFixed(1)}m + ${offer.relativeAltitude}m = ${newAltitudeMSL.toFixed(1)}m MSL ` +
+        `(the file's own absolute altitude was ${offer.absoluteAltitude.toFixed(1)}m)`);
+}
+
+/**
+ * Offer the takeoff-relative height as an alternative when the photo's own altitude has buried
+ * the camera under the terrain.
+ *
+ * Two ways in. The button in Camera > Location appears for any photo carrying the field, so the
+ * swap is always available. The dialog only interrupts when the camera has actually ended up
+ * underground, because that is the case the user cannot be expected to notice - the look view
+ * just goes brown.
+ *
+ * It waits for the elevation before deciding. The camera has just jumped to a new part of the
+ * world, and until a tile arrives the terrain answers sea level, which would either invent a
+ * problem or hide one.
+ */
+async function offerRelativeAltitude(placement, filename = "") {
+    const relativeAltitude = placement?.relativeAltitude;
+
+    if (!placement?.hasLocation || relativeAltitude === undefined) {
+        relativeAltitudeOffer = null;
+        relativeAltitudeButton?.hide();
+        return;
+    }
+
+    const offer = {
+        latitude: placement.latitude,
+        longitude: placement.longitude,
+        absoluteAltitude: placement.altitude ?? 0,
+        relativeAltitude,
+    };
+    relativeAltitudeOffer = offer;
+
+    if (!relativeAltitudeButton && guiMenus?.cameraLocation) {
+        relativeAltitudeButton = guiMenus.cameraLocation.add({
+            useRelativeAltitude: () => applyRelativeAltitude(),
+        }, "useRelativeAltitude").perm()
+            .tooltip("Put the camera at the terrain height under it plus the height above " +
+                "takeoff the photo recorded, instead of the absolute altitude the photo " +
+                "claims.\n\nDrone absolute altitudes are barometric and drift, sometimes by " +
+                "tens of metres — enough to bury the camera underground. The height above " +
+                "takeoff is usually the more trustworthy of the two, but it assumes the ground " +
+                "under the drone is level with where it took off.");
+    }
+    relativeAltitudeButton?.name(`Use Relative Altitude (${relativeAltitude} m)`).show();
+
+    const cameraNode = NodeMan.get("lookCamera", false) ?? NodeMan.get("mainCamera", false);
+    const groundMSL = await waitForGroundMSLBelow(cameraNode);
+
+    // A later import took over while we waited, so this answer is about the wrong photo.
+    if (relativeAltitudeOffer !== offer) return;
+
+    if (groundMSL === undefined) {
+        console.warn(`[EXIF] ${filename}: no elevation loaded here, so the camera's height above ` +
+            `the ground could not be checked. "Use Relative Altitude" in Camera > Location is ` +
+            `available if it turns out to be buried.`);
+        return;
+    }
+
+    const {altitudeMSL} = getPlacementAltitudeInfo(placement);
+    const below = groundMSL - altitudeMSL;
+    if (below <= 0) return;
+
+    const suggested = groundMSL + relativeAltitude;
+    console.warn(`[EXIF] ${filename}: the camera is ${below.toFixed(1)}m BELOW the terrain. ` +
+        `The photo's absolute altitude is ${altitudeMSL.toFixed(1)}m MSL but the ground here ` +
+        `is ${groundMSL.toFixed(1)}m. Its RelativeAltitude says ${relativeAltitude}m above ` +
+        `takeoff, which would put it at ${suggested.toFixed(1)}m.`);
+
+    const choice = await showChoice(
+        `"${filename}" puts the camera ${below.toFixed(1)} m BELOW the ground.\n\n` +
+        `The photo's own altitude is ${altitudeMSL.toFixed(1)} m, but the terrain here is ` +
+        `${groundMSL.toFixed(1)} m. Drone altitudes are barometric and drift.\n\n` +
+        `The photo also records ${relativeAltitude} m above its takeoff point, which would ` +
+        `put the camera at ${suggested.toFixed(1)} m.`,
+        {
+            title: "Camera is Underground",
+            cancelValue: "keep",
+            options: [
+                {
+                    label: `Use Relative Altitude (${relativeAltitude} m above ground)`,
+                    description: `Move the camera to ${suggested.toFixed(1)} m. Assumes the ground here is level with the takeoff point.`,
+                    value: "relative", primary: true, color: "#1976d2",
+                },
+                {
+                    label: "Keep the Photo's Altitude",
+                    description: `Leave it at ${altitudeMSL.toFixed(1)} m, underground, exactly as the file states.`,
+                    value: "keep", cancel: true,
+                },
+            ],
+        });
+
+    // Still the current photo? The dialog can sit open across another import.
+    if (choice === "relative" && relativeAltitudeOffer === offer) {
+        applyRelativeAltitude();
+    }
 }
 
 export function applyImportedImageCameraPosition(metadata, filename = "") {
@@ -642,6 +916,8 @@ export async function extractJPEGImportMetadata(arrayBuffer, filename = "") {
     const longitudeSource = pickNumber(raw, ["longitude", "GPSLongitude", "PoseLongitudeDegrees"]);
     const altitudeSource = pickNumber(raw, ["altitude", "GPSAltitude", "AbsoluteAltitude"]);
     const altitudeRefSource = pickNumber(raw, ["GPSAltitudeRef"]);
+    // Height above the takeoff point, written by DJI and some other drones.
+    const relativeAltitudeSource = pickNumber(raw, ["RelativeAltitude"]);
     const headingSource = pickNumber(raw, [
         "GPSImgDirection",
         "GPSDestBearing",
@@ -680,7 +956,23 @@ export async function extractJPEGImportMetadata(arrayBuffer, filename = "") {
         optics.digitalZoomRatio = undefined;
     }
 
-    const verticalFov = deriveVerticalFov(raw, optics);
+    // Orientations 5-8 turn the frame a quarter turn, which is exactly the question the FOV
+    // derivation has to answer: does the displayed frame stand on the sensor's short axis or its
+    // long one. Both JPEG and HEIC end up upright on screen - JPEG because we rotate it
+    // downstream, HEIC because libheif already did - so the swap applies to both, and
+    // stripImageRotationMetadata (which only stops HEIC rotating twice) does not change that.
+    //
+    // Three independent signals, because getting this wrong costs half the vertical field and no
+    // single one of them is always present: exifr's own flag, the rotation angle it reports (90
+    // and 270 are the swapping ones, and this is equivalent to the flag by construction), and the
+    // Orientation tag as exifr translates it.
+    const dimensionSwapped =
+        rotation?.dimensionSwapped === true
+        || rotation?.deg === 90
+        || rotation?.deg === 270
+        || /rotate\s*(90|270)/i.test(String(raw?.Orientation ?? ""));
+
+    const verticalFov = deriveVerticalFov(raw, optics, dimensionSwapped);
     if (verticalFov) {
         optics.verticalFovDeg = verticalFov.verticalFovDeg;
         optics.verticalFovSource = verticalFov.source;
@@ -736,7 +1028,22 @@ export async function extractJPEGImportMetadata(arrayBuffer, filename = "") {
             altitudeReference: altitudeSource ? "MSL" : undefined,
             heading: headingSource ? normalizeHeadingDegrees(headingSource.value) : undefined,
             pitch: pitchSource?.value,
-            roll: rollSource ? normalizeSignedDegrees(rollSource.value) : undefined,
+            // The camera's roll and the EXIF orientation can describe the SAME physical turn, and
+            // applying both lands it twice. A DJI Mini 3 Pro shooting vertical rotates its gimbal
+            // a quarter turn: the file then says GimbalRollDegree -90 AND Orientation 8 ("rotate
+            // 270 CW"). We already turn the IMAGE by the orientation, so rolling the 3D camera by
+            // -90 as well left the view a quarter turn off the photo.
+            //
+            // Subtracting the display rotation removes exactly the turn already accounted for:
+            // -90 - 270 = -360, i.e. level, which is what a gimbal-stabilised horizon should be.
+            // It is a no-op for unrotated photos (deg 0) and also resolves the 180 degree case.
+            roll: rollSource
+                ? normalizeSignedDegrees(rollSource.value - (rotation?.deg ?? 0))
+                : undefined,
+            // Height above the takeoff point. Worth keeping even though we do NOT place with it:
+            // a drone's absolute altitude is barometric and drifts, so this is often the only
+            // trustworthy height in the file. See the below-terrain check in the apply step.
+            relativeAltitude: relativeAltitudeSource?.value,
             locationSource: latitudeSource?.key && longitudeSource?.key ? `${latitudeSource.key}/${longitudeSource.key}` : undefined,
             altitudeSource: altitudeSource?.key,
             headingSource: headingSource?.key,

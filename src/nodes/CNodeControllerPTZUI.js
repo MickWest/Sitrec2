@@ -130,6 +130,10 @@ function nameAspect(a) {
     return null;
 }
 
+// The gate every "35mm equivalent focal length" is quoted against: the 36x24mm full-frame
+// (135 film) format. 36 is its LONG side - see the focal35 accessors for why that is the one.
+const FULL_FRAME_LONG_MM = 36;
+
 // UI based version of this, PTZ = Az, El, Zoom, and have constants defined by the gui
 export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     constructor(v) {
@@ -156,6 +160,10 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         // Plain field rather than a getter: lil-gui assigns to the property it is handed, and a
         // getter-only accessor would throw if anything ever wrote back. Refreshed in apply().
         this.aspectDisplay = "-";
+        // What the file SAYS the lens was, as opposed to what the camera is currently set to.
+        // Hidden until a photo with that metadata is loaded. Refreshed in apply().
+        this.lensDisplay = "-";
+        this._lensText = "";
 
         assert(v.fov !== undefined, "CNodeControllerPTZUI: initial fov is undefined")
 
@@ -187,6 +195,46 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
                         "frame it spans, which is what the aspect ratio is for."}))
                     .onChange(() => this.refresh())
                     .setLabelColor(pszUIColor);
+
+                // The same angle again, as the lens that would produce it on a full-frame camera.
+                // Elastic because focal length spans four decades - about 1mm for a fisheye up to
+                // several thousand for a narrow sensor field - so a fixed linear range is useless
+                // at one end or the other. The slider grows its own max when pushed past the right
+                // end and shrinks it again on the way back.
+                this.focal35Controller = fovFolder.add(this, "focal35", 1, 200, 0.1, false)
+                    .listen()
+                    .decimals(1)
+                    .elastic(50, 100000, false, true)
+                    .name(t("ptzUI.focal35.label", {defaultValue: "35mm Equiv (mm)"}))
+                    .tooltip(t("ptzUI.focal35.tooltip", {defaultValue:
+                        "The lens that would give this field of view on a 36x24mm full-frame " +
+                        "camera.\n\nMeasured across the frame's LONG axis, so the number only " +
+                        "moves if the frame was actually cropped. A camera shooting 3:2 stills " +
+                        "and 16:9 video cuts the top and bottom off the same sensor through the " +
+                        "same lens, and reports the same number for both; so does turning the " +
+                        "camera to shoot portrait, which crops nothing at all. Editing it sets " +
+                        "HFOV and VFOV to match."}))
+                    // Writing this.fov is not enough to make an edit stick. apply() re-reads the
+                    // fov from fovSwitch every frame, and for the Manual source that switch reads
+                    // fovUI - so an edit that never reaches fovUI is overwritten on the next frame.
+                    // refresh() is what copies it across. Same reason VFOV and HFOV have it.
+                    .onChange(() => this.refresh())
+                    .setLabelColor(pszUIColor);
+
+                // What the imported photo says was actually on the camera. The slider above is a
+                // property of the CAMERA SETTING; this is a property of the FILE, so the two
+                // agreeing is a real check rather than a tautology - and when they disagree, the
+                // import got something wrong.
+                this.lensController = fovFolder.add(this, "lensDisplay")
+                    .listen().disable()
+                    .name(t("ptzUI.lens.label", {defaultValue: "Lens (EXIF)"}))
+                    .tooltip(t("ptzUI.lens.tooltip", {defaultValue:
+                        "The real focal length and lens recorded by the camera in the imported " +
+                        "photo, straight from its EXIF.\n\nThis is the TRUE focal length on that " +
+                        "camera's sensor, not a 35mm equivalent - on a full-frame body the two " +
+                        "match, on a smaller sensor the equivalent above will be the longer " +
+                        "number. Hidden when no photo with lens metadata is loaded."}));
+                this.lensController.hide();
 
                 this.aspectController = fovFolder.add(this, "aspectDisplay")
                     .listen().disable()
@@ -307,6 +355,49 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     }
 
     /**
+     * The lens that would give this field of view on a 36x24mm full-frame camera - the number
+     * photographers actually think in. A third view of the one stored angle, like hfov, so all
+     * three sliders always agree.
+     *
+     * Anchored on the frame's LONG axis, against the gate's long side (36mm). The rule this
+     * expresses is "the number must not move unless the frame was actually CROPPED":
+     *
+     *   3:2 still -> 16:9 video   same lens, top and bottom cut off. The long axis is still the
+     *                             36mm one, so the number holds. (24mm reads 24mm both ways.)
+     *   landscape -> portrait     same lens, same sensor, nothing cropped - only turned. The long
+     *                             axis is still the 36mm one, so the number holds. (85mm reads
+     *                             85mm both ways.)
+     *
+     * Anchoring on the WIDTH instead gets the first case right and the second wrong - it would
+     * call that portrait 85mm a 127mm lens. The manufacturers' diagonal convention gets the second
+     * right and the first wrong - it would call the 16:9 clip a 25.1mm lens. Only the long axis
+     * gets both, because only it tracks what a crop actually removes.
+     *
+     * The one edge: "longer axis" flips at exactly square. Nothing real is shot that close to 1:1.
+     */
+    get focal35() {
+        // Which angle spans the long axis of the frame as displayed.
+        const angle = this.fovAspect >= 1 ? this.hfov : this.fov;
+        if (!(angle > 0) || angle >= 180) return 0;
+        const halfAngleTan = Math.tan(radians(angle) / 2);
+        if (!(halfAngleTan > 0)) return 0;
+        return (FULL_FRAME_LONG_MM / 2) / halfAngleTan;
+    }
+
+    set focal35(f) {
+        if (!(f > 0)) return;
+        const angle = 2 * degrees(Math.atan((FULL_FRAME_LONG_MM / 2) / f));
+        if (this.fovAspect >= 1) {
+            // Landscape: the long axis is horizontal, and hfov's setter already clamps the
+            // vertical result into the same range the other two sliders stop at.
+            this.hfov = angle;
+        } else {
+            // Portrait: the long axis IS the vertical one, so this is the stored angle directly.
+            this.fov = Math.min(170, Math.max(0.0001, angle));
+        }
+    }
+
+    /**
      * Grey out Lock Aspect while a video owns the aspect, and show it ticked, because that is
      * what is actually happening. A checkbox that stays unticked while the value it controls is
      * being overridden reads as the app ignoring it.
@@ -329,6 +420,31 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             this._userLockAspect = undefined;
         }
         this.lockAspectController.enable(!forced);
+    }
+
+    /**
+     * Refresh the read-only lens readout from the loaded photo's EXIF, and show the row only
+     * when there is something to show - a permanent "-" in a sitch with no photo is clutter.
+     *
+     * Called every frame from apply(), so the GUI is only touched when the text actually
+     * changes; show()/hide() and a string write on every frame would be wasted layout work.
+     */
+    updateLensReadout() {
+        const meta = NodeMan.get("video", false)?.videoData?.importMetadata;
+        const focal = meta?.optics?.focalLengthMm;
+        const model = meta?.camera?.lensModel;
+
+        let text = "";
+        if (focal > 0 && model) text = `${+focal.toFixed(1)} mm  (${model})`;
+        else if (focal > 0) text = `${+focal.toFixed(1)} mm`;
+        else if (model) text = model;
+
+        if (text === this._lensText) return;
+        this._lensText = text;
+        this.lensDisplay = text || "-";
+        if (this.lensController) {
+            if (text) this.lensController.show(); else this.lensController.hide();
+        }
     }
 
     /** Refresh the read-only readout: the ratio, plus what it is in human terms. */
@@ -410,6 +526,7 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         this._objectNode = objectNode;
         this.updateAspectLockAvailability();
         this.updateAspectReadout();
+        this.updateLensReadout();
     }
 
     // Satellite mode: quaternion-based orientation, no gimbal lock.

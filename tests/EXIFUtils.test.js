@@ -85,6 +85,7 @@ jest.mock('../src/SphericalMath', () => ({
 
 jest.mock('../src/utils', () => ({
     atan: Math.atan,
+    tan: Math.tan,
     degrees: (value) => value * 180 / Math.PI,
     m2f: (value) => value * 3.280839895,
     radians: (value) => value * Math.PI / 180,
@@ -150,13 +151,23 @@ describe('extractJPEGImportMetadata', () => {
             altitude: 150.5,
             heading: 350,
             pitch: -12.5,
-            roll: -170,
+            // The camera's roll and the EXIF orientation can describe the same physical turn, so
+            // the display rotation is subtracted to avoid applying it twice. This fixture rolls
+            // -170 and rotates 90, giving -260 -> +100. (Verified against a real DJI Mini 3 Pro
+            // vertical shot: GimbalRollDegree -90 with orientation 8 / 270 deg gives exactly 0,
+            // a level horizon. Adding instead of subtracting would give 180 - upside down.)
+            roll: 100,
             hasLocation: true,
             hasOrientation: true,
         }));
         expect(result.optics.focalLengthMm).toBe(24);
         expect(result.optics.focalLength35mm).toBe(50);
-        expect(result.optics.verticalFovDeg).toBeCloseTo(26.99, 1);
+        // A 35mm-equivalent focal length describes the frame's LONG axis against the 36mm long
+        // side of the full-frame gate. This fixture is 4000x3000 stored with orientation 6
+        // (rotate 90 CW), so it is DISPLAYED as 3000x4000 - portrait, long axis vertical - and
+        // the vertical field is the long-axis field directly: 2*atan(18/50) = 39.60 deg.
+        // (The old 26.99 was 2*atan(24/50), which assumed every frame was 3:2 landscape.)
+        expect(result.optics.verticalFovDeg).toBeCloseTo(39.60, 1);
         expect(result.optics.fNumber).toBe(2.8);
         expect(result.optics.iso).toBe(200);
     });

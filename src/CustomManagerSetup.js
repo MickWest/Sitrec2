@@ -245,10 +245,16 @@ export const setupMethods = {
                 set(ptz.rollController, consumesRoll);
             }
 
-            // FOV: the Zoom slider is editable only for the Manual (userFOV) source.
+            // FOV: the Zoom slider is editable only for the Manual (userFOV) source. HFOV and the
+            // 35mm equivalent are the same stored angle seen through an aspect ratio, and write
+            // back through it, so a computed source overwrites an edit to any of the three on the
+            // next apply() - they grey out together.
             const fovSwitch = NodeMan.get("fovSwitch", false);
             if (fovSwitch && ptz) {
-                set(ptz.fovController, fovSwitch.choice === "userFOV");
+                const userFOV = fovSwitch.choice === "userFOV";
+                set(ptz.fovController, userFOV);
+                set(ptz.hfovController, userFOV);
+                set(ptz.focal35Controller, userFOV);
             }
         };
         EventManager.addEventListener("Switch.choiceChanged.cameraTrackSwitch", syncCameraControlGreyout);

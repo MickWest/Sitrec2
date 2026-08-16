@@ -1691,6 +1691,23 @@ const en = {
                 "to match. An HFOV means nothing without saying what frame it spans, which is " +
                 "what the aspect ratio is for.",
         },
+        focal35: {
+            label: "35mm Equiv (mm)",
+            tooltip: "The lens that would give this field of view on a 36x24mm full-frame " +
+                "camera.\n\nMeasured across the frame's LONG axis, so the number only moves if " +
+                "the frame was actually cropped. A camera shooting 3:2 stills and 16:9 video " +
+                "cuts the top and bottom off the same sensor through the same lens, and reports " +
+                "the same number for both; so does turning the camera to shoot portrait, which " +
+                "crops nothing at all. Editing it sets HFOV and VFOV to match.",
+        },
+        lens: {
+            label: "Lens (EXIF)",
+            tooltip: "The real focal length and lens recorded by the camera in the imported " +
+                "photo, straight from its EXIF.\n\nThis is the TRUE focal length on that " +
+                "camera's sensor, not a 35mm equivalent - on a full-frame body the two match, " +
+                "on a smaller sensor the equivalent above will be the longer number. Hidden " +
+                "when no photo with lens metadata is loaded.",
+        },
         aspect: {
             label: "Aspect Ratio",
             tooltip: "Width divided by height of the frame that VFOV and HFOV are quoted " +
