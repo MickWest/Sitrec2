@@ -239,6 +239,130 @@ function orthonormalTimeBasis(taus, maxOrder) {
     return cols;
 }
 
+// --- residualized incremental information per added order ----------------
+//
+// WHAT THE RUNG NUMBERS DO NOT ANSWER. cv/ca/jerk above are JOINT statistics:
+// each is the conditioning of the whole order-0..k design at once, so a rung
+// answers "can this geometry pin down position AND velocity AND ... AND the
+// order-k coefficient together". It cannot separate "the added order carries
+// new information" from "the added order is fine but a LOWER one was already
+// marginal", and a rung can degrade from one to the next for either reason.
+// The defensible question about the added order on its own is INCREMENTAL:
+// after projecting the order-k design columns onto the span of every
+// lower-order column and keeping only what is left over, how much information
+// remains? That residual is the Fisher information for the order-k
+// coefficient with all lower coefficients profiled out — the Schur complement
+// S_k = N_k - G_k,<k G_<k,<k^-1 G_<k,k of the order-k diagonal block — and its
+// smallest eigenvalue is the worst spatial direction of that residual.
+//
+// WHY IT IS DIVIDED BY tr(N_k)/3 AND BY NOTHING ELSE. A rescaling of the
+// order-k columns (basis function phi_k -> s phi_k, i.e. a change of unit for
+// the order-k coefficient) sends both S_k and N_k to s^2 times themselves, so
+// the ratio removes exactly that arbitrariness and nothing else. The
+// denominator is otherwise INERT: with the sample-orthonormal basis above,
+// tr(N_k) = sum_i phi_k(i)^2 tr(P_i) = 2 for every geometry and every order,
+// because tr P_i = 2 for a unit direction and the basis columns have unit
+// norm. So on unscaled input this statistic is 1.5 * lambdaMin(S_k) — an
+// ABSOLUTE information floor wearing a unit-cancelling denominator, not a
+// geometry-cancelling one. 1 is the isotropic reference (an isotropic
+// direction set measures about 0.94); 0 means the geometry constrains no
+// order-k coefficient at all in at least one direction.
+//
+// THE NORMALIZATION THAT WAS REFUSED, AND WHY. The fully basis-invariant
+// version — the generalized eigenvalues of (S_k, N_k), which are the squared
+// sines of the principal angles between the added columns and the lower span
+// and are invariant under ANY invertible reparameterization of the added
+// block — is worthless here, and measurably so. On a static line of sight,
+// where P_i is the same projector at every frame and the geometry constrains
+// nothing at any order, the orthonormal time basis makes the blocks EXACTLY
+// orthogonal: S_k = N_k to 2e-16 relative. A ratio-to-N_k measure therefore
+// scores that dead geometry at a perfect 1.0, STRICTLY ABOVE the isotropic
+// control (which has a real if small overlap between orders), because it
+// divided out the very rank deficiency that is the answer.
+// incrementalInformation.test.js pins that inversion. That is the failure
+// mode this statistic avoids by construction: it is
+// invariant to the basis SCALE and to any reparameterization of the lower
+// orders (a Schur complement is), and deliberately not invariant to anything
+// that could absorb the absolute loss of information.
+//
+// Computed by explicit Gram-Schmidt on the design COLUMNS rather than by
+// eliminating the 12x12 Gram: forming G squares the condition number, and
+// these residuals are wanted precisely where they are tiny.
+function incrementalInformation(dirENU, active, cols) {
+    const K = cols.length - 1;
+    const rows = 3 * active.length;
+    const rho = new Array(K + 1).fill(null);
+    // Q: an orthonormal basis for the span of every design column of order
+    // BELOW the block currently being processed, built up as we go.
+    const Q = [];
+    for (let k = 0; k <= K; k++) {
+        // The three columns the order-k term adds: column c holds
+        // P_i[r][c] * phi_k(tau_i) at row 3i + r.
+        const block = [new Float64Array(rows), new Float64Array(rows), new Float64Array(rows)];
+        for (let i = 0; i < active.length; i++) {
+            const b = active[i] * 3;
+            const dx = dirENU[b], dy = dirENU[b + 1], dz = dirENU[b + 2];
+            const P = [
+                1 - dx * dx, -dx * dy, -dx * dz,
+                -dy * dx, 1 - dy * dy, -dy * dz,
+                -dz * dx, -dz * dy, 1 - dz * dz,
+            ];
+            const w = cols[k][i], r0 = 3 * i;
+            for (let c = 0; c < 3; c++) {
+                block[c][r0] = w * P[c];
+                block[c][r0 + 1] = w * P[3 + c];
+                block[c][r0 + 2] = w * P[6 + c];
+            }
+        }
+        // tr(N_k) before residualization — the unit-cancelling denominator.
+        let traceN = 0;
+        for (const v of block) for (let i = 0; i < rows; i++) traceN += v[i] * v[i];
+
+        // Residualize: strip the lower-order span out of all three columns.
+        // Two passes for the same reason orthonormalTimeBasis needs two.
+        for (let pass = 0; pass < 2; pass++)
+            for (const q of Q)
+                for (const v of block) {
+                    let d = 0;
+                    for (let i = 0; i < rows; i++) d += q[i] * v[i];
+                    for (let i = 0; i < rows; i++) v[i] -= d * q[i];
+                }
+
+        const S = new Float64Array(9);
+        for (let a = 0; a < 3; a++) {
+            for (let b = a; b < 3; b++) {
+                let s = 0;
+                for (let i = 0; i < rows; i++) s += block[a][i] * block[b][i];
+                S[a * 3 + b] = s;
+                S[b * 3 + a] = s;
+            }
+        }
+        rho[k] = traceN > 0
+            ? Math.max(0, symmetricEigenvalues(S, 3)[0]) / (traceN / 3) : null;
+
+        // Extend Q by an orthonormal basis of this block's residual, so the
+        // next order is measured against orders 0..k. A column whose residual
+        // has collapsed contributes nothing to the span and is dropped.
+        for (const v of block) {
+            let raw = 0;
+            for (let i = 0; i < rows; i++) raw += v[i] * v[i];
+            for (let pass = 0; pass < 2; pass++)
+                for (const q of Q) {
+                    let d = 0;
+                    for (let i = 0; i < rows; i++) d += q[i] * v[i];
+                    for (let i = 0; i < rows; i++) v[i] -= d * q[i];
+                }
+            let nrm = 0;
+            for (let i = 0; i < rows; i++) nrm += v[i] * v[i];
+            nrm = Math.sqrt(nrm);
+            if (!(nrm > 1e-12 * Math.sqrt(Math.max(raw, Number.MIN_VALUE)))) continue;
+            for (let i = 0; i < rows; i++) v[i] /= nrm;
+            Q.push(v);
+        }
+    }
+    return rho;
+}
+
 // Returns {cv, ca, jerk} as log10 rcond per rung (null where the sampling
 // cannot support the order) plus maxObservableOrder: the highest rung that
 // passes OBSERVABLE_LOG10_RCOND with every rung below it also passing. It is
@@ -248,9 +372,32 @@ function orthonormalTimeBasis(taus, maxOrder) {
 // does not preserve that ordering, so a higher rung scoring above a failed
 // lower one is scaling noise, not evidence of observability. 0 means "not even
 // constant velocity"; null means the frames were too few to say anything.
+//
+// Also returns incrementalLog10 {cv, ca, jerk}: log10 of the residualized
+// incremental information for the order ADDED at that rung (velocity at cv,
+// acceleration at ca, cubic at jerk) — see incrementalInformation above. It
+// answers a different question from the rung beside it, and neither
+// substitutes for the other: the rung is the joint conditioning of orders
+// 0..k, this is what order k alone contributes once orders 0..k-1 are
+// projected out. 0 is the isotropic reference, and it falls without bound.
+// maxObservableOrder is NOT derived from it and is unchanged by it.
+//
+// MEASURED (2026-08-15, the 26 tractability scenarios regenerated from their
+// own specs): cv spans -4.65 to -0.34 (median -2.65), ca -4.70 to -0.74
+// (median -3.04), jerk -4.91 to -0.67 (median -3.04). The two scales
+// disagree hardest where the equilibration in equilibratedRcond does the most
+// work: maneuver/turn90-instant has the BEST rungs of the 26 (-0.86 / -1.53 /
+// -1.67, order 3) and nearly the worst increments (-4.44 / -4.69 / -4.91),
+// because one design column there has squared norm 1.5e-4 — a spatial
+// direction, near the line of sight, carrying almost no information — and
+// equilibration scales that column back to unit norm before the rung is
+// measured. Equilibrating the three SPATIAL columns within a block is not a
+// change of units the way the temporal scaling is, so that rescaling is real
+// information loss and only the increment reports it.
 export function conditioningStack(dirENU, times, activeFrames) {
     const active = Array.from(activeFrames);
-    const unknown = {cv: null, ca: null, jerk: null, maxObservableOrder: null};
+    const unknown = {cv: null, ca: null, jerk: null, maxObservableOrder: null,
+        incrementalLog10: {cv: null, ca: null, jerk: null}};
     if (active.length < 2) return unknown;
 
     const cols = orthonormalTimeBasis(centeredTau(times, active), STACK_MAX_ORDER);
@@ -303,7 +450,17 @@ export function conditioningStack(dirENU, times, activeFrames) {
         if (log10[k] == null || !(log10[k] >= OBSERVABLE_LOG10_RCOND)) break;
         maxObservableOrder = k;
     }
-    return {cv: log10[1], ca: log10[2], jerk: log10[3], maxObservableOrder};
+
+    // rho[0] is the position block against an empty lower span, which is just
+    // its own anisotropy and not an increment; the rungs report orders 1..3.
+    const rho = incrementalInformation(dirENU, active, cols);
+    const inc = (k) => (k > K || rho[k] == null
+        ? null : Math.log10(Math.max(rho[k], Number.MIN_VALUE)));
+
+    return {
+        cv: log10[1], ca: log10[2], jerk: log10[3], maxObservableOrder,
+        incrementalLog10: {cv: inc(1), ca: inc(2), jerk: inc(3)},
+    };
 }
 
 // Observable LOS-series features (classifier inputs — computed from the

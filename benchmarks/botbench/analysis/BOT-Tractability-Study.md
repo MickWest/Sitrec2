@@ -179,23 +179,43 @@ following: `hover-anom` is declared white and reads correlated — a spliced
 velocity impulse leaves correlated structure in the residuals. That is a
 possible anomaly channel independent of class viability, on n=1.
 
-**F9 — The kinematic profile separates spliced impulses, and the burst probe
-does not trip it.** The dossier's new time-resolved profile reports the largest
-single-frame jump in angular rate as a multiple of the median rate. Measured
-over the eight pilot cases: the two spliced-impulse anomalies read 0.6 and 0.3,
-the hypersonic glide 2.5, while the mundane Go Fast control reads 0.2 and — the
-result that matters — the radiosonde-burst false-positive probe also reads 0.2.
-The burst is a violent MUNDANE discontinuity that trips the class-viability
-alarm; it does not trip this one, because a burst changes the target's motion
-smoothly in bearing space while a velocity step does not. The Go Fast impulse,
-spliced at t=15 s, is localized to t=16 s at 1 Hz sampling.
+**F9 — RETRACTED. The rate-jump statistic tracks sample rate, not anomaly.**
+The first reading of this study reported a lead: on the eight escalation cases
+the largest single-frame jump in angular rate, as a multiple of the median rate,
+read 0.6 and 0.3 on the two spliced impulses against 0.2 on both the mundane
+control and the radiosonde-burst false-positive probe. Measured over all 26
+records at a threshold pre-registered from an already-committed test assertion,
+it does not separate: 5/6 anomalies alarm and 14/20 mundane scenarios alarm,
+Fisher exact p = 1.0.
 
-This is a lead, not a detector: n=5, the statistic self-normalizes (an early
-step scores lower than a late one, pinned by test), and the hypersonic value
-comes from its glide dip rather than a step. But it is the first signal measured
-here that separates anomalies from the designed false-positive probe, and it is
-computed from the sightlines alone with no fit and no class. It belongs in the
-composite-null detector work (programme steps 17, 23) as a candidate component.
+The mechanism is a confound, and it is instructive. The statistic is an
+inter-frame angle multiplied by the sample rate. Raise the rate and the true
+inter-frame motion shrinks proportionally while the pointing error does not, so
+above some rate the number measures noise rather than motion.
+Spearman(jumpRatio, fps) = **0.83**; Spearman(jumpRatio, declared anomalous) =
+**−0.01**. The decisive comparison, all at 10 Hz and the same declared noise: a
+target that never moves scores 2.603 and a straight constant-acceleration track
+scores 2.770, both ABOVE the hypersonic glide at 2.499.
+
+Why the original reading looked clean: four of its five cases were 1–2 Hz
+real-arm scenarios and the fifth was the only 10 Hz case among them. A confound
+that sorts by sample rate is invisible in a set with one member on the far side
+of it. The five values reproduce exactly, so this is a wider measurement of the
+same quantity, not a different one.
+
+What survives is a subgroup reported as a hypothesis with its ceiling attached:
+among the 8 scenarios at 2 Hz or below the two anomalies rank 1st and 3rd, but
+the subgroup boundary was chosen after seeing the confound, and with 2 against 6
+even a perfect split reaches only p = 0.036. Testing it needs a low-rate
+replication arm, which is a scenario-generation job.
+
+This retraction is about one summary number, not about the kinematic profile.
+The time-resolved table is what shows an analyst where a discontinuity sits, and
+that is what it was added for; `lib/dossier.js` is unchanged. Two design
+consequences carry into the composite-null detector work (steps 17, 23): the
+statistic must be normalized against the clip's pointing-noise floor rather than
+only its own median rate, and it should be reported only where motion stands
+comfortably above that floor. Full measurement: `analysis/JUMP-STATISTIC.md`.
 
 ## Escalation pilot — eight truth-blind AI adjudicators
 

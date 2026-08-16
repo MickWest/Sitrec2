@@ -6,7 +6,25 @@ because they correct a premise the brief got wrong or because they are couplings
 the parallel launch ignored. They are recorded here so none of them is lost, with
 what to do and why it matters.
 
-## C1 — The "geometry floor" in the precision score is not a floor (blocking)
+## C1 — RESOLVED ON INSPECTION: the implementation did not follow the wrong brief
+
+**Status (checked 2026-08-15, after the package landed): largely moot.** The
+correction below stands as written, but `lib/crlbTriage.js` did not implement
+the flawed instruction. It derives `rangeObservable` from whether the Fisher
+information is finite along the range direction — the STRUCTURAL test this
+correction asks for — and reports "no sample count helps" exactly when that
+information is singular. What remains is a practical threshold, not a limit
+claim: a case is also labelled geometry-limited when reaching the target
+precision would need more than a stated factor more samples, which is a
+declared operational cutoff and is documented as one.
+
+That is worth recording as evidence about briefing practice rather than about
+the code: the brief specified a wrong method, the package was also told the
+trap the task had to avoid, and the trap won. The remaining action is
+documentation only — state in the module that the two geometry-limited paths
+are different claims (one structural, one operational).
+
+## C1 (original text) — The "geometry floor" in the precision score is not a floor
 
 **The brief was wrong.** Work package C was asked to compare predicted fractional
 range error at the current sample count against its value "as N tends to

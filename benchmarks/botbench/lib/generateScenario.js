@@ -195,7 +195,8 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
             // their original calibration. Do not read the legacy -3/-2/-1
             // bands across the ca/jerk rungs.
             cvDesignLog10RcondEquilibrated: stackObs.cv,
-            conditioningStack: {cv: stackObs.cv, ca: stackObs.ca, jerk: stackObs.jerk},
+            conditioningStack: {cv: stackObs.cv, ca: stackObs.ca, jerk: stackObs.jerk,
+                incrementalLog10: stackObs.incrementalLog10},
             maxObservableOrder: stackObs.maxObservableOrder,
             losSweepDeg: losFeatures.losSweepDeg,
             losMeanRateDegPerS: losFeatures.losMeanRateDegPerS,
