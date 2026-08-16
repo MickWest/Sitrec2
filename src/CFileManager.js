@@ -101,6 +101,7 @@ import {promptForText} from "./TextPrompt";
 import {t} from "./i18n";
 import {parseMethods} from "./CFileManagerParse";
 import {saveMethods} from "./CFileManagerSave";
+import {droppableAcceptAttribute} from "./DroppableTypes";
 import {
     isAbortLikeError,
     sanitizeSitchName,
@@ -1736,8 +1737,11 @@ export class CFileManager extends CManager {
         // Set its type to 'file'
         inputElement.type = 'file';
         
-        // Allow multiple file types including videos, audio and images for better mobile support
-        inputElement.accept = 'video/*,audio/*,image/*,.heic,.heif,.jp2,.j2k,.kml,.kmz,.csv,.json,.geojson,.sitch,.txt,.xml,.srt,.ts,.m2ts,.mts,.zip,.mp3,.m4a,.aac,.wav,.ogg,.flac,.webm,.aif,.aiff,.caf';
+        // Every extension Sitrec can ingest, from the one shared list (DroppableTypes) that
+        // the drag-and-drop routing and the URL gate also read — a format added in one
+        // place shows up in all three. The wildcard MIME groups stay in front of it for
+        // mobile, where the OS picker filters by type rather than by extension.
+        inputElement.accept = 'video/*,audio/*,image/*,' + droppableAcceptAttribute();
         
         // Allow multiple files
         inputElement.multiple = true;

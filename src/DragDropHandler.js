@@ -9,6 +9,7 @@ import {SITREC_DEV_DOMAIN, SITREC_DOMAIN} from "./configUtils";
 import {EventManager} from "./CEventManager";
 import {hideProgress, initProgress, updateProgress} from "./CProgressIndicator";
 import {MP4_DEMUXER_EXTENSIONS, WEBAUDIO_SUPPORTED_EXTENSIONS} from "./AudioFormats";
+import {IMAGE_EXTENSIONS as DROPPABLE_IMAGE_EXTENSIONS, urlLooksDroppable} from "./DroppableTypes";
 import {ViewMan} from "./CViewManager";
 import {quickFetch} from "./quickFetch";
 import {isResolvableSitrecReference, resolveURLForFetch} from "./SitrecObjectResolver";
@@ -21,8 +22,11 @@ import {isMetabunkThreadURL, resolveMetabunkThreadVideoURL} from "./MetabunkThre
 import {showError, showConfirm, showChoice} from "./showError";
 import {applyGoToString} from "./GoTo";
 
-// Image file extensions
-const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'jp2', 'j2k', 'jpx', 'jpc', 'j2c', 'heic', 'heif'];
+// Image file extensions. Shared with the file picker and the URL gate — see DroppableTypes.
+// 'tif'/'tiff' are excluded HERE only: a TIFF may be a GeoTIFF, which becomes a ground
+// overlay through parseAsset rather than one of the "use as video / use as overlay"
+// choices this list drives.
+const IMAGE_EXTENSIONS = DROPPABLE_IMAGE_EXTENSIONS.filter(e => e !== 'tif' && e !== 'tiff');
 
 // Extensions that need software decoding (browser can't decode natively outside Safari).
 const HEIC_EXTENSIONS = ['heic', 'heif'];
@@ -946,8 +950,11 @@ class CDragDropHandler {
         // later we might support other domains, and load them via proxy
         try {
             const urlObject = new URL(url);
-            const pathExt = (urlObject.pathname.split('.').pop() || "").toLowerCase();
-            const looksLikeDirectAssetURL = /^(mp4|mov|webm|avi|m4a|mp3|h264|dad|ts|m2ts|mts|kml|kmz|csv|json|srt|txt|tle|glb|ply|png|jpe?g|gif|webp|tiff?|heic|heif|jp2|j2k|jpx|jpc|j2c)$/i.test(pathExt);
+            // Anything droppable is linkable: this reads the SAME list of ingestable
+            // extensions the file picker offers (DroppableTypes), so a format can never
+            // again be importable from the desktop but refused as a URL — which is what
+            // sent .ntf, .klv, .glb, .zip and the rest to "Unsupported URL host".
+            const looksLikeDirectAssetURL = urlLooksDroppable(url);
 
             if (isDvidsVideoPageURL(url)) {
                 updateProgress({status: "Resolving DVIDS video...", percent: 15, filename: url});

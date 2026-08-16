@@ -363,7 +363,11 @@ class CTrackManager extends CManager {
 
         if (trackFile instanceof CTrackFile) {
             misb = trackFile.toMISB(trackIndex);
-        } else if (ext === "json") {
+        } else if (ext === "json" || ext === "geojson") {
+            // ".geojson" as well as ".json": it is the format's own standard extension,
+            // and the file picker has always offered it, but this dispatch recognised
+            // only "json" — so a file named the standard way reached the assert below
+            // instead of the GeoJSON reader.
             const geo = new CGeoJSON();
             geo.json = trackFile;
             misb = geo.toMISB(trackIndex);

@@ -70,6 +70,7 @@ import {showError} from "./showError";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {projectedBoundsToWGS84} from "./proj4Loader";
 import {isAudioOnlyFormat} from "./AudioFormats";
+import {AUDIO_MIME_TYPES, VIDEO_MIME_TYPES} from "./DroppableTypes";
 import {EventManager} from "./CEventManager";
 import {CTLEData, isOMMCSV} from "./TLEUtils";
 import {extractFeaturesFromFile, isFeaturesCSV} from "./ParseFeaturesCSV";
@@ -831,20 +832,39 @@ export const parseMethods = {
                     const blob = new Blob([parsedFile], { type: 'video/h264' });
                     const file = new File([blob], filename, { type: 'video/h264' });
                     videoNode.uploadFile(file, true);
-                } else if (fileExt === "m4a" || fileExt === "mp3") {
+                } else if (isAudioOnlyFormat(filename) && fileExt !== "webm") {
+                    // Every audio-only container the app accepts, not just m4a/mp3. A
+                    // DROPPED audio file never reaches here — importDroppedFile hands it
+                    // straight to the video node with the browser's own MIME — so this
+                    // branch is the URL path's only route, and the narrower test dropped
+                    // .wav/.ogg/.flac/.aac/.aif/.aiff/.caf into "Unknown video format".
+                    // ".webm" is excluded on purpose: it is in the audio list but is also
+                    // a video container, and has always been handled by the video branch.
                     console.log("Audio file detected: " + filename);
-                    const mimeType = fileExt === "mp3" ? 'audio/mpeg' : 'audio/mp4';
+                    const mimeType = AUDIO_MIME_TYPES[fileExt] ?? 'audio/mpeg';
                     const blob = new Blob([parsedFile], { type: mimeType });
                     const file = new File([blob], filename, { type: mimeType });
                     videoNode.uploadFile(file, true);
-                } else if (fileExt === "mp4" || fileExt === "mov" || fileExt === "webm" || fileExt === "avi") {
+                } else if (fileExt === "mp4" || fileExt === "mov" || fileExt === "webm"
+                        || fileExt === "avi" || fileExt === "m4v" || fileExt === "mp4v") {
+                    // m4v/mp4v are ISO-BMFF — the same container as mp4, which is why
+                    // sniffFileType reports them as "mp4" from the bytes. They need naming
+                    // here too, because this dispatch reads the FILENAME extension rather
+                    // than the sniffed one, and `video/${fileExt}` would invent a
+                    // "video/m4v" type that nothing accepts.
                     console.log("Video file detected: " + filename);
-                    const mimeType = `video/${fileExt === "mov" ? "quicktime" : fileExt}`;
+                    const mimeType = VIDEO_MIME_TYPES[fileExt] ?? `video/${fileExt}`;
                     const blob = new Blob([parsedFile], { type: mimeType });
                     const file = new File([blob], filename, { type: mimeType });
                     videoNode.uploadFile(file, true);
-                } else if (fileExt === "m2v" || fileExt === "m1v") {
-                    const codecName = fileExt === "m2v" ? "MPEG-2" : "MPEG-1";
+                } else if (fileExt === "m2v" || fileExt === "m1v"
+                        || fileExt === "mpg" || fileExt === "mpeg") {
+                    // .mpg/.mpeg reaching here is an MPEG PROGRAM stream: one that is
+                    // really a transport stream was recognised by CONTENT in parseAsset
+                    // and demuxed long before this point. So it is the same MPEG-1/2 dead
+                    // end as .m2v, and deserves that branch's actionable re-encode
+                    // message rather than the silent warning it fell through to.
+                    const codecName = fileExt === "m1v" ? "MPEG-1" : "MPEG-2";
                     showError(`${codecName} video is not supported by browser WebCodecs. ` +
                         `Re-encode to H.264 with: ffmpeg -i "${filename}" -c:v libx264 -preset fast output.mp4`);
                     console.error(`[Video] ${codecName} video stream detected (${filename}). ` +
@@ -1269,6 +1289,11 @@ export const parseMethods = {
                     break;
                 }
                 case "tle":
+                // Two-line and three-line element sets. isTLEFile() has always named
+                // these alongside .tle, but the switch did not, so a .2le/.3le reached
+                // the default branch and registered as unknown.
+                case "2le":
+                case "3le":
                     parsed = decoder.decode(buffer);
                     dataType = "tle";
                     break;
@@ -1373,6 +1398,13 @@ export const parseMethods = {
                     break;
                 case "webp":
                     prom = createImageFromArrayBuffer(buffer, 'image/webp');
+                    dataType = "image";
+                    break;
+                // Decoded natively by every browser. DragDropHandler's IMAGE_EXTENSIONS
+                // has always listed bmp, so one could be dropped; without a case here it
+                // then registered as unknown instead of becoming an image.
+                case "bmp":
+                    prom = createImageFromArrayBuffer(buffer, 'image/bmp');
                     dataType = "image";
                     break;
                 case "heic":
@@ -1500,6 +1532,11 @@ export const parseMethods = {
                     }
                     break;
                 }
+                // GeoJSON is JSON — the track-file detectors below decide what it is,
+                // and a plain feature collection falls through to dataType "json" like
+                // any other. It was already offered by the file picker's accept list
+                // but had no case here, so it registered as unknown.
+                case "geojson":
                 case "json": {
                     const jsonParsed = JSON.parse(decoder.decode(buffer));
                     if (jsonParsed && jsonParsed.kind === "klv-pes-pts") {
@@ -1591,6 +1628,15 @@ export const parseMethods = {
                 case "mov":
                 case "webm":
                 case "avi":
+                // sniffFileType documents its return values as "matching the cases in
+                // parseAsset()", and it returns "mpg" for an MPEG program stream — but
+                // there was no such case, so the one thing the sniffer exists for (a
+                // .mpg that is really a transport stream is caught earlier; a real
+                // program stream is not) fell through to unknown. Handing the buffer to
+                // the video pipeline is what a DROPPED .mpg already does, since the
+                // browser types it video/mpeg and it never reaches this switch at all.
+                case "mpg":
+                case "mpeg":
                     dataType = "video";
                     parsed = buffer;
                     console.log("Parsed video: " + filename + " (" + buffer.byteLength + " bytes)");
