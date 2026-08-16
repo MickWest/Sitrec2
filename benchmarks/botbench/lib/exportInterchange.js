@@ -118,6 +118,35 @@ function targetPart(t) {
         return `${params.anomalous === false ? "ctrl" : "anom"}-${id}`;
     }
     const kind = t.kind.replace(/-/g, "");
+    if (t.family === "real") {
+        // Real-segment targets are named by their scenario label; the
+        // anomalous flag is part of the truth, so it is part of the name
+        // (anom- for the spliced member, ctrl- for its raw-segment twin).
+        const label = String(params.label ?? "segment").replace(/[^a-z0-9]/gi, "").toLowerCase();
+        // First 8 hex chars of the source-file sha (the segmentKey prefix):
+        // two same-labelled segments from different files/windows must not
+        // share a name (audit F8).
+        const src = String(params.segmentKey ?? "").slice(0, 8) || "nosrc";
+        if (params.anomalous === true) return `anom-real-${label}-${src}`;
+        if (params.paired === true) return `ctrl-real-${label}-${src}`;
+        return `real-${label}-${src}`;
+    }
+    if (t.family === "maneuver") {
+        // The anomalous flag is part of the truth (truth.json reads it from
+        // the spec), so it must be part of the name — an anomalous member and
+        // its mundane twin share kind and seed, and without a marker the twin
+        // would silently overwrite it. Same anom/ctrl vocabulary as the
+        // anomaly tuples: anom- when anomalous; ctrl- when a shape whose
+        // DEFAULT is anomalous is generated with mundane parameters; bare
+        // name for naturally mundane shapes.
+        // eslint-disable-next-line global-require
+        const {MANEUVER_ANOMALOUS} = require("./maneuverTargets");
+        const dflt = MANEUVER_ANOMALOUS[t.kind] ?? false;
+        const resolved = params.anomalous ?? dflt;
+        if (resolved) return `anom-${kind}`;
+        if (dflt) return `ctrl-${kind}`;
+        return kind;
+    }
     if (params.startAGL != null) return `${kind}-${num(params.startAGL)}m`;
     return kind;
 }

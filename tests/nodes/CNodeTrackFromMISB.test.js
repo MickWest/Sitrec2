@@ -2,6 +2,17 @@ jest.mock("json-stringify-pretty-compact", () => ({
     __esModule: true,
     default: JSON.stringify,
 }));
+// The production geoid loader fetches its grid over the network, which isn't
+// available under Jest, so the synchronous accessor would return 0 and warn.
+// Delegate to egm96-universal (bit-identical values) so the MSL->HAE conversion
+// in recalculate() is exercised for real. Same pattern as tests/nodes/CNodeTrack.test.js.
+jest.mock("../../src/EGM96Geoid", () => {
+    const {meanSeaLevel} = require("egm96-universal");
+    return {
+        meanSeaLevelOffset: (lat, lon) => meanSeaLevel(Math.max(-90, Math.min(90, lat)), lon),
+        ensureGeoidLoaded: () => Promise.resolve(),
+    };
+});
 
 import {CNode} from "../../src/nodes/CNode";
 import {CNodeManager} from "../../src/nodes/CNodeManager";

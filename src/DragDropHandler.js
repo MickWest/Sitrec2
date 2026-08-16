@@ -654,6 +654,22 @@ class CDragDropHandler {
             reader.onloadend = () => {
                 if (showProgress) hideProgress();
                 this.queueResult(file.name, reader.result, null);
+                // RESOLVE, which this did not used to do. The promise settled
+                // only on error, so for every file that read successfully it
+                // stayed pending forever. Nothing noticed while the only
+                // callers were fire-and-forget drops, but it had two real
+                // consequences: `await uploadDroppedFile(...)` never returned,
+                // and — because the await never came back — the `finally` in
+                // uploadDroppedFile never ran, so reservedImportNames kept
+                // every name it ever claimed.
+                //
+                // WHAT RESOLUTION MEANS HERE, precisely: the bytes are read
+                // and the parse is QUEUED. queueResult hands off to the main
+                // loop, which is where the file actually becomes tracks — so
+                // this is "accepted for import", not "import complete". A
+                // caller needing the nodes must look for them, not assume
+                // this promise waited for them.
+                resolve();
             };
             reader.onerror = () => {
                 if (showProgress) hideProgress();

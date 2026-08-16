@@ -10,7 +10,7 @@
  */
 
 import {setSit} from "../src/Globals";
-import {integrateBalloonPositions} from "../src/BalloonPhysics";
+import {FLAT_GEOID, integrateBalloonPositions} from "../src/BalloonPhysics";
 import {ECEFToLLAVD_radii} from "../src/LLA-ECEF-ENU";
 import {ecefDisplacementToENU} from "../src/TrackExportMath";
 
@@ -31,6 +31,9 @@ function base(params = {}) {
         seed: 1,
         frames: 20 * FPS,
         dt: DT,
+        // Kinematics only: no geoid grid is loaded under Jest, so say so rather
+        // than letting the production lookup fall back to 0 with a warning.
+        geoidOffset: FLAT_GEOID,
         ...params,
     };
 }

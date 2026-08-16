@@ -7,6 +7,29 @@
 // invariant to units and time origin, comparable across 5-120 s clips, and —
 // unlike sensorMotionStats — it DOES see the straight-CV sensor degeneracy.
 // Never thresholded at generation time; kept continuous for the classifier.
+//
+// WHY the centering and the equilibration are not optional. A condition
+// number is a property of a PARAMETERIZATION, not of a geometry:
+// cond(A D) != cond(A) for a diagonal D, so a design matrix whose columns
+// carry different physical units (metres against metre-seconds) reports the
+// analyst's choice of second-versus-millisecond as if it were observability,
+// and a design built on raw t rather than t - tmid reports the epoch. Both
+// defects are removed here at the source: tau is centered on the active span
+// and normalized to [-1, 1] (so any affine change of time variable leaves
+// every entry untouched), and the normal matrix is symmetrically scaled to
+// unit diagonal, which is exactly scaling each design COLUMN to unit norm.
+// conditioningStack.test.js pins both invariances against a deliberately
+// naive raw-basis reference that fails them by orders of magnitude. Both were
+// original to this file rather than a later repair, so the legacy cvDesign*
+// values are bit-for-bit what the 855-run calibration saw; the shared helpers
+// below were factored out of the CV path without moving a single result.
+//
+// SECOND feature (design review, program step 1): a nested per-order stack.
+// The CV design tests ONE dynamics order, and Fogel & Gavish 1988 is explicit
+// that the CV observability conditions are necessary but not sufficient for a
+// maneuvering target — a clip can pass CV conditioning and still be blind to
+// the acceleration the anomaly arm exists to find. conditioningStack() walks
+// CV -> CA -> jerk over the same frames and emits maxObservableOrder.
 
 // Eigenvalues of a symmetric m x m matrix (flat row-major) by cyclic Jacobi.
 export function symmetricEigenvalues(A, m) {
@@ -44,13 +67,10 @@ export function symmetricEigenvalues(A, m) {
     return ev;
 }
 
-// dirENU: Float64Array(3n) unit directions; times: seconds; active: frame
-// index iterable (post-FOV-exclusion for the observed variant).
-export function cvDesignConditioning(dirENU, times, activeFrames) {
-    const active = Array.from(activeFrames);
-    if (active.length < 2) {
-        return {rcond: null, log10Rcond: null, effectiveRank: null, lambdaMinOverTrace: null};
-    }
+// Centered, span-normalized time over the active frames. tau in [-1, 1] is
+// what makes every statistic here immune to the units and epoch of `times`:
+// an affine t -> a t + b cancels in both the centering and the scaling.
+export function centeredTau(times, active) {
     let tMin = Infinity, tMax = -Infinity;
     for (const f of active) {
         if (times[f] < tMin) tMin = times[f];
@@ -58,13 +78,54 @@ export function cvDesignConditioning(dirENU, times, activeFrames) {
     }
     const mid = (tMin + tMax) / 2;
     const halfSpan = (tMax - tMin) / 2 || 1;
+    const tau = new Float64Array(active.length);
+    for (let i = 0; i < active.length; i++) tau[i] = (times[active[i]] - mid) / halfSpan;
+    return tau;
+}
+
+// Equilibrate a symmetric normal matrix G (m x m, flat row-major) to
+// C = D^-1/2 G D^-1/2 — i.e. scale every design COLUMN to unit norm — and
+// report the design-matrix rcond sqrt(lambdaMin/lambdaMax). One code path for
+// the CV field and for every stack rung, so the rungs stay comparable.
+function equilibratedRcond(G, m) {
+    const dinv = new Float64Array(m);
+    for (let i = 0; i < m; i++) {
+        const dii = G[i * m + i];
+        dinv[i] = dii > 0 ? 1 / Math.sqrt(dii) : 0;
+    }
+    const C = new Float64Array(m * m);
+    for (let i = 0; i < m; i++)
+        for (let j = 0; j < m; j++) C[i * m + j] = G[i * m + j] * dinv[i] * dinv[j];
+
+    const ev = symmetricEigenvalues(C, m);
+    const lambdaMax = ev[m - 1];
+    if (!(lambdaMax > 0)) {
+        return {rcond: 0, log10Rcond: Math.log10(Number.MIN_VALUE), effectiveRank: 0};
+    }
+    const lambdaMin = Math.max(0, ev[0]);
+    const rcond = Math.sqrt(lambdaMin / lambdaMax);
+    return {
+        rcond,
+        log10Rcond: Math.log10(Math.max(rcond, Number.MIN_VALUE)),
+        effectiveRank: ev.filter((e) => e > 1e-10 * lambdaMax).length,
+    };
+}
+
+// dirENU: Float64Array(3n) unit directions; times: seconds; active: frame
+// index iterable (post-FOV-exclusion for the observed variant).
+export function cvDesignConditioning(dirENU, times, activeFrames) {
+    const active = Array.from(activeFrames);
+    if (active.length < 2) {
+        return {rcond: null, log10Rcond: null, effectiveRank: null, lambdaMinOverTrace: null};
+    }
+    const taus = centeredTau(times, active);
 
     // G blocks: G00 = sum P, G01 = sum tau P, G11 = sum tau^2 P (P symmetric).
     const G = new Float64Array(36);
-    for (const f of active) {
-        const b = f * 3;
+    for (let k = 0; k < active.length; k++) {
+        const b = active[k] * 3;
         const dx = dirENU[b], dy = dirENU[b + 1], dz = dirENU[b + 2];
-        const tau = (times[f] - mid) / halfSpan;
+        const tau = taus[k];
         const P = [
             1 - dx * dx, -dx * dy, -dx * dz,
             -dy * dx, 1 - dy * dy, -dy * dz,
@@ -87,29 +148,318 @@ export function cvDesignConditioning(dirENU, times, activeFrames) {
     for (let i = 0; i < 6; i++) trace += G[i * 6 + i];
     const lambdaMinOverTrace = trace > 0 ? Math.max(0, evG[0]) / trace : null;
 
-    // Equilibrate: C = D^-1/2 G D^-1/2.
-    const dinv = new Float64Array(6);
-    for (let i = 0; i < 6; i++) {
-        const dii = G[i * 6 + i];
-        dinv[i] = dii > 0 ? 1 / Math.sqrt(dii) : 0;
-    }
-    const C = new Float64Array(36);
-    for (let i = 0; i < 6; i++)
-        for (let j = 0; j < 6; j++) C[i * 6 + j] = G[i * 6 + j] * dinv[i] * dinv[j];
+    return {...equilibratedRcond(G, 6), lambdaMinOverTrace};
+}
 
-    const ev = symmetricEigenvalues(C, 6);
-    const lambdaMax = ev[5];
-    if (!(lambdaMax > 0)) {
-        return {rcond: 0, log10Rcond: Math.log10(Number.MIN_VALUE), effectiveRank: 0, lambdaMinOverTrace};
+// --- nested per-order conditioning stack ---------------------------------
+//
+// Rung k models the target as a degree-k polynomial in tau: CV is k=1
+// (position + velocity, 6 parameters), CA is k=2 (+ acceleration, 9), jerk is
+// k=3 (+ cubic, 12). Residual block per frame B_i = P_i [phi_0(tau_i) I ...
+// phi_k(tau_i) I], and the rung's statistic is the equilibrated rcond of
+// G = sum B_i^T B_i exactly as for CV.
+//
+// The temporal basis phi_j is NOT the raw monomials. Monomials on [-1, 1] are
+// strongly correlated with each other (<1, tau^2> = 2/3), so even a perfect
+// isotropic geometry would score log10 rcond about -0.68 at the jerk rung
+// purely from the Vandermonde overlap — the basis, not the observability.
+// Column equilibration cannot fix that: it is diagonal, and this is an
+// off-diagonal defect. So the monomials are orthonormalized against the ACTUAL
+// active sample times first, which is a block change of variables on the
+// parameter vector: it maps null spaces bijectively (a degenerate rung stays
+// degenerate) while removing both the basis overlap and any sampling-density
+// asymmetry, leaving a number that responds only to the direction geometry.
+// An isotropic 400-sample control then measures -0.03 / -0.05 / -0.08 across
+// the three rungs instead of trailing off to -0.68, which is what makes ONE
+// threshold meaningful for all three.
+const STACK_MAX_ORDER = 3;
+
+// ANCHORING (2026-08-15), not a recalibration. The 855-run fit sweep behind
+// the legacy -3 / -2 / -1 => 84% / 8% / 0% collapse bands cannot be re-run
+// here, so no outcome was refitted and no band was moved. What WAS measured is
+// the relation between the two scales, over the 26 tractability scenarios
+// (10 real-segment case geometries, the 10 maneuver shapes, the 6-cell
+// GEO-DURATION ladder) regenerated through generateScenario:
+//
+//   CV rung vs the legacy field: identical. |cv - cvDesignLog10RcondObserved|
+//   had median 5.8e-14 and max 1.0e-10 across all 26. That is not a
+//   coincidence — with a uniformly sampled active span the sample-orthonormal
+//   basis differs from the centered monomials only by a per-column scale,
+//   which equilibration then divides out. The two part company only when the
+//   ACTIVE samples are asymmetrically distributed in tau: a 211-of-601
+//   mid-gap FOV mask on the 60 s ladder cell gave legacy -2.1998 against
+//   cv -2.1867, the legacy number paying 0.013 for a constant/linear column
+//   correlation that is an artifact of the mask, not of the geometry. None of
+//   the 26 exercise that (all had every frame in FOV).
+//   => the legacy CV band transfers to the cv rung unchanged, which is why
+//      the floor below is -3.
+//
+//   Higher rungs sit LOWER on the same clip, by a scenario-dependent amount
+//   that is nothing like a constant: ca - cv spanned -1.604 to -0.001
+//   (median -0.307) and jerk - cv spanned -2.024 to -0.015 (median -0.508).
+//   => there is no offset that converts a legacy band into a ca or jerk band.
+//      Applying -3 to those rungs, as the ladder below does, is an assumption
+//      resting on the shared orthonormal footing, NOT a measured collapse
+//      rate. It is provisional until a per-order fit sweep exists.
+//
+// The resulting order histogram over the 26 was {0: 6, 1: 3, 2: 2, 3: 15}, and
+// it separates cases the CV number alone could not: the 60 s orbit ladder cell
+// is comfortably observable at CV (-1.94) and dead at CA (-3.14), which is the
+// Fogel & Gavish necessary-but-not-sufficient result showing up in this data.
+export const OBSERVABLE_LOG10_RCOND = -3;
+
+// Modified Gram-Schmidt of 1, tau, tau^2, ... over the active samples, with
+// the classic second orthogonalization pass (one sweep loses orthogonality on
+// the near-dependent high monomials). Stops early when the sample times
+// cannot support the next degree at all — three distinct instants can carry a
+// quadratic and nothing above it — so the caller learns the highest order the
+// SAMPLING admits before any geometry enters.
+function orthonormalTimeBasis(taus, maxOrder) {
+    const n = taus.length;
+    const cols = [];
+    for (let j = 0; j <= maxOrder; j++) {
+        const v = new Float64Array(n);
+        for (let i = 0; i < n; i++) v[i] = j === 0 ? 1 : taus[i] ** j;
+        for (let pass = 0; pass < 2; pass++) {
+            for (const u of cols) {
+                let d = 0;
+                for (let i = 0; i < n; i++) d += u[i] * v[i];
+                for (let i = 0; i < n; i++) v[i] -= d * u[i];
+            }
+        }
+        let nrm = 0;
+        for (let i = 0; i < n; i++) nrm += v[i] * v[i];
+        nrm = Math.sqrt(nrm);
+        // Monomial columns start with norm <= sqrt(n) since |tau| <= 1, so the
+        // tolerance is relative to that.
+        if (!(nrm > 1e-10 * Math.sqrt(n))) break;
+        for (let i = 0; i < n; i++) v[i] /= nrm;
+        cols.push(v);
     }
-    const lambdaMin = Math.max(0, ev[0]);
-    const rcond = Math.sqrt(lambdaMin / lambdaMax);
-    const effectiveRank = ev.filter((e) => e > 1e-10 * lambdaMax).length;
+    return cols;
+}
+
+// --- residualized incremental information per added order ----------------
+//
+// WHAT THE RUNG NUMBERS DO NOT ANSWER. cv/ca/jerk above are JOINT statistics:
+// each is the conditioning of the whole order-0..k design at once, so a rung
+// answers "can this geometry pin down position AND velocity AND ... AND the
+// order-k coefficient together". It cannot separate "the added order carries
+// new information" from "the added order is fine but a LOWER one was already
+// marginal", and a rung can degrade from one to the next for either reason.
+// The defensible question about the added order on its own is INCREMENTAL:
+// after projecting the order-k design columns onto the span of every
+// lower-order column and keeping only what is left over, how much information
+// remains? That residual is the Fisher information for the order-k
+// coefficient with all lower coefficients profiled out — the Schur complement
+// S_k = N_k - G_k,<k G_<k,<k^-1 G_<k,k of the order-k diagonal block — and its
+// smallest eigenvalue is the worst spatial direction of that residual.
+//
+// WHY IT IS DIVIDED BY tr(N_k)/3 AND BY NOTHING ELSE. A rescaling of the
+// order-k columns (basis function phi_k -> s phi_k, i.e. a change of unit for
+// the order-k coefficient) sends both S_k and N_k to s^2 times themselves, so
+// the ratio removes exactly that arbitrariness and nothing else. The
+// denominator is otherwise INERT: with the sample-orthonormal basis above,
+// tr(N_k) = sum_i phi_k(i)^2 tr(P_i) = 2 for every geometry and every order,
+// because tr P_i = 2 for a unit direction and the basis columns have unit
+// norm. So on unscaled input this statistic is 1.5 * lambdaMin(S_k) — an
+// ABSOLUTE information floor wearing a unit-cancelling denominator, not a
+// geometry-cancelling one. 1 is the isotropic reference (an isotropic
+// direction set measures about 0.94); 0 means the geometry constrains no
+// order-k coefficient at all in at least one direction.
+//
+// THE NORMALIZATION THAT WAS REFUSED, AND WHY. The fully basis-invariant
+// version — the generalized eigenvalues of (S_k, N_k), which are the squared
+// sines of the principal angles between the added columns and the lower span
+// and are invariant under ANY invertible reparameterization of the added
+// block — is worthless here, and measurably so. On a static line of sight,
+// where P_i is the same projector at every frame and the geometry constrains
+// nothing at any order, the orthonormal time basis makes the blocks EXACTLY
+// orthogonal: S_k = N_k to 2e-16 relative. A ratio-to-N_k measure therefore
+// scores that dead geometry at a perfect 1.0, STRICTLY ABOVE the isotropic
+// control (which has a real if small overlap between orders), because it
+// divided out the very rank deficiency that is the answer.
+// incrementalInformation.test.js pins that inversion. That is the failure
+// mode this statistic avoids by construction: it is
+// invariant to the basis SCALE and to any reparameterization of the lower
+// orders (a Schur complement is), and deliberately not invariant to anything
+// that could absorb the absolute loss of information.
+//
+// Computed by explicit Gram-Schmidt on the design COLUMNS rather than by
+// eliminating the 12x12 Gram: forming G squares the condition number, and
+// these residuals are wanted precisely where they are tiny.
+function incrementalInformation(dirENU, active, cols) {
+    const K = cols.length - 1;
+    const rows = 3 * active.length;
+    const rho = new Array(K + 1).fill(null);
+    // Q: an orthonormal basis for the span of every design column of order
+    // BELOW the block currently being processed, built up as we go.
+    const Q = [];
+    for (let k = 0; k <= K; k++) {
+        // The three columns the order-k term adds: column c holds
+        // P_i[r][c] * phi_k(tau_i) at row 3i + r.
+        const block = [new Float64Array(rows), new Float64Array(rows), new Float64Array(rows)];
+        for (let i = 0; i < active.length; i++) {
+            const b = active[i] * 3;
+            const dx = dirENU[b], dy = dirENU[b + 1], dz = dirENU[b + 2];
+            const P = [
+                1 - dx * dx, -dx * dy, -dx * dz,
+                -dy * dx, 1 - dy * dy, -dy * dz,
+                -dz * dx, -dz * dy, 1 - dz * dz,
+            ];
+            const w = cols[k][i], r0 = 3 * i;
+            for (let c = 0; c < 3; c++) {
+                block[c][r0] = w * P[c];
+                block[c][r0 + 1] = w * P[3 + c];
+                block[c][r0 + 2] = w * P[6 + c];
+            }
+        }
+        // tr(N_k) before residualization — the unit-cancelling denominator.
+        let traceN = 0;
+        for (const v of block) for (let i = 0; i < rows; i++) traceN += v[i] * v[i];
+
+        // Residualize: strip the lower-order span out of all three columns.
+        // Two passes for the same reason orthonormalTimeBasis needs two.
+        for (let pass = 0; pass < 2; pass++)
+            for (const q of Q)
+                for (const v of block) {
+                    let d = 0;
+                    for (let i = 0; i < rows; i++) d += q[i] * v[i];
+                    for (let i = 0; i < rows; i++) v[i] -= d * q[i];
+                }
+
+        const S = new Float64Array(9);
+        for (let a = 0; a < 3; a++) {
+            for (let b = a; b < 3; b++) {
+                let s = 0;
+                for (let i = 0; i < rows; i++) s += block[a][i] * block[b][i];
+                S[a * 3 + b] = s;
+                S[b * 3 + a] = s;
+            }
+        }
+        rho[k] = traceN > 0
+            ? Math.max(0, symmetricEigenvalues(S, 3)[0]) / (traceN / 3) : null;
+
+        // Extend Q by an orthonormal basis of this block's residual, so the
+        // next order is measured against orders 0..k. A column whose residual
+        // has collapsed contributes nothing to the span and is dropped.
+        for (const v of block) {
+            let raw = 0;
+            for (let i = 0; i < rows; i++) raw += v[i] * v[i];
+            for (let pass = 0; pass < 2; pass++)
+                for (const q of Q) {
+                    let d = 0;
+                    for (let i = 0; i < rows; i++) d += q[i] * v[i];
+                    for (let i = 0; i < rows; i++) v[i] -= d * q[i];
+                }
+            let nrm = 0;
+            for (let i = 0; i < rows; i++) nrm += v[i] * v[i];
+            nrm = Math.sqrt(nrm);
+            if (!(nrm > 1e-12 * Math.sqrt(Math.max(raw, Number.MIN_VALUE)))) continue;
+            for (let i = 0; i < rows; i++) v[i] /= nrm;
+            Q.push(v);
+        }
+    }
+    return rho;
+}
+
+// Returns {cv, ca, jerk} as log10 rcond per rung (null where the sampling
+// cannot support the order) plus maxObservableOrder: the highest rung that
+// passes OBSERVABLE_LOG10_RCOND with every rung below it also passing. It is
+// a LADDER by construction: Cauchy interlacing makes the RAW Gram's rcond
+// monotone non-increasing in the order (each rung's Gram is the leading
+// principal block of the next), but equilibration is applied afterwards and
+// does not preserve that ordering, so a higher rung scoring above a failed
+// lower one is scaling noise, not evidence of observability. 0 means "not even
+// constant velocity"; null means the frames were too few to say anything.
+//
+// Also returns incrementalLog10 {cv, ca, jerk}: log10 of the residualized
+// incremental information for the order ADDED at that rung (velocity at cv,
+// acceleration at ca, cubic at jerk) — see incrementalInformation above. It
+// answers a different question from the rung beside it, and neither
+// substitutes for the other: the rung is the joint conditioning of orders
+// 0..k, this is what order k alone contributes once orders 0..k-1 are
+// projected out. 0 is the isotropic reference, and it falls without bound.
+// maxObservableOrder is NOT derived from it and is unchanged by it.
+//
+// MEASURED (2026-08-15, the 26 tractability scenarios regenerated from their
+// own specs): cv spans -4.65 to -0.34 (median -2.65), ca -4.70 to -0.74
+// (median -3.04), jerk -4.91 to -0.67 (median -3.04). The two scales
+// disagree hardest where the equilibration in equilibratedRcond does the most
+// work: maneuver/turn90-instant has the BEST rungs of the 26 (-0.86 / -1.53 /
+// -1.67, order 3) and nearly the worst increments (-4.44 / -4.69 / -4.91),
+// because one design column there has squared norm 1.5e-4 — a spatial
+// direction, near the line of sight, carrying almost no information — and
+// equilibration scales that column back to unit norm before the rung is
+// measured. Equilibrating the three SPATIAL columns within a block is not a
+// change of units the way the temporal scaling is, so that rescaling is real
+// information loss and only the increment reports it.
+export function conditioningStack(dirENU, times, activeFrames) {
+    const active = Array.from(activeFrames);
+    const unknown = {cv: null, ca: null, jerk: null, maxObservableOrder: null,
+        incrementalLog10: {cv: null, ca: null, jerk: null}};
+    if (active.length < 2) return unknown;
+
+    const cols = orthonormalTimeBasis(centeredTau(times, active), STACK_MAX_ORDER);
+    const K = cols.length - 1;
+    if (K < 1) return unknown;
+
+    // Moments M[j][l] = sum_i phi_j(i) phi_l(i) P_i, one symmetric 3x3 per
+    // basis pair. Because the basis is nested, the order-k Gram is literally
+    // the leading (k+1)x(k+1) block of the order-K one — accumulate once.
+    const M = [];
+    for (let j = 0; j <= K; j++) {
+        M.push([]);
+        for (let l = 0; l <= K; l++) M[j].push(new Float64Array(9));
+    }
+    for (let i = 0; i < active.length; i++) {
+        const b = active[i] * 3;
+        const dx = dirENU[b], dy = dirENU[b + 1], dz = dirENU[b + 2];
+        const P = [
+            1 - dx * dx, -dx * dy, -dx * dz,
+            -dy * dx, 1 - dy * dy, -dy * dz,
+            -dz * dx, -dz * dy, 1 - dz * dz,
+        ];
+        for (let j = 0; j <= K; j++) {
+            for (let l = j; l <= K; l++) {
+                const w = cols[j][i] * cols[l][i];
+                const acc = M[j][l];
+                for (let e = 0; e < 9; e++) acc[e] += w * P[e];
+            }
+        }
+    }
+
+    const log10 = [null, null, null, null];
+    for (let k = 1; k <= K; k++) {
+        const m = 3 * (k + 1);
+        const G = new Float64Array(m * m);
+        for (let j = 0; j <= k; j++) {
+            for (let l = 0; l <= k; l++) {
+                // Block (l,j) equals block (j,l): the weights commute and P is
+                // symmetric, so no transpose is needed.
+                const blk = j <= l ? M[j][l] : M[l][j];
+                for (let r = 0; r < 3; r++)
+                    for (let c = 0; c < 3; c++) G[(j * 3 + r) * m + (l * 3 + c)] = blk[r * 3 + c];
+            }
+        }
+        log10[k] = equilibratedRcond(G, m).log10Rcond;
+    }
+
+    let maxObservableOrder = 0;
+    for (let k = 1; k <= K; k++) {
+        if (log10[k] == null || !(log10[k] >= OBSERVABLE_LOG10_RCOND)) break;
+        maxObservableOrder = k;
+    }
+
+    // rho[0] is the position block against an empty lower span, which is just
+    // its own anisotropy and not an increment; the rungs report orders 1..3.
+    const rho = incrementalInformation(dirENU, active, cols);
+    const inc = (k) => (k > K || rho[k] == null
+        ? null : Math.log10(Math.max(rho[k], Number.MIN_VALUE)));
+
     return {
-        rcond,
-        log10Rcond: Math.log10(Math.max(rcond, Number.MIN_VALUE)),
-        effectiveRank,
-        lambdaMinOverTrace,
+        cv: log10[1], ca: log10[2], jerk: log10[3], maxObservableOrder,
+        incrementalLog10: {cv: inc(1), ca: inc(2), jerk: inc(3)},
     };
 }
 

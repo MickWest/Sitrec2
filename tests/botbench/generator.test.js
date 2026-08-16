@@ -9,7 +9,7 @@
  */
 
 import {setSit} from "../../src/Globals";
-import {generateScenario, SITES, canonical} from "../../benchmarks/botbench/lib/generateScenario";
+import {DEFAULT_SITE, generateScenario, SITES, canonical} from "../../benchmarks/botbench/lib/generateScenario";
 import {toLOSDataset, toTraverseDataset, toActiveTraverseDataset} from "../../benchmarks/botbench/lib/adapters";
 import {generatePlatformPath} from "../../benchmarks/botbench/lib/platforms";
 import {deriveSeed, makeStream} from "../../benchmarks/botbench/lib/rng";
@@ -256,9 +256,14 @@ describe("botbench generator", () => {
         expect(m.estimateSummary.finiteFrameFraction).toBeCloseTo(1 - half / s.n, 9);
     });
 
-    test("all four sites exist and HAB altitude clears mountain ground", () => {
+    test("every site exists and HAB altitude clears mountain ground", () => {
         expect(Object.keys(SITES).sort()).toEqual(
-            ["cheyenne-mountain", "denver", "flat-reference", "ocean"]);
+            ["central-valley", "cheyenne-mountain", "denver", "flat-reference", "ocean"]);
+        // The default is on LAND and above sea level. An over-water default
+        // gave every generated scene nothing to look at when opened — no
+        // terrain to judge a track against, no imagery to judge scale by.
+        expect(SITES[DEFAULT_SITE]).toBeDefined();
+        expect(SITES[DEFAULT_SITE].groundElevationMSL).toBeGreaterThan(0);
         const s = generateScenario(baseSpec({
             siteId: "cheyenne-mountain",
             initialHorizontalRangeM: 20000,

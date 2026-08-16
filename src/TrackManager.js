@@ -32,10 +32,126 @@ import {assert} from "./assert";
 import {getLocalSouthVector, getLocalUpVector, pointOnSphereBelow} from "./SphericalMath";
 import {closestIntersectionTime, trackBoundingBox} from "./trackUtils";
 import {CNode3DObject, ModelFiles} from "./nodes/CNode3DObject";
+import {radiusIsOnlyDimension} from "./nodes/CNode3DObjectGeometry";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {CGeoJSON} from "./geoJSONUtils";
 import {CNodeSmoothedPositionTrack} from "./nodes/CNodeSmoothedPositionTrack";
 import {CNodeSplineEditor} from "./nodes/CNodeSplineEdit";
+
+// Marker-sphere radius a newly imported track gets, in metres.
+//
+// Sized for the widely-spaced tracks a user normally drops — an airliner 30 km
+// away needs a marker you can see at all. It is far too big for a set of
+// candidate reconstructions of ONE object, which is what "Global Radius Resize"
+// in the Objects menu exists to fix.
+export const DEFAULT_TRACK_SPHERE_RADIUS_M = 40;
+
+/**
+ * Resize every SPHERE in the Objects menu to this radius, in metres.
+ *
+ * Spheres only. A model (an aircraft GLB) has no radius and is scaled by its
+ * model length, and a box or a cylinder has dimensions this control does not
+ * describe — silently rewriting one of those would be a surprise, so they are
+ * left alone.
+ *
+ * In place, via geometryParams + rebuild(). Recreating the node would drop the
+ * controllers that tie it to its track.
+ *
+ * @param radiusM  the new radius
+ * @param filter   optional (id, node) => boolean, to scope the change. The
+ *                 file-handoff path uses it to touch only the objects it just
+ *                 created and leave the rest of the scene alone.
+ */
+export function resizeAllObjectSpheres(radiusM, filter = null) {
+    if (!Number.isFinite(radiusM) || radiusM <= 0) return 0;
+    let changed = 0;
+    forEachRadiusObject((id, node) => {
+        if (filter && !filter(id, node)) return;
+        node.geometryParams.radius = radiusM;
+        node.rebuild();
+        changed++;
+    });
+    if (changed) setRenderOne(true);
+    return changed;
+}
+
+/**
+ * Visit every object in the Objects menu whose ONLY dimension is a radius.
+ *
+ * Not just spheres: an icosahedron, an octahedron, a circle and an ellipsoid
+ * are all fully described by one radius, so setting it scales them completely.
+ * A capsule or a torus is not — each has a second length, and rewriting only
+ * the radius would deform it rather than resize it. radiusIsOnlyDimension
+ * makes that judgement from the geometry table itself, so a shape added later
+ * is classified without anyone remembering to update a list here.
+ *
+ * Models are excluded outright: a GLB has no radius and is scaled by its model
+ * length, so a radius written onto one would do nothing while appearing to.
+ */
+function forEachRadiusObject(fn) {
+    NodeMan.iterate((id, node) => {
+        if (!(node instanceof CNode3DObject)) return;
+        if (node.modelOrGeometry !== "geometry") return;
+        if (node.geometryParams?.radius === undefined) return;
+        if (!radiusIsOnlyDimension(node.common?.geometry ?? "sphere")) return;
+        fn(id, node);
+    });
+}
+
+/**
+ * Is this imported track GROUND TRUTH?
+ *
+ * Two ways to know, because two kinds of file carry truth. A BOT interchange
+ * file knows structurally which of its sub-tracks is the answer key and says so
+ * (CTrackFileBOT.trackIsTruth). A plain CSV cannot, so a name is the only
+ * signal it has — which is why the traverse handoff calls its file `truth.csv`
+ * and the BOT importer suffixes its sub-track "(Truth)".
+ *
+ * The name test is deliberately narrow: a whole name of "truth", or a trailing
+ * "(Truth)". It will not fire on "ground_truth_study.csv", which is a file
+ * ABOUT truth rather than a truth track.
+ */
+function isTruthTrack(trackOb, shortName = null) {
+    // NAME FIRST, and that ordering is not cosmetic: the marker is built while
+    // the track is still being assembled, before the source file has been
+    // registered with FileManager, so the structural test below silently
+    // returns nothing at the only moment it is asked. The name is in hand.
+    const name = String(shortName ?? trackOb?.menuText ?? "").trim();
+    if (/^truth$/i.test(name) || /\(truth\)$/i.test(name)) return true;
+    const file = FileManager.get(trackOb?.trackFileName, false);
+    return !!file?.trackIsTruth?.(trackOb?.trackIndex);
+}
+
+/**
+ * Point "Global Radius Resize" at the LARGEST radius currently in the scene,
+ * WITHOUT resizing anything.
+ *
+ * The control has to show a number, and a stale one is worse than useless: a
+ * slider reading 40 beside a scene of 1 m markers invites the reader to nudge
+ * it and watch everything jump. So it follows the scene as objects arrive.
+ *
+ * IT MUST NOT ACT WHILE DOING SO. Writing the value through the normal path
+ * would fire the onChange and resize every OTHER object down to the new
+ * reading — so importing one small object would silently shrink an entire
+ * scene that the user had already sized by hand. setValue's `ignoreOnChange`
+ * writes the display quietly; only a drag or a click on the control resizes.
+ *
+ * The LARGEST rather than the mean or the newest, because it is the one that
+ * sets the scale the reader is looking at, and because dragging down from it
+ * reaches every other radius on the way.
+ */
+export function syncGlobalSphereResize() {
+    const control = NodeMan.get("globalSphereResize", false);
+    if (!control) return;
+    let max = null;
+    forEachRadiusObject((id, node) => {
+        const r = node.geometryParams.radius;
+        if (Number.isFinite(r) && (max === null || r > max)) max = r;
+    });
+    if (max === null) return;                 // nothing resizable: leave the reading alone
+    if (max === control.value) return;        // already right; do not touch the GUI
+    control.setValue(max, true);              // true = quietly, no onChange
+}
 import {CTrackFile} from "./TrackFiles/CTrackFile";
 import {CTrackFileSonde} from "./TrackFiles/CTrackFileSonde";
 import {CNodeDisplayBalloonSphere} from "./nodes/CNodeDisplayBalloonSphere";
@@ -342,6 +458,10 @@ class CTrackManager extends CManager {
     // shifts. The wind GUI listens so it can rebuild its source dropdowns
     // (track-bearing-wind options come and go with imports/removals).
     notifyTracksChanged() {
+        // Spheres arrive and leave with tracks, so this is where the Global
+        // Radius Resize reading is brought up to date. Quietly — see the note
+        // on syncGlobalSphereResize about why it must not act.
+        syncGlobalSphereResize();
         EventManager.dispatchEvent("tracksChanged", this);
     }
 
@@ -537,17 +657,30 @@ class CTrackManager extends CManager {
         console.log("addTracks called with ", trackFiles)
         console.log("-----------------------------------------------------")
 
-        // if we are adding tracks, then we need to add a scale for the target sphere
-        if (!NodeMan.exists("sizeTargetScaled")) {
-            new CNodeScale("sizeTargetScaled", scaleF2M,
-                new CNodeGUIValue({
-                    value: Sit.targetSize,
-                    start: 10,
-                    end: 20000,
-                    step: 0.1,
-                    desc: "Target Sphere size ft"
-                }, guiMenus.objects)
-            )
+        // GLOBAL SPHERE RESIZE.
+        //
+        // This replaces "Target Sphere size ft", which was wired to nothing:
+        // it fed a `sizeTargetScaled` node whose only consumer had been
+        // commented out (see the `size: "sizeTargetScaled"` line further down),
+        // so moving it changed nothing on screen. It now does what its position
+        // in the Objects menu implies and resizes the objects that are there.
+        //
+        // Metres, not feet, and radius rather than diameter — matching the
+        // `radius:` a track's marker sphere is created with, so the number in
+        // this control and the number in the object's own Radius field agree.
+        if (!NodeMan.exists("globalSphereResize")) {
+            new CNodeGUIValue({
+                id: "globalSphereResize",
+                value: DEFAULT_TRACK_SPHERE_RADIUS_M,
+                start: 0.01,
+                end: 100,
+                step: 0.01,
+                desc: "Global Radius Resize",
+                tip: "Resize every object in the Objects menu whose only dimension is a radius "
+                    + "— spheres, icosahedrons, circles and the like — to this radius, in metres. "
+                    + "Shapes with a second length (capsule, cone, torus) and models are left alone.",
+                onChange: (v) => resizeAllObjectSpheres(v),
+            }, guiMenus.objects)
         }
 
         // Pre-scan: for files with 3+ independently-selectable tracks, show selection dialog
@@ -1101,8 +1234,34 @@ class CTrackManager extends CManager {
 
         const sphereId = trackOb.menuText ?? shortName;
 
+        // GROUND TRUTH FIRST, ahead of the supplementary branch below.
+        //
+        // A BOT scenario's truth IS a supplementary sub-track — sensor is
+        // primary — so without this it took the small invisible reference
+        // sphere and the answer key was drawn as nothing at all. It is the one
+        // track in the scene that must never be confused with a fitted
+        // candidate, so it gets a shape and a colour of its own: a lime
+        // icosahedron, unmistakable at a glance and still a single-radius
+        // solid, so it stays the same size as the spheres and moves with
+        // Global Radius Resize.
+        const isTruth = isTruthTrack(trackOb, shortName);
+
         // Sonde tracks get a pressure-scaling balloon sphere
-        if (isSonde) {
+        if (isTruth) {
+            trackOb.displayTargetSphere = new CNode3DObject({
+                id: sphereId + "_ob",
+                // `geometry`, not `object`. addParams reads the constructor
+                // props by PARAMETER NAME, and the parameter is called
+                // geometry — so the `object:` the other branches here pass has
+                // never done anything. It went unnoticed because every one of
+                // them wanted "sphere", which is also the default.
+                geometry: "icosahedron",
+                radius: DEFAULT_TRACK_SPHERE_RADIUS_M,
+                material: "phong",
+                color: "#32CD32",
+                label: shortName,
+            });
+        } else if (isSonde) {
             trackOb.displayTargetSphere = new CNodeDisplayBalloonSphere({
                 id: sphereId + "_ob",
                 inputs: {
@@ -1122,8 +1281,9 @@ class CTrackManager extends CManager {
             // isSupplementaryTrack to keep each track visible.
             trackOb.displayTargetSphere = new CNode3DObject({
                 id: sphereId + "_ob",
-                object: "sphere",
+                geometry: "sphere",
                 radius: 2,
+                material: "phong",     // as the other auto track markers
                 color: trackColor,
                 label: shortName,
                 visible: false,
@@ -1141,14 +1301,20 @@ class CTrackManager extends CManager {
             }
         }
 
-        // if we didn't make a model or balloon, then we use a default sphere
+        // if we didn't make a model or balloon, then we use a default marker
         if (!trackOb.displayTargetSphere)
         {
-
             trackOb.displayTargetSphere = new CNode3DObject({
                 id: sphereId + "_ob",
-                object: "sphere",
-                radius: 40,
+                geometry: "sphere",
+                radius: DEFAULT_TRACK_SPHERE_RADIUS_M,
+                // Phong rather than the lambert default: these markers are
+                // untextured solids, and a lambert sphere reads as a flat disc
+                // from most angles because nothing on it catches a highlight.
+                // A specular term is what makes it legible as a 3-D body, which
+                // matters most for exactly the case these markers exist for —
+                // several of them close together at different depths.
+                material: "phong",
                 color: trackColor,
                 label: shortName,
 

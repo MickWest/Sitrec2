@@ -53,7 +53,11 @@ import {QuadcopterModel} from "./QuadcopterModel";
 import {classifyFixedWing, classifyQuadcopter} from "./VehicleModels";
 import {isLocal} from "./configUtils";
 import {getCelestialDirection, getGeocentricBodyDirectionECEF, getStarDirectionECEF} from "./CelestialMath";
-import {ECEF2ENU_radii} from "./LLA-ECEF-ENU";
+import {ECEF2ENU_radii, ECEFToLLA_radii} from "./LLA-ECEF-ENU";
+import {
+    candidateNotes, consistentTrackCSVs, contextTrackCSVs, lookCameraFraming,
+    openHandoffWindow,
+} from "./TraverseHandoff";
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import * as Astronomy from "astronomy-engine";
 import {applyRefractionECI, refractionOptsFromUniforms} from "./atmosphere/refraction";
@@ -2613,6 +2617,12 @@ export async function runTraverseAnalysis() {
 
         const terrainDependencies = terrainDependenciesAtBuild;
         results = {
+            // The frame and epoch the candidate tracks are expressed in.
+            // BotBenchRunner puts the same three fields on its results, so
+            // anything that turns a hypothesis back into geography — see
+            // TraverseHandoff.consistentTrackCSVs — works on either.
+            originLat, originLon,
+            clipStartMs: GlobalDateTimeNode?.dateStart?.valueOf() ?? null,
             dataset, sweep, fastProfile, slowProfile, aircraft,
             best: sweep.best, bestMetrics, slowBestRow, hypotheses,
             families,
@@ -4615,9 +4625,27 @@ function showResultGallery(results, uiState = null) {
     restoreBtn.textContent = "Restore set-aside";
     restoreBtn.title = "Bring every set-aside candidate back into consideration.";
     restoreBtn.disabled = true;
+    // Send the candidates still in play to a NEW window, as ordinary tracks.
+    //
+    // The gallery shows each candidate on its own; this shows them TOGETHER, in
+    // the scene, at their real separations — which is the question the gallery
+    // cannot answer and is usually the one that matters ("are these two
+    // readings 5 metres apart or 5 kilometres?"). It opens the same sitch, so
+    // the candidates land in the scene they were computed from.
+    //
+    // Set-aside tiles are excluded, because a reader who pushed a candidate out
+    // of consideration must not get it back by another door.
+    const openBtn = document.createElement("button");
+    openBtn.className = "tg-toggle";
+    openBtn.type = "button";
+    openBtn.textContent = "Open tracks in new window";
+    openBtn.title = "Open a new Sitrec window with every consistent candidate still in play, "
+        + "loaded as tracks so their separations can be seen directly. Set-aside candidates "
+        + "are not included.";
     toolbar.appendChild(syncOrientationBtn);
     toolbar.appendChild(syncScaleBtn);
     toolbar.appendChild(restoreBtn);
+    toolbar.appendChild(openBtn);
     // Apply / set aside the selected truth track. Shown only when a usable one
     // was computed for this run — with nothing to compare against there is
     // nothing to toggle. rerenderWithTruth is a function declaration so this
@@ -4958,6 +4986,67 @@ function showResultGallery(results, uiState = null) {
         await reflowAnimated(relayout, tile);
         tile.style.transition = "";
     };
+
+    openBtn.addEventListener("click", () => {
+        const original = openBtn.textContent;
+        openBtn.textContent = "opening…";
+        openBtn.disabled = true;
+        openHandoffWindow({
+            buildFiles: async () => {
+                // A LIVE analysis works in the loaded sitch's true local
+                // tangent frame, so the full 3-D conversion is right here and
+                // its altitudes are height above the ellipsoid — the opposite
+                // of the BOT-file case, which is why the converter is injected.
+                const frame = {
+                    toLLA: (x, y, z) => {
+                        // unpackTrackToECEF rather than a bare ENU2ECEF_radii:
+                        // it is the conversion the rest of this file already
+                        // uses for exactly this (see localGroundProbeECEF), so
+                        // the candidates cannot drift from the analysis.
+                        const {position: e} = unpackTrackToECEF(
+                            new Float64Array([x, y, z]), 1,
+                            results.originLat, results.originLon)[0];
+                        const [lat, lon, alt] = ECEFToLLA_radii(e.x, e.y, e.z);
+                        return [lat * 180 / Math.PI, lon * 180 / Math.PI, alt];
+                    },
+                    altitudeIsHAE: true,
+                    startMs: results.clipStartMs,
+                };
+                const candidates = consistentTrackCSVs(results, {
+                    ...frame,
+                    exclude: new Set(Array.from(dismissed, (i) => tiles[i].h)),
+                });
+                // The sensor path, and truth where there is one. A candidate on
+                // its own is unreadable — it is a reconstruction of an object
+                // seen from SOMEWHERE, and the somewhere does not travel: the
+                // new window only gets what the URL names, which for a track
+                // the user imported by hand is nothing.
+                const context = contextTrackCSVs(results, frame);
+                const toFile = (c) => new File([c.text], `${c.name}.csv`, {type: "text/csv"});
+                return {
+                    files: [...context.map(toFile), ...candidates.map(toFile)],
+                    meta: {
+                        source: "traverse",
+                        lookCameraFraming: lookCameraFraming(results, candidates),
+                        notes: `TRAVERSE ANALYSIS — ${Sit?.name ?? "this sitch"}\n\n`
+                            + (context.length
+                                ? `Context: ${context.map((c) => c.name).join(", ")}.\n\n` : "")
+                            + candidateNotes(candidates),
+                    },
+                };
+            },
+            // The SAME sitch, unlike the bench: these candidates were computed
+            // from this scene's own sightlines and belong in it. Whatever names
+            // the sitch in the current URL is carried through untouched.
+            urlFor: (key) => {
+                const url = new URL(window.location.href);
+                url.hash = "";
+                url.searchParams.set("handoff", key);
+                return url.toString();
+            },
+            onDone: () => { openBtn.textContent = original; openBtn.disabled = false; },
+        });
+    });
 
     restoreBtn.addEventListener("click", () => {
         if (dismissed.size === 0) return;

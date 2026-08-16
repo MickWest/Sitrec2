@@ -51,10 +51,22 @@ import {ECEF2ENU_radii, ECEFToLLA_radii, ENU2ECEF_radii} from "../LLA-ECEF-ENU";
 
 const DEG = Math.PI / 180;
 
-// The "ocean" site of benchmarks/botbench/lib/generateScenario.js, which every
-// scenario in the shipped interchange release uses. Ground elevation 0, so
-// altitude = Z exactly.
-export const BOT_DEFAULT_ORIGIN = {latDeg: 35, lonDeg: -125, groundElevationMSL: 0};
+// The DEFAULT_SITE of benchmarks/botbench/lib/generateScenario.js, which every
+// scenario in the shipped interchange release uses. It must track that table:
+// a file whose sidecar is missing lands here, and a mismatch would import the
+// shipped set with correct shape at the wrong place on the globe.
+//
+// It used to be an over-water site at 35, -125. That was fine for the geometry
+// and useless for looking at: a scene opened there has no terrain to judge a
+// track against and no imagery to judge scale by.
+// groundElevationMSL is MEAN SEA LEVEL: the flat-plane rule adds it to Z, and
+// the altitude this importer produces is therefore MSL. The same point is
+// -4.9 m on the WGS84 ellipsoid (geoid separation -32.5 m) — worth knowing
+// because anything converting these altitudes to HAE has to apply that, and a
+// conversion that skips it lands tens of metres out.
+export const BOT_DEFAULT_ORIGIN = {
+    latDeg: 37.244358, lonDeg: -120.738187, groundElevationMSL: 27.6,
+};
 
 // The daytime epoch the shipped set is generated at. A few cells (the celestial
 // ones) are generated at a night epoch instead, which only scenario.json records —
@@ -368,6 +380,20 @@ export class CTrackFileBOT extends CTrackFile {
     trackRoleHint(trackIndex) {
         const key = this._subTracks()[trackIndex]?.key;
         return key === "sensor" ? "camera" : key === "truth" ? "target" : null;
+    }
+
+    /**
+     * This sub-track is GROUND TRUTH — what the object actually did, not a
+     * reconstruction of it.
+     *
+     * Distinct from trackRoleHint, which reports "target" here: that answers
+     * "which track should the camera point at", and a fitted candidate is a
+     * target too. This answers "is this the answer key", which is what earns
+     * the track its own marker shape so it cannot be mistaken for one more
+     * hypothesis in the scene.
+     */
+    trackIsTruth(trackIndex) {
+        return this._subTracks()[trackIndex]?.key === "truth";
     }
 
     // The Truth sub-track is the generator's own answer, so it is the traverse

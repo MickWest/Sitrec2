@@ -16,14 +16,30 @@ import {generatePlatformPath} from "./platforms";
 import {generateTargetTruth} from "./targets";
 import {makeWind} from "./wind";
 import {cleanDirections, generateObservation} from "./observation";
-import {cvDesignConditioning, sensorPathStats, losSeriesFeatures} from "./diagnostics";
+import {cvDesignConditioning, conditioningStack, sensorPathStats, losSeriesFeatures} from "./diagnostics";
 
 export const SITES = {
     "flat-reference":    {latDeg: 40,       lonDeg: -105,      groundElevationMSL: 0},
+    // The DEFAULT generation site. Land, deliberately: an over-water site put
+    // every scenario somewhere a viewer has nothing to look at, no terrain to
+    // check a track against and no imagery to judge scale by, which made the
+    // scenes useless to open and inspect even though the geometry was fine.
+    //
+    // groundElevationMSL is MEAN SEA LEVEL, which is what the flat-plane rule
+    // adds to Z. The same point is -4.9 m on the WGS84 ellipsoid, the geoid
+    // separation here being -32.5 m. Recorded because that difference is a
+    // standing trap: anything converting a scenario altitude to HAE must apply
+    // it, and a conversion that quietly skips it puts a track tens of metres
+    // from where it was computed.
+    "central-valley":    {latDeg: 37.244358, lonDeg: -120.738187, groundElevationMSL: 27.6},
     "ocean":             {latDeg: 35,       lonDeg: -125,      groundElevationMSL: 0},
     "denver":            {latDeg: 39.7392,  lonDeg: -104.9903, groundElevationMSL: 1609},
     "cheyenne-mountain": {latDeg: 38.744,   lonDeg: -104.846,  groundElevationMSL: 2900},
 };
+
+// The site every scenario set uses unless it is deliberately testing another.
+// Named once so moving the benchmark's ground is one edit rather than a search.
+export const DEFAULT_SITE = "central-valley";
 
 // Stable stringify with sorted keys (canonical spec hashing).
 export function canonical(obj) {
@@ -57,6 +73,12 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
     // pairs and sentinels sharing truth+seed stay in one classifier group.
     const targetGroup = {...spec.target, parameters: {...(spec.target.parameters ?? {})}};
     delete targetGroup.parameters.anomalous;
+    // Real-segment pairs: the spliced impulse and the control marker are the
+    // event variant, not truth content — strip them or the pair's two members
+    // land in different groups (audit F2). pairOnsetSeconds is identical
+    // across members and may stay.
+    delete targetGroup.parameters.impulse;
+    delete targetGroup.parameters.paired;
     const scenarioGroupId = `bg-${fnv1a32(canonical({
         platform: spec.platform,
         target: targetGroup,
@@ -142,6 +164,7 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
     }
     const condObs = cvDesignConditioning(observation.observedDirectionENU, times, activeFrames);
     const condClean = cvDesignConditioning(cleanDir, times, allFrames);
+    const stackObs = conditioningStack(observation.observedDirectionENU, times, activeFrames);
     const pathStats = sensorPathStats(platformPos, n);
     const losFeatures = losSeriesFeatures(observation.observedDirectionENU, times, activeFrames);
 
@@ -182,6 +205,15 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
             cvDesignEffectiveRank: condObs.effectiveRank,
             cvDesignRcondCleanOracle: condClean.rcond,
             cvNormalLambdaMinOverTrace: condObs.lambdaMinOverTrace,
+            // Nested per-order stack (diagnostics.js conditioningStack). These
+            // are NEW fields on a sample-orthonormal temporal basis; the
+            // legacy cvDesign* fields above keep their original definition and
+            // their original calibration. Do not read the legacy -3/-2/-1
+            // bands across the ca/jerk rungs.
+            cvDesignLog10RcondEquilibrated: stackObs.cv,
+            conditioningStack: {cv: stackObs.cv, ca: stackObs.ca, jerk: stackObs.jerk,
+                incrementalLog10: stackObs.incrementalLog10},
+            maxObservableOrder: stackObs.maxObservableOrder,
             losSweepDeg: losFeatures.losSweepDeg,
             losMeanRateDegPerS: losFeatures.losMeanRateDegPerS,
             losLag1Autocorr: losFeatures.losLag1Autocorr,

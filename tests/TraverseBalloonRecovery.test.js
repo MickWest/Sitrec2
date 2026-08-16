@@ -80,7 +80,7 @@
  */
 
 import {setSit} from "../src/Globals";
-import {integrateBalloonPositions} from "../src/BalloonPhysics";
+import {FLAT_GEOID, integrateBalloonPositions} from "../src/BalloonPhysics";
 import {ecefDisplacementToENU} from "../src/TrackExportMath";
 import {fitPhysicsModel} from "../src/LOSFitting";
 import {SkyLanternModel} from "../src/SkyLanternModel";
@@ -135,6 +135,8 @@ function makeBalloonScene({
         startLat: LAT, startLon: LON, startAltMSL,
         launchDelay: 0, ascentRate, variabilityPct, seed: 7,
         frames, dt,
+        // Truth and fit share one frame, so the geoid cancels; no grid under Jest.
+        geoidOffset: FLAT_GEOID,
     }, windAt);
 
     // ENU origin = the balloon's launch point, so truth ENU starts at ~0.
