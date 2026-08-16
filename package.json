@@ -87,7 +87,10 @@
     "bench-bot-verdict": "npx jest benchmarks/botbench/verdict.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-rate": "npx jest benchmarks/botbench/samplerate.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-capability": "npx jest benchmarks/botbench/capability.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
-    "bench-bot-capval": "npx jest benchmarks/botbench/capability-validation.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit"
+    "bench-bot-capval": "npx jest benchmarks/botbench/capability-validation.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-maneuver": "npx jest benchmarks/botbench/maneuver.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-real": "npx jest benchmarks/botbench/realtracks.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-tract": "npx jest benchmarks/botbench/tractability.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit"
   },
   "jest": {
     "testPathIgnorePatterns": [

@@ -46,6 +46,14 @@ AGENTS.md
 # BOT Bench local sweep output (benchmarks/botbench/PLAN.md) — results are
 # regenerated locally; only the harness + plan are tracked
 /benchmarks/botbench/results/
+# Real-world GPS source tracks for the real-track arm. NOT redistributed here:
+# the SondeHub radiosonde/amateur tracks are CC BY-SA 2.0, and this project does
+# not ship copyleft data. The PX4 drone logs are CC-BY (attribution only) and
+# could be tracked, but the set is kept whole and local so the arm has one
+# provenance story. Every file is re-fetchable from the APIs documented in
+# benchmarks/botbench/real-tracks/README.md, and each scenario commits to the
+# exact bytes it was cut from via a sha256 in its segment provenance.
+/benchmarks/botbench/real-tracks/
 # Local code-review / audit reports (not part of the codebase)
 /CODE-REVIEW-*.md
 

@@ -455,6 +455,26 @@ BOTBENCH_OPAQUE=1 BOTBENCH_SEAL_SALT=$(openssl rand -hex 32) \
   Those names are of course total truth leakage, which is the point of the other
   mode.</p>
 
+  <p>The name grammar (<code>scenarioBaseName</code> in
+  <code>lib/exportInterchange.js</code>, the authoritative definition): seven
+  fields joined by <code>_</code>, sub-parts within a field joined by
+  <code>-</code>. In field values, <code>p</code> replaces a decimal point,
+  <code>neg</code> replaces a minus sign, and hyphens inside a kind name are
+  removed. <code>ms</code> is metres per second; a bare <code>m</code> is
+  metres. Names are stable for a given spec and seed, so regeneration
+  overwrites in place.</p>
+
+  <div class="scroll"><table>
+    <tr><th>Field</th><th>Example</th><th>Meaning</th></tr>
+    <tr><td>platform</td><td><code>orbitpoint-70ms-3000m</code></td><td class="note">Kind, speed (m/s), altitude AGL (m). Orbit-direction platforms insert their range-error factor as <code>eN</code> after the kind.</td></tr>
+    <tr><td>range</td><td><code>r5km</code></td><td class="note">Initial horizontal sensor→target range (<code>rNNNm</code> below 1&nbsp;km).</td></tr>
+    <tr><td>timing</td><td><code>15s-1fps</code></td><td class="note">Duration (s) and sample rate (Hz).</td></tr>
+    <tr><td>target</td><td><code>partyneutral-500m</code></td><td class="note">Kind, plus start height when the spec sets one. Anomaly-tuple targets read <code>anom-</code>/<code>ctrl-</code> + tuple id. Maneuver-class targets carry <code>anom-</code> when anomalous, <code>ctrl-</code> when a default-anomalous shape is generated with mundane parameters, and a bare kind otherwise — the flag is part of the truth, so a pair's two members must not share a name.</td></tr>
+    <tr><td>wind</td><td><code>wfixed</code></td><td class="note"><code>w</code> + wind configuration kind.</td></tr>
+    <tr><td>observation</td><td><code>white0p03deg</code></td><td class="note"><code>clean</code>; <code>whiteNdeg</code> (requested 1σ); <code>wobbleNdeg</code> (amplitude); <code>matchwhiteNdeg</code> (partner's realized RMS — a matched member has no requested σ of its own).</td></tr>
+    <tr><td>seed</td><td><code>s101</code></td><td class="note">The scenario seed.</td></tr>
+  </table></div>
+
   <p>The current set is <strong>20 scenarios at 1 Hz</strong> — one measurement
   per second, which is what a human-operated sensor or a downsampled feed
   actually delivers. A 60 s clip is 61 rows; a 15 s clip is 16. Rate is not a

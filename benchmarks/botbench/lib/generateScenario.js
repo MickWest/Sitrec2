@@ -57,6 +57,12 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
     // pairs and sentinels sharing truth+seed stay in one classifier group.
     const targetGroup = {...spec.target, parameters: {...(spec.target.parameters ?? {})}};
     delete targetGroup.parameters.anomalous;
+    // Real-segment pairs: the spliced impulse and the control marker are the
+    // event variant, not truth content — strip them or the pair's two members
+    // land in different groups (audit F2). pairOnsetSeconds is identical
+    // across members and may stay.
+    delete targetGroup.parameters.impulse;
+    delete targetGroup.parameters.paired;
     const scenarioGroupId = `bg-${fnv1a32(canonical({
         platform: spec.platform,
         target: targetGroup,

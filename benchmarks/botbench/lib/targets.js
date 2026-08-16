@@ -357,8 +357,23 @@ export function generateTargetTruth(targetSpec, {site, n, fps, seed, windSeed, w
                 }],
             };
         }
-        default:
+        default: {
+            if (targetSpec.family === "real") {
+                // Targets cut from real GPS tracks; the bench registers the
+                // windowed segment first (see lib/realSegments.js).
+                // eslint-disable-next-line global-require
+                const {generateRealSegmentTruth} = require("./realSegments");
+                return generateRealSegmentTruth(targetSpec, {n, fps});
+            }
+            if (targetSpec.family === "maneuver") {
+                // MANEUVER-CLASS track types (shape taxonomy, first pass) live
+                // in their own module; this dispatcher stays the single entry.
+                // eslint-disable-next-line global-require
+                const {generateManeuverTruth} = require("./maneuverTargets");
+                return generateManeuverTruth(targetSpec, {n, fps, seed});
+            }
             throw new Error(`botbench: unknown target kind "${targetSpec.kind}"`);
+        }
     }
 }
 
