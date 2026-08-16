@@ -9,6 +9,24 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.133.0 (2026-08-16)
+
+### New Features
+
+- **Big slider**: rest the pointer on any slider in the menus for three seconds and a full-width version pops up near the bottom of the screen, giving a whole screen of travel for fine adjustments. It moves the very same setting — including sliders that stretch their range or wrap around — a read-out box follows the knob, and clicking anywhere else simply dismisses it without disturbing the menus or the value.
+
+- **New Sitch Startup** (Sitrec → Settings → *New Sitch Startup*): choose how a brand-new sitch begins — the unit system (Nautical, Imperial/US, Metric or Feet only), an optional start location with a height above the ground (coordinates can be typed or pasted in any format, including a whole "lat, lon" pair), and whether 3D buildings are on from the start. Saved with your other settings, and applied only to a fresh sitch: named recreations, saved sitches and share links keep their own camera, terrain and units, and a location in the link still wins.
+
+### Bug Fixes
+
+- Fixed every star, planet, satellite and object label in the look view being pushed out of place — some into the black bars — while *Match Video Aspect* (Camera menu) was on. Clicking a star or satellite to identify it now also works with the box ticked; before, the click was hunting well away from the visible dot and finding nothing.
+
+- Fixed stars and satellites abruptly changing brightness the moment *Match Video Aspect* (Camera menu) was ticked. As part of the same correction, star and satellite dots are now sized exactly for the field of view — marginally larger when zoomed in, noticeably smaller in wide views — and stars reflected in water no longer come out brighter than the sky they reflect.
+
+- Fixed the equatorial grid appearing over the look view of a new sitch while its own control (Show → Celestial → *Equatorial Grid in Look*) said off. It now starts off unless the sitch itself asks for it.
+
+---
+
 ## Version 2.132.0 (2026-08-16)
 
 ### New Features
