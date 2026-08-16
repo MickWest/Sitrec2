@@ -13,14 +13,14 @@ program). Raw records: `results/tractability/records*.jsonl` (regenerate with
 `results/tractability/summary.md` (regenerate with
 `node benchmarks/botbench/analyzeTractability.mjs`).
 
-> **Provenance note (2026-08-15, added after the near-term tier landed).** The
-> real-arm numbers below were measured BEFORE the ingest guard that corrected
-> the datum-step bridge (dash: 119 repairs down to 5). That guard moves the
-> dash window by 0.774 s and changes the noise draw for the six unpaired real
-> scenarios, so every real-arm figure here is superseded by the regenerated
-> records. The maneuver arm, the ladder, and every finding's DIRECTION are
-> unaffected. Figures are refreshed by re-running `bench-bot-tract` for the
-> real set and `analyzeTractability.mjs`.
+> **Ingest-guard refresh (2026-08-15).** All ten real-arm scenarios were
+> regenerated after the guard that corrected the datum-step bridge (dash: 119
+> repairs down to 5), which moved the dash window by 0.774 s and redrew the
+> noise for the six unpaired real scenarios. Every finding's direction is
+> unchanged. Two figures moved: the rubber-duck drone from 0.001 to 0.004
+> relSep, and the rubber-duck balloon from 0.151 to 0.150. The numbers below
+> are the refreshed ones. `analysis/YIELD-DEFECT.md` still carries pre-guard
+> figures and says so.
 
 ## Scope and honesty rules
 
@@ -84,7 +84,7 @@ is 116 km away.
 
 The real structural finding is different, and larger. The executive layer
 reports CLASS VIABILITY only, so a well-determined TRAJECTORY has no channel
-out of the pipeline at all. The rubber-duck drone's 0.001 relSep recovery is
+out of the pipeline at all. The rubber-duck drone's 0.004 relSep recovery is
 invisible to the verdict by design, not by any blocker. Of 17 unresolved
 records the blind rank-1 tile lands within 5% of truth on five, and only dash
 is pin-blocked.
@@ -96,7 +96,7 @@ below `consistent-one` — not at relaxing the rule. (Steps 7, 22.)
 
 **F5 — Multiple orbits recover the trajectory; they do not recover the class.**
 Two 2-km orbits produced the study's single best track recovery (hexarotor,
-topRelSep 0.001) and located the climbing balloon to 15% — but both winning
+topRelSep 0.004) and located the climbing balloon to 15% — but both winning
 fits are GENERIC Constant-Altitude tracks; the class fits failed (quadcopter
 rejected at 0.761°, balloon at 0.925°). Orbiting is what a platform should fly
 when it can — it buys range through geometry alone. Both verdicts still said
@@ -142,8 +142,60 @@ compressed picture, sorted by conditioning:
 | real/burst | unresolved | — | false-positive probe fires as designed |
 | real/hover | consistent-several | 0.014 | |
 | real/hover-anom | unresolved | — | impulse detected by abstention |
-| real/rubberduck-drone | unresolved | 0.001 | best track recovery — via a GENERIC fit |
-| real/rubberduck-balloon | unresolved | 0.151 | climbing drifter; generic fit, class fits fail |
+| real/rubberduck-drone | unresolved | 0.004 | best track recovery — via a GENERIC fit |
+| real/rubberduck-balloon | unresolved | 0.150 | climbing drifter; generic fit, class fits fail |
+
+## The new triage signals, measured (F8)
+
+The near-term tier added three truth-free pre-fit signals. Joining them against
+the outcomes already recorded (`results/tractability/triage-features.md`,
+regenerate with `bench-bot-triage`) gives an honest negative result and one
+lead.
+
+**F8 — The dynamics-order gate inverts exactly like conditioning did.**
+`maxObservableOrder` (the highest dynamics order the geometry can support at
+all) solves 5/6 at order 0 and 2/15 at order 3 — the same inversion F1 found,
+from the same cause. Order 0 collects the in-catalog balloon cases that a
+physics prior rescues; order 3 collects the out-of-catalog shapes that abstain.
+So the stack is not an end-to-end triage score either, and this is now measured
+rather than assumed. Its value is elsewhere: it is a per-order statement about
+what the GEOMETRY can support, which is the input a per-class solver gate needs,
+and it correctly reports the hypersonic trap as order 0 — a geometry that cannot
+support even constant velocity, on a case where the verdict nonetheless
+committed. That combination (committed verdict, dead geometry) is a candidate
+disagreement signal, but it occurs 6 times here with only 1 catastrophe, so it
+does not discriminate on this set.
+
+**The predicted-precision bound computes over real records** and spans four
+orders of magnitude across the set (7.1e-5 on the rubber-duck drone to 1.2e0 on
+the 5-second ladder cell), ordering broadly as geometry would suggest. It
+returns no value on the degenerate cells, which is the correct behavior rather
+than a gap.
+
+**The noise self-check flags 2 of 26.** One is an artifact of the join, not a
+finding: the wobble scenario's declared amplitude is a peak, not a sigma, and
+the adapter passed it as one, so its 0.40 ratio is expected. The other is worth
+following: `hover-anom` is declared white and reads correlated — a spliced
+velocity impulse leaves correlated structure in the residuals. That is a
+possible anomaly channel independent of class viability, on n=1.
+
+**F9 — The kinematic profile separates spliced impulses, and the burst probe
+does not trip it.** The dossier's new time-resolved profile reports the largest
+single-frame jump in angular rate as a multiple of the median rate. Measured
+over the eight pilot cases: the two spliced-impulse anomalies read 0.6 and 0.3,
+the hypersonic glide 2.5, while the mundane Go Fast control reads 0.2 and — the
+result that matters — the radiosonde-burst false-positive probe also reads 0.2.
+The burst is a violent MUNDANE discontinuity that trips the class-viability
+alarm; it does not trip this one, because a burst changes the target's motion
+smoothly in bearing space while a velocity step does not. The Go Fast impulse,
+spliced at t=15 s, is localized to t=16 s at 1 Hz sampling.
+
+This is a lead, not a detector: n=5, the statistic self-normalizes (an early
+step scores lower than a late one, pinned by test), and the hypersonic value
+comes from its glide dip rather than a step. But it is the first signal measured
+here that separates anomalies from the designed false-positive probe, and it is
+computed from the sightlines alone with no fit and no class. It belongs in the
+composite-null detector work (programme steps 17, 23) as a candidate component.
 
 ## Escalation pilot — eight truth-blind AI adjudicators
 

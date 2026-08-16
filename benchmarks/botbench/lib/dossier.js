@@ -1,4 +1,4 @@
-// dossier.mjs — build a TRUTH-BLIND analyst dossier from one tractability
+// dossier.js — build a TRUTH-BLIND analyst dossier from one tractability
 // record, for the escalation experiment: can an AI agent add value on a case
 // the automated verdict left ambiguous?
 //
@@ -7,7 +7,7 @@
 // truth), meanTruthRangeM, anomalousDeclared, the target block of the spec,
 // and the scenario label (labels name the case and sometimes the answer).
 //
-//     node -e "import('./benchmarks/botbench/lib/dossier.mjs').then(m => ...)"
+//     node -e "import('./benchmarks/botbench/lib/dossier.js').then(m => ...)"
 
 const fmt = (x, d = 3) => (Number.isFinite(x) ? x.toFixed(d) : "n/a");
 

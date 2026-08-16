@@ -30,7 +30,7 @@ import path from "path";
 import {setSit} from "../../src/Globals";
 import {generateScenario} from "./lib/generateScenario";
 import {REAL_SCENARIOS, buildRealScenarioSpec} from "./lib/realScenarioSet";
-import {buildDossier, buildAnswerKey, kinematicProfile} from "./lib/dossier.mjs";
+import {buildDossier, buildAnswerKey, kinematicProfile} from "./lib/dossier";
 
 const DIR = path.resolve(__dirname, "results", "tractability");
 const OUT = path.resolve(__dirname, "results", "escalation");

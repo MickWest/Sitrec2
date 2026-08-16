@@ -1,5 +1,5 @@
 /**
- * The dossier's kinematic profile (benchmarks/botbench/lib/dossier.mjs).
+ * The dossier's kinematic profile (benchmarks/botbench/lib/dossier.js).
  *
  * WHY THIS EXISTS. The first escalation pilot missed every spliced velocity
  * impulse: a smooth model still fits a spliced track to 0.075-0.151 deg, and
@@ -17,7 +17,7 @@
  * scenario generators or on any recorded data.
  */
 
-import {kinematicProfile} from "../../benchmarks/botbench/lib/dossier.mjs";
+import {kinematicProfile} from "../../benchmarks/botbench/lib/dossier";
 
 const DEG = Math.PI / 180;
 
