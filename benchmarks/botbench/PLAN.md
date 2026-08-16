@@ -1,27 +1,30 @@
 # BOT Bench — synthetic scenario families for bearings-only tracking (BOT) evaluation
 
-STATUS: v2 — AGREED CONTRACT (2026-07-22). Supersedes the v1 draft. A v1 draft
-was reviewed against the codebase in two passes; all review corrections were
-accepted; the block design, schemas, and protocols below are the reviewed text,
-lightly edited for layout.
+STATUS: v2 — AGREED CONTRACT (2026-07-22). This version supersedes the v1
+draft. Two review passes compared the draft with the codebase. The contract
+includes all corrections from those reviews. The sections below are the
+reviewed text, with small layout edits.
 
 ## Purpose and scope
 
-Build an auto-generated suite of test scenarios for the traverse analysis. The
-platform is a fixed-wing aircraft with a narrow field of view (<1°), flying an
-orbit around a point, an orbit around the object's rough direction, a curve, a
-straight cruise, or an S-curve toward or perpendicular to the object. Targets:
-wind-blown balloons (rising party, stable party, rising weather, stable HAB),
-birds, aircraft, Venus, and anomalous objects with sudden impossible
-accelerations. Clips run 5 to 120 seconds. Wind for balloons: zero, ideal
-fixed, or data-based, with or without variability. Pointing can carry simulated
-operator wobble. Sites: ocean, high plain (Denver), and mountain (Cheyenne
-Mountain). Scenario families are generated on demand, not saved; similar sets
-collapse where possible. Round 1 uses the constant-velocity solver, the Kalman
-smoother, and other fast solvers only. The goal is a paper on bearings-only
-tracking (BOT) with detailed metrics: which solvers work in which situations,
-how to determine that from observables, and how well practical situations can
-be recovered at all.
+Build an auto-generated suite of test scenarios for the traverse analysis.
+The suite measures how well the analysis recovers truth from bearings alone.
+Each scenario pairs one maneuvering sensor platform with one target. The
+platform is a fixed-wing aircraft. The targets are the classes that an
+analyst meets: balloons, birds, aircraft, celestial objects, and physically
+impossible controls. The scenarios cover a range of geometries, durations,
+winds, and pointing-error models.
+
+The end goal is a paper on bearings-only tracking (BOT). The paper will give
+detailed metrics on three questions:
+
+- Which solvers give good results in which situations?
+- How can observable features alone identify those situations?
+- How much of a practical situation can the analysis recover?
+
+The generator makes each scenario on demand, deterministically. It does not
+store them. Similar sets collapse where possible. The first round uses only
+the fast solvers.
 
 ## The five paper-facing questions
 
@@ -689,3 +692,106 @@ needs real sounding fixtures (the deferred UWYO/GFS work).
 drone-control fit, live LOS-fit method nodes, and balloon wind evidence. The
 list is exported as `ABSENT_HYPOTHESES` and printed in every report, so a
 coverage claim cannot quietly omit half the analysis.
+
+## Round 3 amendment (2026-08-15) — real-track and maneuver arms, tractability study
+
+This amendment adds two scenario arms and one study to the contract. Round 1
+and round 2 above are unchanged.
+
+### Why the scope grows
+
+Rounds 1 and 2 measured recovery over a synthetic matrix. Three questions
+stayed open, and each needs data the matrix cannot supply:
+
+- Which sightline sets are worth solving at all, and can that be decided
+  BEFORE fitting?
+- How much confidence does a verdict deserve, and does the verdict code carry
+  that confidence honestly?
+- Can a genuine anomaly be told apart from hard geometry, at a controlled
+  false-positive rate?
+
+### Arm R — real-track targets
+
+Target truth is cut from recorded GPS tracks (radiosondes, amateur balloons,
+drone flight logs). The observation layer stays synthetic and declared, so the
+noise model is still controlled. Modules: `lib/realSegments.js` (loader) and
+`lib/realScenarioSet.js` (the scenario set). Bench: `bench-bot-real`.
+
+Contract rules for this arm:
+
+1. **Window selection is a declared rule**, never a hand-typed row range. The
+   rules are `offset`, `altitude` (first crossing), `burst` (altitude maximum),
+   and `peak-speed` (fastest run of the requested duration).
+2. **A scenario commits to the source bytes.** The loader records a sha256 of
+   the file it read, the rule, the rule arguments, the resolved window start,
+   the rate, and the cleaning caps. The registry key includes every one of
+   them, so a stale registration cannot satisfy a newer spec.
+3. **Truth hygiene is declared, not silent.** Real logs carry two artifact
+   classes: isolated position excursions (despiked) and datum-shift steps
+   across telemetry gaps (bridged under a per-file speed cap). Both counts
+   travel in provenance. Altitude bridges only on its own evidence.
+4. **Anomaly pairs are spliced, not simulated.** An anomalous member adds a
+   constant delta-v to the real motion from a declared onset; its control is
+   the same segment with the same noise realization and the same event window
+   at zero delta-v. The two members differ by nothing else, which is what the
+   arm exists to provide: the control carries real texture.
+5. **Source data stays local.** The tracks are not redistributed with the
+   repository (see `.gitignore`); the README in `real-tracks/` documents the
+   APIs and the fetch recipes.
+
+Case geometries in the first set: a fast high platform over a mid-altitude
+drifter; a low platform arcing past a near-surface riser; two-orbit passes of
+slow movers; a radiosonde burst window (a mundane object with a violent
+dynamics discontinuity, used as a false-positive probe); a fast drone segment
+seen from long range; and tight fixed-wing circuits.
+
+### Arm M — maneuver-class targets
+
+Ten shape classes spanning the model-violation ladder: static point, straight
+constant-acceleration, instantaneous 90-degree turn, zig-zag, sustained
+high-g turn, hypersonic glide, sine wave, corkscrew, vertical loop, and
+figure-eight. Modules: `lib/maneuverTargets.js` and `lib/maneuverSet.js`.
+Bench: `bench-bot-maneuver`.
+
+Contract rules for this arm:
+
+1. **Anomalousness is a parameter, not a shape.** A loop is aerobatic, a
+   corkscrew is a thermalling bird. Each generator takes overridable
+   parameters and records its realized peaks, so a later sweep can walk one
+   shape from mundane to impossible. `MANEUVER_ANOMALOUS` holds the default
+   per kind; an explicit spec value overrides it.
+2. **The declared flag is part of the truth and part of the name.** Names
+   carry `anom-` or `ctrl-`, so a member and its twin can never overwrite
+   each other.
+3. **Sustained anomalies carry whole-track event windows**, so event-local
+   scoring has something to score.
+
+### Study T — tractability
+
+`tractability.bench.test.js` runs the shipping analysis over both arms plus a
+GEO-DURATION ladder, and records, per scenario, the pre-fit observables an
+analyst could triage on together with the scored outcome.
+`analyzeTractability.mjs` joins them. Bench: `bench-bot-tract`.
+
+Method rules, all load-bearing:
+
+1. The range-ladder anchor is FIXED for every scenario (20 NM, the bulk-analysis
+   default). The generating range is never handed to the search.
+2. The triage block contains pre-fit observables only.
+3. The primary outcome is the RANK-1 hypothesis's separation from truth. The
+   best eligible separation is an ORACLE CEILING and is labeled as one, because
+   truth selects the winner.
+4. Rates carry exact (Clopper-Pearson) intervals. Correlations are
+   tie-corrected and are exploratory: the cells vary geometry, target class,
+   duration, and noise jointly.
+5. Verdict codes are scored on per-code semantic endpoints, not one threshold.
+   The wording is "observed reliability on these designed scenarios".
+6. One seed per scenario in round 1: claims are about these realizations.
+
+Findings and the derived programme live in `analysis/BOT-Tractability-Study.md`
+and `analysis/BOT-Tractability-Plan.md`. The programme's near-term tier is
+adopted as the next round of contract work: harden the conditioning statistic
+into a per-class stack, add sham-splice controls and a triviality gate,
+certify coverage with exact bounds, add an empirical noise self-check, install
+a routing layer in front of the verdict, add a class-conditioned predicted
+precision score, and run the envelope-feasibility calibration pilot.
