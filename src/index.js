@@ -104,6 +104,7 @@ import {imageQueueManager} from "./js/get-pixels-mick";
 import {disposeGimbalChart} from "./JetChart";
 import {CNode} from "./nodes/CNode";
 import {DragDropHandler} from "./DragDropHandler";
+import {takeFileHandoff} from "./FileHandoff";
 // Side-effect import: registers event listeners that watch for video +
 // KLV finishing to load and offer the user a frame-rate-choice dialog
 // when the file's labeled fps disagrees with the KLV-UTS-derived rate.
@@ -292,6 +293,7 @@ let situation = "custom";
 // Some (essentially) global variables
 let urlParams;
 let startupDropURLLoaded = false;
+let startupHandoffLoaded = false;
 const sortedSitches = {};
 const selectableSitches = {};
 const toolSitches = {};
@@ -664,6 +666,9 @@ const hasExplicitStartupRequest = isNewSitchAction
     || !!urlParams.get("mod")
     || !!urlParams.get("test")
     || !!urlParams.get("testAll")
+    // A file handoff is a request for THIS file, so the sitch browser must not
+    // open over it — the user already chose what they wanted to look at.
+    || !!urlParams.get("handoff")
     || urlParams.get("fromapp") === "1";   // app handoff builds its own sitch — don't auto-open the sitch browser
 
 const hasServerBackedSaves = getEnvBool("SAVE_TO_SERVER", process.env.SAVE_TO_SERVER)
@@ -898,6 +903,7 @@ if (Sit.TerrainModel) {
 legacySetup();
 await setupFunctions();
 loadStartupDropURLAfterSitchSetup();
+loadStartupHandoffAfterSitchSetup();
 
 const dateTime = urlParams.get("datetime");
 if (dateTime) {
@@ -1558,6 +1564,7 @@ async function newSitch(situation, customSetup = false ) {
     legacySetup();
     await setupFunctions();
     loadStartupDropURLAfterSitchSetup();
+    loadStartupHandoffAfterSitchSetup();
     Globals.sitchDirty = false; // Reset after setup — initialization triggers onChange callbacks
     startAnimating(Sit.fps);
     setTimeout( checkForTest, Globals.quickTerrain?1:testCheckInterval);
@@ -2828,6 +2835,61 @@ function loadStartupDropURLAfterSitchSetup() {
         DragDropHandler.uploadURL(dropURL, {persistDrop: false}).catch(error => {
             console.warn("Failed to load startup drop URL:", error);
         });
+    }, 0);
+}
+
+/**
+ * Load files another window handed us through IndexedDB (?handoff=<key>).
+ *
+ * The counterpart of `drop=`, for files that have no URL: a file picked with
+ * the folder picker exists only as an in-memory Blob, so the window that holds
+ * it stores the bytes and passes a key. See src/FileHandoff.js for why the
+ * store is IndexedDB rather than a blob: URL or postMessage.
+ *
+ * Routed through the SAME importer a drag-and-drop uses, deliberately: a file
+ * opened from a link must behave exactly as the same file dragged onto the
+ * window, or the link becomes a second code path to keep in step.
+ */
+function loadStartupHandoffAfterSitchSetup() {
+    if (startupHandoffLoaded) return;
+
+    const key = urlParams?.get("handoff")?.trim();
+    if (!key) return;
+
+    startupHandoffLoaded = true;
+    setTimeout(async () => {
+        try {
+            const handoff = await takeFileHandoff(key);
+            if (!handoff || !handoff.files.length) {
+                // The usual cause is a link opened again hours later, or a
+                // reload after the store swept. Say so plainly rather than
+                // leaving an empty sitch that looks like a load failure.
+                showError("This file handoff has expired or was not found.\n\n"
+                    + "Handoff links carry the file itself, not a path, and are kept for one "
+                    + "hour. Open the file again from the window that produced the link.");
+                return;
+            }
+            console.log(`Loading ${handoff.files.length} handoff file(s) after sitch setup: `
+                + handoff.files.map((f) => f.name).join(", "));
+            // Sequentially: the importer resolves name collisions and mutates
+            // shared state, and two BOT tracks racing through it can end up
+            // fighting over a name. Note that the await returns once a file is
+            // ACCEPTED for import, not once its tracks exist — the parse is
+            // handed to the main loop (see queueResult). Nothing here needs
+            // the tracks, so that is sufficient; anything that did would have
+            // to watch for the nodes itself.
+            for (const file of handoff.files) {
+                await DragDropHandler.uploadDroppedFile(file);
+            }
+            // The notes describe the files, so they go in after them. The
+            // panel is independent of the tracks, so it does not matter that
+            // the parse is still in flight.
+            if (handoff.meta?.notes && NodeMan.exists("notesView")) {
+                NodeMan.get("notesView").appendAndShow(handoff.meta.notes);
+            }
+        } catch (e) {
+            showError("Failed to load the handed-off file: " + (e && e.message), e);
+        }
     }, 0);
 }
 

@@ -253,6 +253,278 @@ export function sourceQualityGrade(q) {
     return {grade, reasons};
 }
 
+/**
+ * Mean angular residual a PERFECT track scores against white pointing noise.
+ *
+ * The per-frame pointing error is two independent Gaussians in the pan/tilt
+ * tangent plane, so its MAGNITUDE is Rayleigh-distributed and its mean is
+ * sigma*sqrt(pi/2) — not sigma, and not sigma*sqrt(2). This matters because it
+ * is the only honest yardstick for a residual: a candidate at or below this
+ * value is fitting the noise, and no candidate can beat it for an honest
+ * reason.
+ *
+ * Checked against the ten real-arm scenarios, whose truth tracks carry their
+ * own measured residual: predicted 0.0376 deg at the declared 0.03 deg sigma,
+ * measured 0.0365 to 0.0401 across the nine white-noise files.
+ *
+ * It lives here rather than in the runner because it is a property of the
+ * SOURCE DATA's declared error, alongside assessSourceQuality — the runner and
+ * the notes both read it from here.
+ */
+export const RAYLEIGH_MEAN = Math.sqrt(Math.PI / 2);
+
+// Standard deviation of the same Rayleigh magnitude, as a multiple of sigma.
+// Used for the standard error of a residual MEAN over n frames, which sets the
+// scale below which two candidates' residuals are not telling you anything.
+export const RAYLEIGH_SD = Math.sqrt(2 - Math.PI / 2);
+
+// Platform path shapes, in words. The generator's enum is hyphenated and reads
+// as a code identifier; the table wants the thing a person would say.
+const PLATFORM_WORDS = {
+    "orbit-point": "orbits the target",
+    "orbit-direction": "orbits a fixed bearing",
+    "curve": "curving",
+    "straight": "straight line",
+    "s-curve-toward": "S-turns, toward",
+    "s-curve-perp": "S-turns, across",
+    "static": "stationary",
+    "hover": "hovering",
+};
+
+/**
+ * Two prose strings: what the TARGET was, and what the PLATFORM flew.
+ *
+ * WHAT THIS MAY AND MAY NOT READ. The generating spec on a label sidecar holds
+ * `initialHorizontalRangeM`, which is the answer to the question the analysis is
+ * being asked, so this reads a NAMED ALLOWLIST of fields and never the object.
+ * Three rules decide what is on it:
+ *
+ *   safe      Anything a reader could already measure from the input CSV. The
+ *             platform's kind, speed and altitude are all visible in the sensor
+ *             columns, so naming them tells nobody anything new.
+ *   safe      Categorical identity: target kind, family, editorial label, the
+ *             anomalous flag, an event's family and onset time. None of these
+ *             constrains range.
+ *   NOT SAFE  Any target distance, altitude or speed. Target speed with a
+ *             measured angular rate GIVES range, and target altitude with the
+ *             platform's own altitude nearly does. So `startAGL`, `segmentKey`
+ *             (which embeds startAGL), and every target speed field stay off
+ *             this list. Adding one would leak the answer into a column that
+ *             looks purely descriptive.
+ *
+ * Returns {} when the sidecar carries no spec, so a challenge file simply has
+ * no description rather than a misleading partial one.
+ */
+function describeScene(labels) {
+    const spec = labels?.provenance?.spec;
+    if (!spec) return {};
+
+    const out = {};
+
+    const p = spec.platform;
+    if (p?.kind) {
+        const words = PLATFORM_WORDS[p.kind] ?? String(p.kind);
+        // Speed and altitude are read straight off the sensor columns by any
+        // reader, so quoting them costs nothing and saves a lookup.
+        const bits = [];
+        if (Number.isFinite(p.speedMS)) bits.push(`${Math.round(p.speedMS)} m/s`);
+        if (Number.isFinite(p.altitudeAGL)) bits.push(`${Math.round(p.altitudeAGL)} m`);
+        out.platformDescription = bits.length ? `${words}, ${bits.join(", ")}` : words;
+    }
+
+    const t = spec.target;
+    if (t?.kind) {
+        const tp = t.parameters ?? {};
+        // The editorial label ("hover", "dash", "circuits") is the most
+        // informative single word when there is one; the kind is the fallback.
+        const head = typeof tp.label === "string" && tp.label ? tp.label : String(t.kind);
+        const bits = [];
+        if (t.family && t.family !== head) bits.push(String(t.family));
+        // Which recorded flight the segment came from — identity, not geometry.
+        const src = tp.source?.file;
+        if (typeof src === "string") bits.push(src.replace(/\.[a-z]+$/i, ""));
+        out.targetDescription = bits.length ? `${head} (${bits.join(", ")})` : head;
+    }
+
+    // Spliced events, by family and onset. An onset TIME is not a range, and
+    // saying an impulse was injected at 30 s is exactly what makes a reader able
+    // to check whether the analysis noticed it.
+    //
+    // SHAM SPLICES MUST NOT READ AS REAL ONES. The control member of a matched
+    // pair carries a zero-magnitude event through the identical splice
+    // machinery — that is the point of it, since a difference between the pair
+    // then cannot be an artefact of splicing. But an undifferentiated "impulse
+    // @ 30s" on the control row says the opposite of what is true, so the two
+    // are labelled apart.
+    const events = Array.isArray(labels.events) ? labels.events : [];
+    if (events.length) {
+        out.eventDescription = events.map((e) => {
+            const fam = e.family ?? e.eventId ?? "event";
+            const sham = e.anomalous === false || e.parameters?.spliced === false;
+            const at = Number.isFinite(e.onsetSeconds) ? ` @ ${e.onsetSeconds}s` : "";
+            return sham ? `sham ${fam}${at} (matched control)` : `${fam}${at}`;
+        }).join("; ");
+    }
+    return out;
+}
+
+function fmtM(v) {
+    if (!Number.isFinite(v)) return null;
+    return v >= 10000 ? `${(v / 1000).toFixed(1)} km` : `${Math.round(v)} m`;
+}
+
+/**
+ * The scenario's sidecars, as prose for the sitch Notes panel.
+ *
+ * WHY. Opening a scenario in Sitrec gives you tracks and nothing else — the
+ * declared pointing error, the frame datum, the wind, the provenance seal and
+ * (on an answers file) what the object actually was all live in JSON sidecars
+ * the app's importer has no route for. Without them a reader is looking at
+ * lines in space with no idea what they were told about them.
+ *
+ * THE ANSWER KEY IS SECTIONED AND LABELLED, never mixed into the description.
+ * It is included only when a truth sidecar is present — a challenge file has
+ * no answer to leak — and on such a file the truth track is already drawn in
+ * the scene, so withholding the number that describes it would be theatre
+ * rather than blinding. The separation is so that nobody quotes an answer-key
+ * figure believing it came from the measurement.
+ *
+ * @param sidecar   parsed <name>.scenario.json, or null
+ * @param labels    parsed <name>.truth.json, or null
+ * @param fileName  the CSV the notes accompany
+ */
+export function buildScenarioNotes(sidecar, labels, fileName = "") {
+    const L = [];
+    const id = sidecar?.trackId ?? labels?.trackId ?? fileName;
+    L.push(`BOT SCENARIO — ${id}`);
+
+    const scene = describeScene(labels);
+    if (scene.targetDescription || scene.platformDescription) {
+        L.push("");
+        L.push("WHAT THIS IS");
+        if (scene.targetDescription) L.push(`  Target:    ${scene.targetDescription}`);
+        if (scene.platformDescription) L.push(`  Platform:  ${scene.platformDescription}`);
+        if (scene.eventDescription) L.push(`  Events:    ${scene.eventDescription}`);
+        if (labels?.anomalous) {
+            L.push("  DECLARED ANOMALOUS — no conventional model is expected to fit, so");
+            L.push("  \"unresolved\" is the correct outcome here and not a failure.");
+        }
+    }
+
+    L.push("");
+    L.push("MEASUREMENT");
+    const n = sidecar?.frameCount, dur = sidecar?.durationSeconds, fps = sidecar?.nominalFps;
+    if (Number.isFinite(n)) {
+        L.push(`  ${n} samples`
+            + (Number.isFinite(dur) ? ` over ${dur} s` : "")
+            + (Number.isFinite(fps) ? ` at ${fps}/s` : ""));
+    }
+    const le = sidecar?.losError;
+    if (le) {
+        const sig = Number.isFinite(le.sigmaDeg) ? le.sigmaDeg : null;
+        L.push(`  Pointing error: ${le.model ?? "unstated"}`
+            + (sig !== null ? `, ${sig}°` : ""));
+        if (le.note) L.push(`    ${le.note}`);
+        // The single most useful thing a reader can be told about a residual,
+        // and it is not derivable from anything else on screen.
+        if (sig !== null && !le.correlated) {
+            L.push(`  A PERFECT track scores ${(sig * RAYLEIGH_MEAN).toFixed(4)}° mean residual `
+                + `against this noise`);
+            L.push(`  (sigma x 1.2533, because the error is two Gaussians in the tangent plane).`);
+            L.push(`  A fit at or below that is fitting the noise, not the object.`);
+        } else if (sig !== null && le.correlated) {
+            L.push(`  CORRELATED error: ${sig}° is a deadband AMPLITUDE, not a standard`);
+            L.push(`  deviation, so it does not convert to a residual floor.`);
+        }
+    }
+    if (Number.isFinite(sidecar?.sensor?.fovFullDeg)) {
+        L.push(`  Sensor field of view: ${sidecar.sensor.fovFullDeg}°`);
+    }
+    const w = sidecar?.wind ?? labels?.windTruth;
+    if (w) {
+        L.push(`  Wind: ${w.kind ?? "declared"}`
+            + (Number.isFinite(w.sigmaMS) ? `, sigma ${w.sigmaMS} m/s` : ""));
+    }
+
+    const fr = sidecar?.frame;
+    if (fr) {
+        L.push("");
+        L.push("FRAME");
+        if (Array.isArray(fr.originLLA)) {
+            L.push(`  ${fr.type ?? "ENU"} about ${fr.originLLA[0]}, ${fr.originLLA[1]}`
+                + `, ground ${fr.groundElevationMSL ?? 0} m MSL`);
+        }
+        L.push(`  ${fr.surfaceModel ?? "flat-plane"}, ${fr.ellipsoid ?? "WGS84"}`);
+        if (sidecar?.epochISO) L.push(`  Epoch ${sidecar.epochISO}`);
+    }
+
+    if (labels) {
+        L.push("");
+        L.push("ANSWER KEY — declared by the scenario, NOT measured from the sightlines.");
+        L.push("The truth track is drawn in the scene, so these describe what you can see.");
+        const bits = [];
+        if (labels.truthKind) bits.push(`truth ${labels.truthKind}`);
+        if (labels.objectClass) bits.push(`class ${labels.objectClass}`);
+        if (labels.targetKind) bits.push(labels.targetKind);
+        if (bits.length) L.push(`  ${bits.join(", ")}`);
+        const r0 = labels.provenance?.spec?.initialHorizontalRangeM;
+        if (Number.isFinite(r0)) L.push(`  Initial horizontal range: ${fmtM(r0)}`);
+        const rn = labels.realizedNoise;
+        if (Number.isFinite(rn?.meanDeg)) {
+            L.push(`  Truth's own mean LOS residual, as realised: ${rn.meanDeg.toFixed(4)}°`);
+        }
+        const g = labels.geometry;
+        if (g) {
+            if (Number.isFinite(g.sensorSpanM)) {
+                L.push(`  Sensor baseline ${fmtM(g.sensorSpanM)}`
+                    + (Number.isFinite(g.losSweepDeg) ? `, LOS sweep ${g.losSweepDeg.toFixed(2)}°` : ""));
+            }
+            if (g.cvConditioningBucket) L.push(`  CV conditioning: ${g.cvConditioningBucket}`);
+        }
+    }
+
+    const p = labels?.provenance;
+    const seal = sidecar?.seal;
+    if (p || seal) {
+        L.push("");
+        L.push("PROVENANCE");
+        if (p?.generator) {
+            L.push(`  ${p.generator} ${p.generatorVersion ?? ""}`.trimEnd()
+                + (p.scenarioId ? `, scenario ${p.scenarioId}` : "")
+                + (Number.isFinite(p.scenarioSeed) ? `, seed ${p.scenarioSeed}` : ""));
+        }
+        const src = p?.spec?.target?.parameters?.source;
+        if (src?.file) L.push(`  Source recording: ${src.file}`
+            + (src.rule ? ` (${src.rule})` : ""));
+        // Truncated: the point of showing it is that a reader can check a file
+        // is the one a result was quoted against, and 12 hex digits does that.
+        if (seal?.inputCsvSha256) {
+            L.push(`  Input CSV sha256: ${String(seal.inputCsvSha256).slice(0, 12)}…`);
+        }
+    }
+    return L.join("\n");
+}
+
+/**
+ * What the PLATFORM flew, measured rather than declared.
+ *
+ * The fallback for every file with no label sidecar — FMV, challenge sets,
+ * anything third-party. `straightness` is the sensor's straight-line span over
+ * its travelled path, so it separates the shapes on its own: 1.0 is a straight
+ * run, and a closed orbit drives it toward zero because the path grows while
+ * the span does not. The sweep distinguishes a single curve from a full circuit.
+ */
+export function describeMeasuredPlatform(q) {
+    if (!q || !Number.isFinite(q.straightness)) return null;
+    const s = q.straightness;
+    const sweep = q.sweepPathDeg ?? 0;
+    if (!(q.sensorSpanM > 100) && !(q.sensorPathM > 100)) return "stationary";
+    if (s > 0.98) return "straight line";
+    if (s < 0.45) return sweep > 300 ? "orbit (closed)" : "orbit (partial)";
+    if (s < 0.9) return "curving";
+    return "near-straight";
+}
+
 // ---------------------------------------------------------------------------
 // BOT interchange
 // ---------------------------------------------------------------------------
@@ -654,6 +926,12 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
             objectClass: labels.objectClass ?? null,
             truthKind: labels.truthKind ?? null,
             anomalous: labels.anomalous ?? null,
+            // Two PROSE strings saying what the object and the platform were
+            // doing, so a reader can judge a verdict against the answer instead
+            // of decoding a filename. Built by describeScene from a per-field
+            // allowlist — see the warning on that function about which fields
+            // are and are not safe to put in front of a reader.
+            ...describeScene(labels),
         } : null,
         meta: {
             trackId: sidecar?.trackId ?? ids[0] ?? null,

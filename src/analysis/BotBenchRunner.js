@@ -33,7 +33,7 @@ import {
     buildHypotheses as buildCoreHypotheses, flatTerrainProbes, trackGroundStats,
     UNDERGROUND_TOL,
 } from "../TraverseHypotheses";
-import {kinematicFamilyScreen, runTraverseBattery} from "../TraverseBattery";
+import {kinematicFamilyScreen, runTraverseBattery, SWEEP_VARIANTS} from "../TraverseBattery";
 import {
     buildTraverseReportHTML, traverseReportSeries,
 } from "../AnalyzeTraverse";
@@ -41,6 +41,22 @@ import {
     compareTrackToTruth, meanAngularError, KNOTS_TO_MS, METERS_PER_NM,
 } from "../TraverseAnalysis";
 import {rankAllHypotheses} from "../TraverseRanking";
+// RAYLEIGH_MEAN / RAYLEIGH_SD live in BotBenchIngest, beside assessSourceQuality:
+// they describe the SOURCE's declared pointing error, and the notes builder
+// needs the same figures. See the comment there for why the constant is
+// sqrt(pi/2) and not 1 or sqrt(2).
+import {describeMeasuredPlatform, RAYLEIGH_MEAN, RAYLEIGH_SD} from "./BotBenchIngest";
+
+// The curve-fitting strategies swept over polynomial order. TraverseHypotheses
+// documents these as a METHOD DIAGNOSTIC and not a ranking — "a higher-order
+// curve can always hug the sightlines more closely simply because it bends
+// more" — but nothing enforces that downstream, so the flag is computed here
+// and reported. A curve fitted through the sightlines carries no independent
+// range information: measured over a bulk run, all five polynomial orders in a
+// file returned the SAME separation from truth to four significant figures,
+// which is the signature of a family whose range comes from the anchor rather
+// than from the data.
+const DIAGNOSTIC_FAMILY_KEYS = new Set(SWEEP_VARIANTS.map((v) => v.key));
 
 /**
  * What a bulk run cannot produce, named as data so the report and the table can
@@ -577,6 +593,14 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
             if (!c || !c.comparable || !Number.isFinite(c.score)) continue;
             if (c.score < bestSepM) { bestSepM = c.score; bestName = h.name; }
         }
+        // Mean sensor-to-target range, taken from whichever comparison carries
+        // it. It is a property of TRUTH, not of any candidate, so every
+        // comparable hypothesis reports the same value — which is what lets
+        // bestSepM be turned into a relative figure alongside topRelSep.
+        const meanTruthRangeM = results.hypotheses
+            .map((h) => h.truthComparison)
+            .find((c) => c && Number.isFinite(c.meanTruthRange) && c.meanTruthRange > 0)
+            ?.meanTruthRange ?? null;
         truthScore = {
             topSepM: tc && tc.comparable && Number.isFinite(tc.score) ? tc.score : null,
             topRelSep: tc && tc.comparable && Number.isFinite(tc.score)
@@ -584,10 +608,59 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
                 ? tc.score / tc.meanTruthRange : null,
             bestSepM: Number.isFinite(bestSepM) ? bestSepM : null,
             bestName,
+            // The ORACLE ceiling, and it must be read as one: truth picked this
+            // winner. The gap between it and topRelSep is what the RANKING
+            // costs, which is a different quantity from what the FITS achieved
+            // and the two were previously indistinguishable in the report.
+            bestRelSep: Number.isFinite(bestSepM) && meanTruthRangeM
+                ? bestSepM / meanTruthRangeM : null,
+            meanTruthRangeM,
             truthResidualDeg: results.hypotheses.find((h) => Number.isFinite(h.truthResidualDeg))
                 ?.truthResidualDeg ?? null,
             label: results.truth.label,
         };
+    }
+
+    // SEPARABILITY. Whether the residual could legitimately have chosen the top
+    // candidate at all, which is prior to whether it chose well. Truth-free: it
+    // uses only the DECLARED pointing sigma and the candidates' own residuals,
+    // so it computes on a challenge file exactly as it does on an answers file.
+    //
+    // Correlated (operator wobble) declarations are excluded rather than
+    // approximated. Their sigma is a deadband amplitude, not a per-axis
+    // standard deviation, so the Rayleigh relation does not hold and a floor
+    // computed from it would be wrong in an unstated direction.
+    let separability = null;
+    {
+        const q = record.quality ?? {};
+        const sigma = q.declaredLosSigmaDeg;
+        const errs = results.hypotheses.map((h) => h.errDeg)
+            .filter(Number.isFinite).sort((a, b) => a - b);
+        if (Number.isFinite(sigma) && sigma > 0 && !q.losErrorCorrelated && errs.length) {
+            const floorDeg = sigma * RAYLEIGH_MEAN;
+            const n = Number.isFinite(q.frames) && q.frames > 1 ? q.frames : null;
+            separability = {
+                floorDeg,
+                // A residual MEAN over n frames has this sampling error. Two
+                // candidates closer together than about this are not being
+                // separated by the data; they are being separated by which
+                // noise realisation the clip happens to carry.
+                seDeg: n ? sigma * RAYLEIGH_SD / Math.sqrt(n) : null,
+                // Candidates that beat what a perfect track scores. Every one
+                // of them is fitting the pointing noise, by definition.
+                belowFloor: errs.filter((e) => e < floorDeg).length,
+                candidates: errs.length,
+                // How far the winner led the runner-up. Reported in degrees and
+                // as a multiple of the sampling error above.
+                marginDeg: errs.length > 1 ? errs[1] - errs[0] : null,
+                // The residual spread across the leading candidates, against
+                // the declared sigma. A spread well under 1 sigma means the
+                // whole ranking decision happened inside the noise.
+                leadSpreadDeg: errs.length > 1
+                    ? errs[Math.min(4, errs.length - 1)] - errs[0] : null,
+                topBelowFloor: Number.isFinite(top?.h?.errDeg) && top.h.errDeg < floorDeg,
+            };
+        }
     }
 
     // GEOMETRY PROBE. The Minimum Acceleration fit's stage-1 gate is a cheap
@@ -622,6 +695,19 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
         // challenge files); the table shows it in place of the opaque filename.
         displayName: record.meta?.descriptiveName ?? null,
         kind: record.kind,
+        // WHAT THE ANSWER ACTUALLY WAS, in words — "hover (drone_px4_36634f3e)"
+        // against a platform that "orbits the target, 70 m/s, 3000 m". Scoring
+        // a verdict needs this and nothing in the table used to carry it, so a
+        // reader had to decode a filename to tell a rising balloon from a
+        // hovering quadcopter. Present only where a label sidecar declared it.
+        targetDescription: record.labels?.targetDescription ?? null,
+        eventDescription: record.labels?.eventDescription ?? null,
+        anomalousDeclared: record.labels?.anomalous ?? null,
+        // Declared where a sidecar says so, else measured from the sensor path,
+        // so this column is populated on every file including FMV.
+        platformDescription: record.labels?.platformDescription
+            ?? describeMeasuredPlatform(record.quality),
+        platformMeasured: !record.labels?.platformDescription,
         probe,
         trackId: record.meta?.trackId ?? null,
         // Reported on the row because the ingest's comment promises it is: the
@@ -653,6 +739,12 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
             altMeanM: Number.isFinite(top.h.metricsFull?.altitude?.mean)
                 ? top.h.metricsFull.altitude.mean : null,
         } : null,
+        // The winner came from a family TraverseHypotheses documents as a
+        // method diagnostic rather than a ranking. Worth a flag of its own: a
+        // curve fitted through the sightlines will happily post the lowest
+        // residual in the run while its range sits wherever the anchor put it.
+        topRangeBlind: !!(top && DIAGNOSTIC_FAMILY_KEYS.has(top.h.key)),
+        separability,
         candidates: results.hypotheses.length,
         rangeUnobservable: !!results.provenance.rangeUnobservable,
         failures: results.failures.map((f) => f.method),

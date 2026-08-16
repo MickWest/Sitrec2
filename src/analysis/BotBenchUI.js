@@ -35,10 +35,11 @@ import {par} from "../par";
 import {showTraverseGallery} from "../AnalyzeTraverse";
 import {METERS_PER_NM} from "../TraverseAnalysis";
 import {
-    botBenchFileRole, botBenchScenarioBase, ingestBotBenchEntry, ingestMISBRecords,
-    sourceQualityGrade,
+    botBenchFileRole, botBenchScenarioBase, buildScenarioNotes, ingestBotBenchEntry,
+    ingestMISBRecords, sourceQualityGrade,
 } from "./BotBenchIngest";
 import {longestUniformRun, measureAnchorRate} from "./BotBenchClock";
+import {putFileHandoff} from "../FileHandoff";
 import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBenchRunner";
 
 let activeDialog = null;
@@ -66,7 +67,9 @@ const SUMMARY_TOOLTIPS = {
     "Resolved": "Files whose executive verdict was something other than 'unresolved' AND whose top candidate does not contradict the file's declared MaxRange. A parenthesised figure is how many were excluded for that contradiction — a verdict resting on a candidate the measurement says is impossible is not a resolution.",
     "With truth": "Files whose conclusion can be scored — a TruePosition column, or a direction truth for a target that has a bearing but no finite range. The two are scored in different units and are never averaged together; the counts are shown as positional+direction.",
     "Median |err|": "Median line-of-sight (LOS) residual of the top-ranked interpretation across the run, in degrees — how far the winning candidates' tracks lie off the measured sightlines.",
-    "Median rel. sep": "Median of (top interpretation's mean 3D separation from truth) / (mean true range), over the files that carry truth. Scale-free, so a 2 km and a 50 km scenario compare.",
+    "Median rel. sep": "Median of (top interpretation's mean 3D separation from truth) / (mean true range), over the files that carry truth. Scale-free, so a 2 km and a 50 km scenario compare. Read it beside 'Best candidate': this tile scores the RANKING, that one scores the fits.",
+    "Best candidate": "The same measure for the CLOSEST candidate any method produced on each file. An ORACLE — truth picks the winner — so it is a ceiling and not a score the analysis could claim. Its distance from 'Median rel. sep' is what the ranking costs.",
+    "Ranking cost": "Median of (top interpretation's error / closest candidate's error). 1x means the ranking chose the best available answer every time. A large figure means the fits already found the object and the selection stage discarded it — a different repair from the fits missing it.",
 };
 
 // [label, width, tooltip, group]
@@ -77,31 +80,54 @@ const SUMMARY_TOOLTIPS = {
 // nowrap, so a column can never silently grow a second line and double the
 // height of the whole row.
 const TABLE_COLUMNS = [
-    ["File", "12%", "The file's path relative to the chosen folder.", ""],
-    ["Status", "4.5%", "Progress while running, then the final state.", ""],
+    ["File", "9%", "The file's path relative to the chosen folder.", ""],
+    ["Status", "3.5%", "Progress while running, then the final state.", ""],
 
+    // WHAT THE ANSWER WAS. Without it a reader cannot tell a correct verdict
+    // from a lucky one, and had to decode the filename to find out. These are
+    // SOURCE columns rather than analysis ones on purpose: they describe the
+    // scenario, and nothing derived from them reaches any fit. They lead the
+    // group because they are what the rest of the row should be read against.
+    ["Target", "9%", "What the object actually was and what it was doing, from the answer-key sidecar. A flag marks a scenario DECLARED anomalous, where 'unresolved' is the correct outcome. Blank on challenge files, which carry no answer by design. Never seen by the analysis — it is shown so a verdict can be judged against it.", "source"],
+    ["Platform", "8%", "What the sensor flew. Declared by the sidecar where there is one, otherwise MEASURED from the sensor path (straightness and sweep) and shown in italics. The platform's path is what makes range solvable at all, so this is the first thing to read when a file fails.", "source"],
     ["n", "2.5%", "Usable samples in the file, at its own native rate — not resampled to a video frame rate.", "source"],
     ["Dur", "3%", "Clip duration in seconds.", "source"],
-    ["Rate", "2.5%", "Samples per second: the sidecar's declared rate, or the median sample interval.", "source"],
-    ["Base", "4.5%", "Straight-line extent of the sensor path. This is what makes distance solvable at all: a moving sensor sees near things shift against far ones (parallax); with no baseline there is no parallax and no range.", "source"],
+    ["Base", "4%", "Straight-line extent of the sensor path. This is what makes distance solvable at all: a moving sensor sees near things shift against far ones (parallax); with no baseline there is no parallax and no range.", "source"],
     ["Sweep", "3.5%", "Total angular path travelled by the sightline, in degrees. A bearing that never moves carries no information about motion.", "source"],
     ["CV rcond", "3.5%", "Conditioning of the Constant Velocity (CV) family of fits (0-1, higher is better) — CV-specific by design. Says whether a LINEAR fit can determine range here; physics and stationary-point methods may still work when this is poor. One-way: 'good' is not a guarantee.", "source"],
-    ["Noise", "3.5%", "Pointing noise estimated FROM THE SIGHTLINES: how far each sightline tips away from the midpoint of its two neighbours (median over the clip), converted to a standard deviation by assuming the error is random frame to frame. Compare with 'Decl' — agreement is evidence the declared figure is honest.", "source"],
-    ["Decl", "3.5%", "Pointing error the file DECLARES, as a standard deviation in degrees (BOT sidecar losError.sigmaDeg, or the LOSUncertainty column). A trailing * means a CORRELATED error model — slow wobble that neighbouring frames share, not frame-to-frame jitter — whose figure is not comparable with the estimate to the left. Blank for FMV, which declares none.", "source"],
-    ["Src", "3.5%", "One-word triage of the columns to the left. Not a calibrated score — hover it for the specific reasons.", "source"],
+    ["Noise", "4%", "Pointing noise estimated FROM THE SIGHTLINES, over the noise the file DECLARES, as a ratio. 1.0 means the sightlines carry exactly the error they claim. A trailing * means a CORRELATED (wobble) declaration, whose amplitude is not a standard deviation and does not compare — hover for both figures.", "source"],
+    ["Src", "3%", "One-word triage of the columns to the left. Not a calibrated score — hover it for the specific reasons.", "source"],
 
-    ["Probe", "4.5%", "A cheap extraction ATTEMPT, not a pre-fit heuristic: did the Minimum Acceleration fit's pure-smoothness stage pin the range from geometry alone (both valley walls proven, narrow valley, no floor shaping)? 'geom N' = yes, at N nautical miles; 'prior' = geometry left range ambiguous and the speed prior chose. Speaks for geometry only — physics and stationary methods may still succeed on a 'prior' file.", "analysis"],
-    ["Verdict", "14%", "The executive assessment for this file. Shortened to fit — hover for the full headline.", "analysis"],
-    ["Top interpretation", "11%", "The highest-ranked candidate, and its rank tier. Long method names are shortened — hover for the full name.", "analysis"],
-    ["|err|", "3.5%", "The top interpretation's mean line-of-sight residual — how far its track lies off the measured sightlines — in degrees.", "analysis"],
-    ["Range", "4%", "Start range of the top interpretation, in nautical miles.", "analysis"],
+    ["Verdict", "12%", "The executive assessment for this file. Shortened to fit — hover for the full headline.", "analysis"],
+    ["Top interpretation", "10%", "The highest-ranked candidate, and its rank tier. Long method names are shortened — hover for the full name.", "analysis"],
+    ["|err|", "5%", "The top interpretation's mean line-of-sight residual in degrees, and after the slash the NOISE FLOOR — the residual a perfect track would score against the declared pointing error. A residual at or below the floor is fitting the noise, not the object, and cannot be read as a good answer.", "analysis"],
+    ["Range", "3.5%", "Start range of the top interpretation, in nautical miles.", "analysis"],
     ["Spd (Knots)", "4%", "The top interpretation's air speed over the clip, min-max, in knots.", "analysis"],
     ["Alt (ft)", "3.5%", "The top interpretation's mean altitude, in feet.", "analysis"],
-    ["Truth", "4.5%", "Where truth exists: the top interpretation's separation from it as a fraction of the true range — or, for a target with no finite range, its bearing error in degrees.", "analysis"],
-    ["", "7.5%", "Open this file's full analysis.", "analysis"],
+    ["Truth", "4%", "Where truth exists: the top interpretation's separation from it as a fraction of the true range — or, for a target with no finite range, its bearing error in degrees.", "analysis"],
+    // The oracle, and the single most diagnostic column in the table: it splits
+    // "the fits could not find it" from "the fits found it and the ranking
+    // discarded it", which the Truth column alone cannot distinguish.
+    ["Best", "4%", "The CLOSEST candidate any method produced, as a fraction of true range — truth picks this winner, so it is a ceiling and not an achievable score. Read it against Truth: a small Best beside a large Truth means the answer was found and then out-ranked. Hover for which method it was.", "analysis"],
+    ["", "5%", "Open this file's full analysis.", "analysis"],
 ];
 
-// Minimum table width. With 17 columns, a percentage layout inside a narrow
+// Cell indices, BY NAME. fillRow used to address twenty cells as c[0]..c[19],
+// so inserting one column meant renumbering every line below it and a missed
+// one wrote the right text into the wrong column silently. Derived from the
+// table above so the two cannot drift apart.
+const COL = (() => {
+    const names = ["file", "status", "target", "platform", "n", "dur", "base", "sweep",
+        "rcond", "noise", "src", "verdict", "top", "err", "range", "spd", "alt",
+        "truth", "best", "actions"];
+    if (names.length !== TABLE_COLUMNS.length) {
+        throw new Error(`BotBenchUI: ${names.length} cell names for `
+            + `${TABLE_COLUMNS.length} columns — they must correspond one to one.`);
+    }
+    return Object.fromEntries(names.map((k, i) => [k, i]));
+})();
+
+// Minimum table width. With 20 columns, a percentage layout inside a narrow
 // window gives every column a few characters and wraps ALL of them — measured
 // at an 893 px viewport, rows ran to 121 px and eight fitted on screen. Fixing
 // the table's floor and letting the wrapper scroll horizontally instead keeps
@@ -192,8 +218,12 @@ const CSV_COLUMNS = [
     "topKey", "topName", "topTier", "topErrDeg", "topRangeM", "topSpeedKt",
     "topSpeedMinKt", "topSpeedMaxKt", "topAltM",
     "candidates", "failures",
-    "truthLabel", "truthTopSepM", "truthTopRelSep", "truthBestSepM", "truthBestName",
-    "truthResidualDeg",
+    "targetDescription", "platformDescription", "platformMeasured", "eventDescription",
+    "anomalousDeclared", "topRangeBlind",
+    "noiseFloorDeg", "residualSeDeg", "candidatesBelowFloor", "topBelowFloor",
+    "winnerMarginDeg",
+    "truthLabel", "truthTopSepM", "truthTopRelSep", "truthBestSepM", "truthBestRelSep",
+    "truthBestName", "meanTruthRangeM", "rankingCost", "truthResidualDeg",
     "directionTruthLabel", "directionTopDeg", "directionBestDeg", "directionBestName",
     "elapsedMs", "error",
 ];
@@ -241,9 +271,27 @@ function rowToCsvRecord(entry) {
         topSpeedMinKt: r?.top?.speedMinKt, topSpeedMaxKt: r?.top?.speedMaxKt,
         topAltM: r?.top?.altMeanM,
         candidates: r?.candidates, failures: (r?.failures ?? []).join("; "),
+        targetDescription: r?.targetDescription ?? "",
+        platformDescription: r?.platformDescription ?? "",
+        platformMeasured: r ? (r.platformMeasured ? 1 : 0) : "",
+        eventDescription: r?.eventDescription ?? "",
+        anomalousDeclared: r?.anomalousDeclared == null ? "" : (r.anomalousDeclared ? 1 : 0),
+        topRangeBlind: r ? (r.topRangeBlind ? 1 : 0) : "",
+        noiseFloorDeg: r?.separability?.floorDeg,
+        residualSeDeg: r?.separability?.seDeg,
+        candidatesBelowFloor: r?.separability?.belowFloor,
+        topBelowFloor: r?.separability ? (r.separability.topBelowFloor ? 1 : 0) : "",
+        winnerMarginDeg: r?.separability?.marginDeg,
         truthLabel: r?.truthScore?.label ?? "",
         truthTopSepM: r?.truthScore?.topSepM, truthTopRelSep: r?.truthScore?.topRelSep,
-        truthBestSepM: r?.truthScore?.bestSepM, truthBestName: r?.truthScore?.bestName ?? "",
+        truthBestSepM: r?.truthScore?.bestSepM, truthBestRelSep: r?.truthScore?.bestRelSep,
+        truthBestName: r?.truthScore?.bestName ?? "",
+        meanTruthRangeM: r?.truthScore?.meanTruthRangeM,
+        // Precomputed because every downstream analysis wants it and deriving
+        // it from two columns invites the wrong division.
+        rankingCost: (Number.isFinite(r?.truthScore?.topSepM)
+            && r?.truthScore?.bestSepM > 0)
+            ? r.truthScore.topSepM / r.truthScore.bestSepM : "",
         truthResidualDeg: r?.truthScore?.truthResidualDeg,
         directionTruthLabel: r?.directionScore?.label ?? "",
         directionTopDeg: r?.directionScore?.topDeg,
@@ -339,12 +387,30 @@ function buildSummaryReport(entries, options) {
 
         L.push("SOURCE DATA");
         L.push("─".repeat(72));
-        for (const [g, c] of Object.entries(grades)) L.push(`  ${padCell(g + ":", 24)}${c}`);
-        L.push(`  ${padCell("Range unobservable:", 24)}${unobs}`);
-        L.push(`  ${padCell("Const-Velocity poor:", 24)}${poor}`);
-        L.push(`  ${padCell("Const-Vel. marginal:", 24)}${marginal}`);
-        L.push(`  ${padCell("Median sensor baseline:", 24)}${fmtMetres(median(rows.map((r) => r.quality.sensorSpanM)))}`);
-        L.push(`  ${padCell("Median LOS sweep:", 24)}${n2(median(rows.map((r) => r.quality.sweepPathDeg)))}°`);
+        // One line each rather than one line per category. The counts were nine
+        // lines of mostly-zero and pushed the findings below the fold.
+        L.push(`  Grade:      ${Object.entries(grades).map(([g, c]) => `${g} ${c}`).join(", ")}`
+            + `   |   CV conditioning: poor ${poor}, marginal ${marginal}`);
+        L.push(`  Geometry:   median baseline ${fmtMetres(median(rows.map((r) => r.quality.sensorSpanM)))}`
+            + `, median sweep ${n2(median(rows.map((r) => r.quality.sweepPathDeg)))}°`
+            + `, range unobservable on ${unobs}`);
+        // Platform path shape drives whether range is solvable at all, so the
+        // mix is worth a line — and it is the one source statistic that a
+        // reader can act on when planning a collection.
+        const shapes = {};
+        for (const r of rows) if (r.platformDescription) {
+            const k = r.platformDescription.split(",")[0];
+            shapes[k] = (shapes[k] ?? 0) + 1;
+        }
+        if (Object.keys(shapes).length) {
+            L.push(`  Platforms:  ${Object.entries(shapes).sort((a, b) => b[1] - a[1])
+                .map(([k, c]) => `${k} ${c}`).join(", ")}`);
+        }
+        const anomCount = rows.filter((r) => r.anomalousDeclared).length;
+        if (anomCount) {
+            L.push(`  Targets:    ${anomCount} of ${rows.length} declared ANOMALOUS — on those, `
+                + `"unresolved" is the correct outcome.`);
+        }
 
         // The estimated-vs-declared noise check is the single most useful
         // statement this tool can make about a set that declares its own error:
@@ -362,21 +428,17 @@ function buildSummaryReport(entries, options) {
         const correlated = rows.filter((r) => r.quality.losErrorCorrelated);
         if (comparable.length) {
             const ratios = comparable.map((r) => r.quality.noiseEstDeg / r.quality.declaredLosSigmaDeg);
-            L.push(`  ${padCell("Est/declared noise:", 24)}median ${n2(median(ratios))}x `
-                + `over ${comparable.length} WHITE-noise file(s)`);
-            L.push("      1.0 means the sightlines carry exactly the pointing error they declare.");
-        }
-        if (correlated.length) {
-            const ratios = correlated
-                .map((r) => r.quality.noiseEstDeg / r.quality.declaredLosSigmaDeg)
-                .filter(Number.isFinite);
-            L.push(`  ${padCell("Correlated-error files:", 24)}${correlated.length}, excluded from the `
-                + `ratio above`);
-            if (ratios.length) {
-                L.push(`      Their estimate/declared median is ${n2(median(ratios))}x. The estimator only`);
-                L.push("      sees the fast frame-to-frame part of a slow wobble, so it reads far");
-                L.push("      below the declared amplitude. A large gap is the signature of wobble,");
-                L.push("      not a disagreement.");
+            L.push(`  Noise:      estimated/declared median ${n2(median(ratios))}x over `
+                + `${comparable.length} white-noise file(s) — 1.0 means the sightlines carry`);
+            L.push(`              exactly the pointing error they declare.`
+                + (correlated.length ? `  ${correlated.length} correlated file(s) excluded:` : ""));
+            if (correlated.length) {
+                const cr = correlated
+                    .map((r) => r.quality.noiseEstDeg / r.quality.declaredLosSigmaDeg)
+                    .filter(Number.isFinite);
+                L.push(`              their ${cr.length ? n2(median(cr)) + "x" : "ratio"} is the `
+                    + `signature of wobble, not a disagreement (a deadband amplitude is not`);
+                L.push(`              a sigma, and a frame-to-frame estimator sees only the fast part of a slow drift).`);
             }
         }
         L.push("");
@@ -385,41 +447,120 @@ function buildSummaryReport(entries, options) {
         L.push("─".repeat(72));
         const codes = {};
         for (const r of rows) codes[r.verdictCode ?? "none"] = (codes[r.verdictCode ?? "none"] ?? 0) + 1;
-        for (const [c, n] of Object.entries(codes).sort((a, b) => b[1] - a[1])) {
-            L.push(`  ${padCell(c + ":", 24)}${n}`);
-        }
-        L.push(`  ${padCell("Median top |err|:", 24)}${n3(median(rows.map((r) => r.top?.errDeg)))}°`);
+        L.push(`  Verdicts:   ${Object.entries(codes).sort((a, b) => b[1] - a[1])
+            .map(([c, n]) => `${c} ${n}`).join(", ")}`);
         const topKeys = {};
         for (const r of rows) if (r.top) topKeys[r.top.key] = (topKeys[r.top.key] ?? 0) + 1;
-        L.push("  Top-ranked interpretation, by count:");
-        for (const [k, n] of Object.entries(topKeys).sort((a, b) => b[1] - a[1])) {
-            L.push(`    ${padCell(k, 20)}${n}`);
+        L.push(`  Top pick:   ${Object.entries(topKeys).sort((a, b) => b[1] - a[1])
+            .map(([k, n]) => `${k} ${n}`).join(", ")}`);
+        L.push(`  Median top |err|: ${n3(median(rows.map((r) => r.top?.errDeg)))}°`);
+
+        // RANGE-BLIND WINNERS. A curve-fitting strategy taking first place is a
+        // finding in itself: TraverseHypotheses documents that family as a
+        // diagnostic and not a ranking, and its distance comes from the anchor.
+        const blind = rows.filter((r) => r.topRangeBlind);
+        if (blind.length) {
+            L.push("");
+            L.push(`  RANGE-BLIND WINNER on ${blind.length} of ${rows.length} file(s). The top`);
+            L.push("  interpretation there is one of the curve-fitting strategies, which the");
+            L.push("  analysis documents as a METHOD DIAGNOSTIC and not a ranking: a higher-order");
+            L.push("  curve hugs the sightlines more closely because it bends more, so its low");
+            L.push("  residual is arithmetic. Its distance is inherited from the range anchor, so");
+            L.push("  the range it reports is not a measurement.");
         }
+
+        // SEPARABILITY. Whether the residual was entitled to choose at all.
+        const sepRows = rows.filter((r) => r.separability);
+        if (sepRows.length) {
+            const belowFloor = sepRows.filter((r) => r.separability.topBelowFloor).length;
+            const insideNoise = sepRows.filter((r) => Number.isFinite(r.separability.marginDeg)
+                && Number.isFinite(r.separability.seDeg)
+                && r.separability.marginDeg < 2 * r.separability.seDeg).length;
+            L.push("");
+            L.push("  RESIDUAL AGAINST THE NOISE FLOOR");
+            L.push(`  A perfect track does not score zero. Against a declared per-axis sigma the`);
+            L.push(`  mean angular residual of TRUTH ITSELF is sigma x 1.2533 (the error is two`);
+            L.push(`  Gaussians in the tangent plane, so its magnitude is Rayleigh-distributed).`);
+            L.push(`  Median floor over ${sepRows.length} file(s): `
+                + `${n3(median(sepRows.map((r) => r.separability.floorDeg)))}°.`);
+            L.push(`    Top pick BELOW the floor:            ${belowFloor} / ${sepRows.length}`);
+            L.push(`    Winner's lead inside the noise:      ${insideNoise} / ${sepRows.length}`);
+            if (belowFloor) {
+                L.push("  A residual below the floor means the model fits the sightlines better than");
+                L.push("  the true trajectory does — it is fitting the pointing noise, and its low");
+                L.push("  residual is not evidence about the object.");
+            }
+            if (insideNoise) {
+                L.push("  A lead inside the noise means the residual did not separate the winner from");
+                L.push("  the runner-up; which one placed first is a property of this noise draw.");
+            }
+        }
+
         const failCounts = {};
         for (const r of rows) for (const f of r.failures) failCounts[f] = (failCounts[f] ?? 0) + 1;
         if (Object.keys(failCounts).length) {
-            L.push("  Fits that failed at least once:");
-            for (const [f, n] of Object.entries(failCounts).sort((a, b) => b[1] - a[1])) {
-                L.push(`    ${padCell(f, 40)}${n}`);
-            }
+            L.push("");
+            L.push(`  Fits that failed at least once: ${Object.entries(failCounts)
+                .sort((a, b) => b[1] - a[1]).map(([f, n]) => `${f} (${n})`).join(", ")}`);
         }
         L.push("");
 
         if (withTruth.length) {
             L.push("AGAINST TRUTH");
             L.push("─".repeat(72));
-            L.push(`  Files carrying truth:    ${withTruth.length}`);
+            L.push(`  Files carrying truth: ${withTruth.length}`);
             const rel = withTruth.map((r) => r.truthScore.topRelSep).filter(Number.isFinite);
-            L.push(`  Median relative sep:     ${n3(median(rel))} `
-                + `(top interpretation's mean separation / mean true range)`);
+            const best = withTruth.map((r) => r.truthScore.bestRelSep).filter(Number.isFinite);
             const within10 = rel.filter((x) => x <= 0.10).length;
-            L.push(`  Within 10% of range:     ${within10} / ${rel.length}`);
+            const bestWithin10 = best.filter((x) => x <= 0.10).length;
+
+            // ACHIEVED beside ORACLE, on adjacent lines, because the pair is
+            // what carries the diagnosis and the achieved figure alone was
+            // being read as "how good the analysis is". It is not: it is how
+            // good the RANKING is, and the two differ by a factor that this
+            // block now states rather than leaving to be worked out.
+            L.push("");
+            L.push(`                            achieved      oracle (truth picks the winner)`);
+            L.push(`    Median relative sep:    ${padCell(n3(median(rel)), 14)}`
+                + `${best.length ? n3(median(best)) : "—"}`);
+            L.push(`    Within 10% of range:    ${padCell(`${within10} / ${rel.length}`, 14)}`
+                + `${best.length ? `${bestWithin10} / ${best.length}` : "—"}`);
+
             // Whether the RANKING picked the best available candidate is a
             // different question from whether any candidate was close.
             const pickedBest = withTruth.filter((r) => Number.isFinite(r.truthScore.topSepM)
                 && Number.isFinite(r.truthScore.bestSepM)
                 && r.truthScore.topSepM <= r.truthScore.bestSepM * 1.05).length;
-            L.push(`  Ranking picked the closest candidate: ${pickedBest} / ${withTruth.length}`);
+            L.push(`    Ranking picked closest: ${pickedBest} / ${withTruth.length}`);
+
+            const costs = withTruth
+                .map((r) => (Number.isFinite(r.truthScore.topSepM)
+                    && Number.isFinite(r.truthScore.bestSepM) && r.truthScore.bestSepM > 0)
+                    ? r.truthScore.topSepM / r.truthScore.bestSepM : null)
+                .filter(Number.isFinite);
+            if (costs.length) {
+                const medCost = median(costs);
+                L.push("");
+                L.push(`  RANKING COST: median ${medCost < 10 ? medCost.toFixed(1) : Math.round(medCost)}x`
+                    + ` (top interpretation's error / closest candidate's error).`);
+                L.push("  The oracle column is a CEILING and not a score the analysis could claim —");
+                L.push("  truth chose its winner. But the gap between the two columns is real, and it");
+                L.push("  says where the work is: a large gap means the fits already found the answer");
+                L.push("  and the ranking discarded it, which is a different repair from a small");
+                L.push("  oracle figure, where no method found it at all.");
+                // Name the worst file. A median hides the case worth opening.
+                let worstName = null, worstCost = 0;
+                for (const r of withTruth) {
+                    const ts = r.truthScore;
+                    if (!(Number.isFinite(ts.topSepM) && ts.bestSepM > 0)) continue;
+                    const c = ts.topSepM / ts.bestSepM;
+                    if (c > worstCost) { worstCost = c; worstName = r.targetDescription ?? r.label; }
+                }
+                if (worstName) {
+                    L.push(`  Worst: ${worstName} at `
+                        + `${worstCost < 10 ? worstCost.toFixed(1) : Math.round(worstCost)}x.`);
+                }
+            }
             L.push("");
         } else {
             L.push("AGAINST TRUTH");
@@ -455,20 +596,37 @@ function buildSummaryReport(entries, options) {
     L.push("FILES");
     L.push("─".repeat(72));
     const cols = [
-        {h: "File", w: 30, get: (e) => e.relativePath},
+        // The scenario NAME, not the path. A flat folder of generated files
+        // shares a long common suffix, so a right-clipped path column showed
+        // the same characters on every row.
+        {h: "Scenario", w: 26, get: (e) => e.row?.displayName ?? e.relativePath},
+        // What the answer was, next to what was concluded. Reading a verdict
+        // without it is guesswork.
+        {h: "Target (truth)", w: 22,
+            get: (e) => (e.row?.anomalousDeclared ? "* " : "") + (e.row?.targetDescription ?? "")},
+        {h: "Platform", w: 18, get: (e) => e.row?.platformDescription ?? ""},
         {h: "n", w: 5, get: (e) => e.row?.quality.frames ?? "", right: true},
-        {h: "Base", w: 8, get: (e) => fmtMetres(e.row?.quality.sensorSpanM), right: true},
         {h: "Sweep", w: 7, get: (e) => n2(e.row?.quality.sweepPathDeg), right: true},
         {h: "CVrcond", w: 8, get: (e) => n3(e.row?.quality.rcond), right: true},
         {h: "Src", w: 5, get: (e) => (e.row ? sourceQualityGrade(e.row.quality).grade : "")},
-        {h: "Verdict", w: 26, get: (e) => e.row?.headline ?? e.error ?? ""},
-        {h: "Top", w: 22, get: (e) => e.row?.top?.name ?? ""},
+        {h: "Verdict", w: 22, get: (e) => e.row?.headline ?? e.error ?? ""},
+        {h: "Top", w: 20, get: (e) => (e.row?.topRangeBlind ? "<> " : "") + (e.row?.top?.name ?? "")},
         {h: "|err|", w: 7, get: (e) => n3(e.row?.top?.errDeg), right: true},
+        // The floor beside the residual, so no reader can take a small number
+        // for a good one without seeing what a perfect track would score.
+        {h: "floor", w: 7, get: (e) => n3(e.row?.separability?.floorDeg), right: true},
         {h: "RelSep", w: 7, get: (e) => n3(e.row?.truthScore?.topRelSep), right: true},
+        {h: "Best", w: 7, get: (e) => n3(e.row?.truthScore?.bestRelSep), right: true},
     ];
     L.push(cols.map((c) => padCell(c.h, c.w, c.right)).join(" "));
     L.push(cols.map((c) => "─".repeat(c.w)).join(" "));
     for (const e of entries) L.push(cols.map((c) => padCell(c.get(e), c.w, c.right)).join(" "));
+    L.push("");
+    L.push("  * = declared anomalous, so 'unresolved' is the CORRECT outcome on that row.");
+    L.push("  <> = the winner is a range-blind curve fit; its range came from the anchor.");
+    L.push("  floor = the residual a PERFECT track scores against the declared pointing");
+    L.push("          error. An |err| at or below it is fitting noise, not the object.");
+    L.push("  Best = closest candidate any method produced (ORACLE — truth picked it).");
     return L.join("\n");
 }
 
@@ -926,6 +1084,24 @@ function updateSummary(state) {
     if (truthRows.length) {
         state.summary.appendChild(summaryCell("Median rel. sep",
             n3(median(truthRows.map((r) => r.truthScore.topRelSep)))));
+        // THE ORACLE, ON THE TILE ROW. "Median rel. sep" standing alone reads
+        // as a verdict on the whole analysis; beside the best any method
+        // produced it reads as what it is — a verdict on the RANKING. The two
+        // tiles differ by the ranking cost, and a large gap points at the
+        // selection stage rather than at the fits.
+        const bestRel = truthRows.map((r) => r.truthScore.bestRelSep).filter(Number.isFinite);
+        if (bestRel.length) {
+            state.summary.appendChild(summaryCell("Best candidate", n3(median(bestRel))));
+        }
+        const costs = truthRows
+            .map((r) => (Number.isFinite(r.truthScore.topSepM) && r.truthScore.bestSepM > 0)
+                ? r.truthScore.topSepM / r.truthScore.bestSepM : null)
+            .filter(Number.isFinite);
+        if (costs.length) {
+            const m = median(costs);
+            state.summary.appendChild(summaryCell("Ranking cost",
+                `${m < 10 ? m.toFixed(1) : Math.round(m)}x`));
+        }
     }
 }
 
@@ -943,12 +1119,31 @@ function makeRow(state, entry) {
         cells.push(td);
         tr.appendChild(td);
     }
-    cells[0].textContent = entry.relativePath;
-    cells[0].title = entry.relativePath;
-    // A deep relative path is identified by its END, so clip the front.
-    cells[0].style.direction = "rtl";
-    cells[0].style.textAlign = "left";
-    cells[1].textContent = "Queued";
+    // The filename OPENS the file, in a fresh Sitrec. A bulk row says a fit
+    // landed 97% of range from truth and the immediate question is always
+    // "let me look at it" — which meant finding the file on disk and dragging
+    // it in by hand. See openInNewSitrec for why this cannot be a plain href.
+    const link = document.createElement("a");
+    link.textContent = entry.relativePath;
+    link.href = "#";
+    link.style.cssText = "color: #1565c0; text-decoration: none; cursor: pointer;";
+    link.onmouseenter = () => { link.style.textDecoration = "underline"; };
+    link.onmouseleave = () => { link.style.textDecoration = "none"; };
+    link.onclick = (ev) => { ev.preventDefault(); openInNewSitrec(entry, link); };
+    cells[COL.file].appendChild(link);
+    cells[COL.file].title = entry.relativePath
+        + "\n\nClick to open this scenario in a new Sitrec window.";
+    // WHICH END TO CLIP. A deep relative path is identified by its tail, so
+    // clipping the front is right for `.../2026-run/sub/bot-0042.csv`. It is
+    // exactly wrong for a flat folder of generated scenarios, whose names share
+    // a long common SUFFIX — measured on a ten-file run, nine rows clipped to
+    // the identical "…_wzero_white0p03deg_s901.all.csv" and the column carried
+    // no information at all. So clip the end only when there is a directory to
+    // identify the file by.
+    const deepPath = entry.relativePath.includes("/");
+    cells[COL.file].style.direction = deepPath ? "rtl" : "ltr";
+    cells[COL.file].style.textAlign = "left";
+    cells[COL.status].textContent = "Queued";
     state.tbody.appendChild(tr);
     entry.tr = tr;
     entry.cells = cells;
@@ -957,8 +1152,8 @@ function makeRow(state, entry) {
 
 function setRowStatus(entry, text, tooltip = "") {
     if (!entry.cells) return;
-    entry.cells[1].textContent = text;
-    if (tooltip) entry.cells[1].title = tooltip;
+    entry.cells[COL.status].textContent = text;
+    if (tooltip) entry.cells[COL.status].title = tooltip;
 }
 
 // Shade a source-quality cell so a scan down the column shows where the data
@@ -975,89 +1170,119 @@ function fillRow(state, entry) {
     // An answer-key sidecar carries the human-meaningful scenario name;
     // show it in place of the opaque filename, keeping the path in the
     // tooltip. Challenge files (no name) keep showing their path.
+    // The cell holds a link element, so the descriptive name replaces the link
+    // TEXT — writing textContent on the cell would delete the anchor and with
+    // it the click handler, leaving a name that looks clickable and is not.
     if (r.displayName) {
-        c[0].textContent = r.displayName;
-        c[0].title = `${r.displayName}\n${entry.relativePath}`;
+        const link = c[COL.file].firstChild;
+        if (link) link.textContent = r.displayName;
+        c[COL.file].title = `${r.displayName}\n${entry.relativePath}`
+            + "\n\nClick to open this scenario in a new Sitrec window.";
     }
-    c[1].textContent = "done";
-    c[1].title = r.warnings.length ? r.warnings.join("\n") : "";
-    c[2].textContent = n0(q.frames);
-    c[3].textContent = n1(q.durationS);
-    c[4].textContent = q.fps >= 1 ? n0(q.fps) : n2(q.fps);
-    c[5].textContent = fmtMetres(q.sensorSpanM);
-    c[5].title = `Path length ${fmtMetres(q.sensorPathM)}; straightness `
+
+    // WHAT THE ANSWER WAS. An anomalous scenario is marked, because "the
+    // analysis found nothing conventional" is a correct result on one of these
+    // and a failure on the others, and the two look identical without it.
+    if (r.targetDescription) {
+        c[COL.target].textContent = (r.anomalousDeclared ? "⚑ " : "") + r.targetDescription;
+        c[COL.target].title = `The object actually was: ${r.targetDescription}.`
+            + (r.anomalousDeclared ? `\n\nDECLARED ANOMALOUS. "Unresolved" is the CORRECT `
+                + `outcome here, not a failure.` : "")
+            + (r.eventDescription ? `\nInjected events: ${r.eventDescription}.` : "")
+            + `\n\nFrom the answer-key sidecar. The analysis never sees it.`;
+        if (r.anomalousDeclared) c[COL.target].style.color = "#6a1b9a";
+    } else {
+        c[COL.target].textContent = "";
+        c[COL.target].title = "No answer key for this file — it declares no target. "
+            + "Challenge files are published this way by design.";
+    }
+
+    if (r.platformDescription) {
+        c[COL.platform].textContent = r.platformDescription;
+        // Italic marks a MEASURED description, so a reader never mistakes an
+        // inference from the sensor path for something the file declared.
+        c[COL.platform].style.fontStyle = r.platformMeasured ? "italic" : "";
+        c[COL.platform].title = (r.platformMeasured
+            ? `MEASURED from the sensor path, not declared by the file.`
+            : `Declared by the scenario sidecar.`)
+            + `\n\nPath length ${fmtMetres(q.sensorPathM)}, straight-line span `
+            + `${fmtMetres(q.sensorSpanM)}, straightness ${n2(q.straightness)} `
+            + `(1 = a straight run, the degenerate case for range), altitude span `
+            + `${fmtMetres(q.sensorAltSpanM)}.`;
+    }
+
+    c[COL.status].textContent = "done";
+    c[COL.status].title = r.warnings.length ? r.warnings.join("\n") : "";
+    c[COL.n].textContent = n0(q.frames);
+    c[COL.dur].textContent = n1(q.durationS);
+    // Rate lost its own column to Target/Platform; it is duration and frames
+    // divided, so it costs a reader nothing to keep it in the tooltip.
+    c[COL.dur].title = `${n1(q.durationS)} s at `
+        + `${q.fps >= 1 ? n0(q.fps) : n2(q.fps)} samples/s.`;
+    c[COL.base].textContent = fmtMetres(q.sensorSpanM);
+    c[COL.base].title = `Path length ${fmtMetres(q.sensorPathM)}; straightness `
         + `${n2(q.straightness)} (1 = a straight run, which is the degenerate case for range); `
         + `altitude span ${fmtMetres(q.sensorAltSpanM)}`;
-    c[6].textContent = n2(q.sweepPathDeg);
-    c[6].title = `Net end-to-end bearing change ${n2(q.netSweepDeg)}°; median rate `
+    c[COL.sweep].textContent = n2(q.sweepPathDeg);
+    c[COL.sweep].title = `Net end-to-end bearing change ${n2(q.netSweepDeg)}°; median rate `
         + `${n3(q.rateMedianDegPerS)}°/s. A large path with a small net change means the `
         + `sightline went out and came back.`;
-    c[7].textContent = n3(q.rcond);
-    c[7].title = `${q.conditioning} — the data pins down ${q.effectiveRank ?? "?"} of the 6 `
+    c[COL.rcond].textContent = n3(q.rcond);
+    c[COL.rcond].title = `${q.conditioning} — the data pins down ${q.effectiveRank ?? "?"} of the 6 `
         + `numbers a constant-velocity fit needs. This is a statement about the Constant `
         + `Velocity (CV) family only.`;
-    c[8].textContent = n3(q.noiseEstDeg);
-    c[8].title = `Raw frame-to-frame deviation ${n3(q.jitterDeg)}° (median), divided by 1.4422 `
-        + `to convert it to a standard deviation — valid when the pointing error is random in `
-        + `every direction and the true path is locally straight. On a slowly-sampled `
-        + `manoeuvring target real curvature inflates this.`;
-    c[9].textContent = n3(q.declaredLosSigmaDeg)
-        + (q.losErrorCorrelated ? "*" : "");
-    c[9].title = q.declaredLosSigmaDeg == null ? "This file declares no pointing error."
-        : q.losErrorCorrelated
-            ? `Error model: ${q.losErrorModel ?? "correlated"} — NOT comparable with the `
-                + `estimate to the left. ${q.losErrorNote ?? ""}\n\nCorrelated (operator wobble) `
-                + `error drifts smoothly, so a frame-to-frame estimator sees only its fast `
-                + `fraction and reads much lower. The GAP is the signature of wobble, not a `
-                + `disagreement about magnitude.`
-            : `Error model: ${q.losErrorModel ?? "white"} — a per-axis standard deviation `
-                + `(1-sigma), directly comparable with the estimate to the left. `
-                + `${q.losErrorNote ?? ""}`;
-    c[10].textContent = grade.grade;
-    c[10].style.color = GRADE_COLOURS[grade.grade] ?? "";
-    c[10].style.fontWeight = "700";
-    c[10].title = (grade.reasons.length ? grade.reasons.join("\n") : "No flagged degeneracy.")
-        + (r.earthModel ? `\n\nEarth model in force: ${r.earthModel}.` : "")
-        + (r.surfaceModel ? `\nGround: ${r.surfaceModel}.` : "");
 
-    const pr = r.probe;
-    if (pr) {
-        c[11].textContent = pr.speedOverride ? "geom→spd"
-            : pr.geometryPinned ? `geom ${n2(pr.rangeM / METERS_PER_NM)}` : "prior";
-        c[11].style.color = pr.speedOverride ? "#ef6c00"
-            : pr.geometryPinned ? "#2e7d32" : "";
-        c[11].style.fontWeight = pr.geometryPinned || pr.speedOverride ? "700" : "";
-        c[11].title = (pr.speedOverride
-            ? `Geometry DID pin a range, but the speed it implies exceeds twice the fit's `
-                + `speed target, so the Minimum Acceleration fit deliberately fell back to `
-                + `its prior${Number.isFinite(pr.rangeM)
-                    ? ` (prior-picked range ${fmtMetres(pr.rangeM)})` : ""}. For data `
-                + `quality read this as RECOVERABLE — a fast object at pinned range is a `
-                + `finding, not an ambiguity.`
-            : pr.geometryPinned
-            ? `Pure-smoothness geometry PINNED the range at ${fmtMetres(pr.rangeM)} — an `
-                + `actual extraction attempt succeeded with no speed assumption.`
-            : `Geometry left the range ambiguous; the Minimum Acceleration fit fell back `
-                + `to its soft speed prior${Number.isFinite(pr.rangeM)
-                    ? ` (prior-picked range ${fmtMetres(pr.rangeM)})` : ""}.`)
-            + (Number.isFinite(pr.decisiveness)
-                ? `\nValley decisiveness ${n2(pr.decisiveness)}`
-                    + (Number.isFinite(pr.valleyWidthLog)
-                        ? `, width ${n2(pr.valleyWidthLog)} nats` : "")
-                    + `, residual ${n3(pr.errDeg)}°.`
-                : "")
-            + (pr.floorShaped
-                ? "\nThe candidate valley was FLOOR-SHAPED and rejected as geometry." : "")
-            + (pr.boundaryLimited
-                ? "\nThe selected range sits on a search edge (unresolved)." : "")
-            + "\nGeometry-only verdict: physics and stationary methods may still succeed "
-            + "on a 'prior' file.";
-    } else {
-        c[11].textContent = "";
-        c[11].title = "No Minimum Acceleration fit available for this file.";
+    // NOISE AS A RATIO. Two columns of raw degrees asked every reader to do the
+    // same division; one column does it once. The ratio is also the number that
+    // carries the finding — 1.0 means the file is as noisy as it claims — and
+    // both raw figures stay in the tooltip.
+    const noiseRatio = Number.isFinite(q.noiseEstDeg) && q.declaredLosSigmaDeg > 0
+        ? q.noiseEstDeg / q.declaredLosSigmaDeg : null;
+    c[COL.noise].textContent = Number.isFinite(noiseRatio)
+        ? `${n2(noiseRatio)}x` + (q.losErrorCorrelated ? "*" : "")
+        : n3(q.noiseEstDeg);
+    c[COL.noise].title = `Estimated ${n3(q.noiseEstDeg)}° against a declared `
+        + `${n3(q.declaredLosSigmaDeg)}°.\n\n`
+        + `The estimate is the raw frame-to-frame deviation ${n3(q.jitterDeg)}° (median) `
+        + `divided by 1.4422 — valid when the pointing error is random in every direction `
+        + `and the true path is locally straight. On a slowly-sampled manoeuvring target, `
+        + `real curvature inflates it.\n\n`
+        + (q.declaredLosSigmaDeg == null ? "This file declares no pointing error."
+            : q.losErrorCorrelated
+                ? `Error model: ${q.losErrorModel ?? "correlated"} — the declared figure is a `
+                    + `deadband AMPLITUDE, not a standard deviation, so this ratio is not a `
+                    + `like-for-like comparison and reads far below 1. The gap is the `
+                    + `signature of wobble, not a disagreement. ${q.losErrorNote ?? ""}`
+                : `Error model: ${q.losErrorModel ?? "white"} — a per-axis standard deviation `
+                    + `(1-sigma), so the ratio is like-for-like. ${q.losErrorNote ?? ""}`);
+    // Only a WHITE declaration can be off; flag a real mismatch, never a wobble.
+    if (!q.losErrorCorrelated && Number.isFinite(noiseRatio)
+        && (noiseRatio < 0.7 || noiseRatio > 1.4)) {
+        c[COL.noise].style.color = "#ef6c00";
+        c[COL.noise].style.fontWeight = "700";
     }
-    c[12].textContent = shortVerdict(r.headline, r.verdictCode);
-    c[12].title = (r.headline ? r.headline + "\n\n" : "")
+
+    c[COL.src].textContent = grade.grade;
+    c[COL.src].style.color = GRADE_COLOURS[grade.grade] ?? "";
+    c[COL.src].style.fontWeight = "700";
+    c[COL.src].title = (grade.reasons.length ? grade.reasons.join("\n") : "No flagged degeneracy.")
+        + (r.earthModel ? `\n\nEarth model in force: ${r.earthModel}.` : "")
+        + (r.surfaceModel ? `\nGround: ${r.surfaceModel}.` : "")
+        // The Probe column used to sit in the analysis group and was read by
+        // nobody; its one genuinely useful statement — did pure geometry pin a
+        // range without a speed assumption — belongs here, with the rest of
+        // what the SOURCE can support.
+        + (r.probe ? `\n\nGeometry probe: ${r.probe.speedOverride
+            ? `pinned a range but the implied speed exceeded twice the fit's target, so it fell `
+                + `back to the prior — read as RECOVERABLE, a fast object at pinned range is a finding`
+            : r.probe.geometryPinned
+                ? `pure smoothness PINNED the range at ${fmtMetres(r.probe.rangeM)}, with no `
+                    + `speed assumption`
+                : `geometry left range ambiguous; the Minimum Acceleration fit used its speed prior`}`
+            + `. Speaks for geometry only — physics and stationary methods may still succeed.` : "");
+
+    c[COL.verdict].textContent = shortVerdict(r.headline, r.verdictCode);
+    c[COL.verdict].title = (r.headline ? r.headline + "\n\n" : "")
         + (r.viableClasses.length
         ? `Viable classes: ${r.viableClasses.join(", ")}.` : "No class reached viable.")
         + (r.rangeUnobservable
@@ -1070,9 +1295,18 @@ function fillRow(state, entry) {
     // ranking first is the whole problem.
     const topViolates = (r.maxRangeViolations ?? []).some((v) => v.key === r.top?.key
         && v.name === r.top?.name);
-    c[13].textContent = (topViolates ? "⚠ " : "") + shortTopName(r.top?.name);
+    c[COL.top].textContent = (topViolates ? "⚠ " : "") + (r.topRangeBlind ? "◇ " : "")
+        + shortTopName(r.top?.name);
     const otherViolators = (r.maxRangeViolations ?? []).length - (topViolates ? 1 : 0);
-    c[13].title = (r.top ? `${r.top.name}\nRank tier: ${r.top.tier}. ${r.candidates} candidates considered.` : "")
+    c[COL.top].title = (r.top ? `${r.top.name}\nRank tier: ${r.top.tier}. ${r.candidates} candidates considered.` : "")
+        + (r.topRangeBlind
+            ? `\n\n◇ RANGE-BLIND FAMILY. This is one of the curve-fitting strategies, which `
+                + `TraverseHypotheses documents as a method diagnostic rather than a ranking: a `
+                + `higher-order curve hugs the sightlines more closely simply because it bends `
+                + `more, so its low residual is arithmetic and not evidence about the object. `
+                + `Its distance is inherited from the range anchor, so the Range cell beside it `
+                + `is not a measurement.`
+            : "")
         + (topViolates
             ? `\n\nCONTRADICTS THE DECLARED MaxRange of ${fmtMetres(r.declaredMaxRangeM)}: this `
                 + `candidate places the object beyond the range the file itself says the sensor `
@@ -1087,60 +1321,127 @@ function fillRow(state, entry) {
             ? `\n\n${otherViolators} other candidate(s) also exceed the declared MaxRange of `
                 + `${fmtMetres(r.declaredMaxRangeM)}.`
             : "");
-    if (topViolates) c[13].style.color = "#c62828";
-    c[14].textContent = n3(r.top?.errDeg);
-    c[15].textContent = Number.isFinite(r.top?.rangeStartM)
+    if (topViolates) c[COL.top].style.color = "#c62828";
+    if (r.topRangeBlind) c[COL.top].style.color = "#ef6c00";
+
+    // RESIDUAL AGAINST THE NOISE FLOOR. A bare residual invites the reading
+    // "small means good", which on bearings-only data is false: the residual is
+    // nearly invariant to how far away the track is placed, so a candidate can
+    // post the best number in the run and sit at the wrong range entirely. The
+    // floor makes the comparison the reader should be making visible in the cell.
+    const sep = r.separability;
+    c[COL.err].textContent = n3(r.top?.errDeg)
+        + (sep ? ` / ${n3(sep.floorDeg)}` : "");
+    c[COL.err].title = `Top interpretation's mean LOS residual: ${n3(r.top?.errDeg)}°.`
+        + (sep
+            ? `\n\nNoise floor ${n3(sep.floorDeg)}° — what a PERFECT track scores against the `
+                + `declared ${n3(q.declaredLosSigmaDeg)}° pointing error. (The per-frame error `
+                + `is two Gaussians in the tangent plane, so its magnitude is Rayleigh and its `
+                + `mean is sigma x 1.2533.)`
+                + (sep.topBelowFloor
+                    ? `\n\nTHIS RESIDUAL IS BELOW THE FLOOR. The winning model fits the `
+                        + `sightlines better than the true trajectory does, which means it is `
+                        + `fitting the pointing noise. Its low residual is not evidence.`
+                    : "")
+                + (sep.belowFloor > 0
+                    ? `\n${sep.belowFloor} of ${sep.candidates} candidates beat the floor.` : "")
+                + (Number.isFinite(sep.marginDeg) && Number.isFinite(sep.seDeg)
+                    ? `\n\nThe winner led the runner-up by ${n3(sep.marginDeg)}°, against a `
+                        + `sampling error of ${n3(sep.seDeg)}° on a residual mean over `
+                        + `${q.frames} frames`
+                        + (sep.marginDeg < 2 * sep.seDeg
+                            ? ` — the lead is INSIDE the noise, so the residual did not `
+                                + `separate these two candidates.` : `.`)
+                    : "")
+            : `\n\nNo noise floor: this file declares no white pointing sigma.`);
+    if (sep && (sep.topBelowFloor
+        || (Number.isFinite(sep.marginDeg) && Number.isFinite(sep.seDeg)
+            && sep.marginDeg < 2 * sep.seDeg))) {
+        c[COL.err].style.color = "#ef6c00";
+    }
+
+    c[COL.range].textContent = Number.isFinite(r.top?.rangeStartM)
         ? n2(r.top.rangeStartM / METERS_PER_NM) : "";
-    c[15].title = Number.isFinite(r.top?.rangeStartM)
+    c[COL.range].title = Number.isFinite(r.top?.rangeStartM)
         ? `${fmtMetres(r.top.rangeStartM)}` + (Number.isFinite(r.top?.speedKt)
-            ? `, mean air speed ${n0(r.top.speedKt)} kt` : "") : "";
-    c[16].textContent = Number.isFinite(r.top?.speedMinKt) && Number.isFinite(r.top?.speedMaxKt)
+            ? `, mean air speed ${n0(r.top.speedKt)} kt` : "")
+            + (r.topRangeBlind ? `\n\nInherited from the range anchor — see the ◇ note on the `
+                + `interpretation to the left. Not a measurement.` : "")
+        : "";
+    c[COL.spd].textContent = Number.isFinite(r.top?.speedMinKt) && Number.isFinite(r.top?.speedMaxKt)
         ? `${Math.round(r.top.speedMinKt)}-${Math.round(r.top.speedMaxKt)}`
         : "";
-    c[16].title = Number.isFinite(r.top?.speedKt)
+    c[COL.spd].title = Number.isFinite(r.top?.speedKt)
         ? `Air speed of the top interpretation over the clip: `
             + `${Math.round(r.top.speedMinKt)}-${Math.round(r.top.speedMaxKt)} kt `
             + `(mean ${n0(r.top.speedKt)} kt).`
         : "";
-    c[17].textContent = Number.isFinite(r.top?.altMeanM)
+    c[COL.alt].textContent = Number.isFinite(r.top?.altMeanM)
         ? `${Math.round(r.top.altMeanM * 3.28084)}` : "";
-    c[17].title = Number.isFinite(r.top?.altMeanM)
+    c[COL.alt].title = Number.isFinite(r.top?.altMeanM)
         ? `Mean altitude of the top interpretation's track: `
             + `${Math.round(r.top.altMeanM * 3.28084)} ft (${Math.round(r.top.altMeanM)} m).`
         : "";
 
     if (r.truthScore) {
         const ts = r.truthScore;
-        c[18].textContent = Number.isFinite(ts.topRelSep)
+        c[COL.truth].textContent = Number.isFinite(ts.topRelSep)
             ? `${(ts.topRelSep * 100).toFixed(1)}%` : (Number.isFinite(ts.topSepM) ? fmtMetres(ts.topSepM) : "—");
-        c[18].title = `Top interpretation is ${fmtMetres(ts.topSepM)} from truth`
+        c[COL.truth].title = `Top interpretation is ${fmtMetres(ts.topSepM)} from truth`
             + (Number.isFinite(ts.topRelSep) ? ` (${(ts.topRelSep * 100).toFixed(1)}% of the true range)` : "")
             + `.\nClosest candidate of any: ${fmtMetres(ts.bestSepM)} (${ts.bestName ?? "—"}).`
             + (Number.isFinite(ts.truthResidualDeg)
                 ? `\nTruth's own LOS residual — the achievable floor — is ${n3(ts.truthResidualDeg)}°.` : "");
         // Green when the analysis both picked well and landed close.
         const good = Number.isFinite(ts.topRelSep) && ts.topRelSep <= 0.10;
-        c[18].style.color = good ? "#2e7d32" : (Number.isFinite(ts.topRelSep) ? "#c62828" : "");
+        c[COL.truth].style.color = good ? "#2e7d32" : (Number.isFinite(ts.topRelSep) ? "#c62828" : "");
+
+        // THE ORACLE, beside the achieved score. The pair is the whole point:
+        // Truth alone cannot say whether a bad result means the fits missed or
+        // the ranking discarded a good fit, and those need different repairs.
+        c[COL.best].textContent = Number.isFinite(ts.bestRelSep)
+            ? `${(ts.bestRelSep * 100).toFixed(1)}%` : "—";
+        const cost = Number.isFinite(ts.bestSepM) && ts.bestSepM > 0
+            && Number.isFinite(ts.topSepM) ? ts.topSepM / ts.bestSepM : null;
+        c[COL.best].title = `Closest candidate any method produced: ${ts.bestName ?? "—"} at `
+            + `${fmtMetres(ts.bestSepM)}`
+            + (Number.isFinite(ts.bestRelSep)
+                ? ` (${(ts.bestRelSep * 100).toFixed(1)}% of true range)` : "") + `.`
+            + `\n\nAn ORACLE: truth picked this winner, so it is a ceiling and not a score the `
+            + `analysis could claim.`
+            + (Number.isFinite(cost) && cost > 1.05
+                ? `\n\nThe ranking cost a factor of ${cost < 10 ? cost.toFixed(1) : Math.round(cost)}x `
+                    + `on this file — the answer was among the candidates and was not chosen.`
+                : `\n\nThe ranking picked this candidate, so nothing was lost to ranking here.`);
+        // Amber when the fits found it and the ranking threw it away — a
+        // DIFFERENT failure from the red in the Truth column beside it.
+        c[COL.best].style.color = Number.isFinite(cost) && cost > 3 ? "#ef6c00" : "";
+        c[COL.best].style.fontWeight = Number.isFinite(cost) && cost > 3 ? "700" : "";
     } else if (r.directionScore) {
         // DEGREES, not metres, and labelled so. A direction-only target has no
         // range to be right or wrong about; the comparable quantity is bearing
         // error. Showing a blank here previously read as "could not be scored".
         const ds = r.directionScore;
-        c[18].textContent = Number.isFinite(ds.topDeg) ? `${n2(ds.topDeg)}°` : "—";
-        c[18].title = `${ds.label}. The top interpretation's mean BEARING error is `
+        c[COL.truth].textContent = Number.isFinite(ds.topDeg) ? `${n2(ds.topDeg)}°` : "—";
+        c[COL.truth].title = `${ds.label}. The top interpretation's mean BEARING error is `
             + `${n3(ds.topDeg)}°; the closest candidate of any was ${ds.bestName} at `
             + `${n3(ds.bestDeg)}°.\n\nThis target has no finite range, so 3-D separation and `
             + `relative separation are undefined for it — this column is in degrees for this `
             + `row and metres/percent for the others, and the two are never averaged together.`;
-        c[18].style.color = Number.isFinite(ds.topDeg) && ds.topDeg <= 1 ? "#2e7d32" : "#c62828";
+        c[COL.truth].style.color = Number.isFinite(ds.topDeg) && ds.topDeg <= 1 ? "#2e7d32" : "#c62828";
+        c[COL.best].textContent = Number.isFinite(ds.bestDeg) ? `${n2(ds.bestDeg)}°` : "—";
+        c[COL.best].title = `Closest candidate by BEARING error: ${ds.bestName} at `
+            + `${n3(ds.bestDeg)}°. Degrees for this row, percent for the others.`;
     } else {
-        c[18].textContent = "";
-        c[18].title = "This file carries no TruePosition column and no direction truth, "
+        c[COL.truth].textContent = "";
+        c[COL.truth].title = "This file carries no TruePosition column and no direction truth, "
             + "so nothing here is scored.";
+        c[COL.best].textContent = "";
+        c[COL.best].title = c[COL.truth].title;
     }
 
     // Actions: the full gallery, and the HTML report.
-    c[19].innerHTML = "";
+    c[COL.actions].innerHTML = "";
     const galleryButton = smallButton("Gallery", "#1976d2", BUTTON_TOOLTIPS["Gallery"]);
     galleryButton.onclick = () => {
         try {
@@ -1149,14 +1450,90 @@ function fillRow(state, entry) {
             showError("Could not open the gallery for this result: " + (e && e.message), e);
         }
     };
-    c[19].appendChild(galleryButton);
+    c[COL.actions].appendChild(galleryButton);
     const reportButton = smallButton("Report", "#455a64", BUTTON_TOOLTIPS["Report"]);
     reportButton.style.marginLeft = "3px";
     reportButton.onclick = () => openReport(entry, reportButton);
-    c[19].appendChild(reportButton);
+    c[COL.actions].appendChild(reportButton);
 
     entry.tr.style.background = grade.grade === "weak" ? "#fff5f5"
         : grade.grade === "hard" ? "#fffaf0" : "#f7fff7";
+}
+
+/**
+ * Open one scenario in a fresh Sitrec window.
+ *
+ * WHY THIS IS NOT A PLAIN href. The rows come from a folder picker or a drag,
+ * so the file is an in-memory Blob with no URL and no path — there is nothing
+ * for a link to point AT. The bytes are put in the handoff store instead
+ * (src/FileHandoff.js) and the new window is sent a key.
+ *
+ * THE SIDECARS TRAVEL AS NOTES, NOT AS FILES. The interchange sidecars are read
+ * by the BENCHMARK's ingest, not by the app's importer — CTrackFileBOT
+ * deliberately does not require one and falls back to BOT_DEFAULT_ORIGIN. So
+ * handing the app a .scenario.json would produce an unsupported-file error
+ * beside a track that loaded fine, which reads as a failure and is not one.
+ * Everything they say that a reader needs is rendered to prose instead and
+ * carried in the handoff's meta, to land in the sitch Notes panel.
+ *
+ * ONE KEY, NOT A LIST. The handoff record holds an ARRAY of files plus the
+ * meta, so several files and their notes travel under a single key — there is
+ * no need to join keys with a separator in the URL, and nothing can arrive
+ * half-transferred because the record is written in one transaction.
+ *
+ * The window is claimed synchronously, before the store write, for the same
+ * reason openReport does it: window.open is only honoured while the click's
+ * transient activation is live, and an await drops it.
+ */
+function openInNewSitrec(entry, link) {
+    const w = window.open("", "_blank");
+    if (!w) {
+        showError("The new Sitrec window was blocked by the browser's popup blocker. "
+            + "Allow popups for this site and click the filename again.");
+        return;
+    }
+    w.document.open();
+    w.document.write("<!doctype html><meta charset=\"utf-8\">"
+        + "<title>Opening in Sitrec…</title>"
+        + "<body style=\"font:14px system-ui;padding:24px;background:#12161c;color:#cfd8e3\">"
+        + "Handing the scenario to a new Sitrec window…");
+
+    const original = link.textContent;
+    link.textContent = "opening…";
+    (async () => {
+        try {
+            const file = await entry.getFile();
+            // The sidecar TEXT is already on the entry — pairSidecars attached
+            // it during the folder walk, which is the only moment the siblings
+            // were visible together. Parsed leniently: a malformed sidecar
+            // must cost the notes, never the file open.
+            const parse = (text, what) => {
+                if (!text) return null;
+                try { return JSON.parse(text); }
+                catch (e) { console.warn(`BotBench: could not parse the ${what}:`, e); return null; }
+            };
+            const notes = buildScenarioNotes(
+                parse(entry.sidecarText, "scenario sidecar"),
+                parse(entry.labelsText, "truth sidecar"),
+                entry.relativePath);
+            const key = await putFileHandoff([file],
+                {source: "botbench", relativePath: entry.relativePath, notes});
+            // action=new gives the custom sitch, which is the neutral scene a
+            // BOT track should land in — it carries no target of its own to
+            // conflict with the one being imported.
+            const url = new URL(window.location.href);
+            url.hash = "";
+            url.search = "";
+            url.searchParams.set("action", "new");
+            url.searchParams.set("handoff", key);
+            w.location.href = url.toString();
+        } catch (e) {
+            try { w.close(); } catch (_) { /* already gone */ }
+            showError("Could not open this file in a new window: " + (e && e.message), e);
+        } finally {
+            link.textContent = original;
+        }
+    })();
 }
 
 function openReport(entry, button) {
@@ -1210,10 +1587,10 @@ function openReport(entry, button) {
 
 function setRowError(entry, message) {
     const c = entry.cells;
-    c[1].textContent = "error";
-    c[1].title = message;
-    c[12].textContent = message;
-    c[12].title = message;
+    c[COL.status].textContent = "error";
+    c[COL.status].title = message;
+    c[COL.verdict].textContent = message;
+    c[COL.verdict].title = message;
     entry.tr.style.background = "#fff5f5";
 }
 
