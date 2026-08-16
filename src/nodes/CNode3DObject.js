@@ -161,6 +161,28 @@ export const ModelFiles = {
 // SuperEggGeometry
 // https://en.wikipedia.org/wiki/Superellipsoid
 
+/**
+ * An object's display name, shortened the one way.
+ *
+ * Middle-truncated so BOTH ends survive: the distinguishing part of a name like
+ * "elevated_track (Platform)" or a generated scenario's
+ * "orbitpoint-...-hover-...-s901 (Sensor)" is at the END, so a plain right-clip
+ * turns a folder of distinct objects into a column of identical prefixes.
+ *
+ * Used for the Objects-menu folder AND for the 3-D label. They were computed
+ * separately, so an imported track drew its full 90-character filename across
+ * the scene while its menu entry showed the tidy version — the same object
+ * apparently named two different things. The full name stays available as the
+ * folder tooltip.
+ */
+export function shortObjectName(fullName, max = 30) {
+    const s = String(fullName ?? "");
+    if (s.length <= max) return s;
+    const keep = max - 3;                    // room for the "..."
+    return s.substring(0, Math.ceil(keep / 2))
+        + "..." + s.substring(s.length - Math.floor(keep / 2));
+}
+
 export class CNode3DObject extends CNode3DGroup {
     constructor(v) {
         v.layers ??= LAYER.MASK_LOOKRENDER;
@@ -184,15 +206,7 @@ export class CNode3DObject extends CNode3DGroup {
         // generous (fills the folder-title width; the .title has no CSS ellipsis and
         // would wrap instead). The full, untruncated name is set as the folder tooltip.
         const fullName = (this.props.name ?? this.id).replace(/_ob$/, "");
-        const MAX_LABEL = 30;
-        if (fullName.length > MAX_LABEL) {
-            const keep = MAX_LABEL - 3; // room for the "..."
-            const head = Math.ceil(keep / 2);
-            const tail = Math.floor(keep / 2);
-            this.menuName = fullName.substring(0, head) + "..." + fullName.substring(fullName.length - tail);
-        } else {
-            this.menuName = fullName;
-        }
+        this.menuName = shortObjectName(fullName);
 
         this.gui = guiMenus.objects.addFolder(this.menuName).close()
         this.gui.tooltip(fullName);
@@ -364,7 +378,11 @@ export class CNode3DObject extends CNode3DGroup {
 
         this.label = new CNodeLabel3D({
             id: this.id + "_label",
-            text: label,
+            // The same shortening the Objects menu uses, so an object is called
+            // one thing rather than two. Applied to the LABEL rather than
+            // substituting menuName, because a caller is free to label an
+            // object something other than its name and that choice is kept.
+            text: shortObjectName(String(label ?? "").replace(/_ob$/, "")),
             position: this,
             offsetY:40, // this is vertical offset in screen pixels.
             color: "white",

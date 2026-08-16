@@ -724,6 +724,54 @@ export const materialTypes = {
 
 }
 
+/**
+ * Geometry parameters that are NOT a physical dimension.
+ *
+ * Everything in gTypes is either a length in metres or one of these: a mesh
+ * resolution, a subdivision count, a ratio, an angle, a winding number or a
+ * flag. The distinction is what lets "Global Radius Resize" know which shapes
+ * it can honestly resize — one whose ONLY dimension is `radius` scales
+ * completely when that changes, while a capsule (radius AND totalLength) or a
+ * torus (radius AND tube) would just be distorted.
+ *
+ * Listed as the NON-dimensional set rather than the dimensional one so the
+ * failure is safe: a geometry added later with an unrecognised length lands on
+ * the dimensional side and is simply left alone, instead of being silently
+ * resized in a way nobody intended.
+ */
+export const NON_DIMENSIONAL_GEOMETRY_PARAMS = new Set([
+    // mesh resolution / subdivision
+    "widthSegments", "heightSegments", "capSegments", "radialSegments",
+    "tubularSegments", "thetaSegments", "phiSegments", "segments", "detail",
+    // ratios and shape exponents
+    "aspect", "sharpness",
+    // angles
+    "thetaStart", "thetaLength", "arc",
+    // torus-knot winding
+    "p", "q",
+    // flags
+    "openEnded",
+]);
+
+/**
+ * True when `radius` is the geometry's ONLY physical dimension, so setting it
+ * scales the whole shape rather than deforming it.
+ *
+ * Yes for sphere, ellipsoid, circle and the four platonics (dodecahedron,
+ * icosahedron, octahedron, tetrahedron). No for capsule, cone, torus, superegg
+ * and tictac, which each have a second length; no for box, cylinder and ring,
+ * which have no plain `radius` at all.
+ */
+export function radiusIsOnlyDimension(geometryName) {
+    const def = gTypes[String(geometryName ?? "").toLowerCase()];
+    if (!def?.params || def.params.radius === undefined) return false;
+    for (const key of Object.keys(def.params)) {
+        if (key === "radius") continue;
+        if (!NON_DIMENSIONAL_GEOMETRY_PARAMS.has(key)) return false;
+    }
+    return true;
+}
+
 export const commonMaterialParams = {
     material: [["basic", "lambert", "phong", "physical", "envMap", "gradient", "checkerboard"],"Type of Material lighting"],
     wireframe: [false, "Display geometry object as a wireframe"],
