@@ -1,9 +1,17 @@
-# How to brief a delegated work package (v2, 2026-08-15)
+# How to brief a delegated work package (v2.1, 2026-08-15)
 
-A template for specifying work handed to a parallel worker. Derived from a round
-of seven packages run on this benchmark, then critiqued by two independent
-reviewers and revised. Every rule exists because its absence cost something
-measurable, or because a reviewer named the exploit it prevents.
+A template for specifying work handed to a parallel worker on this benchmark.
+Derived from a round of seven packages, critiqued by two independent reviewers,
+revised, then tested on two further packages.
+
+**It has two layers, and both are load-bearing.** Blocks 1-7 and the report
+schema are GENERIC: they protect the process, and they are what stopped a
+planted false premise twice in the retest. Block 8 is SPECIFIC to bearings-only
+tracking: it protects the science, and it is the half a worker cannot
+reconstruct from the code in the time available. A round that gets the process
+right and the domain wrong produces well-evidenced wrong answers — this project
+has published three findings it later had to retract, and every one of them
+failed on a block-8 rule, not a process rule.
 
 **Two audiences.** The maintainer reads this whole file. A worker reads only the
 brief it produces — so the `Rationale` notes are for the maintainer and must not
@@ -131,9 +139,107 @@ worker does not spend budget rediscovering it. Point at the two or three
 documents carrying the detail. Orientation, not education — this is last on
 purpose.
 
-### 8. Known traps in this repository
+### 8. Domain rules for this benchmark
 
-Environment hazards that cost time to rediscover. Keep this list running.
+Everything above is generic: it protects the PROCESS. This block protects the
+SCIENCE, and it is the half that a worker cannot reconstruct from the code in
+the time available. Paste the entries relevant to the package; a worker touching
+truth, ranking or measurement needs all of them.
+
+**A. Range is not observable without a dynamics prior.** Bearings depend only on
+the DIRECTION of the relative position vector, so any positive scaling of the
+whole relative trajectory reproduces the same sightlines exactly. No observer
+maneuver repairs that. Observer maneuver creates observability only by making
+the scaled alternatives violate an ASSUMED target model. Consequences a worker
+must respect: any range-accuracy claim states the assumed class; a class-free
+"how well can range be recovered" number does not exist; and a bound computed
+for one class says nothing if the true target is in another.
+
+**B. The generating range is not an input.** `spec.initialHorizontalRangeM` is
+the truth used to BUILD the scenario. Anchoring a range search on it hands the
+search a bracket centred on the answer, which no analyst has. Use the fixed
+operational anchor (20 NM) and say so. The same rule covers any other generating
+parameter: wind, start altitude, ascent rate.
+
+**C. Truth leakage has more surfaces than it looks.** Known ones, all live:
+`rankHypotheses` and `rankAllHypotheses` default to **`useTruth = true`** —
+truth decides the ORDER unless `{useTruth: false}` is passed, so a blind ranking
+claim built on the default is measuring an oracle; `familyCoverage` is computed
+against truth by construction; `truthSepM` and every `*RelSep` are scored
+quantities; descriptive scenario FILENAMES encode target family, altitude and
+wind. A "blind" artifact must exclude these BY CONSTRUCTION, not by filtering
+them out afterwards.
+
+**D. Operational versus oracle outcomes.** The rank-1 hypothesis's error is the
+operational number: it is what the pipeline would actually report. The best
+error among eligible hypotheses is an ORACLE CEILING, because truth chose the
+winner. Both may be reported; they must never be conflated, and the oracle one
+must be labelled where it appears.
+
+**E. No inverse crime.** A truth generator must not live inside the model class
+of any solver being benchmarked, and sightlines must carry noise — except in
+cells deliberately labelled oracle-compatible controls. If you generate truth
+with the same equations a fitter uses, you are measuring the fitter against
+itself.
+
+**F. Residual and truth error diverge, and that divergence is a result.** Report
+them separately. A measured case: the angular residual improved from 0.074 deg
+to 0.049 deg while the truth error rose about six times, from 8 m to 49 m. A
+package that reports only residual is reporting the thing that can improve while
+the answer gets worse.
+
+**G. Residual units are not comparable across solvers.** The constant-velocity,
+constant-acceleration and Kalman paths return residuals in METRES; the Monte
+Carlo and alternating-least-squares paths return RADIANS. Never compare raw
+residuals across families; go through the shared angular reducer.
+
+**H. Seed and determinism discipline.** Every stochastic component is seeded
+from a stable hash of (scenarioId, scenarioSeed, componentLabel,
+generatorVersion) through `mulberry32`; seed 0 maps to 1. Component streams are
+INDEPENDENT: adding a random draw in one generator must not perturb another. The
+truth key deliberately excludes the observation section, which is what lets a
+matched-noise pair share an identical truth realization. No wall clock, no
+unseeded randomness, anywhere in a generator path.
+
+**I. Frames and units.** Scenario ENU, origin at the target's initial ground
+point, z is height above the flat-proxy site ground. Scenarios are generated on
+a FLAT PLANE: altitude is Z plus the site ground elevation at any horizontal
+distance, which differs from the ellipsoid by about 2 m at 5 km and 196 m at
+50 km. Specs carry degrees; internals frequently carry radians. Track and
+terrain altitudes are MSL and need the geoid to reach HAE.
+
+**J. Measurement traps this benchmark has actually fallen into.** Each cost a
+retracted or corrected finding:
+
+- *The sample-rate confound.* Any statistic formed as a per-frame difference
+  multiplied by the frame rate measures NOISE at a high rate, because the true
+  inter-frame motion shrinks with the rate while the pointing error does not. A
+  statistic of this shape correlated 0.83 with sample rate and -0.01 with
+  anomalousness. Normalise against the clip's pointing-noise floor, not only
+  against the series' own median.
+- *Set-composition confounding.* This scenario set varies geometry, target
+  class, duration, rate and noise JOINTLY. A pooled correlation across it is
+  hypothesis-generating only. Stratify, or say plainly that the number is
+  exploratory.
+- *Post-hoc thresholds.* A statistic with a free parameter and a handful of
+  suggestive values will produce a result. Declare the threshold before the
+  outcome, take it from something already committed where possible, and print
+  the whole sweep so the parameter's leverage is visible.
+- *Calibration pool contamination.* Declared-anomalous members must never enter
+  a null or calibration pool. A detector calibrated on data containing the thing
+  it detects is calibrated on nothing.
+- *Small-n arithmetic.* With 26 heterogeneous scenarios and one seed each, rates
+  carry exact (Clopper-Pearson) intervals and correlations are tie-corrected.
+  Two paired items cannot reach significance whatever they show: the smallest
+  attainable p is 0.5. State the ceiling rather than reporting the p alone.
+
+**K. Verdict vocabulary.** The executive layer reports CLASS VIABILITY, not
+certainty and not trajectory quality. `consistent-one` and `consistent-several`
+say a class survived screening; `unresolved` is an abstention. A determined
+trajectory with no viable class currently has no channel out of the pipeline —
+that is a known structural gap, not a bug to route around.
+
+### 8b. Environment traps
 
 - The Jest config maps every `.mjs` import to a stub module. Importing a `.mjs`
   file from a test silently returns a stub instead of failing. Keep shared
@@ -144,6 +250,8 @@ Environment hazards that cost time to rediscover. Keep this list running.
 - The positional argument to Jest is a path REGEX, not a filename.
 - `--testPathIgnorePatterns` REPLACES the configured list rather than adding to
   it, silently re-including suites the config excludes.
+- The `results/` tree is gitignored and regenerated; never commit it, and never
+  assume a record in it is current after an ingest or generator change.
 
 ### 9. House rules
 
@@ -255,3 +363,24 @@ Ranked by measured cost, briefer error first.
 6. **Confirmation.** A package asked to find a defect finds one. Defended by §6.
 7. **The stop rule as an exit hatch.** Defended by §5's restate-and-repro
    protocol.
+
+### Domain failure modes (§8), each with the finding it cost
+
+These are separate from the list above because a correct PROCESS does not catch
+any of them. Each was found only after a result had been written down.
+
+8. **A class-free range claim.** Range does not exist without a dynamics prior
+   (§8A). Cost: an early framing that treated recoverability as a property of
+   geometry alone.
+9. **Anchoring on a generating parameter.** (§8B.) Would silently hand every
+   search a bracket centred on its own answer.
+10. **Truth-aware ranking used as a blind result.** `useTruth` defaults to true
+    (§8C). An unguarded call measures an oracle and looks like a measurement.
+11. **Oracle reported as operational.** (§8D.) Cost: the first version of the
+    study's headline outcome.
+12. **A statistic that measures sample rate.** (§8J.) Cost: finding F9,
+    retracted after measurement over the full record set.
+13. **A pooled correlation over a jointly-varying set.** (§8J.) Cost: finding
+    F1's original causal framing.
+14. **Quoting a record after the generator changed under it.** (§8b.) Cost: a
+    stale dossier path and two scenarios' figures.
