@@ -895,16 +895,33 @@ class NumberController extends Controller {
         return this;
     }
 
+    // MICK: how far along the track the knob sits, 0..1. It reads the RAW stored
+    // value rather than getValue(): a log slider keeps log10(value) in the object,
+    // and its _min/_max are in that same log space, so this is the one formula that
+    // is right for both kinds. Also used by the big-slider popup to draw its fill.
+    _fillPercent() {
+        const raw = this.object[ this.property ];
+        const percent = ( raw - this._min ) / ( this._max - this._min );
+        return Math.max( 0, Math.min( percent, 1 ) );
+    }
+
+    // MICK: the value as the input box shows it. Shared with the big-slider popup's
+    // read-out, so the two can never disagree about decimals or the log/zero rules.
+    displayText() {
+        const value = this.getValue();  // log sliders return the real (exponentiated) value
+        if ( this._displayZeroThreshold !== undefined && value <= this._displayZeroThreshold ) {
+            return '0';
+        }
+        return this._decimals === undefined ? String( value ) : value.toFixed( this._decimals );
+    }
+
     // given the value (in the object, not the GUI), update the display of the slider line and the input box
     updateDisplay() {
-
-        const value = this.getValue();
 
         // Mick: checking $fill instead of $_hasSlider as we set $_hasSlider to true to prevent recreation after removing the DOM element it with noSloder()
         if ( this.$fill ) {
 
-            let percent = ( value - this._min ) / ( this._max - this._min );
-            percent = Math.max( 0, Math.min( percent, 1 ) );
+            const percent = this._fillPercent();
 
             // Skip layout-triggering style write when width is unchanged.
             // .listen() runs this every frame; on slow GPUs the style setter
@@ -917,7 +934,7 @@ class NumberController extends Controller {
         }
 
         if ( !this._inputFocused ) {
-            const text = this._decimals === undefined ? value : value.toFixed( this._decimals );
+            const text = this.displayText();
             if ( text !== this._lastDisplayedText ) {
                 this.$input.value = text;
                 this._lastDisplayedText = text;
@@ -1161,91 +1178,10 @@ class NumberController extends Controller {
         // Map clientX to value
         // ---------------------------------------------------------------------
 
-        const map = ( v, a, b, c, d ) => {
-            return ( v - a ) / ( b - a ) * ( d - c ) + c;
-        };
-
-
-        const setValueFromX = ((clientX, allowWrapping=true) => {
-            const rect = this.$slider.getBoundingClientRect();
-            const sliderWidth = rect.right - rect.left;
-
-            // MICK: To support elastic sliders, we need to expand the range
-            // but the value should be calculated based on the original range
-            // when clicked
-            let value = map(clientX, rect.left, rect.right, this._minClick, this._maxClick);
-
-            // MICK: added elastic and wrapping
-            if (this._elastic) {
-                assert(!this._canWrap, "elastic and wrap are mutually exclusive");
-
-                // gone off the right, so expand the range to encompass this
-                while (value > this._max && this._max < this._elasticMax) {
-                    this._max = Math.min(this._max * 2, this._elasticMax);
-                    this.updateElasticStep()
-                }
-
-                // off the left, compress the max range?
-                // (_elasticMin is the minimum of _max, not _min)
-                if (clientX < rect.left) {
-                    this._max = Math.max(this._max / 2, this._elasticMin);
-
-                    // need to reset _maxClick to the new max
-                    // so if we drag back to the right, we don't jump
-                    this._maxClick = this._max;
-                    this.updateElasticStep();
-                 //   value = this._min;
-                }
-
-                if (this._elasticShrink) {
-
-                    if (value < this._max/3) {
-                        this._max = Math.max(this._max / 2, this._elasticMin+1);
-                    }
-                }
-
-            }
-
-            if (allowWrapping && this._canWrap) {
-                if (clientX < rect.left) {
-                    value = this._max - ((rect.left - clientX) % sliderWidth) / sliderWidth * (this._max - this._min);
-                } else if (clientX > rect.right) {
-                    value = this._min + ((clientX - rect.right) % sliderWidth) / sliderWidth * (this._max - this._min);
-                }
-            }
-            this._snapClampSetValue(value);
-
-            if (allowWrapping && this._canWrap && this._wrapReceiver && Number.isFinite(this.deltaX)) {
-                // MICK: count how many whole slider widths this move crossed, and carry
-                // all of them into the wrapReceiver (e.g. seconds -> minutes).
-                // A single move can cross the end of the slider more than once - a fast
-                // flick, or a pointermove the browser has coalesced. Carrying only +/-1
-                // in that case leaves the minutes running behind the seconds.
-                //
-                // wrapIndex() deliberately mirrors the branch tests above, so it steps at
-                // exactly the X values where the mapped value jumps. In particular the
-                // ends are inclusive: at clientX === rect.right the value is still an
-                // un-wrapped _max, so that must be index 0, not 1.
-                const wrapIndex = x => {
-                    if (x > rect.right) return Math.floor((x - rect.right) / sliderWidth) + 1;
-                    if (x < rect.left) return -(Math.floor((rect.left - x) / sliderWidth) + 1);
-                    return 0;
-                };
-                const carry = wrapIndex(clientX) - wrapIndex(clientX - this.deltaX);
-
-                if (carry !== 0) {
-                    this._wrapReceiver.setValue(this._wrapReceiver.getValue() + carry);
-                }
-            }
-
-
-        });
-
-        // const setValueFromX = clientX => {
-        //     const rect = this.$slider.getBoundingClientRect();
-        //     let value = map( clientX, rect.left, rect.right, this._min, this._max );
-        //     this._snapClampSetValue( value );
-        // };
+        // MICK: the mapping itself, and the drag bookkeeping around it, live on the
+        // prototype (_setValueFromX / _dragStart / _dragMove) so that the big-slider
+        // popup can steer this controller through exactly the same maths - elastic,
+        // wrapping and all - just by handing them its own full-width track element.
 
         // Mouse drag
         // ---------------------------------------------------------------------
@@ -1309,13 +1245,7 @@ class NumberController extends Controller {
             }
 
             this._setDraggingStyle( true );
-            // MICK: added minClick and maxClick to support elastic sliders
-            this._minClick = this._min;
-            this._maxClick = this._max;
-
-            this.prevDragX = e.clientX;
-            this.deltaX = 0;
-            setValueFromX( e.clientX , false); // don't allow wrapping on initial click
+            this._dragStart( e.clientX );
         };
 
         // Only the pointer that started the drag may steer or end it. The listeners sit
@@ -1323,9 +1253,7 @@ class NumberController extends Controller {
         // would otherwise yank the value to its own X, or release the drag early.
         const pointerMove = e => {
             if ( e.pointerId !== dragPointerId ) return;
-            this.deltaX = e.clientX - this.prevDragX;
-            this.prevDragX = e.clientX;
-            setValueFromX( e.clientX );
+            this._dragMove( e.clientX );
         };
 
         // Tear the drag down completely. Kept separate from onFinishChange so that the
@@ -1379,11 +1307,7 @@ class NumberController extends Controller {
             // In a scrollable container this runs on the FIRST touchmove, after the
             // scroll/slide test - so the finger has already travelled, and that first
             // step has to carry the wrapReceiver like any other.
-            const x = touch.clientX;
-            this.deltaX = x - this.prevDragX;
-            this.prevDragX = x;
-
-            setValueFromX( x );
+            this._dragMove( touch.clientX );
             testingForScroll = false;
         };
 
@@ -1407,17 +1331,14 @@ class NumberController extends Controller {
             window.addEventListener( 'touchend', onTouchEnd );
             window.addEventListener( 'touchcancel', onTouchEnd );
 
-            // MICK: added minClick and maxClick to support elastic sliders
-            this._minClick = this._min;
-            this._maxClick = this._max;
-
-            // MICK: seed the drag origin at finger-down. The wrap carry works from
-            // this.deltaX, which would otherwise still hold the last mouse drag's value
-            // and let a touch invent a carry it never made.
+            // MICK: seed the drag origin at finger-down (min/maxClick for the elastic
+            // range, prevDragX/deltaX for the wrap carry - which would otherwise still
+            // hold the last mouse drag's value and let a touch invent a carry it never
+            // made). Unlike the mouse, no value is committed yet: that waits for the
+            // scroll/slide test below.
             prevClientX = e.touches[ 0 ].clientX;
             prevClientY = e.touches[ 0 ].clientY;
-            this.prevDragX = prevClientX;
-            this.deltaX = 0;
+            this._dragSeed( prevClientX );
 
             // If we're in a scrollable container, we should wait for the first
             // touchmove to see if the user is trying to slide or scroll.
@@ -1464,11 +1385,8 @@ class NumberController extends Controller {
             } else {
 
                 e.preventDefault();
-                // MICK: track deltaX here too, so the wrap carry works on touch
-                const x = touch.clientX;
-                this.deltaX = x - this.prevDragX;
-                this.prevDragX = x;
-                setValueFromX( x );
+                // MICK: _dragMove tracks deltaX, so the wrap carry works on touch too
+                this._dragMove( touch.clientX );
 
             }
 
@@ -1529,6 +1447,115 @@ class NumberController extends Controller {
         this.$slider.addEventListener( 'touchstart', onTouchStart, { passive: false } );
         this.$slider.addEventListener( 'wheel', onWheel, { passive: false } );
 
+    }
+
+    // MICK: map a pointer X onto the slider's range and commit the value. Pulled out
+    // of _initSlider's drag closure so a second widget can drive this controller
+    // through the identical maths. `trackElement` is whatever the user has hold of:
+    // the controller's own $slider normally, the big-slider popup's full-width bar
+    // when that is open. Everything below - elastic expansion, wrapping, the
+    // wrapReceiver carry - is measured against that element's rect.
+    _setValueFromX( clientX, allowWrapping = true, trackElement = this.$slider ) {
+
+        const map = ( v, a, b, c, d ) => {
+            return ( v - a ) / ( b - a ) * ( d - c ) + c;
+        };
+
+        const rect = trackElement.getBoundingClientRect();
+        const sliderWidth = rect.right - rect.left;
+
+        // MICK: To support elastic sliders, we need to expand the range
+        // but the value should be calculated based on the original range
+        // when clicked
+        let value = map(clientX, rect.left, rect.right, this._minClick, this._maxClick);
+
+        // MICK: added elastic and wrapping
+        if (this._elastic) {
+            assert(!this._canWrap, "elastic and wrap are mutually exclusive");
+
+            // gone off the right, so expand the range to encompass this
+            while (value > this._max && this._max < this._elasticMax) {
+                this._max = Math.min(this._max * 2, this._elasticMax);
+                this.updateElasticStep()
+            }
+
+            // off the left, compress the max range?
+            // (_elasticMin is the minimum of _max, not _min)
+            if (clientX < rect.left) {
+                this._max = Math.max(this._max / 2, this._elasticMin);
+
+                // need to reset _maxClick to the new max
+                // so if we drag back to the right, we don't jump
+                this._maxClick = this._max;
+                this.updateElasticStep();
+             //   value = this._min;
+            }
+
+            if (this._elasticShrink) {
+
+                if (value < this._max/3) {
+                    this._max = Math.max(this._max / 2, this._elasticMin+1);
+                }
+            }
+
+        }
+
+        if (allowWrapping && this._canWrap) {
+            if (clientX < rect.left) {
+                value = this._max - ((rect.left - clientX) % sliderWidth) / sliderWidth * (this._max - this._min);
+            } else if (clientX > rect.right) {
+                value = this._min + ((clientX - rect.right) % sliderWidth) / sliderWidth * (this._max - this._min);
+            }
+        }
+        this._snapClampSetValue(value);
+
+        if (allowWrapping && this._canWrap && this._wrapReceiver && Number.isFinite(this.deltaX)) {
+            // MICK: count how many whole slider widths this move crossed, and carry
+            // all of them into the wrapReceiver (e.g. seconds -> minutes).
+            // A single move can cross the end of the slider more than once - a fast
+            // flick, or a pointermove the browser has coalesced. Carrying only +/-1
+            // in that case leaves the minutes running behind the seconds.
+            //
+            // wrapIndex() deliberately mirrors the branch tests above, so it steps at
+            // exactly the X values where the mapped value jumps. In particular the
+            // ends are inclusive: at clientX === rect.right the value is still an
+            // un-wrapped _max, so that must be index 0, not 1.
+            const wrapIndex = x => {
+                if (x > rect.right) return Math.floor((x - rect.right) / sliderWidth) + 1;
+                if (x < rect.left) return -(Math.floor((rect.left - x) / sliderWidth) + 1);
+                return 0;
+            };
+            const carry = wrapIndex(clientX) - wrapIndex(clientX - this.deltaX);
+
+            if (carry !== 0) {
+                this._wrapReceiver.setValue(this._wrapReceiver.getValue() + carry);
+            }
+        }
+
+    }
+
+    // MICK: remember where a drag started. The elastic range is frozen at press time
+    // (_minClick/_maxClick) so the value does not jump as the range grows under it,
+    // and the wrap carry needs an origin to measure deltaX from.
+    _dragSeed( clientX ) {
+        this._minClick = this._min;
+        this._maxClick = this._max;
+        this.prevDragX = clientX;
+        this.deltaX = 0;
+    }
+
+    // MICK: press. No wrapping on the initial click - clicking outside the track
+    // should clamp to the near end, not teleport to the far one.
+    _dragStart( clientX, trackElement ) {
+        this._dragSeed( clientX );
+        this._setValueFromX( clientX, false, trackElement );
+    }
+
+    // MICK: subsequent moves in a drag that _dragStart (or the touch seed) opened.
+    _dragMove( clientX, trackElement ) {
+        this.deltaX = clientX - this.prevDragX;
+        this.prevDragX = clientX;
+        this._setValueFromX( clientX, true, trackElement );
     }
 
     _setDraggingStyle( active, axis = 'horizontal' ) {
