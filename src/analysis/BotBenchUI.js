@@ -41,6 +41,10 @@ import {
 import {longestUniformRun, measureAnchorRate} from "./BotBenchClock";
 import {putFileHandoff} from "../FileHandoff";
 import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBenchRunner";
+import {botENUToLLA} from "../TrackFiles/CTrackFileBOT";
+import {
+    candidateNotes, consistentTrackCSVs, lookCameraFraming, openHandoffWindow,
+} from "../TraverseHandoff";
 
 let activeDialog = null;
 let botBenchController = null;
@@ -1477,31 +1481,25 @@ function fillRow(state, entry) {
  * carried in the handoff's meta, to land in the sitch Notes panel.
  *
  * ONE KEY, NOT A LIST. The handoff record holds an ARRAY of files plus the
- * meta, so several files and their notes travel under a single key — there is
- * no need to join keys with a separator in the URL, and nothing can arrive
- * half-transferred because the record is written in one transaction.
+ * meta, so the scenario, every consistent candidate and the notes travel under
+ * a single key — there is no need to join keys with a separator in the URL,
+ * and nothing can arrive half-transferred because the record is written in one
+ * transaction.
+ *
+ * WHAT TRAVELS: the scenario CSV (sensor track, and truth where the file
+ * carries it), one CUSTOM1 CSV per consistent candidate named c_<key>, and the
+ * notes. The candidates are the point — the scenario alone shows what was
+ * observed, and the reason to open a row is to see what the analysis made of it.
  *
  * The window is claimed synchronously, before the store write, for the same
  * reason openReport does it: window.open is only honoured while the click's
  * transient activation is live, and an await drops it.
  */
 function openInNewSitrec(entry, link) {
-    const w = window.open("", "_blank");
-    if (!w) {
-        showError("The new Sitrec window was blocked by the browser's popup blocker. "
-            + "Allow popups for this site and click the filename again.");
-        return;
-    }
-    w.document.open();
-    w.document.write("<!doctype html><meta charset=\"utf-8\">"
-        + "<title>Opening in Sitrec…</title>"
-        + "<body style=\"font:14px system-ui;padding:24px;background:#12161c;color:#cfd8e3\">"
-        + "Handing the scenario to a new Sitrec window…");
-
     const original = link.textContent;
     link.textContent = "opening…";
-    (async () => {
-        try {
+    openHandoffWindow({
+        buildFiles: async () => {
             const file = await entry.getFile();
             // The sidecar TEXT is already on the entry — pairSidecars attached
             // it during the folder walk, which is the only moment the siblings
@@ -1516,24 +1514,45 @@ function openInNewSitrec(entry, link) {
                 parse(entry.sidecarText, "scenario sidecar"),
                 parse(entry.labelsText, "truth sidecar"),
                 entry.relativePath);
-            const key = await putFileHandoff([file],
-                {source: "botbench", relativePath: entry.relativePath, notes});
-            // action=new gives the custom sitch, which is the neutral scene a
-            // BOT track should land in — it carries no target of its own to
-            // conflict with the one being imported.
+
+            // botENUToLLA, the SCENARIO'S OWN conversion, and MSL rather than
+            // HAE — see the note on consistentTrackCSVs for why a general
+            // ENU->ECEF->LLA is wrong on a BOT file in two compounding ways.
+            const origin = entry.results?.botOrigin;
+            const candidates = (entry.results && origin) ? consistentTrackCSVs(entry.results, {
+                toLLA: (x, y, z) => botENUToLLA(x, y, z, origin),
+                altitudeIsHAE: false,
+                startMs: entry.results.clipStartMs,
+            }) : [];
+
+            return {
+                files: [file, ...candidates.map((c) =>
+                    new File([c.text], `${c.name}.csv`, {type: "text/csv"}))],
+                meta: {
+                    source: "botbench", relativePath: entry.relativePath,
+                    // The scenario CSV already carries the sensor and truth
+                    // tracks, so unlike the gallery this sends no context
+                    // tracks — adding them would import each one twice.
+                    lookCameraFraming: lookCameraFraming(entry.results, candidates),
+                    notes: `${notes}\n\n${candidateNotes(candidates)}`,
+                },
+            };
+        },
+        // action=new gives the custom sitch, which is the neutral scene a BOT
+        // track should land in — it carries no target of its own to conflict
+        // with the one being imported. The live gallery does the opposite and
+        // keeps its own sitch, because there the candidates belong in the scene
+        // they were computed from.
+        urlFor: (key) => {
             const url = new URL(window.location.href);
             url.hash = "";
             url.search = "";
             url.searchParams.set("action", "new");
             url.searchParams.set("handoff", key);
-            w.location.href = url.toString();
-        } catch (e) {
-            try { w.close(); } catch (_) { /* already gone */ }
-            showError("Could not open this file in a new window: " + (e && e.message), e);
-        } finally {
-            link.textContent = original;
-        }
-    })();
+            return url.toString();
+        },
+        onDone: () => { link.textContent = original; },
+    });
 }
 
 function openReport(entry, button) {

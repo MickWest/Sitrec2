@@ -41,6 +41,7 @@ import {
     compareTrackToTruth, meanAngularError, KNOTS_TO_MS, METERS_PER_NM,
 } from "../TraverseAnalysis";
 import {rankAllHypotheses} from "../TraverseRanking";
+import {BOT_DEFAULT_EPOCH_ISO, botENUToLLA} from "../TrackFiles/CTrackFileBOT";
 // RAYLEIGH_MEAN / RAYLEIGH_SD live in BotBenchIngest, beside assessSourceQuality:
 // they describe the SOURCE's declared pointing error, and the notes builder
 // needs the same figures. See the comment there for why the constant is
@@ -466,6 +467,18 @@ export async function runBotBenchAnalysis(record, {
     });
 
     const results = {
+        // The file's own local ENU frame and epoch. Carried because a candidate
+        // track is only meaningful against them — see consistentTrackCSVs,
+        // which is the one thing that turns a hypothesis back into geography.
+        // botOrigin is in botENUToLLA's shape so that function can be handed it
+        // verbatim, which is what keeps candidates in the same frame as the
+        // scenario's own tracks.
+        originLat, originLon, clipStartMs: record.clipStartMs ?? null,
+        botOrigin: Array.isArray(record.meta?.originLLA) ? {
+            latDeg: record.meta.originLLA[0],
+            lonDeg: record.meta.originLLA[1],
+            groundElevationMSL: record.meta.siteElevationMSL ?? 0,
+        } : null,
         dataset, sweep, fastProfile, slowProfile, aircraft,
         best: sweep.best, bestMetrics: series.bestMetrics, slowBestRow: series.slowBestRow,
         hypotheses, families, truth,

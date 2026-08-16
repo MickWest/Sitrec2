@@ -117,7 +117,7 @@ import {initUILogging} from "./UILogging";
 import {assert} from "./assert";
 import {CNodeFactory} from "./nodes/CNodeFactory";
 import {extraCSS} from "./extra.css";
-import {_TrackManager} from "./TrackManager";
+import {_TrackManager, resizeAllObjectSpheres, syncGlobalSphereResize} from "./TrackManager";
 import {ViewMan} from "./CViewManager";
 import {LayoutMan} from "./CLayoutManager";
 import {clearMenuMirrors} from "./MenuMirror";
@@ -2839,6 +2839,109 @@ function loadStartupDropURLAfterSitchSetup() {
 }
 
 /**
+ * Shrink the marker spheres on tracks a handoff just imported.
+ *
+ * WHY IT IS NEEDED. TrackManager gives every imported track a 40 m sphere
+ * (TrackManager.js, the `if (!trackOb.displayTargetSphere)` fallback). That is
+ * the right default for the widely-spaced tracks a user normally drops — an
+ * airliner 30 km away needs a marker you can see. A BOT scenario is the
+ * opposite case: several candidate reconstructions of the SAME object, metres
+ * apart, where 40 m spheres merge into one blob and hide the very disagreement
+ * they were imported to show.
+ *
+ * WHY IT WAITS. uploadDroppedFile returns once a file is accepted, not once its
+ * tracks exist — the parse is handed to the main loop. So the spheres do not
+ * exist yet at the point this is called, and the work has to hang off
+ * `tracksChanged`, which TrackManager fires as each file's tracks land.
+ *
+ * The listener removes itself once every handed-off file has been seen, and in
+ * any case after a bounded time, so a file that fails to parse cannot leave it
+ * attached for the session.
+ */
+function applyHandoffTrackObjectSize(handoff, before) {
+    const radius = handoff.meta?.trackObjectRadiusM;
+    if (!Number.isFinite(radius) || radius <= 0) return;
+
+    const resized = new Set();
+    const resizeNew = () => {
+        // Scoped to the objects this handoff created, so opening a handoff into
+        // an existing scene cannot shrink the spheres already in it.
+        const changed = resizeAllObjectSpheres(radius, (id) => {
+            if (before.has(id) || resized.has(id)) return false;
+            resized.add(id);
+            return true;
+        });
+        // AFTER the resize, not before. TrackManager syncs the reading as part
+        // of notifyTracksChanged, which runs before this listener — so at that
+        // moment the spheres are still at their import size and the control
+        // would settle on a number the scene no longer uses.
+        if (changed) {
+            syncGlobalSphereResize();
+            // The camera, once there is something in the scene to frame. The
+            // look view has been laid out by now, so its aspect is the real
+            // one rather than whatever it was constructed with.
+            applyHandoffLookFraming(handoff);
+        }
+    };
+
+    const onTracks = () => {
+        resizeNew();
+        if (resized.size >= handoff.files.length) stop();
+    };
+    const stop = () => {
+        EventManager.removeEventListener("tracksChanged", onTracks);
+        clearTimeout(timer);
+    };
+    // A file that produces no track never fires the event, so the count above
+    // can legitimately never be reached. Bounded, then, rather than trusting it.
+    const timer = setTimeout(() => { resizeNew(); stop(); }, 20000);
+    EventManager.addEventListener("tracksChanged", onTracks);
+    // Some tracks may already be in place by the time we get here.
+    resizeNew();
+}
+
+/**
+ * Set the look camera's field of view so the closest marker sphere spans the
+ * requested fraction of the view's WIDTH.
+ *
+ * A 1 m sphere is the right size to represent the object rather than to
+ * symbolise it, and it is invisible at any ordinary field of view — so the
+ * handoff asks for a framing instead of shipping a number. The angle can only
+ * be worked out HERE, because a fraction of width depends on this window's
+ * aspect ratio and a camera's fov is vertical.
+ *
+ *   angular diameter of the sphere   theta = 2*atan(r/d)
+ *   horizontal field of view          hFov  = theta / fraction
+ *   vertical, via the viewport        tan(vFov/2) = tan(hFov/2) / aspect
+ *
+ * Applied to `fovUI` rather than to camera.fov, because a CNodeControllerFOV
+ * re-applies the node's value to the camera every frame and would overwrite a
+ * direct write on the very next one.
+ */
+function applyHandoffLookFraming(handoff) {
+    const f = handoff.meta?.lookCameraFraming;
+    if (!f || !(f.closestRangeM > 0) || !(f.sphereRadiusM > 0) || !(f.widthFraction > 0)) return;
+
+    const fovNode = NodeMan.get("fovUI", false);
+    const lookCamera = NodeMan.get("lookCamera", false);
+    if (!fovNode || !lookCamera?.camera) return;
+
+    const aspect = lookCamera.camera.aspect > 0 ? lookCamera.camera.aspect : 1;
+    const theta = 2 * Math.atan(f.sphereRadiusM / f.closestRangeM);
+    const hFov = theta / f.widthFraction;
+    // A request that works out wider than a hemisphere is not a framing, it is
+    // a sign the geometry is degenerate; leave the camera as it is.
+    if (!(hFov > 0) || hFov >= Math.PI) return;
+    const vFov = 2 * Math.atan(Math.tan(hFov / 2) / aspect) * 180 / Math.PI;
+    if (!(vFov > 0)) return;
+
+    console.log(`Handoff framing: ${f.sphereRadiusM} m sphere at `
+        + `${Math.round(f.closestRangeM)} m to span ${(f.widthFraction * 100).toFixed(1)}% `
+        + `of width => look FOV ${vFov.toFixed(4)} deg (aspect ${aspect.toFixed(3)})`);
+    fovNode.setValue(vFov);
+}
+
+/**
  * Load files another window handed us through IndexedDB (?handoff=<key>).
  *
  * The counterpart of `drop=`, for files that have no URL: a file picked with
@@ -2871,6 +2974,9 @@ function loadStartupHandoffAfterSitchSetup() {
             }
             console.log(`Loading ${handoff.files.length} handoff file(s) after sitch setup: `
                 + handoff.files.map((f) => f.name).join(", "));
+            // Snapshot the graph BEFORE importing, so the resize below can act
+            // on the nodes this handoff created and nothing else.
+            const before = new Set(Object.keys(NodeMan.list ?? {}));
             // Sequentially: the importer resolves name collisions and mutates
             // shared state, and two BOT tracks racing through it can end up
             // fighting over a name. Note that the await returns once a file is
@@ -2887,6 +2993,13 @@ function loadStartupHandoffAfterSitchSetup() {
             if (handoff.meta?.notes && NodeMan.exists("notesView")) {
                 NodeMan.get("notesView").appendAndShow(handoff.meta.notes);
             }
+            // Both are driven off "tracksChanged" rather than done here: this
+            // point is reached as soon as the files are ACCEPTED, which on a
+            // small handoff can be before the sitch has finished building its
+            // camera — and a field of view set then is overwritten by the
+            // setup that follows. Measured: a two-file handoff lost the race
+            // every time while a six-file one won it.
+            applyHandoffTrackObjectSize(handoff, before);
         } catch (e) {
             showError("Failed to load the handed-off file: " + (e && e.message), e);
         }
