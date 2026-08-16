@@ -25,7 +25,7 @@ import {
 import {Sphere, Vector3} from "three";
 import {par} from "../par";
 import {DRAG, getMousePosition, screenToNDC} from "../mouseMoveView";
-import {mouseInViewOnly, withDisplayedCamera} from "../ViewUtils";
+import {mouseInViewOnly, renderedRect, withDisplayedCamera} from "../ViewUtils";
 import {DebugArrowAB} from "../threeExt";
 import {CNode3DObject} from "./CNode3DObject";
 import {FeatureManager} from "../CFeatureManager";
@@ -593,8 +593,18 @@ export const mouseMethods = {
         standaloneMenu.open();
     },
 
-    // Find the closest celestial object (star, planet, or satellite) to a ray
+    // Find the closest celestial object (star, planet, or satellite) to a ray.
+    //
+    // This picks by projecting each candidate FORWARD and comparing screen pixels, so
+    // unlike a raycast it needs the projection the view is actually displayed with —
+    // the same one CNodeDisplaySkyOverlay draws the labels through. Without it, a click
+    // and the label it is aimed at disagree by the letterbox stretch.
     findClosestCelestialObject(mouseRay, mouseX, mouseY, maxAngleDegrees = 5) {
+        return withDisplayedCamera(this,
+            () => this.findClosestCelestialObjectInner(mouseRay, mouseX, mouseY, maxAngleDegrees));
+    },
+
+    findClosestCelestialObjectInner(mouseRay, mouseX, mouseY, maxAngleDegrees = 5) {
         const nightSkyNode = NodeMan.get("NightSkyNode", false);
         if (!nightSkyNode) {
             console.log("NightSkyNode not found");
@@ -603,6 +613,18 @@ export const mouseMethods = {
 
         let closestObject = null;
         let closestAngle = maxAngleDegrees;
+
+        // NDC -> screen pixels through the rectangle the 3D actually fills, which is
+        // NOT the whole pane: with Match Video Aspect the canvas is letterboxed inside
+        // its div, so mapping across the div puts every hit target radially out from
+        // the pane centre and the click lands on the wrong object. This is the forward
+        // twin of screenToNDC(), which already takes the mouse the other way.
+        const pickRect = renderedRect(this, this.widthPx, this.heightPx);
+        const containerOffsetX = ViewMan.screenOffsetX || 0;
+        const toScreen = (ndc) => [
+            pickRect.x + (ndc.x + 1) * 0.5 * pickRect.w + this.leftPx + containerOffsetX,
+            pickRect.y + (1 - ndc.y) * 0.5 * pickRect.h + this.topPx,
+        ];
 
         // Convert mouse ray to a direction vector using the raycaster
         // mouseRay is in NDC coordinates (-1 to +1)
@@ -658,19 +680,15 @@ export const mouseMethods = {
                 
                 // Check if in front of camera and within view
                 if (pos.z > -1 && pos.z < 1 && pos.x >= -1 && pos.x <= 1 && pos.y >= -1 && pos.y <= 1) {
-                    // Convert NDC to screen coordinates, accounting for sidebar offset
-                    const containerOffsetX = ViewMan.screenOffsetX || 0;
-                    const screenX = (pos.x + 1) * this.widthPx / 2 + this.leftPx + containerOffsetX;
-                    const screenY = (-pos.y + 1) * this.heightPx / 2 + this.topPx;
-                    
+                    const [screenX, screenY] = toScreen(pos);
+
                     // Calculate screen radius by projecting an edge point
                     const spriteScale = planetData.sprite.scale.x;
                     const edgeWorldPos = planetWorldPos.clone();
                     const right = new Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
                     edgeWorldPos.addScaledVector(right, spriteScale);
                     const edgePos = edgeWorldPos.project(this.camera);
-                    const edgeScreenX = (edgePos.x + 1) * this.widthPx / 2 + this.leftPx + containerOffsetX;
-                    const edgeScreenY = (-edgePos.y + 1) * this.heightPx / 2 + this.topPx;
+                    const [edgeScreenX, edgeScreenY] = toScreen(edgePos);
                     const screenRadius = Math.sqrt((edgeScreenX - screenX) ** 2 + (edgeScreenY - screenY) ** 2);
                     
                     const dx = screenX - mouseX;
@@ -704,7 +722,6 @@ export const mouseMethods = {
             this.camera.position.copy(savedCameraPos);
             this.camera.updateMatrixWorld();
 
-            const containerOffsetX = ViewMan.screenOffsetX || 0;
             const maxSatPixelDistance = 15;
             let closestSatDistance = maxSatPixelDistance;
 
@@ -722,9 +739,7 @@ export const mouseMethods = {
                 // Skip satellites behind the camera (outside NDC range)
                 if (projected.z < -1 || projected.z > 1) continue;
 
-                // Convert NDC to screen coordinates
-                const screenX = (projected.x + 1) * this.widthPx / 2 + this.leftPx + containerOffsetX;
-                const screenY = (-projected.y + 1) * this.heightPx / 2 + this.topPx;
+                const [screenX, screenY] = toScreen(projected);
 
                 const dx = screenX - mouseX;
                 const dy = screenY - mouseY;
@@ -786,11 +801,8 @@ export const mouseMethods = {
                 pos.project(this.camera);
                 
                 if (pos.z > -1 && pos.z < 1 && pos.x >= -1 && pos.x <= 1 && pos.y >= -1 && pos.y <= 1) {
-                    // Convert NDC to screen coordinates, accounting for sidebar offset
-                    const containerOffsetX = ViewMan.screenOffsetX || 0;
-                    const screenX = (pos.x + 1) * this.widthPx / 2 + this.leftPx + containerOffsetX;
-                    const screenY = (-pos.y + 1) * this.heightPx / 2 + this.topPx;
-                    
+                    const [screenX, screenY] = toScreen(pos);
+
                     const dx = screenX - mouseX;
                     const dy = screenY - mouseY;
                     const pixelDistance = Math.sqrt(dx * dx + dy * dy);
