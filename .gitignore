@@ -54,6 +54,17 @@ AGENTS.md
 # benchmarks/botbench/real-tracks/README.md, and each scenario commits to the
 # exact bytes it was cut from via a sha256 in its segment provenance.
 /benchmarks/botbench/real-tracks/
+# JetBrains IDE project state (bot.iml, workspace.xml and friends). Per-user
+# and per-machine, so it belongs to whoever opened the repo, not to the repo.
+.idea/
+
+# A transfer note about the Gimbal arguments: what the BOT tractability results
+# do and do not say about them. Reading and commentary rather than a result of
+# this benchmark, so it stays local — the same reasoning as the working notes
+# below. The rest of benchmarks/botbench/analysis/ IS tracked, so this names the
+# one file rather than the directory.
+/benchmarks/botbench/analysis/GIMBAL-APPLICABILITY.md
+
 # Local code-review / audit reports (not part of the codebase)
 /CODE-REVIEW-*.md
 
