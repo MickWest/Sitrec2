@@ -9,6 +9,42 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.132.0 (2026-08-16)
+
+### New Features
+
+- **35mm Equiv (mm)** (Camera → FOV (Zoom)): set or read the camera's field of view as the lens that would produce it on a full-frame camera — the number photographers actually think in. It is a third view of the same angle as VFOV and HFOV, so editing any one moves the other two and they can never disagree. Measured across the frame's long side, so it only changes if the frame was really cropped: the same lens reads the same number for 3:2 stills and 16:9 video, and for landscape and portrait.
+
+- **Lens (EXIF)** (Camera → FOV (Zoom)): a read-only row showing the real focal length and lens name recorded in an imported photo, so you can check Sitrec's field of view against what the camera says was fitted. Hidden when no photo with lens details is loaded.
+
+- **Use Relative Altitude** (Camera → Location): drone photos also record how high the drone was above its takeoff point, which is often more trustworthy than the barometric altitude in the same file. That height is now offered as a one-click alternative, and if a photo's own altitude puts the camera below the ground Sitrec says so and offers the swap. The camera is still placed exactly where the file says unless you choose otherwise.
+
+- **Paste a link to anything you can drag in**: file types you could always import by dropping them — NITF imagery, KLV metadata, ZIP archives, radar captures, satellite element sets, and more video and audio formats — can now be loaded by pasting their web address as well. The two lists are now one list, so they cannot drift apart again.
+
+### Bug Fixes
+
+- Fixed photos from Canon cameras importing with no field of view at all, so the camera kept whatever zoom it already had instead of matching the photo.
+
+- Fixed drone photos with a cropped, wide frame importing far too wide a field of view — one measured shot came in at 100.7 degrees across where 78.6 is correct.
+
+- Fixed photos shot in portrait importing with half the vertical field missing.
+
+- Fixed drone photos shot vertically importing rotated a quarter turn, because the file describes the same turn twice and Sitrec was applying both.
+
+- Fixed HFOV (Camera → FOV (Zoom)) accepting an edit and silently discarding it whenever something other than *Manual* was driving the field of view. It now greys out along with VFOV and the 35mm readout, since all three are the same angle.
+
+- Fixed a photo taken with no GPS fix teleporting the camera into the Gulf of Guinea. Cameras that write zero latitude and longitude when they have no fix are now treated as having no location, so the camera stays exactly where you put it.
+
+- Fixed a photo that has a position but no height dropping the camera to sea level, usually under the terrain. It is now placed 2 m above the ground with *Above Ground Level* switched on.
+
+- Fixed the greyed-out Cam Lat/Lon/Alt boxes (Camera → Location) and the VFOV slider (Camera → FOV (Zoom)) showing stale values whenever an imported file took over the camera — and switching either back to *Manual* then throwing the camera half a world away and jumping the zoom. Both now hold the values the camera actually has, so *Manual* picks up exactly where the imported source left off.
+
+- Fixed GeoJSON track files failing to load when named with the standard .geojson extension.
+
+- Fixed several file types that could be selected or dropped but then quietly did nothing: BMP images, two- and three-line element sets, and .m4v video and most audio formats loaded from a web address. MPEG-1 and MPEG-2 files now give the same re-encode instructions the other unsupported video formats do.
+
+---
+
 ## Version 2.131.1 (2026-08-15)
 
 ### New Features

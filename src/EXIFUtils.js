@@ -95,6 +95,11 @@ function clamp(value, min, max) {
 // Matches FULL_FRAME_LONG_MM in CNodeControllerPTZUI, which anchors the slider the same way.
 const FULL_FRAME_LONG_MM = 36;
 
+// Where to stand a camera whose photo gives a position but no usable height. Roughly eye level,
+// so a handheld ground shot starts somewhere plausible instead of at the centre of the Earth's
+// sea-level surface, and the user can raise it from a sane place.
+const DEFAULT_AGL_METRES = 2;
+
 /**
  * Millimetres per FocalPlaneResolutionUnit, accepting BOTH the raw EXIF code and the
  * human-readable string exifr substitutes for it.
@@ -406,21 +411,29 @@ function applyImportedImageCameraPositionInternal(metadata, filename = "", optio
     // altitude as absolute rather than above-ground.)
     cameraNode.forceAboveSurface = false;
 
+    // A photo can carry a real position but no usable height: the altitude tag is absent, or the
+    // camera filled in a bare 0 the way a phone or an action cam without a barometer does. Zero
+    // MSL is a real place — the sea — so honouring it drops the camera to sea level and usually
+    // under the terrain. Stand it just above the ground instead, and switch the position node to
+    // AGL so the number on screen says what it means. No real fix reports exactly 0.000.
+    const noUsableAltitude = !Number.isFinite(placement.altitude) || placement.altitude === 0;
+    const placedAltitude = noUsableAltitude ? DEFAULT_AGL_METRES : altitudeMSL;
+
     if (cameraPositionNode) {
         if (cameraPositionNode.agl !== undefined) {
-            cameraPositionNode.agl = false;
+            cameraPositionNode.agl = noUsableAltitude;
             // Keep the "Above Ground Level" GUI checkbox in sync with the change.
             cameraPositionNode.aglController?.updateDisplay?.();
         }
-        cameraPositionNode.setLLA(placement.latitude, placement.longitude, altitudeMSL);
+        cameraPositionNode.setLLA(placement.latitude, placement.longitude, placedAltitude);
         applied.cameraPositionNode = cameraPositionNode.id ?? "fixedCameraPosition";
     } else if (cameraLat && cameraLon && cameraAlt) {
         cameraLat.setValue(placement.latitude, true);
         cameraLon.setValue(placement.longitude, true);
         if (cameraAlt.setValueWithUnits) {
-            cameraAlt.setValueWithUnits(altitudeMSL, "metric", "small", true);
+            cameraAlt.setValueWithUnits(placedAltitude, "metric", "small", true);
         } else {
-            cameraAlt.setValue(m2f(altitudeMSL), true);
+            cameraAlt.setValue(m2f(placedAltitude), true);
         }
 
         if (cameraLat.recalculateCascade) {
@@ -433,9 +446,14 @@ function applyImportedImageCameraPositionInternal(metadata, filename = "", optio
         cameraNode.recalculateCascade();
     }
 
-    cameraNode.startPosLLA = [placement.latitude, placement.longitude, altitudeHAE];
-    camera.position.copy(importedCameraPosition);
-    camera.updateMatrixWorld();
+    // With no usable height the ECEF above is built from a sea-level altitude, so stamping it
+    // here would put the camera back at sea level and undo the AGL placement. The position node
+    // resolves the height against the terrain instead, which is the whole point of AGL.
+    if (!noUsableAltitude) {
+        cameraNode.startPosLLA = [placement.latitude, placement.longitude, altitudeHAE];
+        camera.position.copy(importedCameraPosition);
+        camera.updateMatrixWorld();
+    }
 
     const locationSummary = summarizeLocation(metadata);
     applied.cameraPosition = locationSummary;
@@ -453,7 +471,11 @@ function applyImportedImageCameraPositionInternal(metadata, filename = "", optio
         console.log(`[EXIF] Applied EXIF camera position for ${filename}: ${locationSummary}`);
     }
 
-    offerRelativeAltitude(placement, filename);
+    // Nothing to second-guess when we placed the camera ourselves: it is 2m above the ground by
+    // construction, and the file's own heights were the reason we had to.
+    if (!noUsableAltitude) {
+        offerRelativeAltitude(placement, filename);
+    }
 
     return applied;
 }
@@ -570,7 +592,9 @@ function applyRelativeAltitude() {
 async function offerRelativeAltitude(placement, filename = "") {
     const relativeAltitude = placement?.relativeAltitude;
 
-    if (!placement?.hasLocation || relativeAltitude === undefined) {
+    // A bare 0 is what a camera with no barometer writes, not a height it measured, and
+    // "Use Relative Altitude (0 m)" offers to move the camera nowhere.
+    if (!placement?.hasLocation || !(relativeAltitude > 0)) {
         relativeAltitudeOffer = null;
         relativeAltitudeButton?.hide();
         return;
@@ -1049,7 +1073,13 @@ export async function extractJPEGImportMetadata(arrayBuffer, filename = "") {
             headingSource: headingSource?.key,
             pitchSource: pitchSource?.key,
             rollSource: rollSource?.key,
-            hasLocation: latitudeSource?.value !== undefined && longitudeSource?.value !== undefined,
+            // Exactly 0/0 is "Null Island", in the Gulf of Guinea, and is what a camera writes
+            // when it has no fix - a DJI Osmo Action 4 with no GPS fills in zeros for latitude,
+            // longitude, altitude and every gimbal angle alike. Treating that as a real position
+            // teleports the camera into the Atlantic. No genuine fix lands on exactly 0.000000
+            // twice over, so the test is for exact zeros rather than a tolerance.
+            hasLocation: latitudeSource?.value !== undefined && longitudeSource?.value !== undefined
+                && !(latitudeSource.value === 0 && longitudeSource.value === 0),
             hasOrientation: headingSource?.value !== undefined || pitchSource?.value !== undefined || rollSource?.value !== undefined,
         },
     };
