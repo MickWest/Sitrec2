@@ -78,6 +78,7 @@ import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
 import {CNodeGUIFlag, CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
+import {extractFOV} from "./FOVUtils";
 import {collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry} from "./trackSourceUtils";
 import {encodeShareParam, resolveURLForFetch, toShareableCustomValue} from "./SitrecObjectResolver";
 import {getEnvBool} from "./envUtils";
@@ -446,6 +447,105 @@ export const setupMethods = {
                 lookCamera.camera.updateMatrixWorld();
                 ptzController.syncFromCamera(lookCamera.camera);
                 ptzController.refresh();
+                setRenderOne(true);
+            });
+        }
+
+        // ── Keep the Manual Location / FOV values on the camera it actually has ──
+        //
+        // The Heading folder already does this (the two blocks above): while a computed
+        // source drives the camera, the manual Pan/Tilt/Roll are kept on the live
+        // orientation, so the greyed-out sliders read the truth and selecting "Manual"
+        // is a no-op rather than a jump.
+        //
+        // Location and FOV had no equivalent, and they are the two a dropped file
+        // usually claims. An NTF image nominates its own camera track (TrackManager's
+        // autoSelectAsCamera) and its own FOV, so both switches move off "Manual" on
+        // import — leaving Cam Lat/Lon/Alt showing the sitch's default 31.98°, -118.43°
+        // 10000 ft, and fovUI on 30°, while the camera is a satellite over England at
+        // 8.8°. Picking "Manual" back then teleports the camera half a world away, and
+        // the Location boxes never described where the camera was in the first place.
+        //
+        // Two directions, two different right answers for what the manual value is:
+        //
+        //   arriving at a computed source — the value that source has at THIS frame.
+        //     Read from the switch, which has already changed by the time choiceChanged
+        //     fires, so this is the incoming source.
+        //
+        //   going back to Manual — what the camera has RIGHT NOW. The pose is applied in
+        //     the render loop, not in the cascade, so at this moment the camera is still
+        //     as the outgoing source left it; capturing it here is what makes the switch
+        //     exact at any frame, for a moving track as well as a fixed one. (Same
+        //     moment-of-switch capture, and same reasoning, as the Heading block above.)
+        //
+        // choiceChanged rather than onChange so programmatic selections (TrackManager
+        // claiming the switches on import — the whole case this exists for) are covered
+        // too. It fires twice for one selectOption(); both writes are no-ops after the
+        // first, since each store skips a write it already holds.
+        const fixedCameraPosition = NodeMan.get("fixedCameraPosition", false);
+        const cameraTrackSwitch = NodeMan.get("cameraTrackSwitch", false);
+        if (lookCamera && fixedCameraPosition && cameraTrackSwitch) {
+            // "flightSimCamera" and "orbitCamera" are not alternatives to the manual
+            // position, they are BUILT ON it — the jet takes off from it and the orbit
+            // circles it. Mirroring a camera into fixedCameraPosition while one of those
+            // is selected would move the origin the source is being generated from, so
+            // the whole simulated track would slide along behind the camera. The same
+            // three-way "manual family" already appears in the PositionLLA.onChange
+            // handler below, which promotes to "fixedCamera" from a track but leaves
+            // these two alone for the same reason.
+            const manualFamily = (c) =>
+                c === "fixedCamera" || c === "flightSimCamera" || c === "orbitCamera";
+            let previousChoice = cameraTrackSwitch.choice;
+
+            EventManager.addEventListener("Switch.choiceChanged.cameraTrackSwitch", (choice) => {
+                // Tracked before the guards, not after: a load restores the choice with
+                // the guards active, and leaving previousChoice on the pre-load value
+                // would make the next real change look like it came from somewhere else.
+                const from = previousChoice;
+                previousChoice = choice;
+                if (Globals.deserializing || Globals.disposing) return;
+                if (choice === from) return;
+
+                let position = null;
+                if (!manualFamily(choice)) {
+                    // A track has taken the Location. Mirror what it says at this frame,
+                    // so the greyed-out Lat/Lon/Alt describe the camera you can see.
+                    // p(), not getValueFrame(): a track's per-frame value may be a row
+                    // object rather than a bare Vector3, and p() is what unwraps it.
+                    position = cameraTrackSwitch.p(par.frame);
+                } else if (choice === "fixedCamera" && !manualFamily(from)) {
+                    // Coming back from a track. Capture the pose it left the camera in.
+                    lookCamera.camera.updateMatrixWorld();
+                    position = lookCamera.camera.position;
+                }
+
+                if (position && fixedCameraPosition.mirrorECEF(position)) {
+                    setRenderOne(true);
+                }
+            });
+        }
+
+        const fovUI = NodeMan.get("fovUI", false);
+        const fovSwitchNode = NodeMan.get("fovSwitch", false);
+        if (lookCamera && fovUI && fovSwitchNode) {
+            EventManager.addEventListener("Switch.choiceChanged.fovSwitch", (choice) => {
+                if (Globals.deserializing || Globals.disposing) return;
+
+                // camera.fov, not ptzAngles.fov: the PTZ controller only refreshes its
+                // own fov inside apply(), and apply() does not run while some other
+                // heading source owns the camera — which is exactly the state a dropped
+                // angles track leaves it in. The camera's own fov is written every frame
+                // by fovController from whichever source is selected, so it is the one
+                // reading that is always live.
+                const fov = (choice === "userFOV")
+                    ? lookCamera.camera.fov
+                    : extractFOV(fovSwitchNode.getValue(par.frame));
+                if (!(fov > 0)) return;
+
+                if (Math.abs(fovUI.value - fov) > 1e-9) fovUI.setValue(fov);
+                // The Zoom slider is bound to ptzAngles.fov (listened), so it shows a
+                // stale number until this lands even though fovUI is now correct.
+                if (ptzController) ptzController.fov = fov;
                 setRenderOne(true);
             });
         }

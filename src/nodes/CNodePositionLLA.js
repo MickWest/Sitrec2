@@ -239,6 +239,51 @@ export class CNodePositionLLA extends CNodeTrack {
 
     }
 
+    /**
+     * Mirror an ECEF position into these Lat/Lon/Alt fields as a DERIVED value rather
+     * than a user edit.
+     *
+     * setLLA announces itself with PositionLLA.onChange, and CCustomManager listens for
+     * that on fixedCameraPosition to pull the camera's Location source back to "Manual".
+     * That is right for a hand edit and exactly wrong for a mirror: the caller here is
+     * copying whatever source is CURRENTLY driving the camera, so announcing it would
+     * yank the Location off that source the instant the source claimed it.
+     *
+     * The altitude is stored absolutely (MSL). AGL is a different KIND of answer — "N
+     * metres above the ground", which moves as finer terrain streams in — so storing a
+     * measured height there would not preserve the position at all. AGL is switched off,
+     * visibly: its checkbox is listened.
+     *
+     * @returns {boolean} true if anything actually changed (sub-mm moves are float noise)
+     */
+    mirrorECEF(pos) {
+        if (this._LLA === undefined) return false;
+        const lla = ECEFToLLAVD_radii(pos);
+        // ECEFToLLAVD_radii returns ellipsoid height (HAE); _LLA[2] is MSL (h = H + N).
+        const altMSL = lla.z - meanSeaLevelOffset(lla.x, lla.y);
+
+        if (!this.agl
+            && Math.abs(lla.x - this._LLA[0]) < 1e-9
+            && Math.abs(lla.y - this._LLA[1]) < 1e-9
+            && Math.abs(altMSL - this._LLA[2]) < 1e-3) {
+            return false;
+        }
+
+        if (this.agl) {
+            this.agl = false;
+            this.aglController?.updateDisplay?.();
+        }
+
+        this._LLA = [lla.x, lla.y, altMSL];
+        if (this.guiLat) {
+            this.guiLat.value = lla.x;
+            this.guiLon.value = lla.y;
+            this.guiAlt.setValueWithUnits(altMSL, "metric", "small", true);
+        }
+        this.recalculateCascade();
+        return true;
+    }
+
 //     updateAltituide() {
 //         const altitude = altitudeAtLL(this._LLA[0], this._LLA[1]);
 //
