@@ -16,7 +16,7 @@ import {generatePlatformPath} from "./platforms";
 import {generateTargetTruth} from "./targets";
 import {makeWind} from "./wind";
 import {cleanDirections, generateObservation} from "./observation";
-import {cvDesignConditioning, sensorPathStats, losSeriesFeatures} from "./diagnostics";
+import {cvDesignConditioning, conditioningStack, sensorPathStats, losSeriesFeatures} from "./diagnostics";
 
 export const SITES = {
     "flat-reference":    {latDeg: 40,       lonDeg: -105,      groundElevationMSL: 0},
@@ -148,6 +148,7 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
     }
     const condObs = cvDesignConditioning(observation.observedDirectionENU, times, activeFrames);
     const condClean = cvDesignConditioning(cleanDir, times, allFrames);
+    const stackObs = conditioningStack(observation.observedDirectionENU, times, activeFrames);
     const pathStats = sensorPathStats(platformPos, n);
     const losFeatures = losSeriesFeatures(observation.observedDirectionENU, times, activeFrames);
 
@@ -188,6 +189,14 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
             cvDesignEffectiveRank: condObs.effectiveRank,
             cvDesignRcondCleanOracle: condClean.rcond,
             cvNormalLambdaMinOverTrace: condObs.lambdaMinOverTrace,
+            // Nested per-order stack (diagnostics.js conditioningStack). These
+            // are NEW fields on a sample-orthonormal temporal basis; the
+            // legacy cvDesign* fields above keep their original definition and
+            // their original calibration. Do not read the legacy -3/-2/-1
+            // bands across the ca/jerk rungs.
+            cvDesignLog10RcondEquilibrated: stackObs.cv,
+            conditioningStack: {cv: stackObs.cv, ca: stackObs.ca, jerk: stackObs.jerk},
+            maxObservableOrder: stackObs.maxObservableOrder,
             losSweepDeg: losFeatures.losSweepDeg,
             losMeanRateDegPerS: losFeatures.losMeanRateDegPerS,
             losLag1Autocorr: losFeatures.losLag1Autocorr,

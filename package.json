@@ -90,7 +90,8 @@
     "bench-bot-capval": "npx jest benchmarks/botbench/capability-validation.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-maneuver": "npx jest benchmarks/botbench/maneuver.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-real": "npx jest benchmarks/botbench/realtracks.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
-    "bench-bot-tract": "npx jest benchmarks/botbench/tractability.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit"
+    "bench-bot-tract": "npx jest benchmarks/botbench/tractability.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-dossiers": "npx jest benchmarks/botbench/dossiers.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit"
   },
   "jest": {
     "testPathIgnorePatterns": [
@@ -112,13 +113,14 @@
       "json"
     ],
     "transform": {
-      "\\.[jt]s$": "babel-jest",
+      "\\.(mjs|[jt]s)$": "babel-jest",
       "\\.txt$": "<rootDir>/tests/rawTextTransform.js"
     },
     "transformIgnorePatterns": [
       "node_modules/(?!(3d-tiles-renderer)/)"
     ],
     "moduleNameMapper": {
+      "^\\.\\./\\.\\./benchmarks/botbench/lib/(.*)\\.mjs$": "<rootDir>/benchmarks/botbench/lib/$1.mjs",
       ".+\\.mjs$": "<rootDir>/tests/__mocks__/three-addons-stub.js",
       "^3d-tiles-renderer/src/(.*)$": "<rootDir>/node_modules/3d-tiles-renderer/src/$1",
       "^3d-tiles-renderer/three$": "<rootDir>/node_modules/3d-tiles-renderer/src/three/renderer/math/OBB.js"

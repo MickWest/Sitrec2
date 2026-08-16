@@ -16,15 +16,16 @@
  *               the fast-far vs slow-near ambiguity, with real texture.
  *   circuits    real fixed-wing flying tight circuits — the figure-eight
  *               family's real-world anchor.
- *   hover pair  slow hexarotor segment, raw (ctrl) vs +120 m/s impulse
- *               splice (anom), identical pointing-error realization.
+ *   hover pair  slow hexarotor segment, sham-spliced (ctrl) vs +120 m/s
+ *               impulse splice (anom), identical pointing-error realization.
  *
  *     npm run bench-bot-real
  *
  * Output: results/real-scenarios/{Input,Truth,All}/ interchange trios,
  * kml/ pairs, manifest.json. Anomaly pairs share pairId and the observation
- * seed key, so the members differ ONLY in the spliced event — the seam-free
- * pairing the real-track arm exists to provide.
+ * seed key, and BOTH members go through the splice machinery (the control at
+ * zero magnitude), so the members differ ONLY in the impulse itself — the
+ * seam-free pairing the real-track arm exists to provide.
  */
 
 import fs from "fs";
@@ -79,6 +80,14 @@ describe("REAL-TRACK ARM first pass", () => {
                 // A control carries its twin's event window, zero delta-v.
                 expect(scenario.events.length).toBe(1);
                 expect(scenario.events[0].anomalous).toBe(false);
+                // SHAM SPLICE: the control ran the same splice machinery as its
+                // twin (a fresh array, not the registered one) at zero
+                // magnitude, and the result is bit-for-bit the raw segment.
+                // Only that identity makes it safe for the two members to
+                // differ by nothing but the impulse.
+                expect(scenario.target.positionENU).not.toBe(seg.positionENU);
+                expect(Buffer.from(scenario.target.positionENU.buffer))
+                    .toEqual(Buffer.from(seg.positionENU.buffer));
             } else {
                 expect(scenario.events.length).toBe(0);
             }
@@ -107,7 +116,11 @@ describe("REAL-TRACK ARM first pass", () => {
             rows.push([name.split("_")[3] + (def.anomalous ? "*" : ""),
                 String(scenario.n), `${spec.fps}`, hMax.toFixed(1),
                 `${vMin.toFixed(1)}..${vMax.toFixed(1)}`,
-                seg.provenance.nativeMeanDtSeconds.toFixed(2)]);
+                seg.provenance.nativeMeanDtSeconds.toFixed(2),
+                // Both halves of the bridge decision, so an over-firing repair
+                // rule shows up in the run rather than hiding in the truth.
+                String(seg.provenance.stepsBridged),
+                String(seg.provenance.stepsSkippedBelowMinDisplacement)]);
         }
 
         // Pair discipline: identical pointing-error realization, and the
@@ -131,7 +144,8 @@ describe("REAL-TRACK ARM first pass", () => {
         fs.writeFileSync(path.join(OUT_DIR, "manifest.json"),
             JSON.stringify(manifest, null, 2));
 
-        const header = ["scenario", "n", "fps", "hspd m/s", "vspd m/s", "src dt s"];
+        const header = ["scenario", "n", "fps", "hspd m/s", "vspd m/s", "src dt s",
+            "bridged", "kept<min"];
         const w = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
         const line = (r) => r.map((c, i) => c.padStart(w[i])).join("  ");
         console.log(`[botbench] real-track arm -> ${OUT_DIR}\n`

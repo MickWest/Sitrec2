@@ -85,7 +85,10 @@ export const REAL_SCENARIOS = [
             + "fast-near vs slow-far, with genuine flight texture.",
         segment: {file: VTOL_DASH, rule: "peak-speed", ruleArgs: {},
             durationSeconds: 30, fps: 10, startAGL: 500,
-            cleanMaxSpeedMS: 120},   // real peak ~87 m/s; steps run to ~200
+            // Real peak ~87 m/s; steps run to ~200. The 0.013 s sampling makes
+            // the speed cap alone fire on metre-scale estimator jitter, which
+            // the loader's minimum-displacement guard now keeps (study F7).
+            cleanMaxSpeedMS: 120},
         platform: {kind: "straight", speedMS: 70, altitudeAGL: 3000},
         rangeM: 20000, observation: {kind: "white", fovFullDeg: 0.5,
             gaussianSigmaDeg: 0.03},
@@ -103,8 +106,8 @@ export const REAL_SCENARIOS = [
     },
     {
         label: "hover", pairId: "hover-pair", paired: true, pairOnsetSeconds: 30,
-        note: "Slow hexarotor segment, raw — the control of the drone "
-            + "impulse pair.",
+        note: "Slow hexarotor segment through a zero-magnitude sham splice — "
+            + "the control of the drone impulse pair.",
         segment: {file: HEXAROTOR, rule: "offset", ruleArgs: {offsetSeconds: 500},
             durationSeconds: 60, fps: 2, startAGL: 100, cleanMaxSpeedMS: 30},
         platform: {kind: "orbit-point", speedMS: 70, altitudeAGL: 3000},
@@ -143,7 +146,8 @@ export function buildRealSpec(def, segKey) {
                 ruleArgs: def.segment.ruleArgs,
                 startAGL: def.segment.startAGL,
                 cleanMaxSpeedMS: def.segment.cleanMaxSpeedMS ?? 100,
-                cleanMaxVSpeedMS: def.segment.cleanMaxVSpeedMS ?? 20},
+                cleanMaxVSpeedMS: def.segment.cleanMaxVSpeedMS ?? 20,
+                cleanMinStepM: def.segment.cleanMinStepM ?? 20},
         }},
         wind: {kind: "zero"},   // the real motion already embodies its wind
         observation: def.observation,

@@ -13,6 +13,15 @@ program). Raw records: `results/tractability/records*.jsonl` (regenerate with
 `results/tractability/summary.md` (regenerate with
 `node benchmarks/botbench/analyzeTractability.mjs`).
 
+> **Provenance note (2026-08-15, added after the near-term tier landed).** The
+> real-arm numbers below were measured BEFORE the ingest guard that corrected
+> the datum-step bridge (dash: 119 repairs down to 5). That guard moves the
+> dash window by 0.774 s and changes the noise draw for the six unpaired real
+> scenarios, so every real-arm figure here is superseded by the regenerated
+> records. The maneuver arm, the ladder, and every finding's DIRECTION are
+> unaffected. Figures are refreshed by re-running `bench-bot-tract` for the
+> real set and `analyzeTractability.mjs`.
+
 ## Scope and honesty rules
 
 - 26 scenarios, one noise seed each: 10 real-GPS-segment case geometries
@@ -55,22 +64,45 @@ slow-near reading and the verdict took it without flagging the alternative.
 (turn90's topRelSep 0.998 is numerically worse, but that verdict abstained.)
 A confident false negative is the worst kind of cell in the matrix. (Steps 17, 21.)
 
-**F4 — The pipeline abstains honestly but yields little on real data, and one
-abstention class is a defect.** 15/26 scenarios landed `unresolved`, including
-10 mundane. On the real dash, the quadcopter fit landed 874 m from truth
-(4.3% of range, 0.046°, ranked first) and was then withheld because the class
-screen treats optimizer bound-pins as a blocker. Found, then refused.
-The `search incomplete (bound pins…)` blocker is the top yield thief on real
-segments. (Steps 7, 22; the co-leader/validated-selector thread.)
+**F4 (REVISED — the original framing was wrong).** 15/26 scenarios landed
+`unresolved`, including 10 mundane, and the first reading of this study called
+the `search incomplete (bound pins…)` blocker a yield defect: "found, then
+refused". A counterfactual replay of the class screen over the records (which
+reproduces the shipped verdict on 28/28) does not support that.
+
+What the replay shows. Pins are the SOLE obstacle on only 3 distinct scenarios
+of 26 — every other `search incomplete` block is over-determined, the fit also
+failing `close` or `ordinary`. On the dash case the rule is CORRECT: mean truth
+range is 20,236 m, the multirotor family's admitted band tops out at 19,998 m,
+and its truth coverage is 0 at every frame. The optimum really does lie outside
+the model's declared box, which is exactly what the rule exists to catch.
+Releasing it would gain three cases (dash twice, and gofast, where it would
+newly surface the balloon class that the wrong single call had missed) and
+harm the worst cell in the study: the hypersonic glide would gain a SECOND
+wrong class, its quadcopter fit pinned against the 50 m near bound while truth
+is 116 km away.
+
+The real structural finding is different, and larger. The executive layer
+reports CLASS VIABILITY only, so a well-determined TRAJECTORY has no channel
+out of the pipeline at all. The rubber-duck drone's 0.001 relSep recovery is
+invisible to the verdict by design, not by any blocker. Of 17 unresolved
+records the blind rank-1 tile lands within 5% of truth on five, and only dash
+is pin-blocked.
+
+Diagnosis, options and the deciding experiment: `analysis/YIELD-DEFECT.md`.
+The evidence points at splitting the blocker (an envelope exclusion is a
+finding; a search-box edge is a gap) and giving the executive layer a channel
+below `consistent-one` — not at relaxing the rule. (Steps 7, 22.)
 
 **F5 — Multiple orbits recover the trajectory; they do not recover the class.**
 Two 2-km orbits produced the study's single best track recovery (hexarotor,
 topRelSep 0.001) and located the climbing balloon to 15% — but both winning
 fits are GENERIC Constant-Altitude tracks; the class fits failed (quadcopter
 rejected at 0.761°, balloon at 0.925°). Orbiting is what a platform should fly
-when it can — it buys range through geometry alone — and both verdicts still
-said `unresolved`, so the yield problem persists even at the geometry optimum.
-(Step 22's probe menu; F4's blockers.)
+when it can — it buys range through geometry alone. Both verdicts still said
+`unresolved`, and F4's revision explains why: a generic fit cannot yield a
+class verdict, so a determined trajectory has no way out of the executive
+layer. That is a reporting gap, not a solver failure. (Step 22's probe menu.)
 
 **F6 — Class-viability alarms detect but do not discriminate.** Naive
 (`unresolved` ⇒ anomaly) and geometry-gated (observable AND no viable class)

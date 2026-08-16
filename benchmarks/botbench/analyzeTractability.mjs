@@ -12,6 +12,11 @@
 //   - Anomaly: geometry-gated rule (observable AND no viable class), with the
 //     naive unresolved-alarm shown only as the strawman it is.
 //   - Single seed per scenario: claims are about these realizations only.
+//   - Spliced-impulse pairs analyzed PAIRED (shared truth, shared noise
+//     realization, shared event window), not pooled — with the honest note
+//     that two pairs cannot reach significance whatever they show.
+//   - Router buckets and the rcond-gate risk-coverage sweep read TRUTH-FREE
+//     fields only; truth enters afterwards, to score what the gate committed.
 //
 //     node benchmarks/botbench/analyzeTractability.mjs
 
@@ -115,6 +120,24 @@ function fisher(a, b, c, d) {
     return Math.min(1, p);
 }
 
+// Exact McNemar: the two-sided binomial sign test on the DISCORDANT pairs only
+// (concordant pairs carry no information about the within-pair effect). The
+// chi-square form is not usable at these counts, and no continuity correction
+// rescues it.
+function mcnemarExact(b, c) {
+    const n = b + c;
+    if (!n) return NaN;
+    const k = Math.max(b, c);
+    return Math.min(1, 2 * (1 - binomCdf(k - 1, n, 0.5)));
+}
+// Smallest discordant count that COULD reach p < alpha — the best case, every
+// discordant pair falling the same way. This is the "how many would we need"
+// number, and it is a floor: any concordant pair pushes the requirement up.
+function minDiscordantForP(alpha) {
+    for (let n = 1; n <= 500; n++) if (mcnemarExact(n, 0) < alpha) return n;
+    return NaN;
+}
+
 // ---- endpoints --------------------------------------------------------------
 
 // Expected class per scenario, for the truth-class-inclusion endpoint. The
@@ -136,12 +159,59 @@ function expectedClasses(r) {
 }
 const viableClasses = (r) => r.outcome.classes.filter((c) => c.viable).map((c) => c.key);
 
+// The truth-class-inclusion endpoint, as one function so the verdict table and
+// the risk-coverage sweep score commitments the same way.
+// null = not scorable (maneuver shapes have no true class).
+function classInclusion(r) {
+    const exp = expectedClasses(r);
+    if (exp === undefined) return null;
+    if (exp === null) return false;                        // anomalous: inclusion is an error
+    return exp.some((k) => viableClasses(r).includes(k));
+}
+
+// The collapse floor: below this the CV design matrix has lost the directions
+// that separate range hypotheses, so "no class fits" carries no information.
+// PROVISIONAL and uncalibrated — it comes from the CV-family collapse
+// measurement, not from a fitted operating point. The anomaly gate and the
+// router share the one constant so triage and alarm cannot disagree about
+// which geometries are dead; the risk-coverage sweep below varies it.
+const COLLAPSE_LOG10RCOND = -2.5;
+
 // v2 anomaly rule (geometry-gated): the geometry is NOT the collapse regime
-// (rcond above -2.5) AND no candidate class is viable.
+// AND no candidate class is viable. A missing conditioning number counts as
+// degenerate — fail closed, never treat an absent measurement as headroom.
 const observable = (r) => fin(r.triage.cvDesignLog10RcondObserved)
-    && r.triage.cvDesignLog10RcondObserved > -2.5;
+    && r.triage.cvDesignLog10RcondObserved > COLLAPSE_LOG10RCOND;
 const alarmV2 = (r) => observable(r) && viableClasses(r).length === 0;
 const alarmNaive = (r) => r.outcome.executive.code === "unresolved";
+
+// ---- router buckets (TRUTH-FREE) --------------------------------------------
+
+// The shipping verdict emits five codes. Two of them commit to a single class
+// ("probably-balloon" is the wind-corroborated form of "consistent-one"); two
+// commit to nothing ("insufficient" is a provenance-driven abstention, the
+// same product as "unresolved" for routing); "consistent-several" is already a
+// set. Only the code and the pre-fit conditioning number are read here — no
+// truth quantity reaches this function, so the labels can be back-filled onto
+// any run and used to gate work before an answer exists.
+const COMMITTED_CODES = new Set(["consistent-one", "probably-balloon"]);
+
+function routerBucket(r) {
+    const code = r.outcome.executive.code;
+    const informative = observable(r);
+    if (COMMITTED_CODES.has(code)) {
+        // Geometry may only DOWNGRADE. A single-class commitment made where the
+        // design matrix has collapsed is published as a set, never auto-committed:
+        // in the collapse regime the mundane family is a superset of everything
+        // the bearings admit, so "one class" is a statement about the priors.
+        return informative ? "auto-commit" : "report-set";
+    }
+    if (code === "consistent-several") return "report-set";
+    // Nothing committed. Degenerate geometry means no probe can help, so the
+    // case closes here and its anomaly status is "untestable", never "clean".
+    return informative ? "escalate" : "terminal-untestable";
+}
+const BUCKETS = ["auto-commit", "report-set", "escalate", "terminal-untestable"];
 
 // ---- report -----------------------------------------------------------------
 
@@ -226,12 +296,8 @@ for (const [c, rs] of byCode) {
             + `${rs.filter((r) => !r.anomalousDeclared).length} mundane |`);
         continue;
     }
-    const scored = rs.filter((r) => expectedClasses(r) !== undefined);
-    const okClass = scored.filter((r) => {
-        const exp = expectedClasses(r);
-        if (exp === null) return false;                    // anomalous: inclusion is an error
-        return exp.some((k) => viableClasses(r).includes(k));
-    });
+    const scored = rs.filter((r) => classInclusion(r) !== null);
+    const okClass = scored.filter((r) => classInclusion(r));
     const anomWrong = scored.filter((r) => expectedClasses(r) === null).length;
     L.push(`| ${c} | ${rs.length} | truth-class inclusion | ${rate(okClass.length, scored.length)}`
         + `${anomWrong ? `; includes ${anomWrong} anomalous scored as failures` : ""}`
@@ -272,6 +338,270 @@ for (const [name, fn] of [["naive (code==unresolved)", alarmNaive],
 L.push("");
 L.push("The mundane burst and aguadilla rows are the false-positive probes; the");
 L.push("hypersonic row is the false-negative probe (fast-far read as slow-near).");
+L.push("");
+
+// ---- paired contrasts -------------------------------------------------------
+// Steps 4 and 15: the spliced-impulse pairs are the only place in this set
+// where a comparison is clean, so they get their own analysis rather than
+// being averaged into the pooled alarm rates.
+L.push("## Paired contrasts — spliced-impulse pairs");
+L.push("");
+L.push("Both members of a pair share the truth track, the noise REALIZATION (same");
+L.push("observation seed key) and the event window; the only difference is the");
+L.push("spliced impulse. Everything the pooled comparison must average over —");
+L.push("geometry, target, duration, sigma — is held fixed INSIDE a pair, so the");
+L.push("within-pair contrast isolates the impulse. That is what the pairs are for.");
+L.push("");
+
+const pairs = new Map();
+for (const r of ok) {
+    if (!r.pairId) continue;
+    if (!pairs.has(r.pairId)) pairs.set(r.pairId, []);
+    pairs.get(r.pairId).push(r);
+}
+// Mundane member first: the contrast is always read as mundane -> anomalous.
+for (const rs of pairs.values()) rs.sort((a, b) => (a.anomalousDeclared ? 1 : 0) - (b.anomalousDeclared ? 1 : 0));
+
+const seedKey = (r) => r.outcome?.spec?.observation?.sharedSeedKey;
+for (const [id, rs] of pairs) {
+    // The paired analysis is licensed by the shared noise stream and by having
+    // exactly one member of each kind. Check both rather than trusting the label:
+    // a pairId with two mundane members would silently produce a null contrast.
+    const keys = new Set(rs.map(seedKey));
+    const nAnom = rs.filter((r) => r.anomalousDeclared).length;
+    if (rs.length !== 2 || keys.size !== 1 || !seedKey(rs[0]) || nAnom !== 1) {
+        L.push(`- WARNING ${id}: not a usable pair (${rs.length} members, `
+            + `${keys.size} distinct seed key(s) = ${[...keys].join("/")}, `
+            + `${nAnom} anomalous) — paired claims for it are void.`);
+    }
+}
+L.push("| pair | member | anomalous | seed key | log10rcond | verdict | viable classes | topRelSep | alarm v2 | bucket |");
+L.push("|---|---|---|---|---|---|---|---|---|---|");
+for (const [id, rs] of pairs) {
+    for (const r of rs) {
+        L.push(`| ${id} | ${r.setId}/${r.label} | ${r.anomalousDeclared ? "YES" : "no"} `
+            + `| ${seedKey(r) ?? "none"} | ${fmt(r.triage.cvDesignLog10RcondObserved, 2)} `
+            + `| ${r.outcome.executive.code} | ${viableClasses(r).join("+") || "none"} `
+            + `| ${fmt(r.derived?.topRelSep)} | ${alarmV2(r) ? "FIRE" : "silent"} `
+            + `| ${routerBucket(r)} |`);
+    }
+}
+L.push("");
+L.push("Within-pair contrast (mundane -> anomalous). Where the anomalous member has no");
+L.push("finite rank-1 outcome the paired SCORE difference does not exist, and the");
+L.push("contrast is carried entirely by the verdict and alarm endpoints:");
+for (const [id, rs] of pairs) {
+    const [m, a] = rs;
+    if (!m || !a) continue;
+    const seps = [m, a].map((r) => r.derived?.topRelSep);
+    const dSep = seps.every(fin)
+        ? `topRelSep ${fmt(seps[0])} -> ${fmt(seps[1])} (delta ${fmt(seps[1] - seps[0])})`
+        : "topRelSep contrast UNDEFINED (no finite rank-1 outcome on both sides)";
+    L.push(`- ${id}: verdict ${m.outcome.executive.code} -> ${a.outcome.executive.code}; `
+        + `viable {${viableClasses(m).join(",") || "empty"}} -> {${viableClasses(a).join(",") || "empty"}}; `
+        + `alarm v2 ${alarmV2(m) ? "FIRE" : "silent"} -> ${alarmV2(a) ? "FIRE" : "silent"}; `
+        + `log10rcond ${fmt(m.triage.cvDesignLog10RcondObserved, 2)} -> `
+        + `${fmt(a.triage.cvDesignLog10RcondObserved, 2)}; bucket ${routerBucket(m)} -> ${routerBucket(a)}.`);
+    L.push(`  ${dSep}.`);
+}
+L.push("");
+L.push("McNemar-style discordance over the pairs. b = anomalous member alarms while");
+L.push("its mundane twin stays silent (the wanted direction); c = the reverse.");
+L.push("Concordant pairs are uninformative about the within-pair effect and are");
+L.push("excluded, which is the whole content of the test.");
+L.push("");
+L.push("| alarm | pairs | b (anom fires only) | c (mundane fires only) | concordant | exact two-sided p |");
+L.push("|---|---|---|---|---|---|");
+for (const [name, fn] of [["naive (code==unresolved)", alarmNaive],
+                          ["v2 (observable AND no viable class)", alarmV2]]) {
+    let b = 0, c = 0, conc = 0;
+    for (const rs of pairs.values()) {
+        const [m, a] = rs;
+        if (!m || !a) continue;
+        if (fn(a) && !fn(m)) b++;
+        else if (fn(m) && !fn(a)) c++;
+        else conc++;
+    }
+    L.push(`| ${name} | ${b + c + conc} | ${b} | ${c} | ${conc} | ${fmt(mcnemarExact(b, c), 3)} |`);
+}
+L.push("");
+const nPairs = [...pairs.values()].filter((rs) => rs.length === 2).length;
+const need05 = minDiscordantForP(0.05);
+L.push(`NOT SIGNIFICANT, AND CANNOT BE. With ${nPairs} pairs the smallest attainable`);
+L.push(`two-sided exact p is ${fmt(mcnemarExact(nPairs, 0), 3)} — even a perfect ${nPairs}/${nPairs} discordance in the`);
+L.push("wanted direction clears no conventional threshold. This section installs the");
+L.push("machinery and shows the direction of the discordance; it claims no result.");
+L.push("");
+L.push(`Exact statement of what N would be needed: at least ${need05} DISCORDANT pairs, all`);
+L.push(`falling the same way, are required for two-sided p < 0.05 `
+    + `(2 x 0.5^${need05} = ${fmt(mcnemarExact(need05, 0), 3)}), and`);
+L.push(`${minDiscordantForP(0.01)} such pairs for p < 0.01.`);
+L.push(`If every pair is discordant that is ${need05} pairs total; each concordant pair`);
+L.push(`raises the requirement, so a design should budget more than ${need05}.`);
+L.push("");
+{
+    // Paired vs pooled, stated honestly: the paired p here is WORSE than the
+    // pooled one. That is the price of throwing away confounded comparisons,
+    // not evidence that the pairing failed.
+    const tp = anom.filter(alarmV2).length, fp = mund.filter(alarmV2).length;
+    const pooledP = fisher(tp, anom.length - tp, fp, mund.length - fp);
+    L.push(`Paired vs pooled (alarm v2): pooled Fisher over all ${ok.length} scenarios gives`);
+    L.push(`p=${fmt(pooledP, 3)} on ${anom.length} anomalous vs ${mund.length} mundane, but those groups differ in`);
+    L.push("geometry, target, duration and arm as well as in the impulse. The paired test");
+    L.push(`gives p=${fmt(mcnemarExact(2, 0), 3)} on ${nPairs} pairs and confounds nothing. The larger paired p is`);
+    L.push("the cost of discarding the confounded comparisons, not a failure of pairing;");
+    L.push("the pooled number should not be read as the stronger evidence.");
+}
+L.push("");
+
+// ---- router buckets ---------------------------------------------------------
+L.push("## Router buckets — terminal routing (truth-free)");
+L.push("");
+L.push("Every scenario lands in exactly one bucket. The rule reads the verdict code");
+L.push("and the pre-fit conditioning number, nothing else; no truth quantity enters,");
+L.push("so these labels can be back-filled onto any past run and used to gate work");
+L.push("before an answer exists.");
+L.push("");
+L.push("PROVISIONAL THRESHOLDS (uncalibrated, printed so no consumer can use a bucket");
+L.push("label without seeing what conditioned it):");
+L.push(`- collapse floor: log10 rcond <= ${COLLAPSE_LOG10RCOND.toFixed(1)} is the collapse regime. Shared with the`);
+L.push("  v2 alarm gate. A missing rcond counts as collapsed (fail closed).");
+L.push(`- committed codes: ${[...COMMITTED_CODES].join(", ")}. consistent-several is a set.`);
+L.push("  unresolved and insufficient commit to nothing and route on geometry.");
+L.push("- geometry may only DOWNGRADE: a committed code in the collapse regime is");
+L.push("  published as report-set, never auto-committed, because down there the");
+L.push("  mundane family is a superset of everything the bearings admit.");
+{
+    const absentSets = new Set(ok.map((r) => (r.outcome.absentHypotheses || []).join("|")));
+    L.push("- the program's second escalate disjunct (named auxiliary data plausibly");
+    L.push(`  exists) is NOT applied: outcome.absentHypotheses takes ${absentSets.size} distinct value(s)`);
+    L.push(`  across ${ok.length} records, so here it ${absentSets.size === 1
+        ? "discriminates nothing and would route every open" : "would need its own audit before it could route any"}`);
+    L.push("  case to escalate.");
+}
+L.push("");
+const buckets = new Map(BUCKETS.map((b) => [b, []]));
+for (const r of ok) buckets.get(routerBucket(r)).push(r);
+L.push("| bucket | n | share | members |");
+L.push("|---|---|---|---|");
+for (const b of BUCKETS) {
+    const rs = buckets.get(b);
+    L.push(`| ${b} | ${rs.length} | ${(100 * rs.length / ok.length).toFixed(0)}% `
+        + `| ${rs.map((r) => `${r.setId}/${r.label}`).join(", ") || "—"} |`);
+}
+if (records.length !== ok.length) {
+    L.push("");
+    L.push(`(${records.length - ok.length} errored record(s) are not routable and are excluded.)`);
+}
+L.push("");
+L.push("Per-bucket outcome. Truth enters only HERE, to score what the truth-free rule");
+L.push("routed. Solved = topRelSep ≤ 0.15; missing rank-1 outcome counts as not solved.");
+L.push("");
+L.push("| bucket | n | declared anomalous | rank-1 finite | solved ≤0.15 | truth-class inclusion | anomaly status emitted |");
+L.push("|---|---|---|---|---|---|---|");
+for (const b of BUCKETS) {
+    const rs = buckets.get(b);
+    if (!rs.length) { L.push(`| ${b} | 0 | — | — | — | — | — |`); continue; }
+    const finite = rs.filter((r) => fin(r.derived?.topRelSep));
+    const solved = rs.filter((r) => fin(r.derived?.topRelSep) && r.derived.topRelSep <= 0.15);
+    const scored = rs.filter((r) => classInclusion(r) !== null);
+    const okClass = scored.filter((r) => classInclusion(r));
+    // The never-clean rule: where the geometry is dead the anomaly test has no
+    // power, so the only honest status is "untestable". Elsewhere the v2 alarm
+    // is a real test and its firing count is the status.
+    const status = b === "terminal-untestable"
+        ? "untestable (never \"clean\")"
+        : `${rs.filter(alarmV2).length}/${rs.length} alarm v2 fired`;
+    L.push(`| ${b} | ${rs.length} | ${rs.filter((r) => r.anomalousDeclared).length} `
+        + `| ${finite.length}/${rs.length} | ${rate(solved.length, rs.length)} `
+        + `| ${scored.length ? rate(okClass.length, scored.length) : "n/a (no scorable member)"} `
+        + `| ${status} |`);
+}
+L.push("");
+{
+    const downgraded = ok.filter((r) => COMMITTED_CODES.has(r.outcome.executive.code) && !observable(r));
+    L.push(`Downgraded by the collapse floor (committed code -> report-set): ${downgraded.length} — `
+        + `${downgraded.map((r) => `${r.setId}/${r.label} (topRelSep ${fmt(r.derived?.topRelSep)})`).join(", ") || "none"}.`);
+    L.push("The downgrade is not free: it removes right commitments along with wrong ones,");
+    L.push("and the sweep below is how that trade is meant to be read, not argued.");
+    L.push("");
+    // The shipping verdict emits "unresolved" exactly when no class is viable,
+    // so on this set the escalate bucket and the v2 alarm are the same event.
+    // The alarm column above is therefore NOT independent corroboration of the
+    // routing; only an "insufficient" code with a viable class would separate them.
+    const same = ok.every((r) => (routerBucket(r) === "escalate") === alarmV2(r));
+    L.push(`Alarm-vs-bucket independence: escalate and "alarm v2 fired" are ${same
+        ? "the SAME event on this set" : "distinct events on this set"} — the shipping`);
+    L.push("verdict emits unresolved exactly when no class is viable, so the alarm column");
+    L.push("above corroborates nothing about the routing. Separating them needs a code");
+    L.push("that abstains while a class stays viable (insufficient), which this set lacks.");
+}
+L.push("");
+
+// ---- risk-coverage ----------------------------------------------------------
+// Step 20: a gate is a selective-prediction system, and a single operating
+// point hides the denominator. Sweep it and show the trade.
+L.push("## Risk-coverage curve — sweeping the rcond auto-commit gate");
+L.push("");
+L.push("Coverage = fraction of ALL scenarios the router auto-commits at that gate");
+L.push("(committed code AND log10 rcond > gate). Risk = the error rate among exactly");
+L.push("those, scored two ways: the PRIMARY trajectory endpoint (topRelSep above the");
+L.push("tolerance, or no finite rank-1 outcome at all) and truth-class inclusion,");
+L.push("whose denominator is smaller because maneuver shapes have no true class.");
+L.push("The gate itself is truth-free; truth enters only to score what it let through.");
+L.push("n is printed at every point: at 26 scenarios most points are tiny and the");
+L.push("exact intervals below are the honest width of each claim.");
+L.push("");
+L.push("| gate log10rcond > | committed n | coverage | error (topRelSep > 0.15) | error (> 0.25) | class error |");
+L.push("|---|---|---|---|---|---|");
+const sweep = [];
+// Below the loosest committed geometry the gate is inert, which is the honest
+// zero-gate baseline the curve needs at its left end.
+const minCommittedRcond = Math.min(...ok
+    .filter((r) => COMMITTED_CODES.has(r.outcome.executive.code))
+    .map((r) => r.triage.cvDesignLog10RcondObserved).filter(fin));
+for (let g = -4.0; g <= -0.5 + 1e-9; g += 0.25) {
+    const gate = Math.round(g * 100) / 100;
+    const committed = ok.filter((r) => COMMITTED_CODES.has(r.outcome.executive.code)
+        && fin(r.triage.cvDesignLog10RcondObserved)
+        && r.triage.cvDesignLog10RcondObserved > gate);
+    const errAt = (tol) => committed.filter((r) => !(fin(r.derived?.topRelSep)
+        && r.derived.topRelSep <= tol)).length;
+    const scored = committed.filter((r) => classInclusion(r) !== null);
+    const classErr = scored.filter((r) => !classInclusion(r)).length;
+    sweep.push({gate, n: committed.length, err15: errAt(0.15), err25: errAt(0.25),
+        classErr, classN: scored.length});
+    const tag = gate === COLLAPSE_LOG10RCOND ? " (default)"
+        : gate < minCommittedRcond ? " (ungated)" : "";
+    L.push(`| ${gate.toFixed(2)}${tag} `
+        + `| ${committed.length} | ${rate(committed.length, ok.length)} `
+        + `| ${committed.length ? rate(errAt(0.15), committed.length) : "n/a"} `
+        + `| ${committed.length ? rate(errAt(0.25), committed.length) : "n/a"} `
+        + `| ${scored.length ? rate(classErr, scored.length) : "n/a"} |`);
+}
+L.push("");
+{
+    const live = sweep.filter((s) => s.n > 0);
+    const risk = (s) => s.err15 / s.n;
+    const loosest = live[0], tightest = live[live.length - 1];
+    const best = live.reduce((a, s) => (risk(s) < risk(a) ? s : a), live[0]);
+    // Does buying less coverage ever buy less risk? That is the only question a
+    // risk-coverage curve exists to answer, so it is measured, not asserted.
+    const falls = live.some((s, i) => i > 0 && risk(s) < risk(live[i - 1]));
+    L.push(`Reading the curve on this set: the loosest gate (${loosest.gate.toFixed(2)}) commits `
+        + `${loosest.n}/${ok.length} at risk ${loosest.err15}/${loosest.n}; the`);
+    L.push(`tightest non-empty gate (${tightest.gate.toFixed(2)}) commits ${tightest.n}/${ok.length} `
+        + `at risk ${tightest.err15}/${tightest.n}. The lowest risk`);
+    L.push(`any gate reaches is ${best.err15}/${best.n} at gate ${best.gate.toFixed(2)}, and risk `
+        + `${falls ? "does fall somewhere as the gate" : "NEVER falls anywhere as the gate"}`);
+    L.push(falls
+        ? "tightens, so the trade is real and the operating point is worth choosing."
+        : "tightens: the gate strips correct commitments at least as fast as wrong ones.");
+    L.push("No setting yields an error-free commit set. That is F1 restated in");
+    L.push("operating-point terms — conditioning is not the variable that decides whether");
+    L.push("a commitment is right — and a gate tuned on 26 scenarios with single-digit");
+    L.push("commit counts is a picture of this set, not a shippable operating point.");
+}
 L.push("");
 
 const md = L.join("\n") + "\n";

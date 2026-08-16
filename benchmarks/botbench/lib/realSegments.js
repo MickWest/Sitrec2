@@ -96,10 +96,23 @@ function despike(track) {
 // is BRIDGED: when the implied speed across one interval exceeds the declared
 // per-file cap (cleanMaxSpeedMS — set above the file's real dynamics), the
 // step displacement is subtracted from every later sample. Altitude bridges
-// with it (same event). Count travels in provenance.
+// with it (same event).
+//
+// The speed test ALONE over-fires on densely sampled logs, because speed is a
+// ratio and the denominator can be tiny: at the dash log's 0.013 s spacing a
+// 2 m estimator correction already implies 150 m/s. Of that file's 119 speed-
+// cap crossings, 111 were sub-5-m corrections and only 3 were genuine 60-95 m
+// datum shifts (study F7). Subtracting a 2 m correction from every later
+// sample is not repair, it is silently editing real motion, so a bridge also
+// requires a MINIMUM DISPLACEMENT (cleanMinStepM — default 20 m). 20 m is not
+// a knife edge: sweeping it over the two affected files, every value from 5 m
+// (dash) and 0 m (circuits) up to 20 m yields the IDENTICAL truth, while 40 m
+// starts discarding genuine steps. Both counts travel in provenance: what was
+// bridged, and what was left alone, so the over-fire is visible rather than
+// hidden.
 
-function bridgeSteps(track, cleanMaxSpeedMS, cleanMaxVSpeedMS) {
-    let bridged = 0;
+function bridgeSteps(track, cleanMaxSpeedMS, cleanMaxVSpeedMS, cleanMinStepM) {
+    let bridged = 0, skippedBelowMinDisplacement = 0;
     let offE = 0, offN = 0, offA = 0;
     const outLat = new Array(track.n), outLon = new Array(track.n), outAlt = new Array(track.n);
     outLat[0] = track.lat[0]; outLon[0] = track.lon[0]; outAlt[0] = track.alt[0];
@@ -108,21 +121,28 @@ function bridgeSteps(track, cleanMaxSpeedMS, cleanMaxVSpeedMS) {
         const c = Math.cos(track.lat[i] * DEG);
         const dE = (track.lon[i] - track.lon[i - 1]) * DEG * R_EARTH * c;
         const dN = (track.lat[i] - track.lat[i - 1]) * DEG * R_EARTH;
-        if (dt > 0 && Math.hypot(dE, dN) / dt > cleanMaxSpeedMS) {
-            offE += dE;
-            offN += dN;
-            // Altitude bridges only on its own evidence: the horizontal
-            // trigger says nothing about whether the climb was real (audit F5).
-            const dA = track.alt[i] - track.alt[i - 1];
-            if (Math.abs(dA) / dt > cleanMaxVSpeedMS) offA += dA;
-            bridged++;
+        const step = Math.hypot(dE, dN);
+        if (dt > 0 && step / dt > cleanMaxSpeedMS) {
+            if (step < cleanMinStepM) {
+                // Fast but small: estimator jitter, left in the truth as the
+                // motion the file actually recorded.
+                skippedBelowMinDisplacement++;
+            } else {
+                offE += dE;
+                offN += dN;
+                // Altitude bridges only on its own evidence: the horizontal
+                // trigger says nothing about whether the climb was real (audit F5).
+                const dA = track.alt[i] - track.alt[i - 1];
+                if (Math.abs(dA) / dt > cleanMaxVSpeedMS) offA += dA;
+                bridged++;
+            }
         }
         outLon[i] = track.lon[i] - offE / (DEG * R_EARTH * c);
         outLat[i] = track.lat[i] - offN / (DEG * R_EARTH);
         outAlt[i] = track.alt[i] - offA;
     }
     track.lat = outLat; track.lon = outLon; track.alt = outAlt;
-    return bridged;
+    return {bridged, skippedBelowMinDisplacement};
 }
 
 // ---- window rules ----------------------------------------------------------
@@ -207,12 +227,14 @@ export function segmentKeyOf(seg) {
         + `:${seg.provenance.windowStartSeconds.toFixed(3)}`
         + `:${seg.provenance.durationSeconds}:${seg.provenance.fps}`
         + `:${seg.provenance.startAGL}`
-        + `:${seg.provenance.cleanMaxSpeedMS}:${seg.provenance.cleanMaxVSpeedMS}`;
+        + `:${seg.provenance.cleanMaxSpeedMS}:${seg.provenance.cleanMaxVSpeedMS}`
+        + `:${seg.provenance.cleanMinStepM}`;
 }
 
 // Load one windowed, resampled segment. Node-only (bench side).
 export function loadSegment({file, rule, ruleArgs = {}, durationSeconds, fps, startAGL,
-                             cleanMaxSpeedMS = 100, cleanMaxVSpeedMS = 20}) {
+                             cleanMaxSpeedMS = 100, cleanMaxVSpeedMS = 20,
+                             cleanMinStepM = 20}) {
     // eslint-disable-next-line global-require
     const fs = require("fs");
     // eslint-disable-next-line global-require
@@ -224,7 +246,7 @@ export function loadSegment({file, rule, ruleArgs = {}, durationSeconds, fps, st
     const sha = crypto.createHash("sha256").update(text).digest("hex");
     const track = parseTrackCsv(text);
     const despikedSamples = despike(track);
-    const stepsBridged = bridgeSteps(track, cleanMaxSpeedMS, cleanMaxVSpeedMS);
+    const bridge = bridgeSteps(track, cleanMaxSpeedMS, cleanMaxVSpeedMS, cleanMinStepM);
     const rel = relSeconds(track);
 
     const ruleFn = RULES[rule];
@@ -271,7 +293,10 @@ export function loadSegment({file, rule, ruleArgs = {}, durationSeconds, fps, st
             durationSeconds, fps, startAGL,
             nativeMeanDtSeconds: Number(nativeDt.toFixed(3)),
             nativeSamplesInWindow: Math.max(0, k1 - k0 + 1),
-            despikedSamples, stepsBridged, cleanMaxSpeedMS, cleanMaxVSpeedMS,
+            despikedSamples,
+            stepsBridged: bridge.bridged,
+            stepsSkippedBelowMinDisplacement: bridge.skippedBelowMinDisplacement,
+            cleanMaxSpeedMS, cleanMaxVSpeedMS, cleanMinStepM,
         },
     };
     return seg;
@@ -306,6 +331,15 @@ export function getRegisteredSegment(key) {
 // onset onward: pos'(t) = pos(t) + dv * (t - onset). Real texture everywhere,
 // synthetic event only — the anomaly/control pair differs by nothing else,
 // which is the seam-free pairing the real-track arm is for.
+//
+// SHAM SPLICE: the control member runs the identical machinery at zero
+// magnitude rather than skipping it. A control that returned the registered
+// array untouched would differ from its twin by the splice code itself (the
+// Float64Array copy, the per-frame accumulation) as well as by the impulse,
+// and a benchmark whose two arms differ in their construction is measuring
+// its own harness. Adding 0 * dt is an exact no-op in IEEE-754, so the sham
+// is bit-for-bit the raw segment — the bench asserts precisely that, which is
+// what makes running the machinery safe.
 export function generateRealSegmentTruth(targetSpec, {n, fps}) {
     const p = targetSpec.parameters ?? {};
     const seg = getRegisteredSegment(p.segmentKey);
@@ -315,18 +349,14 @@ export function generateRealSegmentTruth(targetSpec, {n, fps}) {
     }
     let pos = seg.positionENU;
     const events = [];
-    if (!p.impulse && p.pairOnsetSeconds != null) {
-        // The control member of a pair carries the SAME event window as its
-        // spliced twin (zero delta-v, anomalous:false), so event-local scoring
-        // can compare the two windows (audit F4; same rule as ANOMALY-CONTROL).
-        events.push({eventId: `${p.label ?? "real"}-impulse-control`, family: "impulse",
-            anomalous: false, onsetSeconds: p.pairOnsetSeconds,
-            endSeconds: p.pairOnsetSeconds + 1 / fps,
-            directionENU: [0, 0, 0],
-            parameters: {deltaVENU: [0, 0, 0], spliced: false}});
-    }
-    if (p.impulse) {
-        const {onsetSeconds, deltaVENU} = p.impulse;
+    // The control member of a pair carries the SAME event window as its
+    // spliced twin (zero delta-v, anomalous:false), so event-local scoring can
+    // compare the two windows (audit F4; same rule as ANOMALY-CONTROL).
+    const sham = !p.impulse && p.pairOnsetSeconds != null;
+    const impulse = p.impulse
+        ?? (sham ? {onsetSeconds: p.pairOnsetSeconds, deltaVENU: [0, 0, 0]} : null);
+    if (impulse) {
+        const {onsetSeconds, deltaVENU} = impulse;
         pos = new Float64Array(pos);   // never mutate the registered copy
         for (let f = 0; f < n; f++) {
             const dt = f / fps - onsetSeconds;
@@ -337,11 +367,14 @@ export function generateRealSegmentTruth(targetSpec, {n, fps}) {
             }
         }
         const m = Math.hypot(deltaVENU[0], deltaVENU[1], deltaVENU[2] ?? 0) || 1;
-        events.push({eventId: `${p.label ?? "real"}-impulse`, family: "impulse",
-            anomalous: p.anomalous === true,
+        events.push({eventId: `${p.label ?? "real"}-impulse${sham ? "-control" : ""}`,
+            family: "impulse",
+            anomalous: !sham && p.anomalous === true,
             onsetSeconds, endSeconds: onsetSeconds + 1 / fps,
             directionENU: [deltaVENU[0] / m, deltaVENU[1] / m, (deltaVENU[2] ?? 0) / m],
-            parameters: {deltaVENU, spliced: true}});
+            // spliced describes the TRUTH, not the code path: the sham injects
+            // nothing, so the control's truth is still the unmodified segment.
+            parameters: {deltaVENU, spliced: !sham}});
     }
     const valid = new Uint8Array(n).fill(1);
     return {

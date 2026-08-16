@@ -11,7 +11,74 @@
 
 const fmt = (x, d = 3) => (Number.isFinite(x) ? x.toFixed(d) : "n/a");
 
-export function buildDossier(record, {caseId}) {
+const DEG = 180 / Math.PI;
+
+/**
+ * The KINEMATIC PROFILE — a time-resolved, truth-free view of the sightlines.
+ *
+ * v1 of this dossier reported only SCALAR residual summaries, and the first
+ * escalation pilot showed exactly what that costs: every spliced impulse was
+ * missed, because a smooth model still fits a spliced track at 0.075-0.151 deg
+ * and a single mean-residual number cannot show that the miss is concentrated
+ * at one instant. Analysts read "small residual" as "ordinary motion".
+ *
+ * The fix is to publish what the sightlines say over TIME, at assumed ranges.
+ * Angular rate is directly observed. Multiplying it by an assumed range gives
+ * the cross-range speed that range would imply — the fast-far ambiguity made
+ * explicit rather than hidden: the SAME angular track is a slow near object or
+ * a fast far one, and the reader can see both readings side by side. A
+ * velocity step appears as a step in every column at once, which is the
+ * signature no scalar summary can carry.
+ *
+ * Truth-blindness: this uses only observedDirectionENU and the declared search
+ * bracket. No truth, no fitted track, no generating range.
+ */
+export function kinematicProfile(observedDirectionENU, n, fps, rangesM) {
+    const rateDegPerS = new Float64Array(n);   // frame-to-frame angular rate
+    for (let f = 1; f < n; f++) {
+        const a = (f - 1) * 3, b = f * 3;
+        const dot = Math.max(-1, Math.min(1,
+            observedDirectionENU[a] * observedDirectionENU[b]
+            + observedDirectionENU[a + 1] * observedDirectionENU[b + 1]
+            + observedDirectionENU[a + 2] * observedDirectionENU[b + 2]));
+        rateDegPerS[f] = Math.acos(dot) * DEG * fps;
+    }
+    rateDegPerS[0] = rateDegPerS[1] ?? 0;
+
+    // Decimate to at most ~24 rows so the table is readable at any clip length,
+    // but keep the PEAK row: a one-frame impulse must survive decimation, and
+    // averaging it away would reintroduce exactly the defect this section fixes.
+    const stride = Math.max(1, Math.floor(n / 24));
+    let peakF = 1;
+    for (let f = 1; f < n; f++) if (rateDegPerS[f] > rateDegPerS[peakF]) peakF = f;
+    const rows = [];
+    const pushRow = (f) => rows.push({
+        t: f / fps,
+        rateDegPerS: rateDegPerS[f],
+        // speed = range * angular rate (small-angle); one column per assumed range
+        speeds: rangesM.map((R) => R * rateDegPerS[f] / DEG),
+        peak: f === peakF,
+    });
+    for (let f = 0; f < n; f += stride) pushRow(f);
+    if (!rows.some((r) => r.peak)) pushRow(peakF);
+    rows.sort((a, b) => a.t - b.t);
+
+    // Step statistic: the largest single-frame JUMP in angular rate, relative
+    // to the median rate. A smooth trajectory keeps this small however fast it
+    // is going; a velocity discontinuity spikes it. Reported as a number the
+    // reader can weigh, never as a detector verdict.
+    const sorted = [...rateDegPerS].sort((a, b) => a - b);
+    const medRate = sorted[Math.floor(sorted.length / 2)];
+    let maxJump = 0, maxJumpT = 0;
+    for (let f = 2; f < n; f++) {
+        const j = Math.abs(rateDegPerS[f] - rateDegPerS[f - 1]);
+        if (j > maxJump) { maxJump = j; maxJumpT = f / fps; }
+    }
+    return {rows, medRate, maxJump, maxJumpT,
+        jumpRatio: medRate > 0 ? maxJump / medRate : NaN};
+}
+
+export function buildDossier(record, {caseId, profile = null}) {
     const o = record.outcome;
     const t = record.triage;
     const L = [];
@@ -41,9 +108,18 @@ export function buildDossier(record, {caseId}) {
     L.push("| rank | tier | eligible | hypothesis | errDeg | band lo-hi (m) | flags |");
     L.push("|---|---|---|---|---|---|---|");
     for (const h of o.hypotheses) {
+        // Name WHICH bound a pin sits on, not just how many pins there are.
+        // The first pilot's analysts could see that a fit was pinned but not
+        // whether the pinned parameter was decision-relevant (a range bound)
+        // or incidental (a wind term), so they discounted every pinned fit
+        // equally. The distinction is the difference between "this fit's range
+        // is meaningless" and "this fit is fine and the screen is too strict".
+        const pinNames = (h.activePins ?? [])
+            .map((p) => (typeof p === "string" ? p : (p?.name ?? p?.param ?? "?")))
+            .join("/");
         const flags = [
             h.incomplete ? "incomplete" : null,
-            h.activePins?.length ? `pins:${h.activePins.length}` : null,
+            h.activePins?.length ? `pins:${h.activePins.length}${pinNames ? `(${pinNames})` : ""}` : null,
             h.modelClamps?.length ? `clamps:${h.modelClamps.length}` : null,
         ].filter(Boolean).join(",");
         const band = h.band && Number.isFinite(h.band.loM)
@@ -61,6 +137,29 @@ export function buildDossier(record, {caseId}) {
     if (o.failures?.length) {
         L.push("");
         L.push(`## Solver failures: ${o.failures.map((f) => String(f).slice(0, 60)).join("; ")}`);
+    }
+    if (profile) {
+        const rs = profile.ranges;
+        L.push("");
+        L.push("## Kinematic profile (observed sightlines only — no fit, no truth)");
+        L.push("");
+        L.push("Angular rate is measured. The speed columns are that rate read at three");
+        L.push("ASSUMED ranges: the same sightlines are a slow near object or a fast far");
+        L.push("one, and both readings are shown so the ambiguity is explicit. A velocity");
+        L.push("discontinuity appears as a step in every column at the same instant.");
+        L.push("");
+        L.push(`| t (s) | rate (°/s) | speed @ ${Math.round(rs[0] / 1000)} km | @ ${Math.round(rs[1] / 1000)} km | @ ${Math.round(rs[2] / 1000)} km |`);
+        L.push("|---|---|---|---|---|");
+        for (const r of profile.rows) {
+            L.push(`| ${r.t.toFixed(1)}${r.peak ? " *" : ""} | ${fmt(r.rateDegPerS, 3)} `
+                + r.speeds.map((s) => `| ${Math.round(s)} m/s `).join("") + "|");
+        }
+        L.push("");
+        L.push(`Largest single-frame jump in angular rate: ${fmt(profile.maxJump, 3)}°/s `
+            + `at t=${fmt(profile.maxJumpT, 1)} s, which is ${fmt(profile.jumpRatio, 1)}× the `
+            + `median rate (${fmt(profile.medRate, 3)}°/s). A smooth trajectory keeps this `
+            + "ratio small however fast it is travelling; this is a number to weigh, not a verdict.");
+        L.push("`*` marks the peak-rate frame, preserved through decimation.");
     }
     L.push("");
     L.push("## Your task");
