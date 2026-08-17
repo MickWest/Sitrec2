@@ -41,6 +41,9 @@ import {MISB} from "../MISBFields";
 import {findColumn} from "../ParseUtils";
 import {isBOTCSV, BOT_DEFAULT_ORIGIN, BOT_DEFAULT_EPOCH_ISO} from "../TrackFiles/CTrackFileBOT";
 import {trackFileFromCSVType, trackCSVConventions, detectCSVType} from "../TrackFiles/TrackCSV";
+import {CTrackFileSRT} from "../TrackFiles/CTrackFileSRT";
+import {CTrackFileSTANAG} from "../TrackFiles/CTrackFileSTANAG";
+import {parseXml} from "../parseXml";
 import csv from "../utils/CSVParser";
 import {misbSightlineHeading} from "../MISBSightline";
 import {assessLinearFitConditioning} from "../LOSFitting";
@@ -79,7 +82,33 @@ export function botBenchFileRole(name = "") {
     // one a guaranteed error, burying the real results in the error tally.
     const ext = String(name).toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "";
     if (TRANSPORT_STREAM_EXTENSIONS.has(ext) || KLV_EXTENSIONS.has(ext)) return "fmv";
+    // Non-CSV track containers the app imports and that can carry pointing.
+    //
+    // .srt IS A TRACK FORMAT HERE, not a subtitle one: a DJI sidecar carries
+    // per-frame position, platform attitude and gimbal angles. The name alone
+    // cannot tell that from an ordinary subtitle file, or from a drone sidecar
+    // logging position only — so the WALK reads it before queuing it, which is
+    // the one content check in an otherwise name-based sweep (srtHasPointing).
+    if (ext === "srt") return "track-file";
+    // .xml IS DELIBERATELY NOT WALKED. BOTBench reads it only as STANAG 4676,
+    // and XML is a container a folder may hold for a hundred unrelated reasons
+    // — build config, sidecar metadata, an export manifest. Queuing each one
+    // would put a guaranteed error row in every run, which is the failure the
+    // mp4/mov exclusion above already exists to prevent. A file the user
+    // PICKED is a different statement of intent: see botBenchExplicitFileRole.
     return null;
+}
+
+/**
+ * The role for a file the user selected BY HAND, which is a statement that
+ * they mean this file — so formats too ambiguous to sweep a folder for are
+ * accepted here, and refuse with a reason if they turn out to be something
+ * else. A folder walk keeps using botBenchFileRole.
+ */
+export function botBenchExplicitFileRole(name = "") {
+    const role = botBenchFileRole(name);
+    if (role) return role;
+    return /\.xml$/i.test(name) ? "track-file" : null;
 }
 
 /** `bot-0001` from `bot-0001.input.csv` — the key a sidecar is matched on. */
@@ -994,6 +1023,50 @@ function misbHasSightline(row) {
 }
 
 /**
+ * THE OTHER POINTING CONVENTION: THE FRAME CENTER.
+ *
+ * A large family of MISB exports carries no platform attitude and no gimbal
+ * angles at all — pointing is stated as the geodetic point the optical axis
+ * lands on (ST 0601 tags 23/24 plus 25 or 78). The app already treats that as
+ * pointing: CTrackFileMISB derives a "Center" track from those columns and the
+ * camera looks along it. Refusing it here made BOTBench unable to analyse
+ * files the app opens without complaint.
+ *
+ * The sightline is then sensor -> frame center, which is the boresight BY
+ * DEFINITION of what a frame center is. What it is NOT is an independent
+ * measurement: the producer computed it by intersecting the boresight with
+ * ITS terrain model, so the direction inherits that model's error, and the
+ * error is CORRELATED with the geolocation solution rather than independent
+ * of it. A 100 m elevation error at 5 km slant range tilts the sightline by
+ * about a degree — small in absolute terms, systematic in character, and not
+ * the same kind of quantity as a gimbal encoder reading. Callers are told so.
+ *
+ * AN ALTITUDE IS REQUIRED, NOT DEFAULTED. Lat/lon alone place the center
+ * somewhere on a vertical line, and picking a height for it (sea level, say)
+ * would invent the elevation angle outright — the one component the caller
+ * most wants measured. Tag 78 (already ellipsoidal) wins over tag 25 (MSL)
+ * for the same reason SensorEllipsoidHeight wins over SensorTrueAltitude.
+ *
+ * @returns {lat, lon, altHAE, altMSL} or null when the row cannot state one
+ */
+function misbFrameCenter(row) {
+    const lat = row?.[MISB.FrameCenterLatitude];
+    const lon = row?.[MISB.FrameCenterLongitude];
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    const hae = row[MISB.FrameCenterHeightAboveEllipsoid];   // tag 78, HAE
+    const msl = row[MISB.FrameCenterElevation];              // tag 25, MSL
+    if (Number.isFinite(hae)) return {lat, lon, altHAE: hae, altMSL: null};
+    if (Number.isFinite(msl)) return {lat, lon, altHAE: null, altMSL: msl};
+    return null;
+}
+
+/** Whether the row states a frame center position at all (altitude aside). */
+function misbHasFrameCenterLL(row) {
+    return Number.isFinite(row?.[MISB.FrameCenterLatitude])
+        && Number.isFinite(row?.[MISB.FrameCenterLongitude]);
+}
+
+/**
  * Build a dataset from decoded MISB ST 0601 records.
  *
  * ALTITUDE DATUM. SensorTrueAltitude is MSL by MISB convention (the same
@@ -1033,13 +1106,61 @@ export function epochStampSeconds(v) {
 }
 
 /**
- * Ingest ANY Sitrec-loadable track CSV that carries camera pointing —
- * Airdata drone logs, MISB-column CSVs — through the SAME dispatch the live
- * import uses (trackFileFromCSVType, the single source of truth for CSV
- * importing), then the same sightline/clock pipeline as FMV. Position-only
- * tracks and multi-role files refuse with the reason: BOTBench needs, at
- * minimum, a sensor track and a sensor line of sight.
+ * The MISB rows a track file offers a SIGHTLINE consumer, given its format's
+ * pointing convention. Formats that state the sightline as its two ENDS
+ * (STANAG's platform + ground positions) pair them per track point; every
+ * other format's track 0 already carries whatever pointing it has.
+ *
+ * This is where "multi-role" stops meaning "ambiguous". A STANAG file draws
+ * as two or three tracks in the app, and BOTBench used to refuse it for that
+ * reason — but the roles are not competing candidates for "the sensor", they
+ * are the two ends of one ray plus the producer's estimate on it, and which
+ * is which is stated by the format.
  */
+function sightlineMISB(trackFile, conv) {
+    return conv.pointing === "endpoints"
+        ? trackFile.toSightlineMISB()
+        : trackFile.toMISB(0);
+}
+
+/**
+ * Ingest ANY Sitrec-loadable track file that carries camera pointing —
+ * MISB-column CSVs (gimbal angles OR frame-center), Airdata drone logs, DJI
+ * SRT sidecars, STANAG 4676 — through the SAME parsers the live import uses,
+ * then the same sightline/clock pipeline as FMV. Position-only tracks refuse
+ * with the reason: BOTBench needs, at minimum, a sensor track and a sensor
+ * line of sight.
+ *
+ * @param made  {trackFile, pointing, multiRole} — the shape
+ *              trackFileFromCSVType returns, so every format reaches the
+ *              pipeline through one door
+ */
+function ingestTrackFile(made, {label = "", geoid = true, type = ""} = {}) {
+    const misb = sightlineMISB(made.trackFile, made);
+    if (!misb || !misb.length) {
+        throw new Error(made.pointing === "endpoints"
+            ? `This ${type} file parsed, but no track point carries BOTH ends of the sensor `
+              + `line of sight (the platform and ground positions). A target-only STANAG track `
+              + `is a position track with no sightline — it could serve as a truth reference, `
+              + `but not as the sensor.`
+            : `This ${type} file parsed but contained no usable track rows.`);
+    }
+    const record = ingestMISBRecords(misb, {
+        label, geoid,
+        boresightPointing: made.pointing === "boresight",
+    });
+    record.meta.sourceFormat = type;
+    if (made.pointing === "endpoints") {
+        record.warnings.push(`This ${type} file states its sightline as the two ENDS of the `
+            + `ray (the platform and ground positions of each track point), so the sensor `
+            + `position and its aim point are both measured rather than reconstructed from `
+            + `angles. Its THIRD position — the producer's own target estimate — lies ON `
+            + `that same ray, so it is a solution and not an independent observation; it is `
+            + `deliberately not scored here as truth.`);
+    }
+    return record;
+}
+
 export function ingestGenericTrackCSV(text, {label = "", geoid = true} = {}) {
     const rows = csv.toArrays(String(text));
     const type = detectCSVType(rows);
@@ -1050,29 +1171,70 @@ export function ingestGenericTrackCSV(text, {label = "", geoid = true} = {}) {
     if (!conv) {
         throw new Error(`This CSV is not a track file Sitrec recognises (detected: `
             + `${type}). BOTBench needs a sensor track with camera pointing — a BOT `
-            + `interchange CSV, an Airdata drone log, or a MISB-column CSV.`);
-    }
-    if (conv.multiRole) {
-        throw new Error(`This ${type} file carries multiple track roles `
-            + `(platform/target/ground) and BOTBench cannot choose one — load it in `
-            + `the app and pick a role there.`);
+            + `interchange CSV, an Airdata drone log, a STANAG 4676 CSV, or a `
+            + `MISB-column CSV.`);
     }
     if (conv.pointing === "none") {
         throw new Error(`This ${type} track is position-only — it carries no camera `
             + `pointing, so there are no lines of sight to analyse. It could serve as `
             + `a truth reference, but not as the sensor.`);
     }
-    const made = trackFileFromCSVType(type, rows);
-    const misb = made.trackFile.toMISB(0);
-    if (!misb || !misb.length) {
-        throw new Error(`This ${type} file parsed but contained no usable track rows.`);
+    return ingestTrackFile(trackFileFromCSVType(type, rows), {label, geoid, type});
+}
+
+/**
+ * A DJI-style SRT sidecar: drone position plus platform attitude and gimbal
+ * angles, which is a complete gimbal-pointing sightline. Same parser the app
+ * uses (CTrackFileSRT), so the two cannot drift.
+ */
+/**
+ * Whether an .srt carries camera POINTING, not just position.
+ *
+ * A folder walk decides what to queue from the FILENAME, which is right for
+ * every other format here — but ".srt" names both a drone telemetry sidecar
+ * and an ordinary subtitle file, and even a genuine DJI sidecar often carries
+ * position with no gimbal angles at all (data/test/DJI_20231217152755_0007_D.SRT
+ * is exactly that). Queuing those puts a guaranteed error row in every bulk
+ * run, which is the noise the .xml exclusion already exists to prevent.
+ *
+ * So this one extension is judged on CONTENT. It parses with the same parser
+ * the ingest uses, so the walk's answer and the ingest's answer cannot
+ * disagree. A file the user picked BY HAND skips this entirely: there the
+ * refusal is the answer they asked for.
+ */
+export function srtHasPointing(text) {
+    try {
+        const misb = new CTrackFileSRT(String(text)).toMISB(0);
+        return Array.isArray(misb) && misb.some(misbHasSightline);
+    } catch (e) {
+        return false;
     }
-    const record = ingestMISBRecords(misb, {
-        label, geoid,
-        boresightPointing: made.pointing === "boresight",
-    });
-    record.meta.sourceFormat = type;
-    return record;
+}
+
+export function ingestSRT(text, {label = "", geoid = true} = {}) {
+    const trackFile = new CTrackFileSRT(String(text));
+    if (!trackFile.doesContainTrack()) {
+        throw new Error("This .srt file holds no track points Sitrec can read — a track SRT "
+            + "carries per-frame latitude, longitude, altitude and gimbal angles, and an "
+            + "ordinary subtitle file carries none of them.");
+    }
+    return ingestTrackFile({trackFile, pointing: "gimbal", multiRole: false},
+        {label, geoid, type: "SRT"});
+}
+
+/**
+ * A STANAG 4676 XML track. The CSV flavour arrives through
+ * ingestGenericTrackCSV; both end up in the same place, because the two
+ * containers share CTrackFileSTANAGBase.
+ */
+export function ingestSTANAGXML(text, {label = "", geoid = true} = {}) {
+    const trackFile = new CTrackFileSTANAG(parseXml(String(text)));
+    if (!trackFile.doesContainTrack()) {
+        throw new Error("This XML is not a STANAG 4676 track message (no message/track "
+            + "element with usable track points). BOTBench reads XML only as STANAG 4676.");
+    }
+    return ingestTrackFile({trackFile, pointing: "endpoints", multiRole: true},
+        {label, geoid, type: "STANAG_XML"});
 }
 
 export function ingestMISBRecords(misb, {label = "", geoid = true,
@@ -1080,6 +1242,10 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     const warnings = [];
     const usable = [];
     let noSightline = 0, noPosition = 0, noRoll = 0, boresightRows = 0;
+    // Frame-center pointing: rows that used it, and rows that STATED a center
+    // but gave it no height — a distinct failure worth naming, because the fix
+    // is one column rather than a different file.
+    let centerRows = 0, centerNoAlt = 0;
 
     // Per-record PES PTS, paired by index with the MISB array (MISBUtils sets it
     // on the array itself when the TS demuxer supplied PES entries).
@@ -1117,15 +1283,37 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
         // With the full platform triple present and BOTH relative angles
         // absent, the sightline is the platform's forward axis — relative
         // az/el zero by that format's own convention, never as a guess.
-        const boresightRow = boresightPointing && !misbHasSightline(row)
+        const hasAngles = misbHasSightline(row);
+        const boresightRow = boresightPointing && !hasAngles
             && Number.isFinite(row[MISB.PlatformHeadingAngle])
             && Number.isFinite(row[MISB.PlatformPitchAngle])
             && Number.isFinite(row[MISB.PlatformRollAngle])
             && !Number.isFinite(row[MISB.SensorRelativeAzimuthAngle])
             && !Number.isFinite(row[MISB.SensorRelativeElevationAngle]);
+        // ANGLES FIRST, CENTER SECOND. When a row carries both, the gimbal
+        // angles are the measurement and the frame center is derived FROM
+        // them through the producer's terrain model — so the angles are the
+        // shorter path to the same direction, with one less model in it.
+        let centerLLA = null;
         if (boresightRow) boresightRows++;
-        else if (!misbHasSightline(row)) { noSightline++; continue; }
-        if (!Number.isFinite(row[MISB.SensorRelativeRollAngle])) noRoll++;
+        else if (!hasAngles) {
+            centerLLA = misbFrameCenter(row);
+            if (!centerLLA) {
+                if (misbHasFrameCenterLL(row)) centerNoAlt++; else noSightline++;
+                continue;
+            }
+            // A center at the sensor's own position states no direction. This
+            // is not the nadir case — straight down has the same lat/lon but a
+            // different height, and survives.
+            const centerAlt = centerLLA.altHAE ?? centerLLA.altMSL;
+            if (centerLLA.lat === lat && centerLLA.lon === lon
+                && centerAlt === (Number.isFinite(hae) ? hae : msl)) { noSightline++; continue; }
+            centerRows++;
+        }
+        // Only meaningful where the sensor MATRIX builds the direction. A
+        // frame-center row derives its direction from two positions, so a
+        // missing roll there is not a defaulted value, it is an unused one.
+        if (!centerLLA && !Number.isFinite(row[MISB.SensorRelativeRollAngle])) noRoll++;
         // Truth columns (truth_lat/truth_long/truth_alt in the client files,
         // mapped to the Truth tags by parseMISB1CSV). All three are required:
         // a truth point without an altitude cannot be placed in 3D, and
@@ -1138,9 +1326,13 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
         const truthLat = row[MISB.TruthLatitude];
         const truthLon = row[MISB.TruthLongitude];
         const truthAlt = row[MISB.TruthAltitude];
+        // Same {lat, lon, altHAE, altMSL} shape as the sensor and frame-center
+        // positions, so the one datum resolver below handles all three. There
+        // is no HAE variant of TruthAltitude, hence altHAE: null.
         const truthLLA = Number.isFinite(truthLat) && Number.isFinite(truthLon)
             && Number.isFinite(truthAlt)
-            ? {lat: truthLat, lon: truthLon, alt: truthAlt * 0.3048} : null;
+            ? {lat: truthLat, lon: truthLon, altHAE: null, altMSL: truthAlt * 0.3048}
+            : null;
         usable.push({
             truthLLA,
             // Already normalized to SECONDS by epochStampSeconds — see it
@@ -1155,11 +1347,16 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
             lat, lon,
             altHAE: Number.isFinite(hae) ? hae : null,
             altMSL: Number.isFinite(hae) ? null : msl,
+            // EXACTLY ONE of these two is set, and which one names the
+            // pointing convention this row used. The ECEF pass below reads
+            // `angles` first and falls to `centerLLA`, so a row can never
+            // silently get a direction from a source it did not declare.
+            //
             // The whole platform triple and the gimbal az/el are guaranteed
             // finite by misbHasSightline. ONLY sensorRoll falls back to 0, and
             // only because it is the final rotation about the boresight, which
             // leaves the pointing direction untouched.
-            angles: {
+            angles: centerLLA ? null : {
                 platformHeading: row[MISB.PlatformHeadingAngle],
                 platformPitch: row[MISB.PlatformPitchAngle],
                 platformRoll: row[MISB.PlatformRollAngle],
@@ -1168,6 +1365,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
                 sensorRoll: Number.isFinite(row[MISB.SensorRelativeRollAngle])
                     ? row[MISB.SensorRelativeRollAngle] : 0,
             },
+            centerLLA,
         });
     }
 
@@ -1177,13 +1375,31 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
             + `drone heading + gimbal pitch) and carries no sensor-relative angles, so the `
             + `sightline is the platform's forward axis by the format's own convention.`);
     }
+    if (centerRows) {
+        warnings.push(`${centerRows} record(s) point by FRAME CENTER: they carry no platform `
+            + `attitude or gimbal angles, so the sightline is the direction from the sensor to `
+            + `the stated frame-center position — the boresight by definition. Note what that `
+            + `direction is made of: the producer computed the center by intersecting the `
+            + `boresight with ITS terrain model, so the elevation angle inherits that model's `
+            + `error instead of coming from an encoder, and the error is correlated with the `
+            + `geolocation solution rather than independent of it. At a 5 km slant range a 100 m `
+            + `terrain error is about a degree of tilt.`);
+    }
+    if (centerNoAlt) {
+        warnings.push(`${centerNoAlt} record(s) state a frame-center latitude and longitude but `
+            + `no height for it (neither FrameCenterElevation nor FrameCenterHeightAboveEllipsoid), `
+            + `so the center sits somewhere on a vertical line and the sightline's ELEVATION `
+            + `angle is unknown. Choosing a height would invent exactly the component being `
+            + `measured, so those records were dropped instead.`);
+    }
     if (noPosition) warnings.push(`${noPosition} record(s) had no usable sensor position.`);
     if (noSightline) {
         warnings.push(`${noSightline} record(s) were dropped for incomplete pointing — a sightline `
-            + `needs SensorRelativeAzimuth/Elevation AND the full PlatformHeading/Pitch/Roll `
-            + `triple. None of the three is assumed: platform roll re-orients the axes the `
-            + `gimbal angles are measured about, so assuming level flight would swing every `
-            + `sightline that points away from straight ahead.`);
+            + `needs EITHER SensorRelativeAzimuth/Elevation AND the full PlatformHeading/Pitch/Roll `
+            + `triple, OR a frame-center position (lat, lon and a height). None of the three angles `
+            + `is assumed: platform roll re-orients the axes the gimbal angles are measured about, `
+            + `so assuming level flight would swing every sightline that points away from straight `
+            + `ahead.`);
     }
     if (noRoll) {
         warnings.push(`${noRoll} record(s) carry no SensorRelativeRollAngle, taken as 0. That is `
@@ -1195,6 +1411,31 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     // other in the array with a multi-frame jump between their timestamps, and
     // only the timestamps reveal it.
     const complete = usable.filter(Boolean);
+
+    // NAME THE COLUMN THAT IS ACTUALLY MISSING.
+    //
+    // Every refusal below this point is about TIMING, and with fewer than two
+    // surviving records they all fire — the clock trials need two records to
+    // measure an interval, so an EMPTY array reports "this clip carries no
+    // timing" no matter how good its timestamps are. A file whose only fault
+    // was an unrecognised pointing convention therefore sent the reader after
+    // the one column that was fine. Rows are only ever dropped above for
+    // POSITION or POINTING, so that is what the message says.
+    if (complete.length < 2) {
+        const why = [];
+        if (noPosition) why.push(`${noPosition} had no usable sensor position`);
+        if (noSightline) why.push(`${noSightline} had no camera pointing (neither the gimbal `
+            + `az/el plus platform attitude triple, nor a frame-center position)`);
+        if (centerNoAlt) why.push(`${centerNoAlt} stated a frame center with no height for it, `
+            + `which leaves the sightline's elevation angle unknown`);
+        throw new Error(`Only ${complete.length} of ${misb.length} record(s) carry both a sensor `
+            + `position and a sightline, so there is nothing to analyse — this is a POINTING or `
+            + `POSITION problem, not a timing one`
+            + (why.length ? `: ${why.join("; ")}.` : `.`)
+            + ` BOTBench needs, per record, a sensor position plus either gimbal angles or a `
+            + `frame-center position to aim at.`);
+    }
+
     let chosenTimebaseNote = "";
     // Pick the timebase BEFORE judging continuity: a stream with good PES PTS
     // and a broken wall clock is a normal FMV case, and trimming it on the
@@ -1237,13 +1478,13 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     // already drawn further down.
     const trialOf = (get) => {
         if (complete.length < 2) return null;
-        if (complete.filter((u) => Number.isFinite(get(u))).length < 2) return null;
+        if (complete.filter((rec) => Number.isFinite(get(rec))).length < 2) return null;
         const trial = longestUniformRun(complete, get);
         if (trial.degenerateClock || !trial.items.length) return null;
         return {get, kept: trial.items.length};
     };
-    const utsTrial = trialOf((u) => u.t);
-    const ptsTrial = trialOf((u) => u.pts);
+    const utsTrial = trialOf((rec) => rec.t);
+    const ptsTrial = trialOf((rec) => rec.pts);
 
     // COMPARE TYPICAL STEP SIZES, NOT TYPICAL STEP RATIOS.
     //
@@ -1269,8 +1510,8 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     // actually being measured, and jitter cancels instead of accumulating.
     const dU = [], dP = [];
     for (let i = 1; i < complete.length; i++) {
-        const a = complete[i - 1], b = complete[i];
-        const du = b.t - a.t, dp = b.pts - a.pts;
+        const prev = complete[i - 1], rec = complete[i];
+        const du = rec.t - prev.t, dp = rec.pts - prev.pts;
         if (Number.isFinite(du) && Number.isFinite(dp) && du > 0 && dp > 0) {
             dU.push(du); dP.push(dp);
         }
@@ -1363,7 +1604,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
                 + "Treat derived speeds as conditional on the encoder having run at real time.");
         }
     }
-    const useTimeOf = best ? best.get : ((u) => u.t);
+    const useTimeOf = best ? best.get : ((rec) => rec.t);
     const chosen = best;
     if (best) chosenTimebaseNote = why;
 
@@ -1595,25 +1836,35 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     const headings = [];
     const truthEcef = [];
     let mx = 0, my = 0, mz = 0;
-    for (const u of kept) {
-        let alt = u.altHAE;
-        if (alt === null) {
-            const nOff = (geoid && isGeoidLoaded()) ? meanSeaLevelOffset(u.lat, u.lon) : 0;
-            alt = u.altMSL + (Number.isFinite(nOff) ? nOff : 0);
+    // An MSL altitude plus its geoid offset, i.e. the height above the
+    // ELLIPSOID that LLAToECEF wants. Every point in this loop — sensor, frame
+    // center, truth — goes through it, because the moment two of them use
+    // different datums the difference becomes a fake vertical error nothing
+    // downstream can distinguish from a real one.
+    const haeOf = ({lat, lon, altHAE, altMSL}) => {
+        if (altHAE !== null) return altHAE;
+        const geoidN = (geoid && isGeoidLoaded()) ? meanSeaLevelOffset(lat, lon) : 0;
+        return altMSL + (Number.isFinite(geoidN) ? geoidN : 0);
+    };
+    for (const rec of kept) {
+        const sensorECEF = LLAToECEF(rec.lat, rec.lon, haeOf(rec));
+        ecef.push(sensorECEF);
+        if (rec.angles) {
+            headings.push(misbSightlineHeading(sensorECEF, rec.angles));
+        } else {
+            // Frame-center pointing: the direction between two ECEF POSITIONS.
+            const centerECEF = LLAToECEF(rec.centerLLA.lat, rec.centerLLA.lon,
+                haeOf(rec.centerLLA));
+            headings.push(centerECEF.sub(sensorECEF).normalize());
         }
-        const p = LLAToECEF(u.lat, u.lon, alt);
-        ecef.push(p);
-        headings.push(misbSightlineHeading(p, u.angles));
-        mx += p.x; my += p.y; mz += p.z;
-        if (u.truthLLA) {
+        mx += sensorECEF.x; my += sensorECEF.y; mz += sensorECEF.z;
+        if (rec.truthLLA) {
             // TruthAltitude is meters with no HAE variant, so it gets the same
             // MSL treatment as SensorTrueAltitude — the truth and the sensor
             // must sit on the SAME datum or every scored error inherits the
             // geoid offset as a fake vertical miss.
-            const tOff = (geoid && isGeoidLoaded())
-                ? meanSeaLevelOffset(u.truthLLA.lat, u.truthLLA.lon) : 0;
-            truthEcef.push(LLAToECEF(u.truthLLA.lat, u.truthLLA.lon,
-                u.truthLLA.alt + (Number.isFinite(tOff) ? tOff : 0)));
+            truthEcef.push(LLAToECEF(rec.truthLLA.lat, rec.truthLLA.lon,
+                haeOf(rec.truthLLA)));
         } else {
             truthEcef.push(null);
         }
@@ -1681,7 +1932,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     const quality = assessSourceQuality(dataset, {
         times: haveAllTimes ? times : null,
         declaredLosSigmaDeg: null,
-        droppedRows: noPosition + noSightline,
+        droppedRows: noPosition + noSightline + centerNoAlt,
     });
 
     return {
@@ -1723,6 +1974,15 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
             windEstimate: null,
             maxRangeM: null,
             timebase: chosenTimebaseNote || null,
+            // WHERE THE SIGHTLINES CAME FROM. Not cosmetic: a frame-center
+            // sightline is a derived quantity carrying the producer's terrain
+            // error, so a reader comparing two runs needs to know which
+            // convention each one used before comparing their residuals.
+            pointing: centerRows === 0
+                ? (boresightRows ? "boresight (platform frame)" : "gimbal angles")
+                : (centerRows === complete.length
+                    ? "frame center"
+                    : `mixed (${centerRows} of ${complete.length} by frame center)`),
             epochBasis,
             surfaceModel: (usingEllipsoid ? "" : "SPHERICAL Earth mode; ")
                 + (geoidApplied
@@ -1749,7 +2009,17 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
  * sidecar is a sibling file and only the walk can see it.
  */
 export async function ingestBotBenchEntry(entry) {
-    const role = botBenchFileRole(entry.name);
+    const role = botBenchExplicitFileRole(entry.name);
+    if (role === "track-file") {
+        const text = await (await entry.getFile()).text();
+        const label = entry.relativePath || entry.name;
+        // The geoid is only needed for MSL altitudes, and these formats carry
+        // some — load it lazily, exactly as the FMV branch does.
+        try { await ensureGeoidLoaded(); } catch (e) { /* warned about in ingestMISBRecords */ }
+        return /\.srt$/i.test(entry.name)
+            ? ingestSRT(text, {label})
+            : ingestSTANAGXML(text, {label});
+    }
     if (role === "fmv") {
         const file = await entry.getFile();
         const analysis = await analyzeVideoFileLike(file, {
@@ -1814,6 +2084,12 @@ export async function ingestBotBenchEntry(entry) {
         // camera pointing is analysed through the same shared import
         // dispatch the live app uses; anything else refuses with the reason.
         if (!isBOTCSV(toRows(text))) {
+            // A generic track CSV states MSL altitudes, so it needs the geoid
+            // for the same reason the FMV branch does. Without this the CSV
+            // path silently ran on whatever happened to be loaded already and
+            // warned about it — right in the app (the sitch loads the grid),
+            // wrong anywhere the grid had not been fetched yet.
+            try { await ensureGeoidLoaded(); } catch (e) { /* warned about in ingest */ }
             return ingestGenericTrackCSV(text,
                 {label: entry.relativePath || entry.name});
         }

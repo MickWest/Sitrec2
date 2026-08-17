@@ -9,6 +9,30 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.136.0 (2026-08-17)
+
+### New Features
+
+- **BOTBench reads files that aim by frame center** (File → File Analysis → *BOTBench...*): analysis now accepts video metadata and MISB CSVs whose camera pointing is given as the ground position the picture is centered on, rather than as gimbal angles — files Sitrec has always imported but the analysis used to refuse outright. Each such run carries a note that a direction worked out this way inherits the producer's own terrain model error, and rows that give a center position with no height for it are dropped and counted, because otherwise the up-down angle would have to be invented.
+
+- **BOTBench reads STANAG 4676 tracks** (File → File Analysis → *BOTBench...*): a STANAG file was refused for carrying several tracks at once, even though the tracks are not competing candidates — they are the two ends of one line of sight, plus the producer's own guess at the target. The two ends are now paired into a sightline, and that third position is deliberately not treated as the answer, since it sits on the very line being analysed. STANAG spreadsheets are picked up by a folder scan; a STANAG *.xml* is read when you pick it yourself with *Choose Files*.
+
+- **BOTBench reads DJI drone .srt sidecars** (File → File Analysis → *BOTBench...*): a sidecar that records gimbal angles as well as position can now be analysed like any other track. Ones that log position only are refused with that reason, and a folder scan quietly skips .srt files with no camera pointing in them — including ordinary subtitles — so they no longer fill a bulk run with error rows.
+
+### Improvements
+
+- **Auto Masking** (Video → Masking): the automatic tools — both *Mask Ground* buttons, the AI masking pair, *Auto Mask OSD* and *Auto Mask Redactions* with all their tuning sliders — now live in one collapsed *Auto Masking* sub-folder, leaving *Enable Mask*, *Edit Mask*, *Brush Size* and *Clear Mask* at the top.
+
+- **Menu search finds menus** (Help menu, the *Search menus...* box at the top): searching now returns whole menus and sub-menus, not just individual controls — typing "Masking" was the one thing it could never find. Results put menus first and shallower ones above deeper ones, each result is shown as two tidy lines (the path above, the name below) that no longer overlap each other or the search box, the highlight is now an outline box so a menu title stays readable, and your search text and results stay put when you go and try one, instead of being wiped so you have to type it again.
+
+### Bug Fixes
+
+- Fixed BOTBench reporting a timing problem — "this clip carries no timing" — for files whose clock was perfectly good and whose real fault was that no row carried usable camera pointing or a sensor position. The message now says which of the two it was and how many rows were lost to each.
+
+- Fixed BOTBench analysing plain track spreadsheets before the sea-level correction data had loaded, which could place the sensor tens of metres out vertically.
+
+---
+
 ## Version 2.135.0 (2026-08-17)
 
 ### New Features

@@ -7,7 +7,8 @@
  * carries no sensor-relative angles by design. Position-only tracks and
  * unrecognised CSVs refuse with the reason.
  */
-import {ingestGenericTrackCSV} from "../../src/analysis/BotBenchIngest";
+import {ingestGenericTrackCSV, ingestSRT, ingestSTANAGXML, srtHasPointing}
+    from "../../src/analysis/BotBenchIngest";
 import {setSit} from "../../src/Globals";
 
 const AIRDATA_HEADER = "time(millisecond),datetime(utc),latitude,longitude,"
@@ -181,6 +182,100 @@ test("with no stamp column, the day-serial date column supplies the timeline", (
     expect(new Date(record.clipStartMs).getUTCFullYear()).toBe(2023);
 });
 
+// FRAME-CENTER POINTING. A large family of MISB CSV exports carries no
+// platform attitude and no gimbal angles at all — the pointing is the FRAME
+// CENTER, the geodetic point the optical axis lands on. Sitrec imports these
+// happily (CTrackFileMISB derives a "Center" track and the camera looks at
+// it), so BOTBench must too: sensor -> frame center IS the boresight.
+const CENTER_HEADER = ",TIME,PTS,UAS LS Version,PrecisionTimeStamp,UNIX Time Stamp,"
+    + "Sensor True Altitude,Sensor Latitude,Sensor Longitude,"
+    + "Sensor Horizontal Field of View,Sensor Vertical Field of View,"
+    + "Frame Center Latitude,Frame Center Longitude,Frame Center Elevation,"
+    + "truth_lat,truth_lon,truth_alt,truth_heading,truth_speed";
+
+function centerPointingCSV({n = 30, center = true, elevation = true} = {}) {
+    const lines = [CENTER_HEADER];
+    for (let i = 0; i < n; i++) {
+        const t = 1700000000000 + 100 * i;               // ms, 0.1 s steps
+        lines.push([
+            i, (0.1 * i).toFixed(1), 3000 * i, "16",
+            new Date(t).toISOString(),
+            String(t * 1000),                            // µs stamp
+            3000,                                        // Sensor True Altitude
+            (35 + i * 1e-5).toFixed(6), "-125.000000",
+            4.5, 2.5,
+            center ? (35.05 + i * 2e-5).toFixed(6) : "",
+            center ? "-124.950000" : "",
+            center && elevation ? "0" : "",
+            (35.04 + i * 2e-5).toFixed(6), "-124.960000", 4000, 45, 120,
+        ].join(","));
+    }
+    return lines.join("\n");
+}
+
+test("a frame-center-pointing MISB CSV ingests, sightlines aimed at the center", () => {
+    const record = ingestGenericTrackCSV(centerPointingCSV(), {label: "fc.csv", geoid: false});
+    expect(record.meta.sourceFormat).toBe("MISB1");
+    const ds = record.dataset;
+    expect(ds.n).toBe(30);
+    expect(ds.fps).toBeGreaterThan(9);
+    expect(ds.fps).toBeLessThan(11);
+    for (const f of [0, 15, 29]) {
+        const l = Math.hypot(ds.D[f * 3], ds.D[f * 3 + 1], ds.D[f * 3 + 2]);
+        expect(l).toBeCloseTo(1, 6);
+        // Center is NORTH-EAST of and BELOW the sensor: E>0, N>0, U<0 in ENU.
+        expect(ds.D[f * 3]).toBeGreaterThan(0);
+        expect(ds.D[f * 3 + 1]).toBeGreaterThan(0);
+        expect(ds.D[f * 3 + 2]).toBeLessThan(0);
+    }
+    expect(record.warnings.join("\n")).toContain("FRAME CENTER");
+});
+
+// "UNHANDLED MISB DATA" exists to surface a tag nobody has mapped yet. This
+// export fires it four times on columns that are all accounted for — the
+// pandas row index (blank header), UAS LS Version (ST 0601 tag 65, just
+// abbreviated), and TIME/PTS (looked at and deliberately not used as clocks) —
+// which teaches the reader to ignore the one warning that matters.
+test("a pandas-exported MISB CSV warns about no column it already accounts for", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+        ingestGenericTrackCSV(centerPointingCSV(), {label: "fc.csv", geoid: false});
+        const unhandled = warn.mock.calls.map(String).filter((m) => m.includes("UNHANDLED"));
+        expect(unhandled).toEqual([]);
+    } finally {
+        warn.mockRestore();
+    }
+});
+
+test("UAS LS Version maps to ST 0601 tag 65 rather than falling through", () => {
+    const {parseMISB1CSV} = require("../../src/MISBUtils");
+    const {MISB} = require("../../src/MISBFields");
+    const rows = require("../../src/utils/CSVParser").default.toArrays(centerPointingCSV(2));
+    // Verbatim, not coerced: misbTagInfo does not mark tag 65 numeric, and the
+    // column loop honours each tag's declared type. What matters here is that
+    // the value reached its tag at all.
+    expect(parseMISB1CSV(rows)[0][MISB.UASDatalinkLSVersionNumber]).toBe("16");
+});
+
+// A center with no height leaves the ELEVATION angle unknown, which is the
+// one component a bearings-only analysis most needs measured. Refuse, and
+// say which column is missing rather than blaming the clock.
+test("frame-center rows with no center elevation refuse, naming the height", () => {
+    expect(() => ingestGenericTrackCSV(centerPointingCSV({elevation: false}),
+        {label: "fc-noelev.csv", geoid: false}))
+        .toThrow(/frame center with no height/);
+});
+
+// The no-pointing refusal must NAME POINTING. Every row here has a good
+// clock and a good position and nothing to aim, and the old code reported
+// "this clip carries no timing" — sending the reader after the one column
+// that was fine.
+test("a CSV with position and time but no pointing refuses about pointing", () => {
+    expect(() => ingestGenericTrackCSV(centerPointingCSV({center: false}),
+        {label: "nopoint.csv", geoid: false}))
+        .toThrow(/no camera pointing/);
+});
+
 test("a stamp column holding a relative clock refuses AND says what it saw", () => {
     // UnixTimeStamp holding 0, 0.5, 1.0... — a relative clock. No unit reading
     // lands in the 1980-2100 era, and the refusal must say the values were
@@ -194,4 +289,97 @@ test("a stamp column holding a relative clock refuses AND says what it saw", () 
     }
     expect(() => ingestGenericTrackCSV(lines.join("\n"), {label: "rel.csv", geoid: false}))
         .toThrow(/not recognizable as an epoch stamp/);
+});
+
+// ---------------------------------------------------------------------------
+// The non-CSV track containers that also carry pointing.
+// ---------------------------------------------------------------------------
+
+const readFixture = (name) => require("fs").readFileSync(
+    require("path").resolve(__dirname, "../../data/test/", name), "utf8");
+
+// STANAG 4676 states the sightline as its two ENDS — the platform and ground
+// positions of each track point — so BOTBench used to refuse it as
+// "multi-role, cannot choose one" while the app loaded it happily. The ends
+// are not competing candidates for "the sensor"; which is which is stated by
+// the format, and pairing them per track point IS the sightline.
+test("a STANAG 4676 CSV ingests, aiming from the platform down to the ground point", () => {
+    const record = ingestGenericTrackCSV(readFixture("elevated_track.csv"),
+        {label: "elevated_track.csv", geoid: false});
+    expect(record.meta.sourceFormat).toBe("STANAG_CSV");
+    const ds = record.dataset;
+    expect(ds.n).toBeGreaterThanOrEqual(10);
+    for (let f = 0; f < ds.n; f++) {
+        expect(Math.hypot(ds.D[f * 3], ds.D[f * 3 + 1], ds.D[f * 3 + 2])).toBeCloseTo(1, 6);
+        // Sensor ~3305 m HAE looking at ground ~1430 m: every sightline points DOWN.
+        expect(ds.D[f * 3 + 2]).toBeLessThan(0);
+    }
+    // The third STANAG position (the producer's target estimate) lies ON this
+    // same ray, so it is a solution, not an observation, and must not be
+    // scored as truth.
+    expect(record.truth).toBeNull();
+    expect(record.warnings.join("\n")).toContain("not scored here as truth");
+});
+
+// (The XML flavour needs a DOMParser, so it lives in stanagXmlIngest.test.js,
+// which runs under jsdom.)
+
+// A DJI SRT sidecar. This real fixture carries position but NO gimbal or
+// platform angles, so it is position-only and must refuse ABOUT POINTING —
+// the same honest refusal a position-only CSV gets.
+test("an SRT with no gimbal angles refuses about pointing, not about time", () => {
+    expect(() => ingestSRT(readFixture("DJI_20231217152755_0007_D.SRT"),
+        {label: "dji.srt", geoid: false})).toThrow(/no camera pointing/);
+});
+
+// The same format WITH attitude and gimbal angles. This also pins the SRT
+// parser's value TYPE: it used to store every field as a string, which every
+// consumer coerced in arithmetic and so nobody noticed — until a consumer
+// type-checked with Number.isFinite and saw a whole file of unusable rows.
+function gimbalSRT(n = 30) {
+    const lines = [];
+    for (let i = 0; i < n; i++) {
+        const ms = String(i * 40).padStart(3, "0");
+        lines.push(String(i + 1));
+        lines.push(`00:00:0${Math.floor(i * 0.04)},${ms} --> 00:00:0${Math.floor(i * 0.04)},${ms}`);
+        lines.push(`<font size="28">FrameCnt: ${i + 1}, DiffTime: 40ms`);
+        lines.push(`2023-12-17 15:27:${String(55 + Math.floor(i * 0.04)).padStart(2, "0")}`
+            + `.${ms}`);
+        lines.push(`[latitude: ${(36.0657 + i * 1e-5).toFixed(6)}] `
+            + `[longitude: -119.019380] [abs_alt: 500.000] `
+            + `[heading: 90.0] [pitch: 0.0] [roll: 0.0] `
+            + `[gHeading: 10.0] [gPitch: -30.0] [gRoll: 0.0]`);
+        lines.push("");
+    }
+    return lines.join("\n");
+}
+
+// A folder walk queues by FILENAME, which is right for every other format
+// here — but ".srt" names both drone telemetry and ordinary subtitles, and
+// even a real DJI sidecar often logs position with no gimbal angles. Queuing
+// those would put a guaranteed error row in every bulk run, which is the same
+// noise the .xml exclusion exists to prevent, so this one extension is judged
+// on content.
+test("srtHasPointing separates a pointing SRT from a position-only one", () => {
+    expect(srtHasPointing(readFixture("DJI_20231217152755_0007_D.SRT"))).toBe(false);
+    expect(srtHasPointing(gimbalSRT())).toBe(true);
+    expect(srtHasPointing("1\n00:00:00,000 --> 00:00:01,000\nHello.\n\n")).toBe(false);
+    expect(srtHasPointing("")).toBe(false);
+});
+
+test("an SRT with gimbal angles ingests, and its MISB values are NUMBERS", () => {
+    const {CTrackFileSRT} = require("../../src/TrackFiles/CTrackFileSRT");
+    const {MISB} = require("../../src/MISBFields");
+    const rows = new CTrackFileSRT(gimbalSRT()).toMISB(0);
+    expect(typeof rows[0][MISB.SensorLatitude]).toBe("number");
+    expect(typeof rows[0][MISB.SensorRelativeElevationAngle]).toBe("number");
+
+    const record = ingestSRT(gimbalSRT(), {label: "gimbal.srt", geoid: false});
+    expect(record.meta.sourceFormat).toBe("SRT");
+    const ds = record.dataset;
+    expect(ds.n).toBeGreaterThanOrEqual(10);
+    for (let f = 0; f < ds.n; f++) {
+        expect(Math.hypot(ds.D[f * 3], ds.D[f * 3 + 1], ds.D[f * 3 + 2])).toBeCloseTo(1, 6);
+        expect(ds.D[f * 3 + 2]).toBeLessThan(0);        // gimbal pitched 30 deg down
+    }
 });

@@ -209,6 +209,61 @@ export class CTrackFileSTANAGBase extends CTrackFile {
         return misb;
     }
 
+    /**
+     * The file as ONE MISB stream describing a sensor and what it aimed at.
+     *
+     * toMISB() splits the file into separate tracks because that is what the
+     * app wants: three things to draw. A line-of-sight consumer wants the
+     * opposite — the platform and ground endpoints of the SAME track point,
+     * paired, because together they ARE the sightline: platform is where the
+     * sensor was, ground is where its ray met the terrain. Splitting them into
+     * two tracks and asking a caller to re-pair them by index invites exactly
+     * the off-by-one that silently rotates every bearing.
+     *
+     * The pair is written in the frame-center convention (sensor position +
+     * FrameCenter position), which is a real ST 0601 pointing convention with
+     * a consumer already, rather than inventing a fourth shape.
+     *
+     * WHICH ALTITUDE TAGS THE HEIGHTS GO IN IS NOT A CONSTANT — ASK THE FILE.
+     * MISB carries two tags per position, one ellipsoidal and one orthometric,
+     * and the tag CHOSEN is what tells a consumer whether to add the geoid
+     * offset N. STANAG heights are ellipsoidal by the 4676 default, but the
+     * XML subclass reads <dynamics cs="..."> and reports an EGM/MSL/NAVD file
+     * as orthometric — so isAltitudeHAE() is the authority here, exactly as it
+     * is for toMISB(). Hard-coding the HAE tags made such a file skip the
+     * conversion and put both endpoints out by N (~19 m in Colorado, up to
+     * ~100 m globally). Both ends move together, so the sightline DIRECTION
+     * barely changes; the sensor POSITION is simply wrong, which is worse for
+     * being invisible.
+     *
+     * `target` is deliberately absent. It is the producer's own estimate and
+     * it lies ON this ray, so it is a solution, not an independent
+     * observation — see the file header.
+     *
+     * @returns an array of MISB rows, or false when no point has both ends
+     */
+    toSightlineMISB() {
+        // File-wide datum (see isAltitudeHAE), so it is resolved once.
+        const isHAE = this.isAltitudeHAE(0);
+        const sensorAltTag = isHAE ? MISB.SensorEllipsoidHeight : MISB.SensorTrueAltitude;
+        const groundAltTag = isHAE
+            ? MISB.FrameCenterHeightAboveEllipsoid : MISB.FrameCenterElevation;
+        const misb = [];
+        for (const point of this._points()) {
+            if (!point.platform || !point.ground) continue;
+            const row = new Array(MISBFields).fill(null);
+            row[MISB.UnixTimeStamp] = point.time;
+            row[MISB.SensorLatitude] = point.platform[0];
+            row[MISB.SensorLongitude] = point.platform[1];
+            row[sensorAltTag] = point.platform[2];
+            row[MISB.FrameCenterLatitude] = point.ground[0];
+            row[MISB.FrameCenterLongitude] = point.ground[1];
+            row[groundAltTag] = point.ground[2];
+            misb.push(row);
+        }
+        return misb.length ? misb : false;
+    }
+
     getShortName(trackIndex = 0, trackFileName = "") {
         const baseName = trackFileName ? trackFileName.replace(/\.[^/.]+$/, "") : "STANAG Track";
         const distinct = this._distinctTracks();

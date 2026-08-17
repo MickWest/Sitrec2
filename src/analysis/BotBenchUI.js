@@ -35,7 +35,8 @@ import {par} from "../par";
 import {showTraverseGallery} from "../AnalyzeTraverse";
 import {METERS_PER_NM} from "../TraverseAnalysis";
 import {
-    botBenchFileRole, botBenchScenarioBase, buildScenarioNotes, ingestBotBenchEntry,
+    botBenchExplicitFileRole, botBenchFileRole, botBenchScenarioBase,
+    buildScenarioNotes, ingestBotBenchEntry, srtHasPointing,
     ingestMISBRecords, sourceQualityGrade,
 } from "./BotBenchIngest";
 import {longestUniformRun, measureAnchorRate} from "./BotBenchClock";
@@ -780,18 +781,21 @@ function buildSummaryReport(entries, options) {
  * ingest it is a lone Blob. So the walk collects every candidate, then this
  * attaches the sidecar TEXT to the row that needs it.
  */
-async function pairSidecars(found) {
+async function pairSidecars(found, {explicit = false} = {}) {
     const sidecars = new Map();
     const labels = new Map();
     const rows = [];
     for (const f of found) {
-        const role = botBenchFileRole(f.name);
+        const role = explicit ? botBenchExplicitFileRole(f.name) : botBenchFileRole(f.name);
         const key = (f.relativePath.replace(/[^/]*$/, "")) + botBenchScenarioBase(f.name);
         if (role === "bot-sidecar") sidecars.set(key, f);
         else if (role === "bot-labels") labels.set(key, f);
-        else if (role === "bot-csv" || role === "fmv") rows.push({...f, key});
+        else if (role === "bot-csv" || role === "fmv" || role === "track-file") {
+            rows.push({...f, key});
+        }
     }
-    for (const r of rows) {
+    const queued = explicit ? rows : await keepOnlyPointingSRT(rows);
+    for (const r of queued) {
         const s = sidecars.get(r.key);
         if (s) {
             try { r.sidecarText = await (await s.getFile()).text(); }
@@ -803,14 +807,44 @@ async function pairSidecars(found) {
             catch (e) { /* labels are optional */ }
         }
     }
-    rows.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
-    return rows;
+    queued.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+    return queued;
+}
+
+/**
+ * Drop the .srt entries that carry no camera pointing — ordinary subtitles,
+ * and drone sidecars logging position only. Every other extension is judged
+ * by NAME; ".srt" is the one that names two unrelated things, so it is the
+ * one that gets read. See srtHasPointing for why the alternative (an error
+ * row per file) is worse than a slightly slower walk.
+ */
+async function keepOnlyPointingSRT(rows) {
+    const kept = [];
+    for (const row of rows) {
+        if (!/\.srt$/i.test(row.name)) { kept.push(row); continue; }
+        try {
+            if (srtHasPointing(await (await row.getFile()).text())) kept.push(row);
+        } catch (e) {
+            // Unreadable during the walk. Queue it and let the ingest report
+            // the real reason — silently dropping a file the user can see in
+            // the folder is the one outcome with no explanation anywhere.
+            kept.push(row);
+        }
+    }
+    return kept;
 }
 
 // Anything BotBench might want from a walk, including the sidecars that are not
 // themselves rows.
 function isCollectable(name) {
     return botBenchFileRole(name) !== null;
+}
+
+// The same question for files the user PICKED BY HAND. Hand-picking is a
+// statement of intent, so it accepts formats too ambiguous to sweep a folder
+// for (.xml, read only as STANAG 4676) — see botBenchExplicitFileRole.
+function isExplicitlyCollectable(name) {
+    return botBenchExplicitFileRole(name) !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1154,8 +1188,9 @@ function createDialog() {
     const status = document.createElement("div");
     status.textContent = "Ready — choose a folder or drag one onto this window. "
         + "BOT interchange scenarios (.input/.all.csv + .scenario.json), FMV clips — "
-        + "video with embedded camera metadata (.ts/.klv) — and track CSVs with camera "
-        + "pointing (Airdata drone logs, MISB CSVs).";
+        + "video with embedded camera metadata (.ts/.klv) — and track files with camera "
+        + "pointing (Airdata drone logs, MISB CSVs by gimbal angles or frame center, "
+        + "STANAG 4676, DJI .srt). STANAG .xml is read when you choose files by hand.";
     status.style.cssText = "font-size: 13px; margin: 0 0 6px 0; min-height: 18px; color: #333;";
 
     const progress = document.createElement("progress");
@@ -2144,9 +2179,12 @@ async function runChooseFiles(state) {
         if (!isAbortLikeError(error)) showError(error);
         return;
     }
-    const found = await pairSidecars((files || []).filter((e) => isCollectable(e.name)));
+    const found = await pairSidecars((files || []).filter((e) => isExplicitlyCollectable(e.name)),
+        {explicit: true});
     if (!found.length) {
-        state.status.textContent = "None of the selected files are BOT interchange or FMV files.";
+        state.status.textContent = "None of the selected files are ones BOTBench can analyse "
+            + "(BOT interchange CSV, FMV .ts/.klv, a track CSV or .srt with camera pointing, "
+            + "or a STANAG 4676 .xml).";
         return;
     }
     await analyzeEntries(state, found);

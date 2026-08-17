@@ -392,7 +392,52 @@ const MISB_CSV_HEADER_ALIASES = {
     // not the stamp. Without this alias the stamp column falls to the
     // unhandled-column warning and every record imports with no time.
     "unictimestamp": "UnixTimeStamp",
+    // ST 0601 tag 65, whose full name ("UAS Datalink LS Version Number") no
+    // exporter writes out; "UAS LS Version" is the usual abbreviation.
+    "uaslsversion": "UASDatalinkLSVersionNumber",
+    "uasdatalinklsversion": "UASDatalinkLSVersionNumber",
 };
+
+/**
+ * Columns that are KNOWN to carry no MISB tag, so their absence from the tag
+ * map is expected rather than a discovery. "UNHANDLED MISB DATA" exists to
+ * surface a tag nobody has mapped yet; firing it on columns we have already
+ * looked at and decided about trains the reader to ignore it, which is the
+ * opposite of what it is for.
+ *
+ * The value is the note logged once per file, or null to say nothing at all.
+ * A column that could plausibly have been the clock gets a note, because the
+ * alternative is a reader staring at a "no timing" error next to a column
+ * called TIME and having to guess why it was not used.
+ */
+const MISB_CSV_IGNORED_HEADERS = new Map([
+    // The pandas/Excel row index: `df.to_csv()` writes the index with no name,
+    // so a leading empty header is a property of the exporter, not the data.
+    ["", null],
+    ["unnamed:0", null],        // the same column after a round trip
+
+    // TIME AND PTS ARE NOT USED AS CLOCKS, DELIBERATELY.
+    //
+    // In the exports these come from, TIME duplicates the epoch column
+    // (1730136900000000 — the same microseconds as UnixTimeStamp). But the
+    // NAME cannot tell that apart from the other common meaning, seconds since
+    // clip start, and mapping it to UnixTimeStamp would let a relative clock
+    // OVERWRITE a good epoch column whenever it happened to sit to the right
+    // of it. UnixTimeStamp is already the authority; a duplicate adds nothing
+    // and the ambiguity is all downside.
+    //
+    // PTS is the presentation timestamp of the source packet — a value like
+    // 123456, whose unit (90 kHz ticks, ms, µs) is not declared anywhere in
+    // the file and cannot be recovered from one column. It is RELATIVE, so
+    // the era test that classifies an epoch stamp has nothing to bite on. It
+    // would be worth having as the synchronous timebase, but only measured,
+    // never assumed: read at the wrong scale it multiplies every speed,
+    // acceleration and g-load by a constant nobody would notice.
+    ["time", "TIME is ignored: UnixTimeStamp is the clock, and a column named TIME is a "
+        + "duplicate epoch stamp in some exports and a relative one in others."],
+    ["pts", "PTS is ignored: it is a presentation timestamp in units the file does not "
+        + "state, so it cannot be scaled to real seconds."],
+]);
 
 // Days between the spreadsheet day-serial epoch (1899-12-30) and the Unix
 // epoch, and the serial range accepted as a date (1954-2189) — anything
@@ -507,6 +552,11 @@ export function parseMISB1CSV(csv) {
                         if (Number.isFinite(ms)) dateFallbackMs[row - 1] = ms;
                     }
                 }
+
+            } else if (MISB_CSV_IGNORED_HEADERS.has(header)) {
+
+                const note = MISB_CSV_IGNORED_HEADERS.get(header);
+                if (note) console.log("MISB CSV: " + note);
 
             } else {
 

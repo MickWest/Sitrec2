@@ -19,11 +19,20 @@
  *   pointing — whether rows carry a camera sightline, and in which
  *     convention:
  *       "gimbal"    SensorRelativeAzimuth/Elevation + platform attitude
- *                   (real MISB columns).
+ *                   (real MISB columns). May ALSO be stated as a frame-center
+ *                   position on files that carry no angles at all — that is a
+ *                   per-ROW property, not a per-format one, so it is not a
+ *                   separate value here; see BotBenchIngest.misbFrameCenter.
  *       "boresight" the PLATFORM frame is the pointing: Airdata's importer
  *                   builds it from drone heading + gimbal pitch and leaves
  *                   the sensor-relative angles empty on purpose, so a
  *                   sightline consumer treats relative az/el as zero.
+ *       "endpoints" the file states the sightline as its two ENDS (STANAG's
+ *                   platform and ground positions per track point) rather
+ *                   than as angles. Such a file is multiRole for the app —
+ *                   it draws two or three tracks — but NOT ambiguous for a
+ *                   sightline consumer, which pairs the ends by track point
+ *                   via toSightlineMISB().
  *       "none"      position-only track; there are no sightlines to build.
  */
 import {CTrackFileMISB} from "./CTrackFileMISB";
@@ -131,7 +140,7 @@ const CSV_TRACK_TYPES = {
     Airdata:    {pointing: "boresight", multiRole: false},
     MISB_FULL:  {pointing: "gimbal",    multiRole: false},
     MISB1:      {pointing: "gimbal",    multiRole: false},
-    STANAG_CSV: {pointing: "gimbal",    multiRole: true},
+    STANAG_CSV: {pointing: "endpoints", multiRole: true},
     BOT_CSV:    {pointing: "gimbal",    multiRole: false},
     CUSTOM1:    {pointing: "none",      multiRole: false},
     CUSTOM_FLL: {pointing: "none",      multiRole: false},

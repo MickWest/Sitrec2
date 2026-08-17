@@ -49,6 +49,18 @@ const SRTMapMISB = {
     gRoll: MISB.SensorRelativeRollAngle,
 }
 
+// Every field SRTMapMISB maps is a NUMERIC MISB tag (position, altitude,
+// platform attitude, gimbal angles), but the SRT text arrives as strings and
+// used to be stored as strings. Arithmetic coerces them, so the track drew
+// correctly and the anomaly stayed invisible — but every other parser in the
+// codebase writes numbers, and a consumer doing the type check those parsers
+// have earned (Number.isFinite, as BotBenchIngest does) saw a whole file of
+// unusable rows. Store what the tag says it is.
+function srtNumber(value) {
+    const n = Number(String(value).trim());
+    return Number.isFinite(n) ? n : null;
+}
+
 function parseSRT(data) {
     const lines = data.split('\n');
     if (lines[4] === "2" && lines [8] === "3") {
@@ -89,7 +101,7 @@ function parseSRT1(lines) {
             let [key, value] = info.split(': ');
             if (SRT.hasOwnProperty(key)) {
                 if(SRTMapMISB[key] !== null) {
-                    MISBArray[i][SRTMapMISB[key]] = value.replace('ms', '').trim();
+                    MISBArray[i][SRTMapMISB[key]] = srtNumber(value.replace('ms', ''));
                 }
             }
         });
@@ -103,7 +115,7 @@ function parseSRT1(lines) {
 
                 if (SRT.hasOwnProperty(key)) {
                     if(SRTMapMISB[key] !== null) {
-                        MISBArray[i][SRTMapMISB[key]] = value;
+                        MISBArray[i][SRTMapMISB[key]] = srtNumber(value);
                     }
 
                     if (key === 'focal_len') {
