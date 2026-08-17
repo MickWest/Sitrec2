@@ -2578,12 +2578,17 @@ function createMaskingFolder(parentFolder) {
     maskFolder.add(maskParams, 'clearMask').name("Clear Mask").perm()
         .tooltip("Clear all mask data");
 
-    maskFolder.add(maskParams, 'maskGroundAuto').name("Mask Ground (auto)").perm()
+    // Everything automatic — the ground/sky classifiers, the OSD auto-mask and
+    // its tuning, and the redaction-box detector — lives in one sub-folder so
+    // the everyday controls above stay uncluttered.
+    const autoFolder = maskFolder.addFolder("Auto Masking").close().perm();
+
+    autoFolder.add(maskParams, 'maskGroundAuto').name("Mask Ground (auto)").perm()
         .tooltip("Classify the frame into sky and ground with no clicks, by splitting it into "
             + "blocks and keeping only what a large uniform block can describe. Rejects anything "
             + "it cannot - losing a little sky costs a few stars, keeping a treetop costs false "
             + "detections. Adds to the mask; use Clear Mask to reset.");
-    maskFolder.add(maskParams, 'maskGround').name("Mask Ground (click sky, then ground)").perm()
+    autoFolder.add(maskParams, 'maskGround').name("Mask Ground (click sky, then ground)").perm()
         .tooltip("Click the sky, then click the ground, and everything that is not sky is added to "
             + "the mask. Two clicks rather than one because the second lets Sitrec MEASURE which "
             + "feature separates sky from ground in this clip instead of assuming one. Check the "
@@ -2595,7 +2600,7 @@ function createMaskingFolder(parentFolder) {
         // Experimental, and admin-only because each press spends money on a provider API.
         // The gate that enforces that is in sitrecServer/aimask.php; this only hides the
         // button from everyone it would fail for.
-        aiMaskController = maskFolder.add(maskParams, 'maskGroundAI').name(AI_MASK_BUTTON_NAME).perm()
+        aiMaskController = autoFolder.add(maskParams, 'maskGroundAI').name(AI_MASK_BUTTON_NAME).perm()
             .tooltip("EXPERIMENTAL. Sends the current frame to your selected AI model (Settings > "
                 + "AI Model) and asks it to outline the sky. Everything on the other side of "
                 + "that outline is masked. The result is deliberately ROUGH - it will be a few "
@@ -2604,43 +2609,43 @@ function createMaskingFolder(parentFolder) {
                 + "works on frames they refuse - a bright horizon glow does not confuse it. "
                 + "Needs a model that can see images: Claude, GPT-5 or Gemini. Adds to the mask; "
                 + "use Clear Mask to reset.");
-        maskFolder.add(maskParams, 'aiMaskMargin', 0, 0.05, 0.002).name("[ADMIN] AI Margin").perm()
+        autoFolder.add(maskParams, 'aiMaskMargin', 0, 0.05, 0.002).name("[ADMIN] AI Margin").perm()
             .tooltip("Safety band added along the AI's outline, as a fraction of the frame's "
                 + "shorter side. Raise it if trees are left outside the mask, lower it to keep "
                 + "more sky. Applies to the next press.");
     }
-    maskFolder.add(maskParams, 'autoMask').name("Auto Mask OSD").perm()
+    autoFolder.add(maskParams, 'autoMask').name("Auto Mask OSD").perm()
         .tooltip("Add a mask of static text-coloured pixels over the frame window (adds to the mask; use Clear Mask to reset)");
 
-    maskFolder.add(maskParams, 'autoMaskWindow', 10, 30, 1).name("Auto Window").perm()
+    autoFolder.add(maskParams, 'autoMaskWindow', 10, 30, 1).name("Auto Window").perm()
         .tooltip("Number of frames to analyze for auto mask");
-    maskFolder.add(maskParams, 'autoMaskThreshold', 0.9, 1, 0.001).name("Auto Threshold").perm()
+    autoFolder.add(maskParams, 'autoMaskThreshold', 0.9, 1, 0.001).name("Auto Threshold").perm()
         .tooltip("Color similarity threshold (higher = stricter)");
-    maskFolder.add(maskParams, 'autoMaskSpread', 1, 10, 0.1).name("Auto Spread").perm()
+    autoFolder.add(maskParams, 'autoMaskSpread', 1, 10, 0.1).name("Auto Spread").perm()
         .tooltip("Radius of mask circle at each invariant pixel");
-    maskFolder.addColor(maskParams, 'autoMaskTargetColor', 255).name("Target Color").perm()
+    autoFolder.addColor(maskParams, 'autoMaskTargetColor', 255).name("Target Color").perm()
         .onChange(() => { const a = ensureMaskingAnalyzer(); if (a) { a.autoMaskTargetColor = {...maskParams.autoMaskTargetColor}; a.autoMask(); } })
         .tooltip("Target color for auto mask");
-    maskFolder.add(maskParams, 'autoMaskCloseToTarget', 0, 255, 1).name("Color Tolerance").perm()
+    autoFolder.add(maskParams, 'autoMaskCloseToTarget', 0, 255, 1).name("Color Tolerance").perm()
         .tooltip("How close pixel must be to target color (lower = stricter)");
 
-    maskFolder.add(maskParams, 'autoMaskRedactions').name("Auto Mask Redactions").perm()
+    autoFolder.add(maskParams, 'autoMaskRedactions').name("Auto Mask Redactions").perm()
         .tooltip("Detect solid black/grey rectangular redaction boxes and add them to the mask (adds to the mask; use Clear Mask to reset)");
-    maskFolder.add(maskParams, 'redactionWindow', 2, 30, 1).name("Redaction Frames").perm()
+    autoFolder.add(maskParams, 'redactionWindow', 2, 30, 1).name("Redaction Frames").perm()
         .tooltip("Number of frames analysed to find invariant (unchanging) regions");
-    maskFolder.add(maskParams, 'redactionInvariance', 1, 15, 0.5).name("Redaction Invariance %").perm()
+    autoFolder.add(maskParams, 'redactionInvariance', 1, 15, 0.5).name("Redaction Invariance %").perm()
         .tooltip("Max % brightness change for a pixel to count as invariant (lower = stricter)");
-    maskFolder.add(maskParams, 'redactionMaxLuma', 0, 255, 1).name("Redaction Max Bright").perm()
+    autoFolder.add(maskParams, 'redactionMaxLuma', 0, 255, 1).name("Redaction Max Bright").perm()
         .tooltip("Ignore pixels brighter than this (keeps black..mid-grey redactions)");
-    maskFolder.add(maskParams, 'redactionFlatness', 0, 40, 1).name("Redaction Flatness").perm()
+    autoFolder.add(maskParams, 'redactionFlatness', 0, 40, 1).name("Redaction Flatness").perm()
         .tooltip("Max local brightness variation for a solid fill (lower = stricter; this is what rejects textured terrain)");
-    maskFolder.add(maskParams, 'redactionMinSize', 4, 100, 1).name("Redaction Min Size").perm()
+    autoFolder.add(maskParams, 'redactionMinSize', 4, 100, 1).name("Redaction Min Size").perm()
         .tooltip("Minimum box width AND height in pixels");
-    maskFolder.add(maskParams, 'redactionFill', 0.3, 1, 0.05).name("Redaction Min Fill").perm()
+    autoFolder.add(maskParams, 'redactionFill', 0.3, 1, 0.05).name("Redaction Min Fill").perm()
         .tooltip("Minimum filled fraction of the bounding box (rectangularity)");
-    maskFolder.add(maskParams, 'redactionSnap', 0, 30, 1).name("Redaction Snap").perm()
+    autoFolder.add(maskParams, 'redactionSnap', 0, 30, 1).name("Redaction Snap").perm()
         .tooltip("Bridge slivers up to this many px between adjacent boxes (closes grey↔black transition gaps; 0 = off)");
-    maskFolder.add(maskParams, 'redactionSpread', 0, 20, 1).name("Redaction Expand").perm()
+    autoFolder.add(maskParams, 'redactionSpread', 0, 20, 1).name("Redaction Expand").perm()
         .tooltip("Expand each detected box outward by this many pixels (outer margin)");
 }
 
