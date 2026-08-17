@@ -4635,17 +4635,31 @@ function showResultGallery(results, uiState = null) {
     //
     // Set-aside tiles are excluded, because a reader who pushed a candidate out
     // of consideration must not get it back by another door.
+    //
+    // TWO BUTTONS, ONE MECHANISM. "Open Consistent" sends the c_ tracks the
+    // verdict counts. "Open Consistent+Weak" also sends the w_ band — the
+    // solutions the analysis found and then declined to endorse (bound pin,
+    // incomplete optimizer, lower fit tier) — because on an "unresolved" file
+    // the weak band is often the only thing there IS to look at.
     const openBtn = document.createElement("button");
     openBtn.className = "tg-toggle";
     openBtn.type = "button";
-    openBtn.textContent = "Open tracks in new window";
+    openBtn.textContent = "Open Consistent";
     openBtn.title = "Open a new Sitrec window with every consistent candidate still in play, "
-        + "loaded as tracks so their separations can be seen directly. Set-aside candidates "
-        + "are not included.";
+        + "loaded as tracks (c_ names) so their separations can be seen directly. Set-aside "
+        + "candidates are not included.";
+    const openWeakBtn = document.createElement("button");
+    openWeakBtn.className = "tg-toggle";
+    openWeakBtn.type = "button";
+    openWeakBtn.textContent = "Open Consistent+Weak";
+    openWeakBtn.title = "As Open Consistent, but also loading the weak candidates (w_ names): "
+        + "fits that passed the broad screen but were declined for a search-bound pin, an "
+        + "incomplete optimizer run, or a lower fit tier. Set-aside candidates are not included.";
     toolbar.appendChild(syncOrientationBtn);
     toolbar.appendChild(syncScaleBtn);
     toolbar.appendChild(restoreBtn);
     toolbar.appendChild(openBtn);
+    toolbar.appendChild(openWeakBtn);
     // Apply / set aside the selected truth track. Shown only when a usable one
     // was computed for this run — with nothing to compare against there is
     // nothing to toggle. rerenderWithTruth is a function declaration so this
@@ -4987,10 +5001,10 @@ function showResultGallery(results, uiState = null) {
         tile.style.transition = "";
     };
 
-    openBtn.addEventListener("click", () => {
-        const original = openBtn.textContent;
-        openBtn.textContent = "opening…";
-        openBtn.disabled = true;
+    const wireOpenButton = (btn, includeWeak) => btn.addEventListener("click", () => {
+        const original = btn.textContent;
+        btn.textContent = "opening…";
+        btn.disabled = true;
         openHandoffWindow({
             buildFiles: async () => {
                 // A LIVE analysis works in the loaded sitch's true local
@@ -5015,6 +5029,7 @@ function showResultGallery(results, uiState = null) {
                 const candidates = consistentTrackCSVs(results, {
                     ...frame,
                     exclude: new Set(Array.from(dismissed, (i) => tiles[i].h)),
+                    includeWeak,
                 });
                 // The sensor path, and truth where there is one. A candidate on
                 // its own is unreadable — it is a reconstruction of an object
@@ -5044,9 +5059,11 @@ function showResultGallery(results, uiState = null) {
                 url.searchParams.set("handoff", key);
                 return url.toString();
             },
-            onDone: () => { openBtn.textContent = original; openBtn.disabled = false; },
+            onDone: () => { btn.textContent = original; btn.disabled = false; },
         });
     });
+    wireOpenButton(openBtn, false);
+    wireOpenButton(openWeakBtn, true);
 
     restoreBtn.addEventListener("click", () => {
         if (dismissed.size === 0) return;

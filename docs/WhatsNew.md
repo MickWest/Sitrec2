@@ -9,6 +9,24 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.135.0 (2026-08-17)
+
+### New Features
+
+- **Scatter plots from the BOTBench results table** (File → File Analysis → *BOTBench...*): click the column headers to chart any two numeric columns against each other — left-click picks the horizontal axis, right-click the vertical axis, and middle-click makes a third column set the dot size. The chart opens in a floating window you can drag and resize, hovering a dot highlights and scrolls to its row in the table, and scenarios designed to be anomalous plot in red.
+
+- **BOTBench remembers results between runs** (File → File Analysis → *BOTBench...*): pick your folder with the new *Folder (Caching)* button and each finished file's result is saved beside it, so an unchanged file is filled in instantly on the next run — its row says "cached" so you always know. A result is only reused when the files and every analysis option are truly identical. *Folder (Read)* opens a folder without asking for write permission (previously saved results are still reused), and *Flush Cache* clears the saved results when you want everything analysed fresh.
+
+- **Open Consistent+Weak** (Traverse → *Analyze Traverse Methods...*, in the results gallery): a second button opens a new window with not only the consistent candidates but also the "weak" ones — solutions the analysis found but declined to endorse — as tracks whose names start with w_, with the reason each was declined listed in the Notes. On an "unresolved" file the weak band is often the only thing there is to look at. The existing button is now called *Open Consistent*.
+
+### Bug Fixes
+
+- Fixed distant ground showing as sky-colored gaps at extremely narrow zoom when refraction of terrain is on (View → Atmospheric Refraction → *Terrain and Buildings*): the ground that refraction bends up into view now actually loads, on both the globe and the flat-Earth model.
+
+- Fixed tracks opened in a new window from the traverse results gallery starting at the beginning of the clip when the analysis was run on a marked A–B section of the video; they now carry the times of the analyzed section.
+
+---
+
 ## Version 2.134.0 (2026-08-16)
 
 ### New Features

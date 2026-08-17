@@ -45,16 +45,20 @@ import {botENUToLLA} from "../TrackFiles/CTrackFileBOT";
 import {
     candidateNotes, consistentTrackCSVs, lookCameraFraming, openHandoffWindow,
 } from "../TraverseHandoff";
+import {CNodeCustomGraphView} from "../nodes/CNodeCustomGraphView";
+import {NodeMan} from "../Globals";
 
 let activeDialog = null;
 let botBenchController = null;
 
 const BUTTON_TOOLTIPS = {
     "Close": "Close this window and restore the previous Sitrec playback state. Results are discarded.",
-    "Choose Folder": "Pick a folder of BOT interchange scenarios and/or FMV clips. Sidecars (.scenario.json) are paired automatically.",
+    "Folder (Read)": "Pick a folder of BOT interchange scenarios and/or FMV clips with READ-ONLY access. Sidecars (.scenario.json) are paired automatically. Existing .botbench-cache.json results are still reused when their hashes match, but no new caches are generated and Flush Cache cannot delete them.",
+    "Folder (Caching)": "Pick a folder of BOT interchange scenarios and/or FMV clips, granting FULL WRITE access to the folder and all its subfolders (the browser will ask). Results are cached in a .botbench-cache.json beside the files in each leaf folder, so an unchanged file is instant on the next run; Flush Cache deletes those files.",
     "Choose Files": "Pick individual files to run. Without their .scenario.json sidecars, BOT files fall back to the shipped set's default origin, with the rate read from the CSV's own Time column.",
     "Cancel Run": "Stop the run. The file currently being analysed is abandoned and marked cancelled; completed rows keep their results.",
     "Clear Results": "Remove every result from the table and start fresh.",
+    "Flush Cache": "Delete the .botbench-cache.json result cache from every folder in the current run, so the next run analyses every file from scratch. The cache reuses a file's result only when its content hashes and the analysis options both match; flush it after an analysis-code change, or to force fresh runs (cached rows have no Gallery/Report).",
     "Export JSON": "Save every row's measurements and conclusions (not the fitted tracks).",
     "Export CSV": "Save one row per file for spreadsheet analysis.",
     "Summary": "Open a combined overview: what the run covered, how the source data scored, and where the analysis landed.",
@@ -130,6 +134,135 @@ const COL = (() => {
     }
     return Object.fromEntries(names.map((k, i) => [k, i]));
 })();
+
+// ---------------------------------------------------------------------------
+// Column scatter plots. Every numeric column has an extractor pulling the RAW
+// value from the result row (parsing the formatted cell text would mix units:
+// fmtMetres switches m/km within one column). Click a numeric header to
+// assign it to a plot axis — left = X, right = Y, middle = dot size — and the
+// selected columns plot as a sized scatter in a floating CustomGraph window,
+// light-themed by default so it prints.
+// ---------------------------------------------------------------------------
+const SCATTER_COLUMNS = {
+    n:     {label: "Samples",              get: (r) => r.quality?.frames},
+    dur:   {label: "Duration (s)",         get: (r) => r.quality?.durationS},
+    base:  {label: "Baseline (m)",         get: (r) => r.quality?.sensorSpanM},
+    sweep: {label: "Sweep (°)",            get: (r) => r.quality?.sweepPathDeg},
+    rcond: {label: "CV rcond",             get: (r) => r.quality?.rcond},
+    noise: {label: "Noise ratio",          get: (r) =>
+        (Number.isFinite(r.quality?.noiseEstDeg) && r.quality?.declaredLosSigmaDeg > 0)
+            ? r.quality.noiseEstDeg / r.quality.declaredLosSigmaDeg : null},
+    err:   {label: "Top |err| (°)",        get: (r) => r.top?.errDeg},
+    range: {label: "Top range (NM)",       get: (r) =>
+        Number.isFinite(r.top?.rangeStartM) ? r.top.rangeStartM / METERS_PER_NM : null},
+    // The column shows min–max; a scatter needs one number, so it plots the MAX.
+    spd:   {label: "Top max speed (kt)",   get: (r) => r.top?.speedMaxKt},
+    alt:   {label: "Top mean alt (ft)",    get: (r) =>
+        Number.isFinite(r.top?.altMeanM) ? r.top.altMeanM * 3.28084 : null},
+    // Positional truth only — direction rows score in degrees, a different
+    // unit, and must not land on the same axis.
+    truth: {label: "Truth rel. sep",       get: (r) => r.truthScore?.topRelSep},
+    best:  {label: "Best rel. sep",        get: (r) => r.truthScore?.bestRelSep},
+};
+
+const SCATTER_VIEW_ID = "botBenchScatter";
+
+function scatterMarker(state, name) {
+    const m = [];
+    if (state.scatter.x === name) m.push("X");
+    if (state.scatter.y === name) m.push("Y");
+    if (state.scatter.size === name) m.push("size");
+    return m.length ? ` [${m.join(",")}]` : "";
+}
+
+function updateScatterHeaders(state) {
+    for (const {name, th, label} of state.scatterThs) {
+        const mark = scatterMarker(state, name);
+        th.textContent = label + mark;
+        th.style.background = mark ? "#dce9f7" : "";
+    }
+}
+
+// Mirror a scatter-dot hover onto the table: outline the row (the grade
+// background stays untouched underneath) and scroll it into view.
+function highlightScatterRow(state, entry) {
+    const tr = entry?.tr ?? null;
+    if (state.scatterHighlightTr && state.scatterHighlightTr !== tr) {
+        state.scatterHighlightTr.style.outline = "";
+        state.scatterHighlightTr = null;
+    }
+    if (tr) {
+        tr.style.outline = "2px solid #1976d2";
+        tr.style.outlineOffset = "-2px";
+        tr.scrollIntoView({block: "nearest"});
+        state.scatterHighlightTr = tr;
+    }
+}
+
+function disposeScatterView(state) {
+    if (state.scatter?.view && NodeMan.exists(SCATTER_VIEW_ID)) {
+        NodeMan.disposeRemove(SCATTER_VIEW_ID, true);
+    }
+    if (state.scatter) state.scatter.view = null;
+}
+
+function updateScatterPlot(state) {
+    const sel = state.scatter;
+    if (!sel || !sel.x || !sel.y) { disposeScatterView(state); return; }
+    const gx = SCATTER_COLUMNS[sel.x], gy = SCATTER_COLUMNS[sel.y];
+    const gs = sel.size ? SCATTER_COLUMNS[sel.size] : null;
+
+    const points = [];
+    const pointEntries = [];
+    for (const e of state.entries) {
+        if (e.status !== "done" || !e.row) continue;
+        const x = gx.get(e.row), y = gy.get(e.row);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        const size = gs ? gs.get(e.row) : null;
+        points.push({x, y, size: Number.isFinite(size) ? size : null,
+            label: e.row.displayName ?? e.relativePath,
+            // Declared-anomalous scenarios in the analysis theme's red; the
+            // rest in its blue — same meaning as the flag on the Target column.
+            color: e.row.anomalousDeclared ? "#c00" : "#06c"});
+        pointEntries.push(e);
+    }
+
+    if (!sel.view || !NodeMan.exists(SCATTER_VIEW_ID)) {
+        if (NodeMan.exists(SCATTER_VIEW_ID)) NodeMan.disposeRemove(SCATTER_VIEW_ID, true);
+        sel.view = new CNodeCustomGraphView({
+            id: SCATTER_VIEW_ID,
+            menuName: "BOT Bench scatter",
+            title: "",
+            dark: false,               // light, so a printed/pasted copy reads
+            showLegend: false,
+            visible: true,
+            left: 0.52, top: 0.06, width: 0.44, height: 0.55,
+            draggable: true, resizable: true, freeAspect: true, shiftDrag: false,
+        });
+        // The bench dialog is a modal overlay at z-index 10000; the graph is a
+        // normal app view and the view manager keeps re-stacking view
+        // z-indices, so a one-shot style assignment ends up back behind the
+        // modal. The view re-asserts this every scatter render.
+        sel.view.scatterElevateZ = 10001;
+    }
+    // A header click on a CLOSED graph window must bring it back — otherwise
+    // the selections keep updating an invisible view and the clicks appear to
+    // do nothing (a hidden view also stops rendering, so even its axis labels
+    // freeze at whatever was on screen when it was closed).
+    if (!sel.view.visible) sel.view.show(true);
+    // Hovering a dot highlights (and scrolls to) its table row.
+    sel.view.onScatterHover = (idx) =>
+        highlightScatterRow(state, idx == null ? null : pointEntries[idx]);
+    sel.view.title = `${gy.label} vs ${gx.label}`
+        + (gs ? ` (dot size: ${gs.label})` : "");
+    sel.view.emptyMessage = "No completed rows have numbers for both selected columns";
+    sel.view.setScatterData({
+        points,
+        xLabel: gx.label,
+        yLabel: gy.label,
+        sizeLabel: gs ? gs.label : null,
+    });
+}
 
 // Minimum table width. With 20 columns, a percentage layout inside a narrow
 // window gives every column a few characters and wraps ALL of them — measured
@@ -680,6 +813,106 @@ function isCollectable(name) {
     return botBenchFileRole(name) !== null;
 }
 
+// ---------------------------------------------------------------------------
+// Per-folder result cache.
+//
+// A `.botbench-cache.json` in each LEAF folder holds, per scenario filename,
+// the sha256 of every input that shaped its row (the CSV bytes, the
+// .scenario.json sidecar, the .truth.json answer key), the analysis options it
+// ran under, and the finished row. On a re-run, a file whose hashes AND
+// options both match is filled from the cache instead of re-analysed; its
+// Status cell says "cached" so a reused row is never silent. The hashes also
+// ride on every row (row.fileSha256), so an Export JSON records exactly which
+// bytes produced each result.
+//
+// Writing needs a directory handle, so the cache is read/write for Choose
+// Folder (picked with readwrite permission) and inert for drag-and-drop,
+// whose FileSystemEntry API is read-only. The cache stores rows, not the full
+// in-memory results, so a cached row's Gallery/Report need a real re-run
+// (Flush Cache) — same trade as Export JSON, and what keeps the file small.
+// ---------------------------------------------------------------------------
+const CACHE_FILENAME = ".botbench-cache.json";
+const CACHE_SCHEMA = 1;
+
+async function sha256Hex(data) {
+    const buf = typeof data === "string" ? new TextEncoder().encode(data) : data;
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Hash EVERY input that shapes the row. The sidecar and answer key travel as
+// text on the entry (pairSidecars), so a changed sidecar with an unchanged CSV
+// correctly misses the cache.
+async function entryFileHashes(entry) {
+    const hashes = {csv: await sha256Hex(await (await entry.getFile()).arrayBuffer())};
+    if (entry.sidecarText != null) hashes.sidecar = await sha256Hex(entry.sidecarText);
+    if (entry.labelsText != null) hashes.truth = await sha256Hex(entry.labelsText);
+    return hashes;
+}
+
+const combinedHash = (h) => [h.csv, h.sidecar ?? "-", h.truth ?? "-"].join("|");
+
+// One memoized cache record per leaf folder for the life of the dialog.
+async function loadDirCache(state, entry) {
+    if (!entry.dirHandle) return null;   // drag-and-drop: no writable folder
+    const key = entry.dirPath ?? "";
+    if (!state.dirCaches) state.dirCaches = new Map();
+    if (state.dirCaches.has(key)) return state.dirCaches.get(key);
+    let data = {schema: CACHE_SCHEMA, results: {}};
+    try {
+        const fh = await entry.dirHandle.getFileHandle(CACHE_FILENAME);
+        const parsed = JSON.parse(await (await fh.getFile()).text());
+        if (parsed?.schema === CACHE_SCHEMA && parsed.results) data = parsed;
+    } catch (e) { /* absent or unreadable — start fresh */ }
+    const rec = {handle: entry.dirHandle, data,
+        // "Folder (Read)" runs reuse existing caches but never write them.
+        writable: entry.cacheWritable !== false};
+    state.dirCaches.set(key, rec);
+    return rec;
+}
+
+async function writeDirCache(rec) {
+    rec.data.schema = CACHE_SCHEMA;
+    rec.data.savedAt = new Date().toISOString();
+    rec.data.appVersion = process.env.BUILD_VERSION_STRING;
+    const fh = await rec.handle.getFileHandle(CACHE_FILENAME, {create: true});
+    const writable = await fh.createWritable();
+    await writable.write(JSON.stringify(rec.data, null, 1));
+    await writable.close();
+}
+
+async function flushCaches(state) {
+    if (state.running) return;
+    // Every leaf folder this dialog has touched: entries from the current run
+    // plus any cache records already loaded.
+    const dirs = new Map();
+    for (const e of state.entries) {
+        if (e.dirHandle) dirs.set(e.dirPath ?? "", e.dirHandle);
+    }
+    if (state.dirCaches) {
+        for (const [k, rec] of state.dirCaches) dirs.set(k, rec.handle);
+    }
+    if (!dirs.size) {
+        state.status.textContent = "No cacheable folders in this session — "
+            + "caching needs Choose Folder (drag-and-drop folders are read-only).";
+        return;
+    }
+    let removed = 0, denied = 0;
+    for (const [, handle] of dirs) {
+        try { await handle.removeEntry(CACHE_FILENAME); removed++; }
+        catch (e) {
+            // NotFound = nothing to flush there; NotAllowed = read-only grant.
+            if (e?.name === "NotAllowedError" || e?.name === "SecurityError") denied++;
+        }
+    }
+    state.dirCaches = new Map();
+    state.status.textContent = `Flushed ${removed} cache file(s) from ${dirs.size} `
+        + `folder(s). The next run will analyse every file from scratch.`
+        + (denied ? ` ${denied} folder(s) were opened read-only — reopen with `
+            + `Folder (Caching) to delete their caches.` : "");
+}
+
 function fsEntryToFile(fsEntry) {
     return new Promise((resolve, reject) => fsEntry.file(resolve, reject));
 }
@@ -743,7 +976,10 @@ async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", o
         const relativePath = basePath ? `${basePath}/${name}` : name;
         if (handle.kind === "file") {
             if (isCollectable(name)) {
-                const entry = {name, relativePath, getFile: () => handle.getFile()};
+                // The containing (leaf) directory handle travels with the
+                // entry so the result cache can live beside the files.
+                const entry = {name, relativePath, getFile: () => handle.getFile(),
+                    dirHandle: directoryHandle, dirPath: basePath};
                 files.push(entry);
                 onFound?.(entry);
             }
@@ -898,17 +1134,20 @@ function createDialog() {
     anchorLabel.appendChild(anchorInput);
     anchorLabel.appendChild(document.createTextNode("NM"));
 
-    const chooseFolderButton = makeButton("Choose Folder");
+    const chooseFolderReadButton = makeButton("Folder (Read)");
+    const chooseFolderCacheButton = makeButton("Folder (Caching)");
     const chooseFilesButton = makeButton("Choose Files");
     const cancelButton = makeButton("Cancel Run", "#d32f2f");
     const clearButton = makeButton("Clear Results", "#d32f2f");
+    const flushCacheButton = makeButton("Flush Cache", "#6d4c41");
     const exportJsonButton = makeButton("Export JSON", "#455a64");
     const exportCsvButton = makeButton("Export CSV", "#455a64");
     const summaryButton = makeButton("Summary", "#00695c");
 
     for (const el of [recursive.label, families.label, mcSweep.label, anchorLabel,
-        chooseFolderButton, chooseFilesButton, cancelButton, clearButton,
-        exportJsonButton, exportCsvButton, summaryButton]) {
+        chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
+        cancelButton, clearButton,
+        flushCacheButton, exportJsonButton, exportCsvButton, summaryButton]) {
         controls.appendChild(el);
     }
 
@@ -978,15 +1217,41 @@ function createDialog() {
         groupRow.appendChild(th);
     }
     const headerRow = document.createElement("tr");
-    for (const [label, , tooltip, group] of TABLE_COLUMNS) {
+    const scatterThs = [];
+    const colNames = Object.keys(COL);
+    TABLE_COLUMNS.forEach(([label, , tooltip, group], i) => {
         const th = document.createElement("th");
         th.textContent = label;
         th.title = tooltip || label;
         th.style.cssText = "text-align: left; padding: 5px 5px; border-bottom: 1px solid #ddd; "
             + `background: ${GROUP_COLOURS[group]}; font-size: 11px; `
             + "white-space: nowrap; overflow: hidden; text-overflow: ellipsis;";
+        const name = colNames[i];
+        if (SCATTER_COLUMNS[name]) {
+            th.title += "\n\nScatter plot: left-click = X axis, right-click = Y axis, "
+                + "middle-click = dot size. Click the same header again to clear it.";
+            th.style.cursor = "pointer";
+            scatterThs.push({name, th, label});
+            // `state` does not exist yet when the header is built; resolve the
+            // live dialog at click time instead.
+            const assign = (slot) => {
+                const s = activeDialog;
+                if (!s || !s.scatter) return;
+                s.scatter[slot] = s.scatter[slot] === name ? null : name;
+                updateScatterHeaders(s);
+                updateScatterPlot(s);
+            };
+            th.addEventListener("click", () => assign("x"));
+            th.addEventListener("contextmenu", (e) => { e.preventDefault(); assign("y"); });
+            // Middle click: suppress the browser's autoscroll on mousedown,
+            // assign on auxclick.
+            th.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); });
+            th.addEventListener("auxclick", (e) => {
+                if (e.button === 1) { e.preventDefault(); assign("size"); }
+            });
+        }
         headerRow.appendChild(th);
-    }
+    });
     thead.appendChild(groupRow);
     thead.appendChild(headerRow);
     const tbody = document.createElement("tbody");
@@ -1018,7 +1283,9 @@ function createDialog() {
         familiesInput: families.input,
         mcSweepInput: mcSweep.input,
         anchorInput,
-        chooseFolderButton, chooseFilesButton, cancelButton, clearButton,
+        chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
+        cancelButton, clearButton,
+        flushCacheButton,
         closeButton, exportJsonButton, exportCsvButton, summaryButton,
         status, progress, summary, tbody,
         entries: [],
@@ -1028,6 +1295,9 @@ function createDialog() {
         pauseLock: null,
         heldFrames: 0,
         memoryNote: "",
+        // Column-scatter selections (header clicks) + the floating graph view.
+        scatter: {x: null, y: null, size: null, view: null},
+        scatterThs,
     };
     acquireAnalysisPauseLock(state);
     activeDialog = state;
@@ -1444,7 +1714,9 @@ function fillRow(state, entry) {
         c[COL.best].title = c[COL.truth].title;
     }
 
-    // Actions: the full gallery, and the HTML report.
+    // Actions: the full gallery, and the HTML report. A CACHED row has no
+    // in-memory analysis (the cache stores rows, like Export JSON), so both
+    // are disabled with the reason on the tooltip rather than failing on click.
     c[COL.actions].innerHTML = "";
     const galleryButton = smallButton("Gallery", "#1976d2", BUTTON_TOOLTIPS["Gallery"]);
     galleryButton.onclick = () => {
@@ -1459,9 +1731,19 @@ function fillRow(state, entry) {
     reportButton.style.marginLeft = "3px";
     reportButton.onclick = () => openReport(entry, reportButton);
     c[COL.actions].appendChild(reportButton);
+    if (!entry.results) {
+        for (const b of [galleryButton, reportButton]) {
+            setButtonDisabled(b, true);
+            b.title = "This row came from the folder's result cache, which holds the "
+                + "row only. Flush Cache and re-run to load the full analysis.";
+        }
+    }
 
     entry.tr.style.background = grade.grade === "weak" ? "#fff5f5"
         : grade.grade === "hard" ? "#fffaf0" : "#f7fff7";
+
+    // A completed row may extend the open column-scatter plot.
+    if (state.scatter?.x && state.scatter?.y) updateScatterPlot(state);
 }
 
 /**
@@ -1616,10 +1898,14 @@ function setRowError(entry, message) {
 function refreshControls(state) {
     const running = state.running;
     const has = state.entries.length > 0;
-    setButtonDisabled(state.chooseFolderButton, running);
+    setButtonDisabled(state.chooseFolderReadButton, running);
+    setButtonDisabled(state.chooseFolderCacheButton, running);
     setButtonDisabled(state.chooseFilesButton, running);
     setButtonDisabled(state.cancelButton, !running);
     setButtonDisabled(state.clearButton, running || !has);
+    // Flush needs a folder with handles; entries or loaded caches signal one.
+    setButtonDisabled(state.flushCacheButton, running
+        || !(state.entries.some((e) => e.dirHandle) || state.dirCaches?.size));
     setButtonDisabled(state.exportJsonButton, running || !has);
     setButtonDisabled(state.exportCsvButton, running || !has);
     setButtonDisabled(state.summaryButton, running || !has);
@@ -1637,6 +1923,9 @@ function clearResults(state) {
     state.tbody.innerHTML = "";
     state.progress.value = 0;
     state.status.textContent = "Cleared. Choose a folder or drag one onto this window.";
+    // The selections survive a clear (the next run plots straight into them);
+    // the now-empty plot just says so.
+    if (state.scatter?.x && state.scatter?.y) updateScatterPlot(state);
     updateSummary(state);
     refreshControls(state);
 }
@@ -1707,7 +1996,33 @@ async function analyzeEntries(state, found) {
             + `${entry.relativePath}${state.memoryNote ?? ""}`;
         await yieldToDOM();
 
+        // Cache lookup, best-effort: any failure here (hashing, an unreadable
+        // cache file) falls through to a normal run rather than an error row.
+        let hashes = null, dirCache = null, cachedHit = false;
         try {
+            setRowStatus(entry, "hashing");
+            hashes = await entryFileHashes(entry);
+            dirCache = await loadDirCache(state, entry);
+            const hit = dirCache?.data.results[entry.name];
+            if (hit && hit.hash === combinedHash(hashes)
+                && JSON.stringify(hit.options ?? null) === JSON.stringify(entry.options ?? null)) {
+                entry.row = hit.row;
+                entry.status = "done";
+                entry.fromCache = true;
+                cachedHit = true;
+                fillRow(state, entry);
+                setRowStatus(entry, "cached",
+                    `Reused from ${CACHE_FILENAME} (saved ${hit.savedAt ?? "?"}, `
+                    + `app ${dirCache.data.appVersion ?? "?"}).\n`
+                    + `Every input hash and every analysis option matches this file's `
+                    + `cached run.\nGallery/Report need the in-memory analysis — `
+                    + `Flush Cache and re-run to get them.`);
+            }
+        } catch (cacheError) {
+            console.warn("BotBench cache lookup failed for", entry.relativePath, cacheError);
+        }
+
+        if (!cachedHit) try {
             setRowStatus(entry, "reading");
             await yieldToDOM();
             const record = await ingestBotBenchEntry(entry);
@@ -1723,8 +2038,23 @@ async function analyzeEntries(state, found) {
             });
             entry.results = results;
             entry.row = row;
+            // The hashes ride on the ROW, so Export JSON records exactly which
+            // bytes produced each result.
+            if (hashes) row.fileSha256 = hashes;
             entry.status = "done";
             fillRow(state, entry);
+            if (dirCache?.writable && hashes) {
+                dirCache.data.results[entry.name] = {
+                    hash: combinedHash(hashes), hashes,
+                    savedAt: new Date().toISOString(),
+                    options: {...entry.options}, row,
+                };
+                try { await writeDirCache(dirCache); }
+                catch (writeError) {
+                    console.warn("BotBench cache write failed for",
+                        entry.relativePath, writeError);
+                }
+            }
         } catch (error) {
             if (state.cancelled) {
                 entry.status = "cancelled";
@@ -1761,14 +2091,18 @@ async function analyzeEntries(state, found) {
     updateSummary(state);
 }
 
-async function runFolderScan(state) {
+// mode "read": existing caches are still REUSED (reading needs no write
+// grant), but no new cache is written and Flush Cache cannot delete them.
+// mode "readwrite": the browser grants write access to the folder and every
+// subfolder, and each leaf folder gets its cache written back.
+async function runFolderScan(state, mode) {
     if (!supportsDirectoryPicker()) {
         showLocalFolderAccessUnsupportedMessage();
         return;
     }
     let directoryHandle;
     try {
-        directoryHandle = await window.showDirectoryPicker({mode: "read"});
+        directoryHandle = await window.showDirectoryPicker({mode});
     } catch (error) {
         if (!isAbortLikeError(error)) showError(error);
         return;
@@ -1781,6 +2115,7 @@ async function runFolderScan(state) {
             recursive: state.recursiveInput.checked,
             onFound: () => { state.status.textContent = `Found ${++count} file(s)...`; },
         });
+        for (const e of raw) e.cacheWritable = (mode === "readwrite");
         found = await pairSidecars(raw);
     } catch (error) {
         state.status.textContent = error.message || String(error);
@@ -1865,6 +2200,7 @@ export function openBotBenchDialog() {
     state.closeButton.onclick = () => {
         state.cancelled = true;
         releaseAnalysisPauseLock(state);
+        disposeScatterView(state);
         if (state.overlay.parentNode) document.body.removeChild(state.overlay);
         if (activeDialog === state) activeDialog = null;
     };
@@ -1874,7 +2210,9 @@ export function openBotBenchDialog() {
         setButtonDisabled(state.cancelButton, true);
     };
     state.clearButton.onclick = () => clearResults(state);
-    state.chooseFolderButton.onclick = () => runFolderScan(state);
+    state.flushCacheButton.onclick = () => flushCaches(state).then(() => refreshControls(state));
+    state.chooseFolderReadButton.onclick = () => runFolderScan(state, "read");
+    state.chooseFolderCacheButton.onclick = () => runFolderScan(state, "readwrite");
     state.chooseFilesButton.onclick = () => runChooseFiles(state);
     state.exportJsonButton.onclick = () => {
         // Option sets AS RUN, not the controls' current state. The controls stay

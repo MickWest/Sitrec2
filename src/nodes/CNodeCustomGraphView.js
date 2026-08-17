@@ -47,6 +47,73 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
         // {min, max} to pin the frame-X axis to (rolling-window mode), or
         // null to autoscale the axis to the plotted data. Set by the manager.
         this.fixedXRange = null;
+        // Sized-scatter mode (setScatterData): the graph plots free-standing
+        // {x, y, size} points instead of per-frame series — no frame coupling,
+        // no equal-aspect forcing, dot AREA carries the third column.
+        this.scatterMode = false;
+        this.scatter = null;
+        this._hoverIndex = -1;
+    }
+
+    /**
+     * Switch the view to sized-scatter mode and set its data.
+     *
+     * @param d.points     [{x, y, size, label, color}] — size and color optional
+     * @param d.xLabel     x-axis title
+     * @param d.yLabel     y-axis title (drawn rotated on the left)
+     * @param d.sizeLabel  what dot size encodes, shown in the corner (optional)
+     */
+    setScatterData(d) {
+        this.scatterMode = true;
+        this.isFrameX = false;
+        // Leaving the canvas ends the hover — without this the last dot's
+        // highlight (and any host row highlight) sticks forever.
+        if (this.canvas && !this._scatterLeaveWired) {
+            this._scatterLeaveWired = true;
+            this.canvas.addEventListener("mouseleave", () => {
+                if (this._hoverIndex !== -1) {
+                    this._hoverIndex = -1;
+                    this.onScatterHover?.(null);
+                    setRenderOne();
+                }
+            });
+        }
+        // Inherited frame/crosshair machinery all no-ops on an empty series
+        // list, which is what keeps the OSD base class untouched here.
+        this.series = [];
+        this.scatter = {
+            points: d.points ?? [],
+            xLabel: d.xLabel ?? "",
+            yLabel: d.yLabel ?? "",
+            sizeLabel: d.sizeLabel ?? null,
+        };
+        this._hoverIndex = -1;
+        this.scatterAutoScale();
+        setRenderOne();
+    }
+
+    // Plain independent min/max autoscale for scatter data. The value-X branch
+    // of autoScale() forces equal aspect (square units), which is right for
+    // spatial pairs and wrong for arbitrary column pairs like duration vs
+    // relative separation.
+    scatterAutoScale() {
+        const pts = this.scatter?.points ?? [];
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const p of pts) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+        }
+        if (!isFinite(minX)) { minX = 0; maxX = 1; }
+        if (!isFinite(minY)) { minY = 0; maxY = 1; }
+        if (minX === maxX) { minX -= 1; maxX += 1; }
+        if (minY === maxY) { minY -= 1; maxY += 1; }
+        const px = (maxX - minX) * 0.06, py = (maxY - minY) * 0.06;
+        this.minX = minX - px; this.maxX = maxX + px;
+        this.minY = minY - py; this.maxY = maxY + py;
+        this.hasY2 = false;
+        this.hasY3 = false;
     }
 
     // Single source of truth for the right margin. 60px base, +40 per right axis.
@@ -161,7 +228,186 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
             e.stopPropagation(); e.preventDefault();
             return;
         }
+        if (this.scatterMode) {
+            // Hover hit-test: nearest dot within its radius (+4px slack).
+            const rect = this.canvas.getBoundingClientRect();
+            const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+            let best = -1, bestDist = Infinity;
+            const pts = this.scatter?.points ?? [];
+            for (let i = 0; i < pts.length; i++) {
+                const s = this.graphToScreenAxis(pts[i].x, pts[i].y, this.minY, this.maxY);
+                const d = Math.hypot(s.x - mx, s.y - my);
+                if (d <= (pts[i]._r ?? 5) + 4 && d < bestDist) { bestDist = d; best = i; }
+            }
+            if (best !== this._hoverIndex) {
+                this._hoverIndex = best;
+                // Hosts can mirror the hover elsewhere (e.g. highlight the
+                // matching table row). null = no dot under the pointer.
+                this.onScatterHover?.(best >= 0 ? best : null);
+                setRenderOne();
+            }
+            return;
+        }
         super.onMouseMove(e);
+    }
+
+    // Radius mapping: dot AREA tracks the size column (sqrt), 3..14 px.
+    _scatterRadii() {
+        const pts = this.scatter.points;
+        const sizes = pts.map((p) => p.size).filter(Number.isFinite);
+        const sMin = Math.min(...sizes), sMax = Math.max(...sizes);
+        const span = sMax - sMin;
+        for (const p of pts) {
+            p._r = Number.isFinite(p.size) && span > 0
+                ? 3 + 11 * Math.sqrt((p.size - sMin) / span)
+                : (Number.isFinite(p.size) ? 8 : 4);
+        }
+        return {sMin, sMax, sized: sizes.length > 0};
+    }
+
+    renderScatter(frame) {
+        // A host (e.g. the BotBench modal) may need the graph ABOVE its own
+        // overlay. The view manager re-stacks view z-indices, so a one-shot
+        // assignment gets overwritten — re-assert it each render instead.
+        if (this.scatterElevateZ && this.div
+            && this.div.style.zIndex !== String(this.scatterElevateZ)) {
+            this.div.style.zIndex = String(this.scatterElevateZ);
+        }
+        if (this.rebuildCallback) this.rebuildCallback();
+        if (this._lastWidth !== this.widthPx || this._lastHeight !== this.heightPx) {
+            this._lastWidth = this.widthPx;
+            this._lastHeight = this.heightPx;
+            this.scatterAutoScale();
+        }
+
+        const ctx = this.ctx;
+        const c = this.dark ? DARK_THEME : LIGHT_THEME;
+        const margin = 60;
+        const rightMargin = this._rightMargin();
+
+        CNodeTabbedCanvasView.prototype.renderCanvas.call(this, frame);
+
+        const width = this.widthPx;
+        const height = this.heightPx;
+        if (width < margin + rightMargin + 10 || height < margin * 2 + 10) return;
+        const graphWidth = width - margin - rightMargin;
+        const graphHeight = height - margin * 2;
+
+        ctx.fillStyle = c.bg;
+        ctx.fillRect(0, 0, width, height);
+
+        if (this.title) {
+            ctx.font = '14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = c.title;
+            ctx.fillText(this.title, width / 2, 18);
+        }
+
+        ctx.strokeStyle = c.frame;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.rect(margin, margin, graphWidth, graphHeight);
+        ctx.stroke();
+
+        const pts = this.scatter?.points ?? [];
+        if (pts.length === 0) {
+            ctx.fillStyle = c.text;
+            ctx.font = '13px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(this.emptyMessage ?? "No rows have numbers for both selected columns",
+                margin + graphWidth / 2, margin + graphHeight / 2);
+            ctx.textAlign = 'left';
+            return;
+        }
+
+        // Grid + labels. formatLabel on BOTH axes — arbitrary columns can span
+        // 0..1, so the frame-graph's integer x labels would collapse to 0/1.
+        const xStep = this.calculateStep(this.maxX - this.minX, graphWidth);
+        const yStep = this.calculateStep(this.maxY - this.minY, graphHeight);
+        const formatLabel = (v) => Math.abs(v) < 1 ? v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
+            : Math.abs(v) < 10 ? v.toFixed(1) : Math.round(v).toString();
+        ctx.font = '12px sans-serif';
+        ctx.strokeStyle = c.grid;
+        for (let x = Math.ceil(this.minX / xStep) * xStep; x <= this.maxX; x += xStep) {
+            const s = this.graphToScreenAxis(x, this.minY, this.minY, this.maxY);
+            ctx.beginPath(); ctx.moveTo(s.x, margin); ctx.lineTo(s.x, margin + graphHeight); ctx.stroke();
+        }
+        for (let y = Math.ceil(this.minY / yStep) * yStep; y <= this.maxY; y += yStep) {
+            const s = this.graphToScreenAxis(this.minX, y, this.minY, this.maxY);
+            ctx.beginPath(); ctx.moveTo(margin, s.y); ctx.lineTo(margin + graphWidth, s.y); ctx.stroke();
+        }
+        ctx.fillStyle = c.text;
+        ctx.textAlign = 'center';
+        for (let x = Math.ceil(this.minX / xStep) * xStep; x <= this.maxX; x += xStep) {
+            const s = this.graphToScreenAxis(x, this.minY, this.minY, this.maxY);
+            ctx.fillText(formatLabel(x), s.x, margin + graphHeight + 20);
+        }
+        ctx.textAlign = 'right';
+        for (let y = Math.ceil(this.minY / yStep) * yStep; y <= this.maxY; y += yStep) {
+            const s = this.graphToScreenAxis(this.minX, y, this.minY, this.maxY);
+            ctx.fillText(formatLabel(y), margin - 5, s.y + 4);
+        }
+
+        // Axis titles: x below, y rotated on the left.
+        ctx.font = '14px sans-serif';
+        ctx.fillStyle = c.title;
+        ctx.textAlign = 'center';
+        ctx.fillText(this.scatter.xLabel, margin + graphWidth / 2, height - 10);
+        ctx.save();
+        ctx.translate(14, margin + graphHeight / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(this.scatter.yLabel, 0, 0);
+        ctx.restore();
+
+        // Size legend (top-left corner, inside the margin band).
+        const {sMin, sMax, sized} = this._scatterRadii();
+        if (sized && this.scatter.sizeLabel) {
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillStyle = c.text;
+            ctx.fillText(`dot size: ${this.scatter.sizeLabel} (${formatLabel(sMin)} – ${formatLabel(sMax)})`,
+                5, margin - 8);
+        }
+
+        // Dots, smallest-last so big dots never bury small ones, with a
+        // background ring so overlapping dots stay separable.
+        const order = pts.map((p, i) => i).sort((a, b) => (pts[b]._r ?? 4) - (pts[a]._r ?? 4));
+        for (const i of order) {
+            const p = pts[i];
+            const s = this.graphToScreenAxis(p.x, p.y, this.minY, this.maxY);
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, p._r, 0, Math.PI * 2);
+            ctx.fillStyle = p.color ?? c.axis[0];
+            ctx.globalAlpha = 0.8;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = c.bg;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+
+        // Hover label: the point's own label plus its coordinates.
+        const h = this._hoverIndex >= 0 ? pts[this._hoverIndex] : null;
+        if (h) {
+            const s = this.graphToScreenAxis(h.x, h.y, this.minY, this.maxY);
+            const lines = [h.label ?? "", `${this.scatter.xLabel}: ${formatLabel(h.x)}   `
+                + `${this.scatter.yLabel}: ${formatLabel(h.y)}`
+                + (Number.isFinite(h.size) && this.scatter.sizeLabel
+                    ? `   ${this.scatter.sizeLabel}: ${formatLabel(h.size)}` : "")]
+                .filter((l) => l.length);
+            ctx.font = '12px sans-serif';
+            const tw = Math.max(...lines.map((l) => ctx.measureText(l).width));
+            const bx = Math.min(Math.max(margin, s.x + 12), width - rightMargin - tw - 12);
+            const by = Math.max(margin + 6, s.y - 14 - lines.length * 15);
+            ctx.fillStyle = this.dark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.92)';
+            ctx.fillRect(bx - 5, by - 13, tw + 10, lines.length * 15 + 8);
+            ctx.strokeStyle = c.frame;
+            ctx.strokeRect(bx - 5, by - 13, tw + 10, lines.length * 15 + 8);
+            ctx.fillStyle = c.title;
+            ctx.textAlign = 'left';
+            lines.forEach((l, i) => ctx.fillText(l, bx, by + i * 15));
+        }
+        ctx.textAlign = 'left';
     }
 
     onMouseUp(e) {
@@ -176,6 +422,7 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
     }
 
     autoScale() {
+        if (this.scatterMode) { this.scatterAutoScale(); return; }
         if (this.series.length === 0) return;
 
         let allMinX = Infinity, allMaxX = -Infinity;
@@ -246,6 +493,7 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
 
     renderCanvas(frame) {
         if (!this.visible) return;
+        if (this.scatterMode) { this.renderScatter(frame); return; }
 
         // Pull fresh data / refresh selectors (throttled inside the callback).
         if (this.rebuildCallback) this.rebuildCallback();

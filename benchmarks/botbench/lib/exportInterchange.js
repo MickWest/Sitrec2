@@ -143,9 +143,15 @@ function targetPart(t) {
         const {MANEUVER_ANOMALOUS} = require("./maneuverTargets");
         const dflt = MANEUVER_ANOMALOUS[t.kind] ?? false;
         const resolved = params.anomalous ?? dflt;
-        if (resolved) return `anom-${kind}`;
-        if (dflt) return `ctrl-${kind}`;
-        return kind;
+        // Variant label (M1 parameter sweeps): two variants of one kind are
+        // different truths and must not share a name. Hyphens survive — they
+        // are the in-field sub-part separator.
+        const v = params.variant
+            ? `-${String(params.variant).replace(/[^a-z0-9-]/gi, "").toLowerCase()}`
+            : "";
+        if (resolved) return `anom-${kind}${v}`;
+        if (dflt) return `ctrl-${kind}${v}`;
+        return kind + v;
     }
     if (params.startAGL != null) return `${kind}-${num(params.startAGL)}m`;
     return kind;
@@ -166,13 +172,15 @@ function observationPart(o) {
 /**
  * Descriptive basename for a scenario spec. Stable for a given spec+seed, so
  * regenerating overwrites in place rather than accumulating near-duplicates.
+ * The TARGET leads: a directory listing sorts into "what is it" first
+ * (anom-zigzag, straightca, ...), with the observing geometry after it.
  */
 export function scenarioBaseName(spec, scenarioSeed) {
     return [
+        targetPart(spec.target),
         platformPart(spec.platform),
         fmtRange(spec.initialHorizontalRangeM),
         `${num(spec.durationSeconds)}s-${num(spec.fps)}fps`,
-        targetPart(spec.target),
         `w${(spec.wind.kind ?? spec.wind).replace(/-/g, "")}`,
         observationPart(spec.observation),
         `s${scenarioSeed}`,

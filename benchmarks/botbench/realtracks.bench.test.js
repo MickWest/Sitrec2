@@ -113,7 +113,7 @@ describe("REAL-TRACK ARM first pass", () => {
                 vMin = Math.min(vMin, vz);
                 vMax = Math.max(vMax, vz);
             }
-            rows.push([name.split("_")[3] + (def.anomalous ? "*" : ""),
+            rows.push([name.split("_")[0] + (def.anomalous ? "*" : ""),
                 String(scenario.n), `${spec.fps}`, hMax.toFixed(1),
                 `${vMin.toFixed(1)}..${vMax.toFixed(1)}`,
                 seg.provenance.nativeMeanDtSeconds.toFixed(2),

@@ -1,6 +1,6 @@
 /**
- * TraverseHandoff.js — send a traverse analysis's CONSISTENT candidates to a
- * new Sitrec window, as ordinary tracks.
+ * TraverseHandoff.js — send a traverse analysis's CONSISTENT candidates (and,
+ * on request, its WEAK ones) to a new Sitrec window, as ordinary tracks.
  *
  * TWO CALLERS, ONE IMPLEMENTATION. The live gallery (AnalyzeTraverse) and the
  * bulk bench (analysis/BotBenchUI) run the same battery over the same results
@@ -31,6 +31,7 @@
 import {putFileHandoff} from "./FileHandoff";
 import {rankAllHypotheses} from "./TraverseRanking";
 import {SWEEP_VARIANTS} from "./TraverseBattery";
+import {clipFrameDate} from "./TraverseHypotheses";
 import {showError} from "./showError";
 
 // The curve-fitting strategies swept over polynomial order. TraverseHypotheses
@@ -81,6 +82,19 @@ export const HANDOFF_LOOK_WIDTH_FRACTION = 0.03;
  * showing one interpretation, so the collapse is reported in `alsoRan` rather
  * than done silently.
  *
+ * WEAK CANDIDATES, on request. With `includeWeak` a second band travels too,
+ * named w_<key>: candidates that PASSED THE BROAD SCREEN (rank >= 1) but
+ * failed the consistency screen — a parameter pinned at a search bound, an
+ * incomplete optimizer run, or a fit tier below the screen. These are the
+ * solutions the analysis found and then declined to endorse (the dash
+ * scenario's bound-pinned solve is the motivating case), and the only way to
+ * judge one is to look at it in the scene. Kinematically-extreme and invalid
+ * candidates (rank < 1) stay out even here — those are not readings of the
+ * data at any strength. The one-track-per-family rule spans both bands: the
+ * ranking is best-first and every eligible candidate precedes every weak one,
+ * so a family with a consistent member gets c_ and its weak members are
+ * counted in that entry's `alsoRan`, never doubled as a w_ twin.
+ *
  * WHY CUSTOM1 AND NOT THE BOT FORMAT. A BOT interchange row is a sensor
  * position plus a sightline; it describes an OBSERVATION. A candidate is a
  * reconstructed object path with no sightline of its own, so it belongs in an
@@ -93,13 +107,18 @@ export const HANDOFF_LOOK_WIDTH_FRACTION = 0.03;
  *                 column is named TPHAE when it does, which is the one header
  *                 ParseCustom1CSV reads as already-HAE so it skips the geoid
  *                 add; a plain ALTITUDE is read as mean sea level.
- * @param startMs  epoch of frame 0
+ * @param startMs  epoch of CLIP frame 0. The dataset may be an A-B window of
+ *                 the clip (dataset.frame0 > 0); timestamps are built through
+ *                 clipFrameDate, which applies that offset, so the handed-off
+ *                 tracks land in the analyzed window rather than at the start
+ *                 of the clip.
  * @param exclude  hypotheses to leave out — the gallery's "set aside" tiles,
  *                 which the reader has explicitly pushed out of consideration
  *                 and must not get back by another door.
+ * @param includeWeak  also send the weak band, named w_<key> — see above.
  */
 export function consistentTrackCSVs(results, {
-    toLLA, altitudeIsHAE = false, startMs, exclude = null,
+    toLLA, altitudeIsHAE = false, startMs, exclude = null, includeWeak = false,
 } = {}) {
     const dataset = results?.dataset;
     if (!dataset || typeof toLLA !== "function") return [];
@@ -111,38 +130,57 @@ export function consistentTrackCSVs(results, {
     const ranked = rankAllHypotheses(results.hypotheses ?? [], {useTruth: false});
 
     const out = [];
-    const used = new Set();
-    const alsoRan = new Map();
+    const byKey = new Map();   // family key -> its out entry (first seen = best)
     for (const {h, r} of ranked) {
-        if (!r?.eligible) continue;
         if (exclude?.has(h)) continue;
         const track = h?.track;
         if (!track || track.length < dataset.n * 3 || h.atInfinity) continue;
 
-        const name = `c_${String(h.key ?? "candidate").replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`;
-        // The ranked list is best-first, so the first member of a key is the
-        // one that stands for its family. Later members are counted, not kept.
-        if (used.has(name)) { alsoRan.set(name, (alsoRan.get(name) ?? 0) + 1); continue; }
-        used.add(name);
+        // Band membership. Consistent = the ranker's eligible flag, as before.
+        // Weak = passed the broad screen but failed eligibility; the reason is
+        // kept because the notes must say WHY this track is not an endorsement.
+        let prefix, weakReason = null;
+        if (r?.eligible) {
+            prefix = "c_";
+        } else if (includeWeak && r && r.rank >= 1) {
+            prefix = "w_";
+            weakReason = r.boundaryLimited ? "pinned at a search bound"
+                : r.optimizerWarnings?.length ? "optimizer incomplete"
+                : `fit tier "${r.label}"`;
+        } else {
+            continue;
+        }
 
+        const key = String(h.key ?? "candidate").replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+        // The ranked list is best-first, so the first member of a key is the
+        // one that stands for its family. Later members are counted, not kept
+        // — across BOTH bands, so a family never fields a c_ and a w_ twin.
+        const prev = byKey.get(key);
+        if (prev) { prev.alsoRan++; continue; }
+
+        const name = prefix + key;
         let csv = `TIME,LAT,LONG,${altitudeIsHAE ? "TPHAE" : "ALTITUDE"},CALLSIGN\n`;
         for (let f = 0; f < dataset.n; f++) {
             const x = track[f * 3], y = track[f * 3 + 1], z = track[f * 3 + 2];
             const lla = toLLA(x, y, z);
             if (!lla) continue;
-            const iso = new Date(startMs + (f / dataset.fps) * 1000).toISOString();
+            // clipFrameDate, not a bare startMs + f/fps: the dataset can be an
+            // A-B window and its frame0 offset must reach the timestamps.
+            const iso = clipFrameDate(startMs, dataset, f).toISOString();
             csv += `${iso},${lla[0].toFixed(9)},${lla[1].toFixed(9)},`
                 + `${lla[2].toFixed(3)},${name}\n`;
         }
-        out.push({
+        const entry = {
             name, text: csv, hypothesis: h.name, errDeg: h.errDeg, tier: r.label,
+            weak: prefix === "w_", weakReason,
             // What decides how big a marker on this candidate looks — see
             // lookCameraFraming.
             closestRangeM: closestRangeToSensor(dataset, track),
             alsoRan: 0, rangeBlind: DIAGNOSTIC_FAMILY_KEYS.has(h.key),
-        });
+        };
+        byKey.set(key, entry);
+        out.push(entry);
     }
-    for (const c of out) c.alsoRan = alsoRan.get(c.name) ?? 0;
     return out;
 }
 
@@ -174,7 +212,8 @@ export function contextTrackCSVs(results, {toLLA, altitudeIsHAE = false, startMs
             if (valid && !valid[f]) continue;      // truth may not cover the whole clip
             const lla = toLLA(positions[f * 3], positions[f * 3 + 1], positions[f * 3 + 2]);
             if (!lla) continue;
-            const iso = new Date(startMs + (f / dataset.fps) * 1000).toISOString();
+            // Same A-B window offset as the candidates — see consistentTrackCSVs.
+            const iso = clipFrameDate(startMs, dataset, f).toISOString();
             csv += `${iso},${lla[0].toFixed(9)},${lla[1].toFixed(9)},`
                 + `${lla[2].toFixed(3)},${name}\n`;
             rows++;
@@ -272,16 +311,30 @@ export function closestRangeToSensor(dataset, track, valid = null) {
 
 /** The candidate list as the lines that go in the sitch Notes. */
 export function candidateNotes(candidates) {
+    const line = (c) =>
+        `  ${c.name}  ${c.hypothesis} — ${c.errDeg?.toFixed(3) ?? "?"}°, ${c.tier}`
+        + (c.alsoRan ? `, standing for ${c.alsoRan + 1} members of its family` : "")
+        + (c.weakReason ? `  [${c.weakReason}]` : "")
+        + (c.rangeBlind ? "  [RANGE-BLIND]" : "")
+        + "\n";
+
+    const consistent = candidates.filter((c) => !c.weak);
+    const weak = candidates.filter((c) => c.weak);
+
     let notes = "CONSISTENT CANDIDATES IN THIS SCENE\n";
-    if (!candidates.length) {
-        return notes + "  None. No candidate passed the screen without a bound pin or an\n"
+    if (!consistent.length) {
+        notes += "  None. No candidate passed the screen without a bound pin or an\n"
             + "  optimizer warning, which is what an \"unresolved\" verdict means.\n";
+        if (!weak.length) return notes;
+    } else {
+        for (const c of consistent) notes += line(c);
     }
-    for (const c of candidates) {
-        notes += `  ${c.name}  ${c.hypothesis} — ${c.errDeg?.toFixed(3) ?? "?"}°, ${c.tier}`
-            + (c.alsoRan ? `, standing for ${c.alsoRan + 1} members of its family` : "")
-            + (c.rangeBlind ? "  [RANGE-BLIND]" : "")
-            + "\n";
+    if (weak.length) {
+        notes += "WEAK CANDIDATES IN THIS SCENE (w_ prefix)\n";
+        for (const c of weak) notes += line(c);
+        notes += "A weak candidate passed the broad screen but failed the consistency\n"
+            + "screen for the bracketed reason. It is the solution the analysis found\n"
+            + "and declined to endorse — context to look at, not a finding.\n";
     }
     notes += "Each is a reconstructed object path, not an observation: a candidate\n"
         + "consistent with the sightlines, at the range its own model implies.\n";

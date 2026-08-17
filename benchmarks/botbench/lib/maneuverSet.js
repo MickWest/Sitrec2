@@ -13,7 +13,10 @@ const ORBIT = {kind: "orbit-point", speedMS: 70, altitudeAGL: 3000};
 // it crosses the scene in seconds.
 export const MANEUVER_CASES = {
     "static-point":     {rangeM: 5000,   durationSeconds: 60},
+    "straight-cv":      {rangeM: 20000,  durationSeconds: 60},
     "straight-ca":      {rangeM: 20000,  durationSeconds: 60},
+    "slow-turn":        {rangeM: 20000,  durationSeconds: 60},
+    "accel-instant":    {rangeM: 20000,  durationSeconds: 15},
     "turn90-instant":   {rangeM: 20000,  durationSeconds: 15},
     "zigzag":           {rangeM: 5000,   durationSeconds: 30},
     "highg-turn":       {rangeM: 20000,  durationSeconds: 15},

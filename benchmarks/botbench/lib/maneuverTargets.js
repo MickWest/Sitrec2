@@ -1,21 +1,25 @@
-// maneuverTargets.js — MANEUVER-CLASS truth generators (first pass, 2026-08-15).
+// maneuverTargets.js — MANEUVER-CLASS truth generators (first pass 2026-08-15;
+// completed to the full thirteen-type table 2026-08-16).
 //
-// The track-type taxonomy: shape classes from a static point through a
-// figure-eight. The shapes themselves are mostly mundane (a thermalling raptor
-// flies a corkscrew; an aerobatic plane flies a loop); anomalousness is a
-// PARAMETER (speed, g, amplitude), not the shape — so every generator takes
+// The track-type taxonomy: THIRTEEN shape classes from a static point through
+// a figure-eight. The shapes themselves are mostly mundane (a thermalling
+// raptor flies a corkscrew; an aerobatic plane flies a loop); anomalousness is
+// a PARAMETER (speed, g, amplitude), not the shape — so every generator takes
 // overridable parameters and records the realized peaks in its profile, ready
-// for capability-ladder-style sweeps later. Defaults below give one clearly
-// mundane or clearly anomalous instance per kind, per the agreed table:
-//   mundane: static-point, straight-ca, sine-wave, corkscrew, vertical-loop,
-//            figure-eight
-//   anomalous: turn90-instant (infinite accel), zigzag (58 g transitions),
-//              highg-turn (50 g sustained), hypersonic-glide (Mach ~5)
+// for capability-ladder-style sweeps (the M1 batch in lib/m1Set.js is the
+// first such sweep). Defaults below give one clearly mundane or clearly
+// anomalous instance per kind, per the agreed table:
+//   mundane: static-point, straight-cv, straight-ca, slow-turn, sine-wave,
+//            corkscrew, vertical-loop, figure-eight
+//   anomalous: accel-instant (speed step, no ramp), turn90-instant (infinite
+//              accel), zigzag (58 g transitions), highg-turn (50 g sustained),
+//              hypersonic-glide (Mach ~5)
 //
 // Same contract as targets.js generators: scenario ENU, origin at the target's
 // initial ground point, z = height above (flat-proxy) site ground, returns
 // Float64Array(3n). Deterministic; the seeded stream is used ONLY for the
-// turn90 onset draw (the "turn happens in 20–80% of the track" rule).
+// onset draws of turn90-instant and accel-instant (the "event happens in
+// 20–80% of the track" rule).
 // No wind coupling in this first pass: these targets are self-propelled and
 // their shape IS the signal under test.
 
@@ -69,6 +73,17 @@ function staticPoint({n, p}) {
     return {pos, profile: {startAGL}};
 }
 
+function straightCV({n, fps, p}) {
+    const alt = p.altitudeAGL ?? 3000;
+    const speed = p.speed ?? 100;
+    const pos = new Float64Array(n * 3);
+    for (let f = 0; f < n; f++) {
+        pos[f * 3] = speed * (f / fps);
+        pos[f * 3 + 2] = alt;
+    }
+    return {pos, profile: {speed}};
+}
+
 function straightCA({n, fps, p}) {
     const alt = p.altitudeAGL ?? 3000;
     const v0 = p.v0 ?? 60;
@@ -82,6 +97,47 @@ function straightCA({n, fps, p}) {
     const dur = (n - 1) / fps;
     return {pos, profile: {v0, accel,
         realizedPeakSpeedMS: v0 + accel * dur}};
+}
+
+// Slow, constant-radius turn: the mundane turning anchor. Constant speed and
+// turn rate from frame 0 — a wide lazy circle, no event to detect.
+function slowTurn({n, fps, p}) {
+    const alt = p.altitudeAGL ?? 3000;
+    const speed = p.speed ?? 100;
+    const R = p.radiusM ?? 3000;
+    const omega = speed / R;
+    const {pos} = integrateHeading(n, fps, {altitudeAGL: alt, speed,
+        rateAt: () => omega});
+    return {pos, profile: {speed, radiusM: R,
+        periodSeconds: 2 * Math.PI / omega,
+        realizedPeakGLoad: omega * speed / G}};
+}
+
+// Straight line with an INSTANTANEOUS speed change — the along-track
+// complement of turn90-instant (speed steps, direction holds). The onset
+// follows the same 20–80% seeded rule.
+function accelInstant({n, fps, p, seed, anomalous}) {
+    const alt = p.altitudeAGL ?? 3000;
+    const v0 = p.v0 ?? 20;
+    const v1 = p.v1 ?? 200;
+    const dur = (n - 1) / fps;
+    const onsetSeconds = p.onsetSeconds
+        ?? dur * (0.2 + 0.6 * makeStream(seed).uniform());
+    const pos = new Float64Array(n * 3);
+    for (let f = 0; f < n; f++) {
+        const t = f / fps;
+        pos[f * 3] = t < onsetSeconds
+            ? v0 * t
+            : v0 * onsetSeconds + v1 * (t - onsetSeconds);
+        pos[f * 3 + 2] = alt;
+    }
+    const dv = v1 - v0;
+    return {pos, profile: {v0, v1, onsetSeconds,
+            deltaVMagnitudeMS: Math.abs(dv)},
+        events: [{eventId: "accel-instant", family: "impulse", anomalous,
+            onsetSeconds, endSeconds: onsetSeconds + 1 / fps,
+            directionENU: [Math.sign(dv) || 1, 0, 0],
+            parameters: {v0, v1, deltaVMS: dv}}]};
 }
 
 function turn90Instant({n, fps, p, seed, anomalous}) {
@@ -146,14 +202,22 @@ function highgTurn({n, fps, p, anomalous}) {
     const alt = p.altitudeAGL ?? 3000;
     const speed = p.speed ?? 240;
     const gLoad = p.gLoad ?? 50;
+    // With a lead-in (the default) the track flies straight for 20% of the
+    // clip and rolls into the turn over a short rise; without one it turns at
+    // full rate from frame 0, so there is no straight reference segment and
+    // no onset event inside the window to detect.
+    const leadIn = p.leadIn ?? true;
     // Level coordinated turn: horizontal load sqrt(g²−1), rate = latG·G/v.
     const psiDot = Math.sqrt(Math.max(0, gLoad * gLoad - 1)) * G / speed;
     const dur = (n - 1) / fps;
-    const onset = dur * 0.2, rise = Math.min(2, dur * 0.1);
-    const rateAt = (t) => (t < onset) ? 0 : psiDot * smoothstep((t - onset) / rise);
+    const onset = leadIn ? dur * 0.2 : 0;
+    const rise = Math.min(2, dur * 0.1);
+    const rateAt = leadIn
+        ? (t) => (t < onset) ? 0 : psiDot * smoothstep((t - onset) / rise)
+        : () => psiDot;
     const {pos, peakRate} = integrateHeading(n, fps, {altitudeAGL: alt, speed, rateAt});
     const realized = Math.sqrt(1 + (peakRate * speed / G) ** 2);
-    return {pos, profile: {speed, gLoad, turnRadiusM: speed / psiDot,
+    return {pos, profile: {speed, gLoad, leadIn, turnRadiusM: speed / psiDot,
             realizedPeakGLoad: realized},
         events: [{eventId: "highg-turn-sustained", family: "sustained",
             anomalous, onsetSeconds: onset, endSeconds: dur,
@@ -168,6 +232,10 @@ function hypersonicGlide({n, fps, p, anomalous}) {
     const speed = p.speed ?? 1700;            // ~Mach 5.7 at altitude
     const dip = (p.dipDeg ?? 2) * DEG;
     const dipS = p.dipSeconds ?? 10;
+    // "dive" (default) noses down; "pullup" is the same raised-cosine
+    // flight-path-angle excursion mirrored upward.
+    const sense = p.sense ?? "dive";
+    const sgn = sense === "pullup" ? 1 : -1;
     const dur = (n - 1) / fps;
     const onset = dur * 0.4;
     // Raised-cosine flight-path-angle dip: gentle (~2 g vertical) — the
@@ -175,7 +243,7 @@ function hypersonicGlide({n, fps, p, anomalous}) {
     const gamma = (t) => {
         const tau = (t - onset) / dipS;
         if (tau < 0 || tau > 1) return 0;
-        return -dip * 0.5 * (1 - Math.cos(2 * Math.PI * tau));
+        return sgn * dip * 0.5 * (1 - Math.cos(2 * Math.PI * tau));
     };
     const pos = new Float64Array(n * 3);
     const SUB = 40, h = 1 / fps / SUB;
@@ -192,16 +260,16 @@ function hypersonicGlide({n, fps, p, anomalous}) {
         }
     }
     return {pos, profile: {speed, dipDeg: p.dipDeg ?? 2,
-            dipSeconds: dipS, realizedPeakSinkMS: peakVz},
+            dipSeconds: dipS, sense, realizedPeakSinkMS: peakVz},
         // The anomaly is the speed regime itself, not the gentle dip, so the
         // event window is the whole track.
         events: [{eventId: "hypersonic-speed", family: "sustained",
             anomalous, onsetSeconds: 0, endSeconds: dur,
             directionENU: [1, 0, 0],   // velocity axis
-            parameters: {speedMS: speed, dipDeg: p.dipDeg ?? 2}}]};
+            parameters: {speedMS: speed, dipDeg: p.dipDeg ?? 2, sense}}]};
 }
 
-function sineWave({n, fps, p}) {
+function sineWave({n, fps, p, anomalous}) {
     const alt = p.altitudeAGL ?? 1000;
     const speed = p.speed ?? 60;
     const A = p.amplitudeM ?? 200;
@@ -215,9 +283,19 @@ function sineWave({n, fps, p}) {
         pos[f * 3 + 1] = plane === "horizontal" ? A * Math.sin(omega * t) : 0;
         pos[f * 3 + 2] = alt + (plane === "vertical" ? A * Math.sin(omega * t) : 0);
     }
+    const peakG = A * omega * omega / G;
+    const dur = (n - 1) / fps;
     return {pos, profile: {speed, amplitudeM: A,
-        periodSeconds: period, plane,
-        realizedPeakGLoad: A * omega * omega / G}};
+            periodSeconds: period, plane, realizedPeakGLoad: peakG},
+        // The weave is sustained — it runs the whole track — so the event
+        // window is the whole track (same rule as zigzag). Emitted for the
+        // mundane member too, anomalous:false, so a plausible/impossible pair
+        // shares a comparable window (the ANOMALY-CONTROL rule).
+        events: [{eventId: "sine-wave-sustained", family: "sustained",
+            anomalous, onsetSeconds: 0, endSeconds: dur,
+            directionENU: [1, 0, 0],   // mean track axis (base heading east)
+            parameters: {amplitudeM: A, periodSeconds: period, plane,
+                peakGLoad: peakG}}]};
 }
 
 function corkscrew({n, fps, p}) {
@@ -238,7 +316,7 @@ function corkscrew({n, fps, p}) {
         realizedPeakGLoad: omega * omega * R / G}};
 }
 
-function verticalLoop({n, fps, p}) {
+function verticalLoop({n, fps, p, anomalous}) {
     const alt = p.altitudeAGL ?? 2000;
     const speed = p.speed ?? 80;
     const R = p.radiusM ?? 200;
@@ -262,12 +340,20 @@ function verticalLoop({n, fps, p}) {
             pos[f * 3 + 2] = alt;
         }
     }
+    const peakG = speed * speed / R / G;
     return {pos, profile: {speed, radiusM: R,
-        onsetSeconds: onset, loopSeconds: 2 * Math.PI / omega,
-        realizedPeakGLoad: speed * speed / R / G}};
+            onsetSeconds: onset, loopSeconds: 2 * Math.PI / omega,
+            realizedPeakGLoad: peakG},
+        // The event is the loop itself: straight flight outside it. A slow
+        // loop can outlast a short clip, so the window clamps to the track.
+        events: [{eventId: "vertical-loop-sustained", family: "sustained",
+            anomalous, onsetSeconds: onset,
+            endSeconds: Math.min(loopEnd, dur),
+            directionENU: [0, 0, 1],   // initial centripetal direction (center above)
+            parameters: {speedMS: speed, radiusM: R, peakGLoad: peakG}}]};
 }
 
-function figureEight({n, fps, p}) {
+function figureEight({n, fps, p, anomalous}) {
     const alt = p.altitudeAGL ?? 1000;
     const speed = p.speed ?? 60;
     const R = p.radiusM ?? 300;
@@ -286,15 +372,26 @@ function figureEight({n, fps, p}) {
         return sign * omega;
     };
     const {pos} = integrateHeading(n, fps, {altitudeAGL: alt, speed, rateAt});
+    const peakG = omega * speed / G;
+    const dur = (n - 1) / fps;
     return {pos, profile: {speed, radiusM: R,
-        lobeSeconds: circleS, realizedPeakGLoad: omega * speed / G}};
+            lobeSeconds: circleS, realizedPeakGLoad: peakG},
+        // It weaves from frame 0, so the window is the whole track (same rule
+        // as zigzag and the sine wave).
+        events: [{eventId: "figure-eight-sustained", family: "sustained",
+            anomalous, onsetSeconds: 0, endSeconds: dur,
+            directionENU: [1, 0, 0],   // initial velocity axis (heading east)
+            parameters: {speedMS: speed, radiusM: R, peakGLoad: peakG}}]};
 }
 
 // ---- dispatcher ------------------------------------------------------------
 
 const KINDS = {
     "static-point": staticPoint,
+    "straight-cv": straightCV,
     "straight-ca": straightCA,
+    "slow-turn": slowTurn,
+    "accel-instant": accelInstant,
     "turn90-instant": turn90Instant,
     "zigzag": zigzag,
     "highg-turn": highgTurn,
@@ -313,7 +410,10 @@ export const MANEUVER_KINDS = Object.keys(KINDS);
 // maneuver.bench.test.js) so the spec and the generator cannot disagree.
 export const MANEUVER_ANOMALOUS = {
     "static-point": false,
+    "straight-cv": false,
     "straight-ca": false,
+    "slow-turn": false,
+    "accel-instant": true,
     "turn90-instant": true,
     "zigzag": true,
     "highg-turn": true,
@@ -335,7 +435,8 @@ export function generateManeuverTruth(targetSpec, {n, fps, seed}) {
     const valid = new Uint8Array(n).fill(1);
     return {
         target: {kind: "track", family: "maneuver", positionENU: r.pos, valid,
-            profile: {kind: targetSpec.kind, ...r.profile, anomalous}},
+            profile: {kind: targetSpec.kind, variant: p.variant ?? null,
+                ...r.profile, anomalous}},
         events: r.events ?? [],
     };
 }

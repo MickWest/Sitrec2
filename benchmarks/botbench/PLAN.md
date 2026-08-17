@@ -747,11 +747,36 @@ seen from long range; and tight fixed-wing circuits.
 
 ### Arm M — maneuver-class targets
 
-Ten shape classes spanning the model-violation ladder: static point, straight
-constant-acceleration, instantaneous 90-degree turn, zig-zag, sustained
-high-g turn, hypersonic glide, sine wave, corkscrew, vertical loop, and
-figure-eight. Modules: `lib/maneuverTargets.js` and `lib/maneuverSet.js`.
+Thirteen shape classes spanning the model-violation ladder: static point,
+straight constant-velocity, straight constant-acceleration, slow
+constant-radius turn, instantaneous acceleration (speed step, direction
+held), instantaneous 90-degree turn, zig-zag, sustained high-g turn,
+hypersonic glide, sine wave, corkscrew, vertical loop, and figure-eight.
+Modules: `lib/maneuverTargets.js` and `lib/maneuverSet.js`.
 Bench: `bench-bot-maneuver`.
+
+**The M1 batch** (`lib/m1Set.js`, `bench-bot-m1`) sweeps the full taxonomy as
+23 parameter variants — both directions of the speed step; 20 g and 50 g
+high-g turns with and without a lead-in; hypersonic at Mach ~6 (dive and
+pull-up) and Mach 50; plausible and impossible sine, loop (aero / too slow /
+too fast) and figure-eight members — at four clip durations (20/60/120/300 s)
+and three operator-error levels (clean, 0.15 deg and 0.3 deg wobble
+amplitude). Output tree: `results/m1/batch_<D>sec/<E>deg/{Input,Truth,All}`
+with a manifest per folder and per-batch generation times in
+`results/m1/timing.json`. Error level lives outside the truth key, so one
+variant's three error members are the same flight observed three ways.
+
+Batch generation and its integrity checks live in `lib/m1Batch.js`, shared by
+the sequential bench and by `run-m1-parallel.mjs` (`bench-bot-m1-par`): the
+twelve batch folders are independent, so the driver runs each in its own
+worker thread from a single esbuild-built worker bundle (the lazy
+non-maneuver target modules are stubbed, so accidentally pulling the app
+stack into a worker is a loud failure). Generation is deterministic, so the
+parallel tree is byte-identical to a sequential run — verified by per-file
+sha256 over all 1,944 files — with only `timing.json` differing; wall time
+drops from ~8–10 s to under 1 s. The physics bench parallelizes differently
+(Jest process shards) because its solvers need the app stack; see
+`run-physics-parallel.mjs`.
 
 Contract rules for this arm:
 
@@ -765,6 +790,20 @@ Contract rules for this arm:
    each other.
 3. **Sustained anomalies carry whole-track event windows**, so event-local
    scoring has something to score.
+
+### Visualization and the run registry
+
+`vizBotBench.mjs` (`npm run bench-bot-viz -- results/<set>`) turns any results
+set into a self-contained HTML page under `results/viz/runs/`: stat tiles, a
+truth-track shape gallery, an animated scene player (platform, target,
+observed line of sight, event windows), a peak-speed vs peak-g envelope
+scatter, a realized pointing-error strip per folder, and generation timing.
+Every visualized run is appended to `results/viz/registry.json` with compact
+per-scenario stats, and `results/viz/index.html` is rebuilt from the registry:
+the run history plus dataset-wide aggregates (counts by kind, duration ×
+operator-error coverage, the whole-dataset kinematic envelope). Pages embed
+their data, so old runs stay viewable after the source results are
+regenerated; `--index-only` rebuilds just the index.
 
 ### Study T — tractability
 
