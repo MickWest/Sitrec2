@@ -30,6 +30,7 @@ import {
     resolveTerrestrialK,
 } from "../atmosphere/terrestrialRefraction";
 import {currentTerrestrialLiftContext} from "../atmosphere/refractionSettings";
+import {flatEarthWarpPoint} from "../scenarios/FlatEarthScenario";
 
 const DEG2RAD = Math.PI / 180;
 
@@ -80,6 +81,8 @@ function applyMeshOpacity(mesh, opacity) {
 const _tilesSizeTmp = new Vector2();
 /** Scratch for the camera world position handed to the refraction lift context. */
 const _tilesCamWorldPos = new Vector3();
+/** Scratch for the flat-Earth-warped camera position (flat-mode lift context). */
+const _tilesCamWarpedPos = new Vector3();
 
 // ── Flat Earth aware tile selection ─────────────────────────────────
 //
@@ -168,24 +171,26 @@ class FlatAwareTilesRenderer extends TilesRenderer {
         _feWorldSphere.copy(_feLocalSphere).applyMatrix4(this.group.matrixWorld);
         const originalRadius = _feWorldSphere.radius;
 
-        // Terrestrial refraction stays active in flat mode — the flat scene
-        // hook warps the camera pose FIRST precisely so the refraction hook
-        // can chain after it (FlatEarthScenario.installFlatEarthSceneHook) —
-        // so the selection must see the lift here too. Lift in globe space
-        // before the disc warp, mirroring that chain. Metres of lift against
-        // the far field's planetary-scale sphere slop; no radius pad needed.
-        const liftCtx = this._terrLiftCtx;
-        if (liftCtx) {
-            liftWorldPoint(liftCtx, _feWorldSphere.center, _feWorldSphere.center);
-        }
-
         // Mutates the sphere; true means the warp is locally rigid here.
         if (warpSphere(_feWorldSphere) === true) {
             super.calculateTileViewError(tile, target);
-            // Near field, warp ~identity: the same physical-camera-vs-unwarped
-            // pair as flat-mode-off, so the same refraction repair applies.
+            // Near field: a locally rigid warp preserves camera-relative
+            // geometry, so the unwarped camera + unwarped volumes + unwarped
+            // lift used by the retest are a self-consistent pair that the
+            // warp maps onto the rendered one — the same repair as flat-off.
             this._terrestrialRefractionRetest(tile, target);
             return;
+        }
+
+        // Terrestrial refraction stays active in flat mode, and the render
+        // applies it AROUND THE WARPED OBSERVER: the flat scene hook warps
+        // the camera pose first precisely so the chained refraction hook
+        // derives its uniforms from that pose (installFlatEarthSceneHook).
+        // Mirror that chain — warp above, then lift the warped sphere with
+        // the warped-observer context. Metres of lift against the far
+        // field's planetary-scale sphere slop; no radius pad needed.
+        if (this._terrLiftCtxFlat) {
+            liftWorldPoint(this._terrLiftCtxFlat, _feWorldSphere.center, _feWorldSphere.center);
         }
 
         // Back into the tiles-group frame the cached cameraInfo lives in.
@@ -727,6 +732,13 @@ class PerViewTiles {
         // refraction is off, which keeps the retest a strict no-op.
         _tilesCamWorldPos.setFromMatrixPosition(cam.matrixWorld);
         this.renderer._terrLiftCtx = currentTerrestrialLiftContext(_tilesCamWorldPos);
+        // Flat mode renders refraction relative to the WARPED camera — the
+        // flat scene hook warps the pose first, then the chained refraction
+        // hook derives its uniforms from it — so the far-field flat culling
+        // needs a context built around that same warped observer.
+        this.renderer._terrLiftCtxFlat = (this.renderer._terrLiftCtx && Globals.flatEarthWarpSphere)
+            ? currentTerrestrialLiftContext(flatEarthWarpPoint(_tilesCamWorldPos, _tilesCamWarpedPos))
+            : null;
 
         this.renderer.setCamera(cam);
         this.renderer.setResolutionFromRenderer(cam, view.renderer);
