@@ -176,6 +176,29 @@ export class CTrackFileMISB extends CTrackFile {
         return this._derivedTrackTypes()[trackIndex - 1] === "Truth";
     }
 
+    /**
+     * The derived Truth sub-track IS the answer key — what the object actually
+     * did, per the file's truth_lat/truth_long/truth_alt columns.
+     *
+     * SAY IT STRUCTURALLY, because the name cannot. TrackManager.isTruthTrack
+     * tests a whole name of "truth" or a trailing "(Truth)" — the shapes the
+     * BOT importer and the traverse handoff produce — and this file names its
+     * derived tracks with a PREFIX, "Truth_<base>", which matches neither. So
+     * the truth track fell through to the supplementary branch and was given
+     * the small INVISIBLE reference sphere meant for a FrameCenter track: the
+     * answer key was imported, listed in the menus, and drawn as nothing at
+     * all. That is the same failure a BOT scenario's truth had before it was
+     * given the lime icosahedron, arriving by a different route.
+     *
+     * Distinct from isSupplementaryTrack, which stays true: the truth track
+     * genuinely shares a flight with track 0 and must keep out of
+     * closest-point-of-approach timing. This answers the narrower question of
+     * whether it is the reference the scene is judged against.
+     */
+    trackIsTruth(trackIndex) {
+        return this._derivedTrackTypes()[trackIndex - 1] === "Truth";
+    }
+
     // Build a derived supplementary track by mapping each source row to a
     // new MISB row (or null to skip the row). Forwards the source MISB's
     // pesPTSus (PCR-anchored per-record timing) into the derived track,

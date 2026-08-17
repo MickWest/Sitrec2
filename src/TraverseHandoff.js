@@ -55,6 +55,67 @@ const DIAGNOSTIC_FAMILY_KEYS = new Set(SWEEP_VARIANTS.map((v) => v.key));
 // is why the handoff also sends a framing request — see lookCameraFraming.
 export const HANDOFF_TRACK_RADIUS_M = 1;
 
+/**
+ * READABLE TRACK NAMES, SEPARATE FROM THE HYPOTHESIS KEYS.
+ *
+ * A candidate track used to be named straight from `h.key`, which produced
+ * `w_plausible`, `w_saddle` and `w_gfpolyals` in the scene. Those are internal
+ * identifiers, not labels: "plausible" reads as a VERDICT when the hypothesis
+ * only claims to be the smoothest path, "saddle" is jargon from the shape of
+ * the cost surface, and "gfpolyals" is not a word.
+ *
+ * THE KEYS CANNOT SIMPLY BE RENAMED. They are persisted identity — they appear
+ * verbatim in the benchmark's exported records (benchmarks/botbench/results/
+ * *.jsonl) and in the per-folder result cache, and code branches on them
+ * (TraverseRanking's RAY_KEYS, the switches in AnalyzeTraverse). Renaming one
+ * is a data-format change that breaks comparison against every stored result.
+ * So the key stays the identity and this is the label; the two jobs were being
+ * done by one string.
+ *
+ * NAMING THE DISPLAY NAME INSTEAD WOULD NOT WORK EITHER. A key is a FAMILY and
+ * a display name is a MEMBER: the polynomial sweep runs one variant at five
+ * orders, all sharing key `gfPolyALS` but each named "… (order 5)". The
+ * one-track-per-family collapse keys on the family, so a per-member name would
+ * either split the family into five near-identical tracks or label the family
+ * with one arbitrary member's order.
+ *
+ * WIDTH IS A REAL CONSTRAINT, so these are checked rather than guessed. The
+ * tightest place a track name appears is the camera/target dropdown in the
+ * menus: a 240 px panel with 4 px padding and a 36% name column leaves about
+ * 132 px of widget, and lil-gui renders it at 11 px. Measured in the browser,
+ * the longest entry here (`w_minimum_acceleration`) comes to 125 px. Anything
+ * much longer is silently clipped, which is worse than an abbreviation because
+ * the reader cannot tell it happened.
+ *
+ * Unlisted keys fall back to the sanitized key, so a new hypothesis is merely
+ * unlovely rather than broken — and handoffTrackSlugsAreUsable (tested) keeps
+ * this table unique and inside the width.
+ */
+export const HANDOFF_TRACK_SLUGS = {
+    constAir:      "constant_air_speed",
+    constAlt:      "constant_altitude",
+    plausible:     "minimum_acceleration",
+    saddle:        "minimum_speed",
+    aircraft:      "fixed_wing_aircraft",
+    lantern:       "sky_lantern_balloon",
+    quadcopter:    "quadcopter",
+    droneControl:  "drone_flown_inputs",
+    ground:        "ground_object",
+    groundVehicle: "ground_vehicle",
+    fixedPoint:    "stationary_point",
+    satellite:     "satellite",
+    // The curve-fitting sweep (SWEEP_VARIANTS). "Global Fit" is the battery's
+    // own word for them; what a reader needs to know is that they are curves
+    // fitted through the sightlines, which is why each says so.
+    gfMC1:         "monte_carlo_fit_1",
+    gfMC2:         "monte_carlo_fit_2",
+    gfPolyALS:     "polynomial_curve_fit",
+};
+
+// The measured budget from the comment above: the dropdown widget at the menu's
+// default width, less the select's own arrow and padding.
+export const HANDOFF_TRACK_NAME_MAX_PX = 132;
+
 // Fraction of the look view's WIDTH the closest marker should span.
 //
 // Small on purpose: the point is to see the candidates SEPARATED, not to fill
@@ -158,7 +219,9 @@ export function consistentTrackCSVs(results, {
         const prev = byKey.get(key);
         if (prev) { prev.alsoRan++; continue; }
 
-        const name = prefix + key;
+        // The FAMILY is keyed on `key` above and stays so; only the label
+        // changes here — see HANDOFF_TRACK_SLUGS for why the two are separate.
+        const name = prefix + (HANDOFF_TRACK_SLUGS[h.key] ?? key);
         let csv = `TIME,LAT,LONG,${altitudeIsHAE ? "TPHAE" : "ALTITUDE"},CALLSIGN\n`;
         for (let f = 0; f < dataset.n; f++) {
             const x = track[f * 3], y = track[f * 3 + 1], z = track[f * 3 + 2];
@@ -182,6 +245,47 @@ export function consistentTrackCSVs(results, {
         out.push(entry);
     }
     return out;
+}
+
+/**
+ * The candidates for a handoff that gets ONE link rather than a choice:
+ * the consistent band, or — when nothing passed the consistency screen — the
+ * weak band in its place.
+ *
+ * WHY A FALLBACK EXISTS AT ALL. A scenario where nothing passed is the
+ * "unresolved" verdict, and it is precisely the row a reader most wants to
+ * open — yet it was the one that arrived carrying nothing but the scenario
+ * track, because every candidate had been declined. In an empty scene
+ * "nothing to show" and "nothing survived the screen" look identical, and
+ * only one of them is true: the analysis did find solutions, it just would
+ * not endorse them. The weak band is those solutions.
+ *
+ * WHY IT IS A FALLBACK AND NOT AN ADDITION. Sending the weak band alongside
+ * consistent candidates would dilute the very distinction the c_ prefix
+ * exists to draw — a bound-pinned solve standing in the scene beside an
+ * endorsed one reads as its peer. With the consistent band empty there is no
+ * endorsement left to dilute, and the w_ prefix plus candidateNotes' "WEAK
+ * CANDIDATES IN THIS SCENE" section still say what these are.
+ *
+ * TWO PASSES, DELIBERATELY. Asking for both bands at once and filtering
+ * afterwards would give the same tracks but different `alsoRan` counts — a
+ * consistent entry would silently start counting the weak members of its
+ * family among the peers it stands for. Running the consistent pass on its
+ * own keeps the ordinary case bit-for-bit what it always was; the second pass
+ * only ever runs when the first returned nothing.
+ *
+ * The live gallery deliberately does NOT use this: it offers Open Consistent
+ * and Open Consistent+Weak as separate buttons, because a reader looking at
+ * the tiles can see what they are asking for. This is for callers with one
+ * link and no such context.
+ *
+ * @param results  a traverse analysis result
+ * @param opts     as consistentTrackCSVs, minus includeWeak (this sets it)
+ */
+export function handoffCandidateCSVs(results, opts = {}) {
+    const consistent = consistentTrackCSVs(results, {...opts, includeWeak: false});
+    if (consistent.length) return consistent;
+    return consistentTrackCSVs(results, {...opts, includeWeak: true});
 }
 
 /**

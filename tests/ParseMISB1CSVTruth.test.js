@@ -113,4 +113,47 @@ describe('CSV → CTrackFileMISB truth track end-to-end', () => {
         expect(truthMisb[0][MISB.SensorLatitude]).toBeCloseTo(40.2, 6);
         expect(trackFile.getShortName(1, "flight.csv")).toBe("Truth_flight");
     });
+
+    // THE TRUTH TRACK MUST DECLARE ITSELF STRUCTURALLY.
+    //
+    // TrackManager.isTruthTrack tests a whole name of "truth" or a trailing
+    // "(Truth)" — the shapes CTrackFileBOT and the traverse handoff produce —
+    // then falls back to the file's own trackIsTruth(). This file names its
+    // derived tracks with a PREFIX ("Truth_flight"), which matches neither
+    // pattern, so without trackIsTruth() the truth track fell through to the
+    // supplementary branch and got the INVISIBLE reference sphere meant for a
+    // FrameCenter track: imported, listed in the menus, drawn as nothing.
+    test('the derived Truth track reports itself as ground truth', () => {
+        const trackFile = new CTrackFileMISB(parseMISB1CSV(makeTruthCSV()));
+        // The name alone cannot carry this — pinned so a future rename of the
+        // derived tracks does not quietly make the structural test redundant
+        // OR make it the only thing holding the marker up without anyone
+        // noticing which.
+        expect(trackFile.getShortName(2, "flight.csv")).not.toMatch(/^truth$|\(truth\)$/i);
+
+        expect(trackFile.trackIsTruth(2)).toBe(true);
+        expect(trackFile.trackIsTruth(1)).toBe(false);   // Center
+        expect(trackFile.trackIsTruth(0)).toBe(false);   // the sensor platform
+    });
+
+    test('truth is still SUPPLEMENTARY — it shares a flight with track 0', () => {
+        // Two different questions with the same-looking answer. Supplementary
+        // keeps it out of closest-point-of-approach re-timing (it is the same
+        // observation, not a second flight); trackIsTruth earns it the marker.
+        const trackFile = new CTrackFileMISB(parseMISB1CSV(makeTruthCSV()));
+        expect(trackFile.isSupplementaryTrack(2)).toBe(true);
+        expect(trackFile.trackIsTruth(2)).toBe(true);
+    });
+
+    test('a file with no truth columns claims no truth track', () => {
+        const csv = makeTruthCSV();
+        // Blank the truth columns (7, 8, 9) — center columns stay.
+        for (let r = 1; r < csv.length; r++) {
+            csv[r][7] = ""; csv[r][8] = ""; csv[r][9] = "";
+        }
+        const trackFile = new CTrackFileMISB(parseMISB1CSV(csv));
+        expect(trackFile.getTrackCount()).toBe(2);       // sensor + center only
+        expect(trackFile.trackIsTruth(1)).toBe(false);   // that index is Center
+        expect(trackFile.trackIsTruth(2)).toBe(false);   // and nothing is there
+    });
 });

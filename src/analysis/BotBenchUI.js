@@ -44,7 +44,7 @@ import {putFileHandoff} from "../FileHandoff";
 import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBenchRunner";
 import {botENUToLLA} from "../TrackFiles/CTrackFileBOT";
 import {
-    candidateNotes, consistentTrackCSVs, lookCameraFraming, openHandoffWindow,
+    candidateNotes, handoffCandidateCSVs, lookCameraFraming, openHandoffWindow,
 } from "../TraverseHandoff";
 import {CNodeCustomGraphView} from "../nodes/CNodeCustomGraphView";
 import {NodeMan} from "../Globals";
@@ -1807,6 +1807,9 @@ function fillRow(state, entry) {
  * carries it), one CUSTOM1 CSV per consistent candidate named c_<key>, and the
  * notes. The candidates are the point — the scenario alone shows what was
  * observed, and the reason to open a row is to see what the analysis made of it.
+ * When NO candidate passed the consistency screen, the WEAK band travels
+ * instead, named w_<key> — see the fallback below for why that is a fallback
+ * and not an addition.
  *
  * The window is claimed synchronously, before the store write, for the same
  * reason openReport does it: window.open is only honoured while the click's
@@ -1836,11 +1839,17 @@ function openInNewSitrec(entry, link) {
             // HAE — see the note on consistentTrackCSVs for why a general
             // ENU->ECEF->LLA is wrong on a BOT file in two compounding ways.
             const origin = entry.results?.botOrigin;
-            const candidates = (entry.results && origin) ? consistentTrackCSVs(entry.results, {
+            const csvOpts = origin ? {
                 toLLA: (x, y, z) => botENUToLLA(x, y, z, origin),
                 altitudeIsHAE: false,
                 startMs: entry.results.clipStartMs,
-            }) : [];
+            } : null;
+
+            // Consistent if there are any, weak in their place if there are
+            // not — handoffCandidateCSVs owns that rule and the reasoning for
+            // it. A bench row has ONE link, so it decides; the live gallery
+            // offers the same choice as two buttons instead.
+            const candidates = csvOpts ? handoffCandidateCSVs(entry.results, csvOpts) : [];
 
             return {
                 files: [file, ...candidates.map((c) =>
@@ -1851,6 +1860,19 @@ function openInNewSitrec(entry, link) {
                     // tracks, so unlike the gallery this sends no context
                     // tracks — adding them would import each one twice.
                     lookCameraFraming: lookCameraFraming(entry.results, candidates),
+                    // WHICH TRACKS ARE RECONSTRUCTIONS, stated rather than
+                    // inferred. The receiver puts the camera on the SCENARIO's
+                    // own sensor track, and the only thing separating that from
+                    // a candidate is which file it came from — knowledge only
+                    // this side has. Sending the exact names beats having the
+                    // receiver sniff the c_/w_ prefixes, which would quietly
+                    // capture any real track a user happened to name that way.
+                    candidateTrackNames: candidates.map((c) => c.name),
+                    // The camera belongs on the sensor, looking along the
+                    // angles the sensor actually recorded — see
+                    // applyHandoffCameraTrack for why arrival order cannot be
+                    // trusted to arrange that.
+                    cameraOnScenarioTrack: true,
                     notes: `${notes}\n\n${candidateNotes(candidates)}`,
                 },
             };

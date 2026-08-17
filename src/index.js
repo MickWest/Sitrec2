@@ -2868,7 +2868,7 @@ function applyHandoffTrackObjectSize(handoff, before) {
             // The camera, once there is something in the scene to frame. The
             // look view has been laid out by now, so its aspect is the real
             // one rather than whatever it was constructed with.
-            applyHandoffLookFraming(handoff);
+            applyHandoffLookFraming(handoff, before);
         }
     };
 
@@ -2889,6 +2889,138 @@ function applyHandoffTrackObjectSize(handoff, before) {
 }
 
 /**
+ * Put the camera on the SCENARIO's sensor track, looking along the angles that
+ * sensor recorded.
+ *
+ * WHY THE NORMAL RULE CANNOT DO THIS. TrackManager auto-assigns the camera by
+ * ARRIVAL ORDER (updateDropTargets: `autoSelect = trackNumber === selectNumber`).
+ * A bench handoff hands the importer [scenario, ...candidates] in that order,
+ * but uploadDroppedFile returns once a file is ACCEPTED, not once its tracks
+ * exist — so the order that decides the camera is the order the PARSES finish
+ * in. Demuxing a transport stream takes far longer than reading six small CSVs,
+ * so on a .ts scenario every candidate lands first and the camera ends up on a
+ * reconstructed object path — one that, when the weak band travelled, the
+ * analysis had explicitly declined to endorse.
+ *
+ * Nor can it recover: that auto-selection is gated on `!Globals.sitchEstablished`,
+ * which has flipped by the time a slow scenario's tracks finally arrive. So the
+ * camera stays wherever the race left it.
+ *
+ * WHICH TRACK IS THE SENSOR. Not guessed from the c_/w_ naming — the sender
+ * lists its candidate track names exactly (meta.candidateTrackNames), because
+ * only that side knows which file each track came from, and prefix-sniffing
+ * would capture a real track a user happened to name that way. What is left,
+ * among the tracks this handoff created, at track index 0, is the scenario's
+ * own primary track — which is the sensor for every format the bench reads
+ * (BOT's Sensor, a MISB CSV's Sensor* columns, an FMV clip's platform).
+ *
+ * THE HEADING GOES WITH IT. A camera on the right platform pointing the wrong
+ * way still shows the wrong thing, and "Manual" is where it was left. The
+ * track's own recorded angles are the MEASUREMENT the whole analysis was run
+ * against, so they are what the view should reproduce; aiming instead at a
+ * candidate would point the camera using a reconstruction. Only ever selected
+ * when that option actually exists — a scenario with no recorded angles keeps
+ * whatever heading it had rather than being given a fabricated one.
+ */
+function applyHandoffCameraTrack(handoff, before) {
+    if (!handoff.meta?.cameraOnScenarioTrack) return;
+    const candidates = new Set(handoff.meta.candidateTrackNames ?? []);
+
+    let done = false;
+    const tryApply = () => {
+        if (done) return;
+        const cameraSwitch = NodeMan.get("cameraTrackSwitch", false);
+        if (!cameraSwitch) return;
+
+        let sensor = null;
+        TrackManager.iterate((id, trackOb) => {
+            if (sensor) return;
+            const name = trackOb.menuText;
+            if (!name || candidates.has(name)) return;
+            // Created by THIS handoff, so opening one into an existing scene
+            // cannot steal the camera from what was already there.
+            if (before.has("Track_" + name)) return;
+            // The primary track. A scenario's derived sub-tracks (a MISB
+            // Center_, a Truth_) are supplementary views of the same flight
+            // and are never the sensor.
+            if (trackOb.trackIndex !== 0) return;
+            sensor = trackOb;
+        });
+        if (!sensor || !cameraSwitch.inputs?.[sensor.menuText]) return;
+
+        // DO NOT OVERRIDE A CAMERA THE READER CHOSE. Without a deadline this
+        // can fire minutes after the window opened, by which time the reader
+        // may have picked a camera deliberately — and silently moving it then
+        // is worse than the bug being fixed. Claim it only while it still
+        // holds something this handoff put there, or something that is not a
+        // track at all (the sitch's own fixedCamera/orbitCamera/…).
+        // The sensor already holding it is the race going RIGHT, not a reader's
+        // choice — fall through, so the heading below is still applied.
+        const held = cameraSwitch.choice;
+        const heldTrack = held ? TrackManager.get("Track_" + held, false) : null;
+        if (held && heldTrack && held !== sensor.menuText && !candidates.has(held)) {
+            console.log("Handoff: leaving the camera on " + held
+                + " — it was chosen after the handoff loaded.");
+            done = true;
+            return;
+        }
+
+        done = true;
+        cameraSwitch.selectOption(sensor.menuText);
+        console.log("Handoff: camera track set to the scenario's sensor track "
+            + sensor.menuText);
+
+        // The angles this sensor recorded, if it recorded any. TrackManager
+        // names that option "Angles_<shortName>" (see makeAngles there).
+        const los = NodeMan.get("CameraLOSController", false);
+        const anglesOption = "Angles_" + sensor.menuText;
+        if (los?.inputs?.[anglesOption]) {
+            los.selectOption(anglesOption);
+            console.log("Handoff: camera heading set to the recorded " + anglesOption);
+        }
+
+        // AND ITS RECORDED FIELD OF VIEW, for the same reason and blocked by
+        // the same gate. TrackManager adds an FOV-carrying track to fovSwitch
+        // but only SELECTS it while `!Globals.sitchEstablished`, which a
+        // handoff is past by the time a transport stream finishes demuxing —
+        // so the sensor's own zoom was offered and ignored, and the computed
+        // framing below stood in for it. On this file that is 3.45 deg against
+        // a recorded 1.72 deg: the look view opens at twice the real angle and
+        // nothing in it lines up with the video.
+        const fovSwitch = NodeMan.get("fovSwitch", false);
+        const fovOption = sensor.trackID ?? ("Track_" + sensor.menuText);
+        if (fovSwitch?.inputs?.[fovOption]) {
+            fovSwitch.selectOption(fovOption);
+            console.log("Handoff: field of view set to the recorded " + fovOption);
+        }
+    };
+
+    const onTracks = () => { tryApply(); if (done) stop(); };
+    const stop = () => EventManager.removeEventListener("tracksChanged", onTracks);
+
+    // NO WALL-CLOCK DEADLINE, and that is the opposite of the sibling above.
+    //
+    // applyHandoffTrackObjectSize can afford a 20 s bound because it also stops
+    // on a real condition — every handed-off file resized — and its timeout is
+    // only a backstop for a file that yields no track. Here the timeout would be
+    // the ONLY exit, so it does not bound a leak, it *is* a failure mode: the
+    // slow scenario this whole function exists for is precisely the one that can
+    // still be parsing when the clock runs out, and expiring leaves the camera on
+    // a candidate with nothing left listening to correct it. uploadDroppedFile
+    // hands the parse to the main loop and reports no completion, so there is no
+    // honest number to pick; a large transport stream can exceed any of them.
+    //
+    // Listening indefinitely is safe because the listener is inert: it acts only
+    // on a track THIS handoff created (the `before` check), only once (`done`),
+    // and never over a camera the reader has since chosen. If the scenario never
+    // parses, it simply never fires — one dormant listener per window, and a
+    // window handles one handoff.
+    EventManager.addEventListener("tracksChanged", onTracks);
+    tryApply();
+    if (done) stop();
+}
+
+/**
  * Set the look camera's field of view so the closest marker sphere spans the
  * requested fraction of the view's WIDTH.
  *
@@ -2906,9 +3038,33 @@ function applyHandoffTrackObjectSize(handoff, before) {
  * re-applies the node's value to the camera every frame and would overwrite a
  * direct write on the very next one.
  */
-function applyHandoffLookFraming(handoff) {
+function applyHandoffLookFraming(handoff, before) {
     const f = handoff.meta?.lookCameraFraming;
     if (!f || !(f.closestRangeM > 0) || !(f.sphereRadiusM > 0) || !(f.widthFraction > 0)) return;
+
+    // A RECORDED FOV OUTRANKS A COMPUTED ONE, ALWAYS.
+    //
+    // This framing exists for a BOT scenario, which states no field of view at
+    // all: its candidates are 1 m markers and something has to make them
+    // visible. An FMV clip is the opposite case — the sensor's zoom is in the
+    // metadata, frame by frame, and it is a MEASUREMENT. Overriding it with an
+    // angle derived from marker size would re-frame the one view whose whole
+    // purpose is to reproduce what the camera saw, and it would do so silently:
+    // the scene still renders, it just no longer matches the video beside it.
+    //
+    // Tested on the OPTIONS rather than the current selection, deliberately.
+    // Whether the recorded FOV has been selected yet depends on which
+    // tracksChanged listener ran first, and this must not depend on that race —
+    // the question is whether the scenario HAS a recorded FOV, and an option in
+    // fovSwitch that this handoff created is exactly that.
+    const fovSwitch = NodeMan.get("fovSwitch", false);
+    const recorded = Object.keys(fovSwitch?.inputs ?? {})
+        .find((opt) => opt.startsWith("Track_") && !before?.has(opt));
+    if (recorded) {
+        console.log("Handoff framing skipped: the scenario records its own field of "
+            + "view (" + recorded + "), which is a measurement and outranks a computed one.");
+        return;
+    }
 
     const fovNode = NodeMan.get("fovUI", false);
     const lookCamera = NodeMan.get("lookCamera", false);
@@ -2988,6 +3144,8 @@ function loadStartupHandoffAfterSitchSetup() {
             // setup that follows. Measured: a two-file handoff lost the race
             // every time while a six-file one won it.
             applyHandoffTrackObjectSize(handoff, before);
+            // Same reason it is not done inline: the tracks do not exist yet.
+            applyHandoffCameraTrack(handoff, before);
         } catch (e) {
             showError("Failed to load the handed-off file: " + (e && e.message), e);
         }
