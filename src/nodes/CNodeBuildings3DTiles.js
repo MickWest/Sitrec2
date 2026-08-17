@@ -8,9 +8,9 @@
 // competing for budget.
 
 import {CNode} from "./CNode";
-import {Globals, markShadowCastersDirty, NodeMan, setRenderOne} from "../Globals";
+import {Globals, markShadowCastersDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
-import {DoubleSide, Group, Matrix4, Raycaster, Sphere, Vector2} from "three";
+import {DoubleSide, Group, Matrix4, Raycaster, Sphere, Vector2, Vector3} from "three";
 import * as LAYER from "../LayerMasks";
 import {TilesRenderer} from "3d-tiles-renderer";
 import {GLTFExtensionsPlugin, TilesFadePlugin} from "3d-tiles-renderer/plugins";
@@ -24,7 +24,12 @@ import {getLocalUpVector} from "../SphericalMath";
 import {getPointBelow} from "../threeExt";
 import {intersectDisplayed} from "../raycastGround";
 import {undoManager as UndoManager} from "../UndoManager";
-import {excludeFromTerrestrialRefraction} from "../atmosphere/terrestrialRefraction";
+import {
+    excludeFromTerrestrialRefraction,
+    liftWorldPoint,
+    resolveTerrestrialK,
+} from "../atmosphere/terrestrialRefraction";
+import {currentTerrestrialLiftContext} from "../atmosphere/refractionSettings";
 
 const DEG2RAD = Math.PI / 180;
 
@@ -73,6 +78,8 @@ function applyMeshOpacity(mesh, opacity) {
 
 /** Scratch for renderer.getSize() in the per-frame settle check — avoids a per-frame alloc. */
 const _tilesSizeTmp = new Vector2();
+/** Scratch for the camera world position handed to the refraction lift context. */
+const _tilesCamWorldPos = new Vector3();
 
 // ── Flat Earth aware tile selection ─────────────────────────────────
 //
@@ -95,7 +102,13 @@ const _tilesSizeTmp = new Vector2();
 //
 // Behavior:
 //  - Flat mode off (Globals.flatEarthWarpSphere null): the stock method,
-//    bit-for-bit — this class is a 100% no-op.
+//    plus the terrestrial-refraction visibility repair below
+//    (_terrestrialRefractionRetest) — itself a no-op when refraction is
+//    off, so refraction-off remains the stock method bit-for-bit.
+//    Refraction stays active in flat mode too (the flat scene hook chains
+//    it after the warp), so both flat branches below carry the lift as
+//    well: the near field via the same retest, the far field by lifting
+//    the globe-space sphere before warping it.
 //  - Near field ("locally rigid": the warp moved the tile's bounding
 //    sphere by less than its own radius, with modest stretch): also the
 //    stock method. There the physical camera vs unwarped volumes are a
@@ -121,11 +134,30 @@ const _feWorldSphere = new Sphere();
 const _feFlatSphere = new Sphere();
 const _feInvGroup = new Matrix4();
 
+// Scratch for the terrestrial-refraction retest — module-level for the same
+// zero-per-tile-allocation reason as the _fe* set above.
+const _trWorldSphere = new Sphere();
+const _trGroupSphere = new Sphere();
+const _trLiftedCenter = new Vector3();
+const _trHoriz = new Vector3();
+const _trFarPoint = new Vector3();
+const _trFarLifted = new Vector3();
+const _trGroupLifted = new Vector3();
+const _trGroupCenter = new Vector3();
+const _trLiftVec = new Vector3();
+const _trInvGroup = new Matrix4();
+const _trLiftMatrix = new Matrix4();
+// Allocated on first use from the tileset's own OBB class (not exported by
+// the package), then reused for every retest.
+let _trScratchOBB = null;
+
 class FlatAwareTilesRenderer extends TilesRenderer {
     calculateTileViewError(tile, target) {
         const warpSphere = Globals.flatEarthWarpSphere;
         if (!warpSphere) {
-            return super.calculateTileViewError(tile, target);
+            super.calculateTileViewError(tile, target);
+            this._terrestrialRefractionRetest(tile, target);
+            return;
         }
 
         // Generic sphere for ANY bounding volume type (box → OBB, sphere,
@@ -136,9 +168,24 @@ class FlatAwareTilesRenderer extends TilesRenderer {
         _feWorldSphere.copy(_feLocalSphere).applyMatrix4(this.group.matrixWorld);
         const originalRadius = _feWorldSphere.radius;
 
+        // Terrestrial refraction stays active in flat mode — the flat scene
+        // hook warps the camera pose FIRST precisely so the refraction hook
+        // can chain after it (FlatEarthScenario.installFlatEarthSceneHook) —
+        // so the selection must see the lift here too. Lift in globe space
+        // before the disc warp, mirroring that chain. Metres of lift against
+        // the far field's planetary-scale sphere slop; no radius pad needed.
+        const liftCtx = this._terrLiftCtx;
+        if (liftCtx) {
+            liftWorldPoint(liftCtx, _feWorldSphere.center, _feWorldSphere.center);
+        }
+
         // Mutates the sphere; true means the warp is locally rigid here.
         if (warpSphere(_feWorldSphere) === true) {
-            return super.calculateTileViewError(tile, target);
+            super.calculateTileViewError(tile, target);
+            // Near field, warp ~identity: the same physical-camera-vs-unwarped
+            // pair as flat-mode-off, so the same refraction repair applies.
+            this._terrestrialRefractionRetest(tile, target);
+            return;
         }
 
         // Back into the tiles-group frame the cached cameraInfo lives in.
@@ -213,6 +260,145 @@ class FlatAwareTilesRenderer extends TilesRenderer {
         target.inView = inView;
         target.error = inView ? inViewError : maxCameraError;
         target.distanceFromCamera = inView ? inViewDistance : minCameraDistance;
+    }
+
+    // Terrestrial refraction renders the solid scene LIFTED: the vertex shader
+    // patched into every streamed tile (DayNightStandardMaterial) bends
+    // gl_Position up by ~k·d²/2R, while the library culls and refines against
+    // the UNBENT bounding volumes. At ordinary fields of view the few-metre
+    // lift sits well inside bounding-volume slack; at the narrow end it does
+    // not. Measured at fov 0.025° on a 36 km sightline (k 0.176, lift ~18 m,
+    // frame height ~16 m): the lift exceeds the whole viewport, so every tile
+    // the bent render needs on screen is — correctly, by unbent math — out of
+    // frustum, never loads, and the look view shows a sky-colored band where
+    // the ground should be, its edge the last covered tile's silhouette.
+    //
+    // Repair at the same seam the flat-Earth warp uses. When the stock test
+    // says out-of-view, re-test the tile's OBB TRANSLATED to where its image
+    // is actually DRAWN: the lift comes from liftWorldPoint — the CPU twin of
+    // the shader chunk, so the two cannot drift — and the box is expanded to
+    // bound the lift's variation across the tile's extent (evaluated at the
+    // tile's far edge). It must be the exact OBB, not the bounding sphere: past the
+    // ground intersection a steep narrow-FOV sightline runs UNDERGROUND, and
+    // the fat spheres of every coarse tile along that buried chord contain it
+    // — measured on the 0.025° view, a sphere-based retest admitted the chord
+    // through the planet and queued 10k+ downloads against a full cache. The
+    // OBB hugs the terrain slab, so a buried ray stays outside it and only
+    // the genuine few-km band of lifted-into-view ground is rescued. Tiles
+    // the stock test already accepts keep its exact answer and exact SSE, and
+    // with refraction off _terrLiftCtx is null, so this is a strict no-op.
+    _terrestrialRefractionRetest(tile, target) {
+        const ctx = this._terrLiftCtx;
+        if (!ctx || target.inView) return;
+
+        const boundingVolume = tile.engineData.boundingVolume;
+        boundingVolume.getSphere(_trWorldSphere);
+        _trWorldSphere.applyMatrix4(this.group.matrixWorld);
+
+        liftWorldPoint(ctx, _trWorldSphere.center, _trLiftedCenter);
+        const liftCenter = _trLiftedCenter.distanceTo(_trWorldSphere.center);
+
+        // The lift varies across the tile — quadratic in HORIZONTAL range and
+        // altitude-attenuated — so evaluate it directly at the point of the
+        // tile horizontally farthest from the observer, rather than modeling
+        // the growth. Horizontal, not slant: an elevated camera's slant range
+        // exceeds the horizontal range the law actually uses, and a ratio
+        // model built on it under-padded. The far-edge evaluation also covers
+        // the near-nadir case a ratio model cannot: the center lift is ~0
+        // there while a large tile's rim still lifts.
+        _trHoriz.subVectors(_trWorldSphere.center, ctx.observer);
+        _trHoriz.addScaledVector(ctx.zenith, -_trHoriz.dot(ctx.zenith));
+        const hLen = _trHoriz.length();
+        if (hLen > 1e-6) {
+            _trHoriz.multiplyScalar(1 / hLen);
+        } else {
+            // Directly above the tile center: any horizontal direction bounds
+            // the rim, since the lift law is rotationally symmetric about the
+            // observer's zenith.
+            _trHoriz.set(1, 0, 0).cross(ctx.zenith);
+            if (_trHoriz.lengthSq() < 1e-12) _trHoriz.set(0, 1, 0).cross(ctx.zenith);
+            _trHoriz.normalize();
+        }
+        _trFarPoint.copy(_trWorldSphere.center).addScaledVector(_trHoriz, _trWorldSphere.radius);
+        liftWorldPoint(ctx, _trFarPoint, _trFarLifted);
+        const liftFar = _trFarLifted.distanceTo(_trFarPoint);
+        // Nearest horizontal point of the tile, clamped at the observer's
+        // nadir (the law is symmetric about it).
+        _trFarPoint.copy(_trWorldSphere.center)
+            .addScaledVector(_trHoriz, -Math.min(_trWorldSphere.radius, hLen));
+        liftWorldPoint(ctx, _trFarPoint, _trFarLifted);
+        const liftNear = _trFarLifted.distanceTo(_trFarPoint);
+
+        // The box is translated by the CENTER lift below, so the expansion
+        // only needs the worst DEVIATION from that translation across the
+        // tile — far side in the quadratic regime, near side once saturation
+        // flattens the far growth. The deviation, not the absolute lift: an
+        // absolute-lift pad measured hundreds of metres on far coarse tiles
+        // and re-admitted the buried-chord set the OBB exists to exclude
+        // (8.8k downloads queued), while deviations stay metres-scale for
+        // the band tiles and tens of metres for coarse ones.
+        const pad = Math.min(ctx.maxLiftM,
+            Math.max(liftFar - liftCenter, liftCenter - liftNear, 0));
+        if (!(liftCenter > 0 || pad > 0)) return;
+
+        // Lift vector in the tiles-group frame the cached cameraInfo lives in.
+        _trInvGroup.copy(this.group.matrixWorld).invert();
+        _trGroupLifted.copy(_trLiftedCenter).applyMatrix4(_trInvGroup);
+        _trGroupCenter.copy(_trWorldSphere.center).applyMatrix4(_trInvGroup);
+        _trLiftVec.subVectors(_trGroupLifted, _trGroupCenter);
+
+        // Same member preference the library's own intersectsFrustum uses.
+        const obb = boundingVolume.obb || boundingVolume.regionObb;
+        let testVolume = null;
+        if (obb) {
+            // Scratch OBB via the tileset's own class (module has no export
+            // path for it); reused across tiles, allocated once.
+            if (!_trScratchOBB) _trScratchOBB = new obb.constructor();
+            _trScratchOBB.box.copy(obb.box).expandByScalar(pad);
+            _trScratchOBB.transform.copy(obb.transform).premultiply(
+                _trLiftMatrix.makeTranslation(_trLiftVec.x, _trLiftVec.y, _trLiftVec.z));
+            _trScratchOBB.update();
+            testVolume = _trScratchOBB;
+        }
+        // Lifted sphere: the distance stand-in for SSE, and the frustum test
+        // fallback for the rare sphere-only bounding volume.
+        _trGroupSphere.center.copy(_trGroupLifted);
+        _trGroupSphere.radius = _trWorldSphere.radius + pad;
+
+        // Stock aggregation semantics (max error / min distance over in-view
+        // cameras), with the lifted volume standing in for the stock one.
+        const cameraInfo = this.cameraInfo;
+        let inView = false;
+        let inViewError = 0;
+        let inViewDistance = Infinity;
+        for (let i = 0, l = cameraInfo.length; i < l; i++) {
+            const info = cameraInfo[i];
+            const hit = testVolume
+                ? testVolume.intersectsFrustum(info.frustum)
+                : info.frustum.intersectsSphere(_trGroupSphere);
+            if (!hit) continue;
+            let error;
+            let distance;
+            if (info.isOrthographic) {
+                error = tile.geometricError / info.pixelSize;
+                distance = Infinity;
+            } else {
+                distance = Math.max(_trGroupSphere.distanceToPoint(info.position), 0);
+                error = distance === 0
+                    ? Infinity
+                    : tile.geometricError / (distance * info.sseDenominator);
+            }
+            inView = true;
+            inViewError = Math.max(inViewError, error);
+            inViewDistance = Math.min(inViewDistance, distance);
+        }
+        if (!inView) return;
+
+        // Keep the stock all-camera fallbacks when the lifted volume misses
+        // too; override only on a positive answer.
+        target.inView = true;
+        target.error = inViewError;
+        target.distanceFromCamera = inViewDistance;
     }
 }
 
@@ -488,9 +674,15 @@ class PerViewTiles {
         // tiles until the camera moved. p[0]/p[5] track ortho/persp scale,
         // p[10]/p[14] track near/far.
         const p = cam.projectionMatrix.elements;
+        // The refraction coefficient is folded in because tile selection
+        // compensates for the refraction lift (_terrestrialRefractionRetest):
+        // toggling refraction or editing k changes the LOD answer with a
+        // static camera, and without this term a settled tileset would stay
+        // stale until the camera next moved.
         const fp = e[0] + e[5] + e[10] + e[12] + e[13] + e[14]
             + cam.fov + cam.zoom + (cam.aspect || 0)
-            + p[0] + p[5] + p[10] + p[14];
+            + p[0] + p[5] + p[10] + p[14]
+            + (Sit.terrestrialRefraction ? resolveTerrestrialK(Sit) : 0);
 
         // The asymmetric frustum SHIFT (video pan) and the render resolution are compared
         // separately, and exactly, rather than folded into the sum above.
@@ -529,6 +721,12 @@ class PerViewTiles {
         // whatever async work just completed. If it queues further work, the normal
         // grace/pending path below keeps the loop alive until truly settled.
         this._needsLibUpdate = false;
+
+        // Observer-relative lift context for _terrestrialRefractionRetest,
+        // resolved once per traversal from this view's camera. Null when
+        // refraction is off, which keeps the retest a strict no-op.
+        _tilesCamWorldPos.setFromMatrixPosition(cam.matrixWorld);
+        this.renderer._terrLiftCtx = currentTerrestrialLiftContext(_tilesCamWorldPos);
 
         this.renderer.setCamera(cam);
         this.renderer.setResolutionFromRenderer(cam, view.renderer);
