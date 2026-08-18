@@ -139,7 +139,7 @@ export class CVideoH264Data extends CVideoWebCodecBase {
         // Only mark as unusable for fatal errors, not decode errors
         if (e.name === 'NotSupportedError' || e.name === 'InvalidStateError') {
             this.decoderError = true;
-            showError("Fatal H.264 decoder error:", e.message);
+            showError("Fatal H.264 decoder error: " + e.message, e);
         } else if (e.name === 'EncodingError') {
             // Prevent infinite recreation loops
             if (!this.recreationAttempts) this.recreationAttempts = 0;

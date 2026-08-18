@@ -18,6 +18,28 @@ import {
     chat as chatDirect,
 } from "../CDirectLLMClient";
 
+// What the model gets back from a tool call.
+//
+// On success that is just the return value, as before. On failure it is the whole
+// handleAPICall envelope, because that is where the correctable detail lives: the
+// error, near-miss control or function names, the parameter list a throw did not
+// satisfy, and any error dialog raised underneath the call (which no longer goes to
+// the screen when the model is the caller). Handing back only the inner result threw
+// all of that away, and the model retried the same wrong call until the continuation
+// depth ran out.
+function toolPayloadForModel(callResult) {
+    if (callResult.success === false || callResult.errorDialogs) return callResult;
+    return callResult.result ?? callResult;
+}
+
+// One line of failure text for the chat pane, wherever the detail ended up.
+function errorTextOf(callResult) {
+    return callResult.error
+        ?? callResult.result?.error
+        ?? callResult.errorDialogs?.join("; ")
+        ?? "the call failed";
+}
+
 class CNodeViewChat extends CNodeViewText {
     constructor(v) {
         // Set up configuration for the base class
@@ -487,12 +509,12 @@ class CNodeViewChat extends CNodeViewText {
                     if (sitrecAPI.callChangesSerializedState(call, callResult)) {
                         changesSerializedState = true;
                     }
-                    const payload = callResult.result ?? callResult;
-                    if (payload && typeof payload === 'object' && payload.success === false) {
-                        this.addSystemMessage(`Error: ${payload.error}`);
+                    const payload = toolPayloadForModel(callResult);
+                    if (callResult.success === false) {
+                        this.addSystemMessage(`Error: ${errorTextOf(callResult)}`);
                     }
                     executedForLog.push({fn: call.fn, args: call.args});
-                    // Returning the inner result lets the client set is_error correctly.
+                    // Returning the failure-bearing object lets the client set is_error correctly.
                     return payload;
                 },
             });
@@ -592,15 +614,19 @@ class CNodeViewChat extends CNodeViewText {
             // JSON.stringify'd to "{}" on its way back to the model — and both the
             // dirty-state check and the error message below silently read undefined.
             const result = await sitrecAPI.handleAPICall(call, "chat");
-            toolResults.push({ fn: call.fn, args: call.args, result: result.result ?? result });
+            toolResults.push({ fn: call.fn, args: call.args, result: toolPayloadForModel(result) });
             if (sitrecAPI.callChangesSerializedState(call, result)) {
                 changesSerializedState = true;
             }
-            
+
             // Only show user-facing messages for errors
-            // Success messages will come from the LLM's natural language response
-            if (result.result && typeof result.result === 'object' && result.result.success === false) {
-                this.addSystemMessage(`Error: ${result.result.error}`);
+            // Success messages will come from the LLM's natural language response.
+            // Keyed off the OUTER success so a thrown error and an unknown function name
+            // surface too, not just a function that returned {success:false} - and since
+            // an agent's failure no longer raises a dialog, this line is the only place
+            // the user learns the model asked for something Sitrec could not do.
+            if (result.success === false) {
+                this.addSystemMessage(`Error: ${errorTextOf(result)}`);
             }
         }
         return {toolResults, changesSerializedState};

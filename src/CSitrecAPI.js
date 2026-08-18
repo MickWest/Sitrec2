@@ -74,6 +74,33 @@ function parseDec(input) {
     return null;
 }
 
+// Callers that are an AI agent rather than a person: "chat" is the in-app chatbot,
+// "mcp" is an external agent driving the page through the SitrecBridge extension.
+// Everything else ("ui") is a person clicking something, or Sitrec calling itself.
+//
+// The distinction decides where a failure goes. An agent asking for something that
+// does not exist has made a correctable mistake, so the details must travel back to
+// it in the return value. A modal is the wrong destination twice over: the agent
+// cannot read it, and the user gets stopped by an error about a call they did not
+// make and cannot fix. See handleAPICall.
+const AGENT_SOURCES = new Set(["chat", "mcp"]);
+
+// A control address ("video:Annotate/Edit Mode") reduced to lower-case words, for the
+// near-miss scoring in _suggestControls.
+function tokenizeControlAddress(address) {
+    return String(address ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+// Two address words count as the same word if one is a prefix of the other, with a
+// three-character floor. Deliberately NOT a substring test: "xyzzyphlogiston" contains
+// both "log" and "gis", so substrings recommended "Export Debug Log" and a GIS doc page
+// for a word that matches nothing at all.
+function nearWord(a, b) {
+    return a === b
+        || (a.length >= 3 && b.startsWith(a))
+        || (b.length >= 3 && a.startsWith(b));
+}
+
 // Calls that do not change the sitch's serialized state. Used for two different
 // questions, which mostly coincide but not entirely — hence the second set below.
 const TRANSIENT_CALLS = new Set([
@@ -146,6 +173,11 @@ class CSitrecAPI {
 
         this.debug = isLocal;
 
+        // >0 while an AI agent's call is on the stack. A nested call (a deserialize
+        // that re-enters the API, say) inherits it: it is still agent-driven, so its
+        // error dialogs stay suppressed and get reported back up too.
+        this._agentCallDepth = 0;
+
         this.docs = {
             gotoLLA: "Move the camera to the location specified by Lat/Lon/Alt (Alt optional, defaults to 0). Parameters: lat (float), lon (float), alt (float, optional).",
             setDateTime: "Set the date and time for the simulation. Parameter: dateTime (ISO 8601 string).",
@@ -162,6 +194,12 @@ class CSitrecAPI {
                 fn: (v) => {
                     const camera = NodeMan.get("fixedCameraPosition");
                     if (!camera) return { success: false, error: "fixedCameraPosition node not found" };
+                    // Without this the missing value reaches gotoLLA as undefined and NaN
+                    // propagates through the camera track and out into the render loop, so
+                    // the caller gets a broken scene and no idea why. Say what is missing.
+                    if (!Number.isFinite(v.lat) || !Number.isFinite(v.lon)) {
+                        return { success: false, error: "lat and lon are required, in degrees" };
+                    }
                     camera.gotoLLA(v.lat, v.lon, v.alt)
                     return { success: true };
                 }
@@ -1430,7 +1468,14 @@ class CSitrecAPI {
                 fn: (v) => {
                     const result = this._setMenuValue(v.menu, v.path, v.value);
                     if (!result.success) {
-                        showError("setMenuValue failed:", result.error);
+                        // Concatenated, not passed as showError's second argument: that
+                        // parameter is an Error object and only its .stack is shown, so a
+                        // plain string error there is silently dropped and the dialog is blank.
+                        //
+                        // Under an agent this dialog never reaches the screen anyway -
+                        // showError routes it into handleAPICall's capture and back to the
+                        // agent, which has the suggestions in `result` to retry with.
+                        showError("setMenuValue failed: " + result.error);
                     }
                     return result;
                 }
@@ -2524,6 +2569,62 @@ class CSitrecAPI {
         return { success: false, error: 'Empty path' };
     }
 
+    // Every control whose address loosely matches `path`, as fully qualified
+    // "menu:Folder/Control" strings. A failed lookup carries these back so an agent
+    // gets a real address to retry with instead of guessing a second time — which is
+    // what turned one wrong menu id into six identical retries. Cheap enough to run
+    // only on the failure path: it walks every menu once.
+    _suggestControls(path, limit = 6) {
+        // Scored on shared words rather than substrings, so a typo still finds the
+        // control: "Annotate/Edt Mode" shares "annotate" and "mode" with
+        // "video:Annotate/Edit Mode" and outscores everything that shares only one.
+        const wanted = tokenizeControlAddress(path);
+        if (wanted.length === 0) return [];
+        const scored = [];
+        const walk = (gui, menuId, trail) => {
+            for (const c of gui.controllers) {
+                const address = `${menuId}:${trail}${c._name ?? c.property ?? ""}`;
+                const words = tokenizeControlAddress(address);
+                const score = wanted.filter(t => words.some(w => nearWord(t, w))).length;
+                if (score > 0) scored.push({address, score});
+            }
+            for (const child of gui.children) {
+                if (child instanceof GUI) walk(child, menuId, trail + child._title + "/");
+            }
+        };
+        for (const id of Object.keys(guiMenus)) {
+            const gui = guiMenus[id];
+            if (!gui || !gui.controllers) continue;
+            walk(gui, id, "");
+        }
+        if (scored.length === 0) return [];
+        // Only the joint best. A query of "Annotate/Edt Mode" matches "Edit Mode" on two
+        // words and a dozen unrelated controls on the word "Mode" alone; listing those
+        // too buries the answer the agent needs in noise it has to re-check.
+        const best = Math.max(...scored.map(h => h.score));
+        return scored
+            .filter(h => h.score === best)
+            .sort((a, b) => a.address.length - b.address.length)   // shortest, most direct first
+            .slice(0, limit)
+            .map(h => h.address);
+    }
+
+    // Attach near-miss addresses to a failed control lookup, in the error text (so it
+    // survives a caller that only reads .error) and as a list (so one that reads the
+    // object gets it structured).
+    _withControlSuggestions(path, failure) {
+        const suggestions = this._suggestControls(path);
+        if (suggestions.length === 0) return failure;
+        // _findController's messages end on a bare list, so punctuate before appending
+        // or the two run together as "...Atmospheric Refraction Did you mean:".
+        const stem = /[.?!]$/.test(failure.error) ? failure.error : failure.error + ".";
+        return {
+            ...failure,
+            error: `${stem} Did you mean: ${suggestions.join(", ")}?`,
+            suggestions,
+        };
+    }
+
     // Resolve (menuId, path) to a controller. With a falsy menuId, scan every
     // menu — recursing into folders — and return the first match, so callers
     // (e.g. the Scripted Video `set("Constellation Lines", false)` command) can
@@ -2531,11 +2632,35 @@ class CSitrecAPI {
     // matches anywhere beat partial matches anywhere (two passes), so a loose
     // substring in an early menu can't shadow an exact name in a later one.
     _resolveControl(menuId, path) {
+        // Accept the fully qualified "menu:Folder/Control" form that _suggestControls
+        // hands back, so an agent can feed a suggestion straight into its next call. Without
+        // this the suggestion is not valid input, and retrying it fails with the same
+        // suggestion attached - a loop that looks like progress and never ends.
+        // Split only on a prefix that really is a menu id, so a control name keeps its colons.
+        if (typeof path === "string") {
+            const colon = path.indexOf(":");
+            if (colon > 0 && guiMenus[path.slice(0, colon)]) {
+                menuId = path.slice(0, colon);
+                path = path.slice(colon + 1);
+            }
+        }
         if (menuId) {
             const gui = guiMenus[menuId];
-            if (!gui) return { success: false, error: `Menu '${menuId}' not found` };
+            if (!gui) {
+                return this._withControlSuggestions(path, { success: false,
+                    error: `Menu '${menuId}' not found. Menus: ${Object.keys(guiMenus).join(", ")}.` });
+            }
             const r = this._findController(gui, path);
-            return r.success ? r : (this._resolveObjectControl(path) || r);
+            if (r.success) return r;
+            const obj = this._resolveObjectControl(path);
+            if (obj) return obj;
+            // The menu id is a hint, not a constraint. `menu` is documented as optional,
+            // and a caller that supplies it can still guess wrong - the chatbot asked for
+            // "Annotate/Edit Mode" in `view` when that folder lives in `video` - so fall
+            // back to the all-menu scan before giving up. Only when that misses too do we
+            // return the named menu's error, which lists what that menu does contain.
+            const anywhere = this._resolveControl(null, path);
+            return anywhere.success ? anywhere : this._withControlSuggestions(path, r);
         }
         const qualified = path.includes("/");
         if (qualified) {
@@ -2546,7 +2671,8 @@ class CSitrecAPI {
                 if (r.success) return r;
             }
             return this._resolveObjectControl(path)
-                || { success: false, error: `Control '${path}' not found in any menu or scene object` };
+                || this._withControlSuggestions(path, { success: false,
+                    error: `Control '${path}' not found in any menu or scene object.` });
         }
         // Unqualified: EXACT menu control wins; then an EXACT scene-object id (so an
         // object named "Viewer" isn't shadowed by a menu button merely CONTAINING
@@ -2566,7 +2692,8 @@ class CSitrecAPI {
             const c = this._deepFindController(gui, path, true);
             if (c) return { success: true, controller: c };
         }
-        return { success: false, error: `Control '${path}' not found in any menu or scene object` };
+        return this._withControlSuggestions(path, { success: false,
+            error: `Control '${path}' not found in any menu or scene object.` });
     }
 
     // A 3D object node (by id) presented as a synthetic boolean controller backed
@@ -2635,10 +2762,9 @@ class CSitrecAPI {
     }
 
     _executeMenuButton(menuId, path) {
-        const gui = guiMenus[menuId];
-        if (!gui) return { success: false, error: `Menu '${menuId}' not found` };
-
-        const result = this._findController(gui, path);
+        // Same resolution as setMenuValue: the menu id is a hint, a miss falls back to
+        // the all-menu scan, and a real failure comes back with near-miss addresses.
+        const result = this._resolveControl(menuId, path);
         if (!result.success) return result;
 
         const controller = result.controller;
@@ -3655,15 +3781,29 @@ class CSitrecAPI {
         };
     }
 
-    // source: "ui" (default, trusted — UI buttons, MCP bridge, programmatic call())
-    //         or "chat" (untrusted — issued by the LLM/chatbot, subject to prompt injection).
+    // source: "ui" (default, trusted — UI buttons and programmatic call())
+    //         "chat" (untrusted — issued by the LLM/chatbot, subject to prompt injection)
+    //         "mcp"  (an external agent driving the page through the SitrecBridge extension).
     // Chat calls are refused for any entry tagged llmCallable:false, so a guessed name can't
     // reach a JS-executing function even though it was never advertised (B1 defense-in-depth).
+    //
+    // For the two agent sources this is also the single place that decides where a failure
+    // is PRESENTED. An agent's mistake — a control that does not exist, a missing argument,
+    // a function it invented — is correctable, so every failure exit below carries enough
+    // detail for it to fix the call and retry: near-miss suggestions for a bad name, the
+    // parameter list for a throw. No agent failure raises a dialog: showError is redirected
+    // into `captured` for the duration of the call, and whatever it collected comes back in
+    // the result. See AGENT_SOURCES above and Globals.errorDialogCapture.
     async handleAPICall(call, source = "ui") {
         console.log("Handling API call:", call);
         const apiFn = this.api[call.fn];
         if (!apiFn) {
-            return { success: false, error: `Unknown API function: ${call.fn}` };
+            return {
+                success: false,
+                fn: call.fn,
+                error: `Unknown API function: ${call.fn}`,
+                suggestions: this._suggestFunctions(call.fn),
+            };
         }
         if (source === "chat" && apiFn.llmCallable === false) {
             console.warn(`Refusing chat-sourced call to non-LLM-callable function: ${call.fn}`);
@@ -3676,17 +3816,62 @@ class CSitrecAPI {
             const denied = await this._confirmWriteInExternalSitch(call);
             if (denied) return denied;
         }
+
+        const agent = AGENT_SOURCES.has(source) || this._agentCallDepth > 0;
+        const captured = [];
+        const outerCapture = Globals.errorDialogCapture;
+        if (agent) {
+            this._agentCallDepth++;
+            Globals.errorDialogCapture = captured;
+        }
         try {
             const args = this._coerceArgs(call.args, apiFn.params);
             const result = await apiFn.fn(args);
-            return {
-                success: true,
+            // A function that returned {success:false} failed, even though it did not
+            // throw. Say so at the top level too. The MCP bridge hands this whole object
+            // to the agent, and an outer success:true wrapping an inner failure reads as
+            // "it worked" — which is how a wrong menu id turned into six silent retries.
+            const innerFailed = result !== null && typeof result === "object" && result.success === false;
+            const out = {
+                success: !innerFailed,
                 fn: call.fn,
                 result: source === "chat" ? this._fenceUntrustedResultFields(call.fn, result) : result,
             };
+            if (innerFailed) out.error = result.error ?? `${call.fn} failed`;
+            if (captured.length) out.errorDialogs = captured;
+            return out;
         } catch (e) {
-            return { success: false, fn: call.fn, error: e.message };
+            // Give the agent what it needs to repair the call itself: what threw, and
+            // the parameters this function actually takes.
+            const out = { success: false, fn: call.fn, error: e.message };
+            if (apiFn.params) out.expected = apiFn.params;
+            if (captured.length) out.errorDialogs = captured;
+            return out;
+        } finally {
+            if (agent) {
+                this._agentCallDepth--;
+                Globals.errorDialogCapture = outerCapture;
+                // Bubble a nested call's dialogs up, so the outermost agent call reports
+                // everything raised underneath it rather than only its own level.
+                if (outerCapture) outerCapture.push(...captured);
+            }
         }
+    }
+
+    // API function names close to `name`, returned with an "unknown function" error so an
+    // agent that guessed gets the real spelling back instead of a dead end.
+    _suggestFunctions(name, limit = 8) {
+        const names = Object.keys(this.api);
+        const wanted = String(name ?? "").toLowerCase();
+        if (!wanted) return names.slice(0, limit);
+        const hits = names.filter(k => {
+            const kl = k.toLowerCase();
+            return kl.includes(wanted) || wanted.includes(kl);
+        });
+        if (hits.length) return hits.slice(0, limit);
+        // No substring overlap: fall back to a shared opening, which catches most typos.
+        const head = wanted.slice(0, 4);
+        return names.filter(k => k.toLowerCase().startsWith(head)).slice(0, limit);
     }
 
     // Some tool results carry free text that came from the sitch rather than from the user —

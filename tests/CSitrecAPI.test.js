@@ -17,6 +17,7 @@ var mockFileManager;
 var mockGlobalsState;
 var mockSit;
 var mockSitchMan;
+var mockGuiMenus;
 
 const originalFetch = global.fetch;
 
@@ -53,7 +54,7 @@ jest.mock('../src/Globals', () => {
         FileManager: mockFileManager,
         GlobalDateTimeNode: {setStartDateTime: (...args) => mockSetStartDateTime(...args)},
         Globals: mockGlobalsState,
-        guiMenus: {},
+        guiMenus: mockGuiMenus = {},
         markSitchDirty: (...args) => mockMarkSitchDirty(...args),
         NodeMan: {
             get: (...args) => mockNodeGet(...args),
@@ -218,9 +219,13 @@ describe('CSitrecAPI importMedia', () => {
     test('returns an error when no media file is provided', async () => {
         const result = await sitrecAPI.call('importMedia', {});
 
+        // A function that returns {success:false} fails the whole call: the outer
+        // success flag mirrors it, so an agent reading the wrapper (the MCP bridge
+        // hands it over whole) cannot read a failure as "it worked".
         expect(result).toEqual({
-            success: true,
+            success: false,
             fn: 'importMedia',
+            error: 'Media file is required',
             result: {
                 success: false,
                 error: 'Media file is required',
@@ -460,8 +465,9 @@ describe('CSitrecAPI sitch APIs', () => {
         const result = await sitrecAPI.call('loadSitch', {name: 'gimbal'});
 
         expect(result).toEqual({
-            success: true,
+            success: false,
             fn: 'loadSitch',
+            error: expect.stringContaining('setup hooks'),
             result: {
                 success: false,
                 error: expect.stringContaining('setup hooks'),
@@ -476,8 +482,9 @@ describe('CSitrecAPI sitch APIs', () => {
         const result = await sitrecAPI.call('saveSitch', {target: 'server'});
 
         expect(result).toEqual({
-            success: true,
+            success: false,
             fn: 'saveSitch',
+            error: expect.stringContaining('name is required'),
             result: {
                 success: false,
                 error: expect.stringContaining('name is required'),
@@ -771,5 +778,157 @@ describe('createWalker input validation (before any destructive teardown)', () =
         expect(r.success).toBe(true);
         expect(r.trackID).toBe('restored_track');
         expect(mockTrackManager.addSyntheticTrack).not.toHaveBeenCalled();
+    });
+});
+// An AI agent's mistake is correctable, so every failure has to reach the agent as
+// data rather than the user as a modal. These cover both halves: nothing pops a
+// dialog on an agent path, and what comes back is enough to retry with.
+describe('CSitrecAPI agent-sourced error routing', () => {
+    afterEach(() => {
+        delete sitrecAPI.api.__probe;
+        delete sitrecAPI.api.__inner;
+        delete sitrecAPI.api.__outer;
+        mockGlobalsState.errorDialogCapture = null;
+    });
+
+    test.each(['chat', 'mcp'])('a %s call diverts error dialogs into the result', async (source) => {
+        let hookDuringCall;
+        sitrecAPI.api.__probe = {fn: () => {
+            hookDuringCall = mockGlobalsState.errorDialogCapture;
+            hookDuringCall.push('Annotate is not available here');
+            return {success: false, error: 'no such control'};
+        }};
+
+        const r = await sitrecAPI.handleAPICall({fn: '__probe', args: {}}, source);
+
+        expect(Array.isArray(hookDuringCall)).toBe(true);
+        expect(r.success).toBe(false);                       // not buried under success:true
+        expect(r.error).toBe('no such control');
+        expect(r.errorDialogs).toEqual(['Annotate is not available here']);
+        expect(mockGlobalsState.errorDialogCapture).toBeFalsy();   // hook released again
+    });
+
+    test('a ui call leaves the hook clear, so a person still gets the dialog', async () => {
+        let hookDuringCall = 'unset';
+        sitrecAPI.api.__probe = {fn: () => {
+            hookDuringCall = mockGlobalsState.errorDialogCapture;
+            return {success: true};
+        }};
+
+        await sitrecAPI.handleAPICall({fn: '__probe', args: {}}, 'ui');
+
+        expect(hookDuringCall).toBeFalsy();
+    });
+
+    test('a call nested inside an agent call is agent-driven too, and bubbles up', async () => {
+        sitrecAPI.api.__inner = {fn: () => {
+            mockGlobalsState.errorDialogCapture.push('inner could not do that');
+            return {success: true};
+        }};
+        // "ui" on purpose: re-entry through call() must not re-expose the dialog.
+        sitrecAPI.api.__outer = {fn: async () => {
+            await sitrecAPI.handleAPICall({fn: '__inner', args: {}}, 'ui');
+            return {success: true};
+        }};
+
+        const r = await sitrecAPI.handleAPICall({fn: '__outer', args: {}}, 'chat');
+
+        expect(r.errorDialogs).toEqual(['inner could not do that']);
+        expect(mockGlobalsState.errorDialogCapture).toBeFalsy();
+    });
+
+    test('an invented function name comes back with the real ones', async () => {
+        const r = await sitrecAPI.handleAPICall({fn: 'setMenu', args: {}}, 'chat');
+
+        expect(r.success).toBe(false);
+        expect(r.suggestions).toEqual(expect.arrayContaining(['setMenuValue']));
+    });
+
+    test('a throw comes back with the parameters the function actually takes', async () => {
+        sitrecAPI.api.__probe = {
+            params: {lat: 'Latitude in degrees (float)'},
+            fn: () => { throw new Error('boom'); },
+        };
+
+        const r = await sitrecAPI.handleAPICall({fn: '__probe', args: {}}, 'chat');
+
+        expect(r).toMatchObject({
+            success: false,
+            error: 'boom',
+            expected: {lat: 'Latitude in degrees (float)'},
+        });
+    });
+});
+
+describe('CSitrecAPI menu control resolution', () => {
+    const GUI = require('../src/js/lil-gui.esm');
+
+    // lil-gui stand-ins: _resolveControl reads .controllers, and picks folders out of
+    // .children with `instanceof GUI`, so the folders must share that prototype.
+    function control(name, initial = false) {
+        let value = initial;
+        return {_name: name, property: name, initialValue: initial,
+                getValue: () => value, setValue: (v) => { value = v; }};
+    }
+    function menu(title, controllers = [], folders = []) {
+        const g = Object.create(GUI.prototype);
+        g._title = title;
+        g.controllers = controllers;
+        g.children = [...controllers, ...folders];
+        return g;
+    }
+
+    let editMode;
+    beforeEach(() => {
+        editMode = control('Edit Mode');
+        mockGuiMenus.view = menu('view', [control('Main FOV')]);
+        mockGuiMenus.video = menu('video', [], [
+            menu('Annotate', [editMode, control('Show Annotations')]),
+        ]);
+    });
+    afterEach(() => {
+        delete mockGuiMenus.view;
+        delete mockGuiMenus.video;
+    });
+
+    test('a wrong menu id no longer hides a control that exists elsewhere', () => {
+        // The exact call the chatbot made: Annotate lives in `video`, not `view`.
+        const r = sitrecAPI._setMenuValue('view', 'Annotate/Edit Mode', true);
+
+        expect(r.success).toBe(true);
+        expect(editMode.getValue()).toBe(true);
+    });
+
+    test('a misspelt control returns the real address to retry with', () => {
+        const r = sitrecAPI._setMenuValue('view', 'Annotate/Edt Mode', true);
+
+        expect(r.success).toBe(false);
+        expect(r.suggestions[0]).toBe('video:Annotate/Edit Mode');
+        expect(r.error).toContain('Did you mean');
+    });
+
+    test('a suggested address can be fed straight back in', () => {
+        // Otherwise the suggestion is not valid input: retrying it fails and returns the
+        // same suggestion, which is a loop rather than a recovery.
+        const suggested = sitrecAPI._setMenuValue('view', 'Annotate/Edt Mode', true).suggestions[0];
+
+        const r = sitrecAPI._setMenuValue(null, suggested, true);
+
+        expect(r.success).toBe(true);
+        expect(editMode.getValue()).toBe(true);
+    });
+
+    test('a control that matches nothing suggests nothing, rather than noise', () => {
+        const r = sitrecAPI._setMenuValue('view', 'Xyzzyphlogiston', true);
+
+        expect(r.success).toBe(false);
+        expect(r.suggestions).toBeUndefined();
+    });
+
+    test('an unknown menu names the menus that do exist', () => {
+        const r = sitrecAPI._getMenuValue('vidoe', 'Edit Mode');
+
+        expect(r.success).toBe(false);
+        expect(r.error).toContain('view, video');
     });
 });

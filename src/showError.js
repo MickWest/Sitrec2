@@ -1,9 +1,15 @@
 import {Globals} from "./Globals";
 
 /**
- * Show a copyable error dialog to the user
- * @param {string} title - Error title
- * @param {string} message - Error message
+ * Show a copyable error dialog to the user.
+ *
+ * @param {string} message - Error message. NOTE: the second parameter is an Error
+ *        OBJECT, not more message text - only its .stack is appended. Passing a
+ *        plain string there drops it silently and yields a blank dialog, so
+ *        concatenate extra text into `message` instead.
+ * @param {Error} [error] - The Error whose stack to append
+ * @returns {boolean} true if a dialog was put on screen, false if the text was
+ *        routed to a waiting AI agent instead (see Globals.errorDialogCapture).
  */
 export function showError(message, error=null) {
 
@@ -14,9 +20,21 @@ export function showError(message, error=null) {
         message = message.message || JSON.stringify(message);
     }
 
+    // An AI agent is driving - the in-app chatbot, or an external agent over the
+    // SitrecBridge MCP extension. A modal is the wrong place for the text: the agent
+    // cannot read it, and the user did not ask for this call and cannot act on it.
+    // Hand it to the waiting caller (CSitrecAPI.handleAPICall) so it goes back to the
+    // agent as data it can correct against, and let the agent retry properly.
+    if (Globals.errorDialogCapture) {
+        Globals.errorDialogCapture.push(error?.stack ? message + '\n' + error.stack : message);
+        console.error("showError (returned to agent): " + message);
+        return false;
+    }
+
     if (Globals.validationMode) {
         console.error("showError (suppressed dialog): " + message);
-        return;
+        // Reported as shown so showErrorOnce still fires only once per validation run.
+        return true;
     }
 
     const title = "Error"
@@ -152,6 +170,7 @@ export function showError(message, error=null) {
     textarea.select();
 
     console.error(message);
+    return true;
 }
 
 /**
@@ -380,7 +399,9 @@ export function showErrorOnce(ID, message, error=null) {
     if (shownErrors.has(ID)) {
         return;
     }
-    shownErrors.add(ID);
-    showError(message, error);
-
+    // Only burn the ID if the user actually saw it. When the text was routed to an
+    // AI agent instead, a later occurrence still deserves its dialog.
+    if (showError(message, error)) {
+        shownErrors.add(ID);
+    }
 }

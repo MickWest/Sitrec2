@@ -8,6 +8,13 @@ export function incrementMainLoopCount() {
 };
 
 export const Globals = {
+    // When non-null, showError() pushes its text here and shows no dialog. Set by
+    // CSitrecAPI.handleAPICall for the duration of an AI agent's call (the in-app
+    // chatbot, or an external agent over the SitrecBridge MCP extension), so a
+    // failure comes back to the agent as correctable data instead of stopping the
+    // user with a modal about a call they did not make.
+    errorDialogCapture: null,
+
     // V5 shadows: true when at least one CNodeView3D has effective shadows on.
     // Read by load-model handlers, terrain construction, and the per-frame
     // sun-propagation throttle for fast defaults-off short-circuits.

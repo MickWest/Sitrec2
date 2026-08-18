@@ -534,7 +534,10 @@ const handlers = {
         const api = window.sitrecAPI;
         if (!api) return { error: "sitrecAPI not available (page may need rebuilding)" };
         try {
-            const result = await api.handleAPICall({ fn, args: args || {} });
+            // "mcp": an AI agent is driving, so a failure must come back in this
+            // return value with the detail it needs to retry — never as a modal in
+            // the user's browser that the agent cannot read.
+            const result = await api.handleAPICall({ fn, args: args || {} }, "mcp");
             return safeSerialize(result);
         } catch (e) {
             return { error: `API call error: ${e.message}` };
