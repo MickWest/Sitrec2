@@ -20,6 +20,11 @@ export const Globals = {
     // never depends on the order calls happen to finish in.
     errorDialogSinks: new Set(),
 
+    // The one sink a dialog belongs to right now: set only while a handler's SYNCHRONOUS
+    // body is on the stack, where nothing else can be running, so attribution is exact.
+    // Null outside that window, when several overlapping calls are indistinguishable.
+    errorDialogTarget: null,
+
     // V5 shadows: true when at least one CNodeView3D has effective shadows on.
     // Read by load-model handlers, terrain construction, and the per-frame
     // sun-propagation throttle for fast defaults-off short-circuits.

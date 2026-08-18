@@ -3788,7 +3788,7 @@ class CSitrecAPI {
     // detail for it to fix the call and retry: near-miss suggestions for a bad name, the
     // parameter list for a throw. No agent failure raises a dialog: showError is redirected
     // into `captured` for the duration of the call, and whatever it collected comes back in
-    // the result. See AGENT_SOURCES above and Globals.errorDialogSinks.
+    // the result. See AGENT_SOURCES, Globals.errorDialogSinks, and _runAttributed.
     async handleAPICall(call, source = "ui") {
         console.log("Handling API call:", call);
         const apiFn = this.api[call.fn];
@@ -3824,10 +3824,14 @@ class CSitrecAPI {
         // stays captured whatever source it claims.
         const agent = AGENT_SOURCES.has(source) || Globals.errorDialogSinks.size > 0;
         const captured = [];
+        // Non-null only when this call was made from inside another handler's synchronous
+        // body, i.e. real nesting with the parent on the stack - not the accidental overlap
+        // of two independent calls. See the finally block.
+        const parent = Globals.errorDialogTarget;
         if (agent) Globals.errorDialogSinks.add(captured);
         try {
             const args = this._coerceArgs(call.args, apiFn.params);
-            const result = await apiFn.fn(args);
+            const result = await this._runAttributed(apiFn.fn, args, agent ? captured : null);
             // A function that returned {success:false} failed, even though it did not
             // throw. Say so at the top level too. The MCP bridge hands this whole object
             // to the agent, and an outer success:true wrapping an inner failure reads as
@@ -3849,9 +3853,34 @@ class CSitrecAPI {
             if (captured.length) out.errorDialogs = captured;
             return out;
         } finally {
-            // Removes exactly this call's array. Any other call still running keeps its
-            // own, and showError has already given each of them a copy of the text.
-            if (agent) Globals.errorDialogSinks.delete(captured);
+            // Removes exactly this call's array. Any other call still running keeps its own.
+            if (agent) {
+                Globals.errorDialogSinks.delete(captured);
+                // A nested call's dialogs belong to the call that made it as well, since the
+                // agent only ever sees the outermost result and the inner one is consumed
+                // internally. Copied up the stack we actually have, never sideways to a call
+                // that merely happened to be running at the same time.
+                if (parent) parent.push(...captured);
+            }
+        }
+    }
+
+    // Run a handler with its SYNCHRONOUS body attributed to `sink`, so an error dialog it
+    // raises before its first await lands on this call and not on whatever else happens to
+    // be in flight. Almost every handler is synchronous throughout, so almost every dialog
+    // is attributed exactly.
+    //
+    // Save-and-restore is correct here where it was not for the sink set: fn(args) runs to
+    // its first await or its return with nothing else able to interleave, so unwinding
+    // really is last-in-first-out. Deliberately NOT awaited inside - awaiting would extend
+    // the window across the handler's own awaits and reintroduce the ordering bug.
+    _runAttributed(fn, args, sink) {
+        const previous = Globals.errorDialogTarget;
+        Globals.errorDialogTarget = sink;
+        try {
+            return fn(args);
+        } finally {
+            Globals.errorDialogTarget = previous;
         }
     }
 

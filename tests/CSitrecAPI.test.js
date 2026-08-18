@@ -40,6 +40,7 @@ jest.mock('../src/Globals', () => {
     mockGlobalsState = {
         sitchDirty: false,
         errorDialogSinks: new Set(),
+        errorDialogTarget: null,
     };
 
     mockSit = {};
@@ -137,12 +138,13 @@ beforeEach(() => {
     // at module load and nothing ever removes it, so deleting it here would only make
     // the harness diverge from production. Emptied rather than dropped.
     Object.keys(mockGlobalsState).forEach((key) => {
-        if (key !== 'sitchDirty' && key !== 'errorDialogSinks') {
+        if (key !== 'sitchDirty' && key !== 'errorDialogSinks' && key !== 'errorDialogTarget') {
             delete mockGlobalsState[key];
         }
     });
     mockGlobalsState.sitchDirty = false;
     mockGlobalsState.errorDialogSinks.clear();
+    mockGlobalsState.errorDialogTarget = null;
     mockCustomManager.customLink = null;
     mockCustomManager.getCustomSitchString.mockImplementation(() => JSON.stringify({name: 'Serialized'}));
     mockFileManager.userSaves = undefined;
@@ -789,9 +791,14 @@ describe('createWalker input validation (before any destructive teardown)', () =
 // data rather than the user as a modal. These cover both halves: nothing pops a
 // dialog on an agent path, and what comes back is enough to retry with.
 describe('CSitrecAPI agent-sourced error routing', () => {
-    // What showError does when any agent call is in flight.
+    // Mirrors showError's routing rule, since showError itself is mocked out here.
+    // Keep in step with src/showError.js.
     function raiseDialog(text) {
-        for (const sink of mockGlobalsState.errorDialogSinks) sink.push(text);
+        const sinks = mockGlobalsState.errorDialogSinks;
+        if (sinks.size === 0) return;
+        const target = mockGlobalsState.errorDialogTarget
+            ?? (sinks.size === 1 ? sinks.values().next().value : null);
+        if (target) target.push(text);
     }
 
     afterEach(() => {
@@ -800,6 +807,7 @@ describe('CSitrecAPI agent-sourced error routing', () => {
         delete sitrecAPI.api.__outer;
         delete sitrecAPI.api.__a;
         delete sitrecAPI.api.__b;
+        delete sitrecAPI.api.__slow;
     });
 
     test.each(['chat', 'mcp'])('a %s call diverts error dialogs into the result', async (source) => {
@@ -875,6 +883,47 @@ describe('CSitrecAPI agent-sourced error routing', () => {
 
         // and nothing is left armed to swallow a dialog the user should get
         expect(mockGlobalsState.errorDialogSinks.size).toBe(0);
+    });
+
+    test('a dialog raised by one call is not reported to another running beside it', async () => {
+        // Broadcasting to every live sink meant an unrelated caller got - and could act
+        // on - this call's failure text. A handler's synchronous body is attributed to
+        // exactly one call, which covers all but a handful of handlers.
+        let finishSlow;
+        sitrecAPI.api.__slow = {fn: () => new Promise(resolve => { finishSlow = resolve; })};
+        sitrecAPI.api.__probe = {fn: () => {
+            raiseDialog('this belongs to __probe');
+            return {success: false, error: 'probe failed'};
+        }};
+
+        const slow = sitrecAPI.handleAPICall({fn: '__slow', args: {}}, 'mcp');
+        const probe = await sitrecAPI.handleAPICall({fn: '__probe', args: {}}, 'mcp');
+
+        expect(probe.errorDialogs).toEqual(['this belongs to __probe']);
+
+        finishSlow({success: true});
+        expect((await slow).errorDialogs).toBeUndefined();   // not told about __probe
+        expect(mockGlobalsState.errorDialogSinks.size).toBe(0);
+        expect(mockGlobalsState.errorDialogTarget).toBeNull();
+    });
+
+    test('the attribution window closes when a handler awaits, and does not leak', async () => {
+        let released;
+        const gate = new Promise(resolve => { released = resolve; });
+        let targetAfterAwait = 'unset';
+        sitrecAPI.api.__probe = {fn: async () => {
+            await gate;
+            targetAfterAwait = mockGlobalsState.errorDialogTarget;
+            return {success: true};
+        }};
+
+        const call = sitrecAPI.handleAPICall({fn: '__probe', args: {}}, 'mcp');
+        // The synchronous body has already yielded, so nothing is claiming dialogs...
+        expect(mockGlobalsState.errorDialogTarget).toBeNull();
+        released();
+        await call;
+        // ...including after it resumes, so a later overlapping call cannot inherit it
+        expect(targetAfterAwait).toBeNull();
     });
 
     test('an invented function name comes back with the real ones', async () => {

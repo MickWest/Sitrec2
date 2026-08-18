@@ -25,12 +25,18 @@ export function showError(message, error=null) {
     // cannot read it, and the user did not ask for this call and cannot act on it.
     // Hand it to the waiting caller (CSitrecAPI.handleAPICall) so it goes back to the
     // agent as data it can correct against, and let the agent retry properly.
-    // Every in-flight agent call gets the text. On a single-threaded event loop there is
-    // no way to tell which one a dialog raised deep in a handler belongs to, so all of
-    // them see it rather than one being picked arbitrarily and the rest told nothing.
+    // Which call gets the text. errorDialogTarget is set only while one handler's
+    // synchronous body runs, so when it is set the answer is exact - that covers almost
+    // every handler, none of which awaits. Otherwise a single in-flight call is still
+    // unambiguous. With several and no target we cannot tell, so no one is told: giving
+    // every caller a failure that probably belongs to another would have them act on it,
+    // and each call's own `error` field is correctly attributed regardless. The dialog
+    // stays suppressed either way, and the text is always on the console.
     if (Globals.errorDialogSinks?.size > 0) {
-        const text = error?.stack ? message + '\n' + error.stack : message;
-        for (const sink of Globals.errorDialogSinks) sink.push(text);
+        const sinks = Globals.errorDialogSinks;
+        const target = Globals.errorDialogTarget
+            ?? (sinks.size === 1 ? sinks.values().next().value : null);
+        if (target) target.push(error?.stack ? message + '\n' + error.stack : message);
         console.error("showError (returned to agent): " + message);
         return false;
     }
