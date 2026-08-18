@@ -319,9 +319,10 @@ function renderSparkGraph($statsHistory, $key, $label, $formatFn = 'number_forma
         $dates[] = $date;
         $values[] = $day[$key] ?? 0;
     }
-    $max = max(1, max($values));
-    $h = 60;
-    $today = end($values);
+    $maxValue = empty($values) ? 0 : max($values);
+    $max = max(1, $maxValue);
+    $h = 34;
+    $today = empty($values) ? 0 : end($values);
 
     // Dispatch on the named formatter rather than special-casing one of them, so a new
     // unit does not silently render as a bare count. fmtUSD takes micro-dollars.
@@ -332,6 +333,14 @@ function renderSparkGraph($statsHistory, $key, $label, $formatFn = 'number_forma
     };
 
     $formattedToday = $fmt($today);
+
+    if ($maxValue === 0) {
+        return '<div class="spark-card spark-card-empty">'
+            . '<div class="spark-header"><span class="spark-label">' . htmlspecialchars($label) . '</span>'
+            . '<span class="spark-today">' . $formattedToday . '</span></div>'
+            . '<div class="spark-zero">No activity in 28 days</div>'
+            . '</div>';
+    }
 
     $svg = '<svg viewBox="0 0 280 ' . $h . '" preserveAspectRatio="none" style="width:100%;height:' . $h . 'px;">';
     foreach ($values as $i => $v) {
@@ -429,87 +438,99 @@ $userNames = getUserNames($allUserIds);
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            background: #161c35;
             min-height: 100vh;
             color: #e4e4e4;
-            padding: 10px;
-            font-size: 13px;
+            padding: 8px;
+            font-size: 12px;
             user-select: text;
             -webkit-user-select: text;
         }
-        .dashboard { max-width: 1900px; margin: 0 auto; }
+        .dashboard { width: 100%; margin: 0; }
         h1 {
             text-align: center;
-            margin-bottom: 12px;
-            font-weight: 300;
-            font-size: 1.8em;
+            margin-bottom: 8px;
+            font-weight: 400;
+            font-size: 1.5em;
             color: #fff;
         }
-        .grid {
+        .grid,
+        .summary-grid,
+        .history-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 10px;
-            margin-bottom: 10px;
+            gap: 8px;
+            margin-bottom: 8px;
+            align-items: start;
         }
-        @media (min-width: 1400px) {
-            .grid { grid-template-columns: repeat(4, 1fr); }
-            .grid-3 { grid-template-columns: repeat(3, 1fr); }
+        .grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+        .summary-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+        .history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .detail-grid {
+            columns: 4 290px;
+            column-gap: 8px;
+            margin-bottom: 0;
         }
-        @media (min-width: 1700px) {
-            .grid { grid-template-columns: repeat(5, 1fr); }
+        .detail-grid > .card {
+            display: inline-block;
+            width: 100%;
+            margin: 0 0 8px;
+            vertical-align: top;
+            break-inside: avoid;
         }
         .card {
-            background: rgba(255,255,255,0.05);
-            border-radius: 10px;
-            padding: 12px;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.1);
+            background: #242a43;
+            border-radius: 6px;
+            padding: 8px;
+            border: 1px solid #343b58;
         }
         .card h2 {
-            font-size: 0.85em;
-            font-weight: 500;
-            color: #8892b0;
-            margin-bottom: 8px;
+            font-size: 0.8em;
+            line-height: 1.2;
+            font-weight: 600;
+            color: #929bb9;
+            margin-bottom: 6px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.45px;
         }
         .stat-value {
-            font-size: 1.8em;
+            font-size: 1.7em;
+            line-height: 1.05;
             font-weight: 700;
             color: #64ffda;
             margin-bottom: 2px;
         }
-        .stat-label { font-size: 0.8em; color: #8892b0; }
+        .stat-label { font-size: 0.75em; line-height: 1.35; color: #929bb9; }
         .progress-bar {
             height: 6px;
             background: rgba(255,255,255,0.1);
             border-radius: 3px;
             overflow: hidden;
-            margin: 6px 0;
+            margin: 4px 0;
         }
         .progress-fill { height: 100%; border-radius: 3px; }
         .progress-green { background: linear-gradient(90deg, #00c853, #64ffda); }
         .progress-yellow { background: linear-gradient(90deg, #ffd600, #ffab00); }
         .progress-red { background: linear-gradient(90deg, #ff5252, #ff1744); }
-        .service-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+        .service-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
         .service-item {
-            background: rgba(255,255,255,0.03);
-            padding: 6px 8px;
+            background: rgba(255,255,255,0.035);
+            padding: 4px 6px;
             border-radius: 4px;
         }
-        .service-name { font-size: 0.75em; color: #8892b0; text-transform: uppercase; }
-        .service-value { font-size: 1.1em; font-weight: 600; color: #ccd6f6; }
+        .service-name { font-size: 0.68em; color: #929bb9; text-transform: uppercase; overflow-wrap: anywhere; }
+        .service-value { font-size: 1em; font-weight: 600; color: #ccd6f6; }
         .full-width { grid-column: 1 / -1; }
-        table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 4px; }
         th, td {
-            padding: 6px 4px;
+            padding: 4px 3px;
             text-align: left;
             border-bottom: 1px solid rgba(255,255,255,0.05);
+            line-height: 1.2;
         }
-        th { color: #8892b0; font-weight: 500; font-size: 0.75em; text-transform: uppercase; }
+        th { color: #929bb9; font-weight: 600; font-size: 0.68em; text-transform: uppercase; }
         td { color: #ccd6f6; }
         tr:hover { background: rgba(255,255,255,0.02); }
-        .user-id { color: #8892b0; font-size: 0.8em; }
+        .user-id { color: #929bb9; font-size: 0.75em; }
         .user-link { color: #ccd6f6; text-decoration: none; }
         .user-link:hover { color: #64ffda; text-decoration: underline; }
         .sitch-link { color: #64ffda; text-decoration: none; }
@@ -519,7 +540,7 @@ $userNames = getUserNames($allUserIds);
         .card-title-link:hover { color: #64ffda; text-decoration: underline; }
         .card-title-link::after { content: " \2197"; opacity: 0.5; font-size: 0.9em; }
         .prompt-text {
-            max-width: 500px;
+            max-width: min(700px, 45vw);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -533,12 +554,12 @@ $userNames = getUserNames($allUserIds);
             padding: 1px 4px;
             border-radius: 3px;
         }
-        .log-table { max-height: 400px; overflow-y: auto; }
-        .disk-item { margin-bottom: 10px; }
+        .log-table { max-height: 400px; overflow: auto; }
+        .disk-item { margin-bottom: 7px; }
         .disk-item:last-child { margin-bottom: 0; }
-        .disk-label { display: flex; justify-content: space-between; margin-bottom: 2px; font-size: 0.9em; }
+        .disk-label { display: flex; justify-content: space-between; gap: 6px; margin-bottom: 2px; font-size: 0.85em; }
         .disk-path { font-size: 0.7em; color: #5a6a8a; word-break: break-all; }
-        .timestamp { text-align: center; color: #5a6a8a; font-size: 0.8em; margin-top: 10px; }
+        .timestamp { text-align: center; color: #5a6a8a; font-size: 0.75em; margin-top: 2px; }
         .refresh-btn {
             display: inline-block;
             margin-left: 8px;
@@ -551,17 +572,48 @@ $userNames = getUserNames($allUserIds);
             font-size: 0.8em;
         }
         .refresh-btn:hover { background: rgba(100, 255, 218, 0.2); }
-        .spark-card { margin-bottom: 8px; }
-        .spark-card:last-child { margin-bottom: 0; }
+        .spark-grid { display: grid; gap: 5px; }
+        .usage-sparks { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .tile-sparks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .spark-card {
+            min-width: 0;
+            padding: 5px;
+            background: rgba(255,255,255,0.025);
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius: 4px;
+        }
         .spark-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
-        .spark-label { font-size: 0.75em; color: #8892b0; text-transform: uppercase; }
-        .spark-today { font-size: 1.1em; font-weight: 600; color: #64ffda; }
+        .spark-label { font-size: 0.68em; color: #929bb9; text-transform: uppercase; }
+        .spark-today { font-size: 0.95em; font-weight: 600; color: #64ffda; }
         .spark-card svg { display: block; border-radius: 3px; background: rgba(255,255,255,0.02); }
         .spark-card svg rect { transition: opacity 0.15s; }
         .spark-card svg rect:hover { opacity: 1 !important; }
-        .grid-2 { grid-template-columns: repeat(2, 1fr); }
-        @media (min-width: 1400px) { .grid-2 { grid-template-columns: repeat(2, 1fr); } }
+        .spark-zero {
+            display: flex;
+            height: 34px;
+            align-items: center;
+            color: #5f6988;
+            font-size: 0.68em;
+            line-height: 1.4;
+        }
         .visit-ip { font-family: monospace; font-size: 0.85em; color: #8892b0; }
+        @media (max-width: 1100px) {
+            .summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        }
+        @media (max-width: 760px) {
+            body { padding: 5px; }
+            .summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .history-grid { grid-template-columns: 1fr; }
+            .usage-sparks { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .detail-grid { columns: 2 260px; }
+        }
+        @media (max-width: 560px) {
+            .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .usage-sparks,
+            .tile-sparks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .detail-grid { columns: 1; }
+            .prompt-text { max-width: 260px; }
+        }
     </style>
 </head>
 <body>
@@ -634,7 +686,7 @@ $userNames = getUserNames($allUserIds);
         </div>
 <?php else: ?>
 
-        <div class="grid">
+        <div class="summary-grid">
             <div class="card">
                 <h2>AI Usage (This Hour)</h2>
                 <div class="stat-value"><?= number_format($aiTotalHour) ?></div>
@@ -670,19 +722,6 @@ $userNames = getUserNames($allUserIds);
                 <div class="stat-label" style="color:#fbbf24">
                     Unpriced models reachable by a tier:
                     <?= htmlspecialchars(implode(', ', $aiMissingPrices)) ?>
-                </div>
-                <?php endif; ?>
-                <?php if (!empty($aiSpend['by_model'])): ?>
-                <div class="log-table" style="margin-top:8px">
-                    <table>
-                        <tr><th>Model</th><th>28-day cost</th></tr>
-                        <?php foreach ($aiSpend['by_model'] as $model => $micros): ?>
-                        <tr>
-                            <td><span class="model-tag"><?= htmlspecialchars($model) ?></span></td>
-                            <td><?= fmtUSD($micros) ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </table>
                 </div>
                 <?php endif; ?>
             </div>
@@ -721,15 +760,17 @@ $userNames = getUserNames($allUserIds);
             </div>
         </div>
         
-        <div class="grid grid-2">
+        <div class="history-grid">
             <div class="card">
                 <h2>28-Day Usage History</h2>
+                <div class="spark-grid usage-sparks">
                 <?= renderSparkGraph($statsHistory, 'visits', 'Visits', 'number_format', '#64ffda') ?>
                 <?= renderSparkGraph($statsHistory, 'unique_users', 'Unique Users', 'number_format', '#7ec8e3') ?>
                 <?= renderSparkGraph($statsHistory, 'unique_ips', 'Unique IPs', 'number_format', '#c084fc') ?>
                 <?= renderSparkGraph($statsHistory, 'ai_requests', 'AI Requests', 'number_format', '#fbbf24') ?>
                 <?= renderSparkGraph($statsHistory, 'ai_calls', 'AI Provider Calls', 'number_format', '#fb923c') ?>
                 <?= renderSparkGraph($statsHistory, 'ai_cost_micros', 'AI Cost', 'fmtUSD', '#f87171') ?>
+                </div>
             </div>
             <div class="card">
                 <h2>28-Day Tile History</h2>
@@ -748,14 +789,16 @@ $userNames = getUserNames($allUserIds);
                 }
                 unset($day);
                 ?>
+                <div class="spark-grid tile-sparks">
                 <?= renderSparkGraph($tileHistoryForGraph, 'tiles_total', 'Total Tiles', 'number_format', '#64ffda') ?>
                 <?= renderSparkGraph($statsHistory, 'google_3d_root', 'Google 3D Root', 'number_format', '#f87171') ?>
                 <?= renderSparkGraph($statsHistory, 'google_3d_tiles', 'Google 3D Tiles', 'number_format', '#fb923c') ?>
                 <?= renderSparkGraph($statsHistory, 'cesium_osm_3d_bytes', 'Cesium OSM BW', 'formatBytes', '#a78bfa') ?>
+                </div>
             </div>
         </div>
 
-        <div class="grid">
+        <div class="detail-grid">
             <div class="card">
                 <h2>Visitors Today (<?= count($todayVisits['users']) ?> users, <?= count($todayVisits['ips']) ?> IPs)</h2>
                 <table>
@@ -788,9 +831,7 @@ $userNames = getUserNames($allUserIds);
                     <?php endif; ?>
                 </table>
             </div>
-        </div>
 
-        <div class="grid">
             <div class="card">
                 <h2>Tiles by Service (Hour)</h2>
                 <div class="service-grid">
@@ -840,9 +881,7 @@ $userNames = getUserNames($allUserIds);
                 </div>
                 <?php endforeach; ?>
             </div>
-        </div>
-        
-        <div class="grid">
+
             <div class="card">
                 <h2><a class="card-title-link" href="?expand=ai">Top 10 AI Users (Hour)</a></h2>
                 <table>
@@ -858,6 +897,21 @@ $userNames = getUserNames($allUserIds);
                     <?php endif; ?>
                 </table>
             </div>
+
+            <?php if (!empty($aiSpend['by_model'])): ?>
+            <div class="card">
+                <h2>AI Spend by Model (28 Days)</h2>
+                <table>
+                    <tr><th>Model</th><th>Cost</th></tr>
+                    <?php foreach ($aiSpend['by_model'] as $model => $micros): ?>
+                    <tr>
+                        <td><span class="model-tag"><?= htmlspecialchars($model) ?></span></td>
+                        <td class="highlight"><?= fmtUSD($micros) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </table>
+            </div>
+            <?php endif; ?>
             
             <div class="card">
                 <h2><a class="card-title-link" href="?expand=tiles">Top 10 Tile Users (Day)</a></h2>
@@ -874,9 +928,7 @@ $userNames = getUserNames($allUserIds);
                     <?php endif; ?>
                 </table>
             </div>
-        </div>
 
-        <div class="grid">
             <div class="card">
                 <h2><a class="card-title-link" href="?expand=menu">Top 10 Clicked Menu Items</a></h2>
                 <table>
@@ -892,9 +944,7 @@ $userNames = getUserNames($allUserIds);
                     <?php endif; ?>
                 </table>
             </div>
-        </div>
 
-        <div class="grid">
             <div class="card">
                 <h2>S3 Storage Summary</h2>
                 <?php if ($s3Usage['error']): ?>
