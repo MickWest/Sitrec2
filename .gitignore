@@ -78,3 +78,6 @@ AGENTS.md
 # celestial positions against real images with known camera position and time.
 # Third-party photographs (Wikimedia Commons) — local only, not redistributed.
 /alignment-tests/
+
+# Local AI-agent skills and configuration
+/.agents/

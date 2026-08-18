@@ -9,6 +9,30 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.139.0 (2026-08-18)
+
+### New Features
+
+- **OpenRouter keys** (Settings → *API Keys…*, then Settings → *AI Model*): add your own OpenRouter key to use *OpenAI GPT-5 Mini (your OpenRouter key)* or *OpenAI GPT-5 Nano (your OpenRouter key)*, billed to you with separate usage totals; the key stays in your browser and goes only to OpenRouter, while the conversation and assistant actions are also visible to OpenRouter’s selected model provider.
+
+- **Auto (economy)** (Settings → *AI Model*): automatically chooses the lowest estimated-cost server model available to your account, including a vision-capable choice when AI ground masking needs to inspect an image.
+
+- Administrators can now see 28-day AI spend, today’s cost, requests, provider calls, tokens, cache use and per-model totals, with recent cost broken down by user and individual request.
+
+### Improvements
+
+- The Assistant now reuses stable instructions, loads menu details and uncommon creation abilities only when needed, and avoids a second AI call merely to say “Done” after successful actions, reducing response time and token cost.
+
+### Bug Fixes
+
+- Fixed the Assistant losing information when it requested that information and an action together.
+
+- Fixed an action being able to run with missing inputs when an OpenAI-compatible model’s response was cut off; the incomplete action is now refused and the user is asked to retry.
+
+### Security
+
+- AI limits now count every provider call made to complete a request, concurrent calls can no longer bypass counters, and invalid model selections or oversized request data are rejected instead of being silently accepted.
+
 ## Version 2.138.0 (2026-08-18)
 
 ### New Features
