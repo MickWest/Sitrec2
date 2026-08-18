@@ -543,8 +543,25 @@ class CClientNLU {
             {
                 name: "math_expression",
                 test: (text) => {
-                    const cleaned = text.replace(/^(?:what(?:'s|\s+is)\s+|calculate\s+|eval(?:uate)?\s+)/i, '').replace(/[?!]$/, '').trim();
+                    const trimmed = text.trim();
+                    // Split from the punctuation strip because the two are asked different
+                    // questions below: whether the user SAID to evaluate, and what is left
+                    // once sentence punctuation is gone.
+                    const unprefixed = trimmed.replace(/^(?:what(?:'s|\s+is)\s+|calculate\s+|eval(?:uate)?\s+)/i, '');
+                    const askedToEvaluate = unprefixed !== trimmed;
+                    const cleaned = unprefixed.replace(/[?!.]$/, '').trim();
                     if (!cleaned || /^[a-z]+$/i.test(cleaned)) return null;
+
+                    // A message that is nothing but a number is an ANSWER, not a sum. The
+                    // assistant routinely offers numbered choices, and a lone "2" means "the
+                    // second one" - evaluating it replies "2 = 2", and that reply never
+                    // reaches the agent, which is left waiting on a choice the user already
+                    // made. Nothing needs calculating in a bare literal in any case. Tested
+                    // AFTER the punctuation strip, so "2." and "2?" are caught too, but only
+                    // when the user did not explicitly ask - "what is 2" still answers here.
+                    // The sibling guard above does the same for a bare word.
+                    if (!askedToEvaluate && /^[+-]?\d+(?:\.\d+)?$/.test(cleaned)) return null;
+
                     try {
                         const result = mathDeg.evaluate(cleaned);
                         if (typeof result === 'number' && isFinite(result)) {
@@ -573,12 +590,22 @@ class CClientNLU {
             },
             {
                 name: "set_time_simple",
-                regex: /^(?:set\s+)?(?:time\s+(?:to\s+)?)?(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(am|pm)?$/i,
+                // The "time" keyword is CAPTURED (match[1]) so extract can tell whether the
+                // user actually named the clock - every word here is optional, so without
+                // that test a lone "2" matches and sets the time to 02:00.
+                regex: /^(?:set\s+)?(time\s+(?:to\s+)?)?(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(am|pm)?$/i,
                 extract: (match) => {
-                    let hours = parseInt(match[1]);
-                    const minutes = match[2] ? parseInt(match[2]) : 0;
-                    const seconds = match[3] ? parseInt(match[3]) : 0;
-                    const ampm = match[4]?.toLowerCase();
+                    // With no "time" keyword, only a time-SHAPED value is a time command:
+                    // "2:30" or "2pm", not a bare "2". A lone number is far more likely to
+                    // be the user picking option 2 from a list the assistant just offered,
+                    // and reading it as 02:00 silently moves the sitch clock instead of
+                    // answering. Same reasoning as the bare-number guard in math_expression.
+                    if (!match[1] && !match[3] && !match[5]) return null;
+
+                    let hours = parseInt(match[2]);
+                    const minutes = match[3] ? parseInt(match[3]) : 0;
+                    const seconds = match[4] ? parseInt(match[4]) : 0;
+                    const ampm = match[5]?.toLowerCase();
                     if (ampm === "pm" && hours < 12) hours += 12;
                     if (ampm === "am" && hours === 12) hours = 0;
                     return {intent: "SET_TIME_RELATIVE", slots: {hours, minutes, seconds}};
