@@ -28,29 +28,21 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-// three's package has "type": "module", and its addon subpaths resolve to
-// ESM files Jest's CommonJS runtime can't load. Stub each three/addons
-// path this test transitively pulls in. Scoped to this file so other tests
-// that supply their own three/addons mocks (e.g. ModelLoader.test.js) keep
-// working.
+// three's addon subpaths (three/addons/*) resolve to ESM files under
+// node_modules/three/examples/jsm/. Jest's CommonJS runtime cannot load those
+// as-is, so package.json's transformIgnorePatterns carves out "three/examples"
+// and Babel transforms them like project source, letting the REAL addon modules
+// load here — which is what a module-load smoke test should be proving.
 //
-// jest.mock factories are hoisted above variable declarations, so the stub
-// path must be inline — referencing an outer `const` here would fail with
-// "module factory of jest.mock() is not allowed to reference any
-// out-of-scope variables".
-jest.mock("three/addons/lines/LineMaterial.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/lines/LineGeometry.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/lines/LineSegmentsGeometry.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/lines/Line2.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/loaders/DRACOLoader.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/loaders/GLTFLoader.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/loaders/PLYLoader.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/objects/Sky.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/postprocessing/ShaderPass.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/shaders/HorizontalBlurShader.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/shaders/VerticalBlurShader.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/utils/BufferGeometryUtils.js", () => require("./__mocks__/three-addons-stub.js"));
-jest.mock("three/addons/webxr/VRButton.js", () => require("./__mocks__/three-addons-stub.js"));
+// That replaced a hand-maintained list of jest.mock() stubs, one per addon the
+// node graph transitively pulled in. Two things were wrong with it: the list had
+// to be extended by hand whenever a node imported a new addon, and a stub whose
+// path failed to resolve was a silent no-op that let the raw ESM through. The
+// second bit: the mocks resolved on Node 22.13 but not on CI's pinned 22.4, so
+// all 84 subtests failed there with "Cannot use import statement outside a
+// module" while the same test passed locally. Other suites that supply their own
+// three/addons mocks (e.g. ModelLoader.test.js) are unaffected — jest.mock is
+// per-file.
 
 // jsdom in the jest-environment-jsdom package doesn't implement matchMedia.
 // A handful of node modules read it at top level (responsive-GUI / mobile
