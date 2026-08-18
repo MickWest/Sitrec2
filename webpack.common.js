@@ -271,6 +271,13 @@ module.exports = (env = {}) => ({
                     const rootReadme = path.resolve(__dirname, 'README.md');
                     const outputRootReadme = path.resolve(outputBaseDir, 'README.html');
 
+                    // Local-only working notes that live under docs/ but must never ship.
+                    // This walk emits three things per file — the rendered .html, the raw
+                    // .md (for chatbot access), and any non-markdown file verbatim — so an
+                    // un-skipped directory here publishes its whole contents. Kept in step
+                    // with the /docs/temp/ entry in .gitignore.
+                    const skipDirs = new Set(['temp']);
+
                     const convertMarkdownFiles = async (dir) => {
                         const files = await fs.promises.readdir(dir, { withFileTypes: true });
 
@@ -280,6 +287,7 @@ module.exports = (env = {}) => ({
                             const outputPath = path.join(outputDir, relativePath.replace(/\.md$/, '.html'));
 
                             if (file.isDirectory()) {
+                                if (skipDirs.has(file.name)) continue;
                                 await fs.promises.mkdir(path.join(outputDir, relativePath), { recursive: true });
                                 await convertMarkdownFiles(fullPath);
                             } else if (file.name.endsWith('.md')) {

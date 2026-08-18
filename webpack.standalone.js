@@ -54,7 +54,10 @@ module.exports = merge(commonConfig, {
                     from: path.resolve(__dirname, 'docs'),
                     to: path.resolve(standalonePath, 'docs'),
                     globOptions: {
-                        ignore: ['**/*.md'], // Ignore Markdown files here
+                        ignore: [
+                            '**/*.md',        // Ignore Markdown files here
+                            '**/temp/**',     // Local-only working notes, never shipped
+                        ],
                     },
                 },
             ],
