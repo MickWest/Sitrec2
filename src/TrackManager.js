@@ -31,6 +31,7 @@ import {CNodeLazyMISBFlightTrack} from "./nodes/CNodeLazyMISBFlightTrack";
 import {assert} from "./assert";
 import {getLocalSouthVector, getLocalUpVector, pointOnSphereBelow} from "./SphericalMath";
 import {closestIntersectionTime, trackBoundingBox} from "./trackUtils";
+import {collectTrackPoints, computeTrackFraming} from "./CameraFraming";
 import {CNode3DObject, ModelFiles} from "./nodes/CNode3DObject";
 import {radiusIsOnlyDimension} from "./nodes/CNode3DObjectGeometry";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
@@ -653,6 +654,12 @@ class CTrackManager extends CManager {
         const showDialog = options.showDialog !== false && !Globals.deserializing;
         const syncTime = options.syncTime !== false;
 
+        // Tracks that centerOnTrack decided the view is allowed to move for. Collected
+        // here rather than acted on there because framing a camera+target pair needs
+        // BOTH tracks, and centerOnTrack runs once per track as each one is built.
+        // See frameLoadedTracks() at the end of this method.
+        this.pendingFramingTracks = [];
+
         console.log("-----------------------------------------------------")
         console.log("addTracks called with ", trackFiles)
         console.log("-----------------------------------------------------")
@@ -1129,6 +1136,12 @@ class CTrackManager extends CManager {
 
         // we've loaded some tracks, and set stuff up, so ensure everything is calculated
         NodeMan.recalculateAllRootFirst()
+
+        // Now the tracks all exist and are calculated, put the view where the whole
+        // import can be seen at once. Must come after the recalc: it reads track
+        // positions, and before the recalc a lazily-built track has none.
+        this.frameLoadedTracks();
+
         setRenderOne(true);
 
         // Notify listeners that the imported-track set has changed.
@@ -1371,6 +1384,89 @@ class CTrackManager extends CManager {
         }
     }
 
+    /**
+     * Point the main view at everything this import just loaded.
+     *
+     * centerOnTrack() moves the camera once per track, so with two tracks the second
+     * one's framing simply replaces the first's and one of them is left off screen.
+     * This runs once, after all of them exist, and fits them together — the platform
+     * on the left, the target on the right, looking down at 15-30 degrees. See
+     * CameraFraming.js for the fit itself.
+     *
+     * Deliberately narrow about which imports it reframes:
+     *
+     *  - one track, or a file that DECLARES which track is the camera and which is
+     *    the target (BOT scenarios, STANAG), is reframed;
+     *  - anything else keeps whatever centerOnTrack() and the closest-approach
+     *    re-timing left behind. A drop of several aircraft tracks has no
+     *    platform/target reading to honour, and fitting all of them at once would
+     *    pull the view back off the encounter that re-timing just found.
+     */
+    frameLoadedTracks() {
+        const candidates = (this.pendingFramingTracks ?? []).filter(t => !t.isSondeTrack);
+        this.pendingFramingTracks = [];
+        if (candidates.length === 0) return;
+        if (!NodeMan.exists("mainCamera") || !NodeMan.exists("mainView")) return;
+
+        const roleOf = (trackOb) => {
+            const file = FileManager.get(trackOb.trackFileName, false);
+            return file?.trackRoleHint ? file.trackRoleHint(trackOb.trackIndex) : null;
+        };
+        const cameraTracks = candidates.filter(t => roleOf(t) === "camera");
+        const targetTracks = candidates.filter(t => roleOf(t) === "target");
+
+        let leftTrack = null;
+        let rightTrack = null;
+        if (cameraTracks.length === 1 && targetTracks.length === 1) {
+            leftTrack = cameraTracks[0];
+            rightTrack = targetTracks[0];
+        } else if (candidates.length === 1) {
+            leftTrack = candidates[0];
+        } else {
+            return;
+        }
+
+        const leftPoints = collectTrackPoints(leftTrack.trackDataNode);
+        const rightPoints = rightTrack ? collectTrackPoints(rightTrack.trackDataNode) : [];
+        if (leftPoints.length === 0 && rightPoints.length === 0) return;
+
+        const mainView = NodeMan.get("mainView");
+        const mainCameraNode = NodeMan.get("mainCamera");
+        const mainCamera = mainCameraNode.camera;
+
+        // Up at the middle of what we are framing, not at the camera: it is the scene
+        // that has to sit level in frame.
+        const middle = leftPoints.concat(rightPoints)
+            .reduce((sum, p) => sum.add(p), new Vector3())
+            .multiplyScalar(1 / (leftPoints.length + rightPoints.length));
+
+        const framingOptions = {
+            tanH: Math.tan(mainView.getHFOV() / 2),
+            tanV: Math.tan(mainCamera.fov * Math.PI / 360),
+            near: mainCamera.near,
+        };
+        let framing = computeTrackFraming(leftPoints, rightPoints, getLocalUpVector(middle), framingOptions);
+        if (!framing) return;
+
+        // The fit measures its look-down angle against up at the SCENE, but the angle
+        // that has to land in the 15-30 degree band is the one at the CAMERA — that is
+        // the depression the view reads out, and the two are different vectors once
+        // the camera is far enough away for the Earth to have curved between them. A
+        // 90 km airliner track already puts the camera a degree out. Refitting once
+        // with up taken where the camera actually ended up closes almost all of that;
+        // what is left is second order and far below a degree.
+        const refined = computeTrackFraming(leftPoints, rightPoints,
+            getLocalUpVector(framing.position), framingOptions);
+        if (refined) framing = refined;
+
+        mainCamera.position.copy(framing.position);
+        mainCamera.up.copy(framing.up);
+        mainCamera.lookAt(framing.position.clone().add(framing.forward));
+
+        // Store as the default pose for this import, so resetCamera() comes back here.
+        mainCameraNode.snapshotCamera();
+    }
+
     centerOnTrack(shortName, trackNumber, trackOb, hasAngles, trackIndex = 0) {
 //        console.log("Considering setup options for track: ", shortName, " number ", trackNumber)
 //        console.log("Sit.centerOnLoadedTracks: ", Sit.centerOnLoadedTracks, " Globals.dontAutoZoom: ", Globals.dontAutoZoom, " Globals.sitchEstablished: ", Globals.sitchEstablished)
@@ -1384,6 +1480,12 @@ class CTrackManager extends CManager {
 
 
 //            console.log("Centering on loaded track ", shortName)
+
+            // Register for the whole-import framing pass. What follows still runs: it
+            // is the per-track fallback for imports frameLoadedTracks() declines to
+            // reframe (three or more tracks with no declared camera/target roles), and
+            // it is what the closest-approach re-timing below adjusts.
+            this.pendingFramingTracks.push(trackOb);
 
             // maybe adjust the main view camera to look at the center of the track
             const mainCameraNode = NodeMan.get("mainCamera");

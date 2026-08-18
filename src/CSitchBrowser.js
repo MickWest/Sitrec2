@@ -2166,6 +2166,29 @@ export class CSitchBrowser {
 
     // ==================== FILE DRAG & DROP ====================
 
+    /**
+     * Take files chosen from File > Import while the browser is showing, and treat
+     * them exactly as if they had been dropped on it.
+     *
+     * There is no sitch to import INTO while the browser is up — what is loaded
+     * behind it is whatever was there before, "empty" on a cold start — so both
+     * routes have to queue the files and load the custom sitch first. Importing
+     * straight into "empty" instead gives a sitch with no lat/lon, and every track
+     * node built against it asserts on the next frame.
+     *
+     * @param {File[]} files
+     * @returns {boolean} true if the browser took them; false if it isn't showing
+     *                    and the caller should import normally.
+     */
+    acceptImportedFiles(files) {
+        if (!this.overlay || !files || files.length === 0) return false;
+        for (const file of files) {
+            DragDropHandler.pendingDropFiles.push(file);
+        }
+        this._loadCustomSitchForQueuedDrops(files.length);
+        return true;
+    }
+
     _loadCustomSitchForQueuedDrops(queuedCount) {
         console.log("Sitch browser: queued " + queuedCount + " dropped item(s), loading custom sitch");
         this.close();
