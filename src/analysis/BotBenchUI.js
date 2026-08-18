@@ -917,11 +917,19 @@ async function entryFileHashes(entry) {
 const combinedHash = (h) => [h.csv, h.sidecar ?? "-", h.truth ?? "-"].join("|");
 
 // One memoized cache record per leaf folder for the life of the dialog.
+//
+// KEYED BY THE HANDLE ITSELF, not by dirPath. A walk numbers its paths relative
+// to the folder that was chosen, so the chosen root is always "" — and picking
+// a second folder in the same dialog gave it the FIRST folder's cache record,
+// handle and writable flag. The second folder's results were then read from and
+// written into the first folder's cache, in the first folder's directory. A
+// list keyed by handle identity is exact, and stays iterable — which a
+// WeakMap is not, and flushCaches has to walk every folder it has touched.
 async function loadDirCache(state, entry) {
     if (!entry.dirHandle) return null;   // drag-and-drop: no writable folder
-    const key = entry.dirPath ?? "";
-    if (!state.dirCaches) state.dirCaches = new Map();
-    if (state.dirCaches.has(key)) return state.dirCaches.get(key);
+    if (!state.dirCaches) state.dirCaches = [];
+    const already = state.dirCaches.find((r) => r.handle === entry.dirHandle);
+    if (already) return already;
     let data = {schema: CACHE_SCHEMA, results: {}};
     try {
         const fh = await entry.dirHandle.getFileHandle(CACHE_FILENAME);
@@ -931,7 +939,7 @@ async function loadDirCache(state, entry) {
     const rec = {handle: entry.dirHandle, data,
         // "Folder (Read)" runs reuse existing caches but never write them.
         writable: entry.cacheWritable !== false};
-    state.dirCaches.set(key, rec);
+    state.dirCaches.push(rec);
     return rec;
 }
 
@@ -950,10 +958,18 @@ async function writeDirCache(rec) {
 // reusable — see the section note above.
 const APP_VERSION = process.env.BUILD_VERSION_STRING ?? "dev";
 
-// Content-addressed, so two identical scenarios in a folder share one blob and
-// a rewritten file never collides with its own old analysis. Hex from sha256,
-// so there is nothing in the name a file system could object to.
-const blobName = (hash) => `${hash.slice(0, 40)}.json`;
+// Content-addressed over ALL THREE input hashes, not just the first.
+//
+// combinedHash is "<csv>|<sidecar>|<truth>" and the csv part alone is 64 hex
+// characters, so a name taken from its first 40 fell entirely inside the csv
+// hash: two copies of one CSV with DIFFERENT sidecars — a different declared
+// MaxRange, say — produced the same blob name, and the second analysis
+// overwrote the first while both index entries still pointed at it. The index
+// keys on all three and so must the name.
+const blobName = (hash) => {
+    const [csv = "", sidecar = "-", truth = "-"] = hash.split("|");
+    return `${csv.slice(0, 32)}-${sidecar.slice(0, 12)}-${truth.slice(0, 12)}.json`;
+};
 
 async function readBatteryBlob(rec, name) {
     const dir = await rec.handle.getDirectoryHandle(CACHE_BLOB_DIR);
@@ -979,11 +995,12 @@ async function flushCaches(state) {
     // plus any cache records already loaded.
     const dirs = new Map();
     for (const e of state.entries) {
-        if (e.dirHandle) dirs.set(e.dirPath ?? "", e.dirHandle);
+        // Keyed by the handle, for the same reason loadDirCache is: two chosen
+        // folders both report a dirPath of "", so keying by path would flush
+        // one of them and silently leave the other's cache in place.
+        if (e.dirHandle) dirs.set(e.dirHandle, e.dirHandle);
     }
-    if (state.dirCaches) {
-        for (const [k, rec] of state.dirCaches) dirs.set(k, rec.handle);
-    }
+    for (const rec of state.dirCaches ?? []) dirs.set(rec.handle, rec.handle);
     if (!dirs.size) {
         state.status.textContent = "No cacheable folders in this session — "
             + "caching needs Choose Folder (drag-and-drop folders are read-only).";
@@ -1002,7 +1019,7 @@ async function flushCaches(state) {
         try { await handle.removeEntry(CACHE_BLOB_DIR, {recursive: true}); }
         catch (e) { /* absent, or the same read-only grant counted above */ }
     }
-    state.dirCaches = new Map();
+    state.dirCaches = [];
     state.status.textContent = `Flushed ${removed} cache file(s) from ${dirs.size} `
         + `folder(s). The next run will analyse every file from scratch.`
         + (denied ? ` ${denied} folder(s) were opened read-only — reopen with `
@@ -2044,7 +2061,7 @@ function refreshControls(state) {
     setButtonDisabled(state.clearButton, running || !has);
     // Flush needs a folder with handles; entries or loaded caches signal one.
     setButtonDisabled(state.flushCacheButton, running
-        || !(state.entries.some((e) => e.dirHandle) || state.dirCaches?.size));
+        || !(state.entries.some((e) => e.dirHandle) || state.dirCaches?.length));
     setButtonDisabled(state.exportJsonButton, running || !has);
     setButtonDisabled(state.exportCsvButton, running || !has);
     setButtonDisabled(state.summaryButton, running || !has);

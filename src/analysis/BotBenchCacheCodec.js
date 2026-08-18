@@ -72,6 +72,16 @@ export function packForCache(value, path = "$") {
             value.byteOffset, value.byteLength))};
     }
 
+    // A Map is a real value here, not an exotic one: runTraverseBattery returns
+    // the solution families as a Map keyed by "key|windEvidenceRole", and the
+    // gallery reads it back with .get(). Encoding it as a plain object would
+    // hand a cached run something without .get() — a silent break instead of a
+    // refused write — so the type is preserved rather than flattened.
+    if (value instanceof Map) {
+        return {__map: Array.from(value.entries()).map(([k, v], i) =>
+            [packForCache(k, `${path}<key ${i}>`), packForCache(v, `${path}<value ${i}>`)])};
+    }
+
     if (Array.isArray(value)) {
         const items = value.map((v, i) => packForCache(v, `${path}[${i}]`));
         // ARRAYS HERE CARRY FIELDS. rangeProfile returns the profile rows as an
@@ -102,7 +112,8 @@ export function packForCache(value, path = "$") {
         // The encoded forms are objects with reserved keys, so a real field of
         // the same name would decode as an encoding. Nothing in the analysis
         // uses these names, and the check makes sure that stays true.
-        if (key === "__ta" || key === "__num" || key === "__undef" || key === "__arr") {
+        if (key === "__ta" || key === "__num" || key === "__undef"
+            || key === "__arr" || key === "__map") {
             throw new Error(`BotBench cache: reserved key "${key}" at ${path}`);
         }
         out[key] = packForCache(value[key], `${path}.${key}`);
@@ -114,6 +125,9 @@ export function packForCache(value, path = "$") {
 export function unpackFromCache(value) {
     if (value === null || typeof value !== "object") return value;
     if (Array.isArray(value)) return value.map(unpackFromCache);
+    if (Array.isArray(value.__map)) {
+        return new Map(value.__map.map(([k, v]) => [unpackFromCache(k), unpackFromCache(v)]));
+    }
     if (Array.isArray(value.__arr)) {
         const out = value.__arr.map(unpackFromCache);
         for (const key of Object.keys(value.p ?? {})) out[key] = unpackFromCache(value.p[key]);

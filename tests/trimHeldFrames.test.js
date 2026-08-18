@@ -103,15 +103,21 @@ test("a sensor that never moves is left completely alone", () => {
     expect(r.refusedTrim).toBe(true);
 });
 
-test("a held run at the START is trimmed too", () => {
+// A LEADING hold is left alone, deliberately. A frozen run means either frames
+// past the end of the data or a sensor that genuinely stood still, and position
+// cannot tell them apart — but a track holds its last sample past the END of its
+// data by construction, so only a tail can be the artefact. A vehicle camera
+// parked for the first part of a clip and then driving is real observation, and
+// trimming it would drop those bearings from every fit.
+test("a held run at the START is kept — it may be a parked sensor", () => {
     const pos = [], hdg = [];
     for (let f = 0; f < 400; f++) {
         pos.push([Math.max(0, f - 100) * 4.32, 0, 0]);
         hdg.push([0, 0, 1]);
     }
     const r = trimHeldFrames(losNode(pos, hdg), full(400));
-    expect(r.trimmedStart).toBe(100);
-    expect(r.frame0).toBe(100);
+    expect(r.trimmedStart).toBe(0);
+    expect(r.frame0).toBe(0);
     expect(r.frame1).toBe(399);
 });
 

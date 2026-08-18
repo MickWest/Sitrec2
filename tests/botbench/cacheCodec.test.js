@@ -54,6 +54,19 @@ test("fields hung off an array survive", () => {
     expect(out.boundarySides).toEqual({lo: true, hi: false});
 });
 
+// runTraverseBattery returns the solution families as a Map keyed by
+// "key|windEvidenceRole" and the gallery reads it with .get(). Refusing Maps
+// made every cache write fail whenever Solution Families was enabled — safely,
+// but silently, so the cache simply never worked in that mode.
+test("a Map keeps its type and its contents", () => {
+    const m = new Map([["a|", {score: 1}], ["b|wind", {track: new Float64Array([7])}]]);
+    const out = roundTrip({families: m});
+    expect(out.families).toBeInstanceOf(Map);
+    expect(out.families.get("a|")).toEqual({score: 1});
+    expect(Array.from(out.families.get("b|wind").track)).toEqual([7]);
+    expect(out.families.size).toBe(2);
+});
+
 test("undefined stays undefined rather than becoming absent", () => {
     const out = roundTrip({a: undefined, b: 1});
     expect("a" in out).toBe(true);
@@ -81,8 +94,7 @@ describe("anything it cannot represent exactly is refused, with the path", () =>
         class Model { constructor() { this.x = 1; } }
         expect(() => packForCache({fit: new Model()})).toThrow(/Model at \$\.fit/);
     });
-    test("a Map, a Set and a Date", () => {
-        expect(() => packForCache({m: new Map()})).toThrow(/Map at \$\.m/);
+    test("a Set and a Date", () => {
         expect(() => packForCache({s: new Set()})).toThrow(/Set at \$\.s/);
         expect(() => packForCache({d: new Date()})).toThrow(/Date at \$\.d/);
     });

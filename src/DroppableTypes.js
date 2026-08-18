@@ -69,11 +69,26 @@ export const DATA_EXTENSIONS = [
 // onto an existing track is how a scene gets built, and resetting there would
 // destroy the work rather than continue it.
 export const TRACK_EXTENSIONS = Object.freeze([
-    'kml', 'kmz', 'ksv', 'csv', 'json', 'geojson', 'srt', 'txt',
-    'tle', '2le', '3le', 'dat', 'klv', 'xml',
-    'pcap', 'pcapng', 'raw',            // ASTERIX radar captures
+    'kml', 'kmz', 'ksv', 'csv', 'geojson', 'srt',
+    'tle', '2le', '3le', 'klv',
+    'pcap', 'pcapng',                   // ASTERIX radar captures
     'ts', 'm2ts', 'mts',                // transport streams: KLV plus video
 ]);
+
+// DELIBERATELY ABSENT, and each for the same reason: the extension is shared
+// with something that is not a track, and a false positive here throws away a
+// scene the user may not have saved.
+//   json  - FlightClub tracks use it, but so do exported FOV keyframes, saved
+//           sitches and the BOT .scenario.json / .truth.json sidecars. Dropping
+//           any of those would have reset the scene.
+//   xml   - STANAG 4676 is a track; XML in general is a container a folder holds
+//           for a hundred other reasons. BOTBench already refuses to sweep .xml
+//           for exactly this reason and takes it only when picked by hand.
+//   txt   - TLE files use it, and so does everything else.
+//   dat   - a raw elementary stream as often as anything track-shaped.
+//   raw   - ASTERIX uses it; the name promises nothing.
+// A track in one of these still imports normally; it just does not trigger the
+// reset. Under-triggering costs a manual New Sitch, over-triggering costs work.
 
 const TRACK_SET = new Set(TRACK_EXTENSIONS);
 

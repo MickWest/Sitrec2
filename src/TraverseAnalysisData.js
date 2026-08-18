@@ -170,8 +170,22 @@ const HELD_POS_EPS_M = 1e-3;
  * motionless frames" but "drop motionless frames at the ENDS of a window that
  * moves somewhere" — if the sensor never moves at all, nothing is trimmed.
  *
- * ONLY THE ENDS. An interior hold is a real gap between real data; cutting it
- * out would splice two moments together and put a false jump in every velocity.
+ * ONLY THE TRAILING END, and this is a deliberate narrowing. A frozen run means
+ * one of two things and position alone cannot tell them apart: frames past the
+ * end of the track's data, or a sensor that genuinely stood still. The first is
+ * an artefact and the second is data — a vehicle camera parked for the first
+ * half of a clip and then driving is real observation, and trimming it would
+ * silently drop half the bearings from every fit and every report.
+ *
+ * What separates them is WHERE they can occur. A track holds its last sample
+ * past the END of its data, by construction, so the artefact is always a tail.
+ * A genuine stationary period can be anywhere. Trimming only the tail therefore
+ * removes the artefact and leaves a parked start alone; a parked FINISH is the
+ * one case still lost, and it costs bearings taken from a fixed point, which is
+ * the geometry that contributes least to a range solution in the first place.
+ *
+ * An interior hold is never touched: cutting one out would splice two moments
+ * together and put a false jump in every velocity.
  *
  * @param losNode  node returning {position, heading} per frame
  * @param range    {frame0, frame1} to trim
@@ -195,20 +209,19 @@ export function trimHeldFrames(losNode, {frame0, frame1}, minCount = 10) {
         return Math.hypot(pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]) <= HELD_POS_EPS_M;
     };
 
-    let lo = frame0, hi = frame1;
+    const lo = frame0;
+    let hi = frame1;
     // A backstop, not a policy: a window that is mostly motionless is a scene
     // problem, and cutting it down to a sliver would answer a question nobody
     // asked. Hand it over whole and let the analysis report what it found.
     const maxTrim = Math.floor((frame1 - frame0 + 1) / 2);
-    while (hi - lo + 1 > minCount && lo - frame0 < maxTrim && still(lo, lo + 1)) lo++;
-    while (hi - lo + 1 > minCount && (lo - frame0) + (frame1 - hi) < maxTrim
-           && still(hi - 1, hi)) hi--;
+    while (hi - lo + 1 > minCount && frame1 - hi < maxTrim && still(hi - 1, hi)) hi--;
 
-    const trimmed = (lo - frame0) + (frame1 - hi);
+    const trimmed = frame1 - hi;
     if (!trimmed) return untouched;
     if (trimmed >= maxTrim) return {...untouched, refusedTrim: true};
     return {frame0: lo, frame1: hi, count: hi - lo + 1,
-        trimmedStart: lo - frame0, trimmedEnd: frame1 - hi, refusedTrim: false};
+        trimmedStart: 0, trimmedEnd: trimmed, refusedTrim: false};
 }
 
 /**

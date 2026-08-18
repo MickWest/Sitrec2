@@ -1065,9 +1065,21 @@ export function clampAboveGroundAlongLine(point, height, from, useVisibleGround 
     let clear = -1;                 // travel known to clear; negative until found
     let deficit = height - clearance;
     let travelled = 0;
+    let testedMaxT = false;
     for (let step = 0; step < ALONG_LINE_MAX_STEPS; step++) {
         travelled += deficit / climb;
-        if (!(travelled > 0) || travelled > maxT) break;
+        if (!(travelled > 0)) break;
+        // A STEP PAST THE CAMERA IS CLAMPED, NOT ABANDONED. The step length is a
+        // FLAT-ground estimate, so ground that falls away toward the camera
+        // clears far sooner than it predicts — and simply giving up whenever the
+        // estimate overshoots threw away solutions that existed. Test the far
+        // end once; only if the line still has not surfaced there is there
+        // genuinely nothing further along it to find.
+        if (travelled > maxT) {
+            if (testedMaxT) break;
+            travelled = maxT;
+            testedMaxT = true;
+        }
         const c = clearanceAt(travelled);
         if (c > height) { clear = travelled; break; }
         buried = travelled;
