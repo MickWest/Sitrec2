@@ -9,6 +9,28 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.138.0 (2026-08-18)
+
+### New Features
+
+- **Label List** (Show → Celestial): a new box that names which sky labels you want. Leave it empty and everything is labelled as before; type a comma-separated list — for example *Moon, Polaris* — and only the labels matching it are drawn. It covers star, planet, Sun and Moon and satellite labels, matching is not case-sensitive and works on the start of a name, so *sl-30* catches every SL-30xx. Satellites can be named either way, by catalog name (STARLINK-1234) or by the short name on the label (SL-1234). Only the labels are filtered — the stars, planets and satellites themselves are still drawn — and your list is saved with the sitch.
+
+### Improvements
+
+- **The assistant is now told what it probably meant when a request fails**: when the Assistant asks for a control or a command that does not exist, the reply names the closest real ones, with the menu each one lives in, and what the command actually needs. Names offered this way can be used exactly as given, so it can correct itself instead of repeating the same wrong request.
+
+### Bug Fixes
+
+- Fixed answering the Assistant with just a number being handled by Sitrec instead of being passed on. Replying "2" to a numbered list of options came back as "2 = 2", or quietly moved the sitch clock to 02:00, while the assistant went on waiting for a choice you had already made. Times you actually type as times still work — "2:30", "2pm", "time 2".
+
+- Fixed a failed Assistant request stacking up error dialogs about a call you did not make and could not fix. The failure now goes back to the assistant, which can correct it, and the chat window shows a single line saying what went wrong. The same applies to external AI tools driving Sitrec. Confirmations you are meant to answer, such as the one before writing to a shared sitch, still appear as usual.
+
+- Fixed the Assistant being unable to reach a control when it looked in the wrong menu — the Annotate controls, for instance, live in the Video menu rather than the View menu. A named menu is now only a starting point, and a miss falls back to searching every menu.
+
+- Fixed error dialogs that showed the headline with the reason missing, including the one reporting that a video could not be decoded.
+
+- Fixed a request to move the camera with no location given leaving the view broken; it now says what was missing instead.
+
 ## Version 2.137.0 (2026-08-18)
 
 ### New Features
