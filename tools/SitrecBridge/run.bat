@@ -1,6 +1,7 @@
 @echo off
 REM Launcher for SitrecBridge MCP server (Windows).
-REM Node.js is usually on PATH via the official installer.
+REM Node.js is usually on PATH via the official installer. Distribution builds
+REM contain mcp-server.mjs; the source tree contains mcp-server.js.
 
 where node >nul 2>nul
 if %ERRORLEVEL% neq 0 (
@@ -8,4 +9,11 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-node "%~dp0mcp-server.mjs" %*
+if exist "%~dp0mcp-server.mjs" (
+    node "%~dp0mcp-server.mjs" %*
+) else if exist "%~dp0mcp-server.js" (
+    node "%~dp0mcp-server.js" %*
+) else (
+    echo Error: SitrecBridge server not found beside run.bat. >&2
+    exit /b 1
+)

@@ -24,7 +24,8 @@ The short version is:
 1. Download **MCP Bridge** from Sitrec's **Help -> Documentation** menu.
 2. Unzip `SitrecBridge.zip`.
 3. Load `SitrecBridge/extension/` in Chrome.
-4. Configure Claude Desktop or Claude Code to start SitrecBridge.
+4. Configure Codex, Claude Code, Claude Desktop, or another MCP client to start
+   SitrecBridge.
 5. Confirm the SitrecBridge extension popup shows green **MCP Servers** and
    **Sitrec Tabs** indicators.
 

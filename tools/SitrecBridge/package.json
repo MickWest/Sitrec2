@@ -1,7 +1,7 @@
 {
   "name": "sitrec-bridge",
   "version": "1.0.0",
-  "description": "MCP server bridging Claude Code to a running Sitrec instance via Chrome extension",
+  "description": "MCP server bridging AI coding clients to a running Sitrec instance via Chrome extension",
   "type": "module",
   "bin": {
     "sitrec-bridge": "./mcp-server.js"
