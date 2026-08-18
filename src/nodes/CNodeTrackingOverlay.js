@@ -5,14 +5,20 @@
 
 import {CNodeViewUI} from "./CNodeViewUI";
 import {assert} from "../assert";
-import {Globals, NodeMan, Sit} from "../Globals";
+import {Globals, NodeMan, Sit, Units} from "../Globals";
 import {par} from "../par";
-import {radians} from "../utils";
 import {extractFOV} from "./CNodeControllerVarious";
 import {mouseToCanvas} from "../ViewUtils";
 import {CNodeVideoView} from "./CNodeVideoView";
+import {CNodeGUIValue} from "./CNodeGUIValue";
 import {EventManager} from "../CEventManager";
 import {t} from "../i18n";
+import {
+    angleBetween,
+    endpointRangeFromAngularSize,
+    focalLengthPixels,
+    speedBetween,
+} from "../AngularSizeMath";
 
 /*
     the intent of a tracking overlay is to track point on a video
@@ -190,6 +196,17 @@ export class CNodeActiveOverlay extends CNodeViewUI {
     }
 
 
+    // Which draggable a click at canvas (x, y) grabs. Default is first-hit-wins, in
+    // draggable order. Subclasses override this when several handles can legitimately
+    // sit on top of each other and the click needs disambiguating — see
+    // CNodeTrackingOverlay, where an A keyframe and its B partner can overlap.
+    pickDraggable(x, y, e) {
+        for (const d of this.draggable) {
+            if (d.isWithin(x, y)) return d;
+        }
+        return null;
+    }
+
     onMouseDown(e, mouseX, mouseY) {
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY)
 
@@ -198,12 +215,12 @@ export class CNodeActiveOverlay extends CNodeViewUI {
 
         this.lastMouseX = x
         this.lastMouseY = y
-        for (const d of this.draggable) {
-            if (d.isWithin(x, y)) {
-                console.log("Clicked on draggable item, starting drag")
-                d.startDrag(x, y)
-                return true;
-            }
+
+        const hit = this.pickDraggable(x, y, e);
+        if (hit) {
+            console.log("Clicked on draggable item, starting drag")
+            hit.startDrag(x, y)
+            return true;
         }
         return false;
     }
@@ -266,6 +283,71 @@ class CNodeVideoTrackKeyframe extends CDraggableCircle{
 }
 
 
+// The optional second point on a keyframe, for angular-size measurement. The
+// A keyframe is the tracked point that drives the LOS; B is purely a measurement
+// handle, so it lives in this.draggable but NEVER in this.keyframes — the curve
+// fitting must not see it.
+const DEFAULT_B_OFFSET_PIXELS = 20;
+
+export class CNodeVideoTrackKeyframeB extends CDraggableCircle {
+    constructor(v) {
+        super(v);
+        this.view = v.view;
+        this.partner = v.partner;
+        this.isB = true;
+
+        // Set once the user actually places this point. An untouched default offset
+        // is not a measurement, and must not be allowed to quietly set a range.
+        this.edited = v.edited ?? false;
+    }
+
+    // Live getter, not a copy. The deserialize path translates saved source-indexed
+    // frame numbers to virtual once the video loads, but it only walks this.keyframes
+    // (see modDeserialize) — a copied frame number here would silently go stale.
+    get frame() {
+        return this.partner.frame;
+    }
+
+    startDrag(x, y) {
+        par.frame = this.frame;
+        par.paused = true;
+
+        // NOT edited here. A mouse-down is not a measurement. A plain click, or an
+        // alt-click that the delete path then turns back into an inert click, would
+        // otherwise pass the untouched DEFAULT_B_OFFSET_PIXELS span off as measured,
+        // and let it set a range, a speed and the start distance. noteDragged()
+        // promotes the handle once it has actually moved.
+        this.dragStartX = this.x;
+        this.dragStartY = this.y;
+
+        super.startDrag(x, y);
+    }
+
+    // Promote this handle to a real measurement, but only once it has moved from
+    // where its drag began. Called from the overlay's onMouseDrag.
+    noteDragged() {
+        if (this.x !== this.dragStartX || this.y !== this.dragStartY) {
+            this.edited = true;
+        }
+    }
+
+    render(ctx) {
+        // Drawn as a square, so it reads as a different kind of thing from the A
+        // circle even when the two are nearly on top of each other.
+        const r = this.cR * 0.7;
+        ctx.strokeStyle = this.edited ? '#00FFFF' : '#808080';
+        ctx.lineWidth = par.frame === this.frame ? 2.5 : 1.5;
+
+        ctx.beginPath();
+        ctx.moveTo(this.partner.cX, this.partner.cY);
+        ctx.lineTo(this.cX, this.cY);
+        ctx.stroke();
+
+        ctx.strokeRect(this.cX - r, this.cY - r, r * 2, r * 2);
+    }
+}
+
+
 export class CNodeTrackingOverlay extends CNodeActiveOverlay {
     constructor(v) {
         super(v);
@@ -319,6 +401,58 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
         this.manualTrackingFolder.add(this, "minimizeAirSpeed").name(t("trackingOverlay.minimizeAirSpeed.label"))
             .tooltip(t("trackingOverlay.minimizeAirSpeed.tooltip"))
+
+        // --- Angular size (Point B) -------------------------------------------------
+        // A second point on each keyframe, a known physical distance from the first.
+        // The angle A and B subtend gives the range, which gives the speed.
+
+        this.usePointB = false;
+        this.manualTrackingFolder.add(this, "usePointB").name(t("trackingOverlay.usePointB.label")).listen()
+            .onChange(() => {
+                this.syncBPoints();
+                this.updateSizeSolution();
+                this.recalculateCascade();
+            })
+            .tooltip(t("trackingOverlay.usePointB.tooltip"))
+
+        if (!NodeMan.exists("abSize")) {
+            // value/start/end/step are in the CURRENT display units, not SI — .v(0)
+            // applies Units.small.toM on the way out, and changeUnits() rescales all
+            // of them when the user switches unit system. So a 10cm default has to be
+            // expressed in whatever "small" currently means (metres, or feet).
+            const smallToM = Units.small.toM;
+            new CNodeGUIValue({
+                id: "abSize",
+                value: 0.1 / smallToM,
+                start: 0,
+                end: 10 / smallToM,
+                step: 0.001 / smallToM,
+                desc: "Assumed Size",
+                color: "#C0FFC0",
+                tooltip: t("trackingOverlay.abSize.tooltip"),
+                unitType: "small",
+                onChange: () => {
+                    this.updateSizeSolution();
+                },
+            }, this.manualTrackingFolder)
+        }
+
+        // Read-only readouts. Recomputed on the events that can change them (drag end,
+        // size change, keyframe edits) rather than polled — the solution needs a
+        // camera LOS lookup per keyframe, which is too much to do every frame.
+        this.sizeRangeText = "—";
+        this.manualTrackingFolder.add(this, "sizeRangeText").name(t("trackingOverlay.sizeRange.label"))
+            .listen().disable()
+            .tooltip(t("trackingOverlay.sizeRange.tooltip"))
+
+        this.sizeSpeedText = "—";
+        this.manualTrackingFolder.add(this, "sizeSpeedText").name(t("trackingOverlay.sizeSpeed.label"))
+            .listen().disable()
+            .tooltip(t("trackingOverlay.sizeSpeed.tooltip"))
+
+        this.manualTrackingFolder.add(this, "setStartDistanceFromSize")
+            .name(t("trackingOverlay.setStartDistanceFromSize.label"))
+            .tooltip(t("trackingOverlay.setStartDistanceFromSize.tooltip"))
 
         this.separateVisibility = true; // don't propagate visibility to the overlaid view
 
@@ -460,6 +594,341 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         NodeMan.recalculateAllRootFirst();
     }
 
+    // --- Angular size (Point B) ---------------------------------------------------
+
+    resetDraggable() {
+        // Clearing the keyframes takes their B points with them, so the readouts have
+        // nothing left to describe.
+        super.resetDraggable();
+        this.updateSizeSolution();
+    }
+
+    makeBPoint(keyframe, x, y, edited = false) {
+        const b = new CNodeVideoTrackKeyframeB({
+            view: this,
+            x: x,
+            y: y,
+            partner: keyframe,
+            edited: edited,
+            coordinatesAreVideo: true,   // x,y are already original-video pixels
+        });
+        keyframe.bPoint = b;
+        this.add(b);
+        return b;
+    }
+
+    // Bring the set of live B handles into line with usePointB. Turning the mode off
+    // keeps each keyframe's B coordinates so that turning it back on restores the
+    // measurement — it only unhooks them from this.draggable so they stop being
+    // pickable and stop drawing.
+    syncBPoints() {
+        if (this.usePointB) {
+            for (const k of this.keyframes) {
+                if (k.bPoint === undefined) {
+                    this.makeBPoint(k, k.x + DEFAULT_B_OFFSET_PIXELS, k.y);
+                } else if (!this.draggable.includes(k.bPoint)) {
+                    this.add(k.bPoint);
+                }
+            }
+        } else {
+            this.draggable = this.draggable.filter(d => !d.isB);
+        }
+    }
+
+    // Range and 3D position at every keyframe that carries a placed B point.
+    //
+    // A stays the tracked point — the one the LOS and the traverse are built on — so
+    // the range returned is the slant range to the A endpoint, matching how
+    // startDistance is used (position + heading * startDist).
+    //
+    // Returns [] when the measurement is not available or not meaningful.
+    sizeSolution() {
+        if (!this.usePointB) return [];
+        if (!this.ensureOverlayGeometryReady()) return [];
+
+        const abSizeNode = NodeMan.get("abSize", false);
+        if (!abSizeNode) return [];
+        const sizeM = abSizeNode.v(0);
+        if (!(sizeM > 0)) return [];
+
+        const out = [];
+        for (const k of this.keyframes) {
+            const b = k.bPoint;
+            // An untouched default offset is not a measurement.
+            if (b === undefined || !b.edited) continue;
+
+            const los = this.in.cameraLOSNode.getValueFrame(k.frame);
+            const vFOV = extractFOV(this.in.fovNode.getValueFrame(k.frame));
+            if (!Number.isFinite(vFOV) || vFOV <= 0) continue;
+
+            const dirA = this.rayForVideoXY(los, vFOV, k.x, k.y);
+            const dirB = this.rayForVideoXY(los, vFOV, b.x, b.y);
+
+            const theta = angleBetween(dirA.toArray(), dirB.toArray());
+            const range = endpointRangeFromAngularSize(theta, sizeM);
+            // B dragged onto A gives a zero angle and an infinite range.
+            if (!Number.isFinite(range)) continue;
+
+            out.push({
+                frame: k.frame,
+                theta: theta,
+                range: range,
+                // Kept so that anything comparing against this measurement uses the
+                // very same camera position, at the very same (possibly fractional)
+                // frame, rather than re-deriving it at a rounded one.
+                cameraPosition: los.position.clone(),
+                position: los.position.clone().addScaledVector(dirA, range),
+            });
+        }
+        return out;
+    }
+
+    // Recompute the readouts. Called from the events that can change them rather than
+    // polled, because each measurement costs a camera LOS evaluation.
+    updateSizeSolution() {
+        const solution = this.sizeSolution();
+        this._sizeSolution = solution;
+
+        if (solution.length === 0) {
+            this.sizeRangeText = "—";
+            this.sizeSpeedText = "—";
+            return;
+        }
+
+        this.sizeRangeText = solution.map(m => this.formatDistance(m.range)).join(", ");
+
+        if (solution.length < 2) {
+            // One range pins the scale, but says nothing about motion on its own.
+            this.sizeSpeedText = "—";
+            return;
+        }
+
+        const first = solution[0];
+        const last = solution[solution.length - 1];
+        const dt = (last.frame - first.frame) / Sit.fps;
+        const speed = speedBetween(first.position.toArray(), last.position.toArray(), dt);
+
+        this.sizeSpeedText = Number.isFinite(speed)
+            ? (speed / Units.speed.toM).toFixed(1) + " " + Units.speed.abbrev
+            : "—";
+    }
+
+    // Small units below a big unit, big units above — so a 13 m range doesn't read as
+    // "0.013 km" and a 40 km one doesn't read as "40000 m".
+    formatDistance(metres) {
+        if (!Number.isFinite(metres)) return "—";
+        if (metres < Units.big.toM) {
+            return (metres / Units.small.toM).toFixed(2) + " " + Units.small.abbrev;
+        }
+        return (metres / Units.big.toM).toFixed(3) + " " + Units.big.abbrev;
+    }
+
+    // Push the size-derived range at the first placed B into startDistance.
+    //
+    // In Perspective mode this is the whole calibration: the three screen positions
+    // already fix every depth RATIO through the depth-velocity ratio d, leaving
+    // startDistance as the single free parameter. One angular-size measurement
+    // determines it, and the traverse, the speed graph and Analysis all follow.
+    setStartDistanceFromSize() {
+        this.updateSizeSolution();
+        const solution = this._sizeSolution;
+
+        if (!solution || solution.length === 0) {
+            console.warn("setStartDistanceFromSize: no placed Point B to measure. " +
+                "Enable Point B and drag a B handle onto the far side of the object.");
+            return;
+        }
+
+        const startDistNode = NodeMan.get("startDistance", false);
+        if (!startDistNode) {
+            console.warn("setStartDistanceFromSize: startDistance node not found");
+            return;
+        }
+
+        // startDistance is the range at the FIRST keyframe, so a measurement taken
+        // there can be used as-is. Prefer one.
+        const firstFrame = this.keyframes.length > 0 ? this.keyframes[0].frame : undefined;
+        const measurement = solution.find(m => m.frame === firstFrame) ?? solution[0];
+
+        const apply = (rangeM) => {
+            startDistNode.setValue(rangeM / Units.big.toM);
+            startDistNode.guiEntry.updateDisplay();
+            NodeMan.recalculateAllRootFirst();
+        };
+
+        if (measurement.frame === firstFrame) {
+            apply(measurement.range);
+            return;
+        }
+
+        // Measured somewhere other than the start, so the range cannot be used
+        // directly — it has to be carried back along the traverse's own depth model.
+        //
+        // Done by inverting the traverse numerically rather than re-deriving the
+        // depth-velocity ratio d, which would duplicate CNodeLOSTraversePerspective and
+        // could drift out of step with it. The range at a keyframe is proportional to
+        // startDistance — exactly so at the first and last, where the traverse meets
+        // its LOS — so a proportional step lands on the target, and the repeats mop up
+        // the camera motion at the interpolated middle keyframe.
+        const traverseNode = NodeMan.get("LOSTraversePerspective", false);
+        if (!traverseNode || traverseNode._needsRecalculate) {
+            console.warn("setStartDistanceFromSize: the only placed Point B is at frame " +
+                measurement.frame + ", but the traverse starts at frame " + firstFrame +
+                ", and it cannot be back-solved from here. Place a B on the first keyframe.");
+            return;
+        }
+
+        // Both sides must refer to the same instant. Keyframes can sit on fractional
+        // frames — 163.002 in the patched-video workflow — so the traverse is read with
+        // getValue, which interpolates, rather than getValueFrame, which indexes the
+        // per-frame array and needs an integer. The camera position is the one the
+        // measurement itself used.
+        const frame = measurement.frame;
+        const cameraPos = measurement.cameraPosition;
+
+        // Cheap per-iteration recalculation of just these two nodes, as
+        // minimizeTraverseSpeed does; the full graph is recalculated once at the end.
+        const savedStartDist = startDistNode.value;
+        const traverseRangeFor = (distM) => {
+            startDistNode.value = distM / Units.big.toM;
+            startDistNode.recalculate();
+            traverseNode.recalculate();
+            return traverseNode.getValue(frame).position.distanceTo(cameraPos);
+        };
+
+        // Iterate to a residual rather than to a fixed count. The relation is very
+        // nearly linear so this normally lands in one or two steps, but a camera that
+        // translates significantly relative to the range makes it non-linear, and
+        // stopping after a fixed number of steps there would silently accept a wrong
+        // scale. Well below any real measurement accuracy, well above float noise.
+        const TOLERANCE = 1e-6;
+        const MAX_ITERATIONS = 12;
+
+        let startDist = measurement.range;
+        let residual = Infinity;
+        let converged = false;
+
+        for (let i = 0; i < MAX_ITERATIONS; i++) {
+            const range = traverseRangeFor(startDist);
+            if (!(range > 0) || !Number.isFinite(range)) break;
+
+            residual = Math.abs(range - measurement.range) / measurement.range;
+            if (residual < TOLERANCE) {
+                converged = true;
+                break;
+            }
+            startDist *= measurement.range / range;
+        }
+
+        if (!converged) {
+            // Leave the traverse as it was rather than applying an unconverged scale.
+            startDistNode.value = savedStartDist;
+            startDistNode.recalculate();
+            traverseNode.recalculate();
+            console.warn("setStartDistanceFromSize: could not back-solve the start distance " +
+                "from the measurement at frame " + frame + " (residual " + residual +
+                " after " + MAX_ITERATIONS + " iterations). Start distance left unchanged — " +
+                "place a Point B on the first keyframe instead.");
+            return;
+        }
+
+        apply(startDist);
+    }
+
+    // A keyframe and its B partner can sit on top of each other, so a click there is
+    // ambiguous. One handle under the cursor drags normally; several, and shift picks
+    // the B point.
+    pickDraggable(x, y, e) {
+        const hits = this.draggable.filter(d => d.isWithin(x, y));
+        if (hits.length <= 1) return hits[0] ?? null;
+
+        const wantB = !!e.shiftKey;
+
+        // Prefer a handle on the current frame, so that stacked keyframes from
+        // different frames resolve to the one being looked at.
+        const onFrame = hits.filter(d => d.frame === par.frame);
+        const candidates = onFrame.length > 0 ? onFrame : hits;
+
+        return candidates.find(d => !!d.isB === wantB) ?? candidates[0];
+    }
+
+    // Dragging an A keyframe carries its B point along, so that repositioning the
+    // tracked point does not silently change the measured AB length — and so the range
+    // it implies — without the user touching B. Matches what the ctrl-click
+    // reposition path in onMouseDown does.
+    onMouseDrag(e, mouseX, mouseY) {
+        // The base class writes straight to d.x/d.y, so the deltas have to be taken
+        // by comparing against the positions from before it runs.
+        const carrying = this.draggable
+            .filter(d => d.dragging && !d.isB && d.bPoint !== undefined && !d.bPoint.dragging)
+            .map(k => ({keyframe: k, x: k.x, y: k.y}));
+
+        super.onMouseDrag(e, mouseX, mouseY);
+
+        for (const was of carrying) {
+            was.keyframe.bPoint.x += was.keyframe.x - was.x;
+            was.keyframe.bPoint.y += was.keyframe.y - was.y;
+        }
+
+        // A B point the user is actually dragging becomes a measurement. One merely
+        // carried by its A keyframe just above is NOT dragging, so it keeps whatever
+        // status it had — repositioning A must not silently create a measurement.
+        for (const d of this.draggable) {
+            if (d.dragging && d.isB) d.noteDragged();
+        }
+    }
+
+    onMouseUp(e, mouseX, mouseY) {
+        const wasDragging = this.draggable.some(d => d.dragging);
+        super.onMouseUp(e, mouseX, mouseY);
+
+        // Refresh on drag END, not during the drag. A drag already runs a cascade per
+        // pointer move; recomputing the size solution there would add a camera LOS
+        // evaluation per keyframe on top of it.
+        if (wasDragging) {
+            this.updateSizeSolution();
+        }
+    }
+
+    // Unit direction of the ray through original-video pixel (vx, vy), for a camera
+    // LOS carrying orthonormal heading/up/right and a vertical FOV in degrees.
+    //
+    // Angles are computed ENTIRELY in original-video pixel space. An older path
+    // round-tripped through the live canvas (letterbox fovCoverage, widthPx/heightPx
+    // from div.clientWidth, zoom, and a panOffset zero/restore hack) purely to invert
+    // the display mapping. That transform cancels analytically, but it made the
+    // physical LOS depend on window/layout state down to float rounding — and it
+    // mixed zoom.v0 (inside the mapping) with zoom.v(f) (in the unscale). Direct
+    // form: the video's vertical FOV spans originalVideoHeight pixels, so the focal
+    // length in original pixels is oh / (2 tan(vFOV/2)).
+    //
+    // The ray itself is a true rectilinear pinhole projection. This replaced a
+    // yaw-then-pitch Euler construction — rotate heading by atan(dx/fpx) about up,
+    // then by atan(dy/fpx) about the new right — which is an EQUIRECTANGULAR
+    // mapping, not a pinhole one. Under it a vertical pixel step subtended the same
+    // angle everywhere in the frame, because the pitch was applied about the already
+    // yawed axis by an angle depending only on dy. A real lens compresses that step
+    // away from the vertical centre line, since the ray to an off-axis pixel is
+    // longer: the effective focal length in that plane is hypot(fpx, dx). At the
+    // 22.8° FOV of a 1920-wide frame the old mapping overstated a vertical angle by
+    // 2.2% a third of the way out and 6.2% at the frame edge. That error was
+    // invisible for a single tracked point near the centre but scales the whole LOS
+    // near the edges, and it directly corrupts angular-size ranging, which reads the
+    // local scale of the mapping rather than just a position.
+    rayForVideoXY(los, vFOVDegrees, vx, vy) {
+        const ow = this.overlayView.originalVideoWidth;
+        const oh = this.overlayView.originalVideoHeight;
+        const fpx = focalLengthPixels(vFOVDegrees, oh);
+
+        const dx = vx - ow / 2;
+        const dy = vy - oh / 2;   // downward, as in image coordinates
+
+        return los.heading.clone().multiplyScalar(fpx)
+            .addScaledVector(los.right, dx)
+            .addScaledVector(los.up, -dy)
+            .normalize();
+    }
+
     getValueFrame(f) {
         const cameraLOSNode = this.in.cameraLOSNode
         const fovNode = this.in.fovNode
@@ -476,34 +945,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         // x and y are in original video coordinates, which are pixels
         const [vx, vy] = this.pointsXY[f];
 
-        // Pointing angles computed ENTIRELY in original-video pixel space.
-        // The old path round-tripped through the live canvas (letterbox
-        // fovCoverage, widthPx/heightPx from div.clientWidth, zoom, and a
-        // panOffset zero/restore hack) purely to invert the display mapping.
-        // That transform cancels analytically (verified for both letterbox
-        // branches), but it made the physical LOS depend on window/layout
-        // state down to float rounding — and it mixed zoom.v0 (inside the
-        // mapping) with zoom.v(f) (in the unscale). Direct form: the video's
-        // vertical FOV spans originalVideoHeight pixels, so the focal length
-        // in original pixels is oh / (2 tan(vFOV/2)).
-        const ow = this.overlayView.originalVideoWidth;
-        const oh = this.overlayView.originalVideoHeight;
-        const fpx = oh / (2 * Math.tan(radians(vFOV) / 2));
-        const xangle = -Math.atan((vx - ow / 2) / fpx);
-        const yangle = -Math.atan((vy - oh / 2) / fpx);
-
-
-        const up = los.up;
-        const right = los.right;
-        const heading = los.heading;
-
-        // rotate the heading and right vector by xangle about the up vector
-        // and then the new headin by yangle about the new right vector
-        const newHeading = heading.clone().applyAxisAngle(up, xangle)
-        const newRight = right.clone().applyAxisAngle(up, xangle)
-        newHeading.applyAxisAngle(newRight, yangle)
-
-        los.heading = newHeading;
+        los.heading = this.rayForVideoXY(los, vFOV, vx, vy);
 
         // up and right are no longer valid
         // could update them, but they are not used.
@@ -1185,14 +1627,30 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
             // check to see if the alt key is down
             // if so, we remove the item from the lists
             if (e.altKey) {
-                this.draggable = this.draggable.filter(d => !d.dragging)
+                // A B point is a measurement handle on its keyframe, not an item in its
+                // own right — deleting one alone would leave an A with no partner while
+                // Point B is on. So only A keyframes are deletable, and deleting one
+                // takes its B with it.
+                const doomedA = this.draggable.filter(d => d.dragging && !d.isB);
 
-                // remove the keyframe from the keyframes array
-                this.keyframes = this.keyframes.filter(k => !k.dragging)
+                if (doomedA.length > 0) {
+                    const remove = new Set(doomedA);
+                    for (const k of doomedA) {
+                        if (k.bPoint !== undefined) remove.add(k.bPoint);
+                    }
 
-                this.recalculateCascade();
+                    this.draggable = this.draggable.filter(d => !remove.has(d))
+                    this.keyframes = this.keyframes.filter(k => !remove.has(k))
 
-                // no dispose is needed
+                    this.updateSizeSolution();
+                    this.recalculateCascade();
+
+                    // no dispose is needed
+                }
+
+                // Clear the flag either way, so an alt-click on a B is an inert click
+                // rather than the start of a drag.
+                this.draggable.forEach(d => d.dragging = false)
             }
 
 
@@ -1227,9 +1685,18 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
                 if (k.frame === par.frame) {
                     found = true;
 
-                    // move it to the new position
+                    // move it to the new position, carrying any B point along by the
+                    // same delta — leaving B behind would silently change the measured
+                    // AB length, and so the range, without the user touching it.
+                    const deltaX = vX - k.x;
+                    const deltaY = vY - k.y;
                     k.x = vX;
                     k.y = vY;
+                    if (k.bPoint !== undefined) {
+                        k.bPoint.x += deltaX;
+                        k.bPoint.y += deltaY;
+                    }
+                    this.updateSizeSolution();
                     this.recalculateCascade();
 
 
@@ -1239,12 +1706,16 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
             if (!found) {
                 console.log("Adding a new keyframe at frame ", par.frame)
-                this.keyframes.push(this.add(new CNodeVideoTrackKeyframe({
+                const keyframe = this.add(new CNodeVideoTrackKeyframe({
                     view: this,
                     x: x,
                     y: y,
                     frame: par.frame
-                })))
+                }));
+                this.keyframes.push(keyframe)
+                if (this.usePointB) {
+                    this.makeBPoint(keyframe, keyframe.x + DEFAULT_B_OFFSET_PIXELS, keyframe.y);
+                }
                 this.recalculateCascade();
             }
 
@@ -1300,6 +1771,34 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
         ctx.stroke();
 
+        this.renderSizeLabels(ctx);
+
+    }
+
+    // Label each measured AB segment with the range it implies. Reads the cached
+    // solution — renderCanvas runs every frame, and the solution needs a camera LOS
+    // lookup per keyframe, so it is not recomputed here.
+    renderSizeLabels(ctx) {
+        if (!this.usePointB) return;
+        const solution = this._sizeSolution;
+        if (!solution || solution.length === 0) return;
+
+        ctx.fillStyle = '#00FFFF';
+        ctx.font = "12px Arial";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "bottom";
+
+        for (const k of this.keyframes) {
+            const b = k.bPoint;
+            if (b === undefined || !b.edited) continue;
+
+            const measurement = solution.find(m => m.frame === k.frame);
+            if (measurement === undefined) continue;
+
+            ctx.fillText(this.formatDistance(measurement.range),
+                (k.cX + b.cX) / 2 + 6,
+                (k.cY + b.cY) / 2 - 4);
+        }
     }
 
     modSerialize() {
@@ -1314,13 +1813,22 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         return {
             ...super.modSerialize(),
             curveType: this.curveType,
+            usePointB: this.usePointB,
             frameSpace: useSource ? "source" : "virtual",
             keyframes: this.keyframes.map(k => {
-                return {
+                const out = {
                     x: k.x,
                     y: k.y,
                     frame: toSource(k.frame)
                 }
+                // Only frame numbers are source/virtual indexed. B coordinates are
+                // original-video pixels like A's, so they need no translation.
+                if (k.bPoint !== undefined) {
+                    out.bx = k.bPoint.x;
+                    out.by = k.bPoint.y;
+                    out.bEdited = k.bPoint.edited;
+                }
+                return out;
             })
         }
     }
@@ -1343,6 +1851,9 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         // translation once the video has loaded — the wrapper doesn't
         // exist yet at deserialize time.
         this._savedFrameSpace = v.frameSpace || "virtual";
+        if (v.usePointB !== undefined) {
+            this.usePointB = v.usePointB;
+        }
         this.keyframes = v.keyframes.map(k => {
             const newKeyframe = this.add(new CNodeVideoTrackKeyframe({
                 view: this,
@@ -1372,6 +1883,14 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
                 newKeyframe.x = k.x;
                 newKeyframe.y = k.y;
             }
+
+            // Saved B coordinates are original-video pixels, same as A's, so they must
+            // be constructed with coordinatesAreVideo — otherwise CDraggableItem would
+            // read them as canvas pixels and convert them a second time.
+            if (k.bx !== undefined && k.by !== undefined) {
+                this.makeBPoint(newKeyframe, k.bx, k.by, k.bEdited ?? true);
+            }
+
             return newKeyframe;
         })
 
@@ -1387,6 +1906,10 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
                     k.frame = videoData.sourceToVirtual(k.frame);
                 }
             }
+            // Give any keyframe saved without a B one now, and fill in the readouts —
+            // the size solution needs the video geometry, which only exists at this point.
+            this.syncBPoints();
+            this.updateSizeSolution();
             this.recalculateCascade();
         };
         EventManager.addEventListener("videoLoaded", onVideoLoaded);
