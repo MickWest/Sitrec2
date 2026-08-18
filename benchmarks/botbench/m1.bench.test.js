@@ -22,6 +22,7 @@
 import fs from "fs";
 import path from "path";
 import {setSit} from "../../src/Globals";
+import {resetOutDir} from "./lib/resetOutDir";
 import {generateM1Batch} from "./lib/m1Batch";
 import {M1_VARIANTS, M1_DURATIONS_SECONDS, M1_ERROR_LEVELS} from "./lib/m1Set";
 
@@ -38,7 +39,9 @@ describe("M1 batch generation", () => {
     test("generates every duration x error x variant, timed", () => {
         // Names encode variant and flags, so a rename leaves stale files
         // behind — start from an empty tree every run.
-        fs.rmSync(OUT_DIR, {recursive: true, force: true});
+        // resetOutDir, not rmSync: a .DS_Store recreated mid-walk makes the
+        // plain call throw ENOTEMPTY with the tree already half deleted.
+        resetOutDir(OUT_DIR);
 
         const timing = [];
         const rows = [];
