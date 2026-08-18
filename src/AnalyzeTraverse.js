@@ -27,7 +27,7 @@ import {EventManager} from "./CEventManager";
 import {addOptionToGUIMenu, removeOptionFromGUIMenu} from "./lil-gui-extras";
 import {showError} from "./showError";
 import {t} from "./i18n";
-import {abFrameRange, buildAnalysisDataset, unpackTrackToECEF} from "./TraverseAnalysisData";
+import {abFrameRange, buildAnalysisDataset, trimHeldFrames, unpackTrackToECEF} from "./TraverseAnalysisData";
 import {getPointBelow, calculateAltitude} from "./threeExt";
 // The fit battery moved to TraverseBattery.js, and with it every solver this
 // file used to call directly. What remains here are the ones the REPORT and the
@@ -2126,6 +2126,24 @@ export async function runTraverseAnalysis() {
         showError("Traverse analysis: not enough LOS frames to analyze in the A-B/In-Out range.");
         return null;
     }
+    // SAY WHAT WAS DROPPED. Frozen frames at the ends of a window are the
+    // largest single error source measured on a short clip in a long sitch, and
+    // trimming them silently would replace one invisible behaviour with another
+    // — a reader comparing two runs needs to know the second one used fewer
+    // frames and why.
+    if (analysisFrames.trimmedStart || analysisFrames.trimmedEnd) {
+        console.log(`Traverse analysis: dropped `
+            + `${analysisFrames.trimmedStart} held frame(s) at the start and `
+            + `${analysisFrames.trimmedEnd} at the end — the track holds its last `
+            + `sample past the end of its data, and a frozen sensor on a frozen ray `
+            + `is not an observation. Analysing frames `
+            + `${analysisFrames.frame0}-${analysisFrames.frame1}.`);
+    } else if (analysisFrames.refusedTrim) {
+        console.warn("Traverse analysis: MORE THAN HALF this window is held frames "
+            + "(a frozen sensor on a frozen ray). Nothing was trimmed — that is a "
+            + "scene problem, not something the analysis can cut its way out of. "
+            + "Check that the clip's In/Out range covers real data.");
+    }
     // Readiness: an analysis triggered before the LOS is fully baked (video /
     // tracks still loading) can contain null or non-finite frames, which used
     // to crash deep inside the fingerprint hash. Validate up front and give a
@@ -2690,7 +2708,14 @@ function analysisFrameRange(losNode) {
     // Preserve the user's exact A/B selection here so the explicit <10-frame
     // readiness error can fire. The shared helper's default protects standalone
     // live fit nodes from degenerate windows by falling back to the full clip.
-    return abFrameRange(losNode.frames, 1);
+    const ab = abFrameRange(losNode.frames, 1);
+    // Then drop any HELD run at either end. A track holds its last sample past
+    // the end of its data, so a clip shorter than the sitch ends in frozen
+    // frames that every fit is then asked to explain — see trimHeldFrames for
+    // what that costs. Doing it HERE rather than inside the dataset builder
+    // keeps one window: the fits, the charts and the applied gallery tile all
+    // read this range, and they must not disagree about which frames were used.
+    return trimHeldFrames(losNode, ab, 10);
 }
 
 function losFrameView(losNode, frame0, frame1) {

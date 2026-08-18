@@ -64,7 +64,11 @@ const DIAGNOSTIC_FAMILY_KEYS = new Set(SWEEP_VARIANTS.map((v) => v.key));
  * state it rather than leave a reader to infer it from silence.
  */
 export const ABSENT_HYPOTHESES = [
-    "Sky Lantern / Balloon (measured wind)",
+    // The wind-pinned balloon fit is NOT listed here. It is absent from a bulk
+    // run for the same reason it is absent from a live run with no wind loaded
+    // — nothing supplied a wind to pin it to — and runTraverseBattery now says
+    // so per run, with the reason. Naming it in both places would state one
+    // fact twice and let the two copies drift apart.
     "Drone (flown control inputs) is fitted, but the interactive scene's LOS-fit methods are not",
     "Astronomical (current time / best time)",
     "Catalogued satellite pass",

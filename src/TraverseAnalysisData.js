@@ -141,6 +141,76 @@ export function abFrameRange(totalFrames, minCount = 8) {
     return {frame0, frame1, count: frame1 - frame0 + 1};
 }
 
+// A millimetre. Below this the sensor has not moved between two frames, in any
+// units any source reports a position in.
+const HELD_POS_EPS_M = 1e-3;
+
+/**
+ * Trim leading and trailing frames where the SENSOR DOES NOT MOVE, from a
+ * window in which it otherwise does.
+ *
+ * WHY. A track node holds its last sample for every frame past the end of its
+ * data, so importing a 20-second clip into a 30-second sitch leaves 10 seconds
+ * of a sensor parked at its final position. Nothing rejects those frames and
+ * they are not neutral: a third of the residual budget then describes an
+ * aircraft that stopped dead in mid-air, and every fit is pulled between the
+ * real motion and that fiction. Measured on a synthetic 20 s balloon clip in a
+ * 30 s sitch: the held tail moved the balloon fit from 120 m off truth to 888 m
+ * and its angular residual from 0.002 degrees to 0.43, with no warning anywhere
+ * and an "Unresolved" verdict at the end of it.
+ *
+ * POSITION ONLY, DELIBERATELY. The obvious rule — "neither the position nor the
+ * sightline changes" — does not fire, because the camera-centre LOS keeps
+ * rotating through the held tail (measured at 0.015 degrees a frame while the
+ * position was frozen to the millimetre). What identifies the tail is the
+ * SENSOR standing still, and only that.
+ *
+ * A FIXED CAMERA IS NOT A HELD TAIL. Its position never changes for the whole
+ * clip, and every frame of it is real data. That is why the rule is not "drop
+ * motionless frames" but "drop motionless frames at the ENDS of a window that
+ * moves somewhere" — if the sensor never moves at all, nothing is trimmed.
+ *
+ * ONLY THE ENDS. An interior hold is a real gap between real data; cutting it
+ * out would splice two moments together and put a false jump in every velocity.
+ *
+ * @param losNode  node returning {position, heading} per frame
+ * @param range    {frame0, frame1} to trim
+ * @param minCount refuse to trim below this many frames
+ * @returns {frame0, frame1, count, trimmedStart, trimmedEnd, refusedTrim}
+ */
+export function trimHeldFrames(losNode, {frame0, frame1}, minCount = 10) {
+    const untouched = {frame0, frame1, count: frame1 - frame0 + 1,
+        trimmedStart: 0, trimmedEnd: 0, refusedTrim: false};
+    // COPY THE NUMBERS OUT. Several LOS nodes return the same cached object on
+    // every call, so holding two of them and diffing compares an object with
+    // itself — every pair reads as held and the trim eats the clip from the
+    // front. (It did: a 900-frame window came back as frames 890-899.)
+    const posOf = (f) => {
+        const v = losNode.v(f);
+        return v?.position ? [v.position.x, v.position.y, v.position.z] : null;
+    };
+    const still = (a, b) => {
+        const pa = posOf(a), pb = posOf(b);
+        if (!pa || !pb) return false;
+        return Math.hypot(pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]) <= HELD_POS_EPS_M;
+    };
+
+    let lo = frame0, hi = frame1;
+    // A backstop, not a policy: a window that is mostly motionless is a scene
+    // problem, and cutting it down to a sliver would answer a question nobody
+    // asked. Hand it over whole and let the analysis report what it found.
+    const maxTrim = Math.floor((frame1 - frame0 + 1) / 2);
+    while (hi - lo + 1 > minCount && lo - frame0 < maxTrim && still(lo, lo + 1)) lo++;
+    while (hi - lo + 1 > minCount && (lo - frame0) + (frame1 - hi) < maxTrim
+           && still(hi - 1, hi)) hi--;
+
+    const trimmed = (lo - frame0) + (frame1 - hi);
+    if (!trimmed) return untouched;
+    if (trimmed >= maxTrim) return {...untouched, refusedTrim: true};
+    return {frame0: lo, frame1: hi, count: hi - lo + 1,
+        trimmedStart: lo - frame0, trimmedEnd: frame1 - hi, refusedTrim: false};
+}
+
 /**
  * Expand a window-fitted {position} array to cover the whole clip: frames
  * before the window hold the window's first position, frames after hold its

@@ -666,6 +666,29 @@ export async function runTraverseBattery({
             lanternMeasured = null;  // non-fatal — the free fit is the primary
         }
         throwIfCancelled();
+    } else {
+        // SAY THAT IT WAS NOT TESTED. This interpretation is conditioned on a
+        // wind the caller has to supply, and there is no honest substitute:
+        // "no wind given" is not evidence for calm, and a zero prior would pin
+        // the balloon to zero drift, which is a different claim entirely.
+        //
+        // What must not happen is the fit simply not appearing. A reader
+        // comparing two runs cannot tell "the balloon was tested against the
+        // winds aloft and did not survive" from "nobody ever asked", and those
+        // are opposite conclusions. Measured on a clean synthetic balloon clip,
+        // this fit recovered the truth EXACTLY (0 m, against 168 m for the
+        // free-wind fit) when the real wind was supplied — so its absence is a
+        // real gap in what was checked, not a formality.
+        //
+        // It is stated here rather than in each caller's own list of missing
+        // checks, because this line is the only one that knows whether a prior
+        // arrived. The bulk runner used to carry a blanket "measured wind is
+        // never available" entry; that was removed when this was added.
+        failures.push({
+            method: "Sky Lantern / Balloon (measured wind)",
+            error: "not tested — no wind was supplied to pin the drift to "
+                + "(load winds aloft, or set the sitch wind, to include it)",
+        });
     }
 
     // Quadcopter (multirotor drone) — hover-capable near-field object. Runs
