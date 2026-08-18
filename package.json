@@ -91,6 +91,7 @@
     "bench-bot-maneuver": "npx jest benchmarks/botbench/maneuver.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-m1": "npx jest benchmarks/botbench/m1.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-m1-par": "node benchmarks/botbench/run-m1-parallel.mjs",
+    "bench-bot-m2": "npx jest benchmarks/botbench/m2.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-viz": "node benchmarks/botbench/vizBotBench.mjs",
     "bench-bot-real": "npx jest benchmarks/botbench/realtracks.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-tract": "npx jest benchmarks/botbench/tractability.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",

@@ -18,6 +18,9 @@ const DEG = Math.PI / 180;
 
 export const WIND_CONFIGS = {
     "zero":         {u: 0, v: 0,  variabilityPct: 0},
+    // A near-calm drift, for a balloon set that needs "slow" to be slow rather
+    // than still: 2.2 m/s, about a fifth of "fixed".
+    "light":        {u: 2, v: -1, variabilityPct: 0},
     "fixed":        {u: 6, v: -2, variabilityPct: 0},
     "fixed-gust":   {u: 6, v: -2, variabilityPct: 12},
     "layered-gust": {

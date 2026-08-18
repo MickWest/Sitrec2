@@ -166,6 +166,10 @@ function observationPart(o) {
         return `white${num(o.gaussianSigmaDeg)}deg`;
     }
     if (o.kind === "wobble") return `wobble${num(o.wobble?.amplitude ?? 0)}deg`;
+    // The angle REACHED at the end of the clip, which is what the drift level
+    // means. Without it the two non-zero levels of a set share a basename and
+    // are told apart only by which folder they sit in.
+    if (o.kind === "drift") return `drift${num(o.driftDeg ?? 0)}deg`;
     return o.kind;
 }
 
@@ -235,6 +239,23 @@ function declaredLosError(obsSpec) {
             note: "operator tracking wobble: seeded random walk in pan/tilt with "
                 + "reaction-delayed recentering. sigmaDeg is the deadband "
                 + "amplitude, NOT a white 1-sigma.",
+        };
+    }
+    if (obsSpec.kind === "drift") {
+        const d = obsSpec.driftDeg ?? 0;
+        return {
+            model: "systematic",
+            // The RMS of a linear 0 -> d ramp is d/sqrt(3). Quoted because a
+            // solver needs a scale, but the model field is what matters: this
+            // error has a MEAN, and any weighting that assumes zero-mean noise
+            // will read the bias as signal and put the target where the drift
+            // points.
+            sigmaDeg: d / Math.sqrt(3),
+            correlated: true,
+            note: "operator drift: a deterministic one-way ramp in pan/tilt "
+                + `reaching ${d} deg on sky at the last frame. sigmaDeg is the `
+                + "RMS of that ramp, NOT a white 1-sigma, and the error is not "
+                + "zero-mean.",
         };
     }
     return {model: "unknown", sigmaDeg: null, correlated: null};

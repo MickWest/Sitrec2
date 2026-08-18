@@ -86,6 +86,35 @@ export function offsetSeries(obsSpec, n, fps, observationSeed) {
         return {pan, tilt};
     }
 
+    // OPERATOR DRIFT: the tracker slides off the target and never comes back.
+    // Distinct from "wobble", which is a seeded random walk that recentres, and
+    // from "white", which is zero-mean: this is a SYSTEMATIC, monotone error,
+    // the signature of an operator lagging a moving target or a mis-trimmed
+    // auto-tracker. It is the error a bearings-only fit is least able to
+    // absorb, because it is indistinguishable from the target genuinely
+    // drifting — so a set that only ever tested zero-mean noise was not
+    // testing the case that matters most.
+    //
+    // Deterministic by construction: a ramp has no realization to seed, so a
+    // drift level is exactly reproducible and the whole ladder shares one truth.
+    if (obsSpec.kind === "drift") {
+        const total = obsSpec.driftDeg ?? 0;
+        // The bearing the slide happens along, in the pan/tilt tangent plane.
+        // Fixed rather than random, so two drift levels differ only in size.
+        const bearing = (obsSpec.driftBearingDeg ?? 45) * DEG;
+        const dPan = Math.cos(bearing), dTilt = Math.sin(bearing);
+        for (let f = 0; f < n; f++) {
+            // pan/tilt are combined by applyOffset into a rotation of
+            // hypot(pan, tilt) degrees, so this ramps the TRUE on-sky angle
+            // from 0 to driftDeg — the number in the folder name is the number
+            // the analysis sees.
+            const reached = n > 1 ? total * (f / (n - 1)) : 0;
+            pan[f] = reached * dPan;
+            tilt[f] = reached * dTilt;
+        }
+        return {pan, tilt};
+    }
+
     if (obsSpec.kind === "white") {
         const stream = makeStream(observationSeed);
         // Unit-sigma isotropic draw, then one scalar: either the requested
