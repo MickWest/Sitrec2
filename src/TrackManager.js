@@ -31,7 +31,9 @@ import {CNodeLazyMISBFlightTrack} from "./nodes/CNodeLazyMISBFlightTrack";
 import {assert} from "./assert";
 import {getLocalSouthVector, getLocalUpVector, pointOnSphereBelow} from "./SphericalMath";
 import {closestIntersectionTime, trackBoundingBox} from "./trackUtils";
-import {collectTrackPoints, computeTrackFraming} from "./CameraFraming";
+import {collectLOSGroundPoints, collectTrackPoints, computeTrackFraming}
+    from "./CameraFraming";
+import {intersectSurface} from "./threeExt";
 import {CNode3DObject, ModelFiles} from "./nodes/CNode3DObject";
 import {radiusIsOnlyDimension} from "./nodes/CNode3DObjectGeometry";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
@@ -1427,7 +1429,19 @@ class CTrackManager extends CManager {
         }
 
         const leftPoints = collectTrackPoints(leftTrack.trackDataNode);
-        const rightPoints = rightTrack ? collectTrackPoints(rightTrack.trackDataNode) : [];
+        const targetPoints = rightTrack ? collectTrackPoints(rightTrack.trackDataNode) : [];
+        // WHERE THE SIGHTLINES LAND, framed alongside the target rather than
+        // instead of it. The subject of a sensor file is the fan of sightlines,
+        // and the platform and the target are only its two ends — framing just
+        // those cuts the fan off. Added to the right-hand set, not substituted
+        // for it: the target normally sits ON the ray between the two, so the
+        // ground contains it, but a target ABOVE the sightline's ground hit
+        // would fall out of frame if the target's own points stopped counting.
+        // collectLOSGroundPoints returns nothing when the ground is too far to
+        // be worth it, or when the sightlines never reach it at all.
+        const groundPoints = collectLOSGroundPoints(
+            leftTrack.anglesNode, targetPoints, intersectSurface);
+        const rightPoints = targetPoints.concat(groundPoints);
         if (leftPoints.length === 0 && rightPoints.length === 0) return;
 
         const mainView = NodeMan.get("mainView");

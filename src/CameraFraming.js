@@ -72,6 +72,83 @@ export function collectTrackPoints(track) {
     return points;
 }
 
+// How much further than the target the sightline may reach the ground before the
+// ground stops being worth framing. Beyond this the LOS is shallow enough that
+// its ground intersection is somewhere else entirely — a hillside kilometres
+// past the encounter, or nearly the horizon — and including it would zoom the
+// view out until the thing the file is actually about is a few pixels.
+const DEFAULT_MAX_GROUND_RANGE_RATIO = 3;
+
+/**
+ * Where the sightlines land on the ground, as points to be framed alongside the
+ * platform.
+ *
+ * WHY THE GROUND AND NOT JUST THE TARGET. The subject of a sensor file is the
+ * sightline: a fan from the platform sweeping across the scene. Framing the
+ * platform and the target alone frames the two ENDS of one ray and cuts off the
+ * fan, which is the part that shows where the sensor was looking and how the
+ * geometry changed. Measured on a real 7 km go-fast clip, the fan ran off the
+ * right edge and its far half was never on screen.
+ *
+ * The ratio guard is what keeps that from backfiring. A sightline only a few
+ * degrees below the horizon reaches the ground tens of kilometres away — or, at
+ * or above the horizon, never — and framing that would push the encounter into a
+ * corner. So the ground is included only while it is within
+ * `maxGroundRangeRatio` of the target's own distance, compared at the centroids
+ * because that is the one comparison that needs no frame-by-frame pairing
+ * between two tracks whose valid frames need not line up.
+ *
+ * `intersect` is injected rather than imported: this module is deliberately
+ * free of every Sitrec dependency but three, which is what lets it be unit
+ * tested without a scene, and a ray/ground intersection is a scene question.
+ *
+ * @param {object} losNode - node with frames and v(f) -> {position, heading}
+ * @param {Vector3[]} referencePoints - the target/truth points to compare against
+ * @param {(position: Vector3, heading: Vector3) => (Vector3|null)} intersect
+ * @returns {Vector3[]} ground points, or [] when they should not be framed
+ */
+export function collectLOSGroundPoints(losNode, referencePoints, intersect, options = {}) {
+    const ratio = options.maxGroundRangeRatio ?? DEFAULT_MAX_GROUND_RANGE_RATIO;
+    if (!losNode || !(losNode.frames > 0)) return [];
+    if (typeof intersect !== "function") return [];
+    // No target means no scale to judge the ground against, and the guard above
+    // is the only thing standing between this and a view of half a county.
+    if (!referencePoints || referencePoints.length === 0) return [];
+
+    const hits = [];
+    const sensors = [];
+    for (let f = 0; f < losNode.frames; f++) {
+        const los = losNode.v(f);
+        if (!los?.position || !los?.heading) continue;
+        const hit = intersect(los.position, los.heading);
+        // Null is the ordinary case for a sightline at or above the horizon, not
+        // an error: there is no ground on that ray to frame.
+        if (!hit) continue;
+        hits.push({at: hit.clone(), from: los.position.clone()});
+        sensors.push(los.position.clone());
+    }
+    if (hits.length === 0) return [];
+
+    // The limit, set by the target's own distance from the sensor path.
+    const from = centroid(sensors);
+    const limit = ratio * from.distanceTo(centroid(referencePoints));
+
+    // PER POINT, not just at the centroid. One sightline grazing the horizon
+    // reaches the ground tens of kilometres past the rest, and a centroid barely
+    // notices it — 99 hits at 7 km and one at 200 km average to 8.9 km, inside a
+    // 15 km limit — while the framing is an exact fit over every point and would
+    // back the camera off until the encounter was a few pixels. The outlier is
+    // dropped and the sightlines that landed near the scene are still framed.
+    const ground = hits.filter((h) => h.from.distanceTo(h.at) <= limit).map((h) => h.at);
+    if (ground.length === 0) return [];
+
+    // And the surviving set still has to be near the scene as a whole, which is
+    // the original guard: a clip whose sightlines ALL reach the ground far away
+    // has no outlier to drop, it is simply pointed somewhere else.
+    if (from.distanceTo(centroid(ground)) > limit) return [];
+    return ground;
+}
+
 // Mean of an array of Vector3. Caller guarantees a non-empty array.
 function centroid(points) {
     const sum = new Vector3();

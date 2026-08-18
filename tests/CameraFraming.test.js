@@ -1,5 +1,5 @@
 import {PerspectiveCamera, Vector3} from "three";
-import {computeTrackFraming} from "../src/CameraFraming";
+import {collectLOSGroundPoints, computeTrackFraming} from "../src/CameraFraming";
 
 // A patch of Earth to lay test scenes out on. Points are built in a local
 // East/North/Up frame around it and converted to the ECEF-like world coordinates the
@@ -179,4 +179,129 @@ describe("computeTrackFraming", () => {
         expect(computeTrackFraming([], [], SITE_UP, OPTIONS)).toBeNull();
         expect(computeTrackFraming(platform, [], SITE_UP, {tanH: 0, tanV: 0})).toBeNull();
     });
+});
+
+
+// ---------------------------------------------------------------------------
+// The ground track: where the sightlines land, framed alongside the target.
+// ---------------------------------------------------------------------------
+//
+// The subject of a sensor file is the fan of sightlines, and the platform and the
+// target are only its two ends. Framing those alone cut the fan off — measured on
+// a real 7 km go-fast clip, its far half was never on screen. But a sightline a
+// few degrees below the horizon reaches the ground tens of kilometres out, and
+// framing THAT would push the encounter into a corner, so the ground counts only
+// while it is within 3x the target's own distance.
+
+// A LOS node in the shape the framing reads: frames, and v(f) -> {position, heading}.
+function losNode(sensorPoints, headings) {
+    return {
+        frames: sensorPoints.length,
+        v: (f) => ({position: sensorPoints[f], heading: headings[f]}),
+    };
+}
+
+// A flat stand-in for threeExt.intersectSurface: where the ray crosses up = 0 in
+// the site frame. Injected exactly as the real one is, which is the point of the
+// intersector being a parameter.
+function flatGroundIntersect(position, heading) {
+    const originToPos = position.clone().sub(SITE_ORIGIN);
+    const height = originToPos.dot(SITE_UP);
+    const rate = heading.dot(SITE_UP);
+    if (rate >= -1e-9) return null;              // level or climbing: never lands
+    return position.clone().add(heading.clone().multiplyScalar(-height / rate));
+}
+
+// A sensor at 6 km looking down at `depressionDeg`, toward the north.
+function scene(depressionDeg, frames = 20) {
+    const sensors = [], headings = [];
+    const dep = depressionDeg * Math.PI / 180;
+    for (let f = 0; f < frames; f++) {
+        sensors.push(at(0, f * 100, 6000));
+        headings.push(SITE_NORTH.clone().multiplyScalar(Math.cos(dep))
+            .add(SITE_UP.clone().multiplyScalar(-Math.sin(dep))).normalize());
+    }
+    return losNode(sensors, headings);
+}
+
+test("the ground is framed when it is within 3x the target's distance", () => {
+    // 40 degrees down: the ground is about 9.3 km out along the ray.
+    const los = scene(40);
+    const target = [at(0, 4000, 2600)];          // roughly half way down the ray
+    const ground = collectLOSGroundPoints(los, target, flatGroundIntersect);
+    expect(ground.length).toBe(los.frames);
+});
+
+// THE GUARD. A shallow sightline's ground intersection is somewhere else
+// entirely, and including it would zoom the view out until the encounter is a
+// few pixels.
+test("a distant ground intersection is refused", () => {
+    // 3 degrees down: the ground is ~115 km out, against a target ~5 km away.
+    const los = scene(3);
+    const target = [at(0, 5000, 5740)];
+    expect(collectLOSGroundPoints(los, target, flatGroundIntersect)).toEqual([]);
+});
+
+test("sightlines that never reach the ground contribute nothing", () => {
+    const los = scene(-5);                        // looking UP
+    const target = [at(0, 5000, 6500)];
+    expect(collectLOSGroundPoints(los, target, flatGroundIntersect)).toEqual([]);
+});
+
+// With no target there is no scale to judge the ground against, and the ratio
+// guard is the only thing standing between this and a view of half a county.
+test("with no target track, the ground is not framed", () => {
+    expect(collectLOSGroundPoints(scene(40), [], flatGroundIntersect)).toEqual([]);
+    expect(collectLOSGroundPoints(scene(40), null, flatGroundIntersect)).toEqual([]);
+});
+
+// ONE OUTLIER MUST NOT DRAG THE FRAMING. A centroid barely notices a single
+// horizon-grazing ray — 99 hits at 7 km and one at 200 km average to 8.9 km,
+// inside a 15 km limit — but the framing is an exact fit over every point, so
+// that one would back the camera off until the encounter was a few pixels.
+test("a single far-flung ground hit is dropped, the rest are kept", () => {
+    const los = scene(40, 100);
+    const target = [at(0, 4000, 2600)];
+    const good = collectLOSGroundPoints(los, target, flatGroundIntersect);
+    expect(good.length).toBe(100);
+
+    // Same scene, but one frame's ray grazes the horizon and lands far away.
+    const shallow = losNode(
+        Array.from({length: 100}, (_, f) => los.v(f).position),
+        Array.from({length: 100}, (_, f) => (f === 50
+            ? SITE_NORTH.clone().multiplyScalar(Math.cos(0.5 * Math.PI / 180))
+                .add(SITE_UP.clone().multiplyScalar(-Math.sin(0.5 * Math.PI / 180))).normalize()
+            : los.v(f).heading)));
+    const withOutlier = collectLOSGroundPoints(shallow, target, flatGroundIntersect);
+    expect(withOutlier.length).toBe(99);          // the outlier alone is dropped
+    const from = los.v(0).position;
+    for (const g of withOutlier) expect(from.distanceTo(g)).toBeLessThan(50000);
+});
+
+test("a missing intersector is not an error, just no ground", () => {
+    expect(collectLOSGroundPoints(scene(40), [at(0, 4000, 2600)], null)).toEqual([]);
+    expect(collectLOSGroundPoints(null, [at(0, 4000, 2600)], flatGroundIntersect)).toEqual([]);
+});
+
+// The reason the collector exists: the fan has to fit on screen.
+test("framing with the ground included contains the ground points", () => {
+    const los = scene(40);
+    const platform = [];
+    for (let f = 0; f < los.frames; f++) platform.push(los.v(f).position);
+    const target = [at(0, 4000, 2600)];
+    const ground = collectLOSGroundPoints(los, target, flatGroundIntersect);
+    expect(ground.length).toBeGreaterThan(0);
+
+    const withGround = computeTrackFraming(platform, target.concat(ground), SITE_UP, OPTIONS);
+    expect(withGround).toBeTruthy();
+    for (const ndc of project(withGround, ground)) {
+        expect(Math.abs(ndc.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(ndc.y)).toBeLessThanOrEqual(1);
+    }
+
+    // And the old framing did NOT: at least one ground point falls outside it.
+    const withoutGround = computeTrackFraming(platform, target, SITE_UP, OPTIONS);
+    const outside = project(withoutGround, ground)
+        .some(n => Math.abs(n.x) > 1 || Math.abs(n.y) > 1);
+    expect(outside).toBe(true);
 });
