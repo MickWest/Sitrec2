@@ -3121,6 +3121,15 @@ function loadStartupHandoffAfterSitchSetup() {
             // Snapshot the graph BEFORE importing, so the resize below can act
             // on the nodes this handoff created and nothing else.
             const before = new Set(Object.keys(NodeMan.list ?? {}));
+            // BEFORE the import, not after: this is the DEFAULT every track
+            // marker reads in its constructor, and the import is what builds
+            // them. Set afterwards it would apply to nothing. Sender's reason
+            // for asking is in the meta it comes from.
+            if (handoff.meta?.forceAboveSurfaceAlongLOS) {
+                Sit.forceAboveSurfaceAlongLOS = true;
+                console.log("Handoff: track markers will be raised along the sightline "
+                    + "rather than straight up.");
+            }
             // Sequentially: the importer resolves name collisions and mutates
             // shared state, and two BOT tracks racing through it can end up
             // fighting over a name. Note that the await returns once a file is

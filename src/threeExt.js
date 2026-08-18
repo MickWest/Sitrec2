@@ -28,7 +28,7 @@ import {par} from "./par";
 import {showError} from "./showError";
 
 
-import {altitudeHAE, drop3, earthCenterECEF, pointOnSphereBelow, raisePoint, setAltitudeHAE} from "./SphericalMath"
+import {altitudeHAE, drop3, earthCenterECEF, getLocalUpVector, pointOnSphereBelow, raisePoint, setAltitudeHAE} from "./SphericalMath"
 import {GlobalScene} from "./LocalFrame";
 import * as LAYER from "./LayerMasks";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
@@ -947,6 +947,144 @@ export function clampAboveGround(point, height, useVisibleGround = false) {
         return point;
     }
     return pointAbove(ground, height);
+}
+
+// Signed height of `point` above the SAME ground clampAboveGround() clamps to
+// (negative = underground), visible-ground rule included.
+//
+// Split out because the march below and the vertical clamp it falls back to
+// must not disagree about where the ground is. If the march tested the
+// elevation map while the fallback clamped to the tile surface, a point the
+// march called "done" is one the fallback would move again, and the object
+// would jump between two answers as the tiles load.
+function groundClearance(point, useVisibleGround) {
+    const out = {};
+    const ground = getPointBelow(point, false, out);
+    const pointAlt = out.altitudeHAE !== undefined ? out.altitudeHAE : calculateAltitude(point);
+    let groundAlt = calculateAltitude(ground);
+    if (useVisibleGround && terrainBasemapHidden()) {
+        const tileGround = visibleGroundBelow(point);
+        if (tileGround !== null) groundAlt = calculateAltitude(tileGround);
+    }
+    return pointAlt - groundAlt;
+}
+
+// Steps the bracketing march below is allowed. A BUDGET, not a convergence
+// criterion: each step costs a terrain lookup, two or three are enough wherever
+// the ground under the sightline climbs more gently than the sightline does, and
+// where it climbs faster no number of steps would converge — that case is meant
+// to exit through the vertical fallback instead.
+const ALONG_LINE_MAX_STEPS = 6;
+
+// Halvings allowed when closing on the crossing, and the gap at which it stops.
+// Twelve halvings take the bracket the march typically opens — a few kilometres
+// — inside a metre, and the tolerance ends it sooner on a short one. A metre of
+// range on a target several kilometres away is far below the terrain's own
+// error, so buying more precision would only be buying terrain lookups.
+const ALONG_LINE_BISECT_STEPS = 12;
+const ALONG_LINE_TOLERANCE_M = 1;
+
+// Least useful rise per metre travelled, as the sine of the sightline's
+// elevation angle at the object. At 0.05 (~2.9 degrees) a metre of clearance
+// already costs twenty metres along the line; below that the march is both
+// numerically fragile and physically absurd, so the vertical clamp is honest.
+const ALONG_LINE_MIN_CLIMB = 0.05;
+
+/**
+ * Lift `point` to `height` above the ground by sliding it ALONG THE LINE toward
+ * `from`, rather than straight up.
+ *
+ * WHY THIS EXISTS. A traverse candidate is a point ON a recorded sightline, and
+ * that sightline is the entire evidence for it — the analysis chose the range,
+ * but the DIRECTION is measurement. Raising the point along the ellipsoid
+ * normal, which is what clampAboveGround does, moves it off that line: the
+ * object stops sitting where the camera saw it, and the scene quietly stops
+ * matching the video it was derived from. Sliding it toward the camera keeps it
+ * on the line and spends the correction on range alone — the one quantity a
+ * single sightline never pinned down in the first place.
+ *
+ * The line is taken from `from` THROUGH the point's current position rather
+ * than from any recorded pointing angles, so the object holds the same pixel
+ * whatever produced the track.
+ *
+ * WHERE IT STOPS. At the sightline's own crossing of the ground, found by
+ * bracketing and then halving: the FARTHEST point along the line that still has
+ * the clearance asked for. Stopping at the first clearing point a forward march
+ * happens to land on would be arbitrary and, where the ground falls away toward
+ * the camera, badly short — measured over the San Gabriels a single step
+ * overshot the crossing by 800 m of range, which is a number a reader would
+ * have read straight off the scene.
+ *
+ * Falls back to the vertical clamp whenever the line cannot do the job, so
+ * "force above surface" still means what it says:
+ *   - no `from`, or one so close that the direction is numerical noise
+ *   - a line that does not RISE toward `from` (a level or descending sightline
+ *     lifts nothing, however far along it you travel)
+ *   - ground that climbs faster than the line, so the march runs out of room
+ * The fallback clamps the ORIGINAL point, not a marched one: when the march
+ * fails the result should be exactly the old behaviour, not a third position
+ * that is neither on the sightline nor where the object used to appear.
+ */
+export function clampAboveGroundAlongLine(point, height, from, useVisibleGround = false) {
+    if (!from) return clampAboveGround(point, height, useVisibleGround);
+
+    const clearance = groundClearance(point, useVisibleGround);
+    if (clearance > height) return point;
+
+    const toFrom = from.clone().sub(point);
+    const range = toFrom.length();
+    // A metre of separation defines a direction comfortably; below it the
+    // object is effectively AT the camera and the ray is rounding error.
+    if (!(range > 1)) return clampAboveGround(point, height, useVisibleGround);
+    toFrom.divideScalar(range);
+
+    // How much of a metre travelled becomes a metre of height. Measured once at
+    // the start and held: over the distances this marches, local up turns by
+    // thousandths of a degree — far below the terrain error being corrected.
+    const climb = getLocalUpVector(point).dot(toFrom);
+    if (climb < ALONG_LINE_MIN_CLIMB) return clampAboveGround(point, height, useVisibleGround);
+
+    // Stop short of the camera itself, so a hopeless march ends in the fallback
+    // rather than parking the object in the lens.
+    const maxT = range - 10;
+    if (!(maxT > 0)) return clampAboveGround(point, height, useVisibleGround);
+
+    // Every terrain query in this function goes through here, so a step costs
+    // exactly one lookup and `moved` is always left at the point just measured.
+    const moved = point.clone();
+    const clearanceAt = (t) => {
+        moved.copy(toFrom).multiplyScalar(t).add(point);
+        return groundClearance(moved, useVisibleGround);
+    };
+
+    // BRACKET. Walk toward the camera until the line surfaces. Each step is
+    // first order in the flat-ground direction; the ground's own rise is picked
+    // up by re-measuring at the new point, which is what makes this an iteration
+    // rather than a formula.
+    let buried = 0;                 // travel known NOT to clear — the object's own
+    let clear = -1;                 // travel known to clear; negative until found
+    let deficit = height - clearance;
+    let travelled = 0;
+    for (let step = 0; step < ALONG_LINE_MAX_STEPS; step++) {
+        travelled += deficit / climb;
+        if (!(travelled > 0) || travelled > maxT) break;
+        const c = clearanceAt(travelled);
+        if (c > height) { clear = travelled; break; }
+        buried = travelled;
+        deficit = height - c;
+    }
+    if (clear < 0) return clampAboveGround(point, height, useVisibleGround);
+
+    // CLOSE ON THE CROSSING. `clear` always clears and `buried` never does, so
+    // halving preserves both and converges on the surface between them. Return
+    // the clearing side, which gives up the least range.
+    for (let step = 0; step < ALONG_LINE_BISECT_STEPS
+                       && clear - buried > ALONG_LINE_TOLERANCE_M; step++) {
+        const mid = 0.5 * (clear + buried);
+        if (clearanceAt(mid) > height) clear = mid; else buried = mid;
+    }
+    clearanceAt(clear);
+    return moved;
 }
 
 // get the AGL altitude at a point speciifed by lat/lon

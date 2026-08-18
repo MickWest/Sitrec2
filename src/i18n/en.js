@@ -1780,6 +1780,15 @@ const en = {
             label: "Force Above Surface",
             tooltip: "Force the object to be fully above the ground surface",
         },
+        forceAboveSurfaceAlongLOS: {
+            label: "Raise Toward Camera",
+            tooltip: "When forcing the object above the surface, slide it along the line "
+                + "from the camera instead of lifting it straight up. This keeps the object "
+                + "on the same line of sight, so it stays at the same point in the camera's "
+                + "view and only its range changes. Use it for tracks that were fitted to "
+                + "lines of sight, where the direction is measured and the range is not. "
+                + "Falls back to lifting straight up when the sightline is too flat to help.",
+        },
         exportToKML: {
             label: "Export to KML",
             tooltip: "Export this 3D object as a KML file for Google Earth",

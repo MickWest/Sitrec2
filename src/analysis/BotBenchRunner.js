@@ -127,6 +127,16 @@ export async function runBotBenchAnalysis(record, {
     mcOrderSweep = false,
     onProgress = null,
     isCancelled = () => false,
+    // A battery output restored from the folder's result cache. Supplying it
+    // SKIPS THE FITTING and nothing else: every line below the battery call
+    // runs exactly as it does on a fresh analysis, so a cached row is built by
+    // the same code that built the original rather than by a second code path
+    // reconstructing it. See cacheableBattery below for what has to be kept.
+    battery: cachedBattery = null,
+    // The wall time the ORIGINAL analysis took, when replaying from cache. The
+    // row reports it, and a benchmark row that claimed 40 ms because the fit
+    // was skipped would misreport the very thing it exists to measure.
+    elapsedMs: cachedElapsedMs = null,
 } = {}) {
     const t0 = Date.now();
     const {dataset, originLat, originLon, groundZ} = record;
@@ -227,7 +237,7 @@ export async function runBotBenchAnalysis(record, {
         cameraHeading: null,
     };
 
-    const battery = await runTraverseBattery({
+    const battery = cachedBattery ?? await runTraverseBattery({
         dataset, originLat, originLon, provenance,
         anchorDist: anchorM,
         speedTarget: SPEED_TARGET_MS,
@@ -272,6 +282,42 @@ export async function runBotBenchAnalysis(record, {
 
     const {hypotheses, sweep, resolvedRanges, fastProfile, slowProfile,
         slowOpts, aircraft, families, executiveAssessment, failures} = battery;
+
+    // EXACTLY WHAT A CACHED RUN NEEDS, and deliberately a named subset rather
+    // than the whole battery. runTraverseBattery also returns the physics
+    // dataset, the fitted model objects and the raw per-model results, none of
+    // which anything below reads — caching them would multiply the file size
+    // and, worse, would mean storing class instances that cannot survive JSON.
+    //
+    // It is built HERE, one line under the destructure it mirrors, so a field
+    // added to that destructure without being added here is visible in the same
+    // glance. `provenance` is the battery's, not the one declared above: the
+    // battery may add to it.
+    //
+    // These are LIVE REFERENCES, so by the time a caller serializes them the
+    // post-processing below has written truthComparison, truthResidualDeg and
+    // exceedsDeclaredMaxRange onto the hypothesis objects. That is harmless
+    // rather than lucky: every one of those writes is an unconditional
+    // overwrite computed from the record, and a cache entry is only reused when
+    // the input hashes, the analysis options AND the app version all match — so
+    // the replay recomputes the identical values over the top of them.
+    const cacheableBattery = {
+        hypotheses, sweep, resolvedRanges, fastProfile, slowProfile,
+        slowOpts, aircraft, families, executiveAssessment, failures,
+        provenance: battery.provenance,
+        // The resolved search brackets, quoted by the manifest below.
+        fitRangeMin: battery.fitRangeMin, fitRangeMax: battery.fitRangeMax,
+        caRangeMin: battery.caRangeMin, caRangeMax: battery.caRangeMax,
+        plausRangeMin: battery.plausRangeMin, plausRangeMax: battery.plausRangeMax,
+        // Whole fit results, not the three scalars the manifest happens to read
+        // off them today. Keeping the shape means a later line reading another
+        // of their fields gets the same answer from a cached run as from a
+        // fresh one; keeping only the scalars would make that the moment the
+        // two silently parted company. The codec refuses anything it cannot
+        // represent, so if one of these ever stops being plain data the write
+        // fails loudly instead of storing a lie.
+        plausible: battery.plausible, lantern: battery.lantern, quad: battery.quad,
+    };
 
     // The green ground plane in the 3D graphs. Flat plane, so this is exact
     // rather than sampled — no terrain can arrive later and move it.
@@ -501,8 +547,16 @@ export async function runBotBenchAnalysis(record, {
         directionScore, directionTruth: record.directionTruth ?? null,
     };
 
-    return {results, row: summarizeRun(record, results, battery, Date.now() - t0,
-        directionScore, {declaredMaxM, maxRangeViolations})};
+    const elapsedMs = cachedElapsedMs ?? (Date.now() - t0);
+    return {
+        results,
+        row: summarizeRun(record, results, battery, elapsedMs,
+            directionScore, {declaredMaxM, maxRangeViolations}),
+        // Handed back so the caller can cache it. Nothing in the analysis reads
+        // it again.
+        battery: cacheableBattery,
+        elapsedMs,
+    };
 }
 
 /**

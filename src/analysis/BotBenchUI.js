@@ -42,6 +42,7 @@ import {
 import {longestUniformRun, measureAnchorRate} from "./BotBenchClock";
 import {putFileHandoff} from "../FileHandoff";
 import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBenchRunner";
+import {packForCache, unpackFromCache} from "./BotBenchCacheCodec";
 import {botENUToLLA} from "../TrackFiles/CTrackFileBOT";
 import {
     candidateNotes, handoffCandidateCSVs, lookCameraFraming, openHandoffWindow,
@@ -55,11 +56,11 @@ let botBenchController = null;
 const BUTTON_TOOLTIPS = {
     "Close": "Close this window and restore the previous Sitrec playback state. Results are discarded.",
     "Folder (Read)": "Pick a folder of BOT interchange scenarios and/or FMV clips with READ-ONLY access. Sidecars (.scenario.json) are paired automatically. Existing .botbench-cache.json results are still reused when their hashes match, but no new caches are generated and Flush Cache cannot delete them.",
-    "Folder (Caching)": "Pick a folder of BOT interchange scenarios and/or FMV clips, granting FULL WRITE access to the folder and all its subfolders (the browser will ask). Results are cached in a .botbench-cache.json beside the files in each leaf folder, so an unchanged file is instant on the next run; Flush Cache deletes those files.",
+    "Folder (Caching)": "Pick a folder of BOT interchange scenarios and/or FMV clips, granting FULL WRITE access to the folder and all its subfolders (the browser will ask). Each leaf folder gets a .botbench-cache.json index and a .botbench-cache/ folder holding the fitted analyses, so an unchanged file skips the optimizers on the next run and still gives a complete result — Gallery, Report and Open in Sitrec all work from cache. Flush Cache deletes both.",
     "Choose Files": "Pick individual files to run. Without their .scenario.json sidecars, BOT files fall back to the shipped set's default origin, with the rate read from the CSV's own Time column.",
     "Cancel Run": "Stop the run. The file currently being analysed is abandoned and marked cancelled; completed rows keep their results.",
     "Clear Results": "Remove every result from the table and start fresh.",
-    "Flush Cache": "Delete the .botbench-cache.json result cache from every folder in the current run, so the next run analyses every file from scratch. The cache reuses a file's result only when its content hashes and the analysis options both match; flush it after an analysis-code change, or to force fresh runs (cached rows have no Gallery/Report).",
+    "Flush Cache": "Delete the .botbench-cache.json index and the .botbench-cache/ analyses from every folder in the current run, so the next run analyses every file from scratch. A cached result is reused only when the input hashes, the analysis options AND the app version all match, and only if replaying it still reproduces the row it was stored with — so a stale cache normally re-runs itself rather than needing this.",
     "Export JSON": "Save every row's measurements and conclusions (not the fitted tracks).",
     "Export CSV": "Save one row per file for spreadsheet analysis.",
     "Summary": "Open a combined overview: what the run covered, how the source data scored, and where the analysis landed.",
@@ -851,22 +852,50 @@ function isExplicitlyCollectable(name) {
 // Per-folder result cache.
 //
 // A `.botbench-cache.json` in each LEAF folder holds, per scenario filename,
-// the sha256 of every input that shaped its row (the CSV bytes, the
-// .scenario.json sidecar, the .truth.json answer key), the analysis options it
-// ran under, and the finished row. On a re-run, a file whose hashes AND
-// options both match is filled from the cache instead of re-analysed; its
-// Status cell says "cached" so a reused row is never silent. The hashes also
-// ride on every row (row.fileSha256), so an Export JSON records exactly which
-// bytes produced each result.
+// the sha256 of every input that shaped the result (the CSV bytes, the
+// .scenario.json sidecar, the .truth.json answer key), the analysis options and
+// app version it ran under, the finished row, and a pointer to the analysis
+// itself. The hashes also ride on every row (row.fileSha256), so an Export JSON
+// records exactly which bytes produced each result.
+//
+// WHAT IS CACHED IS THE FIT, NOT THE ANSWER. The expensive part of a run is
+// runTraverseBattery — the optimizers. Everything after it (truth scoring,
+// range compliance, the report series, the manifest, the row) is cheap
+// arithmetic over the battery's output. So the cache stores the BATTERY, and a
+// cache hit re-ingests the file and replays runBotBenchAnalysis with that
+// battery handed in. Every line below the fit then runs exactly as it does on a
+// fresh analysis, which is what makes a cached row indistinguishable from a
+// fresh one — Gallery, Report and Open in Sitrec all work, because `results` is
+// built by the same code that would have built it anyway.
+//
+// The alternative — serializing the finished `results` — was rejected: it
+// cannot carry buildHtml (a closure over values that never reach `results`),
+// and every field added to the analysis afterwards would have to be remembered
+// in a second place or be silently missing from cached rows.
+//
+// THREE THINGS MAKE A HIT SAFE, and all three are checked:
+//   - the input hashes, so a changed file or sidecar misses;
+//   - the analysis options, so a run at another anchor misses;
+//   - THE APP VERSION, because a replay re-runs today's ingest and today's
+//     post-processing against yesterday's fit. When the analysis code changes
+//     those no longer belong together, and the only honest answer is to
+//     re-analyse. (This is new in schema 2; a row-only cache could tolerate a
+//     stale entry because nothing was recomputed from it.)
+// On top of that the replayed row is compared against the stored one, so even a
+// change none of the three keys noticed is caught before the row is shown.
+//
+// The battery is large — every candidate track, at 8 bytes a coordinate — so it
+// lives in its own file under `.botbench-cache/`, named by content hash, rather
+// than in the index. The index is rewritten after every file, and inlining
+// megabytes into it would make a folder of N scenarios cost O(N^2) of writing.
 //
 // Writing needs a directory handle, so the cache is read/write for Choose
-// Folder (picked with readwrite permission) and inert for drag-and-drop,
-// whose FileSystemEntry API is read-only. The cache stores rows, not the full
-// in-memory results, so a cached row's Gallery/Report need a real re-run
-// (Flush Cache) — same trade as Export JSON, and what keeps the file small.
+// Folder (picked with readwrite permission) and inert for drag-and-drop, whose
+// FileSystemEntry API is read-only.
 // ---------------------------------------------------------------------------
 const CACHE_FILENAME = ".botbench-cache.json";
-const CACHE_SCHEMA = 1;
+const CACHE_BLOB_DIR = ".botbench-cache";
+const CACHE_SCHEMA = 2;
 
 async function sha256Hex(data) {
     const buf = typeof data === "string" ? new TextEncoder().encode(data) : data;
@@ -909,10 +938,38 @@ async function loadDirCache(state, entry) {
 async function writeDirCache(rec) {
     rec.data.schema = CACHE_SCHEMA;
     rec.data.savedAt = new Date().toISOString();
-    rec.data.appVersion = process.env.BUILD_VERSION_STRING;
+    rec.data.appVersion = APP_VERSION;
     const fh = await rec.handle.getFileHandle(CACHE_FILENAME, {create: true});
     const writable = await fh.createWritable();
     await writable.write(JSON.stringify(rec.data, null, 1));
+    await writable.close();
+}
+
+// The build that produced a cache entry. A replay runs TODAY's ingest and
+// post-processing over a stored fit, so entries from another build are not
+// reusable — see the section note above.
+const APP_VERSION = process.env.BUILD_VERSION_STRING ?? "dev";
+
+// Content-addressed, so two identical scenarios in a folder share one blob and
+// a rewritten file never collides with its own old analysis. Hex from sha256,
+// so there is nothing in the name a file system could object to.
+const blobName = (hash) => `${hash.slice(0, 40)}.json`;
+
+async function readBatteryBlob(rec, name) {
+    const dir = await rec.handle.getDirectoryHandle(CACHE_BLOB_DIR);
+    const fh = await dir.getFileHandle(name);
+    return unpackFromCache(JSON.parse(await (await fh.getFile()).text()));
+}
+
+async function writeBatteryBlob(rec, name, battery) {
+    // Packed BEFORE the directory is touched: the codec throws on anything it
+    // cannot represent exactly, and that must abandon the write rather than
+    // leave a half-written blob the index would later point at.
+    const packed = JSON.stringify(packForCache(battery));
+    const dir = await rec.handle.getDirectoryHandle(CACHE_BLOB_DIR, {create: true});
+    const fh = await dir.getFileHandle(name, {create: true});
+    const writable = await fh.createWritable();
+    await writable.write(packed);
     await writable.close();
 }
 
@@ -939,6 +996,11 @@ async function flushCaches(state) {
             // NotFound = nothing to flush there; NotAllowed = read-only grant.
             if (e?.name === "NotAllowedError" || e?.name === "SecurityError") denied++;
         }
+        // The analyses the index pointed at. Removed even when the index was
+        // already gone, or a flushed folder would keep the bulk of its cache on
+        // disk with nothing left that could ever read it.
+        try { await handle.removeEntry(CACHE_BLOB_DIR, {recursive: true}); }
+        catch (e) { /* absent, or the same read-only grant counted above */ }
     }
     state.dirCaches = new Map();
     state.status.textContent = `Flushed ${removed} cache file(s) from ${dirs.size} `
@@ -1749,9 +1811,11 @@ function fillRow(state, entry) {
         c[COL.best].title = c[COL.truth].title;
     }
 
-    // Actions: the full gallery, and the HTML report. A CACHED row has no
-    // in-memory analysis (the cache stores rows, like Export JSON), so both
-    // are disabled with the reason on the tooltip rather than failing on click.
+    // Actions: the full gallery, and the HTML report. Both need the in-memory
+    // analysis. A cached row HAS one — the cache stores the fit and the run is
+    // replayed around it — so these are live for cached rows too; they are
+    // disabled only for a row that has no results at all, which now means an
+    // error or a cancelled run.
     c[COL.actions].innerHTML = "";
     const galleryButton = smallButton("Gallery", "#1976d2", BUTTON_TOOLTIPS["Gallery"]);
     galleryButton.onclick = () => {
@@ -1769,8 +1833,8 @@ function fillRow(state, entry) {
     if (!entry.results) {
         for (const b of [galleryButton, reportButton]) {
             setButtonDisabled(b, true);
-            b.title = "This row came from the folder's result cache, which holds the "
-                + "row only. Flush Cache and re-run to load the full analysis.";
+            b.title = "This row has no analysis in memory — the run errored or was "
+                + "cancelled before it finished.";
         }
     }
 
@@ -1873,6 +1937,24 @@ function openInNewSitrec(entry, link) {
                     // applyHandoffCameraTrack for why arrival order cannot be
                     // trusted to arrange that.
                     cameraOnScenarioTrack: true,
+                    // RAISE UNDERGROUND MARKERS ALONG THE SIGHTLINE, NOT UP.
+                    //
+                    // A bench run has no terrain: its ground is the flat sea
+                    // level plane at `groundZ` (see the note where the FMV
+                    // ingest sets it), so the underground screen that rejects
+                    // candidates in a live analysis only ever tested them
+                    // against sea level. Inland that is far below the real
+                    // surface — about 1,860 m below it for a clip shot over
+                    // Cheyenne — so candidates the bench accepted arrive here,
+                    // where the terrain IS loaded, buried under it.
+                    //
+                    // Every one of them is a fit to recorded lines of sight, so
+                    // the direction is measurement and the range is not: the
+                    // honest way to lift them is along the sightline, which
+                    // spends the correction on the unconstrained quantity and
+                    // leaves each marker where the camera saw it. This is only
+                    // a default — the Object menu's checkbox still decides.
+                    forceAboveSurfaceAlongLOS: true,
                     notes: `${notes}\n\n${candidateNotes(candidates)}`,
                 },
             };
@@ -2061,19 +2143,52 @@ async function analyzeEntries(state, found) {
             hashes = await entryFileHashes(entry);
             dirCache = await loadDirCache(state, entry);
             const hit = dirCache?.data.results[entry.name];
-            if (hit && hit.hash === combinedHash(hashes)
+            if (hit && hit.hash === combinedHash(hashes) && hit.battery
+                && (hit.appVersion ?? null) === APP_VERSION
                 && JSON.stringify(hit.options ?? null) === JSON.stringify(entry.options ?? null)) {
-                entry.row = hit.row;
-                entry.status = "done";
-                entry.fromCache = true;
-                cachedHit = true;
-                fillRow(state, entry);
-                setRowStatus(entry, "cached",
-                    `Reused from ${CACHE_FILENAME} (saved ${hit.savedAt ?? "?"}, `
-                    + `app ${dirCache.data.appVersion ?? "?"}).\n`
-                    + `Every input hash and every analysis option matches this file's `
-                    + `cached run.\nGallery/Report need the in-memory analysis — `
-                    + `Flush Cache and re-run to get them.`);
+                setRowStatus(entry, "cached", "Replaying the cached analysis…");
+                await yieldToDOM();
+                const battery = await readBatteryBlob(dirCache, hit.battery);
+                // The SAME ingest and the SAME runner a fresh analysis uses —
+                // only the fit is handed in rather than computed. Nothing here
+                // reconstructs a result; the result is built by the code that
+                // builds every other result.
+                const record = await ingestBotBenchEntry(entry);
+                const {results, row} = await runBotBenchAnalysis(record, {
+                    ...options, battery, elapsedMs: hit.elapsedMs ?? null,
+                    isCancelled: () => state.cancelled,
+                });
+                // Before the comparison, not after: the stored row carries the
+                // hashes too, and a row that is complete on one side of the
+                // check and not the other fails it every single time.
+                if (hashes) row.fileSha256 = hashes;
+                // THE CACHE CHECKS ITSELF. The row was stored when the fit ran;
+                // this one was just rebuilt from it. They can only differ if
+                // something the three keys do not cover has moved underneath —
+                // so a mismatch discards the entry and runs the file properly,
+                // rather than showing a number no current code would produce.
+                // Compared through the codec because a row can hold NaN and
+                // Infinity, and plain stringify flattens both to null, which
+                // would hide exactly the differences worth catching.
+                if (JSON.stringify(packForCache(row)) !== JSON.stringify(hit.row)) {
+                    console.warn("BotBench: cached analysis for", entry.relativePath,
+                        "no longer reproduces its stored row — re-analysing.");
+                    delete dirCache.data.results[entry.name];
+                } else {
+                    entry.results = results;
+                    entry.row = row;
+                    entry.status = "done";
+                    entry.fromCache = true;
+                    cachedHit = true;
+                    fillRow(state, entry);
+                    setRowStatus(entry, "cached",
+                        `Reused from ${CACHE_FILENAME} (saved ${hit.savedAt ?? "?"}, `
+                        + `app ${dirCache.data.appVersion ?? "?"}).\n`
+                        + `Input hashes, analysis options and app version all match this `
+                        + `file's cached run, and the replayed row reproduces the stored `
+                        + `one exactly.\nThe fit was reused; everything else was `
+                        + `recomputed, so Gallery, Report and Open in Sitrec all work.`);
+                }
             }
         } catch (cacheError) {
             console.warn("BotBench cache lookup failed for", entry.relativePath, cacheError);
@@ -2084,7 +2199,7 @@ async function analyzeEntries(state, found) {
             await yieldToDOM();
             const record = await ingestBotBenchEntry(entry);
 
-            const {results, row} = await runBotBenchAnalysis(record, {
+            const {results, row, battery, elapsedMs} = await runBotBenchAnalysis(record, {
                 ...options,
                 isCancelled: () => state.cancelled,
                 onProgress: async (frac, label) => {
@@ -2101,15 +2216,40 @@ async function analyzeEntries(state, found) {
             entry.status = "done";
             fillRow(state, entry);
             if (dirCache?.writable && hashes) {
-                dirCache.data.results[entry.name] = {
-                    hash: combinedHash(hashes), hashes,
-                    savedAt: new Date().toISOString(),
-                    options: {...entry.options}, row,
-                };
-                try { await writeDirCache(dirCache); }
+                const hash = combinedHash(hashes);
+                const name = blobName(hash);
+                // The fit first, the index second. A blob with no index entry is
+                // dead weight a flush will collect; an index entry pointing at a
+                // blob that was never written would be a hit that throws on every
+                // future run. The row is stored EXACTLY AS BUILT, because the
+                // replay's self-check compares against it — note that row.fileSha256
+                // is already on it, and the replay re-applies the same hashes.
+                let stored = false;
+                try { await writeBatteryBlob(dirCache, name, battery); stored = true; }
                 catch (writeError) {
-                    console.warn("BotBench cache write failed for",
+                    // The codec refuses anything it cannot represent exactly.
+                    // Skipping the cache costs a re-run next time; writing a
+                    // lossy blob would cost a wrong answer.
+                    console.warn("BotBench: not caching the analysis for",
                         entry.relativePath, writeError);
+                }
+                if (stored) {
+                    dirCache.data.results[entry.name] = {
+                        hash, hashes,
+                        savedAt: new Date().toISOString(),
+                        appVersion: APP_VERSION,
+                        options: {...entry.options},
+                        // Stored in the codec's encoding, not raw: it exists to
+                        // be compared against a replayed row, and that
+                        // comparison has to see NaN and Infinity as themselves.
+                        row: packForCache(row),
+                        elapsedMs, battery: name,
+                    };
+                    try { await writeDirCache(dirCache); }
+                    catch (writeError) {
+                        console.warn("BotBench cache write failed for",
+                            entry.relativePath, writeError);
+                    }
                 }
             }
         } catch (error) {
@@ -2332,6 +2472,9 @@ export function addBotBenchMenu(fileAnalysisFolder) {
             // real file and trivial to provoke through a synthetic one.
             ingestMISBRecords, longestUniformRun, measureAnchorRate,
             buildSummaryReport, resultsToCsv,
+            // The cache codec, so the fit-reuse round trip can be exercised
+            // without a directory picker (which needs a user gesture).
+            packForCache, unpackFromCache,
             get state() { return activeDialog; },
         };
     }

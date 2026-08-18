@@ -4,7 +4,7 @@ import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {GlobalDateTimeNode, gui, guiMenus, guiPhysics, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
 import {getAzElFromPositionAndForward, getLocalEastVector, getLocalNorthVector, getLocalUpVector, getNorthPole} from "../SphericalMath";
-import {adjustHeightAboveGround, clampAboveGround, DebugArrow} from "../threeExt";
+import {adjustHeightAboveGround, clampAboveGround, clampAboveGroundAlongLine, DebugArrow} from "../threeExt";
 import {CNodeController} from "./CNodeController";
 
 import {MISB} from "../MISBUtils";
@@ -132,6 +132,30 @@ export class CNodeControllerTilt extends CNodeController {
 }
 
 
+// WHERE THE SIGHTLINE STARTS, for forceAboveSurfaceAlongLOS.
+//
+// The node the LOOK camera is really positioned by, found through the camera's
+// own TrackPosition controller rather than by guessing a node id: the custom
+// sitch flies the camera on cameraTrackSwitchSmooth while cameraTrackSwitch is
+// what the menu shows, and a sitch that wires it differently again would defeat
+// any fixed list of ids.
+//
+// Read at frame f rather than off camera.position, so it does not matter
+// whether the camera has already been updated this frame — p(f) depends on f
+// alone, and controller order does not silently change where the object lands.
+function lookCameraPositionAt(f) {
+    const lookCamera = NodeMan.get("lookCamera", false);
+    if (!lookCamera) return null;
+    for (const key in lookCamera.inputs) {
+        const controller = lookCamera.inputs[key];
+        if (controller instanceof CNodeControllerTrackPosition) {
+            const track = controller.in.sourceTrack;
+            if (track?.p) return track.p(f);
+        }
+    }
+    return null;
+}
+
 //
 export class CNodeControllerTrackPosition extends CNodeController {
     constructor(v) {
@@ -151,7 +175,17 @@ export class CNodeControllerTrackPosition extends CNodeController {
             // elevation map is hidden and disagrees with the tile surface by metres,
             // which otherwise floats this camera/object above the visible street (its
             // altitude control stops responding) or buries it under one.
-            pos = clampAboveGround(pos, clampHeight, true);
+            //
+            // Along the sightline where the object asks for it: a track fitted to
+            // lines of sight has to STAY on them, and lifting it up the ellipsoid
+            // normal does not (see clampAboveGroundAlongLine). Never for the
+            // camera — it is the thing the sightline starts at, so moving it along
+            // its own sightline is meaningless.
+            if (objectNode.forceAboveSurfaceAlongLOS && !object.isCamera) {
+                pos = clampAboveGroundAlongLine(pos, clampHeight, lookCameraPositionAt(f), true);
+            } else {
+                pos = clampAboveGround(pos, clampHeight, true);
+            }
         }
 
         if (object.isCamera) {

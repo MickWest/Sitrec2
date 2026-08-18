@@ -294,11 +294,31 @@ export class CNode3DObject extends CNode3DGroup {
         this.forceAboveSurface = v.forceAboveSurface ?? true;
         this.addSimpleSerial("forceAboveSurface");
 
+        // WHICH WAY it gets pushed out of the ground. Sitch-level default, so a
+        // scenario made entirely of line-of-sight solutions can ask for it once
+        // instead of per object — every imported track builds its own marker,
+        // and there can be a dozen of them. The checkbox still wins for
+        // anything the user touches, and the value serializes with the object,
+        // so a save keeps what was on screen rather than re-reading the sitch.
+        this.forceAboveSurfaceAlongLOS = v.forceAboveSurfaceAlongLOS
+            ?? Sit.forceAboveSurfaceAlongLOS ?? false;
+        this.addSimpleSerial("forceAboveSurfaceAlongLOS");
+
         this.gui.add(this, "forceAboveSurface").name(t("nodes3dObject.forceAboveSurface.label")).listen().onChange((v) => {
+            this.syncForceAboveSurfaceGUI();
             setRenderOne(true)
         })
             .tooltip(t("nodes3dObject.forceAboveSurface.tooltip"))
             .isCommon = true;
+
+        this.forceAboveSurfaceAlongLOSController =
+            this.gui.add(this, "forceAboveSurfaceAlongLOS")
+                .name(t("nodes3dObject.forceAboveSurfaceAlongLOS.label")).listen().onChange((v) => {
+                    setRenderOne(true)
+                })
+                .tooltip(t("nodes3dObject.forceAboveSurfaceAlongLOS.tooltip"));
+        this.forceAboveSurfaceAlongLOSController.isCommon = true;
+        this.syncForceAboveSurfaceGUI();
 
         const visibleController = this.gui.add(this, "visible").name("Visible").listen().onChange((v) => {
             this.show(v);
@@ -1051,6 +1071,19 @@ export class CNode3DObject extends CNode3DGroup {
         // modDeserialize only sets this.visible without invoking show().
         this.show(this.visible);
 
+        // Same reason: the flags are restored as plain properties, so the
+        // greyout that depends on one of them has to be re-derived.
+        this.syncForceAboveSurfaceGUI();
+
+    }
+
+    // The along-sightline option only means anything while the object is being
+    // forced above the surface at all, so it greys out with it rather than
+    // sitting there as a checkbox that does nothing.
+    syncForceAboveSurfaceGUI() {
+        const controller = this.forceAboveSurfaceAlongLOSController;
+        if (!controller) return;
+        if (this.forceAboveSurface !== false) controller.enable(); else controller.disable();
     }
 
 //   // this is the function that adds the parameters to the GUI

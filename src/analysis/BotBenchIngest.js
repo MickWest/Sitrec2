@@ -58,6 +58,12 @@ import {
 
 const DEG = Math.PI / 180;
 
+// Frame-center elevations needed before their median is trusted as the ground
+// plane. Same threshold the truth track uses for "enough points to mean
+// something": one or two centers in a long clip are as likely to be a producer
+// emitting a stray row as they are to be a survey of the terrain.
+const MIN_GROUND_SAMPLES = 5;
+
 // A BOT interchange member: the data CSV, or its sidecar.
 const BOT_CSV_RE = /\.(input|truth|all)\.csv$/i;
 const BOT_SIDECAR_RE = /\.scenario\.json$/i;
@@ -1290,6 +1296,15 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
             && Number.isFinite(row[MISB.PlatformRollAngle])
             && !Number.isFinite(row[MISB.SensorRelativeAzimuthAngle])
             && !Number.isFinite(row[MISB.SensorRelativeElevationAngle]);
+        // THE FRAME CENTER IS TWO DIFFERENT FACTS AT ONCE, and this file used
+        // to read it as only one of them. It can be the POINTING (below), and
+        // it is always a HEIGHT the producer measured for the ground under the
+        // optical axis — the only terrain measurement an FMV file carries.
+        // Read once, unconditionally, so a clip that points by gimbal angles
+        // still contributes its ground samples: truck.ts is exactly that file,
+        // and its FrameCenterElevation column reads 1867 m over Cheyenne while
+        // the ingest was calling the ground sea level.
+        const frameCenter = misbFrameCenter(row);
         // ANGLES FIRST, CENTER SECOND. When a row carries both, the gimbal
         // angles are the measurement and the frame center is derived FROM
         // them through the producer's terrain model — so the angles are the
@@ -1297,7 +1312,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
         let centerLLA = null;
         if (boresightRow) boresightRows++;
         else if (!hasAngles) {
-            centerLLA = misbFrameCenter(row);
+            centerLLA = frameCenter;
             if (!centerLLA) {
                 if (misbHasFrameCenterLL(row)) centerNoAlt++; else noSightline++;
                 continue;
@@ -1366,6 +1381,10 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
                     ? row[MISB.SensorRelativeRollAngle] : 0,
             },
             centerLLA,
+            // The same point again, kept whatever supplied the pointing —
+            // here it is an ELEVATION SAMPLE, not a direction. Null on rows
+            // that state no frame center, or state one with no height.
+            groundLLA: frameCenter,
         });
     }
 
@@ -1835,6 +1854,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     const ecef = [];
     const headings = [];
     const truthEcef = [];
+    const groundEcef = [];
     let mx = 0, my = 0, mz = 0;
     // An MSL altitude plus its geoid offset, i.e. the height above the
     // ELLIPSOID that LLAToECEF wants. Every point in this loop — sensor, frame
@@ -1868,6 +1888,13 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
         } else {
             truthEcef.push(null);
         }
+        // Through the SAME datum resolver as everything else: a frame center
+        // stated by tag 25 is MSL and needs the geoid, one stated by tag 78 is
+        // already ellipsoidal. Mixing those two would put the ground plane out
+        // by the geoid height — the very error this whole block exists to stop.
+        groundEcef.push(rec.groundLLA
+            ? LLAToECEF(rec.groundLLA.lat, rec.groundLLA.lon, haeOf(rec.groundLLA))
+            : null);
     }
     mx /= n; my /= n; mz /= n;
     const [originLat, originLon] = ECEFToLLA_radii(mx, my, mz);
@@ -1878,9 +1905,17 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     const T = new Float64Array(n * 3);
     const tValid = new Uint8Array(n);
     let anyTruth = false;
+    // Frame-center heights in the DATASET'S OWN ENU Z, which is what groundZ is
+    // compared against — not geodetic altitude. Converting each one properly
+    // rather than treating its HAE as a Z costs nothing here and removes the
+    // Earth-curvature drop between the origin and the aim point.
+    const groundSamples = [];
     for (let f = 0; f < n; f++) {
         const pENU = ECEF2ENU_radii(ecef[f], originLat, originLon);
         S[f * 3] = pENU.x; S[f * 3 + 1] = pENU.y; S[f * 3 + 2] = pENU.z;
+        if (groundEcef[f]) {
+            groundSamples.push(ECEF2ENU_radii(groundEcef[f], originLat, originLon).z);
+        }
         const dENU = ECEF2ENU_radii(headings[f], originLat, originLon, true).normalize();
         D[f * 3] = dENU.x; D[f * 3 + 1] = dENU.y; D[f * 3 + 2] = dENU.z;
         if (truthEcef[f]) {
@@ -1928,6 +1963,64 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
         if (Number.isFinite(nOff)) { geoidN = nOff; geoidApplied = true; }
     }
 
+    // ------------------------------------------------------------------
+    // THE GROUND PLANE.
+    //
+    // A bulk run has no terrain, so the analysis grades "does this candidate
+    // pass underground" against a flat level plane (see flatTerrainProbes in
+    // BotBenchRunner). Sea level is the only answer available with no other
+    // information, and inland it is a badly wrong one: over Cheyenne it sits
+    // 1,867 m below the real surface, which lets every buried candidate through
+    // the screen and puts the Ground Vehicle and Fixed Point fits on a plane
+    // more than a kilometre under the road they are meant to ride.
+    //
+    // The file usually knows better. FrameCenterElevation / -HeightAboveEllipsoid
+    // is the producer's own terrain height where the optical axis meets the
+    // earth, sampled once per record — a real measurement of exactly this
+    // quantity, already in the file, costing nothing to read. The MEDIAN of it
+    // is what gets used: a mean would be dragged by the odd wild center a
+    // producer emits when the axis swings off its terrain model, and half the
+    // samples being sane is a much weaker thing to need than all of them.
+    //
+    // What this is NOT is terrain. It remains one level plane, so it is right
+    // for flat ground and wrong by the local relief in a valley or on a slope —
+    // better ground, not real ground, and the row says which one it got.
+    let groundZ = geoidN;
+    let groundSource = geoidApplied ? "sea level (EGM96)" : "the ellipsoid";
+    if (groundSamples.length >= MIN_GROUND_SAMPLES) {
+        const sorted = groundSamples.slice().sort((a, b) => a - b);
+        const mid = sorted.length >> 1;
+        const median = (sorted.length % 2)
+            ? sorted[mid] : 0.5 * (sorted[mid - 1] + sorted[mid]);
+        // A ground ABOVE the aircraft is not a ground, it is a broken column,
+        // and accepting one would reject every candidate in the file as
+        // underground — including the sensor's own sightlines — with nothing
+        // on the row to say why. Refuse it and keep sea level, out loud.
+        let lowestSensorZ = Infinity;
+        for (let f = 0; f < n; f++) lowestSensorZ = Math.min(lowestSensorZ, S[f * 3 + 2]);
+        if (median < lowestSensorZ) {
+            groundZ = median;
+            groundSource = "the file's own frame-center elevations";
+            warnings.push(`Ground was taken as a level plane at ${Math.round(median)} m, the `
+                + `MEDIAN of ${groundSamples.length} frame-center elevation(s) in the file, `
+                + `rather than sea level. That is the producer's own terrain height under the `
+                + `optical axis, so it is far closer to the real surface than sea level inland `
+                + `— but it is still ONE LEVEL PLANE, so it is wrong by the local relief on a `
+                + `slope or in a valley, and every underground and ground-contact judgement `
+                + `inherits that.`);
+        } else {
+            warnings.push(`The file's ${groundSamples.length} frame-center elevation(s) give a `
+                + `median of ${Math.round(median)} m, which is at or above the lowest sensor `
+                + `height (${Math.round(lowestSensorZ)} m). A ground above the aircraft cannot `
+                + `be right, so it was rejected and sea level used instead — treat this file's `
+                + `frame-center columns as suspect.`);
+        }
+    } else if (groundSamples.length) {
+        warnings.push(`Only ${groundSamples.length} record(s) state a frame-center elevation, `
+            + `too few to take a ground height from, so sea level was used. Inland that is far `
+            + `below the real surface, and candidates that pass underground will not be rejected.`);
+    }
+
     const dataset = {n, fps, S, D, W, frame0: 0, frame1: n - 1};
     const quality = assessSourceQuality(dataset, {
         times: haveAllTimes ? times : null,
@@ -1948,11 +2041,11 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
         // level" would put the ground plane tens of metres out and could read a
         // genuinely low track as underground.
         //
-        // There is still no terrain: this is sea level, which is right over
-        // water and wrong by the local relief anywhere inland. That limitation
-        // is reported on the row rather than assumed away — but the datum part
-        // of it is free to get right.
-        groundZ: geoidN,
+        // The plane itself is chosen above: the median of the file's own
+        // frame-center elevations where it has enough of them, and sea level
+        // where it has none. Either way it is ONE LEVEL PLANE and not terrain,
+        // and the row reports which one it got.
+        groundZ,
         clipStartMs: haveEpoch ? clipStartS * 1000 : null,
         // Truth from the file's own truth columns, in the exact shape the BOT
         // ingest returns, so scoring and the gallery treat both sources alike.
@@ -1984,10 +2077,17 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
                     ? "frame center"
                     : `mixed (${centerRows} of ${complete.length} by frame center)`),
             epochBasis,
+            // WHICH GROUND WAS GRADED AGAINST. Not cosmetic: every underground
+            // and ground-contact verdict on the row is only as good as this
+            // plane, and a reader comparing two files needs to know that one
+            // was screened against the producer's terrain height and the other
+            // against sea level a kilometre below it.
             surfaceModel: (usingEllipsoid ? "" : "SPHERICAL Earth mode; ")
-                + (geoidApplied
-                    ? "sea level via EGM96 (no terrain)"
-                    : "ellipsoid height (no terrain, geoid unavailable)"),
+                + `level plane at ${groundSource}`
+                + (geoidApplied ? "" : "; geoid unavailable")
+                + " (no terrain)",
+            groundZM: groundZ,
+            groundSamples: groundSamples.length,
             earthModel: usingEllipsoid ? "WGS84 ellipsoid" : "sphere",
             geoidAppliedM: geoidApplied ? geoidN : null,
             hasSidecar: false,
