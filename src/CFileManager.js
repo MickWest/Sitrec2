@@ -1729,8 +1729,11 @@ export class CFileManager extends CManager {
      * Opens a file selector dialog and processes each selected file.
      * Supports multiple file selection for various file types (video, audio, images, data files).
      * @param {Function} processFile - Callback function to process each selected File object
+     * @param {Function} [onAllSelected] - Called once after the whole selection has been
+     *        handed over. The hook a caller needs when the files have to be routed
+     *        somewhere as a batch rather than one at a time.
      */
-    selectAndLoadLocalFile(processFile) {
+    selectAndLoadLocalFile(processFile, onAllSelected = null) {
         // Create an input element
         const inputElement = document.createElement('input');
 
@@ -1754,6 +1757,7 @@ export class CFileManager extends CManager {
                 for (let i = 0; i < files.length; i++) {
                     processFile(files[i]);
                 }
+                if (onAllSelected) onAllSelected();
             }
 
             // Remove the input element after use
@@ -1797,8 +1801,31 @@ export class CFileManager extends CManager {
      * GUI menu handler for importing files. Opens file selector and processes files via DragDropHandler.
      */
     importFile() {
+        // File > Import has to end up in the same place as dropping the same file on
+        // the window. It nearly did — both go through uploadDroppedFile — except while
+        // the sitch browser is showing, where a DROP queues the files and loads the
+        // custom sitch first and this went straight into whatever was loaded behind
+        // the overlay. See CSitchBrowser.acceptImportedFiles for why that matters.
+        //
+        // The browser is read once, before the picker opens, because it closes itself
+        // as soon as the first file is handed over; re-reading it per file would send
+        // file 1 down the queued route and the rest down the direct one.
+        const browser = this.sitchBrowser;
+        const queueForBrowser = !!(browser && browser.overlay);
+        const queued = [];
         this.selectAndLoadLocalFile( (file) => {
-            DragDropHandler.uploadDroppedFile(file)
+            if (queueForBrowser) {
+                queued.push(file);
+            } else {
+                DragDropHandler.uploadDroppedFile(file)
+            }
+        }, () => {
+            if (queued.length === 0) return;
+            // The browser can have closed while the OS file dialog was up. Import
+            // them the ordinary way rather than leaving the selection on the floor.
+            if (!browser.acceptImportedFiles(queued)) {
+                for (const file of queued) DragDropHandler.uploadDroppedFile(file);
+            }
         })
     }
 
