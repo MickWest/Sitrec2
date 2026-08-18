@@ -171,6 +171,22 @@ const en = {
             tooltip: "Create a new sitch (will reload this page, resetting everything)",
         },
         savingDisabled: "Saving Disabled (click to log in)",
+        tweaks: {
+            folder: {
+                label: "File Tweaks",
+                tooltip: "Settings that change what importing does",
+            },
+            resetOnTrackImport: {
+                label: "Reset on Track Import",
+                tooltip: "When a track is imported into a sitch that is already set up, "
+                    + "throw the current scene away first and start a fresh one, so the "
+                    + "result is the same as dropping the track onto an empty sitch. Off "
+                    + "by default. Applies to files that can carry a track — including "
+                    + "transport streams (.ts), where the video rides along with it — but "
+                    + "not to plain video, images, audio or 3D models, since dropping one "
+                    + "of those onto a track is how a scene gets built.",
+            },
+        },
         importFile: {
             label: "Import File",
             tooltip: "Import a file (or files) from your local system. Same as dragging and dropping a file into the browser window",

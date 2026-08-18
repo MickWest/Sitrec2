@@ -51,6 +51,55 @@ export const DATA_EXTENSIONS = [
     'zip', 'bin',
 ];
 
+// Extensions that can bring a TRACK into the scene — a path through space with
+// times on it. Used only by the "Reset on Track Import" tweak, to decide whether
+// an import is the kind that tweak is about.
+//
+// This is a judgement made from the FILENAME, before anything is parsed, and it
+// cannot be exact: a .csv is a track in a dozen formats or a list of something
+// else entirely, and only the parser knows which. It is therefore drawn to fail
+// SAFE — the cost of a false positive is a scene thrown away, the cost of a
+// false negative is the old behaviour — so anything whose usual job is to add to
+// a scene rather than to be one is left out: images, audio, 3D models, NITF
+// imagery, and archives.
+//
+// Transport streams ARE here even though they are also video. A .ts is the
+// common case of "import a track": the KLV in it is the sensor path, and the
+// video rides along. Plain video (.mp4 and friends) is not — dropping a video
+// onto an existing track is how a scene gets built, and resetting there would
+// destroy the work rather than continue it.
+export const TRACK_EXTENSIONS = Object.freeze([
+    'kml', 'kmz', 'ksv', 'csv', 'json', 'geojson', 'srt', 'txt',
+    'tle', '2le', '3le', 'dat', 'klv', 'xml',
+    'pcap', 'pcapng', 'raw',            // ASTERIX radar captures
+    'ts', 'm2ts', 'mts',                // transport streams: KLV plus video
+]);
+
+const TRACK_SET = new Set(TRACK_EXTENSIONS);
+
+/** @param {string} name a filename; the extension is read from the last dot. */
+export function isTrackFilename(name) {
+    if (!name) return false;
+    const dot = String(name).lastIndexOf(".");
+    if (dot < 0) return false;
+    return TRACK_SET.has(String(name).slice(dot + 1).toLowerCase());
+}
+
+/**
+ * Does this batch of files count as "importing a track"?
+ *
+ * TRUE when at least one of them can carry a track. One track among several
+ * files is still a track import — a sidecar beside its video, a .csv beside its
+ * .scenario.json — and splitting the batch would reset in the middle of it.
+ */
+export function filesAreTrackImport(files) {
+    if (!files || !files.length) return false;
+    for (const f of files) {
+        if (isTrackFilename(f?.name)) return true;
+    }
+    return false;
+}
+
 /** Every extension Sitrec will attempt to ingest, lower-case, without the dot. */
 export const DROPPABLE_EXTENSIONS = Object.freeze([...new Set([
     ...IMAGE_EXTENSIONS,

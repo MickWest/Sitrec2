@@ -1,6 +1,7 @@
 //////////////////////////////////////////////////////
 ///  DRAG AND DROP FILES?
-import {CustomManager, FileManager, Globals, markSitchDirty, NodeMan, Sit, Synth3DManager} from "./Globals";
+import {CustomManager, FileManager, Globals, markSitchDirty, NodeMan,
+    setNewSitchObject, Sit, SitchMan, Synth3DManager} from "./Globals";
 import {cos, isSubdomain, radians} from "./utils";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {getLocalSouthVector, getLocalUpVector} from "./SphericalMath";
@@ -9,7 +10,8 @@ import {SITREC_DEV_DOMAIN, SITREC_DOMAIN} from "./configUtils";
 import {EventManager} from "./CEventManager";
 import {hideProgress, initProgress, updateProgress} from "./CProgressIndicator";
 import {MP4_DEMUXER_EXTENSIONS, WEBAUDIO_SUPPORTED_EXTENSIONS} from "./AudioFormats";
-import {IMAGE_EXTENSIONS as DROPPABLE_IMAGE_EXTENSIONS, urlLooksDroppable} from "./DroppableTypes";
+import {filesAreTrackImport, IMAGE_EXTENSIONS as DROPPABLE_IMAGE_EXTENSIONS,
+    urlLooksDroppable} from "./DroppableTypes";
 import {ViewMan} from "./CViewManager";
 import {quickFetch} from "./quickFetch";
 import {isResolvableSitrecReference, resolveURLForFetch} from "./SitrecObjectResolver";
@@ -113,6 +115,10 @@ class CDragDropHandler {
     }
 
     addDropArea(options = {}) {
+        // Ahead of every early return below, including the mobile one: a file
+        // parked for this sitch has to arrive whether or not a drop zone is
+        // built for it.
+        this.drainPendingDrops();
 
         if (Globals.isMobile) {
             console.log("Mobile device detected, skipping drag-and-drop zone");
@@ -206,7 +212,21 @@ class CDragDropHandler {
         document.body.addEventListener('drop', this.onDrop.bind(this));
         document.body.addEventListener('paste', this.onPaste.bind(this));
 
-        // Process any files that were dropped on the sitch browser before this sitch loaded
+    }
+
+    /**
+     * Import anything parked for the next sitch, and forget it.
+     *
+     * Called at the TOP of addDropArea, which SituationSetup runs on every sitch
+     * load — deliberately not at the bottom, where this used to live. The bottom
+     * is past `if (this.dropZone !== undefined) return`, so it ran exactly once
+     * in the life of the page: the first sitch. That was invisible while the only
+     * thing queueing files was the sitch browser, which does its queueing BEFORE
+     * that first load. "Reset on Track Import" queues on a page that has been
+     * running for a while, and the files sat in the array forever — the scene was
+     * thrown away and nothing arrived to replace it.
+     */
+    drainPendingDrops() {
         if (this.pendingDropFiles.length > 0) {
             const pending = this.pendingDropFiles;
             this.pendingDropFiles = [];
@@ -444,9 +464,9 @@ class CDragDropHandler {
         // If files were dragged and dropped
         if (dt.files && dt.files.length > 0) {
             console.log("LOADING DROPPED FILE:" + dt.files[0].name);
-            for (const file of dt.files) {
-                this.uploadDroppedFile(file, file.name);
-            }
+            // The whole drop at once — "Reset on Track Import" is a decision
+            // about the selection, not about each file in turn.
+            this.uploadDroppedFiles(dt.files);
         }
 // If a plain text snippet or URL was dragged and dropped
         else {
@@ -485,6 +505,55 @@ class CDragDropHandler {
         }
     }
 
+
+    /**
+     * Import a BATCH of dropped/picked files, honouring "Reset on Track Import".
+     *
+     * WHY A BATCH ENTRY POINT AT ALL. Both callers already had a loop over
+     * uploadDroppedFile, and the reset is a decision about the whole selection:
+     * asked per file it would reset once for the first and then throw away what
+     * it had just imported for the second. There is exactly one decision here
+     * and it has to be made before any file is touched.
+     *
+     * The reset re-uses the route the sitch browser already takes for files
+     * dropped onto it (CSitchBrowser._loadCustomSitchForQueuedDrops): park the
+     * files on pendingDropFiles, load the custom sitch, and let the handler's
+     * own setup drain the queue once the new scene exists. That is what makes
+     * the result identical to having dropped them onto a fresh sitch — it IS
+     * that path, not an imitation of it.
+     */
+    uploadDroppedFiles(files) {
+        const list = Array.from(files ?? []);
+        if (!list.length) return;
+        if (this.shouldResetBeforeImport(list)) {
+            console.log(`Reset on Track Import: starting a fresh sitch for `
+                + `${list.length} dropped file(s)`);
+            for (const file of list) this.pendingDropFiles.push(file);
+            setNewSitchObject(SitchMan.findFirstData((s) => s.data.name === "custom"));
+            return;
+        }
+        for (const file of list) this.uploadDroppedFile(file, file.name);
+    }
+
+    /**
+     * Should this import throw the current scene away first?
+     *
+     * Three things must all hold, and each rules out a case where resetting
+     * would destroy work rather than save it:
+     *  - the tweak is on. It is off by default; this is a deliberate choice to
+     *    treat every track import as a fresh start.
+     *  - the sitch is ESTABLISHED. During startup the files being imported are
+     *    what is building the scene, and resetting would discard the very drop
+     *    that triggered it — including the queue this function fills.
+     *  - the batch can carry a track. Dropping a video or a model onto a track
+     *    is how a scene gets built (see TRACK_EXTENSIONS for where that line is
+     *    drawn, and why a transport stream counts as a track).
+     */
+    shouldResetBeforeImport(files) {
+        if (!FileManager?.resetOnTrackImport) return false;
+        if (!Globals.sitchEstablished) return false;
+        return filesAreTrackImport(files);
+    }
 
     async uploadDroppedFile(droppedFile) {
 

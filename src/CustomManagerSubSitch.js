@@ -98,6 +98,14 @@ export const subSitchMethods = {
         this.subSitchFolder = guiMenus.file.addFolder("Sub Sitches").close()
             .tooltip(t("custom.subSitches.folder.tooltip"));
 
+        // File Tweaks belongs after Sub Sitches, and menu order is creation
+        // order — but File Tweaks is built with the rest of the File menu at
+        // startup, long before this folder exists. So it is moved here, at the
+        // one moment there is something to move it after. Sub Sitches is a
+        // custom-sitch folder; in any other sitch there is nothing to move
+        // after and File Tweaks simply keeps the place it was created in.
+        FileManager?.fileTweaksFolder?.moveAfter("Sub Sitches");
+
         this.subSitchFolder.add(this, "updateSubSitch").name(t("custom.subSitches.updateCurrent.label"))
             .tooltip(t("custom.subSitches.updateCurrent.tooltip"));
 

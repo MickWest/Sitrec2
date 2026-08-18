@@ -225,6 +225,19 @@ export class CFileManager extends CManager {
 
             this.guiFolder.add(this, "importFile").name(t("file.importFile.label")).perm().tooltip(t("file.importFile.tooltip"));
 
+            // Settings that change what importing DOES, as opposed to the
+            // commands above that do it. `perm` so the folder and its state
+            // survive a sitch change — which matters more here than elsewhere,
+            // because the tweak below causes one, and a flag that cleared
+            // itself on the reset it triggered would work exactly once.
+            this.fileTweaksFolder = this.guiFolder.addFolder(t("file.tweaks.folder.label"))
+                .perm().close().tooltip(t("file.tweaks.folder.tooltip"));
+
+            this.resetOnTrackImport = false;
+            this.fileTweaksFolder.add(this, "resetOnTrackImport")
+                .name(t("file.tweaks.resetOnTrackImport.label")).perm()
+                .tooltip(t("file.tweaks.resetOnTrackImport.tooltip"));
+
             //this.guiFolder.add(this, "resetOrigin").name("Reset Origin").perm();
 
             if (isLocal) {
@@ -1813,13 +1826,24 @@ export class CFileManager extends CManager {
         const browser = this.sitchBrowser;
         const queueForBrowser = !!(browser && browser.overlay);
         const queued = [];
+        // Collected rather than imported one at a time, so the batch reaches
+        // uploadDroppedFiles whole — "Reset on Track Import" has to see the
+        // whole selection before any of it is imported.
+        const picked = [];
         this.selectAndLoadLocalFile( (file) => {
             if (queueForBrowser) {
                 queued.push(file);
             } else {
-                DragDropHandler.uploadDroppedFile(file)
+                picked.push(file);
             }
         }, () => {
+            if (picked.length) DragDropHandler.uploadDroppedFiles(picked);
+            // GET OUT OF THE WAY. The picker only reaches this callback when at
+            // least one file was chosen, so arriving here means the import went
+            // ahead rather than the user cancelling out of the dialog — and a
+            // menu that dropped down to offer this command has no reason to
+            // still be covering the scene the files just landed in.
+            this.#closeFileMenuIfDropdown();
             if (queued.length === 0) return;
             // The browser can have closed while the OS file dialog was up. Import
             // them the ordinary way rather than leaving the selection on the floor.
@@ -1827,6 +1851,33 @@ export class CFileManager extends CManager {
                 for (const file of queued) DragDropHandler.uploadDroppedFile(file);
             }
         })
+    }
+
+    /**
+     * Close the File menu, but ONLY where it is a menu-bar dropdown.
+     *
+     * A menu in this app is one of several things. Docked in the bar it is a
+     * dropdown: transient, covering the scene, and expected to go away once it
+     * has been used. Torn out to float, or docked into a sidebar, it is a
+     * persistent window the user deliberately placed — closing that would throw
+     * away an arrangement they set up, to save them a click they did not ask to
+     * be saved. So the test is all three conditions, matching the one the
+     * tear-out drag already uses in lil-gui-extras: the mode is DOCKED, the menu
+     * is really a bar slot, and it is currently open.
+     *
+     * WHAT "SUCCESSFUL" CAN MEAN HERE, honestly: that files were selected and
+     * handed to the importer. It cannot mean they parsed — uploadDroppedFile
+     * queues the parse for the main loop and resolves before it runs, so the
+     * outcome is not knowable at this point. A file that fails raises its own
+     * error dialog, which is better seen against the scene than through a menu.
+     */
+    #closeFileMenuIfDropdown() {
+        const menu = this.guiFolder;
+        const bar = Globals.menuBar;
+        if (!menu || !bar || !Array.isArray(bar.slots)) return;
+        if (menu.mode !== "DOCKED" || menu._closed) return;
+        if (!bar.slots.includes(menu)) return;
+        menu.close();
     }
 
 
