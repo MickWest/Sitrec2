@@ -390,6 +390,40 @@ html, body {
     border-right: 4px solid var(--sitrec-accent);
 }
 
+/* The end zones of an elastic slider's bar: hold a drag in one and the range steps
+   outward (right) or inward (left). A bar this wide has no room outside itself for
+   the pointer-distance rule the menu sliders use, so time does the job instead.
+   Width comes from ZONE_PX in BigSlider.js. Never a hit target - the press has to
+   reach the track underneath. */
+.sitrec-bigslider-zone {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    line-height: 1;
+    color: var(--sitrec-text-dim);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.sitrec-bigslider-zone.low {
+    left: 0;
+    border-right: 1px solid var(--sitrec-border);
+}
+
+.sitrec-bigslider-zone.high {
+    right: 0;
+    border-left: 1px solid var(--sitrec-border);
+}
+
+.sitrec-bigslider-zone.active {
+    background: var(--sitrec-accent);
+    color: var(--sitrec-bg-panel);
+}
+
 .sitrec-bigslider-ends {
     display: flex;
     justify-content: space-between;
