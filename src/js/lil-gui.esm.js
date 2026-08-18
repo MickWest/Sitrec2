@@ -1455,7 +1455,12 @@ class NumberController extends Controller {
     // the controller's own $slider normally, the big-slider popup's full-width bar
     // when that is open. Everything below - elastic expansion, wrapping, the
     // wrapReceiver carry - is measured against that element's rect.
-    _setValueFromX( clientX, allowWrapping = true, trackElement = this.$slider ) {
+    //
+    // `allowElasticRange` turns off the pointer-distance elastic rule below. The
+    // big-slider popup passes false and resizes the range from its own end zones
+    // instead - see _elasticStepRange for why distance cannot do that job on a bar
+    // as wide as the window.
+    _setValueFromX( clientX, allowWrapping = true, trackElement = this.$slider, allowElasticRange = true ) {
 
         const map = ( v, a, b, c, d ) => {
             return ( v - a ) / ( b - a ) * ( d - c ) + c;
@@ -1470,7 +1475,7 @@ class NumberController extends Controller {
         let value = map(clientX, rect.left, rect.right, this._minClick, this._maxClick);
 
         // MICK: added elastic and wrapping
-        if (this._elastic) {
+        if (this._elastic && allowElasticRange) {
             assert(!this._canWrap, "elastic and wrap are mutually exclusive");
 
             // gone off the right, so expand the range to encompass this
@@ -1546,16 +1551,45 @@ class NumberController extends Controller {
 
     // MICK: press. No wrapping on the initial click - clicking outside the track
     // should clamp to the near end, not teleport to the far one.
-    _dragStart( clientX, trackElement ) {
+    _dragStart( clientX, trackElement, allowElasticRange = true ) {
         this._dragSeed( clientX );
-        this._setValueFromX( clientX, false, trackElement );
+        this._setValueFromX( clientX, false, trackElement, allowElasticRange );
     }
 
     // MICK: subsequent moves in a drag that _dragStart (or the touch seed) opened.
-    _dragMove( clientX, trackElement ) {
+    _dragMove( clientX, trackElement, allowElasticRange = true ) {
         this.deltaX = clientX - this.prevDragX;
         this.prevDragX = clientX;
-        this._setValueFromX( clientX, true, trackElement );
+        this._setValueFromX( clientX, true, trackElement, allowElasticRange );
+    }
+
+    // MICK: take one elastic step - double _max, or halve it - with no pointer
+    // position involved at all.
+    //
+    // The rule in _setValueFromX only grows the range once the pointer is PAST the
+    // end of the track, so what really sets the ceiling is "how much screen is there
+    // beyond this slider". A menu slider is about 80px wide with sixteen track widths
+    // of room to its right, so it can double its way to _elasticMax. The big-slider
+    // popup is a bar as wide as the window with a ~48px gutter, which buys exactly one
+    // doubling and then stops. The popup therefore passes allowElasticRange = false
+    // and calls this on a timer while the pointer rests in one of its end zones.
+    //
+    // _maxClick is re-seeded because the rest of the drag maps the pointer onto the
+    // range frozen at press time; leaving it stale would make the new headroom
+    // unreachable. Returns false when the range is already hard against _elasticMin
+    // or _elasticMax, which is how a caller knows there is nothing more to give.
+    _elasticStepRange( grow ) {
+        if ( !this._elastic ) return false;
+
+        const before = this._max;
+        this._max = grow
+            ? Math.min( this._max * 2, this._elasticMax )
+            : Math.max( this._max / 2, this._elasticMin );
+        if ( this._max === before ) return false;
+
+        this._maxClick = this._max;
+        this.updateElasticStep();
+        return true;
     }
 
     _setDraggingStyle( active, axis = 'horizontal' ) {

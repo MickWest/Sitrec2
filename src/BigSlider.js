@@ -13,12 +13,32 @@
  * while the popup is up, every pointer event in the page is intercepted in the
  * CAPTURE phase at the window - above every document-level listener in Sitrec -
  * and only re-emitted as a drag on the bar itself.
+ *
+ * ELASTIC SLIDERS are the one thing that cannot simply be inherited. An elastic
+ * range grows when the pointer goes PAST the end of the track, so the real budget
+ * for growth is the screen between the slider and the edge of the window: a menu
+ * slider is ~80px wide with sixteen track widths of room to its right, while this
+ * bar is as wide as the window and has a ~48px gutter - one doubling, then stuck.
+ * So the bar turns that distance rule off (allowElasticRange = false) and grows the
+ * range from TIME instead: hold a drag in one of the end zones and the range steps
+ * every ZONE_STEP_MS, out to _elasticMax or back to _elasticMin.
  */
 
 import {CValueBox} from "./CValueBox";
 
 // How long the pointer must rest on a normal slider before the big one appears.
 const HOVER_DELAY_MS = 3000;
+
+// The strip at each end of the bar where holding a drag resizes an elastic range:
+// the left one shrinks it, the right one grows it. Only elastic sliders get them;
+// on every other slider the whole bar is value travel. The zone reaches outward
+// past the end of the bar as well, so the gutter behaves the same as the strip.
+const ZONE_PX = 60;
+
+// Crossing a zone on the way to the end of the bar must not resize anything, so the
+// first step waits longer than the ones that follow it.
+const ZONE_FIRST_STEP_MS = 450;
+const ZONE_STEP_MS = 300;
 
 // Above the menu bar (9000/9001) and the frame slider (1001-1004), below the modal
 // dialogs in showError.js (10000).
@@ -100,6 +120,19 @@ export function openBigSlider(controller) {
     fill.className = 'sitrec-bigslider-fill';
     track.appendChild(fill);
 
+    // Added after the fill so they paint over it, and never hit targets themselves -
+    // the press belongs to the track underneath, which is what startDrag looks for.
+    // Width is set here rather than in the stylesheet so ZONE_PX stays the one place
+    // the size is written down.
+    let zoneLow = null;
+    let zoneHigh = null;
+    if (controller._elastic) {
+        zoneLow = makeZone('low', '«');
+        zoneHigh = makeZone('high', '»');
+        track.appendChild(zoneLow);
+        track.appendChild(zoneHigh);
+    }
+
     const ends = document.createElement('div');
     ends.className = 'sitrec-bigslider-ends';
     const minLabel = document.createElement('div');
@@ -123,7 +156,8 @@ export function openBigSlider(controller) {
     });
 
     open = {controller, backdrop, panel, track, fill, minLabel, maxLabel, box,
-        rafID: null, dragPointerID: null, lastPercent: null};
+        zoneLow, zoneHigh, rafID: null, dragPointerID: null, lastPercent: null,
+        zoneDir: 0, zoneStepAt: 0, lastX: 0};
 
     syncBigSlider();
     open.rafID = requestAnimationFrame(tick);
@@ -187,8 +221,63 @@ function tick() {
         closeBigSlider();
         return;
     }
+    stepElasticZone();
     syncBigSlider();
     open.rafID = requestAnimationFrame(tick);
+}
+
+// One end zone of the bar. Marked but inert: pointer-events are off, so a press in a
+// zone still lands on the track and startDrag still sees it.
+function makeZone(side, glyph) {
+    const zone = document.createElement('div');
+    zone.className = 'sitrec-bigslider-zone ' + side;
+    zone.style.width = ZONE_PX + 'px';
+    zone.textContent = glyph;
+    return zone;
+}
+
+// Which end zone the pointer is in: +1 right (grow), -1 left (shrink), 0 neither.
+// Deliberately unbounded outward, so the gutter between the bar and the edge of the
+// window counts as part of the zone it sits next to.
+function zoneAt(clientX) {
+    const {controller, track} = open;
+    if (!controller._elastic) return 0;
+    const rect = track.getBoundingClientRect();
+    if (clientX >= rect.right - ZONE_PX) return 1;
+    if (clientX <= rect.left + ZONE_PX) return -1;
+    return 0;
+}
+
+// Follow the pointer into and out of the end zones. Entering one restarts the step
+// clock, so the wait before the first resize is spent inside that zone rather than
+// carried over from a previous one.
+function setZone(clientX) {
+    const dir = open.dragPointerID === null ? 0 : zoneAt(clientX);
+    if (dir !== open.zoneDir) {
+        open.zoneDir = dir;
+        open.zoneStepAt = performance.now() + ZONE_FIRST_STEP_MS;
+        if (open.zoneLow) open.zoneLow.classList.toggle('active', dir === -1);
+        if (open.zoneHigh) open.zoneHigh.classList.toggle('active', dir === 1);
+    }
+    open.lastX = clientX;
+}
+
+// The elastic resize itself, run from the animation frame because it is driven by
+// how long the pointer has been held rather than by how far it has moved.
+function stepElasticZone() {
+    const {controller, track, zoneDir} = open;
+    if (zoneDir === 0 || open.dragPointerID === null) return;
+
+    const now = performance.now();
+    if (now < open.zoneStepAt) return;
+    open.zoneStepAt = now + ZONE_STEP_MS;
+
+    // False means the range is already against _elasticMin/_elasticMax.
+    if (!controller._elasticStepRange(zoneDir > 0)) return;
+
+    // Put the value back where the pointer points in the range that just changed
+    // size. The pointer is not moving, so nothing else is going to do it.
+    controller._setValueFromX(open.lastX, false, track, false);
 }
 
 // Format one end of the range the same way the controller formats its value.
@@ -226,7 +315,8 @@ function onWindowPointerEvent(e) {
 
 function onWindowPointerMove(e) {
     if (open.dragPointerID === null || e.pointerId !== open.dragPointerID) return;
-    open.controller._dragMove(e.clientX, open.track);
+    open.controller._dragMove(e.clientX, open.track, false);
+    setZone(e.clientX);
     syncBigSlider();
 }
 
@@ -255,7 +345,8 @@ function startDrag(e) {
     open.dragPointerID = e.pointerId;
     track.classList.add('active');
     controller._setDraggingStyle(true);
-    controller._dragStart(e.clientX, track);
+    controller._dragStart(e.clientX, track, false);
+    setZone(e.clientX);
     syncBigSlider();
 }
 
@@ -263,6 +354,7 @@ function endDrag() {
     const {controller, track, dragPointerID} = open;
     if (track.hasPointerCapture(dragPointerID)) track.releasePointerCapture(dragPointerID);
     open.dragPointerID = null;
+    setZone(0);                         // no drag, so this clears the zone highlight
     track.classList.remove('active');
     controller._setDraggingStyle(false);
     controller._callOnFinishChange();
