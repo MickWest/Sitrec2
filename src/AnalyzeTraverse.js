@@ -1337,6 +1337,10 @@ export function addAnalyzeButton(folder) {
             trackMetrics,
             meanAngularError,
             runTraverseAnalysis,
+            // The handoff payload builders, so the files a handoff WOULD send
+            // can be inspected without a popup — window.open needs a real click's
+            // transient activation, which a test harness cannot supply.
+            contextTrackCSVs, consistentTrackCSVs,
         };
     }
     const existing = analyzeButtons.get(folder);
@@ -5068,6 +5072,20 @@ function showResultGallery(results, uiState = null) {
                     meta: {
                         source: "traverse",
                         lookCameraFraming: lookCameraFraming(results, candidates),
+                        // Put the camera back where the analysis watched from,
+                        // looking along the sightlines it used. contextTrackCSVs
+                        // sends the sensor with its recorded angles precisely so
+                        // this can be honoured; without it the new window opens
+                        // on "Manual" heading and shows the candidates from an
+                        // arbitrary direction.
+                        cameraOnScenarioTrack: true,
+                        // NAMED, not sniffed. The receiver's fallback picks the
+                        // first non-candidate primary track, and here that could
+                        // just as easily be "truth" — which is a target, not a
+                        // viewpoint. contextTrackCSVs names the sensor track
+                        // "platform"; this says so out loud.
+                        cameraTrackName: "platform",
+                        candidateTrackNames: candidates.map((c) => c.name),
                         notes: `TRAVERSE ANALYSIS — ${Sit?.name ?? "this sitch"}\n\n`
                             + (context.length
                                 ? `Context: ${context.map((c) => c.name).join(", ")}.\n\n` : "")

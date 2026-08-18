@@ -33,6 +33,7 @@ import {rankAllHypotheses} from "./TraverseRanking";
 import {SWEEP_VARIANTS} from "./TraverseBattery";
 import {clipFrameDate} from "./TraverseHypotheses";
 import {showError} from "./showError";
+import {botLOSToAzEl} from "./TrackFiles/CTrackFileBOT";
 
 // The curve-fitting strategies swept over polynomial order. TraverseHypotheses
 // documents these as a METHOD DIAGNOSTIC and not a ranking — "a higher-order
@@ -288,6 +289,50 @@ export function handoffCandidateCSVs(results, opts = {}) {
     return consistentTrackCSVs(results, {...opts, includeWeak: true});
 }
 
+// The sensor path AND the sightlines it recorded, as a MISB-column CSV.
+//
+// Written in MISB columns because that is the shape Sitrec already turns into a
+// track plus an "Angles_<name>" heading source — CTrackFileMISB does it on
+// import, so the receiving window needs no special case and the handoff needs
+// no new file format.
+//
+// Platform heading/pitch/roll are all ZERO and the direction rides entirely in
+// the sensor-relative pair. That is not a simplification, it is the convention
+// botLOSToAzEl already returns and CNodeLOSTrackMISB already reads: with a
+// level platform frame, azimuth IS the compass bearing and elevation IS the
+// angle above the horizon. Splitting the same direction across a platform
+// attitude and a gimbal offset would encode one fact twice.
+//
+// Returns null when the dataset cannot supply a direction, so the caller falls
+// back to the plain position track rather than emitting a file with no pointing
+// in pointing-shaped columns.
+function buildSensorWithAngles(dataset, toLLA, altitudeIsHAE, startMs, originLat, originLon) {
+    if (!dataset.D || dataset.D.length < dataset.n * 3) return null;
+    if (!Number.isFinite(originLat) || !Number.isFinite(originLon)) return null;
+    const origin = {latDeg: originLat * 180 / Math.PI, lonDeg: originLon * 180 / Math.PI};
+    const altCol = altitudeIsHAE ? "SensorEllipsoidHeight" : "SensorTrueAltitude";
+    let csv = `UnixTimeStamp,SensorLatitude,SensorLongitude,${altCol},`
+        + `PlatformHeadingAngle,PlatformPitchAngle,PlatformRollAngle,`
+        + `SensorRelativeAzimuthAngle,SensorRelativeElevationAngle,`
+        + `SensorRelativeRollAngle,CALLSIGN\n`;
+    let rows = 0;
+    for (let f = 0; f < dataset.n; f++) {
+        const b = f * 3;
+        const lla = toLLA(dataset.S[b], dataset.S[b + 1], dataset.S[b + 2]);
+        if (!lla) continue;
+        const {az, el} = botLOSToAzEl(
+            [dataset.D[b], dataset.D[b + 1], dataset.D[b + 2]], lla[0], lla[1], origin);
+        if (!Number.isFinite(az) || !Number.isFinite(el)) continue;
+        // Microseconds: parseMISB1CSV reads UnixTimeStamp verbatim and decides
+        // the unit per value, and the KLV era it came from is microseconds.
+        const us = Math.round(clipFrameDate(startMs, dataset, f).valueOf() * 1000);
+        csv += `${us},${lla[0].toFixed(9)},${lla[1].toFixed(9)},${lla[2].toFixed(3)},`
+            + `0,0,0,${az.toFixed(6)},${el.toFixed(6)},0,platform\n`;
+        rows++;
+    }
+    return rows > 1 ? {name: "platform", text: csv} : null;
+}
+
 /**
  * The CONTEXT tracks: where the sensor was, and — where the analysis had one —
  * what the object actually did.
@@ -325,8 +370,22 @@ export function contextTrackCSVs(results, {toLLA, altitudeIsHAE = false, startMs
         return rows > 1 ? {name, text: csv} : null;
     };
 
+    // THE SENSOR TRAVELS WITH ITS POINTING, not just its path. A bare position
+    // CSV gives the new window a camera track and nothing to aim it with: the
+    // Camera Heading menu offers only Manual, because TrackManager creates an
+    // "Angles_<name>" option from a file's OWN pointing and there was none in
+    // the file. The reader then sees the candidates from a camera pointing
+    // wherever the last sitch left it, which is the one view that cannot show
+    // what the analysis did.
+    //
+    // Aiming at the truth track instead would be close but not right: the
+    // sightlines are the sensor's RECORDED directions, and where the operator
+    // drifted off the target those are not the same rays. Sending the angles
+    // reproduces the analysis exactly; sending a target reproduces it only for
+    // a perfect operator.
     const out = [];
-    const platform = build("platform", dataset.S);
+    const platform = buildSensorWithAngles(dataset, toLLA, altitudeIsHAE, startMs,
+        results.originLat, results.originLon) ?? build("platform", dataset.S);
     if (platform) out.push(platform);
     // Only when the analysis actually had a usable reference — an absent truth
     // track is the normal case on real data and must not produce an empty file.

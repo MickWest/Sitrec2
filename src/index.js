@@ -2932,11 +2932,20 @@ function applyHandoffCameraTrack(handoff, before) {
         const cameraSwitch = NodeMan.get("cameraTrackSwitch", false);
         if (!cameraSwitch) return;
 
+        // WHEN THE SENDER NAMED IT, USE THAT. The search below picks the first
+        // primary track this handoff created that is not a candidate, which is
+        // right when the scenario arrives as one file. The live gallery instead
+        // synthesises several — a sensor AND a truth track — and both are
+        // primary and neither is a candidate, so the search could land on the
+        // truth track and point the camera from the thing it is meant to be
+        // looking at.
+        const namedCamera = handoff.meta.cameraTrackName;
         let sensor = null;
         TrackManager.iterate((id, trackOb) => {
             if (sensor) return;
             const name = trackOb.menuText;
             if (!name || candidates.has(name)) return;
+            if (namedCamera && name !== namedCamera) return;
             // Created by THIS handoff, so opening one into an existing scene
             // cannot steal the camera from what was already there.
             if (before.has("Track_" + name)) return;
