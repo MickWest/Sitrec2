@@ -9,6 +9,46 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.137.0 (2026-08-18)
+
+### New Features
+
+- **Reset on Track Import** (File → File Tweaks): a new setting, off by default, that throws the current scene away and starts a fresh one when you import a track into a sitch you have already set up, so the result is the same as dropping that track onto an empty sitch. It applies only to files that can carry a track — including transport streams, where the video rides along with it — and never to plain video, images, audio, 3D models, saved sitches or exported keyframes, since dropping one of those onto a track is how a scene gets built.
+
+- **Imported tracks are framed together**: importing a file that says which track is the camera and which is the target — a BOT scenario or a STANAG file — now places the main camera once, after every track has loaded, so both fit on screen at the same time with the camera track on the left and the target on the right, looking down at 15 to 30 degrees. Before, each track was centered in turn and whichever one came second pushed the first off screen. Resetting the camera brings you back to this view.
+
+- **Sightlines are framed too, not just their ends**: for a file with recorded camera pointing, the view now also takes in the places those lines of sight land on the ground, so the whole fan of them is on screen instead of only the platform and the target. Sightlines that graze the horizon and land far beyond the target are left out.
+
+- **Raise Toward Camera** (Objects → the object's own folder): when an object is being forced above the ground, this new option slides it along the line from the camera instead of lifting it straight up, so it stays at the same point in the camera's view and only its distance changes. It is meant for tracks fitted to lines of sight, where the direction is measured and the range is not.
+
+### Improvements
+
+- The File menu now closes after you use *Import File* — but only when it is a dropdown from the menu bar. A File menu you have torn off or docked into a sidebar stays exactly where you put it.
+
+- **Cached BOTBench results are now complete** (File → File Analysis → *BOTBench...*): a row filled from the cache now has a working Gallery, Report and *Open in Sitrec*, because what gets saved is the fitted analysis rather than just the finished row. A saved result is reused only when the files, the analysis options and the app version all match, and only if replaying it still produces the same row.
+
+- **Traverse reports now say when the balloon-against-measured-wind check was not run** (Traverse → *Analyze Traverse Methods...*): that check needs a wind to pin the drift to, and with none supplied it used to be missing from the report with nothing said, leaving no way to tell "the balloon was tested against the winds aloft and failed" from "nobody ever asked". It is now listed under *Unavailable checks*, with the reason and what to load to include it.
+
+### Bug Fixes
+
+- Fixed the traverse results gallery opening a new window whose camera heading was stuck on *Manual*, with no recorded-angles option to pick: the sensor now travels with the angles it actually recorded, so the new window shows the candidates from where the analysis watched them.
+
+- Fixed the camera, heading and zoom in a window opened from a BOTBench row being decided by whichever file finished loading first, which on a transport-stream scenario left the camera riding a reconstructed object path and the look view at twice the real zoom.
+
+- Fixed a BOTBench row for an "unresolved" scenario opening with nothing to look at: it now carries the weak candidates when none passed the consistency screen, and candidate tracks are named readably instead of after internal keys.
+
+- Fixed the known-answer track in a video-metadata file being imported and listed in the menus but drawn as nothing at all; it now gets the same visible lime marker as a BOT scenario's answer key.
+
+- Fixed BOTBench treating the ground as sea level (File → File Analysis → *BOTBench...*), which over high terrain let solutions that were really underground pass the check. The ground height now comes from the file's own record of the terrain under the camera's aim point.
+
+- Fixed traverse analysis being pulled off course by frozen frames at the end of the window (Traverse → *Analyze Traverse Methods...*): a track holds its last position for every frame past the end of its data, so a clip shorter than the sitch ended in a stretch of a sensor parked in mid-air that every fit was then asked to explain. On a test balloon clip that alone moved the answer from 150 m off the truth to 888 m and changed the verdict to "Unresolved". Those trailing frames are now dropped, and how many is reported.
+
+- Fixed *File → Import* going somewhere different from dropping the same file on the window while the sitch browser was showing, which on a cold start imported into a sitch with no location and broke every track built against it.
+
+- Fixed BOTBench reading and writing the wrong folder's saved results when a second folder was picked in the same session.
+
+- Fixed the JPEG 2000 decoder that ships with Sitrec being left out of the third-party license attributions (Help → Documentation → *Third-Party Notices*).
+
 ## Version 2.136.0 (2026-08-17)
 
 ### New Features
