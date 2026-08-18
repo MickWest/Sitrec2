@@ -18,7 +18,7 @@
 
 import fs from "fs";
 import path from "path";
-import {helpDocs, DOC_SECTIONS, chatDocName, getChatAvailableDocs, AI_DOC_CHAR_LIMIT} from "../src/docsRegistry";
+import {AI_DOC_CHAR_LIMIT, chatDocName, DOC_SECTIONS, getChatAvailableDocs, helpDocs} from "../src/docsRegistry";
 import en from "../src/i18n/en";
 
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -140,38 +140,86 @@ describe("i18n help strings", () => {
 });
 
 describe("docs on disk", () => {
-    // Anything user-facing must be registered, or it exists but cannot be found. This
-    // list is the set of docs deliberately NOT in the Help menu: internal plans, review
-    // reports, engineering notes, and *-Internals references linked from their user doc.
+    // Everything reachable by the docs walk in webpack.common.js is PUBLISHED — as
+    // rendered .html, as raw .md (which is what the AI assistant reads), and, for
+    // non-markdown files, verbatim. So the question these tests answer is not "is this
+    // doc in the Help menu" but "is anyone allowed to see this at all".
+    //
+    // Plans, roadmaps, review reports and other agent-facing working documents must not
+    // be under docs/ AT ALL. They live in docs/temp/, which is gitignored and skipped by
+    // the build. docs/plans/ used to exist and every file in it shipped, which is the
+    // failure these tests are shaped around.
+
+    // Mirrors the walk in webpack.common.js: skip docs/temp, skip dot-entries. If that
+    // walk's skip rules change, change these too or the tests stop describing reality.
+    const SKIP_DIRS = new Set(["temp"]);
+
+    function publishedDocs(dir = DOCS_DIR, prefix = "") {
+        const out = [];
+        for (const e of fs.readdirSync(dir, {withFileTypes: true})) {
+            if (e.name.startsWith(".")) continue;
+            const rel = prefix ? `${prefix}/${e.name}` : e.name;
+            if (e.isDirectory()) {
+                if (SKIP_DIRS.has(e.name)) continue;
+                out.push(...publishedDocs(path.join(dir, e.name), rel));
+            } else if (e.name.endsWith(".md")) {
+                out.push(rel);
+            }
+        }
+        return out;
+    }
+
+    // Top-level docs deliberately NOT in the Help menu: engineering references and
+    // *-Internals docs linked from their user doc. Not a parking spot for working notes.
     const INTENTIONALLY_UNREGISTERED = new Set([
-        "AnomalySurfacingPlan",
-        "atmosphere-hillaire-exploration",
-        "atmospheric-refraction-plan",
-        "colorspace-fix-plan",
-        "DroneControlFitReview-R1",
-        "FitPointsAPI",
-        "localFileSystemPlan",
-        "sitrec-MCP-plan-FINAL",
-        "StarTracker-PriorWork",
-        "synth-objects-refactoring-plan",
-        "TransitionToECEF",
-        "TraverseAnalysisReview",
-        "TraverseReviewResponse-2026-07-19",
-        "TraverseSlowObjectReview",
-        "undo-redo-plan",
-        "Wind-Internals",
+        "FitPointsAPI",          // API reference for agents driving the MCP bridge
+        "TransitionToECEF",      // coordinate-frame reference, cited from CLAUDE.md
+        "Wind-Internals",        // internals reference linked from Wind.md
+    ]);
+
+    // Docs in subdirectories of docs/. These are never in the Help menu, so the registry
+    // cannot vouch for them and the top-level test below cannot see them. This is the
+    // complete inventory, listed by path: a NEW nested file fails until someone adds it
+    // here, which is the point — that decision is exactly the one that was skipped when
+    // docs/plans/ filled up with published plans.
+    const NESTED_DOCS = new Set([
+        "dev/ADDING_NEW_SETTINGS.md",       // how to add a user setting
+        "dev/AddSitchInCode.md",            // legacy in-code sitch authoring
+        "dev/CustomTerrainSources.md",      // map/elevation source configuration
+        "dev/FileRehosting.md",             // rehosting + server auth
+        "dev/Installing-and-configuring.md",// install guide
+        "dev/SettingsManager.md",           // settings architecture
+        "dev/dynamic-gui-mirroring.md",     // CustomManagerMirror API
+        "dev/k8s-example/README.md",        // Kubernetes example manifests
+        "dev/misb-timing.md",               // MISB/KLV timing reference
     ]);
 
     test("every user-facing doc is registered", () => {
         const registered = new Set(helpDocs.map(d => chatDocName(d.file)));
-        const unregistered = fs.readdirSync(DOCS_DIR)
-            .filter(f => f.endsWith(".md"))
+        const unregistered = publishedDocs()
+            .filter(p => !p.includes("/"))          // nested docs: see the test below
             .map(f => f.replace(/\.md$/, ""))
             .filter(n => !registered.has(n))
             .filter(n => !INTENTIONALLY_UNREGISTERED.has(n));
 
         // If this fires, either add the doc to src/docsRegistry.js or, if it is an
         // internal note, add it to INTENTIONALLY_UNREGISTERED above with a reason.
+        // If it is a plan, roadmap or review, it belongs in docs/temp/ instead.
         expect(unregistered).toEqual([]);
+    });
+
+    test("every nested doc is a known developer reference", () => {
+        const unlisted = publishedDocs().filter(p => p.includes("/") && !NESTED_DOCS.has(p));
+
+        // If this fires, a file in a docs/ subdirectory is about to be published and
+        // nothing has vouched for it. If it is a plan, roadmap, review or working note,
+        // move it to docs/temp/. If it is a real developer reference, add it to
+        // NESTED_DOCS above with a one-line description.
+        expect(unlisted).toEqual([]);
+    });
+
+    test("NESTED_DOCS has no entries for files that no longer exist", () => {
+        const onDisk = new Set(publishedDocs());
+        expect([...NESTED_DOCS].filter(p => !onDisk.has(p))).toEqual([]);
     });
 });

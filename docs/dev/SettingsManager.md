@@ -177,77 +177,31 @@ The defaults below match the **Balanced** performance preset (see `PERFORMANCE_P
 - **Default**: `en`
 - **Description**: UI language
 
+### New-sitch startup preferences
+
+These are applied to `Sit` before setup runs (see `applyStartupDefaults` in `StartupDefaults.js`)
+and are never part of a sitch, so loading a saved sitch still restores that sitch's own units and
+camera. The defaults reproduce the old hard-coded startup exactly.
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `startupUnits` | String — one of `nautical`, `imperial`, `metric`, `feet` (keys of `SELECTABLE_UNITS` in `CUnits.js`) | `nautical` | Units a new sitch starts in |
+| `startupLocation` | Boolean | `false` | `false` = use the sitch's own start location |
+| `startupLat` | Number (clamped -90..90) | `34` | Only used when `startupLocation` is true |
+| `startupLon` | Number (clamped -180..180) | `-118.3` | Only used when `startupLocation` is true |
+| `startupAlt` | Number (clamped 0..100000) | `0` | Metres ABOVE GROUND; 0 = standing on the ground |
+| `startupBuildings` | Boolean | `false` | 3D buildings on at startup (needs permission and a provider key) |
+
 ## Adding New Settings
 
-To add a new setting:
+See **[Adding New Settings](ADDING_NEW_SETTINGS.md)** for the full checklist. It is the
+authoritative version: a new setting touches **six** places, not the four this section used to
+list, and the UI step is internationalized (`t("custom.settings.<name>.label")`), so a hard-coded
+English `.name()` is no longer correct.
 
-1. **Update `sanitizeSettings()` in `SettingsManager.js`**:
-```javascript
-function sanitizeSettings(settings) {
-    const sanitized = {};
-    
-    // Existing settings...
-    if (settings.maxDetails !== undefined) {
-        const maxDetails = Number(settings.maxDetails);
-        sanitized.maxDetails = Math.max(5, Math.min(30, maxDetails));
-    }
-    
-    // Add new setting
-    if (settings.newSetting !== undefined) {
-        // Validate and sanitize
-        sanitized.newSetting = validateNewSetting(settings.newSetting);
-    }
-    
-    return sanitized;
-}
-```
-
-2. **Update `sanitizeSettings()` in `sitrecServer/settings.php`**:
-```php
-function sanitizeSettings($settings) {
-    $sanitized = [];
-    
-    // Existing settings...
-    if (isset($settings['maxDetails'])) {
-        $sanitized['maxDetails'] = max(5, min(30, intval($settings['maxDetails'])));
-    }
-    
-    // Add new setting
-    if (isset($settings['newSetting'])) {
-        // Validate and sanitize
-        $sanitized['newSetting'] = validateNewSetting($settings['newSetting']);
-    }
-    
-    return $sanitized;
-}
-```
-
-3. **Add UI in `CustomSupport.js`** (if needed):
-```javascript
-setupSettingsMenu() {
-    const settingsFolder = guiMenus.main.addFolder("Settings");
-    
-    // Existing controls...
-    
-    // Add new control
-    settingsFolder.add(Globals.settings, "newSetting", min, max)
-        .name("New Setting")
-        .tooltip("Description of new setting")
-        .onChange((value) => {
-            Globals.settings.newSetting = value;
-            this.saveGlobalSettings(true);
-        });
-}
-```
-
-4. **Add tests in `tests/SettingsManager.test.js`**:
-```javascript
-it('should sanitize newSetting', () => {
-    const settings = { newSetting: invalidValue };
-    const sanitized = sanitizeSettings(settings);
-    expect(sanitized.newSetting).toBe(expectedValue);
-});
-```
+The step most often forgotten is the server-side `sanitizeSettings()` in
+`sitrecServer/settings.php` — it drops any key it does not recognize, so a setting whitelisted
+only on the client silently fails to persist for logged-in users.
 
 ## Testing
 
@@ -301,14 +255,3 @@ The system gracefully handles:
 4. **Whitelist Approach**: Only known settings are accepted
 5. **Private Storage**: S3 files use private ACL
 6. **Authentication**: Server endpoints require login
-
-## Future Enhancements
-
-Potential improvements:
-- Settings versioning/migration
-- Settings sync across devices
-- Settings export/import
-- Settings reset to defaults
-- Rate limiting on server endpoint
-- Settings categories/groups
-- User preferences profiles

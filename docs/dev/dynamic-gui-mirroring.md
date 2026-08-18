@@ -1,5 +1,17 @@
 # Dynamic GUI Mirroring
 
+> **There are two unrelated mirroring systems in Sitrec. This document describes the older one.**
+>
+> - **`src/CustomManagerMirror.js` — this document.** Mirrors a WHOLE lil-gui folder (or a node's
+>   GUI) into a standalone floating window, rebuilding it when the source's structure changes.
+>   Nothing in the shipping UI uses it; it is a developer/console tool.
+> - **`src/MenuMirror.js` — not documented here.** Mirrors an INDIVIDUAL controller into another
+>   menu, with the twin and the source bound to the same `object[property]`. This is the one the
+>   shipping UI is built on (`ViewUIBarMenus.js`, `StarTrackerUI.js`, `CMotionAnalysisUI.js`,
+>   `CNodeVIewChat.js`). If you are wiring a control into a view header or a second menu, that is
+>   the system you want — read the header comment in `src/MenuMirror.js` and note its requirement
+>   that the target menu be a polled root (`src/GUIRootRegistry.js`).
+
 The dynamic GUI mirroring system allows you to create standalone floating menus that mirror any existing GUI folder or node controls. These mirrors automatically update when the original GUI changes, making them perfect for scenarios where menus are programmatically modified (like switching between model and geometry modes).
 
 ## Features

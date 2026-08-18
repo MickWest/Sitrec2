@@ -282,6 +282,11 @@ module.exports = (env = {}) => ({
                         const files = await fs.promises.readdir(dir, { withFileTypes: true });
 
                         for (const file of files) {
+                            // Never publish dot-entries. Two of these were shipping:
+                            // docs/.DS_Store, which encodes the NAMES of everything in the
+                            // directory
+                            if (file.name.startsWith('.')) continue;
+
                             const fullPath = path.join(dir, file.name);
                             const relativePath = path.relative(docsDir, fullPath);
                             const outputPath = path.join(outputDir, relativePath.replace(/\.md$/, '.html'));

@@ -57,6 +57,11 @@ module.exports = merge(commonConfig, {
                         ignore: [
                             '**/*.md',        // Ignore Markdown files here
                             '**/temp/**',     // Local-only working notes, never shipped
+                            // copy-webpack-plugin globs with dot:true, so without these
+                            // it ships docs/.DS_Store (which encodes the NAMES of the
+                            // local-only directories) and any scratch files.
+                            '**/.*',          // dot-files at any depth
+                            '**/.*/**',       // and the contents of dot-directories
                         ],
                     },
                 },

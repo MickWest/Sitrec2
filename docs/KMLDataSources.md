@@ -306,7 +306,7 @@ avoid breaking saved sitches (which key node IDs on `Track_<shortName>`).
 
 Any *improvement* to naming (e.g. using a placemark's own name for callsigns the folder regex
 mangles) is deferred to a future, `exportTagNumber`-version-gated step so it can never silently
-change the track ID of an already-saved sitch. See `docs/plans/KMLGenericIngestionPlan.md`.
+change the track ID of an already-saved sitch.
 
 ---
 

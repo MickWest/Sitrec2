@@ -364,6 +364,3 @@ The result is the field centre in RA/Dec, the roll angle, and a field of view. R
 - [Long Exposure](LongExposure.md) — stacking frames, which pairs naturally with star work
 - [Starlink](Starlink.md) — identifying satellites among the movers
 - [Tracks](Tracks.md) — what Sitrec does with a moving object once you have one
-- [Star Tracker: Prior Work and Novelty](StarTracker-PriorWork.md) — how each stage of the pipeline
-  relates to the published literature: what is standard practice, what diverges from it, and what is
-  a local heuristic. Written for readers who want the references rather than the controls

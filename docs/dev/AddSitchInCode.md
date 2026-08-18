@@ -28,7 +28,7 @@ Let's call the new stitch "Springfield" (just an example name), and assume you h
 - Adjust or add "fps" to be the frames per second of the video (default is 30, typical values might be 24, 25, 29.97, 60, or 59.95)
 - Adjust fov in lookCamera to match the vertical FOV of the camera (and lens/zoom) being used
 - Adjust the lat/lon of the `terrain` descriptor, along with:
-    - zoom: power of two zoom level, maximum 15
+    - zoom: power of two (slippy-map) zoom level. The usable maximum depends on the map/elevation source, not on Sitrec — see the `maxZoom` values in `CNodeTerrainUI.js` (commonly 15, but 18–20 for some sources)
     - nTiles: the terrain will be a square with this many tiles on each side
 - (Optional) `skyColor`: adjust the sky color
 
@@ -55,9 +55,9 @@ mainCamera: {
 },
 ```
 
-These are LLA (Latitude, Longitude, Altitude in meters) positions. Note some sitches have the position specified as EUS local coordinates. LLA is preferred as the EUS coordinate system can change if you do things like adjust the resolution of the terrain.
+These are LLA (Latitude, Longitude, Altitude in meters) positions. Use LLA for anything new.
 
-Some legacy sitches specify the camera position in EUS coordinates (i.e. local x,y,z being East, Up, and South). This is not recommended, as it can change if you adjust the terrain resolution.
+A few legacy sitches instead give `startCameraPosition` as EUS (local x,y,z being East, Up, South). Since the ECEF transition the render frame *is* ECEF and the EUS origin sits at the Earth's centre, so an old sitch's EUS numbers are no longer in the frame they were written for; they are converted on load by `legacyEUSToECEF(eus, lat, lon)` about the sitch's own lat/lon. That conversion is a compatibility shim, so don't write new sitches against it. See [Transition to ECEF](../TransitionToECEF.md).
 
 To get the camera position, just move it to where you want and then copy-and-paste the LLA lines from the debugger console output.
 

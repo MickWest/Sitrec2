@@ -35,8 +35,13 @@
 //               docs/<name>.md). Phrase it the way users ask questions so the model
 //               knows when to open it. Omit to keep a doc out of the AI list.
 //
-// Internal architecture/plan docs (docs/dev/, docs/plans/, *Internals.md, *Plan.md)
-// and other developer-only references must NOT be listed here.
+// Internal architecture docs (docs/dev/, *Internals.md) and other developer-only
+// references must NOT be listed here.
+//
+// Plans, roadmaps and review reports must not be under docs/ AT ALL — they belong in
+// docs/temp/, which is gitignored and skipped by the build. Everything under docs/ is
+// published to the live site both as rendered .html and as raw .md, and the raw .md is
+// what getHelpDoc feeds the assistant, so a plan left in docs/ ships and gets quoted.
 //
 // NOTE ON LENGTH: getHelpDoc (chatbot.php) reads docs/<name>.md and truncates it, so a
 // doc past the limit is silently invisible to the assistant from that point on — it does
