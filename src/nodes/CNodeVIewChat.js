@@ -12,10 +12,11 @@ import {mirrorMenuItem} from "../MenuMirror";
 import {getKey as byokGetKey} from "../BYOKKeyStore";
 import {formatTurnUsage, recordUsage} from "../BYOKUsage";
 import {
-    BYOK_PROVIDER,
-    buildSystemPrompt,
-    buildTools,
+    buildSystemPromptParts,
+    buildToolSet,
     chat as chatDirect,
+    isBYOKProvider,
+    keyProviderForBYOK,
 } from "../CDirectLLMClient";
 
 // What the model gets back from a tool call.
@@ -64,6 +65,8 @@ class CNodeViewChat extends CNodeViewText {
         // Initialize chat-specific properties
         this.chatHistory = [];
         this.historyPosition = 0; // For navigating chat history
+        this.byokSessionId = globalThis.crypto?.randomUUID?.()
+            || `sitrec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
         // Create input box
         this.createInputBox();
@@ -378,11 +381,11 @@ class CNodeViewChat extends CNodeViewText {
                 ? chatModelSetting.split(':')
                 : [null, null];
 
-            // BYOK: the user picked a "(your key)" model, so go straight to Anthropic
-            // from the browser instead of proxying through chatbot.php. The distinct
-            // provider token makes this an explicit user choice, never an inference.
-            if (provider === BYOK_PROVIDER) {
-                await this.sendToLLMDirect(text, model, simDate);
+            // BYOK: the user picked a "(your key)" model, so call its direct browser route
+            // instead of proxying through chatbot.php. The distinct provider token makes
+            // this an explicit user choice, never an inference.
+            if (isBYOKProvider(provider)) {
+                await this.sendToLLMDirect(text, provider, model, simDate);
                 return;
             }
 
@@ -420,15 +423,21 @@ class CNodeViewChat extends CNodeViewText {
             if (response.text) this.addSystemMessage(response.text);
             if (response.apiCalls && response.apiCalls.length > 0) {
                 this.addDebugMessage(`API calls: ${JSON.stringify(response.apiCalls)}`);
-                const {toolResults, changesSerializedState} = await this.handleAPICalls(response.apiCalls);
+                const {toolResults, changesSerializedState, allSucceeded, actionOnly} = await this.handleAPICalls(response.apiCalls);
                 if (changesSerializedState) {
                     markSitchDirty();
                 }
 
                 this.logUnhandledLLMCall(text, response.apiCalls);
 
-                if (response.sessionContinue) {
+                // A successful batch containing actions only needs no second provider call
+                // just to say "Done". Reads and failures still continue so the model can use
+                // their result or repair the call.
+                if (response.sessionContinue
+                    && !(allSucceeded && actionOnly && !response.requiresContinuation)) {
                     await this.continueSession(toolResults, provider, model);
+                } else if (allSucceeded && actionOnly && !response.text) {
+                    this.addSystemMessage("Done.");
                 }
             } else if (response.text) {
                 this.logUnhandledLLMCall(text, null, response.text);
@@ -439,7 +448,9 @@ class CNodeViewChat extends CNodeViewText {
         }
     }
 
-    // BYOK path: browser → Anthropic directly, using the user's own stored key.
+    // BYOK path: browser → Anthropic directly, or browser → OpenRouter → the selected
+    // upstream model, using the user's own stored key. This is an explicit model choice;
+    // Sitrec's server receives neither the credential nor the conversation.
     //
     // Differences from the server path above, all deliberate:
     //  - CDirectLLMClient.chat() owns the whole tool loop, so there is no
@@ -449,10 +460,12 @@ class CNodeViewChat extends CNodeViewText {
     //    to the Sitrec server would break that expectation.
     //  - The system prompt and tools are built client-side, from the same shared
     //    chatbotSystemPrompt.txt the server uses, so the assistant behaves the same.
-    async sendToLLMDirect(text, model, simDate) {
-        const apiKey = await byokGetKey("anthropic");
+    async sendToLLMDirect(text, provider, model, simDate) {
+        const keyProvider = keyProviderForBYOK(provider);
+        const apiKey = await byokGetKey(keyProvider);
         if (!apiKey) {
-            this.addSystemMessage("[No Anthropic API key stored. Add one under Settings → AI Key, or choose a different AI Model.]");
+            const label = keyProvider === "openrouter" ? "OpenRouter" : "Anthropic";
+            this.addSystemMessage(`[No ${label} API key stored. Add one under Settings → AI Key, or choose a different AI Model.]`);
             return;
         }
 
@@ -477,20 +490,29 @@ class CNodeViewChat extends CNodeViewText {
             // same object as its allowlist, so the two can never disagree about what the
             // model was told it may read.
             const availableDocs = getChatAvailableDocs();
+            const toolSet = buildToolSet(sitrecAPI.getLLMDocumentation(), menuSummary);
             const result = await chatDirect({
                 apiKey,
-                provider: BYOK_PROVIDER,
+                provider,
                 model,
-                systemPrompt: buildSystemPrompt({
+                // Split by stability so callAnthropic can put a cache breakpoint at each
+                // boundary — see buildSystemPromptParts(). The concatenated string is not
+                // needed here; callAnthropic assembles the blocks itself.
+                systemParts: buildSystemPromptParts({
                     simDateTime: simDate,
                     menuSummary,
                     availableDocs,
                 }),
                 history: priorHistory.slice(-10),
                 userText: text,
-                // OpenAI-shaped on purpose: callAnthropic() runs convertToolsForAnthropic()
-                // itself, so converting here too would double-convert and throw on t.function.
-                tools: buildTools(sitrecAPI.getLLMDocumentation(), menuSummary),
+                // OpenAI-shaped on purpose: Anthropic converts it at its boundary, while
+                // OpenRouter accepts this shape directly.
+                tools: toolSet.tools,
+                specialistTools: toolSet.specialistTools,
+                // getHelpDoc is implemented locally on the BYOK path rather than as a
+                // CSitrecAPI entry, so name it explicitly alongside the API's result set.
+                needsModelResult: fn => fn === "getHelpDoc" || sitrecAPI.callNeedsModelResult(fn),
+                sessionId: this.byokSessionId,
                 executeCall: async (call) => {
                     // getHelpDoc is implemented in chatbot.php, not in CSitrecAPI, so on the
                     // BYOK path it has to be served locally — otherwise the model, which the
@@ -542,7 +564,8 @@ class CNodeViewChat extends CNodeViewText {
         } catch (e) {
             // Surface the provider's own message — an invalid or expired key is the
             // most likely cause and the user is the only one who can fix it.
-            this.addSystemMessage(`[Anthropic error: ${e && e.message ? e.message : e}]`);
+            const label = keyProvider === "openrouter" ? "OpenRouter" : "Anthropic";
+            this.addSystemMessage(`[${label} error: ${e && e.message ? e.message : e}]`);
             console.error(e);
         }
     }
@@ -606,6 +629,8 @@ class CNodeViewChat extends CNodeViewText {
     async handleAPICalls(calls) {
         const toolResults = [];
         let changesSerializedState = false;
+        let allSucceeded = true;
+        let actionOnly = calls.length > 0;
         for (const call of calls) {
             // "chat" source: these calls came from the LLM, so llmCallable:false entries
             // (e.g. the JS-executing scripted-video functions) are refused (B1).
@@ -615,6 +640,8 @@ class CNodeViewChat extends CNodeViewText {
             // dirty-state check and the error message below silently read undefined.
             const result = await sitrecAPI.handleAPICall(call, "chat");
             toolResults.push({ fn: call.fn, args: call.args, result: toolPayloadForModel(result) });
+            if (result.success === false || result.result?.success === false) allSucceeded = false;
+            if (sitrecAPI.callNeedsModelResult(call)) actionOnly = false;
             if (sitrecAPI.callChangesSerializedState(call, result)) {
                 changesSerializedState = true;
             }
@@ -629,7 +656,7 @@ class CNodeViewChat extends CNodeViewText {
                 this.addSystemMessage(`Error: ${errorTextOf(result)}`);
             }
         }
-        return {toolResults, changesSerializedState};
+        return {toolResults, changesSerializedState, allSucceeded, actionOnly};
     }
     
     async continueSession(toolResults, provider, model, depth = 0) {
@@ -660,13 +687,21 @@ class CNodeViewChat extends CNodeViewText {
             if (response.text) this.addSystemMessage(response.text);
             if (response.apiCalls && response.apiCalls.length > 0) {
                 this.addDebugMessage(`Continue API calls: ${JSON.stringify(response.apiCalls)}`);
-                const {toolResults: newResults, changesSerializedState} = await this.handleAPICalls(response.apiCalls);
+                const {
+                    toolResults: newResults,
+                    changesSerializedState,
+                    allSucceeded,
+                    actionOnly,
+                } = await this.handleAPICalls(response.apiCalls);
                 if (changesSerializedState) {
                     markSitchDirty();
                 }
 
-                if (response.sessionContinue) {
+                if (response.sessionContinue
+                    && !(allSucceeded && actionOnly && !response.requiresContinuation)) {
                     await this.continueSession(newResults, provider, model, depth + 1);
+                } else if (allSucceeded && actionOnly && !response.text) {
+                    this.addSystemMessage("Done.");
                 }
             }
         } catch (e) {

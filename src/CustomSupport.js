@@ -68,7 +68,7 @@ import {configParams} from "./runtimeConfig";
 import {showError, showConfirm} from "./showError";
 import {hasAnyKey as byokHasAnyKey, hasCachedKey, primeKeyCache} from "./BYOKKeyStore";
 import {showKeyDialog} from "./BYOKKeyDialog";
-import {BYOK_MODELS, BYOK_PROVIDER} from "./CDirectLLMClient";
+import {BYOK_MODELS, isBYOKProvider, keyProviderForBYOK} from "./CDirectLLMClient";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
@@ -768,10 +768,12 @@ export class CCustomManager {
 
         // The server's per-tier models, plus the user's own-key models when a BYOK key is
         // stored. Both kinds live in one dropdown; the "(your key)" labels and the distinct
-        // byok-anthropic provider token keep them apart, so picking one never silently
+        // provider-specific BYOK tokens keep them apart, so picking one never silently
         // changes who is paying.
         const selectable = [...this.availableChatModels];
-        if (Globals.hasByokKeys) selectable.push(...BYOK_MODELS);
+        if (Globals.hasByokKeys) {
+            selectable.push(...BYOK_MODELS.filter(model => hasCachedKey(model.keyProvider)));
+        }
 
         // Build options object: {label: "provider:model", ...}
         const options = {};
@@ -825,11 +827,12 @@ export class CCustomManager {
             // A selection can outlive the key that made it valid. Drop back to a server
             // model rather than leaving the assistant pointed at a provider we have no
             // credential for; updateChatModelSelector then picks the first available.
-            if (!hasCachedKey("anthropic")
-                && (Globals.settings.chatModel || "").startsWith(BYOK_PROVIDER + ":")) {
-                Globals.settings.chatModel = "";
-                this.saveGlobalSettings(true);
-            }
+            const selectedProvider = (Globals.settings.chatModel || "").split(":", 1)[0];
+            if (isBYOKProvider(selectedProvider)
+                && !hasCachedKey(keyProviderForBYOK(selectedProvider))) {
+                    Globals.settings.chatModel = "";
+                    this.saveGlobalSettings(true);
+                }
             this.updateChatModelSelector();
         };
         await showKeyDialog(resync);

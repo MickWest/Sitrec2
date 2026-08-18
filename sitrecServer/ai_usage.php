@@ -11,7 +11,30 @@ if (!isAdmin($userInfo)) {
     die('Admin access required');
 }
 
+require_once __DIR__ . '/ai_log.php';
+
 $RATE_LIMIT_DIR = sys_get_temp_dir() . '/sitrec_ratelimit/';
+
+// Per-user spend over whatever the rolling request log still holds (last 500 requests).
+// This is a WINDOW, not a lifetime total - the 28-day totals in admin_dashboard.php are
+// the ones that survive a busy hour. Labelled as such in the table header below.
+$spendByUser = [];
+$loggedRequests = [];
+if (file_exists($AI_LOG_FILE)) {
+    foreach (json_decode(file_get_contents($AI_LOG_FILE), true) ?: [] as $entry) {
+        $uid = (int)($entry['user_id'] ?? 0);
+        $loggedRequests[$uid] = ($loggedRequests[$uid] ?? 0) + 1;
+        if (isset($entry['cost_micros']) && $entry['cost_micros'] !== null) {
+            $spendByUser[$uid] = ($spendByUser[$uid] ?? 0) + (int)$entry['cost_micros'];
+        }
+    }
+}
+function fmtUSDMicros($micros) {
+    if ($micros === null) return '-';
+    $usd = $micros / 1000000;
+    if ($usd == 0) return '$0';
+    return $usd < 0.01 ? '$' . number_format($usd, 4) : '$' . number_format($usd, 2);
+}
 
 $usageData = [];
 
@@ -65,6 +88,9 @@ if ($fileDir && file_exists($fileDir . 'src/XF.php')) {
 </head>
 <body>
     <h1>AI Chatbot Usage</h1>
+    <p>Rate-limit counters below are per-user request counts for the current minute/hour
+    windows. Cost is summed over the last 500 logged requests, so it is a recent window
+    rather than a lifetime total - see the admin dashboard for 28-day spend.</p>
     <p>Rate limit directory: <?= htmlspecialchars($RATE_LIMIT_DIR) ?></p>
     <table>
         <tr>
@@ -74,6 +100,8 @@ if ($fileDir && file_exists($fileDir . 'src/XF.php')) {
             <th>Minute Reset</th>
             <th>Hour Count</th>
             <th>Hour Reset</th>
+            <th>Requests logged</th>
+            <th>Cost (logged window)</th>
         </tr>
         <?php foreach ($usageData as $row): ?>
         <tr>
@@ -87,6 +115,8 @@ if ($fileDir && file_exists($fileDir . 'src/XF.php')) {
             <td class="<?= $row['hour_reset'] < time() ? 'expired' : '' ?>">
                 <?= date('Y-m-d H:i:s', $row['hour_reset']) ?>
             </td>
+            <td><?= number_format($loggedRequests[$row['user_id']] ?? 0) ?></td>
+            <td><?= fmtUSDMicros($spendByUser[$row['user_id']] ?? null) ?></td>
         </tr>
         <?php endforeach; ?>
     </table>

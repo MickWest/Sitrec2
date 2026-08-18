@@ -42,7 +42,23 @@ export const BYOK_PROVIDERS = [
             + 'Adds "(your key)" entries to the AI Model list.',
         signupURL: 'https://console.anthropic.com/settings/keys',
         usage: 'spend',
+        usageModelPrefixes: ['claude-'],
         unitPrice: null,        // priced per model in BYOKUsage, not per request
+        limits: [],
+    },
+    {
+        id: 'openrouter',
+        label: 'OpenRouter',
+        category: 'ai',
+        auth: 'key',
+        keyHint: 'sk-or-v1-…',
+        unlocks: 'Runs the AI assistant through OpenRouter on your own key, including OpenAI models that cannot be called directly from a browser. Chat messages, tool definitions, and tool results are sent to OpenRouter and its selected upstream provider.',
+        signupURL: 'https://openrouter.ai/settings/keys',
+        usage: 'spend',
+        usageModelPrefixes: ['openai/'],
+        // OpenRouter returns the exact charged cost with each completion, so no generic
+        // per-request rate is needed here. Token-price fallbacks live in BYOKUsage.
+        unitPrice: null,
         limits: [],
     },
     {

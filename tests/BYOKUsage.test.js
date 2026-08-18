@@ -47,6 +47,8 @@ describe('pricing', () => {
         expect(pricesFor('claude-opus-5', DURING_PROMO)).toEqual({input: 5, output: 25});
         expect(pricesFor('claude-opus-5', AFTER_PROMO)).toEqual({input: 5, output: 25});
         expect(pricesFor('claude-haiku-4-5', DURING_PROMO)).toEqual({input: 1, output: 5});
+        expect(pricesFor('openai/gpt-5-mini', DURING_PROMO)).toEqual({input: 0.25, output: 2});
+        expect(pricesFor('openai/gpt-5-nano', DURING_PROMO)).toEqual({input: 0.05, output: 0.4});
     });
 
     test('an unknown model has no price rather than a made-up one', () => {
@@ -89,6 +91,21 @@ describe('accumulation', () => {
         const report = await formatUsageReport();
         expect(report.totalRequests).toBe(1);
         expect(report.totalCost).toBeCloseTo(5, 6);
+    });
+
+    test('recordUsage prefers OpenRouter exact charged cost over the fallback estimate', async () => {
+        await recordUsage('openai/gpt-5-mini', {
+            inputTokens: 1e6, outputTokens: 1e6, requests: 1, costUSD: 0.123456,
+        });
+        const byModel = await getUsageByModel();
+        expect(byModel['openai/gpt-5-mini'].costUSD).toBeCloseTo(0.123456, 8);
+    });
+
+    test('usage reports can be filtered to one BYOK provider family', async () => {
+        await recordUsage('claude-opus-5', {inputTokens: 10, requests: 1});
+        await recordUsage('openai/gpt-5-mini', {inputTokens: 10, requests: 2, costUSD: 0.01});
+        expect(await formatUsageReport(['claude-'])).toMatchObject({totalRequests: 1});
+        expect(await formatUsageReport(['openai/'])).toMatchObject({totalRequests: 2});
     });
 
     test('resetUsage clears the totals', async () => {

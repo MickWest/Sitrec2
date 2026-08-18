@@ -88,6 +88,45 @@ function loadTileUsageData($dir) {
     return $data;
 }
 
+// Money is stored as integer micro-dollars (see ai_log.php recordAISpend) because the daily
+// rollup is a running sum and one turn is often a fraction of a cent. Render at a precision
+// that does not round a real cost to $0.00.
+function fmtUSD($micros) {
+    if ($micros === null) return '-';
+    $usd = $micros / 1000000;
+    if ($usd == 0) return '$0';
+    if ($usd < 0.01) return '$' . number_format($usd, 4);
+    return '$' . number_format($usd, 2);
+}
+
+// Totals over the 28-day window, plus the per-model split. The split matters because
+// "AI cost $40 this week" is only actionable next to which model spent it.
+function summarizeAISpend($statsHistory) {
+    $out = ['cost_micros' => 0, 'calls' => 0, 'requests' => 0, 'unpriced' => 0,
+            'input' => 0, 'output' => 0, 'cache_read' => 0, 'cache_write' => 0,
+            'today_micros' => 0, 'by_model' => []];
+    $today = date('Y-m-d');
+    foreach ($statsHistory as $date => $day) {
+        $out['cost_micros'] += $day['ai_cost_micros'] ?? 0;
+        $out['calls']       += $day['ai_calls'] ?? 0;
+        $out['requests']    += $day['ai_requests'] ?? 0;
+        $out['unpriced']    += $day['ai_unpriced_calls'] ?? 0;
+        $out['input']       += $day['ai_input_tokens'] ?? 0;
+        $out['output']      += $day['ai_output_tokens'] ?? 0;
+        $out['cache_read']  += $day['ai_cache_read_tokens'] ?? 0;
+        $out['cache_write'] += $day['ai_cache_write_tokens'] ?? 0;
+        if ($date === $today) $out['today_micros'] = $day['ai_cost_micros'] ?? 0;
+        foreach ($day as $k => $v) {
+            if (strpos($k, 'ai_cost_micros__') === 0) {
+                $model = substr($k, strlen('ai_cost_micros__'));
+                $out['by_model'][$model] = ($out['by_model'][$model] ?? 0) + $v;
+            }
+        }
+    }
+    arsort($out['by_model']);
+    return $out;
+}
+
 function loadAIRequestLogs($file, $limit = 50) {
     if (!file_exists($file)) return [];
     $logs = json_decode(file_get_contents($file), true) ?: [];
@@ -284,7 +323,15 @@ function renderSparkGraph($statsHistory, $key, $label, $formatFn = 'number_forma
     $h = 60;
     $today = end($values);
 
-    $formattedToday = $formatFn === 'formatBytes' ? formatBytes($today) : number_format($today);
+    // Dispatch on the named formatter rather than special-casing one of them, so a new
+    // unit does not silently render as a bare count. fmtUSD takes micro-dollars.
+    $fmt = function ($v) use ($formatFn) {
+        if ($formatFn === 'formatBytes') return formatBytes($v);
+        if ($formatFn === 'fmtUSD') return fmtUSD($v);
+        return number_format($v);
+    };
+
+    $formattedToday = $fmt($today);
 
     $svg = '<svg viewBox="0 0 280 ' . $h . '" preserveAspectRatio="none" style="width:100%;height:' . $h . 'px;">';
     foreach ($values as $i => $v) {
@@ -294,7 +341,7 @@ function renderSparkGraph($statsHistory, $key, $label, $formatFn = 'number_forma
         $y = $h - $barH;
         $opacity = ($i === count($values) - 1) ? '1' : '0.6';
         $svg .= '<rect x="' . $x . '" y="' . $y . '" width="' . $bw . '" height="' . $barH . '" fill="' . $color . '" opacity="' . $opacity . '">';
-        $formattedVal = $formatFn === 'formatBytes' ? formatBytes($v) : number_format($v);
+        $formattedVal = $fmt($v);
         $svg .= '<title>' . htmlspecialchars($dates[$i]) . ': ' . $formattedVal . '</title>';
         $svg .= '</rect>';
     }
@@ -360,6 +407,8 @@ $cesiumOSMBytesDay = $tileTotalDay['cesium_osm_3d_bytes'] ?? 0;
 $diskSpace = getDiskSpace();
 $s3Usage = getS3Usage($expand === 's3' ? $EXPAND_LIMIT : 10);
 $aiRequestLogs = loadAIRequestLogs($AI_LOG_FILE, 50);
+$aiSpend = summarizeAISpend($statsHistory);
+$aiMissingPrices = modelsMissingPrices();
 
 $allUserIds = array_unique(array_merge(
     array_column($aiUsage, 'user_id'),
@@ -591,6 +640,52 @@ $userNames = getUserNames($allUserIds);
                 <div class="stat-value"><?= number_format($aiTotalHour) ?></div>
                 <div class="stat-label">Total AI requests across <?= count($aiUsage) ?> users</div>
             </div>
+
+            <div class="card">
+                <h2>AI Spend (28 Days)</h2>
+                <div class="stat-value"><?= fmtUSD($aiSpend['cost_micros']) ?></div>
+                <div class="stat-label">
+                    <?= fmtUSD($aiSpend['today_micros']) ?> today &middot;
+                    <?= number_format($aiSpend['calls']) ?> provider calls for
+                    <?= number_format($aiSpend['requests']) ?> requests
+                </div>
+                <div class="stat-label">
+                    <?php
+                    // Cache reads are the whole point of the three-tier system prompt: a high
+                    // read share against a low uncached-input share is the fix working.
+                    $inTotal = $aiSpend['input'] + $aiSpend['cache_read'] + $aiSpend['cache_write'];
+                    $readPct = $inTotal > 0 ? round($aiSpend['cache_read'] / $inTotal * 100) : 0;
+                    ?>
+                    in <?= number_format($inTotal) ?> tok
+                    (<?= $readPct ?>% served from cache) &middot;
+                    out <?= number_format($aiSpend['output']) ?> tok
+                </div>
+                <?php if ($aiSpend['unpriced'] > 0): ?>
+                <div class="stat-label" style="color:#fbbf24">
+                    <?= number_format($aiSpend['unpriced']) ?> calls on a model with no price on
+                    file - the total above is a floor, not the whole bill
+                </div>
+                <?php endif; ?>
+                <?php if (!empty($aiMissingPrices)): ?>
+                <div class="stat-label" style="color:#fbbf24">
+                    Unpriced models reachable by a tier:
+                    <?= htmlspecialchars(implode(', ', $aiMissingPrices)) ?>
+                </div>
+                <?php endif; ?>
+                <?php if (!empty($aiSpend['by_model'])): ?>
+                <div class="log-table" style="margin-top:8px">
+                    <table>
+                        <tr><th>Model</th><th>28-day cost</th></tr>
+                        <?php foreach ($aiSpend['by_model'] as $model => $micros): ?>
+                        <tr>
+                            <td><span class="model-tag"><?= htmlspecialchars($model) ?></span></td>
+                            <td><?= fmtUSD($micros) ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </table>
+                </div>
+                <?php endif; ?>
+            </div>
             
             <div class="card">
                 <h2>Tile Usage (This Hour)</h2>
@@ -633,6 +728,8 @@ $userNames = getUserNames($allUserIds);
                 <?= renderSparkGraph($statsHistory, 'unique_users', 'Unique Users', 'number_format', '#7ec8e3') ?>
                 <?= renderSparkGraph($statsHistory, 'unique_ips', 'Unique IPs', 'number_format', '#c084fc') ?>
                 <?= renderSparkGraph($statsHistory, 'ai_requests', 'AI Requests', 'number_format', '#fbbf24') ?>
+                <?= renderSparkGraph($statsHistory, 'ai_calls', 'AI Provider Calls', 'number_format', '#fb923c') ?>
+                <?= renderSparkGraph($statsHistory, 'ai_cost_micros', 'AI Cost', 'fmtUSD', '#f87171') ?>
             </div>
             <div class="card">
                 <h2>28-Day Tile History</h2>
@@ -859,17 +956,27 @@ $userNames = getUserNames($allUserIds);
                 <h2>Recent AI Requests (Last 50)</h2>
                 <div class="log-table">
                     <table>
-                        <tr><th>Time</th><th>User</th><th>Model</th><th>Prompt</th></tr>
+                        <tr><th>Time</th><th>User</th><th>Model</th><th>Calls</th><th>Tokens (in/out)</th><th>Cost</th><th>Prompt</th></tr>
                         <?php foreach ($aiRequestLogs as $log): ?>
+                        <?php
+                            // Rows written before this request finished - or by a build that
+                            // did not record usage - simply have none. Show a dash rather
+                            // than a fabricated zero.
+                            $u = $log['usage'] ?? null;
+                            $inTok = $u ? ($u['inputTokens'] ?? 0) + ($u['cacheReadTokens'] ?? 0) + ($u['cacheWriteTokens'] ?? 0) : null;
+                        ?>
                         <tr>
                             <td><?= date('Y-m-d H:i:s', $log['timestamp']) ?></td>
                             <td><?= renderUserLink($log['user_id'], $userNames) ?></td>
                             <td><span class="model-tag"><?= htmlspecialchars($log['model'] ?? 'default') ?></span></td>
+                            <td><?= $u ? number_format($u['calls'] ?? 0) : '-' ?></td>
+                            <td><?= $u ? number_format($inTok) . ' / ' . number_format($u['outputTokens'] ?? 0) : '-' ?></td>
+                            <td><?= array_key_exists('cost_micros', $log) ? fmtUSD($log['cost_micros']) : '-' ?></td>
                             <td><div class="prompt-text"><?= htmlspecialchars($log['prompt']) ?></div></td>
                         </tr>
                         <?php endforeach; ?>
                         <?php if (empty($aiRequestLogs)): ?>
-                        <tr><td colspan="4">No AI requests logged</td></tr>
+                        <tr><td colspan="7">No AI requests logged</td></tr>
                         <?php endif; ?>
                     </table>
                 </div>

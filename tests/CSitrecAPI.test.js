@@ -528,6 +528,16 @@ describe('CSitrecAPI transient state classification', () => {
             {success: true, result: {success: true}}
         )).toBe(true);
     });
+
+    test('separates result-bearing queries from transient actions', () => {
+        // Both are transient for serialization and safe on an external sitch, but only
+        // the query needs another paid model turn to interpret its returned data.
+        expect(sitrecAPI.callNeedsModelResult('getCameraLLA')).toBe(true);
+        expect(sitrecAPI.callNeedsModelResult('getShareLink')).toBe(true);
+        expect(sitrecAPI.callNeedsModelResult('play')).toBe(false);
+        expect(sitrecAPI.callNeedsModelResult('gotoLLA')).toBe(false);
+        expect(sitrecAPI.callNeedsModelResult('setNotes')).toBe(false);
+    });
 });
 
 describe('CSitrecAPI B1 llmCallable gating', () => {

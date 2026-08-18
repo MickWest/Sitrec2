@@ -1,9 +1,19 @@
 import {
+    buildToolSet,
     buildTools,
     convertToolsForAnthropic,
     buildSystemPrompt,
+    buildSystemPromptParts,
     chat,
+    isBYOKProvider,
 } from '../src/CDirectLLMClient';
+
+test('only explicit own-key provider tokens select the browser BYOK route', () => {
+    expect(isBYOKProvider('byok-anthropic')).toBe(true);
+    expect(isBYOKProvider('byok-openrouter')).toBe(true);
+    expect(isBYOKProvider('anthropic')).toBe(false);
+    expect(isBYOKProvider('openai')).toBe(false);
+});
 
 describe('buildTools', () => {
     test('builds OpenAI-format tool schemas from sitrecDoc with parsed params', () => {
@@ -40,6 +50,53 @@ describe('buildTools', () => {
             'listMenus', 'listMenuControls', 'getHelpDoc',
         ]));
     });
+
+    test('keeps specialist schemas out of the fixed tool block until discovered', () => {
+        const {tools, specialistTools} = buildToolSet({
+            gotoLLA: 'Go. Parameters: lat (number)',
+            createWalker: 'Create a walker. Parameters: speed (number)',
+        }, {});
+        const names = tools.map(tool => tool.function.name);
+        expect(names).toContain('gotoLLA');
+        expect(names).toContain('discoverSpecialistTools');
+        expect(names).not.toContain('createWalker');
+        expect(specialistTools.createWalker.function.name).toBe('createWalker');
+    });
+
+    // COST GUARD. Every parameter's documentation is parsed out of the description into
+    // JSON Schema properties; leaving the "Parameters: ..." tail in the description as well
+    // shipped all of it twice, ~24% of the whole tool block, on every request and every
+    // tool-loop iteration. The schema keeps the text, so nothing is lost.
+    test('strips the Parameters tail from descriptions once it has been parsed into the schema', () => {
+        const tools = buildTools({
+            gotoLLA: 'Go to a place. Parameters: lat (number: latitude), lon (number: longitude)',
+            play: 'Start playback. Parameters: ',
+        }, {});
+
+        const goto = tools.find(t => t.function.name === 'gotoLLA');
+        expect(goto.function.description).toBe('Go to a place.');
+        // The text survives where the model actually needs it.
+        expect(goto.function.parameters.properties.lat.description).toBe('number: latitude');
+
+        // CSitrecAPI appends a bare "Parameters: " to every no-argument function, which the
+        // parse regex deliberately does not match — the strip regex must still remove it.
+        const play = tools.find(t => t.function.name === 'play');
+        expect(play.function.description).toBe('Start playback.');
+        expect(play.function.description).not.toMatch(/Parameters:/);
+    });
+
+    // CACHE GUARD. Tools render BEFORE the system prompt, so anything per-request in a tool
+    // description invalidates the cached prefix for the entire request. The menu list is
+    // per-sitch, so it must not appear here — it is in the system prompt's menu appendix.
+    test('produces byte-identical tools regardless of the menus present', () => {
+        const doc = { gotoLLA: 'Go. Parameters: lat (number)' };
+        const a = buildTools(doc, { view: ['Camera Pos'], satellites: ['showISS'] });
+        const b = buildTools(doc, { terrain: ['Map Type'] });
+        expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+
+        const setMenu = a.find(t => t.function.name === 'setMenuValue');
+        expect(setMenu.function.description).not.toMatch(/view|satellites|terrain/);
+    });
 });
 
 describe('convertToolsForAnthropic', () => {
@@ -71,22 +128,69 @@ describe('buildSystemPrompt', () => {
         // The real wall-clock time is fetched on demand via getCurrentDateTime, not injected
         // into the prompt (injecting it would change the cached prefix every request).
         expect(prompt).toContain('getCurrentDateTime');
-        // Simulation time stays in the prompt (changes infrequently).
+        // Simulation time is still present — it moved position, it was not dropped.
         expect(prompt).toContain('2004-11-14T20:30:00Z');
         expect(prompt).not.toContain('{{dateTime}}');
         expect(prompt).not.toContain('{{simDateTime}}');
     });
 
-    test('appends menu controls section when menuSummary is non-empty', () => {
-        const prompt = buildSystemPrompt({
+    // COST GUARD, and the point of the whole three-tier split. simDateTime is
+    // GlobalDateTimeNode.dateNow — the playhead — so it changes on nearly every message.
+    // It used to sit on line 8 of the base prose, 583 bytes into a ~100 KB prefix, which
+    // meant the cached prefix never repeated: with cache_control set, every call paid the
+    // 1.25x cache WRITE and never collected a 0.1x read. Nothing cacheable may follow it.
+    test('places the volatile simulation clock after every cacheable section', () => {
+        const { staticPart, menuPart, volatilePart } = buildSystemPromptParts({
+            simDateTime: '2004-11-14T20:30:00Z',
+            menuSummary: { view: ['Camera Pos'] },
+            availableDocs: { WhatsNew: 'Recent changes' },
+        });
+
+        // The clock is confined to the one uncached tier.
+        expect(volatilePart).toContain('2004-11-14T20:30:00Z');
+        expect(staticPart).not.toContain('2004-11-14T20:30:00Z');
+        expect(menuPart).not.toContain('2004-11-14T20:30:00Z');
+
+        // The build-constant help-doc index rides in the cached tier; the per-sitch menu
+        // appendix gets its own, so a menu change does not cost the static block.
+        expect(staticPart).toContain('AVAILABLE HELP DOCUMENTATION');
+        expect(menuPart).toContain('AVAILABLE MENUS');
+        expect(staticPart).not.toContain('AVAILABLE MENUS');
+
+        // And the assembled prompt really does end with the volatile part.
+        const full = buildSystemPrompt({
+            simDateTime: '2004-11-14T20:30:00Z',
+            menuSummary: { view: ['Camera Pos'] },
+            availableDocs: { WhatsNew: 'Recent changes' },
+        });
+        expect(full).toBe(staticPart + menuPart + volatilePart);
+        expect(full.indexOf('2004-11-14T20:30:00Z'))
+            .toBeGreaterThan(full.indexOf('AVAILABLE MENUS'));
+    });
+
+    // The static tier must not vary between users on the same build, or the cache entry
+    // cannot be shared. Only the menu tier may differ with the sitch.
+    test('keeps the static tier identical when only the menus differ', () => {
+        const args = { simDateTime: 'a', availableDocs: { WhatsNew: 'Recent changes' } };
+        const one = buildSystemPromptParts({ ...args, menuSummary: { view: ['Camera Pos'] } });
+        const two = buildSystemPromptParts({ ...args, menuSummary: { terrain: ['Map Type'] } });
+        expect(one.staticPart).toBe(two.staticPart);
+        expect(one.menuPart).not.toBe(two.menuPart);
+    });
+
+    test('appends menu IDs without eagerly shipping every control', () => {
+        const args = {
             dateTime: 'x', simDateTime: 'y',
             menuSummary: { view: ['Camera Pos', 'FOV'], satellites: ['showStarlink'] },
             availableDocs: {},
-        });
-        expect(prompt).toContain('AVAILABLE MENU CONTROLS');
-        expect(prompt).toContain("Menu 'view':");
-        expect(prompt).toContain('  - Camera Pos');
-        expect(prompt).toContain('  - showStarlink');
+        };
+        const prompt = buildSystemPrompt(args);
+        const {menuPart} = buildSystemPromptParts(args);
+        expect(prompt).toContain('AVAILABLE MENUS');
+        expect(prompt).toContain('  - view');
+        expect(prompt).toContain('  - satellites');
+        expect(menuPart).not.toContain('Camera Pos');
+        expect(menuPart).not.toContain('showStarlink');
     });
 
     test('appends help docs section when availableDocs is non-empty', () => {
@@ -179,6 +283,81 @@ describe('chat (tool loop)', () => {
         }]);
     });
 
+    // CACHE GUARD. Nothing else in this suite looks at body.system, so a regression that
+    // collapsed the tiers back into one block — or dropped a breakpoint — would be silent
+    // and would only show up as a provider bill.
+    test('sends one cache-marked system block per stable tier, and none on the volatile one', async () => {
+        const fetchMock = mockFetchSequence([
+            { body: { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' } },
+        ]);
+
+        await chat({
+            apiKey: 'sk-ant-test',
+            provider: 'anthropic',
+            model: 'claude-opus-5',
+            systemParts: { staticPart: 'STATIC', menuPart: 'MENU', volatilePart: 'CLOCK' },
+            history: [],
+            userText: 'hi',
+            tools: [],
+            executeCall: async () => ({ success: true }),
+        });
+
+        const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+        expect(sent.system).toEqual([
+            { type: 'text', text: 'STATIC', cache_control: { type: 'ephemeral' } },
+            { type: 'text', text: 'MENU', cache_control: { type: 'ephemeral' } },
+            { type: 'text', text: 'CLOCK' },
+        ]);
+    });
+
+    // The API rejects an empty text block, so a sitch with no menus must not produce one.
+    test('omits system tiers that are empty', async () => {
+        const fetchMock = mockFetchSequence([
+            { body: { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' } },
+        ]);
+
+        await chat({
+            apiKey: 'sk-ant-test',
+            provider: 'anthropic',
+            model: 'claude-opus-5',
+            systemParts: { staticPart: 'STATIC', menuPart: '', volatilePart: 'CLOCK' },
+            history: [],
+            userText: 'hi',
+            tools: [],
+            executeCall: async () => ({ success: true }),
+        });
+
+        const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+        expect(sent.system).toEqual([
+            { type: 'text', text: 'STATIC', cache_control: { type: 'ephemeral' } },
+            { type: 'text', text: 'CLOCK' },
+        ]);
+    });
+
+    // Back-compat: a caller that only has the concatenated string still works, and still
+    // gets a cached block — this is the pre-split behavior.
+    test('falls back to a single cached block when no split is supplied', async () => {
+        const fetchMock = mockFetchSequence([
+            { body: { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' } },
+        ]);
+
+        await chat({
+            apiKey: 'sk-ant-test',
+            provider: 'anthropic',
+            model: 'claude-opus-5',
+            systemPrompt: 'you are a bot',
+            history: [],
+            userText: 'hi',
+            tools: [],
+            executeCall: async () => ({ success: true }),
+        });
+
+        const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+        expect(sent.system).toEqual([
+            { type: 'text', text: 'you are a bot', cache_control: { type: 'ephemeral' } },
+        ]);
+    });
+
     test('returns final text and executes no tools when model ends turn directly', async () => {
         mockFetchSequence([
             { body: { content: [{ type: 'text', text: 'Hello there!' }], stop_reason: 'end_turn' } },
@@ -253,6 +432,78 @@ describe('chat (tool loop)', () => {
             is_error: false,
             cache_control: { type: 'ephemeral' },
         });
+    });
+
+    test('loads a specialist schema only after the model discovers it', async () => {
+        const {tools, specialistTools} = buildToolSet({
+            createWalker: 'Create a walker. Parameters: speed (number)',
+        }, {});
+        mockFetchSequence([
+            {
+                body: {
+                    content: [{
+                        type: 'tool_use', id: 'toolu_discover',
+                        name: 'discoverSpecialistTools', input: {names: ['createWalker']},
+                    }],
+                    stop_reason: 'tool_use',
+                },
+            },
+            {body: {content: [{type: 'text', text: 'Ready.'}], stop_reason: 'end_turn'}},
+        ]);
+
+        const executeCall = jest.fn(async () => ({success: true}));
+        await chat({
+            apiKey: 'k', provider: 'anthropic', model: 'm', systemPrompt: 'sp',
+            history: [], userText: 'make a walker', tools, specialistTools, executeCall,
+        });
+
+        const firstTools = JSON.parse(fetch.mock.calls[0][1].body).tools;
+        const secondTools = JSON.parse(fetch.mock.calls[1][1].body).tools;
+        expect(firstTools.map(tool => tool.name)).not.toContain('createWalker');
+        expect(secondTools.map(tool => tool.name)).toContain('createWalker');
+        expect(executeCall).not.toHaveBeenCalled();
+    });
+
+    test('does not buy a confirmation turn after successful action-only calls', async () => {
+        mockFetchSequence([{
+            body: {
+                content: [{type: 'tool_use', id: 'toolu_play', name: 'play', input: {}}],
+                stop_reason: 'tool_use',
+            },
+        }]);
+
+        const result = await chat({
+            apiKey: 'k', provider: 'anthropic', model: 'm', systemPrompt: 'sp',
+            history: [], userText: 'play', tools: [],
+            executeCall: async () => ({success: true}),
+            needsModelResult: () => false,
+        });
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(result.text).toBe('Done.');
+        expect(result.executedCalls).toHaveLength(1);
+    });
+
+    test('still buys a continuation when a call returns information', async () => {
+        mockFetchSequence([
+            {
+                body: {
+                    content: [{type: 'tool_use', id: 'toolu_get', name: 'getMenuValue', input: {}}],
+                    stop_reason: 'tool_use',
+                },
+            },
+            {body: {content: [{type: 'text', text: 'It is 42.'}], stop_reason: 'end_turn'}},
+        ]);
+
+        const result = await chat({
+            apiKey: 'k', provider: 'anthropic', model: 'm', systemPrompt: 'sp',
+            history: [], userText: 'what is it', tools: [],
+            executeCall: async () => ({success: true, result: 42}),
+            needsModelResult: () => true,
+        });
+
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(result.text).toBe('It is 42.');
     });
 
     test('marks tool_result as error when executeCall returns success: false', async () => {
@@ -367,7 +618,7 @@ describe('chat (tool loop)', () => {
         expect(body.messages[2].content[0].cache_control).toEqual({ type: 'ephemeral' });
     });
 
-    test('rejects non-Anthropic providers', async () => {
+    test('rejects unsupported providers', async () => {
         await expect(chat({
             apiKey: 'k', provider: 'openai', model: 'm',
             systemPrompt: 'sp', history: [], userText: 'u', tools: [], executeCall: async () => ({}),
@@ -383,5 +634,112 @@ describe('chat (tool loop)', () => {
             apiKey: 'bad', provider: 'anthropic', model: 'm',
             systemPrompt: 'sp', history: [], userText: 'u', tools: [], executeCall: async () => ({}),
         })).rejects.toThrow(/invalid api key/);
+    });
+});
+
+describe('chat (OpenRouter BYOK)', () => {
+    beforeEach(() => {
+        jest.resetAllMocks();
+    });
+
+    test('uses the OpenAI-compatible endpoint and preserves exact charged usage', async () => {
+        mockFetchSequence([{
+            body: {
+                choices: [{message: {role: 'assistant', content: 'Hello via OpenRouter.'}, finish_reason: 'stop'}],
+                usage: {
+                    prompt_tokens: 120,
+                    completion_tokens: 15,
+                    prompt_tokens_details: {cached_tokens: 20, cache_write_tokens: 5},
+                    cost: 0.004321,
+                },
+            },
+        }]);
+
+        const result = await chat({
+            apiKey: 'sk-or-secret', provider: 'byok-openrouter', model: 'openai/gpt-5-mini',
+            systemParts: {staticPart: 'STATIC', menuPart: 'MENUS', volatilePart: 'CLOCK'},
+            history: [{role: 'bot', text: 'earlier'}], userText: 'hello', tools: [],
+            executeCall: async () => ({success: true}), sessionId: 'sitrec-session-1',
+        });
+
+        const [url, init] = fetch.mock.calls[0];
+        const sent = JSON.parse(init.body);
+        expect(url).toBe('https://openrouter.ai/api/v1/chat/completions');
+        expect(init.headers.Authorization).toBe('Bearer sk-or-secret');
+        expect(sent.model).toBe('openai/gpt-5-mini');
+        expect(sent.messages[0]).toEqual({role: 'system', content: 'STATICMENUSCLOCK'});
+        expect(sent.session_id).toBe('sitrec-session-1');
+        expect(result.text).toBe('Hello via OpenRouter.');
+        expect(result.usage).toMatchObject({
+            inputTokens: 95, outputTokens: 15,
+            cacheReadTokens: 20, cacheWriteTokens: 5,
+            requests: 1, costUSD: 0.004321,
+        });
+    });
+
+    test('round-trips OpenRouter tool calls and results using OpenAI message roles', async () => {
+        mockFetchSequence([
+            {
+                body: {
+                    choices: [{
+                        message: {
+                            role: 'assistant', content: null,
+                            tool_calls: [{
+                                id: 'call_1', type: 'function',
+                                function: {name: 'getMenuValue', arguments: '{"menu":"view","path":"FOV"}'},
+                            }],
+                        },
+                        finish_reason: 'tool_calls',
+                    }],
+                    usage: {prompt_tokens: 10, completion_tokens: 4, cost: 0.001},
+                },
+            },
+            {
+                body: {
+                    choices: [{message: {role: 'assistant', content: 'The FOV is 30.'}, finish_reason: 'stop'}],
+                    usage: {prompt_tokens: 20, completion_tokens: 6, cost: 0.002},
+                },
+            },
+        ]);
+
+        const executeCall = jest.fn(async () => ({success: true, result: 30}));
+        const result = await chat({
+            apiKey: 'k', provider: 'byok-openrouter', model: 'openai/gpt-5-nano',
+            systemPrompt: 'sp', history: [], userText: 'FOV?', tools: [], executeCall,
+            needsModelResult: () => true,
+        });
+
+        expect(executeCall).toHaveBeenCalledWith({
+            fn: 'getMenuValue', args: {menu: 'view', path: 'FOV'},
+        });
+        const messages = JSON.parse(fetch.mock.calls[1][1].body).messages;
+        expect(messages.some(message => message.role === 'assistant' && message.tool_calls)).toBe(true);
+        expect(messages).toContainEqual({role: 'tool', tool_call_id: 'call_1', content: '30'});
+        expect(result.text).toBe('The FOV is 30.');
+        expect(result.usage).toMatchObject({requests: 2, costUSD: 0.003});
+    });
+
+    test('never executes a tool call from a length-truncated response', async () => {
+        mockFetchSequence([{
+            body: {
+                choices: [{
+                    message: {
+                        content: null,
+                        tool_calls: [{id: 'partial', function: {name: 'play', arguments: '{}'}}],
+                    },
+                    finish_reason: 'length',
+                }],
+                usage: {},
+            },
+        }]);
+        const executeCall = jest.fn();
+
+        const result = await chat({
+            apiKey: 'k', provider: 'byok-openrouter', model: 'openai/gpt-5-mini',
+            systemPrompt: 'sp', history: [], userText: 'play', tools: [], executeCall,
+        });
+
+        expect(executeCall).not.toHaveBeenCalled();
+        expect(result.text).toMatch(/cut off/);
     });
 });

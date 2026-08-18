@@ -59,16 +59,31 @@ if (strlen($imageB64) > MAX_IMAGE_BASE64) {
     failOut('Image too large - send a frame no wider than 1024 pixels');
 }
 
-// The browser picked provider/model from the menu the server built for this user, but the
-// request is still just JSON - re-check it against the same table chatbot.php uses.
-if (!isModelAllowed($userInfo['user_groups'], $provider, $model)) {
-    failOut('Model not available for this account');
-}
-
 // Vision, specifically. A user's chat model may well be a text-only one (Llama on Groq is
 // in every tier), and sending it an image produces an unhelpful provider error - so say
 // what is actually wrong, and name the models that would work.
 $VISION_PROVIDERS = ['anthropic', 'openai', 'gemini'];
+
+// "Auto (economy)" is a real selector entry, not a provider. Resolve it here as well as in
+// chatbot.php so choosing it for chat does not make the AI-mask endpoint reject the same
+// saved setting. Only consider vision-capable models for this endpoint.
+if ($provider === 'auto' && $model === 'economy') {
+    $visionModels = array_values(array_filter(
+        getAvailableModels($userInfo['user_groups']),
+        fn($candidate) => in_array($candidate['provider'], $VISION_PROVIDERS, true)
+    ));
+    $selected = economyModelFor($visionModels, 4000, 1200);
+    if (!$selected) {
+        failOut('No vision-capable AI model is available for this account', 403);
+    }
+    $provider = $selected['provider'];
+    $model = $selected['model'];
+} elseif (!isModelAllowed($userInfo['user_groups'], $provider, $model)) {
+    // The browser picked provider/model from the menu the server built for this user, but
+    // the request is still JSON - re-check it against the same permission table.
+    failOut('Model not available for this account');
+}
+
 if (!in_array($provider, $VISION_PROVIDERS, true)) {
     failOut("The selected AI model ($provider/$model) cannot look at images. "
         . "Choose a Claude, GPT-5 or Gemini model in Settings > AI Model.");
@@ -84,9 +99,9 @@ if (empty($apiKey)) {
 // investigating. Same log and same SITREC_TRACK_STATS switch as chatbot.php, so the admin
 // dashboard shows chat and masking requests together; the prompt field is a fixed label
 // because there is no user prompt here - the input is an image.
+$aiLogId = null;
 if (getenv('SITREC_TRACK_STATS')) {
-    logAIRequest($userInfo['user_id'], '[mask ground] sky outline from video frame', $model);
-    require_once __DIR__ . '/stats_history.php';
+    $aiLogId = logAIRequest($userInfo['user_id'], '[mask ground] sky outline from video frame', $model, $provider);
     recordDailyStats(['ai_requests' => 1]);
 }
 
@@ -220,7 +235,7 @@ function visionAnthropic($apiKey, $model, $imageB64, $systemPrompt, $userText) {
     foreach ($parsed['content'] ?? [] as $block) {
         if (($block['type'] ?? '') === 'text') $text .= $block['text'];
     }
-    return ['text' => $text];
+    return ['text' => $text, 'usage' => normalizeAIUsage($parsed, 'anthropic')];
 }
 
 function visionOpenAI($apiKey, $model, $imageB64, $systemPrompt, $userText) {
@@ -241,6 +256,9 @@ function visionOpenAI($apiKey, $model, $imageB64, $systemPrompt, $userText) {
     // timeout. Reasoning models also reject a custom temperature, so none is sent.
     if (preg_match('/^gpt-5/i', $model)) {
         $body["reasoning_effort"] = "low";
+        $body["max_completion_tokens"] = 8192;
+    } else {
+        $body["max_tokens"] = 8192;
     }
     $res = curlJson('https://api.openai.com/v1/chat/completions', [
         "Authorization: Bearer $apiKey",
@@ -251,7 +269,10 @@ function visionOpenAI($apiKey, $model, $imageB64, $systemPrompt, $userText) {
     if (isset($parsed['error'])) {
         return ['error' => 'OpenAI API error: ' . ($parsed['error']['message'] ?? 'unknown')];
     }
-    return ['text' => $parsed['choices'][0]['message']['content'] ?? ''];
+    return [
+        'text' => $parsed['choices'][0]['message']['content'] ?? '',
+        'usage' => normalizeAIUsage($parsed, 'openai'),
+    ];
 }
 
 function visionGemini($apiKey, $model, $imageB64, $systemPrompt, $userText) {
@@ -277,7 +298,7 @@ function visionGemini($apiKey, $model, $imageB64, $systemPrompt, $userText) {
     foreach ($parsed['candidates'][0]['content']['parts'] ?? [] as $part) {
         if (isset($part['text'])) $text .= $part['text'];
     }
-    return ['text' => $text];
+    return ['text' => $text, 'usage' => normalizeAIUsage($parsed, 'gemini')];
 }
 
 $result = match($provider) {
@@ -285,6 +306,13 @@ $result = match($provider) {
     'openai' => visionOpenAI($apiKey, $model, $imageB64, $OUTLINE_PROMPT, $USER_TEXT),
     'gemini' => visionGemini($apiKey, $model, $imageB64, $OUTLINE_PROMPT, $USER_TEXT),
 };
+
+// Cost is recorded here, before the response-parsing checks below. A frame whose outline
+// could not be read still spent the tokens, and a masking prompt that reliably fails to
+// parse is exactly the kind of quiet spend this logging exists to make visible.
+if ($aiLogId !== null && !empty($result['usage'])) {
+    recordAISpend($aiLogId, $userInfo['user_id'], $provider, $model, addAIUsage(null, $result['usage']));
+}
 
 if (isset($result['error'])) {
     failOut($result['error'], 502);

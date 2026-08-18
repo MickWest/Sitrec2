@@ -33,6 +33,10 @@ const MODEL_PRICES = {
         promo: {input: 2, output: 10, untilUTC: Date.UTC(2026, 8, 1)},  // through 2026-08-31
     },
     'claude-haiku-4-5': {input: 1, output: 5},
+    // OpenRouter model slugs. OpenRouter's response-provided usage.cost is preferred;
+    // these are fallbacks for an upstream response that omits the exact charged cost.
+    'openai/gpt-5-mini': {input: 0.25, output: 2},
+    'openai/gpt-5-nano': {input: 0.05, output: 0.40},
 };
 
 // The per-million rates in effect at a given moment (defaults to now).
@@ -51,6 +55,14 @@ export function pricesFor(model, atMs = undefined) {
 // so folding them in at the input rate would overstate cost substantially.
 const CACHE_READ_MULTIPLIER = 0.1;
 const CACHE_WRITE_MULTIPLIER = 1.25;
+
+function cacheMultipliersFor(model) {
+    // OpenRouter can route OpenAI cached reads at model-dependent discounts. Exact cost
+    // normally comes back from OpenRouter; use the conservative 0.5x fallback when it does
+    // not. OpenAI cache writes carry no premium.
+    if (model.startsWith('openai/')) return {read: 0.5, write: 1};
+    return {read: CACHE_READ_MULTIPLIER, write: CACHE_WRITE_MULTIPLIER};
+}
 
 // costUSD is part of the accumulated record, not just a display-time derivation: it is
 // banked at the rate in effect when the tokens were actually spent, so a later price
@@ -231,12 +243,13 @@ export function addUsage(target, delta) {
 export function estimateCostUSD(model, usage, atMs = undefined) {
     const price = pricesFor(model, atMs);
     if (!price || !usage) return null;
+    const cache = cacheMultipliersFor(model);
     const perToken = 1e-6;
     return (
         (usage.inputTokens || 0) * price.input * perToken +
         (usage.outputTokens || 0) * price.output * perToken +
-        (usage.cacheReadTokens || 0) * price.input * CACHE_READ_MULTIPLIER * perToken +
-        (usage.cacheWriteTokens || 0) * price.input * CACHE_WRITE_MULTIPLIER * perToken
+        (usage.cacheReadTokens || 0) * price.input * cache.read * perToken +
+        (usage.cacheWriteTokens || 0) * price.input * cache.write * perToken
     );
 }
 
@@ -254,7 +267,13 @@ export async function recordUsage(model, usage) {
     const byModel = await getUsageByModel();
     // Bank the cost now, at today's rate, so the running total stays accurate across a
     // price change instead of being re-derived at whatever rate is current at display time.
-    const priced = {...usage, costUSD: estimateCostUSD(model, usage) || 0};
+    const exactCost = Number(usage.costUSD);
+    const priced = {
+        ...usage,
+        costUSD: Number.isFinite(exactCost) && exactCost > 0
+            ? exactCost
+            : (estimateCostUSD(model, usage) || 0),
+    };
     byModel[model] = addUsage(byModel[model] || emptyUsage(), priced);
     try {
         await indexedDBManager.setSetting(USAGE_KEY, byModel);
@@ -287,7 +306,10 @@ export function formatCostUSD(cost) {
 
 // One-line summary of a single turn, for the chat debug log.
 export function formatTurnUsage(model, usage) {
-    const cost = formatCostUSD(estimateCostUSD(model, usage));
+    const exactCost = Number(usage?.costUSD);
+    const cost = formatCostUSD(Number.isFinite(exactCost) && exactCost > 0
+        ? exactCost
+        : estimateCostUSD(model, usage));
     const parts = [
         `${formatTokens(usage.inputTokens)} in`,
         `${formatTokens(usage.outputTokens)} out`,
@@ -298,9 +320,12 @@ export function formatTurnUsage(model, usage) {
 
 // Multi-line breakdown across all models, plus a grand total. Used by the Settings
 // readout so the user can see which model actually spent the money.
-export async function formatUsageReport() {
+export async function formatUsageReport(modelPrefixes = null) {
     const byModel = await getUsageByModel();
-    const models = Object.keys(byModel).sort();
+    const models = Object.keys(byModel)
+        .filter(model => !Array.isArray(modelPrefixes)
+            || modelPrefixes.some(prefix => model.startsWith(prefix)))
+        .sort();
     if (models.length === 0) return {lines: ['No usage recorded yet.'], totalCost: 0, totalRequests: 0};
 
     const lines = [];

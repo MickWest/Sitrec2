@@ -104,8 +104,10 @@ export function sanitizeSettings(settings) {
     
     if (settings.chatModel !== undefined) {
         const chatModel = String(settings.chatModel);
-        // Validate format: "provider:model" or empty string
-        if (chatModel === '' || /^[a-zA-Z0-9_-]+:[a-zA-Z0-9._-]+$/.test(chatModel)) {
+        // Validate "provider:model" or empty. Aggregators use namespaced model slugs such
+        // as openai/gpt-5-mini, so allow slash-separated segments without allowing empty
+        // segments, traversal syntax, query strings, or another colon.
+        if (chatModel === '' || /^[a-zA-Z0-9_-]+:[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)*$/.test(chatModel)) {
             sanitized.chatModel = chatModel;
         }
     }

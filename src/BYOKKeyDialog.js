@@ -128,11 +128,10 @@ export async function showKeyDialog(onKeysChanged = null) {
         modal.appendChild(intro);
 
         const shown = visibleProviders();
-        const [keys, usageByProvider, config, aiReport] = await Promise.all([
+        const [keys, usageByProvider, config] = await Promise.all([
             Promise.all(shown.map(p => getKey(p.id))),
             getProviderUsage(),
             getProviderConfig(),
-            formatUsageReport(),
         ]);
         const hasKey = {};
         shown.forEach((p, i) => { hasKey[p.id] = !!keys[i]; });
@@ -196,11 +195,13 @@ export async function showKeyDialog(onKeysChanged = null) {
                 // ── Usage ────────────────────────────────────────────────────────────
                 const usageLine = el('div', 'font-size:12px; color:#333; margin-top:8px;');
                 if (provider.usage === 'spend') {
-                    // Real token accounting, priced per model.
-                    usageLine.textContent = aiReport.totalRequests === 0
+                    // Real token accounting, priced per model. Filter per provider so the
+                    // Anthropic and OpenRouter rows do not each display the combined total.
+                    const providerReport = await formatUsageReport(provider.usageModelPrefixes);
+                    usageLine.textContent = providerReport.totalRequests === 0
                         ? 'Usage: none yet'
-                        : 'Usage: approx ' + formatCostUSD(aiReport.totalCost)
-                          + ' over ' + aiReport.totalRequests + ' requests';
+                        : 'Usage: approx ' + formatCostUSD(providerReport.totalCost)
+                          + ' over ' + providerReport.totalRequests + ' requests';
                 } else if (provider.usage !== 'none') {
                     const spend = estimateProviderSpendUSD(usage, cfg, provider.rate?.per ?? 1000);
                     usageLine.textContent = 'Usage: ' + formatTokens(usage.total || 0) + ' ' + unit

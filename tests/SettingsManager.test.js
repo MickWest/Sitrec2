@@ -1,6 +1,15 @@
 import {sanitizeSettings} from '../src/SettingsManager';
 
 describe('sanitizeSettings', () => {
+    test('accepts namespaced OpenRouter model slugs and rejects malformed variants', () => {
+        expect(sanitizeSettings({
+            chatModel: 'byok-openrouter:openai/gpt-5-mini',
+        }).chatModel).toBe('byok-openrouter:openai/gpt-5-mini');
+        expect(sanitizeSettings({chatModel: 'byok-openrouter:/gpt-5-mini'}).chatModel).toBeUndefined();
+        expect(sanitizeSettings({chatModel: 'byok-openrouter:openai//gpt-5-mini'}).chatModel).toBeUndefined();
+        expect(sanitizeSettings({chatModel: 'byok-openrouter:openai/gpt?key=x'}).chatModel).toBeUndefined();
+    });
+
     test('should sanitize centerSidebar as boolean true', () => {
         const result = sanitizeSettings({ centerSidebar: true });
         expect(result.centerSidebar).toBe(true);

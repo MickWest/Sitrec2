@@ -136,8 +136,9 @@ function sanitizeSettings($settings) {
     
     if (isset($settings['chatModel'])) {
         $chatModel = strval($settings['chatModel']);
-        // Validate format: "provider:model" or empty string
-        if ($chatModel === '' || preg_match('/^[a-zA-Z0-9_-]+:[a-zA-Z0-9._-]+$/', $chatModel)) {
+        // Aggregators use namespaced model slugs such as openai/gpt-5-mini. Permit
+        // slash-separated non-empty segments, but not traversal, query strings or colons.
+        if ($chatModel === '' || preg_match('/^[a-zA-Z0-9_-]+:[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)*$/', $chatModel)) {
             $sanitized['chatModel'] = $chatModel;
         }
     }

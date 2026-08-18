@@ -16,6 +16,13 @@ if (isset($_GET['fetchModels'])) {
     header('Content-Type: application/json');
     $userInfo = getUserInfo();
     $models = getAvailableModels($userInfo['user_groups']);
+    if (!empty($models)) {
+        $models[] = [
+            'provider' => 'auto',
+            'model' => 'economy',
+            'label' => 'Auto (economy)',
+        ];
+    }
     echo json_encode([
         'models' => $models,
         'userId' => $userInfo['user_id'],
@@ -34,6 +41,16 @@ $RATE_LIMITS = [
     2 => ['minute' => 10, 'hour' => 50],            // registered - same as verified
 ];
 $RATE_LIMIT_DIR = sys_get_temp_dir() . '/sitrec_ratelimit/';
+
+// Hard request bounds. The normal live payload is ~65 KB; these ceilings leave ample room
+// for larger sitches and a 60 KB help-document result while making crafted clients finite.
+const AI_REQUEST_MAX_BYTES = 1048576;
+const AI_HISTORY_MAX_BYTES = 131072;
+const AI_SITREC_DOC_MAX_BYTES = 262144;
+const AI_MENU_SUMMARY_MAX_BYTES = 262144;
+const AI_AVAILABLE_MODELS_MAX_BYTES = 65536;
+const AI_AVAILABLE_DOCS_MAX_BYTES = 65536;
+const AI_TOOL_RESULTS_MAX_BYTES = 524288;
 
 // $AI_LOG_FILE and logAIRequest() live in ai_log.php, shared with the other endpoints that
 // spend money on a provider, so the dashboard sees every AI request and not just this one's.
@@ -64,8 +81,14 @@ function checkRateLimit($userId, $limitPerMinute, $limitPerHour, $rateDir) {
     
     $file = $rateDir . "user_{$userId}.json";
     $now = time();
-    
-    $data = file_exists($file) ? json_decode(file_get_contents($file), true) : null;
+    $handle = @fopen($file, 'c+');
+    if (!$handle || !flock($handle, LOCK_EX)) {
+        if ($handle) fclose($handle);
+        return ['allowed' => false, 'error' => 'Rate limiter unavailable; please try again'];
+    }
+    rewind($handle);
+    $raw = stream_get_contents($handle);
+    $data = $raw !== '' ? json_decode($raw, true) : null;
     if (!$data || !isset($data['minute']) || !isset($data['hour'])) {
         $data = [
             'minute' => ['count' => 0, 'reset' => $now + 60],
@@ -82,40 +105,111 @@ function checkRateLimit($userId, $limitPerMinute, $limitPerHour, $rateDir) {
     
     if ($data['minute']['count'] >= $limitPerMinute) {
         $waitSeconds = $data['minute']['reset'] - $now;
+        flock($handle, LOCK_UN);
+        fclose($handle);
         return ['allowed' => false, 'error' => "Rate limit exceeded. Please wait {$waitSeconds} seconds."];
     }
     
     if ($data['hour']['count'] >= $limitPerHour) {
         $waitMinutes = ceil(($data['hour']['reset'] - $now) / 60);
-        $remaining = $limitPerHour - $data['hour']['count'];
+        flock($handle, LOCK_UN);
+        fclose($handle);
         return ['allowed' => false, 'error' => "Hourly limit ({$limitPerHour}) exceeded. Please wait {$waitMinutes} minutes."];
     }
     
     $data['minute']['count']++;
     $data['hour']['count']++;
-    file_put_contents($file, json_encode($data), LOCK_EX);
+    rewind($handle);
+    ftruncate($handle, 0);
+    fwrite($handle, json_encode($data));
+    fflush($handle);
+    flock($handle, LOCK_UN);
+    fclose($handle);
     
     $remainingHour = $limitPerHour - $data['hour']['count'];
     $remainingMinute = $limitPerMinute - $data['minute']['count'];
     return ['allowed' => true, 'remainingHour' => $remainingHour, 'remainingMinute' => $remainingMinute];
 }
 
-$data = json_decode(file_get_contents('php://input'), true);
+function consumeProviderRateLimit($userInfo) {
+    global $RATE_LIMIT_DIR;
+    $limits = getRateLimitsForUser($userInfo['user_groups'] ?? []);
+    return checkRateLimit(
+        (int)($userInfo['user_id'] ?? 0),
+        $limits['minute'],
+        $limits['hour'],
+        $RATE_LIMIT_DIR
+    );
+}
 
-// Get user info early for rate limiting
-$userInfo = getUserInfo();
+function failChatRequest($message, $status = 400, $code = 'bad_request') {
+    header('Content-Type: application/json');
+    http_response_code($status);
+    echo json_encode(['text' => $message, 'apiCalls' => [], 'debug' => ['error' => $code]]);
+    exit;
+}
 
-// Check rate limits only if stats tracking is enabled
-if (getenv('SITREC_TRACK_STATS')) {
-    $userRateLimits = getRateLimitsForUser($userInfo['user_groups']);
-    $rateLimitResult = checkRateLimit($userInfo['user_id'], $userRateLimits['minute'], $userRateLimits['hour'], $RATE_LIMIT_DIR);
-    if (!$rateLimitResult['allowed']) {
-        header('Content-Type: application/json');
-        http_response_code(429);
-        echo json_encode(['text' => $rateLimitResult['error'], 'apiCalls' => [], 'debug' => ['error' => 'rate_limited']]);
-        exit;
+function validateStructuredField($data, $name, $maxBytes, $maxItems = null) {
+    if (!array_key_exists($name, $data)) return;
+    if (!is_array($data[$name])) failChatRequest("Invalid $name payload", 400, 'invalid_payload');
+    if ($maxItems !== null && count($data[$name]) > $maxItems) {
+        failChatRequest("$name contains too many items", 413, 'payload_too_large');
+    }
+    $encoded = json_encode($data[$name]);
+    if ($encoded === false || strlen($encoded) > $maxBytes) {
+        failChatRequest("$name payload is too large", 413, 'payload_too_large');
     }
 }
+
+$rawInput = file_get_contents('php://input');
+if (strlen($rawInput) > AI_REQUEST_MAX_BYTES) {
+    failChatRequest('Chat request is too large', 413, 'payload_too_large');
+}
+$data = json_decode($rawInput, true);
+if (!is_array($data)) failChatRequest('Invalid JSON request', 400, 'invalid_json');
+
+validateStructuredField($data, 'sitrecDoc', AI_SITREC_DOC_MAX_BYTES, 512);
+validateStructuredField($data, 'menuSummary', AI_MENU_SUMMARY_MAX_BYTES, 256);
+validateStructuredField($data, 'availableModels', AI_AVAILABLE_MODELS_MAX_BYTES, 2048);
+validateStructuredField($data, 'availableDocs', AI_AVAILABLE_DOCS_MAX_BYTES, 256);
+validateStructuredField($data, 'toolResults', AI_TOOL_RESULTS_MAX_BYTES, 64);
+validateStructuredField($data, 'history', AI_HISTORY_MAX_BYTES, 20);
+
+// The fields below eventually reach trim(), comparisons, or prompt substitution. Reject
+// arrays/objects here instead of letting a crafted request trigger PHP 8 TypeErrors later.
+foreach (['prompt', 'dateTime', 'simDateTime', 'provider', 'model'] as $stringField) {
+    if (array_key_exists($stringField, $data)
+        && $data[$stringField] !== null
+        && !is_string($data[$stringField])) {
+        failChatRequest("Invalid $stringField payload", 400, 'invalid_payload');
+    }
+}
+foreach (['sitrecDoc', 'availableDocs'] as $stringMapField) {
+    foreach (($data[$stringMapField] ?? []) as $key => $value) {
+        if (!is_string($key) || !is_string($value)) {
+            failChatRequest("Invalid $stringMapField entry", 400, 'invalid_payload');
+        }
+    }
+}
+foreach (($data['menuSummary'] ?? []) as $menuId => $controls) {
+    if (!is_string($menuId) || !is_array($controls)) {
+        failChatRequest('Invalid menuSummary entry', 400, 'invalid_payload');
+    }
+    foreach ($controls as $control) {
+        if (!is_string($control)) failChatRequest('Invalid menu control', 400, 'invalid_payload');
+    }
+}
+foreach (($data['availableModels'] ?? []) as $availableModel) {
+    if (!is_string($availableModel)) failChatRequest('Invalid availableModels entry', 400, 'invalid_payload');
+}
+foreach (($data['toolResults'] ?? []) as $toolResult) {
+    if (!is_array($toolResult) || !is_string($toolResult['fn'] ?? null)) {
+        failChatRequest('Invalid toolResults entry', 400, 'invalid_payload');
+    }
+}
+
+// Get user info early; the rate limit is consumed immediately before EACH provider call.
+$userInfo = getUserInfo();
 
 // Check if this is a session continuation with tool results
 $toolResults = $data['toolResults'] ?? null;
@@ -143,9 +237,14 @@ if ($continueSession && $toolResults && isset($_SESSION['chatbot_pending'])) {
         $pendingState['menuSummary'],
         $pendingState['available3DModels'],
         $pendingState['availableDocs'] ?? [],
-        $pendingState['remainingIterations']
+        $pendingState['remainingIterations'],
+        // Absent on a session stored by a pre-split deploy: callAnthropic falls back to a
+        // single cached block, so an in-flight continuation survives the upgrade.
+        $pendingState['systemParts'] ?? null,
+        $userInfo,
+        $pendingState['specialistTools'] ?? []
     );
-    
+
     if (!empty($result['apiCalls'])) {
         // Loop guard: if the LLM is re-issuing exactly the same fn+args we just sent it
         // a successful result for, drop the duplicate calls and stop continuing. Without
@@ -180,8 +279,11 @@ if ($continueSession && $toolResults && isset($_SESSION['chatbot_pending'])) {
             $_SESSION['chatbot_pending'] = [
                 'provider' => $pendingState['provider'],
                 'systemPrompt' => $pendingState['systemPrompt'],
+                'systemParts' => $pendingState['systemParts'] ?? null,
+                'logId' => $pendingState['logId'] ?? null,
                 'history' => $result['history'],
-                'tools' => $pendingState['tools'],
+                'tools' => $result['tools'] ?? $pendingState['tools'],
+                'specialistTools' => $result['specialistTools'] ?? ($pendingState['specialistTools'] ?? []),
                 'model' => $pendingState['model'],
                 'menuSummary' => $pendingState['menuSummary'],
                 'available3DModels' => $pendingState['available3DModels'],
@@ -193,11 +295,31 @@ if ($continueSession && $toolResults && isset($_SESSION['chatbot_pending'])) {
     }
     unset($result['history']);
 
+    // A continuation is more provider calls for the SAME user turn, so it reports against
+    // the turn's original log row. Without this the initial request was the only one ever
+    // costed, hiding up to four further round trips per turn.
+    if (!empty($pendingState['logId']) && !empty($result['usage'])) {
+        recordAISpend(
+            $pendingState['logId'],
+            $userInfo['user_id'],
+            $pendingState['provider'],
+            $pendingState['model'],
+            $result['usage']
+        );
+    }
+    unset($result['usage']);
+    if (!empty($result['rateLimited'])) http_response_code(429);
+    unset($result['tools'], $result['specialistTools'], $result['rateLimited']);
+
     $result['debug']['sessionContinued'] = true;
     header('Content-Type: application/json');
     echo json_encode($result);
     exit;
 }
+
+// A new user turn supersedes any abandoned action-only continuation left in the session.
+// The browser intentionally skips that paid confirmation call, so nothing else clears it.
+unset($_SESSION['chatbot_pending']);
 
 // Validate and sanitize prompt
 $prompt = $data['prompt'] ?? '';
@@ -285,25 +407,33 @@ function getHelpDocContent($docName, $availableDocs) {
     return ['content' => $content];
 }
 
-// Log AI request
-if (getenv('SITREC_TRACK_STATS')) {
-    logAIRequest($userInfo['user_id'], $prompt, $requestedModel);
-    require_once __DIR__ . '/stats_history.php';
-    recordDailyStats(['ai_requests' => 1]);
-}
-
-// User info already retrieved above for rate limiting
+// Resolve the requested model before logging so the row records the provider that actually
+// gets billed. Explicit invalid selections fail closed instead of silently spending against
+// a different model. Only an absent selection uses the tier default.
 $aiModels = getAvailableModels($userInfo['user_groups']);
 $selectedProvider = null;
 $selectedModel = null;
 
-if ($requestedProvider && $requestedModel) {
+if (($requestedProvider && !$requestedModel) || (!$requestedProvider && $requestedModel)) {
+    failChatRequest('Both provider and model are required', 400, 'invalid_model');
+}
+
+if ($requestedProvider === 'auto' && $requestedModel === 'economy') {
+    $economy = economyModelFor($aiModels);
+    if ($economy) {
+        $selectedProvider = $economy['provider'];
+        $selectedModel = $economy['model'];
+    }
+} elseif ($requestedProvider && $requestedModel) {
     foreach ($aiModels as $m) {
         if ($m['provider'] === $requestedProvider && $m['model'] === $requestedModel) {
             $selectedProvider = $requestedProvider;
             $selectedModel = $requestedModel;
             break;
         }
+    }
+    if (!$selectedProvider) {
+        failChatRequest('The selected AI model is not available for this account', 403, 'model_not_allowed');
     }
 }
 
@@ -313,10 +443,18 @@ if (!$selectedProvider && !empty($aiModels)) {
     $selectedModel = $aiModels[0]['model'];
 }
 
+// Log that a provider attempt is about to be possible. Deliberately before the provider
+// call, so outages are counted; continuations attach their spend to this same row.
+$aiLogId = null;
+if (getenv('SITREC_TRACK_STATS') && $selectedProvider) {
+    $aiLogId = logAIRequest($userInfo['user_id'], $prompt, $selectedModel, $selectedProvider);
+    recordDailyStats(['ai_requests' => 1]);
+}
+
 // Build tools array from sitrecDoc (OpenAI format, will convert for Anthropic)
 function buildToolsFromDoc($sitrecDoc, $menuSummary) {
     $tools = [];
-    $addedNames = [];
+    $specialistTools = [];
 
     // Menu function names that we'll add manually with better schemas
     $menuFunctions = ['setMenuValue', 'getMenuValue', 'executeMenuButton', 'listMenus', 'listMenuControls'];
@@ -326,6 +464,13 @@ function buildToolsFromDoc($sitrecDoc, $menuSummary) {
     // sending the full doc still can't expose these. Keep in sync with the CSitrecAPI entries
     // tagged llmCallable:false.
     $llmDenied = ['setScriptedVideoScript', 'previewScriptedVideo'];
+    $specialistNames = ['createWalker', 'createSynthBuilding', 'createSynthOverlay', 'createSynthClouds'];
+    $specialistSummaries = [
+        'createWalker' => 'Create an animated object that follows geographic waypoints.',
+        'createSynthBuilding' => 'Create a procedural 3D building.',
+        'createSynthOverlay' => 'Create a georeferenced synthetic ground overlay.',
+        'createSynthClouds' => 'Create a procedural cloud layer.',
+    ];
 
     // Parse sitrecDoc entries to extract function schemas
     foreach ($sitrecDoc as $fn => $desc) {
@@ -392,19 +537,34 @@ function buildToolsFromDoc($sitrecDoc, $menuSummary) {
                 $tool["function"]["parameters"]["required"] = $required;
             }
         }
-        
-        $tools[] = $tool;
+
+        // The "Parameters: ..." tail has now been parsed into JSON Schema properties, each
+        // carrying the same descriptive text. Leaving it in the description as well sends
+        // every parameter's documentation TWICE — measured at 14,478 bytes (~3,620 tokens,
+        // 24% of the whole tool block) across the live tool set. Strip it.
+        //
+        // Note the regex is deliberately looser than the parse regex above: that one uses
+        // (.+) and so never matches the bare "Parameters:" that CSitrecAPI appends to every
+        // no-argument function. (.*) here removes those too.
+        // Mirrored in src/CDirectLLMClient.js buildTools().
+        $tool["function"]["description"] = trim(preg_replace('/\s*Parameters:\s*.*$/is', '', $desc));
+
+        if (in_array($fn, $specialistNames, true)) $specialistTools[$fn] = $tool;
+        else $tools[] = $tool;
     }
     
-    // Build short menu list for tool descriptions (just menu IDs)
-    $menuIds = !empty($menuSummary) ? implode(", ", array_keys($menuSummary)) : "view, camera, satellites, terrain";
-    
-    // Add menu control functions (keep descriptions short - full list is in system prompt)
+    // Add menu control functions (keep descriptions short - full list is in system prompt).
+    //
+    // These descriptions deliberately name NO menus. Tools render before the system prompt,
+    // so anything per-request in a tool description invalidates the cached prefix for the
+    // whole request — and the menu list is per-sitch. The system prompt's menu appendix
+    // already names every menu and control, and listMenus/listMenuControls remain callable,
+    // so nothing is lost. Mirrored in src/CDirectLLMClient.js buildTools().
     $tools[] = [
         "type" => "function",
         "function" => [
             "name" => "setMenuValue",
-            "description" => "Set a menu control's value. Available menus: $menuIds. See system prompt for full control list.",
+            "description" => "Set a menu control's value. Use listMenuControls when you need the exact control path.",
             "parameters" => [
                 "type" => "object",
                 "properties" => [
@@ -483,8 +643,33 @@ function buildToolsFromDoc($sitrecDoc, $menuSummary) {
             ]
         ]
     ];
-    
-    return $tools;
+
+    if (!empty($specialistTools)) {
+        $summaryParts = [];
+        foreach (array_keys($specialistTools) as $name) {
+            $summaryParts[] = "$name: " . $specialistSummaries[$name];
+        }
+        $tools[] = [
+            "type" => "function",
+            "function" => [
+                "name" => "discoverSpecialistTools",
+                "description" => "Load full schemas for uncommon constructors. " . implode(' ', $summaryParts),
+                "parameters" => [
+                    "type" => "object",
+                    "properties" => [
+                        "names" => [
+                            "type" => "array",
+                            "items" => ["type" => "string", "enum" => array_keys($specialistTools)],
+                            "description" => "One or more specialist tool names to enable."
+                        ]
+                    ],
+                    "required" => ["names"]
+                ]
+            ]
+        ];
+    }
+
+    return ['tools' => $tools, 'specialistTools' => $specialistTools];
 }
 
 // Convert OpenAI tools format to Anthropic format
@@ -594,6 +779,9 @@ function callGemini($apiKey, $systemPrompt, $history, $tools, $model = 'gemini-2
     return [
         'text' => trim($text),
         'apiCalls' => $calls,
+        // Provider-reported token counts, normalised to the one shape ai_models.php can
+        // price. runToolLoop sums these across iterations; see recordAISpend.
+        'usage' => normalizeAIUsage($parsed, 'gemini'),
         'debug' => [
             'provider' => 'gemini',
             'model' => $model,
@@ -605,7 +793,9 @@ function callGemini($apiKey, $systemPrompt, $history, $tools, $model = 'gemini-2
     ];
 }
 
-$tools = buildToolsFromDoc($sitrecDoc, $menuSummary);
+$toolSet = buildToolsFromDoc($sitrecDoc, $menuSummary);
+$tools = $toolSet['tools'];
+$specialistTools = $toolSet['specialistTools'];
 
 // ── SINGLE SOURCE OF TRUTH FOR THE SYSTEM PROMPT ─────────────────────────────
 // Every line of prompt prose lives in chatbotSystemPrompt.txt, split into
@@ -663,48 +853,92 @@ function promptSection($name) {
     return $sections[$name];
 }
 
-// Build menu documentation for system prompt (limit size to avoid token limits)
+// List menu IDs only. The previous debugging cap of 9,999 effectively shipped every one
+// of 409 controls (~5,350 tokens) on every call. listMenuControls supplies the exact paths
+// on demand, so the fixed prompt only needs the discovery index.
 $menuDocForPrompt = "";
 if (!empty($menuSummary)) {
     $menuDocForPrompt = "\n\n" . promptSection('menuHeader') . "\n";
-    $totalControls = 0;
-    $maxControls = 9999; // Limit to prevent huge prompts (temporarily high for debugging)
-    
+    $maxMenus = 128;
+    $menuCount = 0;
     foreach ($menuSummary as $menuId => $controls) {
-        if (!empty($controls) && $totalControls < $maxControls) {
-            $menuDocForPrompt .= "\n" . str_replace('{{menuId}}', $menuId, promptSection('menuGroup')) . "\n";
-            foreach ($controls as $control) {
-                if ($totalControls >= $maxControls) {
-                    // Server-only truncation guard — the browser path applies no cap,
-                    // so this line has no counterpart to drift against.
-                    $menuDocForPrompt .= "  - (more controls available - use listMenuControls)\n";
-                    break;
-                }
-                $menuDocForPrompt .= str_replace('{{control}}', $control, promptSection('menuItem')) . "\n";
-                $totalControls++;
-            }
+        if (empty($controls)) continue;
+        if ($menuCount >= $maxMenus) {
+            $menuDocForPrompt .= "  - (more menus available - use listMenus)\n";
+            break;
         }
+        $menuDocForPrompt .= "\n" . str_replace('{{menuId}}', $menuId, promptSection('menuGroup')) . "\n";
+        $menuCount++;
     }
     $menuDocForPrompt .= "\n" . promptSection('menuFooter') . "\n";
 }
 
 // The prompt text itself lives in chatbotSystemPrompt.txt (@@SECTION base),
 // shared verbatim with the browser BYOK path. See promptSection() above.
-$systemPrompt = str_replace('{{simDateTime}}', $simDateTime ?? '', promptSection('base'));
-
-$systemPrompt .= $menuDocForPrompt;
+//
+// ── ASSEMBLED IN STABILITY ORDER, MOST STABLE FIRST ──────────────────────────────────
+// Prompt caching is a prefix match, so the ONLY thing that makes the big prefix cacheable
+// is putting the parts that never change ahead of the parts that do. Three tiers:
+//
+//   $systemStatic   base prose + the help-doc index. Identical for every user on a given
+//                   build, so one cache entry serves everyone.
+//   $systemMenu     the menu appendix. Differs per sitch, but getMenuSummary() reports
+//                   STRUCTURE only (control names, types, ranges) — not values — so it is
+//                   stable across a user's whole session unless a menu appears/disappears.
+//   $systemVolatile the simulation clock, which is the playhead and therefore changes on
+//                   almost every message. Nothing cacheable may sit after it.
+//
+// This ordering is the whole point: simDateTime used to sit on line 8 of the base section,
+// 583 bytes into a ~100 KB prefix, so every turn re-wrote the cache and never read it —
+// which with cache_control set costs 1.25x rather than the 0.1x a hit would cost.
+// Mirror any change here in src/CDirectLLMClient.js buildSystemPromptParts().
+// ─────────────────────────────────────────────────────────────────────────────────────
+$systemStatic = promptSection('base');
 
 if (!empty($availableDocs)) {
-    $systemPrompt .= "\n\n" . promptSection('docsHeader') . "\n";
+    $systemStatic .= "\n\n" . promptSection('docsHeader') . "\n";
     $docsItem = promptSection('docsItem');
     foreach ($availableDocs as $docName => $description) {
-        $systemPrompt .= str_replace(
+        $systemStatic .= str_replace(
             ['{{name}}', '{{description}}'],
             [$docName, $description],
             $docsItem
         ) . "\n";
     }
-    $systemPrompt .= "\n" . promptSection('docsFooter') . "\n";
+    $systemStatic .= "\n" . promptSection('docsFooter') . "\n";
+}
+
+$systemMenu = $menuDocForPrompt;
+
+$systemVolatile = "\n\n" . str_replace('{{simDateTime}}', $simDateTime ?? '', promptSection('simTime')) . "\n";
+
+// The single-string form every non-Anthropic provider takes, and what the session stores.
+// The order still matters for them: OpenAI and Gemini cache a stable prefix automatically,
+// so putting the clock last earns a hit there too even with no explicit breakpoints.
+$systemPrompt = $systemStatic . $systemMenu . $systemVolatile;
+
+// The same text, kept split, so callAnthropic can put a breakpoint at each boundary.
+$systemParts = ['static' => $systemStatic, 'menu' => $systemMenu, 'volatile' => $systemVolatile];
+
+// A capped response that ran out of room mid-answer comes back with finish_reason
+// "length". That is harmless for prose, but NOT for tool calls: the arguments are a JSON
+// string, and a truncated one makes json_decode() return null, which the parsers below
+// turn into an empty args array — so the tool would RUN with its arguments silently
+// missing. Refuse the turn instead. Shared by the three OpenAI-compatible providers.
+function refuseIfTruncatedToolCall($parsed, $provider, $model, $httpCode) {
+    $choice = $parsed['choices'][0] ?? [];
+    if (($choice['finish_reason'] ?? null) !== 'length') return null;
+    if (empty($choice['message']['tool_calls'])) return null;
+    return [
+        'text' => "That answer was cut off before I could finish the action, so I have not run it. Please try a shorter request.",
+        'apiCalls' => [],
+        'debug' => [
+            'provider' => $provider,
+            'model' => $model,
+            'httpCode' => $httpCode,
+            'error' => 'truncated_tool_call',
+        ],
+    ];
 }
 
 // Call OpenAI API
@@ -738,6 +972,18 @@ function callOpenAI($apiKey, $systemPrompt, $history, $tools, $model = 'gpt-5-mi
         $requestBody["reasoning_effort"] = "low";
     }
 
+    // Cap the output. GPT-5 and the o-series REJECT max_tokens with a 400 and require
+    // max_completion_tokens; every model configured in ai_models.php is gpt-5-*, but keep
+    // the same guard the temperature and reasoning_effort rules above use so adding an
+    // older model does not 400 every request. The cap is 2048 rather than the 1024 used
+    // for the other providers because reasoning tokens are billed and counted against it,
+    // so a 1024 ceiling can be consumed by reasoning alone and return empty content.
+    if (preg_match('/^(gpt-5|o\d)/i', $model)) {
+        $requestBody["max_completion_tokens"] = 2048;
+    } else {
+        $requestBody["max_tokens"] = 2048;
+    }
+
     $ch = curl_init("https://api.openai.com/v1/chat/completions");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -766,6 +1012,9 @@ function callOpenAI($apiKey, $systemPrompt, $history, $tools, $model = 'gpt-5-mi
         ];
     }
 
+    $truncated = refuseIfTruncatedToolCall($parsed, 'openai', $model, $httpCode);
+    if ($truncated !== null) return $truncated;
+
     $message = $parsed['choices'][0]['message'] ?? [];
     $text = $message['content'] ?? '';
     $calls = [];
@@ -783,6 +1032,7 @@ function callOpenAI($apiKey, $systemPrompt, $history, $tools, $model = 'gpt-5-mi
     return [
         'text' => trim($text),
         'apiCalls' => $calls,
+        'usage' => normalizeAIUsage($parsed, 'openai'),
         'debug' => [
             'provider' => 'openai',
             'model' => $model,
@@ -799,7 +1049,12 @@ function callOpenAI($apiKey, $systemPrompt, $history, $tools, $model = 'gpt-5-mi
 // Claude Opus 4.5	    claude-opus-4-5-20251101	Most intelligent, higher cost
 
 // Call Anthropic (Claude) API
-function callAnthropic($apiKey, $systemPrompt, $history, $tools, $model = 'claude-haiku-4-5-20251001') {
+// $systemParts is the ['static', 'menu', 'volatile'] split built above, used to place the
+// cache breakpoints at the stability boundaries. It is optional: a continuation request
+// whose session was stored by an older deploy carries only the concatenated $systemPrompt,
+// and passing null there reproduces the previous single-block behavior rather than
+// erroring. See the block-building comment below.
+function callAnthropic($apiKey, $systemPrompt, $history, $tools, $model = 'claude-haiku-4-5-20251001', $systemParts = null) {
     $messages = [];
     foreach ($history as $msg) {
         $role = $msg['role'] === 'bot' ? 'assistant' : 'user';
@@ -823,18 +1078,47 @@ function callAnthropic($apiKey, $systemPrompt, $history, $tools, $model = 'claud
     // in sync — when you change the prompt-caching breakpoints, the system-prompt
     // structure, or the tool loop here, mirror the change there (and update its Jest
     // tests in tests/CDirectLLMClient.test.js), and vice-versa. Both paths now carry
-    // the same two cache_control breakpoints and the same getCurrentDateTime tool /
+    // the same three cache_control breakpoints and the same getCurrentDateTime tool /
     // "no wall-clock time in the prompt" convention — keep them aligned.
     // ──────────────────────────────────────────────────────────────────────────────────
     //
-    // Prompt caching uses up to two prefix breakpoints (max 4 allowed). Caching is a
-    // prefix match over the rendered request, whose block order is tools -> system ->
-    // messages, so a breakpoint caches everything from the start of the prompt up to it.
+    // Prompt caching uses up to three prefix breakpoints here (max 4 allowed). Caching is
+    // a prefix match over the rendered request, whose block order is tools -> system ->
+    // messages, so a breakpoint caches everything from the START of the prompt up to it —
+    // and one byte changing anywhere before a breakpoint invalidates it.
     //
-    // Breakpoint 1 (system block): because tools render before system, this one marker
-    // caches the tools+system prefix together. That prefix is large and byte-identical
-    // across turns, so repeated turns pay ~10% (cache read) instead of full input price.
-    $systemBlocks = [["type" => "text", "text" => $systemPrompt, "cache_control" => ["type" => "ephemeral"]]];
+    // The system prompt is therefore sent as up to three blocks in decreasing stability,
+    // with a breakpoint at each boundary. Anthropic picks the LONGEST prefix that still
+    // matches, so a menu change costs the menu block but still reads the static one:
+    //
+    //   Breakpoint 1 — static (base prose + help-doc index). Tools render before system,
+    //     so this marker caches the whole tools+static prefix, ~21k tokens. It is
+    //     byte-identical for every user on a build, so one entry serves everyone.
+    //   Breakpoint 2 — menu appendix. Per-sitch, but getMenuSummary() reports structure
+    //     and not values, so it holds for a whole session unless a menu appears/disappears.
+    //   (no breakpoint) — the simulation clock. It is the playhead, so it changes on almost
+    //     every message; nothing cacheable may follow it.
+    //
+    // This ordering is load-bearing. The clock used to sit on line 8 of the base prose,
+    // inside the single cached block, which meant the prefix never repeated: every call
+    // paid the 1.25x cache WRITE and never collected a 0.1x read — strictly worse than not
+    // caching at all. Empty blocks are omitted because the API rejects empty text blocks.
+    $systemBlocks = [];
+    if (is_array($systemParts)) {
+        foreach ([$systemParts['static'] ?? '', $systemParts['menu'] ?? ''] as $cacheable) {
+            if (trim($cacheable) !== '') {
+                $systemBlocks[] = ["type" => "text", "text" => $cacheable, "cache_control" => ["type" => "ephemeral"]];
+            }
+        }
+        $volatile = $systemParts['volatile'] ?? '';
+        if (trim($volatile) !== '') {
+            $systemBlocks[] = ["type" => "text", "text" => $volatile];
+        }
+    }
+    // Older session, or a split that produced nothing: fall back to one cached block.
+    if (empty($systemBlocks)) {
+        $systemBlocks = [["type" => "text", "text" => $systemPrompt, "cache_control" => ["type" => "ephemeral"]]];
+    }
 
     // Breakpoint 2 (last message): one user message fans out to up to 5 tool-loop
     // iterations (see runToolLoop maxIterations), and each iteration re-sends the GROWING
@@ -922,6 +1206,7 @@ function callAnthropic($apiKey, $systemPrompt, $history, $tools, $model = 'claud
     return [
         'text' => trim($text),
         'apiCalls' => $calls,
+        'usage' => normalizeAIUsage($parsed, 'anthropic'),
         'debug' => [
             'provider' => 'anthropic',
             'model' => $model,
@@ -929,10 +1214,14 @@ function callAnthropic($apiKey, $systemPrompt, $history, $tools, $model = 'claud
             'toolCallCount' => count($calls),
             'stopReason' => $parsed['stop_reason'] ?? null,
             'httpCode' => $httpCode,
-            // Cache verification: if cacheReadTokens stays 0 across repeated turns, a silent
-            // invalidator is changing the prefix (e.g. the menu-doc system prompt differs
-            // between turns). inputTokens is the UNCACHED remainder only — the full prompt
-            // size is inputTokens + cacheWriteTokens + cacheReadTokens.
+            // Cache verification, and the check to run after touching the system prompt or
+            // the tool schema: if cacheReadTokens stays 0 across repeated turns, a silent
+            // invalidator has crept back into the prefix. The menu doc is no longer a
+            // suspect — it sits in its own block after the first breakpoint — so look for
+            // something per-request that moved AHEAD of one, most likely in the tools array
+            // (which renders first) or in the static system block.
+            // inputTokens is the UNCACHED remainder only — the full prompt size is
+            // inputTokens + cacheWriteTokens + cacheReadTokens.
             'cacheReadTokens' => $parsed['usage']['cache_read_input_tokens'] ?? null,
             'cacheWriteTokens' => $parsed['usage']['cache_creation_input_tokens'] ?? null,
             'inputTokens' => $parsed['usage']['input_tokens'] ?? null,
@@ -969,7 +1258,9 @@ function callGroq($apiKey, $systemPrompt, $history, $tools, $model = 'llama-3.3-
             "messages" => $messages,
             "tools" => $tools,
             "tool_choice" => "auto",
-            "temperature" => 0.2
+            "temperature" => 0.2,
+            // Groq accepts max_tokens as a deprecated alias; use the current name.
+            "max_completion_tokens" => 1024
         ])
     ]);
     
@@ -995,7 +1286,10 @@ function callGroq($apiKey, $systemPrompt, $history, $tools, $model = 'llama-3.3-
             'debug' => ['provider' => 'groq', 'httpCode' => $httpCode, 'error' => $parsed['error']]
         ];
     }
-    
+
+    $truncated = refuseIfTruncatedToolCall($parsed, 'groq', $model, $httpCode);
+    if ($truncated !== null) return $truncated;
+
     $message = $parsed['choices'][0]['message'] ?? [];
     $text = $message['content'] ?? '';
     $calls = [];
@@ -1013,6 +1307,7 @@ function callGroq($apiKey, $systemPrompt, $history, $tools, $model = 'llama-3.3-
     return [
         'text' => trim($text),
         'apiCalls' => $calls,
+        'usage' => normalizeAIUsage($parsed, 'groq'),
         'debug' => [
             'provider' => 'groq',
             'model' => $model,
@@ -1050,7 +1345,9 @@ function callGrok($apiKey, $systemPrompt, $history, $tools, $model = 'grok-4-fas
             "messages" => $messages,
             "tools" => $tools,
             "tool_choice" => "auto",
-            "temperature" => 0.2
+            "temperature" => 0.2,
+            // x.ai's OpenAI-compatible endpoint uses max_tokens, not max_completion_tokens.
+            "max_tokens" => 1024
         ])
     ]);
     
@@ -1076,7 +1373,10 @@ function callGrok($apiKey, $systemPrompt, $history, $tools, $model = 'grok-4-fas
             'debug' => ['provider' => 'grok', 'httpCode' => $httpCode, 'error' => $parsed['error']]
         ];
     }
-    
+
+    $truncated = refuseIfTruncatedToolCall($parsed, 'grok', $model, $httpCode);
+    if ($truncated !== null) return $truncated;
+
     $message = $parsed['choices'][0]['message'] ?? [];
     $text = $message['content'] ?? '';
     $calls = [];
@@ -1094,6 +1394,7 @@ function callGrok($apiKey, $systemPrompt, $history, $tools, $model = 'grok-4-fas
     return [
         'text' => trim($text),
         'apiCalls' => $calls,
+        'usage' => normalizeAIUsage($parsed, 'grok'),
         'debug' => [
             'provider' => 'grok',
             'model' => $model,
@@ -1141,17 +1442,37 @@ function simulateToolCall($fn, $args, $menuSummary, $availableModels, $available
 }
 
 // Tool use loop - allows AI to make multiple tool calls
-function runToolLoop($provider, $apiKey, $systemPrompt, $history, $tools, $model, $menuSummary, $availableModels, $availableDocs = [], $maxIterations = 5) {
+// $systemParts carries the stability split described where it is built; only the Anthropic
+// path uses it (the other providers take a single system string). Null is valid and means
+// "no split available", which callAnthropic handles by falling back to one cached block.
+function runToolLoop($provider, $apiKey, $systemPrompt, $history, $tools, $model, $menuSummary, $availableModels, $availableDocs = [], $maxIterations = 5, $systemParts = null, $userInfo = null, $specialistTools = []) {
     $allApiCalls = [];  // Action calls to send to client
     $debugInfo = [];
     $finalText = '';
     $currentHistory = $history;
+    // Token spend for the WHOLE turn. One user message is up to maxIterations provider
+    // calls here, and up to 15 across continuations, each re-sending the full prompt -
+    // so reporting only the last call's usage would under-report a tool-heavy turn
+    // several-fold. Continuations add to this via the caller.
+    $turnUsage = emptyAIUsage();
+    $rateLimited = false;
+    $requiresContinuation = false;
     
     for ($iteration = 0; $iteration < $maxIterations; $iteration++) {
+        // One limiter unit buys exactly one provider call. This is deliberately independent
+        // of SITREC_TRACK_STATS: disabling analytics must never disable spend protection.
+        $rateLimitResult = consumeProviderRateLimit($userInfo ?? []);
+        if (!$rateLimitResult['allowed']) {
+            $finalText .= ($finalText ? "\n" : '') . $rateLimitResult['error'];
+            $debugInfo['iteration_' . $iteration] = ['error' => 'rate_limited'];
+            $rateLimited = true;
+            break;
+        }
+
         // Call the appropriate provider
         if ($provider === 'anthropic') {
             global $ANTHROPIC_API_KEY;
-            $result = callAnthropic($ANTHROPIC_API_KEY, $systemPrompt, $currentHistory, $tools, $model);
+            $result = callAnthropic($ANTHROPIC_API_KEY, $systemPrompt, $currentHistory, $tools, $model, $systemParts);
         } elseif ($provider === 'groq') {
             global $GROQ_API_KEY;
             $result = callGroq($GROQ_API_KEY, $systemPrompt, $currentHistory, $tools, $model);
@@ -1166,6 +1487,8 @@ function runToolLoop($provider, $apiKey, $systemPrompt, $history, $tools, $model
             $result = callOpenAI($OPENAI_API_KEY, $systemPrompt, $currentHistory, $tools, $model);
         }
         
+        $turnUsage = addAIUsage($turnUsage, $result['usage'] ?? null);
+
         $debugInfo['iteration_' . $iteration] = $result['debug'];
         $debugInfo['iteration_' . $iteration]['toolResults'] = [];
         
@@ -1184,7 +1507,32 @@ function runToolLoop($provider, $apiKey, $systemPrompt, $history, $tools, $model
         $pendingActionCalls = [];
         
         foreach ($result['apiCalls'] as $call) {
-            $simResult = simulateToolCall($call['fn'], $call['args'], $menuSummary, $availableModels, $availableDocs);
+            if ($call['fn'] === 'discoverSpecialistTools') {
+                $requested = $call['args']['names'] ?? [];
+                if (!is_array($requested)) $requested = [];
+                $enabled = [];
+                $unknown = [];
+                $activeNames = array_column(array_column($tools, 'function'), 'name');
+                foreach ($requested as $name) {
+                    if (!is_string($name) || !isset($specialistTools[$name])) {
+                        $unknown[] = $name;
+                        continue;
+                    }
+                    if (!in_array($name, $activeNames, true)) {
+                        $tools[] = $specialistTools[$name];
+                        $activeNames[] = $name;
+                    }
+                    $enabled[] = $name;
+                }
+                $simResult = ['handled' => true, 'result' => [
+                    'success' => empty($unknown) && !empty($enabled),
+                    'enabled' => $enabled,
+                    'unknown' => $unknown,
+                    'available' => array_keys($specialistTools),
+                ]];
+            } else {
+                $simResult = simulateToolCall($call['fn'], $call['args'], $menuSummary, $availableModels, $availableDocs);
+            }
             if ($simResult['handled']) {
                 // Query tool - we can simulate it
                 $handledCalls[] = [
@@ -1203,13 +1551,11 @@ function runToolLoop($provider, $apiKey, $systemPrompt, $history, $tools, $model
             }
         }
         
-        // If we have action calls, return them to client (don't continue loop)
-        if (!empty($pendingActionCalls)) {
-            $allApiCalls = array_merge($allApiCalls, $pendingActionCalls);
-            break;
-        }
-        
-        // If we handled query calls, add results to history and continue loop
+        // Feed locally handled query results into history before deciding whether the
+        // browser must execute actions. A model may issue a query and an action together;
+        // the old order broke immediately on the action and silently discarded the query
+        // result, after which the browser mistook the batch for action-only and skipped the
+        // continuation that the query needed.
         if (!empty($handledCalls)) {
             // Build a response showing tool results
             $toolResultsText = '';
@@ -1222,12 +1568,26 @@ function runToolLoop($provider, $apiKey, $systemPrompt, $history, $tools, $model
             $currentHistory[] = ['role' => 'bot', 'text' => "Calling tools: " . json_encode(array_column($handledCalls, 'fn'))];
             $currentHistory[] = ['role' => 'user', 'text' => "[Tool Results]\n$toolResultsText"];
         }
+
+        // Actions have to run in the browser. If this was a mixed query+action batch, tell
+        // the client that even successful actions must continue so the model can interpret
+        // the query result now stored above.
+        if (!empty($pendingActionCalls)) {
+            $allApiCalls = array_merge($allApiCalls, $pendingActionCalls);
+            $requiresContinuation = !empty($handledCalls);
+            break;
+        }
     }
     
     return [
         'text' => $finalText,
         'apiCalls' => $allApiCalls,
         'history' => $currentHistory,
+        'tools' => $tools,
+        'specialistTools' => $specialistTools,
+        'usage' => $turnUsage,
+        'rateLimited' => $rateLimited,
+        'requiresContinuation' => $requiresContinuation,
         'debug' => array_merge(
             ['provider' => $provider, 'model' => $model, 'iterations' => $iteration + 1],
             count($debugInfo) === 1 ? $debugInfo['iteration_0'] : $debugInfo
@@ -1244,14 +1604,17 @@ if (!$selectedProvider) {
     ];
 } else {
     $apiKey = getApiKeyForProvider($selectedProvider);
-    $result = runToolLoop($selectedProvider, $apiKey, $systemPrompt, $history, $tools, $selectedModel, $menuSummary, $available3DModels, $availableDocs, 5);
+    $result = runToolLoop($selectedProvider, $apiKey, $systemPrompt, $history, $tools, $selectedModel, $menuSummary, $available3DModels, $availableDocs, 5, $systemParts, $userInfo, $specialistTools);
 
     if (!empty($result['apiCalls'])) {
         $_SESSION['chatbot_pending'] = [
             'provider' => $selectedProvider,
             'systemPrompt' => $systemPrompt,
+            'systemParts' => $systemParts,
+            'logId' => $aiLogId,
             'history' => $result['history'],
-            'tools' => $tools,
+            'tools' => $result['tools'],
+            'specialistTools' => $result['specialistTools'],
             'model' => $selectedModel,
             'menuSummary' => $menuSummary,
             'available3DModels' => $available3DModels,
@@ -1262,6 +1625,15 @@ if (!$selectedProvider) {
     }
     unset($result['history']);
 }
+
+if (!empty($result['rateLimited'])) http_response_code(429);
+unset($result['tools'], $result['specialistTools'], $result['rateLimited']);
+
+// What this turn actually cost, from the providers' own reported token counts.
+if ($aiLogId !== null && !empty($result['usage'])) {
+    recordAISpend($aiLogId, $userInfo['user_id'], $selectedProvider, $selectedModel, $result['usage']);
+}
+unset($result['usage']);
 
 header('Content-Type: application/json');
 echo json_encode($result);

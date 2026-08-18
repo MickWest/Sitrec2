@@ -16,7 +16,7 @@ the parts that are still weak.
 - Your keys are stored **only in your own browser**, in IndexedDB, on the machine you typed
   them into. They are **never sent to the Sitrec server**.
 - Each key is sent **only to the provider it belongs to** — your Anthropic key to
-  Anthropic, your Google key to Google, and so on.
+  Anthropic, your OpenRouter key to OpenRouter, your Google key to Google, and so on.
 - Sitrec **never displays a stored key back to you**, not even the last few characters. The
   dialog shows only "Set" or "Not set".
 - Keys are **obscured at rest**, so they are not sitting in the database as readable text.
@@ -30,8 +30,8 @@ the parts that are still weak.
 ## Where the keys are stored
 
 Keys live in your browser's **IndexedDB**, in a database named `SitrecDB`, in the
-`settings` object store, under names prefixed `byok_` — for example `byok_anthropic` or
-`byok_google-maps`.
+`settings` object store, under names prefixed `byok_` — for example `byok_anthropic`,
+`byok_openrouter`, or `byok_google-maps`.
 
 IndexedDB is **origin-scoped**: data saved by `https://www.metabunk.org` can only be read
 by pages served from `https://www.metabunk.org`. Another website cannot read Sitrec's
@@ -111,6 +111,7 @@ Each key goes to exactly one destination — the provider that issued it:
 | Key | Sent to | Purpose |
 |---|---|---|
 | Anthropic | `api.anthropic.com` | Runs the AI assistant on your account |
+| OpenRouter | `openrouter.ai` | Runs OpenAI-family models through OpenRouter on your account |
 | Google | `tile.googleapis.com` | Photorealistic 3D tiles |
 | Cesium Ion | Cesium Ion servers | Terrain and building tilesets |
 | Mapbox / MapTiler | Their tile servers | Map imagery |
@@ -119,6 +120,12 @@ Each key goes to exactly one destination — the provider that issued it:
 These requests go **directly from your browser to the provider**. They do not pass through
 the Sitrec server, which means Sitrec cannot see them — and also means the provider sees
 your browser's IP address rather than Sitrec's.
+
+For OpenRouter, the key itself goes only to OpenRouter, but the request is routed onward to
+the selected upstream model provider. That means the Sitrec system instructions, your chat
+history and current message, tool definitions, and tool results are visible to OpenRouter
+and to that upstream provider. Do not use this route for material you are unwilling to send
+to both services.
 
 Two consequences worth knowing:
 

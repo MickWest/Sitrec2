@@ -4,8 +4,8 @@
 // talk to the LLM API directly — no PHP proxy — when the user has supplied
 // their own key.
 //
-// Currently supports Anthropic only. OpenAI does not support browser CORS;
-// Groq/Grok are untested.
+// Supports Anthropic directly and OpenAI-family models through OpenRouter. OpenAI's own
+// API does not support browser CORS, which is why the aggregator path exists.
 //
 // The module is intentionally pure: no dependencies on sitrec globals,
 // no direct calls to sitrecAPI. The caller injects an executeCall callback
@@ -17,6 +17,7 @@ import {emptyUsage} from './BYOKUsage';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Provider token for "call Anthropic directly with the user's own key". It is
 // deliberately NOT plain "anthropic": the chat model setting is a single
@@ -25,15 +26,34 @@ const ANTHROPIC_VERSION = '2023-06-01';
 // Sitrec account and a stored key keeps their existing server selection — and its
 // billing — untouched, and only pays for their own key when they pick a
 // "(your key)" entry.
-export const BYOK_PROVIDER = 'byok-anthropic';
+export const BYOK_ANTHROPIC_PROVIDER = 'byok-anthropic';
+export const BYOK_OPENROUTER_PROVIDER = 'byok-openrouter';
+// Backward-compatible name used by older imports and saved settings.
+export const BYOK_PROVIDER = BYOK_ANTHROPIC_PROVIDER;
 
-// Models offered in the AI Model dropdown once an Anthropic key is stored. The
-// user is paying for these directly, so the list spans the current price/capability
-// range rather than being capped the way the server's per-tier table is.
+export function keyProviderForBYOK(provider) {
+    if (provider === BYOK_ANTHROPIC_PROVIDER || provider === 'anthropic') return 'anthropic';
+    if (provider === BYOK_OPENROUTER_PROVIDER || provider === 'openrouter') return 'openrouter';
+    return null;
+}
+
+export function isBYOKProvider(provider) {
+    // Only the explicit dropdown tokens mean "bill the user's browser-stored key".
+    // Plain "anthropic" is also accepted by chat() as a transport shorthand in tests and
+    // internal callers, but it is the SERVER provider token in the saved model setting and
+    // must never be rerouted around Sitrec's proxy.
+    return provider === BYOK_ANTHROPIC_PROVIDER || provider === BYOK_OPENROUTER_PROVIDER;
+}
+
+// Models offered in the AI Model dropdown once the corresponding provider key is stored.
+// The user is paying for these directly, so the list spans a price/capability range rather
+// than being capped the way the server's per-tier table is.
 export const BYOK_MODELS = [
-    {provider: BYOK_PROVIDER, model: 'claude-opus-5', label: 'Claude Opus 5 (your key)'},
-    {provider: BYOK_PROVIDER, model: 'claude-sonnet-5', label: 'Claude Sonnet 5 (your key)'},
-    {provider: BYOK_PROVIDER, model: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (your key)'},
+    {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-opus-5', label: 'Claude Opus 5 (your Anthropic key)'},
+    {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-sonnet-5', label: 'Claude Sonnet 5 (your Anthropic key)'},
+    {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (your Anthropic key)'},
+    {provider: BYOK_OPENROUTER_PROVIDER, keyProvider: 'openrouter', model: 'openai/gpt-5-mini', label: 'OpenAI GPT-5 Mini (your OpenRouter key)'},
+    {provider: BYOK_OPENROUTER_PROVIDER, keyProvider: 'openrouter', model: 'openai/gpt-5-nano', label: 'OpenAI GPT-5 Nano (your OpenRouter key)'},
 ];
 
 // ── SINGLE SOURCE OF TRUTH FOR THE SYSTEM PROMPT ─────────────────────────────
@@ -106,6 +126,20 @@ const LLM_DENIED_FUNCTION_NAMES = new Set([
     'setScriptedVideoScript', 'previewScriptedVideo',
 ]);
 
+// These four constructors account for roughly a quarter of the remaining schema but are
+// irrelevant to almost every turn. Keep their full schemas out of the fixed prefix and let
+// the model load the ones it needs through discoverSpecialistTools.
+export const SPECIALIST_TOOL_NAMES = new Set([
+    'createWalker', 'createSynthBuilding', 'createSynthOverlay', 'createSynthClouds',
+]);
+
+const SPECIALIST_TOOL_SUMMARIES = {
+    createWalker: 'Create an animated object that follows geographic waypoints.',
+    createSynthBuilding: 'Create a procedural 3D building.',
+    createSynthOverlay: 'Create a georeferenced synthetic ground overlay.',
+    createSynthClouds: 'Create a procedural cloud layer.',
+};
+
 function inferParamType(desc) {
     const d = desc.toLowerCase();
     if (d.includes('float') || d.includes('number')) return 'number';
@@ -115,8 +149,9 @@ function inferParamType(desc) {
     return 'string';
 }
 
-export function buildTools(sitrecDoc, menuSummary) {
+export function buildToolSet(sitrecDoc, menuSummary) {
     const tools = [];
+    const specialistTools = {};
 
     // 1. Convert each non-menu API entry into an OpenAI function tool.
     for (const [fn, desc] of Object.entries(sitrecDoc || {})) {
@@ -153,19 +188,30 @@ export function buildTools(sitrecDoc, menuSummary) {
             }
         }
 
-        tools.push(tool);
+        // The tail has now been parsed into JSON Schema properties, each carrying the same
+        // text. Leaving it in the description too sends every parameter's documentation
+        // twice — ~24% of the whole tool block, re-sent on every request and every loop
+        // iteration. Note this regex uses (.*) where the parse regex above uses (.+), so it
+        // also removes the bare "Parameters:" that CSitrecAPI appends to no-argument
+        // functions. Mirrors buildToolsFromDoc() in sitrecServer/chatbot.php.
+        tool.function.description = desc.replace(/\s*Parameters:\s*.*$/is, '').trim();
+
+        if (SPECIALIST_TOOL_NAMES.has(fn)) specialistTools[fn] = tool;
+        else tools.push(tool);
     }
 
     // 2. Menu-control tools with curated schemas.
-    const menuIds = menuSummary && Object.keys(menuSummary).length > 0
-        ? Object.keys(menuSummary).join(', ')
-        : 'view, camera, satellites, terrain';
-
+    //
+    // These name NO menus on purpose. Tools render before the system prompt, so anything
+    // per-request in a tool description invalidates the cached prefix for the whole
+    // request — and the menu list is per-sitch. The system prompt's menu appendix already
+    // names every menu and control, and listMenus/listMenuControls remain callable.
+    // Mirrors buildToolsFromDoc() in sitrecServer/chatbot.php.
     tools.push({
         type: 'function',
         function: {
             name: 'setMenuValue',
-            description: `Set a menu control's value. Available menus: ${menuIds}. See system prompt for full control list.`,
+            description: "Set a menu control's value. Use listMenuControls when you need the exact control path.",
             parameters: {
                 type: 'object',
                 properties: {
@@ -249,7 +295,36 @@ export function buildTools(sitrecDoc, menuSummary) {
         },
     });
 
-    return tools;
+    if (Object.keys(specialistTools).length > 0) {
+        const summaries = Object.keys(specialistTools)
+            .map(name => `${name}: ${SPECIALIST_TOOL_SUMMARIES[name]}`)
+            .join(' ');
+        tools.push({
+            type: 'function',
+            function: {
+                name: 'discoverSpecialistTools',
+                description: `Load full schemas for uncommon constructors. ${summaries}`,
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        names: {
+                            type: 'array',
+                            items: {type: 'string', enum: Object.keys(specialistTools)},
+                            description: 'One or more specialist tool names to enable.',
+                        },
+                    },
+                    required: ['names'],
+                },
+            },
+        });
+    }
+
+    return {tools, specialistTools};
+}
+
+// Compatibility helper for callers that do not need the discovery catalog.
+export function buildTools(sitrecDoc, menuSummary) {
+    return buildToolSet(sitrecDoc, menuSummary).tools;
 }
 
 // Ported from chatbot.php:522-532. Converts OpenAI-format tools to Anthropic
@@ -262,38 +337,66 @@ export function convertToolsForAnthropic(tools) {
     }));
 }
 
-export function buildSystemPrompt({ simDateTime, menuSummary, availableDocs }) {
-    // NOTE: the real wall-clock time is deliberately NOT injected here — it would change
-    // the cached prefix every request. The AI fetches it on demand via getCurrentDateTime.
-    // simDateTime stays (it changes infrequently and is core context); when it does change
-    // it invalidates the cache for that turn only.
-    let prompt = fill(section('base'), 'simDateTime', simDateTime || '');
+// The system prompt, split into three tiers of decreasing stability so callAnthropic can
+// put a cache breakpoint at each boundary. Caching is a prefix match, so what makes the
+// ~100 KB prompt cacheable at all is keeping the parts that never change ahead of the
+// parts that do:
+//
+//   static    base prose + the help-doc index. Identical for every user on a build.
+//   menu      the menu appendix. Per-sitch, but getMenuSummary() reports structure and not
+//             values, so it holds for a whole session unless a menu appears/disappears.
+//   volatile  the simulation clock — the playhead, so it changes almost every message.
+//
+// simDateTime used to sit on line 8 of the base prose, inside the cached block, so the
+// prefix never repeated: every call paid the 1.25x cache WRITE and never collected a 0.1x
+// read, which is strictly worse than not caching. This assembly mirrors chatbot.php's.
+export function buildSystemPromptParts({ simDateTime, menuSummary, availableDocs }) {
+    // The real wall-clock time is deliberately NOT injected — the AI fetches it on demand
+    // via getCurrentDateTime, precisely so it cannot churn the prefix. The simulation clock
+    // now gets the same treatment by position rather than by omission.
+    let staticPart = section('base');
 
-    // Menu controls appendix. Only the glue newlines and the loop live here — the
-    // prose is shared, and this assembly mirrors chatbot.php's exactly.
-    if (menuSummary && Object.keys(menuSummary).length > 0) {
-        prompt += '\n\n' + section('menuHeader') + '\n';
-        for (const [menuId, controls] of Object.entries(menuSummary)) {
-            if (!controls || controls.length === 0) continue;
-            prompt += '\n' + fill(section('menuGroup'), 'menuId', menuId) + '\n';
-            for (const control of controls) {
-                prompt += fill(section('menuItem'), 'control', control) + '\n';
-            }
-        }
-        prompt += '\n' + section('menuFooter') + '\n';
-    }
-
-    // Help docs appendix. Same shape as the menu one above.
+    // Help docs appendix. Build-constant, so it belongs in the cached block.
     if (availableDocs && Object.keys(availableDocs).length > 0) {
-        prompt += '\n\n' + section('docsHeader') + '\n';
+        staticPart += '\n\n' + section('docsHeader') + '\n';
         for (const [name, desc] of Object.entries(availableDocs)) {
             // {{name}} appears twice in the template (label and doc link path).
-            prompt += fill(fill(section('docsItem'), 'name', name), 'description', desc) + '\n';
+            staticPart += fill(fill(section('docsItem'), 'name', name), 'description', desc) + '\n';
         }
-        prompt += '\n' + section('docsFooter') + '\n';
+        staticPart += '\n' + section('docsFooter') + '\n';
     }
 
-    return prompt;
+    // Menu appendix. Send IDs only: the live empty sitch had 409 controls / ~5,350 tokens,
+    // while listMenuControls can fetch the one menu a request actually needs. This keeps
+    // discovery possible without charging every unrelated turn for every control.
+    let menuPart = '';
+    if (menuSummary && Object.keys(menuSummary).length > 0) {
+        menuPart += '\n\n' + section('menuHeader') + '\n';
+        let menuCount = 0;
+        for (const [menuId, controls] of Object.entries(menuSummary)) {
+            if (!controls || controls.length === 0) continue;
+            if (menuCount >= 128) {
+                menuPart += '  - (more menus available - use listMenus)\n';
+                break;
+            }
+            menuPart += '\n' + fill(section('menuGroup'), 'menuId', menuId) + '\n';
+            menuCount++;
+        }
+        menuPart += '\n' + section('menuFooter') + '\n';
+    }
+
+    // Always emitted, matching chatbot.php: a null simDateTime renders as an empty value
+    // rather than dropping the sentence, so both paths ship the same prompt shape.
+    const volatilePart = '\n\n' + fill(section('simTime'), 'simDateTime', simDateTime || '') + '\n';
+
+    return { staticPart, menuPart, volatilePart };
+}
+
+// The concatenated form. Kept because it is the shape the tests and any non-Anthropic
+// caller expect; callAnthropic uses the parts directly.
+export function buildSystemPrompt(args) {
+    const { staticPart, menuPart, volatilePart } = buildSystemPromptParts(args);
+    return staticPart + menuPart + volatilePart;
 }
 
 // Convert the chat view's native {role:'user'|'bot', text} history into
@@ -342,7 +445,10 @@ function withCacheBreakpoint(content) {
     return null;
 }
 
-export async function callAnthropic({ apiKey, systemPrompt, messages, tools, model, maxTokens = 1024 }) {
+// systemParts is the {staticPart, menuPart, volatilePart} split from
+// buildSystemPromptParts(). It is optional — callers that only have the concatenated
+// string still work, they just get one cached block, which is the pre-split behavior.
+export async function callAnthropic({ apiKey, systemPrompt, systemParts, messages, tools, model, maxTokens = 1024 }) {
     // ── PARITY WITH THE SERVER PROXY ──────────────────────────────────────────────────
     // This is the browser BYOK sibling of sitrecServer/chatbot.php callAnthropic(). The
     // two MUST stay behaviorally in sync — mirror changes to request shaping, the system
@@ -350,11 +456,19 @@ export async function callAnthropic({ apiKey, systemPrompt, messages, tools, mod
     // across both, and vice-versa.
     // ──────────────────────────────────────────────────────────────────────────────────
     //
-    // Prompt caching (max 4 breakpoints; prefix match over tools -> system -> messages):
-    //   - Breakpoint 1 (system): tools render before system, so one marker on the system
-    //     block caches the whole tools+system prefix. With the wall-clock time no longer in
-    //     the prompt, that prefix is byte-stable across turns, so it caches cross-turn too.
-    //   - Breakpoint 2 (last message): each of the up-to-5 tool-loop iterations re-sends the
+    // Prompt caching (max 4 breakpoints; prefix match over tools -> system -> messages).
+    // A breakpoint caches everything from the START of the request up to it, and one byte
+    // changing anywhere before it invalidates it. Anthropic then picks the longest prefix
+    // that still matches, so splitting by stability means a menu change costs only the menu
+    // block and still reads the static one:
+    //   - Breakpoint 1 (static system block): tools render before system, so this marker
+    //     caches the whole tools+static prefix, ~21k tokens, byte-identical for every user
+    //     on a build.
+    //   - Breakpoint 2 (menu block): per-sitch, but stable for a whole session because
+    //     getMenuSummary() reports control structure, not control values.
+    //   - No breakpoint on the volatile block: it holds the simulation clock, which is the
+    //     playhead and changes almost every message. Nothing cacheable may follow it.
+    //   - Breakpoint 3 (last message): each of the up-to-5 tool-loop iterations re-sends the
     //     growing message history; marking the final message caches that conversation prefix
     //     so later iterations read it at ~0.1x instead of full price.
     // IMPORTANT: chat() reuses `messages` across iterations, so do NOT mutate it — build a
@@ -367,10 +481,26 @@ export async function callAnthropic({ apiKey, systemPrompt, messages, tools, mod
         if (marked) cachedMessages[lastIdx] = { ...cachedMessages[lastIdx], content: marked };
     }
 
+    // Empty text blocks are rejected by the API, so only non-empty tiers are sent.
+    const systemBlocks = [];
+    if (systemParts) {
+        for (const cacheable of [systemParts.staticPart, systemParts.menuPart]) {
+            if (cacheable && cacheable.trim() !== '') {
+                systemBlocks.push({ type: 'text', text: cacheable, cache_control: { type: 'ephemeral' } });
+            }
+        }
+        if (systemParts.volatilePart && systemParts.volatilePart.trim() !== '') {
+            systemBlocks.push({ type: 'text', text: systemParts.volatilePart });
+        }
+    }
+    if (systemBlocks.length === 0) {
+        systemBlocks.push({ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } });
+    }
+
     const body = {
         model,
         max_tokens: maxTokens,
-        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+        system: systemBlocks,
         messages: cachedMessages,
         tools: convertToolsForAnthropic(tools),
     };
@@ -399,94 +529,265 @@ export async function callAnthropic({ apiKey, systemPrompt, messages, tools, mod
     return data;
 }
 
-// Main entry point for BYOK chat. Maintains a provider-native message array
-// with proper tool_use / tool_result blocks. Every executeCall is awaited so
-// tool results are correctly fed back into the next model turn.
-//
-// Returns { text, executedCalls } where:
-//   text — concatenated final assistant text (shown in chat UI)
-//   executedCalls — list of {fn, args, result} for debug display and for the
-//                   caller's sitch-dirty computation
+const MAX_DIRECT_HISTORY_MESSAGES = 10;
+const MAX_DIRECT_MESSAGE_CHARS = 4000;
+const MAX_TOOL_RESULT_CHARS = 60000;
+
+function boundedHistory(history) {
+    return (history || []).slice(-MAX_DIRECT_HISTORY_MESSAGES).map(msg => ({
+        role: msg?.role === 'bot' ? 'bot' : 'user',
+        text: typeof msg?.text === 'string' ? msg.text.slice(0, MAX_DIRECT_MESSAGE_CHARS) : '',
+    })).filter(msg => msg.text.length > 0);
+}
+
+function historyToOpenAIMessages(history) {
+    return boundedHistory(history).map(msg => ({
+        role: msg.role === 'bot' ? 'assistant' : 'user',
+        content: msg.text,
+    }));
+}
+
+function fullSystemPrompt(systemPrompt, systemParts) {
+    if (!systemParts) return systemPrompt || '';
+    return (systemParts.staticPart || '') + (systemParts.menuPart || '') + (systemParts.volatilePart || '');
+}
+
+function serializeToolResult(payload) {
+    let value;
+    try {
+        value = JSON.stringify(payload ?? null);
+    } catch (e) {
+        value = JSON.stringify({success: false, error: `Tool result was not serializable: ${e?.message || e}`});
+    }
+    if (value.length <= MAX_TOOL_RESULT_CHARS) return value;
+    return JSON.stringify({
+        truncated: true,
+        originalCharacters: value.length,
+        preview: value.slice(0, MAX_TOOL_RESULT_CHARS),
+    });
+}
+
+function addOpenRouterUsage(total, raw) {
+    const details = raw?.prompt_tokens_details || {};
+    const cached = Number(details.cached_tokens || 0);
+    const written = Number(details.cache_write_tokens || 0);
+    const prompt = Number(raw?.prompt_tokens ?? raw?.input_tokens ?? 0);
+    total.requests += 1;
+    total.inputTokens += Math.max(0, prompt - cached - written);
+    total.outputTokens += Number(raw?.completion_tokens ?? raw?.output_tokens ?? 0);
+    total.cacheReadTokens += cached;
+    total.cacheWriteTokens += written;
+    if (Number.isFinite(Number(raw?.cost))) total.costUSD += Number(raw.cost);
+}
+
+function enableSpecialistTools(args, specialistTools, activeTools) {
+    const requested = Array.isArray(args?.names) ? args.names : [];
+    const enabled = [];
+    const unknown = [];
+    const activeNames = new Set(activeTools.map(tool => tool.function.name));
+    for (const name of requested) {
+        const tool = specialistTools?.[name];
+        if (!tool) {
+            unknown.push(name);
+            continue;
+        }
+        if (!activeNames.has(name)) {
+            activeTools.push(tool);
+            activeNames.add(name);
+        }
+        enabled.push(name);
+    }
+    return {
+        success: unknown.length === 0 && enabled.length > 0,
+        enabled,
+        unknown,
+        available: Object.keys(specialistTools || {}),
+    };
+}
+
+async function executeOneCall(call, executeCall, specialistTools, activeTools) {
+    if (call.fn === 'discoverSpecialistTools') {
+        return enableSpecialistTools(call.args, specialistTools, activeTools);
+    }
+    try {
+        return await executeCall(call);
+    } catch (e) {
+        return {success: false, error: e?.message || String(e)};
+    }
+}
+
+function canSkipConfirmation(calls, results, needsModelResult) {
+    if (typeof needsModelResult !== 'function' || calls.length === 0) return false;
+    return calls.every((call, index) =>
+        call.fn !== 'discoverSpecialistTools'
+        && !needsModelResult(call.fn)
+        && results[index]?.success !== false
+    );
+}
+
+export async function callOpenRouter({apiKey, systemPrompt, systemParts, messages, tools, model, maxTokens = 2048, sessionId}) {
+    const body = {
+        model,
+        messages: [{role: 'system', content: fullSystemPrompt(systemPrompt, systemParts)}, ...messages],
+        tools,
+        max_completion_tokens: maxTokens,
+        reasoning_effort: 'low',
+    };
+    if (sessionId) body.session_id = sessionId;
+
+    const res = await fetch(OPENROUTER_API_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+            'X-Title': 'Sitrec',
+        },
+        body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+        const msg = data?.error?.message || `HTTP ${res.status}`;
+        const err = new Error(`OpenRouter API error: ${msg}`);
+        err.status = res.status;
+        err.body = data;
+        throw err;
+    }
+    return data;
+}
+
+async function chatAnthropic({apiKey, model, systemPrompt, systemParts, history, userText,
+    tools, specialistTools, executeCall, needsModelResult, maxIterations}) {
+    const messages = [
+        ...historyToAnthropicMessages(boundedHistory(history)),
+        {role: 'user', content: String(userText || '').slice(0, MAX_DIRECT_MESSAGE_CHARS)},
+    ];
+    const activeTools = [...(tools || [])];
+    const final = {text: '', executedCalls: [], usage: emptyUsage()};
+
+    for (let iter = 0; iter < maxIterations; iter++) {
+        const response = await callAnthropic({apiKey, systemPrompt, systemParts, messages, tools: activeTools, model});
+        const u = response.usage || {};
+        final.usage.requests += 1;
+        final.usage.inputTokens += u.input_tokens || 0;
+        final.usage.outputTokens += u.output_tokens || 0;
+        final.usage.cacheReadTokens += u.cache_read_input_tokens || 0;
+        final.usage.cacheWriteTokens += u.cache_creation_input_tokens || 0;
+        const content = Array.isArray(response.content) ? response.content : [];
+        for (const block of content) {
+            if (block.type === 'text' && block.text) final.text += (final.text ? '\n' : '') + block.text;
+        }
+
+        const toolBlocks = content.filter(block => block.type === 'tool_use');
+        if (toolBlocks.length === 0 || response.stop_reason === 'end_turn') break;
+        messages.push({role: 'assistant', content});
+
+        const calls = toolBlocks.map(block => ({fn: block.name, args: block.input || {}}));
+        const results = [];
+        const resultBlocks = [];
+        for (let i = 0; i < calls.length; i++) {
+            const apiResult = await executeOneCall(calls[i], executeCall, specialistTools, activeTools);
+            results.push(apiResult);
+            final.executedCalls.push({...calls[i], result: apiResult});
+            const payload = apiResult?.result !== undefined ? apiResult.result : apiResult;
+            resultBlocks.push({
+                type: 'tool_result',
+                tool_use_id: toolBlocks[i].id,
+                content: serializeToolResult(payload),
+                is_error: apiResult?.success === false,
+            });
+        }
+        if (canSkipConfirmation(calls, results, needsModelResult)) {
+            if (!final.text) final.text = 'Done.';
+            break;
+        }
+        messages.push({role: 'user', content: resultBlocks});
+    }
+    return final;
+}
+
+async function chatOpenRouter({apiKey, model, systemPrompt, systemParts, history, userText,
+    tools, specialistTools, executeCall, needsModelResult, maxIterations, sessionId}) {
+    const messages = [
+        ...historyToOpenAIMessages(history),
+        {role: 'user', content: String(userText || '').slice(0, MAX_DIRECT_MESSAGE_CHARS)},
+    ];
+    const activeTools = [...(tools || [])];
+    const final = {text: '', executedCalls: [], usage: emptyUsage()};
+
+    for (let iter = 0; iter < maxIterations; iter++) {
+        const response = await callOpenRouter({
+            apiKey, systemPrompt, systemParts, messages, tools: activeTools, model, sessionId,
+        });
+        addOpenRouterUsage(final.usage, response.usage || {});
+        const choice = response.choices?.[0] || {};
+        const message = choice.message || {};
+        if (typeof message.content === 'string' && message.content) {
+            final.text += (final.text ? '\n' : '') + message.content;
+        }
+        const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+        if (toolCalls.length === 0) break;
+        if (choice.finish_reason === 'length') {
+            final.text += (final.text ? '\n' : '')
+                + 'That answer was cut off before I could finish the action, so I have not run it.';
+            break;
+        }
+        messages.push({role: 'assistant', content: message.content || null, tool_calls: toolCalls});
+
+        const calls = toolCalls.map(toolCall => {
+            let args = {};
+            try { args = JSON.parse(toolCall.function?.arguments || '{}'); } catch (e) {
+                args = {__parseError: e?.message || String(e)};
+            }
+            return {fn: toolCall.function?.name, args};
+        });
+        const results = [];
+        for (let i = 0; i < calls.length; i++) {
+            const call = calls[i];
+            const invalidArgs = call.args?.__parseError;
+            const apiResult = invalidArgs
+                ? {success: false, error: `Invalid tool arguments: ${invalidArgs}`}
+                : await executeOneCall(call, executeCall, specialistTools, activeTools);
+            results.push(apiResult);
+            final.executedCalls.push({...call, result: apiResult});
+            const payload = apiResult?.result !== undefined ? apiResult.result : apiResult;
+            messages.push({
+                role: 'tool',
+                tool_call_id: toolCalls[i].id,
+                content: serializeToolResult(payload),
+            });
+        }
+        if (canSkipConfirmation(calls, results, needsModelResult)) {
+            if (!final.text) final.text = 'Done.';
+            break;
+        }
+    }
+    return final;
+}
+
+// Main entry point for BYOK chat. Both transports expose one provider-independent result:
+// {text, executedCalls, usage}. Tool calls are always awaited before another model call.
 export async function chat({
     apiKey,
     provider,
     model,
     systemPrompt,
+    systemParts,
     history,
     userText,
     tools,
+    specialistTools = {},
     executeCall,
+    needsModelResult,
+    sessionId,
     maxIterations = 5,
 }) {
-    // Accept both the bare provider name and the BYOK dropdown token, so callers can
-    // pass through whatever was stored in Globals.settings.chatModel unchanged.
-    if (provider !== 'anthropic' && provider !== BYOK_PROVIDER) {
-        throw new Error(`BYOK provider '${provider}' not supported. Only Anthropic is currently supported.`);
-    }
+    const keyProvider = keyProviderForBYOK(provider);
+    if (!keyProvider) throw new Error(`BYOK provider '${provider}' not supported.`);
     if (!apiKey) throw new Error('API key missing');
     if (!model) throw new Error('Model missing');
     if (typeof executeCall !== 'function') throw new Error('executeCall callback missing');
 
-    const priorMessages = historyToAnthropicMessages(history);
-    const messages = [
-        ...priorMessages,
-        { role: 'user', content: userText },
-    ];
-
-    let finalText = '';
-    const executedCalls = [];
-    // Accumulated across every iteration of the tool loop — one user turn can be up to
-    // maxIterations round trips, and the user is paying for all of them, so reporting
-    // only the last response's usage would understate a tool-heavy turn several-fold.
-    const usage = emptyUsage();
-
-    for (let iter = 0; iter < maxIterations; iter++) {
-        const response = await callAnthropic({ apiKey, systemPrompt, messages, tools, model });
-        const u = response.usage || {};
-        usage.requests += 1;
-        usage.inputTokens += u.input_tokens || 0;
-        usage.outputTokens += u.output_tokens || 0;
-        usage.cacheReadTokens += u.cache_read_input_tokens || 0;
-        usage.cacheWriteTokens += u.cache_creation_input_tokens || 0;
-        const content = Array.isArray(response.content) ? response.content : [];
-
-        for (const block of content) {
-            if (block.type === 'text' && block.text) {
-                finalText += (finalText ? '\n' : '') + block.text;
-            }
-        }
-
-        const toolUseBlocks = content.filter(b => b.type === 'tool_use');
-        if (toolUseBlocks.length === 0 || response.stop_reason === 'end_turn') {
-            break;
-        }
-
-        // Echo the full assistant content back (preserving tool_use ids so the
-        // subsequent tool_result blocks can reference them).
-        messages.push({ role: 'assistant', content });
-
-        const resultBlocks = [];
-        for (const block of toolUseBlocks) {
-            const call = { fn: block.name, args: block.input || {} };
-            let apiResult;
-            try {
-                apiResult = await executeCall(call);
-            } catch (e) {
-                apiResult = { success: false, error: e?.message || String(e) };
-            }
-            executedCalls.push({ fn: call.fn, args: call.args, result: apiResult });
-
-            const payload = apiResult?.result !== undefined ? apiResult.result : apiResult;
-            resultBlocks.push({
-                type: 'tool_result',
-                tool_use_id: block.id,
-                content: JSON.stringify(payload ?? null),
-                is_error: apiResult?.success === false,
-            });
-        }
-
-        messages.push({ role: 'user', content: resultBlocks });
-    }
-
-    return { text: finalText, executedCalls, usage };
+    const args = {apiKey, model, systemPrompt, systemParts, history, userText, tools,
+        specialistTools, executeCall, needsModelResult, maxIterations, sessionId};
+    return keyProvider === 'openrouter' ? chatOpenRouter(args) : chatAnthropic(args);
 }

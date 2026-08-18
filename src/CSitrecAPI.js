@@ -168,6 +168,46 @@ export const CHAT_READ_ONLY_CALLS = new Set(
     [...TRANSIENT_CALLS].filter(fn => fn !== "getShareLink")
 );
 
+// Calls whose return value has information the model must read before it can answer the
+// user. This is deliberately separate from both TRANSIENT_CALLS (serialization) and
+// CHAT_READ_ONLY_CALLS (prompt-injection security): play, gotoLLA and pointCamera... are
+// safe/transient ACTIONS, so paying for another provider turn merely to say "Done" wastes
+// money. Conversely getShareLink changes nothing locally but its returned URL must reach
+// the model. Keep this explicit so additions are auditable rather than guessed from a name.
+export const CHAT_MODEL_RESULT_CALLS = new Set([
+    "getGroundAltitude",
+    "pickWorldPoint",
+    "fitPointsStatus",
+    "fitPointsSolve",
+    "getCameraLLA",
+    "getCurrentDateTime",
+    "getFrame",
+    "getCurrentSimTime",
+    "getRealTime",
+    "listCelestialObjects",
+    "listSynthElements",
+    "getSynthElement",
+    "findSatellite",
+    "getMenuValue",
+    "listMenus",
+    "listMenuControls",
+    "listObjectFolders",
+    "listAvailableModels",
+    "listAvailableGeometries",
+    "listViews",
+    "listLayoutTemplates",
+    "listTracks",
+    "getTrackPosition",
+    "listLoadedFiles",
+    "getNotes",
+    "getShareLink",
+    "listSitches",
+    "getSitchState",
+    "exportSitchState",
+    "getNearbyWeatherBalloons",
+    "compareSondeTrajectory",
+]);
+
 class CSitrecAPI {
     constructor() {
 
@@ -3931,6 +3971,13 @@ class CSitrecAPI {
         const transientCalls = TRANSIENT_CALLS;
 
         return !transientCalls.has(call.fn);
+    }
+
+    // A pure action batch that fully succeeds can be acknowledged locally; a query/result
+    // call must go back to the model so it can use the returned value.
+    callNeedsModelResult(callOrName) {
+        const name = typeof callOrName === "string" ? callOrName : callOrName?.fn;
+        return Boolean(name) && CHAT_MODEL_RESULT_CALLS.has(name);
     }
 
     call(fn, args = {}) {
