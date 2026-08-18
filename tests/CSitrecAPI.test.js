@@ -39,6 +39,7 @@ jest.mock('../src/Globals', () => {
 
     mockGlobalsState = {
         sitchDirty: false,
+        errorDialogSinks: new Set(),
     };
 
     mockSit = {};
@@ -132,12 +133,16 @@ import {sitrecAPI} from '../src/CSitrecAPI.js';
 beforeEach(() => {
     jest.clearAllMocks();
     Object.keys(mockSit).forEach((key) => delete mockSit[key]);
+    // errorDialogSinks survives alongside sitchDirty: the real Globals creates it once
+    // at module load and nothing ever removes it, so deleting it here would only make
+    // the harness diverge from production. Emptied rather than dropped.
     Object.keys(mockGlobalsState).forEach((key) => {
-        if (key !== 'sitchDirty') {
+        if (key !== 'sitchDirty' && key !== 'errorDialogSinks') {
             delete mockGlobalsState[key];
         }
     });
     mockGlobalsState.sitchDirty = false;
+    mockGlobalsState.errorDialogSinks.clear();
     mockCustomManager.customLink = null;
     mockCustomManager.getCustomSitchString.mockImplementation(() => JSON.stringify({name: 'Serialized'}));
     mockFileManager.userSaves = undefined;
@@ -784,45 +789,51 @@ describe('createWalker input validation (before any destructive teardown)', () =
 // data rather than the user as a modal. These cover both halves: nothing pops a
 // dialog on an agent path, and what comes back is enough to retry with.
 describe('CSitrecAPI agent-sourced error routing', () => {
+    // What showError does when any agent call is in flight.
+    function raiseDialog(text) {
+        for (const sink of mockGlobalsState.errorDialogSinks) sink.push(text);
+    }
+
     afterEach(() => {
         delete sitrecAPI.api.__probe;
         delete sitrecAPI.api.__inner;
         delete sitrecAPI.api.__outer;
-        mockGlobalsState.errorDialogCapture = null;
+        delete sitrecAPI.api.__a;
+        delete sitrecAPI.api.__b;
     });
 
     test.each(['chat', 'mcp'])('a %s call diverts error dialogs into the result', async (source) => {
-        let hookDuringCall;
+        let armedDuringCall;
         sitrecAPI.api.__probe = {fn: () => {
-            hookDuringCall = mockGlobalsState.errorDialogCapture;
-            hookDuringCall.push('Annotate is not available here');
+            armedDuringCall = mockGlobalsState.errorDialogSinks.size;
+            raiseDialog('Annotate is not available here');
             return {success: false, error: 'no such control'};
         }};
 
         const r = await sitrecAPI.handleAPICall({fn: '__probe', args: {}}, source);
 
-        expect(Array.isArray(hookDuringCall)).toBe(true);
+        expect(armedDuringCall).toBe(1);
         expect(r.success).toBe(false);                       // not buried under success:true
         expect(r.error).toBe('no such control');
         expect(r.errorDialogs).toEqual(['Annotate is not available here']);
-        expect(mockGlobalsState.errorDialogCapture).toBeFalsy();   // hook released again
+        expect(mockGlobalsState.errorDialogSinks.size).toBe(0);    // released again
     });
 
     test('a ui call leaves the hook clear, so a person still gets the dialog', async () => {
-        let hookDuringCall = 'unset';
+        let armedDuringCall = -1;
         sitrecAPI.api.__probe = {fn: () => {
-            hookDuringCall = mockGlobalsState.errorDialogCapture;
+            armedDuringCall = mockGlobalsState.errorDialogSinks.size;
             return {success: true};
         }};
 
         await sitrecAPI.handleAPICall({fn: '__probe', args: {}}, 'ui');
 
-        expect(hookDuringCall).toBeFalsy();
+        expect(armedDuringCall).toBe(0);
     });
 
     test('a call nested inside an agent call is agent-driven too, and bubbles up', async () => {
         sitrecAPI.api.__inner = {fn: () => {
-            mockGlobalsState.errorDialogCapture.push('inner could not do that');
+            raiseDialog('inner could not do that');
             return {success: true};
         }};
         // "ui" on purpose: re-entry through call() must not re-expose the dialog.
@@ -834,7 +845,36 @@ describe('CSitrecAPI agent-sourced error routing', () => {
         const r = await sitrecAPI.handleAPICall({fn: '__outer', args: {}}, 'chat');
 
         expect(r.errorDialogs).toEqual(['inner could not do that']);
-        expect(mockGlobalsState.errorDialogCapture).toBeFalsy();
+        expect(mockGlobalsState.errorDialogSinks.size).toBe(0);
+    });
+
+    test('one agent call finishing does not disarm another still running', async () => {
+        // The two calls interleave and finish out of order, which is what the MCP bridge
+        // does: it answers each request independently rather than queueing them. Saving
+        // and restoring a single global here disarmed the hook the moment the FIRST call
+        // returned - so the second call's dialogs hit the screen, and the restore then
+        // left the hook pointing at a dead array, silently eating every later error the
+        // user was meant to see.
+        let finishA, finishB;
+        sitrecAPI.api.__a = {fn: () => new Promise(resolve => { finishA = resolve; })};
+        sitrecAPI.api.__b = {fn: () => new Promise(resolve => { finishB = resolve; })};
+
+        const a = sitrecAPI.handleAPICall({fn: '__a', args: {}}, 'mcp');
+        const b = sitrecAPI.handleAPICall({fn: '__b', args: {}}, 'mcp');
+        expect(mockGlobalsState.errorDialogSinks.size).toBe(2);
+
+        finishA({success: true});
+        await a;
+
+        // B is still in flight, so its dialogs must still be captured, not shown
+        expect(mockGlobalsState.errorDialogSinks.size).toBe(1);
+        raiseDialog('raised while B was still running');
+
+        finishB({success: true});
+        expect((await b).errorDialogs).toEqual(['raised while B was still running']);
+
+        // and nothing is left armed to swallow a dialog the user should get
+        expect(mockGlobalsState.errorDialogSinks.size).toBe(0);
     });
 
     test('an invented function name comes back with the real ones', async () => {

@@ -8,12 +8,17 @@ export function incrementMainLoopCount() {
 };
 
 export const Globals = {
-    // When non-null, showError() pushes its text here and shows no dialog. Set by
-    // CSitrecAPI.handleAPICall for the duration of an AI agent's call (the in-app
-    // chatbot, or an external agent over the SitrecBridge MCP extension), so a
-    // failure comes back to the agent as correctable data instead of stopping the
-    // user with a modal about a call they did not make.
-    errorDialogCapture: null,
+    // Arrays collecting error text on behalf of AI agent calls that are in flight —
+    // the in-app chatbot, or an external agent over the SitrecBridge MCP extension.
+    // While the set is non-empty, showError() appends to every member and shows no
+    // dialog, so a failure comes back to the agent as correctable data instead of
+    // stopping the user with a modal about a call they did not make.
+    //
+    // A SET, not a single slot: several agent calls can be in flight at once, and one
+    // finishing must not disarm the others. CSitrecAPI.handleAPICall adds its array on
+    // entry and removes that same array on exit, so the bookkeeping is membership and
+    // never depends on the order calls happen to finish in.
+    errorDialogSinks: new Set(),
 
     // V5 shadows: true when at least one CNodeView3D has effective shadows on.
     // Read by load-model handlers, terrain construction, and the per-frame

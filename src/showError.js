@@ -9,7 +9,7 @@ import {Globals} from "./Globals";
  *        concatenate extra text into `message` instead.
  * @param {Error} [error] - The Error whose stack to append
  * @returns {boolean} true if a dialog was put on screen, false if the text was
- *        routed to a waiting AI agent instead (see Globals.errorDialogCapture).
+ *        routed to waiting AI agent calls instead (see Globals.errorDialogSinks).
  */
 export function showError(message, error=null) {
 
@@ -25,8 +25,12 @@ export function showError(message, error=null) {
     // cannot read it, and the user did not ask for this call and cannot act on it.
     // Hand it to the waiting caller (CSitrecAPI.handleAPICall) so it goes back to the
     // agent as data it can correct against, and let the agent retry properly.
-    if (Globals.errorDialogCapture) {
-        Globals.errorDialogCapture.push(error?.stack ? message + '\n' + error.stack : message);
+    // Every in-flight agent call gets the text. On a single-threaded event loop there is
+    // no way to tell which one a dialog raised deep in a handler belongs to, so all of
+    // them see it rather than one being picked arbitrarily and the rest told nothing.
+    if (Globals.errorDialogSinks?.size > 0) {
+        const text = error?.stack ? message + '\n' + error.stack : message;
+        for (const sink of Globals.errorDialogSinks) sink.push(text);
         console.error("showError (returned to agent): " + message);
         return false;
     }

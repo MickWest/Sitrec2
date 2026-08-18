@@ -173,11 +173,6 @@ class CSitrecAPI {
 
         this.debug = isLocal;
 
-        // >0 while an AI agent's call is on the stack. A nested call (a deserialize
-        // that re-enters the API, say) inherits it: it is still agent-driven, so its
-        // error dialogs stay suppressed and get reported back up too.
-        this._agentCallDepth = 0;
-
         this.docs = {
             gotoLLA: "Move the camera to the location specified by Lat/Lon/Alt (Alt optional, defaults to 0). Parameters: lat (float), lon (float), alt (float, optional).",
             setDateTime: "Set the date and time for the simulation. Parameter: dateTime (ISO 8601 string).",
@@ -3793,7 +3788,7 @@ class CSitrecAPI {
     // detail for it to fix the call and retry: near-miss suggestions for a bad name, the
     // parameter list for a throw. No agent failure raises a dialog: showError is redirected
     // into `captured` for the duration of the call, and whatever it collected comes back in
-    // the result. See AGENT_SOURCES above and Globals.errorDialogCapture.
+    // the result. See AGENT_SOURCES above and Globals.errorDialogSinks.
     async handleAPICall(call, source = "ui") {
         console.log("Handling API call:", call);
         const apiFn = this.api[call.fn];
@@ -3817,13 +3812,19 @@ class CSitrecAPI {
             if (denied) return denied;
         }
 
-        const agent = AGENT_SOURCES.has(source) || this._agentCallDepth > 0;
+        // A live sink added to a set, not a global slot saved and restored around the
+        // call. Agent calls overlap in practice — the MCP bridge answers each request
+        // independently, and a chat turn can be in flight beside one — and with
+        // save/restore whichever finished first put ITS value back, disarming the hook
+        // while another call was still running and then leaving it pointing at a dead
+        // array for the rest of the session, silently eating every dialog the user was
+        // owed. Membership carries no such ordering assumption.
+        //
+        // A non-empty set also means an already-agent-driven context, so a nested call
+        // stays captured whatever source it claims.
+        const agent = AGENT_SOURCES.has(source) || Globals.errorDialogSinks.size > 0;
         const captured = [];
-        const outerCapture = Globals.errorDialogCapture;
-        if (agent) {
-            this._agentCallDepth++;
-            Globals.errorDialogCapture = captured;
-        }
+        if (agent) Globals.errorDialogSinks.add(captured);
         try {
             const args = this._coerceArgs(call.args, apiFn.params);
             const result = await apiFn.fn(args);
@@ -3848,13 +3849,9 @@ class CSitrecAPI {
             if (captured.length) out.errorDialogs = captured;
             return out;
         } finally {
-            if (agent) {
-                this._agentCallDepth--;
-                Globals.errorDialogCapture = outerCapture;
-                // Bubble a nested call's dialogs up, so the outermost agent call reports
-                // everything raised underneath it rather than only its own level.
-                if (outerCapture) outerCapture.push(...captured);
-            }
+            // Removes exactly this call's array. Any other call still running keeps its
+            // own, and showError has already given each of them a copy of the text.
+            if (agent) Globals.errorDialogSinks.delete(captured);
         }
     }
 
