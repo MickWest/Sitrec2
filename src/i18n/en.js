@@ -1834,8 +1834,8 @@ const en = {
             tooltip: "Reset manual tracking to an empty state, removing all keyframes and draggable items",
         },
         limitAB: {
-            label: "Limit AB",
-            tooltip: "Limit the A and B frames to the range of the video tracking keyframes. This will prevent extrapolation beyond the first and last keyframes, which is not always desired.",
+            label: "Limit In/Out to Tracked Range",
+            tooltip: "Set the In/Out (A-B) range to the span of the tracking keyframes, plus a 10% margin at each end. This keeps playback and analysis near the frames you actually tracked, instead of running over the whole clip where the curve is only extrapolated. Turn it off to restore the full clip.",
         },
         curveType: {
             label: "Curve Type",
@@ -1848,6 +1848,25 @@ const en = {
         minimizeAirSpeed: {
             label: "Minimize Air Speed",
             tooltip: "Find the Tgt Start Dist that minimizes the air distance traveled (accounting for target wind)",
+        },
+        usePointB: {
+            label: "Use Size Point",
+            tooltip: "Add a second point to each keyframe, 20 pixels away to start with. Drag it to the far side of the object, so the pair spans a known real-world length. The angle the two points subtend then gives the range.\n\nWhere the two overlap, hold shift to drag the size point rather than the tracked point.",
+        },
+        abSize: {
+            tooltip: "The real-world distance between the tracked point and the size point on the object.\n\nAssumes that line is side-on to the camera. A line angled away from the camera looks shorter than it is, which reads as a longer range and so a higher speed.",
+        },
+        sizeRange: {
+            label: "Size Range",
+            tooltip: "Distance to the tracked point at each keyframe where a size point has been placed, derived from the angle the two points subtend and the Assumed Size.",
+        },
+        sizeSpeed: {
+            label: "Size Speed",
+            tooltip: "Speed between the first and last measured keyframes, from their size-derived positions. Needs a size point placed on at least two keyframes.\n\nThis is a straight first-to-last average, and it does not use the Perspective curve fit.",
+        },
+        setStartDistanceFromSize: {
+            label: "Set Start Dist from Size",
+            tooltip: "Set Tgt Start Dist to the size-derived range at the first measured keyframe.\n\nIn Perspective mode this is all the calibration needed: the three keyframe positions already fix every depth ratio, leaving the start distance as the only free parameter.",
         },
     },
 
@@ -2372,6 +2391,7 @@ const en = {
         videoHue: "Hue Shift",
         videoInvert: "Invert",
         videoSaturate: "Saturation",
+        abSize: "Assumed Size",
         startDistanceGUI: "Start Distance",
         targetVCGUI: "Target Vert. Speed",
         targetSpeedGUI: "Target Speed",
