@@ -729,6 +729,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }).name(t("nightSky.flareRegionLook.label")).tooltip(t("nightSky.flareRegionLook.tooltip"));
         this.addSimpleSerial("showFlareRegionLook");
 
+        // Show > Celestial > Label List. Empty (the default) is a no-op and everything
+        // is labelled as before. Otherwise ONLY labels whose name matches one of the
+        // comma-separated entries are drawn - stars, planets, the Sun and Moon, and
+        // satellites alike. The GUI row is added in addNightSky(), after the per-view
+        // "Star Names" rows it filters, so it sits with them at the foot of the folder.
+        this.labelList = "";
+        this.addSimpleSerial("labelList")
 
         this.updateVis()
 
@@ -822,6 +829,46 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         });
 
 //        console.log("Done with CNodeDisplayNightSky constructor")
+    }
+
+    // The Label List parsed into a set of uppercase prefixes, or null when the box is
+    // empty (= label everything). Parsed lazily and cached against the source string:
+    // deserializing a saved sitch assigns labelList directly, without going through the
+    // GUI onChange, so there is no single place to invalidate from.
+    //
+    // The typed text is NOT rewritten on the way in. Turning "STARLINK-1" into a bare
+    // "SL-1" to meet the abbreviated satellite labels would also match the unrelated
+    // "SL-16 R/B" Zenit rocket bodies that appear in mixed catalogues (there is one in
+    // data/ariel). The STARLINK/SL equivalence belongs on the satellite side instead -
+    // see satelliteLabelNames() in CNodeDisplaySkyOverlay.
+    get labelListPrefixes() {
+        if (this._labelListSource !== this.labelList) {
+            this._labelListSource = this.labelList;
+            const prefixes = [];
+            for (const entry of (this.labelList ?? "").split(",")) {
+                const prefix = entry.trim().toUpperCase();
+                if (prefix !== "") prefixes.push(prefix);
+            }
+            this._labelListPrefixes = prefixes.length > 0 ? prefixes : null;
+        }
+        return this._labelListPrefixes;
+    }
+
+    // Case-insensitive prefix match, the same rule the satellite "List" filter uses, so
+    // "sl-30" catches every SL-30xx and "polaris" catches Polaris. Callers that run this
+    // in a hot loop should test labelListPrefixes first and skip the call when it is null.
+    labelPasses(name) {
+        const prefixes = this.labelListPrefixes;
+        if (prefixes === null) return true;
+        const upper = name.toUpperCase();
+        return prefixes.some(prefix => upper.startsWith(prefix));
+    }
+
+    // Some things answer to more than one name - a satellite to its catalog name and to
+    // the abbreviated form its label is drawn with. Any one of them matching is a match.
+    labelPassesAny(names) {
+        if (this.labelListPrefixes === null) return true;
+        return names.some(name => this.labelPasses(name));
     }
 
     // See updateArrow
@@ -1804,6 +1851,15 @@ export function addNightSky(def) {
             });
         }
     })
+
+    // Added here rather than in the constructor so it lands BELOW the per-view
+    // "Star Names" / "Only Label Planets" rows the overlays just added, which are
+    // the toggles it further filters.
+    nightSky.celestialGUI.add(nightSky, "labelList")
+        .listen()
+        .onChange(() => setRenderOne(true))
+        .name(t("nightSky.labelList.label"))
+        .tooltip(t("nightSky.labelList.tooltip"));
 
     // Atmospheric optics (halos, arcs, sun dogs) drawn on the daytime sky,
     // centered on the Sun. Created alongside the night sky so GlobalSunSkyScene

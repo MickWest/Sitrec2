@@ -12,6 +12,31 @@ import {getHUDColor} from "../HUDColor";
 import {viewControlLabel, viewMenuKey} from "../ViewUIBarMenus";
 import {renderedRect, withDisplayedCamera} from "../ViewUtils";
 
+// The text a satellite label is drawn with. Cached on the record because the Label List
+// filter needs it for every visible satellite, every frame, and satData runs to ~11,000
+// entries. Safe to cache: loading a new TLE/OMM file builds fresh satData objects.
+function satelliteLabelText(sat) {
+    if (sat.labelText === undefined) {
+        sat.labelText = sat.name.replace("0 STARLINK", "SL").replace("STARLINK", "SL").replace(/\s+$/, '');
+    }
+    return sat.labelText;
+}
+
+// The names a satellite answers to in the Label List: the text drawn on screen, plus the
+// catalog name behind it with any TLE line-0 marker stripped. Keeping the STARLINK/SL
+// equivalence HERE, on the satellite, is what lets "STARLINK-1234" find a label reading
+// "SL-1234" without the filter having to invent a broader "SL-" prefix - which would also
+// catch the unrelated "SL-16 R/B" Zenit rocket bodies in mixed catalogues. Cached for the
+// same reason as labelText.
+function satelliteLabelNames(sat) {
+    if (sat.labelNames === undefined) {
+        const catalogName = sat.name.replace(/^0\s+/, '').replace(/\s+$/, '');
+        const labelText = satelliteLabelText(sat);
+        sat.labelNames = catalogName === labelText ? [labelText] : [labelText, catalogName];
+    }
+    return sat.labelNames;
+}
+
 const registeredLabels = new Set();
 
 export function registerLabel3D(label) {
@@ -181,12 +206,21 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
     renderStarNames(camera, earthSphere, actualCameraPosition, date, starAlpha = 1) {
         const alphaHex = Math.floor(starAlpha * 255).toString(16).padStart(2, '0');
 
+        // Show > Celestial > Label List. Hoisted out of the loops: null means the box is
+        // empty, which is the usual case and then costs one comparison per label.
+        const labelList = this.nightSky.labelListPrefixes;
+
         if (!this.onlyLabelPlanets) {
             this.ctx.fillStyle = "#ffffff" + alphaHex;
             const refractApplies = refractionUniforms.uRefractionEnabled.value > 0.5;
             const refractOpts = refractApplies ? refractionOptsFromUniforms() : null;
             for (var HR in this.nightSky.starField.commonNames) {
                 const n = HR - 1
+
+                const starName = this.nightSky.starField.commonNames[HR]
+                if (labelList && !this.nightSky.labelPasses(starName)) {
+                    continue
+                }
 
                 const mag = this.nightSky.starField.getStarMagnitude(n)
                 if (mag > Sit.starLimit) {
@@ -219,12 +253,14 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
                 if (pos.z > -1 && pos.z < 1 && pos.x >= -1 && pos.x <= 1 && pos.y >= -1 && pos.y <= 1) {
                     const [x, y] = this.labelXY(pos);
-                    this.ctx.fillText(this.nightSky.starField.commonNames[HR], x + 5, y - 5)
+                    this.ctx.fillText(starName, x + 5, y - 5)
                 }
             }
         }
 
         for (const [name, planet] of Object.entries(this.nightSky.planets.planetSprites)) {
+            if (labelList && !this.nightSky.labelPasses(name)) continue;
+
             const pos = planet.equatorial.clone()
             pos.applyMatrix4(this.nightSky.celestialSphere.matrix)
             pos.project(camera)
@@ -253,6 +289,8 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         const satData = satellites.TLEData.satData;
         const numSats = satData.length;
 
+        const labelList = this.nightSky.labelListPrefixes;
+
         const raycaster = new Raycaster();
         const hitPoint = V3();
         const hitPoint2 = V3();
@@ -276,6 +314,10 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             if (satellites.labelFlares && !sat.isFlaring) continue;
             if (satellites.labelLit && !sat.isLit) continue;
             if (isMainView && satellites.labelLookVisible && !sat.visibleInLook) continue;
+
+            // Tested here, with the other label filters, so a name that is filtered out
+            // also skips the projection and Earth-occlusion work below.
+            if (labelList && !this.nightSky.labelPassesAny(satelliteLabelNames(sat))) continue;
 
             // arrowRange is a physical-range filter, so use the geometric
             // satellite position. Screen projection and Earth-occlusion use
@@ -330,9 +372,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
             const [x, y] = this.labelXY(screenPos);
 
-            let name = sat.name.replace("0 STARLINK", "SL").replace("STARLINK", "SL");
-            name = name.replace(/\s+$/, '');
-            this.ctx.fillText(name, x + 5, y - 5)
+            this.ctx.fillText(satelliteLabelText(sat), x + 5, y - 5)
         }
     }
 

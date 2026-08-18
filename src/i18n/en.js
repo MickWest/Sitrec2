@@ -1102,6 +1102,7 @@ const en = {
         penumbraDepth: { label: "Earth's Penumbra Depth", tooltip: "Vertical depth in meters over which a satellite fades out as it enters the Earth's shadow" },
         sunAngleArrows: { label: "Sun Angle Arrows", tooltip: "When glare is detected, show arrows from camera to satellite, and then satellite to sun" },
         celestialFolder: { tooltip: "night sky related things" },
+        labelList: { label: "Label List", tooltip: "Show only the labels whose name matches this comma-separated list, e.g. \"Moon, Polaris\".\nApplies to star, planet, Sun/Moon and satellite labels. Leave it empty to label everything.\nMatching is case-insensitive and by prefix. Satellites match on either name: the catalog name (STARLINK-1234) or the abbreviated name on the label (SL-1234)." },
         vectorsOnTraverse: { label: "Vectors On Traverse", tooltip: "If checked, the vectors are shown relative to the traverse object. Otherwise they are shown relative to the look camera." },
         vectorsInLookView: { label: "Celestial Vectors in Look", tooltip: "Show the celestial direction vectors in the look/camera view as well as the main view" },
         showSatellitesGlobal: { label: "Show Satellites (Global)", tooltip: "Master toggle: show or hide all satellites" },
