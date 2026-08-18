@@ -621,6 +621,17 @@ function collectNpmDeps(statsPath) {
         // Exclude webpack internals that aren't real shipped dependencies
         const WEBPACK_INTERNALS = new Set(["css-loader", "style-loader", "mini-css-extract-plugin"]);
 
+        // Packages we SHIP but never IMPORT: copy-webpack-plugin drops their files
+        // into the output verbatim, so they are not webpack modules and the stats
+        // file cannot see them. Without this they silently lose their attribution
+        // in every --from-stats run, while still being distributed. Keep in step
+        // with webpackCopyPatterns.js; a name listed here that is also imported is
+        // harmless, since `bundled` is a Set.
+        const COPIED_NOT_IMPORTED = [
+            "@cornerstonejs/codec-openjpeg",   // libs/openjpeg — JPEG 2000 WASM decoder
+        ];
+        for (const pkgName of COPIED_NOT_IMPORTED) bundled.add(pkgName);
+
         const results = [];
         for (const pkgName of bundled) {
             if (WEBPACK_INTERNALS.has(pkgName)) continue;
