@@ -141,7 +141,6 @@ const en = {
                     world: "The World",
                     video: "Video Tools",
                     analysis: "Analysis",
-                    examples: "Worked Examples",
                     advanced: "Advanced",
                 },
                 menuHelpTitle: "Help",

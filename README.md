@@ -55,7 +55,7 @@ assistant — so if you add a doc, add it there.
 - [Camera Modes - Normal (Az/El) and Satellite (quaternion) view modes](docs/satcam.md)
 - [Recreating Starlink Situations - Horizon Flares](docs/Starlink.md)
 
-**Worked examples**
+**Bespoke examples (not typical)**
 
 - [Recreating Gimbal - Walkthrough: build a Gimbal sitch from scratch via drag-and-drop](docs/gimbal-recreate.md)
 - [Nimitz / Tic Tac - Handling sources that disagree](docs/Nimitz.md)

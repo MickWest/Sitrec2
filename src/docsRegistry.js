@@ -16,7 +16,11 @@
 //               "docs/<Name>" (linked as docs/<Name>.md or .html); "README" is special.
 //   labelKey  - i18n key for the Help-menu label (see menus.help.* in src/i18n/en.js).
 //   section   - which group the doc sits in, in the Help menu and the docs index.
-//               One of the keys in DOC_SECTIONS below.
+//               One of the keys in DOC_SECTIONS below. OMIT it to keep the doc out of
+//               the Help menu entirely: it stays listed in README.md and, if it has a
+//               chatDesc, stays available to the AI assistant. That is for the bespoke
+//               case-study docs, which are of no use to a typical user and only made the
+//               menu longer.
 //   top       - if true, the link ALSO sits directly under the Help menu (above the
 //               Documentation folder), so casual users see it without drilling in.
 //   menuId    - id of the app menu this doc explains (the id passed to addGUIMenu in
@@ -60,7 +64,6 @@ export const DOC_SECTIONS = [
     {id: "world", labelKey: "menus.help.documentation.sections.world"},
     {id: "video", labelKey: "menus.help.documentation.sections.video"},
     {id: "analysis", labelKey: "menus.help.documentation.sections.analysis"},
-    {id: "examples", labelKey: "menus.help.documentation.sections.examples"},
     {id: "advanced", labelKey: "menus.help.documentation.sections.advanced"},
 ];
 
@@ -226,20 +229,24 @@ export const helpDocs = [
         chatDesc: "Investigating Starlink satellite flares, and more generally recreating a sighting seen from a fixed spot on the ground: loading satellites for a date (Satellite menu, 'Load LEO Satellites For Date'), orbital data and why very recent events need a few days' wait, and the flare band / sun-angle tools. Its step-by-step walkthrough (date and time, camera location by street address, pointing direction, adding the video, refining) applies to any ground-observer case, not just Starlink.",
     },
 
-    // ── Worked examples ─────────────────────────────────────────────────────
+    // ── Bespoke examples (not typical) ──────────────────────────────────────
+    // Deliberately NOT in the Help menu — no `section`, and no `menuId`. These are
+    // one-off case studies rather than things a typical user needs, so they are linked
+    // from README.md under "Bespoke examples (not typical)" and offered to the AI
+    // assistant, but they no longer take up a folder in Help > Documentation.
     {
         file: "docs/gimbal-recreate", labelKey: "menus.help.documentation.gimbalRecreate",
-        section: "examples", role: "tutorial",
+        role: "tutorial",
         chatDesc: "A step-by-step walkthrough of BUILDING a sitch for the Navy 'Gimbal' UAP video by drag-and-drop. This is a construction tutorial, not an analysis of the case — for what the Gimbal geometry can and cannot establish (it is the classic case where range is not determined by the data), see the traverse analysis docs.",
     },
     {
         file: "docs/Nimitz", labelKey: "menus.help.documentation.nimitz",
-        section: "examples", role: "case-study",
+        role: "case-study",
         chatDesc: "The Nimitz / 'Tic Tac' 2004 case as a worked example of handling conflicting evidence: a per-parameter table of every reconstruction value with its source and a confidence grade, a catalogue of the conflicts between different tellings, competing hypotheses set up as switchable configurations, and an explicit list of what remains unknown. The best model in the docs for how to document an analysis whose sources disagree.",
     },
     {
         file: "docs/Football", labelKey: "menus.help.documentation.football",
-        section: "examples", menuId: "physics", role: "case-study",
+        role: "case-study",
         chatDesc: "The football/Spidercam wire-strike scenario: launching a ball with real ballistic physics (drag, Magnus lift from spin, bounces) against a cable-cam rig. Also a worked example of a reconstruction that is partly fitted to the claim it is testing, and what that means for what it can show.",
     },
 

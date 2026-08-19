@@ -42,7 +42,15 @@ describe("docsRegistry entries", () => {
         expect(typeof lookupKey(d.labelKey)).toBe("string");
     });
 
-    test.each(helpDocs.map(d => [d.file, d]))("%s is in a known section", (file, d) => {
+    // A doc may deliberately have no section, which keeps it out of the Help menu (the
+    // bespoke case studies). It then has to be reachable some other way — README.md
+    // plus the AI assistant — or nobody can ever see it, which is the failure this
+    // whole file exists to catch.
+    test.each(helpDocs.map(d => [d.file, d]))("%s is in a known section, or deliberately out of the menu", (file, d) => {
+        if (d.section === undefined) {
+            expect(typeof d.chatDesc).toBe("string");
+            return;
+        }
         expect(DOC_SECTIONS.map(s => s.id)).toContain(d.section);
     });
 
