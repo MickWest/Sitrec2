@@ -62,12 +62,12 @@ import * as Astronomy from "astronomy-engine";
 import {CStarField} from "./CStarField";
 import {CCelestialElements} from "./CCelestialElements";
 import {
-    refractionUniforms,
-    refractionOptsFromUniforms,
     applyRefractionECI,
+    REFRACTION_DEFAULTS,
+    refractionOptsFromUniforms,
+    refractionUniforms,
     zenithECEFFromLatLon,
     zenithEQJFromLatLon,
-    REFRACTION_DEFAULTS,
 } from "../atmosphere/refraction";
 import {setupRefractionGUI} from "../atmosphere/refractionSettings";
 import {excludeFromTerrestrialRefraction} from "../atmosphere/terrestrialRefraction";
@@ -889,7 +889,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             id: obName,
             visible: this[flagName],
             start: "lookCamera",
+            // Placeholder only -- update() below points the arrow every frame via
+            // updateDirection(). directionFromCode keeps it hidden until then, so
+            // enabling the arrow can't briefly show it along ECEF +Z.
             direction: V3(0, 0, 1),
+            directionFromCode: true,
             length: -200,
             color: this.planets.planetColors[this.planets.planets.indexOf(name)],
             groupNode: groupName,

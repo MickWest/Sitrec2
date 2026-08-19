@@ -3,8 +3,13 @@
 
 import * as LAYER from "../LayerMasks";
 import {
-    DebugArrowAB, DebugArrows, getTilesPointBelow, isVisible, propagateLayerMaskObject,
-    removeDebugArrow, setLayerMaskRecursive,
+    DebugArrowAB,
+    DebugArrows,
+    getTilesPointBelow,
+    isVisible,
+    propagateLayerMaskObject,
+    removeDebugArrow,
+    setLayerMaskRecursive,
 } from "../threeExt";
 import {pointOnSphereBelow} from "../SphericalMath";
 import {CNodeMunge} from "./CNodeMunge";
@@ -451,6 +456,19 @@ export class CNodeLabeledArrow extends CNodeLabel3D {
         this.label = v.label ?? "";
         this.addSimpleSerial("label");
 
+        // Set by updateDirection(), and preferred over the "direction" input from
+        // then on. See calculateVectors.
+        this.directionOverride = undefined;
+
+        // "My direction is pushed in by code, the input is only a placeholder."
+        // Such an arrow is not drawn at all until it has been pointed once --
+        // the night sky's celestial arrows are enabled by the GUI toggle or by
+        // deserializing a sitch, both of which make the arrow visible several
+        // rendered frames before the next CNodeDisplayNightSky.update() points
+        // it, and the placeholder it would show meanwhile is ECEF (0,0,1), the
+        // north celestial pole.
+        this.directionFromCode = v.directionFromCode ?? false;
+
         this.recalculate(0);
         
         // // For negative lengths, initialize textPosition to start (preRender will fix to end)
@@ -465,17 +483,32 @@ export class CNodeLabeledArrow extends CNodeLabel3D {
 
         const color = this.in.color.v(f)
         // add an arrow from A to C and B to D
-        DebugArrowAB(this.id+"arrow", this.start, this.end, color, true, this.groupNode.group, 20, this.layerMask);
+        DebugArrowAB(this.id+"arrow", this.start, this.end, color, this.pointed, this.groupNode.group, 20, this.layerMask);
 
 
         this.changeText(this.label);
 
     }
 
+    // Whether the arrow's direction is meaningful yet, and so whether it should
+    // be drawn at all. Always true unless the direction comes from code.
+    get pointed() {
+        return !this.directionFromCode || this.directionOverride !== undefined;
+    }
+
     calculateVectors(f) {
         this.start = this.in.start.p(f);
         this.length = this.in.length.v(f);
-        this.direction = this.in.direction.p(f);
+        // A direction pushed in from outside (updateDirection) has to survive a
+        // recalculate. The "direction" INPUT is only the placeholder the node was
+        // constructed with -- ECEF (0,0,1), the north celestial pole, for the night
+        // sky's celestial arrows -- so re-reading it on every cascade swung those
+        // arrows ~80 degrees off the body they name until the next night-sky
+        // update() re-pointed them. lookCamera is their "start" input, so every
+        // camera-driven cascade (startup, terrain/tile loads, navigation) did it.
+        this.direction = this.directionOverride !== undefined
+            ? this.directionOverride.clone()
+            : this.in.direction.p(f);
 
         // normalize the direction
         this.direction.normalize();
@@ -493,11 +526,13 @@ export class CNodeLabeledArrow extends CNodeLabel3D {
     }
 
     // update the arrow with a new direction
-    // which will override the current direction
+    // which will override the "direction" input from now on
     updateDirection(dir) {
+        if (this.directionOverride === undefined) this.directionOverride = V3();
+        this.directionOverride.copy(dir);
+        // Set the override BEFORE recomputing, so start/end/position are built from
+        // the new direction rather than from the placeholder input.
         this.calculateVectors(par.frame);
-
-        this.direction.copy(dir);
         this.update(0);
     }
 
@@ -509,7 +544,7 @@ export class CNodeLabeledArrow extends CNodeLabel3D {
             const lengthMeters = view.pixelsToMeters(this.start, lengthPixels);
             const color = this.in.color.v(0)
             this.end = this.start.clone().add(this.direction.clone().multiplyScalar(lengthMeters));
-            DebugArrowAB(this.id+"arrow", this.start, this.end, color, true, this.groupNode.group, 20, this.layerMask);
+            DebugArrowAB(this.id+"arrow", this.start, this.end, color, this.pointed, this.groupNode.group, 20, this.layerMask);
         }
         this.position.copy(this.end);
         this.textPosition.copy(this.end);
