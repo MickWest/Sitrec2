@@ -221,7 +221,16 @@ export const helpDocs = [
     {
         file: "docs/BOTBench", labelKey: "menus.help.documentation.botBench",
         section: "analysis", menuId: "file", role: "reference",
-        chatDesc: "The BOTBench window (File → File Analysis → BOTBench...) — BOT = Bearings-Only Traversal: running the traverse analysis over a whole folder of BOT benchmark scenarios or MISB FMV clips and comparing the results in one table. Covers every control, summary tile and table column (the SOURCE quality measurements — baseline, sweep, rcond, the pointing-noise estimate vs the declared sigma — and the ANALYSIS verdict/interpretation columns), what a bulk run deliberately cannot do, how results are scored against truth, the BOT interchange CSV format and its scenario.json sidecar, how the scenario files are generated (bench-bot-interchange, sealed releases), and a glossary of the technical terms used. Read for 'what is BOTBench / BotBench', 'what does the rcond/Base/Sweep/Src column mean', 'how do I run the analysis on many files', or 'where do the bot-NNNN.input.csv files come from'.",
+        chatDesc: "The BOTBench window (File → File Analysis → BOTBench...) — BOT = Bearings-Only Traversal: running the traverse analysis over a whole folder of BOT benchmark scenarios or MISB FMV clips and comparing the results in one table. Covers every control, summary tile and table column (the SOURCE quality measurements — baseline, sweep, rcond, the pointing-noise estimate vs the declared sigma — and the ANALYSIS verdict/interpretation columns), what a bulk run deliberately cannot do, how results are scored against truth, the BOT interchange CSV format and its scenario.json sidecar, and a glossary of the technical terms used. Where the scenario files come from is its own page — see docs/BOTBenchScenarios. Read for 'what is BOTBench / BotBench', 'what does the rcond/Base/Sweep/Src column mean', or 'how do I run the analysis on many files'.",
+    },
+    {
+        // Split out of docs/BOTBench when that page passed the AI truncation
+        // limit: a doc read past the limit is cut off mid-document and the model
+        // cannot see what was removed. Provenance is the self-contained half, so
+        // it separates cleanly and leaves the main page room to grow.
+        file: "docs/BOTBenchScenarios", labelKey: "menus.help.documentation.botBenchScenarios",
+        section: "analysis", menuId: "file", role: "reference",
+        chatDesc: "Where BOTBench's scenario files come from: how the BOT benchmark scenarios are generated in the Sitrec source repository rather than shipped with it, the curated interchange set (bench-bot-interchange) versus the swept botsets and the single question each set was built to answer, the Input/Truth/All folder layout with its index.json and MANIFEST.json, sealed releases and their hash commitment, and the npm commands that build and export each set. Read for 'where do the bot-NNNN.input.csv files come from', 'how do I regenerate the benchmark scenarios', 'what is a botset', or 'what is a sealed release'.",
     },
     {
         file: "docs/satcam", labelKey: "menus.help.documentation.cameraModes",

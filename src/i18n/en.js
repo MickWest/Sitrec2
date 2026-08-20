@@ -131,6 +131,7 @@ const en = {
                 traverseMethods: "Traverse Methods",
                 traverseAnalysis: "Traverse Analysis and the Verdict",
                 botBench: "BOTBench — Bearings-Only Traversal Bulk Analysis",
+                botBenchScenarios: "BOTBench Scenario Files — where they come from",
                 gimbalRecreate: "Recreating Gimbal Step-by-Step",
                 nimitz: "Nimitz / Tic Tac Case Study",
                 football: "Football and Cable Cam",
