@@ -9,7 +9,7 @@
 // The three pieces:
 //
 //  1. THE PLANE. There is no water geometry in Sitrec to take a plane from —
-//     water is a colour test in the terrain shader. But the ELEVATION MAP
+//     water is a color test in the terrain shader. But the ELEVATION MAP
 //     already contains a perfectly flat lake (Tahoe reads 1873.8 m HAE over
 //     every sample), so the plane can be recovered by firing a grid of rays
 //     into the view, histogramming the hit altitudes, and taking the biggest
@@ -39,6 +39,7 @@
 import {
     HalfFloatType,
     LinearFilter,
+    LinearMipmapLinearFilter,
     LinearSRGBColorSpace,
     Matrix4,
     PerspectiveCamera,
@@ -237,8 +238,15 @@ export class CWaterPlanarMirror {
                 type: HalfFloatType,
                 colorSpace: LinearSRGBColorSpace,
                 // Linear filtering, because the ripple lookup lands between
-                // texels by design. No mipmaps: the reflection is resampled at
-                // roughly 1:1, and minification would smear the shoreline.
+                // texels by design.
+                //
+                // Mipmaps are generated for the OCEAN method and only for it.
+                // The mirror method resamples at roughly 1:1 and minification
+                // would smear its shoreline, so it keeps the plain linear filter
+                // via the minFilter swap in render(). The ocean method needs the
+                // chain because its reflection is not a point lookup at all: it
+                // is an integral over a lobe tens of degrees wide, and the mip
+                // level is how that lobe's width gets applied.
                 minFilter: LinearFilter,
                 magFilter: LinearFilter,
                 // No MSAA — every edge in here is about to be displaced by a
@@ -251,6 +259,20 @@ export class CWaterPlanarMirror {
             entry.target.setSize(w, h);
             entry.w = w;
             entry.h = h;
+        }
+
+        // Mipmaps only for the ocean method. Three.js regenerates the chain by
+        // itself at the end of every render into this target, but only when the
+        // minification filter actually asks for mipmaps — so switching the filter
+        // is what switches the feature on. Reallocating the texture to change a
+        // filter is not cheap, hence the guard: this fires on a method change and
+        // never per frame.
+        const wantsMipmaps = this.node.mode === "ocean";
+        const texture = entry.target.texture;
+        if (texture.generateMipmaps !== wantsMipmaps) {
+            texture.generateMipmaps = wantsMipmaps;
+            texture.minFilter = wantsMipmaps ? LinearMipmapLinearFilter : LinearFilter;
+            texture.needsUpdate = true;
         }
         return entry;
     }
@@ -442,10 +464,12 @@ export class CWaterPlanarMirror {
         // The water shader is about to read waterMirrorMap; if it were live
         // during this pass the lake would sample the previous frame's mirror
         // and feed itself. Both gates off means the water renders as plain map
-        // colour inside the reflection, which is what you want to see anyway.
+        // color inside the reflection, which is what you want to see anyway.
         const savedMirrorGate = sharedUniforms.waterMirror.value;
+        const savedOceanGate = sharedUniforms.waterOcean.value;
         const savedReflectionGate = sharedUniforms.waterReflection.value;
         sharedUniforms.waterMirror.value = 0.0;
+        sharedUniforms.waterOcean.value = 0.0;
         sharedUniforms.waterReflection.value = 0.0;
 
         // Reuse the shadow maps the main pass already built. Letting three
@@ -514,6 +538,7 @@ export class CWaterPlanarMirror {
             renderer.autoClear = savedAutoClear;
             renderer.setRenderTarget(savedTarget);
             sharedUniforms.waterMirror.value = savedMirrorGate;
+            sharedUniforms.waterOcean.value = savedOceanGate;
             sharedUniforms.waterReflection.value = savedReflectionGate;
         }
 

@@ -4,12 +4,12 @@
 //
 // How it works:
 //
-//  1. Water is detected in the TERRAIN SHADER by the colour of the map tile
+//  1. Water is detected in the TERRAIN SHADER by the color of the map tile
 //     texture — the flat OSM water fill by default. That is a hack, and it is
 //     deliberately one: it needs no extra data, no vector tiles and no
 //     geometry, and it tracks whatever the user is actually looking at. It is
 //     gated on the active map source declaring a waterColor, so switching to
-//     satellite/debug imagery cannot invent lakes out of similarly-coloured
+//     satellite/debug imagery cannot invent lakes out of similarly-colored
 //     pixels.
 //
 //  2. The sky comes from a CUBE MAP captured here. The celestial sphere lives
@@ -41,6 +41,10 @@ import {CNode} from "./CNode";
 import {
     Color,
     CubeCamera,
+    DataTexture,
+    FloatType,
+    NearestFilter,
+    RGBAFormat,
     HalfFloatType,
     LinearFilter,
     LinearMipmapLinearFilter,
@@ -49,10 +53,21 @@ import {
     WebGLCubeRenderTarget,
 } from "three";
 import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame";
-import {guiMenus, NodeMan, Sit, setRenderOne, Globals} from "../Globals";
+import {guiMenus, NodeMan, Sit, setRenderOne, Globals, GlobalDateTimeNode} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {CWaterPlanarMirror} from "../WaterPlanarMirror";
+import {OCEAN_MAX_WAVES} from "../ocean/OceanBRDF.glsl.js";
 import {altitudeHAE} from "../SphericalMath";
+import * as Astronomy from "astronomy-engine";
+import {
+    buildWaveComponents,
+    coxMunkSlopeVariance,
+    spectrumParams,
+    totalSlopeVariance,
+    u10ToU125,
+    waterLeavingReflectance,
+    whitecapCoverage,
+} from "../ocean/OceanSpectrum";
 import * as LAYER from "../LayerMasks";
 
 // Beyond this distance from the wave-phase origin, float32 world positions stop
@@ -64,6 +79,28 @@ const WAVE_ORIGIN_REANCHOR_M = 50000;
 // alone. Skirts that stop short of this never intrude on the lake, so they keep
 // covering their own LOD cracks.
 const SKIRT_HIDE_MARGIN_M = 50;
+
+// Apparent magnitude of a full Moon, the reference the phase scaling is measured
+// against. Astronomy.Illumination gives the Moon's magnitude directly, which carries
+// both its phase and its distance, so a crescent correctly makes a fainter glade than
+// a full Moon at perigee.
+const FULL_MOON_MAGNITUDE = -12.7;
+
+// What share of the night ambient the Moon is treated as supplying.
+//
+// This one number is a RENDERING CHOICE, not a measurement, and it is worth being
+// plain about why. Sitrec's night ambient was measured at exactly 0.4*pi whether the
+// Moon sits at 21 degrees or at 61 — it is a fixed floor, not moonlight — and the
+// night scene overall renders only about 1.5x darker than the day scene, against a
+// reality of roughly a million to one. Night here is heavily exposure-boosted by
+// design, and a moonglade has to be boosted with it or it cannot appear in the same
+// image at all.
+//
+// So the absolute level is a free parameter, chosen so that zero stops of glitter
+// exposure suits day and night alike. What is NOT free, and is modelled properly, is
+// how the glade varies: with the Moon's phase and distance through its magnitude, and
+// with the geometry through the BRDF.
+const MOON_AMBIENT_SHARE = 1 / 16;
 
 // A tile whose LOWEST point is this far above the water cannot contain the body
 // being reflected. Its blue pixels are streams, rivers and reservoirs at some
@@ -83,10 +120,10 @@ export class CNodeWaterReflection extends CNode {
         this.enabled = v.enabled ?? false;
         this.strength = v.strength ?? 1.0;
         this.tolerance = v.tolerance ?? 0.10;
-        // How far the flat map water colour is pulled towards the real water
-        // colour while the reflection is active. 0.9 leaves 10% of the map fill.
+        // How far the flat map water color is pulled towards the real water
+        // color while the reflection is active. 0.9 leaves 10% of the map fill.
         this.darken = v.darken ?? 0.9;
-        // Daytime deep-water colour, sRGB 0-1. At night this fades to black,
+        // Daytime deep-water color, sRGB 0-1. At night this fades to black,
         // where the only thing left on the surface is what it reflects.
         this.dayColor = v.dayColor ?? [0.06, 0.13, 0.20];
         // A 90-degree cube face resolves ~0.09 degrees per pixel at 1024, so a
@@ -108,7 +145,7 @@ export class CNodeWaterReflection extends CNode {
         this.cubeResolution = v.cubeResolution ?? 1024;
         this.occlusion = v.occlusion ?? true;
         // Paint OSM's water fill into whatever imagery is loaded, so water is
-        // detectable on sources that have no flat colour for it (satellite
+        // detectable on sources that have no flat color for it (satellite
         // photography). Owned here rather than by the terrain UI because it
         // exists to serve this effect; the terrain UI only decides whether the
         // current source's tiles line up with OSM's.
@@ -134,6 +171,42 @@ export class CNodeWaterReflection extends CNode {
         this.mirrorMaxTile = v.mirrorMaxTile ?? 4000;
         this.mirrorHideSkirts = v.mirrorHideSkirts ?? true;
 
+        // Ocean (spectral) mode. These are PHYSICAL inputs, not look knobs: the
+        // wind speed drives a published wave spectrum whose integrated slope
+        // variance reproduces Cox & Munk's sun-glitter measurements, and every
+        // visible property of the surface follows from that. Turning the wind up
+        // does not "add more ripples", it moves the sea along the same one-parameter
+        // family that a real sea moves along.
+        this.windSpeed = v.windSpeed ?? 5.0;          // U10, m/s
+        this.windDirection = v.windDirection ?? 270;  // degrees, direction wind blows FROM
+        // Inverse wave age. 0.84 is a fully developed sea with unlimited fetch; a
+        // young, short-fetch sea is steeper for the same wind and runs up towards 5.
+        this.waveAge = v.waveAge ?? 0.84;
+        this.waterType = v.waterType ?? "ocean";
+        this.whitecaps = v.whitecaps ?? true;
+        this.gustiness = v.gustiness ?? 0.5;
+        // Wavenumber bands in the resolved wave field, four directions each. Sixteen
+        // bands is 64 trains, which is the shader's maximum.
+        this.waveDetail = v.waveDetail ?? 16;
+        this.debugView = v.debugView ?? "off";
+        // What the glitter term is divided by before the tone shoulder. The
+        // specular image of the Sun is thousands of times brighter than the sky, so
+        // in any real photograph the apparent LENGTH of a glitter path is set by
+        // where it crosses saturation rather than by the width of the slope
+        // distribution — which means an exposure control is part of the physics
+        // here, not a cheat bolted on after it.
+        // In STOPS, so the control is photographic and the range can span the four
+        // orders of magnitude that separate a specular image of the Sun from the sky
+        // around it. Each step doubles the glitter.
+        //
+        // Zero is the calibrated default, and it is calibrated against the RATIO
+        // rather than against any one scene: with the source radiance reconstructed
+        // from delivered irradiance, the glade peaks at roughly twenty times the
+        // reflected sky, which is what a real glitter path does. Tuning it against a
+        // night scene instead gives about -8, because a near-black sea makes almost
+        // anything visible — and that value then renders nothing at all by day.
+        this.glitterExposure = v.glitterExposure ?? 0;
+
         this.addSimpleSerials([
             "enabled",
             "mode",
@@ -145,6 +218,15 @@ export class CNodeWaterReflection extends CNode {
             "mirrorLevel",
             "mirrorMaxTile",
             "mirrorHideSkirts",
+            "windSpeed",
+            "windDirection",
+            "waveAge",
+            "waterType",
+            "whitecaps",
+            "gustiness",
+            "waveDetail",
+            "debugView",
+            "glitterExposure",
             "strength",
             "darken",
             "dayColor",
@@ -183,12 +265,13 @@ export class CNodeWaterReflection extends CNode {
                 this.gui.add(this, property, start, end, step).name(name).listen().onChange(changed);
 
             this.gui.add(this, "enabled").name("Water Reflection").listen().onChange(changed)
-                .tooltip("Reflect the night sky in water. Water is detected by the colour of the map texture, "
+                .tooltip("Reflect the night sky in water. Water is detected by the color of the map texture, "
                     + "so it needs a map source with a flat water fill (OSM) — or Combine Terrain with OSM "
                     + "below. Look view only.");
             this.gui.add(this, "mode", {
                 "Sky Cube": "cube",
                 "Planar Mirror (experimental)": "mirror",
+                "Ocean (spectral)": "ocean",
             }).name("Method").listen().onChange(() => {
                 this.applyMode();
                 changed();
@@ -218,10 +301,10 @@ export class CNodeWaterReflection extends CNode {
             addValue("strength", 0, 2, 0.01, "Reflection Strength")
                 .tooltip("Brightness of the reflected sky. 1.0 is the physical Fresnel amount.");
             addValue("darken", 0, 1, 0.01, "Water Darkening")
-                .tooltip("How far the flat map water colour is pulled towards real water colour while the "
+                .tooltip("How far the flat map water color is pulled towards real water color while the "
                     + "reflection is on. 0.9 leaves 10% of the map fill, so the reflection dominates instead "
                     + "of being washed out by map blue.");
-            this.gui.addColor(this, "dayColor").name("Daylight Water Colour").listen().onChange(changed)
+            this.gui.addColor(this, "dayColor").name("Daylight Water Color").listen().onChange(changed)
                 .tooltip("What water attenuates towards in daylight — deep water is dark blue, not the pale "
                     + "flat fill the map paints it. Fades to black at night, where only reflected light is left.");
             this.cubeOnly = [];
@@ -256,9 +339,71 @@ export class CNodeWaterReflection extends CNode {
             this.cubeOnly.push(this.gui.add(this, "occlusion").name("Terrain Occlusion").listen().onChange(changed)
                 .tooltip("Stop the water reflecting sky that is hidden behind terrain. Captures the terrain "
                     + "silhouette from the observer and masks the reflection with it."));
-            addValue("tolerance", 0.01, 0.5, 0.005, "Water Colour Tolerance")
-                .tooltip("How close a map pixel must be to the source's water colour to count as water. "
+            addValue("tolerance", 0.01, 0.5, 0.005, "Water Color Tolerance")
+                .tooltip("How close a map pixel must be to the source's water color to count as water. "
                     + "Raise it to fill in antialiased shorelines, lower it if land is being flooded.");
+
+            // Ocean settings, in their own folder. Every one of these is a
+            // physical quantity that feeds a published model, so the panel reads
+            // like a sea state rather than like a shader.
+            this.oceanGui = this.gui.addFolder("Ocean");
+            this.oceanGui.add(this, "windSpeed", 0.5, 20, 0.1).name("Wind Speed (m/s)")
+                .listen().onChange(changed)
+                .tooltip("Wind at 10 m, which sets the whole sea state. It drives the Elfouhaily wave "
+                    + "spectrum, and the slope variance that comes out of it reproduces the sun-glitter "
+                    + "measurements Cox and Munk made in 1954 — so this is a physical input, not a "
+                    + "roughness slider. 2 is glassy, 5 a light breeze, 10 a fresh wind with the first "
+                    + "whitecaps, 15 a near gale.");
+            this.oceanGui.add(this, "windDirection", 0, 360, 1).name("Wind From (deg)")
+                .listen().onChange(changed)
+                .tooltip("Compass direction the wind blows FROM. A real sea is measurably steeper along "
+                    + "the wind than across it, so this rotates the glitter path and the surface texture.");
+            this.oceanGui.add(this, "waveAge", 0.84, 5, 0.01).name("Sea Youth")
+                .listen().onChange(changed)
+                .tooltip("Inverse wave age. 0.84 is a fully developed sea after the wind has blown a long "
+                    + "time over a long fetch; higher values are a young sea close to shore, which is "
+                    + "steeper and choppier for the same wind speed.");
+            this.oceanGui.add(this, "waterType", {
+                "Open ocean (deep blue)": "ocean",
+                "Coastal (blue-green)": "coastal",
+                "Turbid (green-brown)": "turbid",
+            }).name("Water Type").listen().onChange(changed)
+                .tooltip("What the water body itself does to light that enters it. The color of the sea "
+                    + "is not a surface property — it is light that went in and came back out, so without "
+                    + "this the water is grey glass however good the reflection is.");
+            this.oceanGui.add(this, "waveDetail", 4, 16, 1).name("Wave Detail")
+                .listen().onChange(changed)
+                .tooltip("How many wavenumber bands of the spectrum are drawn as actual travelling "
+                    + "waves, four directions each. Waves too short for a pixel to resolve become "
+                    + "roughness instead, so lowering this shifts the surface from geometry towards "
+                    + "statistics rather than removing anything — the sea state stays the same.");
+            this.oceanGui.add(this, "gustiness", 0, 1, 0.01).name("Gustiness")
+                .listen().onChange(changed)
+                .tooltip("How patchy the wind is. Gusts and Langmuir circulation break a real sea "
+                    + "into streaks of rougher and smoother water hundreds of metres across, running "
+                    + "along the wind. It is the most conspicuous large-scale structure on a real sea "
+                    + "seen from altitude. The average roughness is unchanged, so this redistributes "
+                    + "the sea state rather than adding to it.");
+            this.oceanGui.add(this, "whitecaps").name("Whitecaps").listen().onChange(changed)
+                .tooltip("Breaking-wave foam. Coverage follows wind speed steeply, so there is essentially "
+                    + "none below 7 m/s and a few percent by 15.");
+            this.oceanGui.add(this, "debugView", {
+                "Off": "off",
+                "Gustiness": "gust",
+                "Resolved waves": "waves",
+                "Unresolved roughness": "roughness",
+                "Reflection source": "blend",
+            }).name("Debug View").listen().onChange(changed)
+                .tooltip("False-color one of the intermediate quantities into the water. A surface "
+                    + "whose job is to look smooth is very hard to debug by eye — more than one real "
+                    + "defect here stayed invisible until the quantity behind it was put on screen.");
+            this.oceanGui.add(this, "glitterExposure", -14, 4, 0.25).name("Glitter Exposure")
+                .listen().onChange(changed)
+                .tooltip("Exposure of the glitter path, in stops. The specular image of the Sun is "
+                    + "thousands of times brighter than the sky, so in any real photograph the apparent "
+                    + "LENGTH of a glitter path is set by where it crosses the sensor's saturation, not "
+                    + "by the width of the wave slope distribution. This is that exposure: it changes "
+                    + "how far the glitter reaches without changing the physics underneath it.");
 
             // Planar-mirror-only settings, in their own folder so the main
             // panel does not grow a row of controls that do nothing in the
@@ -300,7 +445,7 @@ export class CNodeWaterReflection extends CNode {
                     + "Turn off to see them.");
             addMirror("mirrorMaxTile", 0, 20000, 100, "Max Tile Size (m)")
                 .tooltip("Fade the reflection out where the terrain tile is wider than this. Water is found by "
-                    + "the colour of the map texture, and distant water is drawn by huge low-detail tiles that "
+                    + "the color of the map texture, and distant water is drawn by huge low-detail tiles that "
                     + "still carry only a 512-pixel texture — one texel covers kilometres, the flat water fill "
                     + "gets averaged with the coastline, and the reflection breaks into blotches. This makes it "
                     + "stop cleanly instead. 0 turns the fade off, to see what it was hiding.");
@@ -324,11 +469,18 @@ export class CNodeWaterReflection extends CNode {
     applyMode() {
         if (!this.gui) return;
         const mirror = this.mode === "mirror";
-        for (const controller of this.cubeOnly) controller.show(!mirror);
-        this.mirrorGui.show(mirror);
+        const ocean = this.mode === "ocean";
+        // The cube-only controls are about drawing stars and Moon INTO a cube map,
+        // which neither of the other two methods does.
+        for (const controller of this.cubeOnly) controller.show(!mirror && !ocean);
+        // Ocean borrows the mirror's render target, so its settings apply too.
+        this.mirrorGui.show(mirror || ocean);
+        this.oceanGui.show(ocean);
     }
 
     dispose() {
+        this._waveTexture?.dispose();
+        this._waveTexture = null;
         for (const map of [this.cubeTargets, this.occlusionTargets]) {
             for (const {target, camera} of map.values()) {
                 target.dispose();
@@ -390,7 +542,7 @@ export class CNodeWaterReflection extends CNode {
         }
     }
 
-    // Water detection needs a map source that declares its water colour —
+    // Water detection needs a map source that declares its water color —
     // or "Combine Terrain with OSM", which stamps OSM's fill into whatever
     // imagery is loaded and so makes any compatible source detectable.
     getWaterColor() {
@@ -658,6 +810,242 @@ export class CNodeWaterReflection extends CNode {
         return true;
     }
 
+    // Hide the Sun and Moon discs for the duration of the mirror capture.
+    //
+    // Both bodies can have two meshes: CPlanets hides the night-scene copy and draws a
+    // separate day-sky copy whenever a day scene exists, so whichever is currently
+    // visible is the one being rendered. Hide both and restore exactly what was hidden
+    // — never blanket-restore visible=true, which would reveal the copy that CPlanets
+    // deliberately keeps hidden.
+    hideCelestialDiscs(nightSky) {
+        this._hiddenDiscs = [];
+        const sprites = nightSky?.planets?.planetSprites;
+        if (!sprites) return;
+        for (const body of ["Sun", "Moon"]) {
+            for (const mesh of [sprites[body]?.sprite, sprites[body]?.daySkySprite]) {
+                if (mesh?.visible) {
+                    this._hiddenDiscs.push(mesh);
+                    mesh.visible = false;
+                }
+            }
+        }
+    }
+
+    restoreCelestialDiscs() {
+        if (!this._hiddenDiscs) return;
+        for (const mesh of this._hiddenDiscs) mesh.visible = true;
+        this._hiddenDiscs = null;
+    }
+
+    // Pack the resolved wave trains into a texture the shader can walk.
+    //
+    // A texture rather than a uniform array because the count is a user control and
+    // uniform arrays are fixed at compile time — changing the detail level would
+    // otherwise recompile every terrain material on the scene.
+    //
+    // Float textures are guaranteed in WebGL2; the wavevector components run to a few
+    // tens of rad/m and amplitudes down to millimetres, so half-float would quantise
+    // the long waves into steps.
+    buildWaveTexture(params) {
+        const built = buildWaveComponents(params, {
+            bands: this.waveDetail,
+            directionsPerBand: 4,
+        });
+        const components = built.components.slice(0, OCEAN_MAX_WAVES);
+        const data = new Float32Array(OCEAN_MAX_WAVES * 4);
+        for (let index = 0; index < components.length; index++) {
+            const wave = components[index];
+            data[index * 4 + 0] = wave.kx;
+            data[index * 4 + 1] = wave.ky;
+            data[index * 4 + 2] = wave.amplitude;
+            data[index * 4 + 3] = wave.phase;
+        }
+
+        this._waveTexture?.dispose();
+        const texture = new DataTexture(data, OCEAN_MAX_WAVES, 1, RGBAFormat, FloatType);
+        // NEAREST throughout: these are discrete wave parameters, and interpolating
+        // between two unrelated wave trains would invent a component that is in no
+        // spectrum at all.
+        texture.minFilter = NearestFilter;
+        texture.magFilter = NearestFilter;
+        texture.generateMipmaps = false;
+        texture.needsUpdate = true;
+
+        this._waveTexture = texture;
+        this._waveCount = components.length;
+        this._waveTexels = OCEAN_MAX_WAVES;
+        // Slope variance outside the represented band. The shader adds this to
+        // whatever the trains leave unresolved; without it the sea loses about two
+        // fifths of its roughness everywhere.
+        this._waveResidual = [built.residual.up, built.residual.cross];
+        // Reported so the residual can be inspected: it is the share of the sea's
+        // roughness that no camera in this scene is close enough to resolve, and it
+        // being large is correct rather than a shortfall.
+        this.waveResidualShare = built.total.up > 0
+            ? built.residual.up / built.total.up
+            : 0;
+    }
+
+    // Turn the wind controls into the physical quantities the shader needs.
+    //
+    // Everything here comes out of one number — the wind speed — by way of the
+    // Elfouhaily spectrum, whose integrated slope variance reproduces what Cox and
+    // Munk measured from sun-glitter photographs. Nothing is tuned by eye.
+    //
+    // Recomputed only when a control actually moves: integrating the spectrum is
+    // thousands of curvature evaluations, which is nothing once but not something to
+    // do every frame.
+    applyOceanUniforms(view, skyColor, nightFactor = 0) {
+        const key = `${this.windSpeed}|${this.waveAge}|${this.waterType}|${this.whitecaps}|${this.waveDetail}`;
+        if (this._oceanKey !== key) {
+            this._oceanKey = key;
+            const params = spectrumParams(this.windSpeed, this.waveAge);
+            const variance = totalSlopeVariance(params);
+            this._oceanSigma2 = [variance.up, variance.cross];
+            this.buildWaveTexture(params);
+            this._oceanUpwelling = waterLeavingReflectance(this.waterType);
+            this._oceanWhitecap = this.whitecaps ? whitecapCoverage(this.windSpeed) : 0;
+            // Kept for the readout and for anyone checking the model against the
+            // measurements it claims to reproduce.
+            this.measuredSlopeVariance = variance.total;
+            this.coxMunkSlopeVariance = coxMunkSlopeVariance(u10ToU125(this.windSpeed)).total;
+        }
+
+        sharedUniforms.waterSigma2.value.set(this._oceanSigma2[0], this._oceanSigma2[1]);
+        sharedUniforms.waterWaveData.value = this._waveTexture ?? null;
+        sharedUniforms.waterWaveCount.value = this._waveCount ?? 0;
+        sharedUniforms.waterWaveTexels.value = Math.max(1, this._waveTexels ?? 1);
+        sharedUniforms.waterResidualSigma2.value.set(
+            this._waveResidual?.[0] ?? 0, this._waveResidual?.[1] ?? 0);
+        sharedUniforms.waterUpwelling.value.set(...this._oceanUpwelling);
+        sharedUniforms.waterWhitecap.value = this._oceanWhitecap;
+
+        // Wind direction as (east, north) in the local tangent frame. The control is
+        // the direction the wind blows FROM, as every weather report gives it, so the
+        // vector it travels along is the reverse.
+        const fromRadians = this.windDirection * Math.PI / 180;
+        sharedUniforms.waterWindDir.value.set(-Math.sin(fromRadians), -Math.cos(fromRadians));
+
+        // Lighting, in the renderer's own units rather than a parallel photometry.
+        // sunGlobalTotal is what the rest of the terrain shader already uses for the
+        // total, and subtracting the ambient part leaves the direct beam — the same
+        // split the shader makes a few lines above the water block.
+        const totalLight = sharedUniforms.sunGlobalTotal.value;
+        const ambientLight = sharedUniforms.sunAmbientIntensity.value;
+        const directLight = Math.max(0, totalLight - ambientLight);
+        sharedUniforms.waterIrradiance.value = totalLight;
+
+        // ONE source, whichever body the scene's light is currently aimed at. At
+        // night Sitrec re-aims the same directional light at the Moon at a reduced
+        // intensity, so following it is automatically right in both cases — and it
+        // cannot double-count the way a separate Sun term and Moon term could. The
+        // two discs subtend almost the same angle (0.53 vs 0.52 degrees), so a single
+        // solid angle serves both.
+        const sunLight = Globals.sunLight;
+        if (sunLight && directLight > 0) {
+            this._sunDir ??= new Vector3();
+            this._sunDir.copy(sunLight.position).normalize();
+            sharedUniforms.waterSunDir.value.copy(this._sunDir);
+            // Radiance of the disc = irradiance it delivers / the solid angle it
+            // covers. No invented photometry: the numerator is the scene's own light.
+            const radiance = directLight / sharedUniforms.waterSunSolidAngle.value;
+            sharedUniforms.waterSunRadiance.value.set(radiance, radiance, radiance);
+        } else {
+            sharedUniforms.waterSunRadiance.value.set(0, 0, 0);
+        }
+
+        // The Moon, when it is up. Unlike the Sun it drives no scene light — at night
+        // the directional light's intensity is zero — so there is no scene light to
+        // read a radiance from, and it has to be reconstructed the same way the Sun's
+        // is: magnitude from the night ambient, which IS the scene's moonlight budget
+        // once the Sun is down, divided by the solid angle the disc covers.
+        //
+        // Sampling the Moon out of the sky cube instead LOOKS like the principled
+        // choice and is not — see the waterMoonDir comment in SharedUniforms.js. A
+        // rendered disc is clipped to about 1.0 like everything else on screen, so
+        // feeding it into an energy relationship put the glade four orders of
+        // magnitude too dark.
+        //
+        // The shader drops the term by itself whenever the Moon is below the
+        // fragment's horizon.
+        //
+        // Gated on the night factor rather than on directLight. The two shader
+        // lighting parameters are NOT the three.js light intensities: at midnight
+        // sunGlobalTotal is still 1.20 against an ambient of 0.65, so a "is the direct
+        // beam zero" test reports broad daylight and silently deletes the moonglade.
+        const toMoon = Globals.toMoon;
+        let moonIrradiance = ambientLight * nightFactor * MOON_AMBIENT_SHARE;
+
+        // Phase and distance, from the Moon's apparent magnitude. This is the part of
+        // the moonglade that is real physics rather than exposure: a crescent gives a
+        // glade an order of magnitude fainter than a full Moon, and the model should
+        // say so.
+        try {
+            const date = GlobalDateTimeNode?.dateNow;
+            if (date) {
+                const magnitude = Astronomy.Illumination("Moon", new Date(date)).mag;
+                moonIrradiance *= Math.min(1, Math.pow(10, -0.4 * (magnitude - FULL_MOON_MAGNITUDE)));
+            }
+        } catch (error) {
+            // An unavailable ephemeris is not a reason to lose the reflection; fall
+            // back to treating the Moon as full.
+        }
+
+        if (toMoon && moonIrradiance > 0) {
+            sharedUniforms.waterMoonDir.value.copy(toMoon);
+            const radiance = moonIrradiance / sharedUniforms.waterMoonSolidAngle.value;
+            sharedUniforms.waterMoonRadiance.value.set(radiance, radiance, radiance);
+        } else {
+            sharedUniforms.waterMoonRadiance.value.set(0, 0, 0);
+        }
+
+        sharedUniforms.waterGlitterExposure.value = Math.pow(2, this.glitterExposure);
+        sharedUniforms.waterGustiness.value = this.gustiness;
+        // Gust patches grow with the wind that makes them. The floor keeps them from
+        // collapsing to noise in a dead calm, where there is nothing to modulate anyway.
+        sharedUniforms.waterGustScale.value = Math.max(40, 60 * this.windSpeed);
+        sharedUniforms.waterDebug.value = {
+            off: 0, gust: 1, waves: 2, roughness: 3, blend: 4,
+        }[this.debugView] ?? 0;
+
+        // Two-point sky for the reflection lobe, from the same model the view draws
+        // its own sky and haze with — so the water cannot disagree with the sky above
+        // it. Zenith is the sky color, horizon is the haze color, which is already
+        // the desaturated brighter thing a clear sky becomes near the horizon.
+        //
+        // sRGB to linear, because the reflection is added to linear radiance after the
+        // shader's own sRGB conversion.
+        const toLinear = (channel) => channel <= 0.04045
+            ? channel / 12.92
+            : Math.pow((channel + 0.055) / 1.055, 2.4);
+        const sunNode = NodeMan.get("theSun", true);
+        const zenith = skyColor ?? view.background;
+        if (zenith && zenith.r !== undefined) {
+            sharedUniforms.waterSkyZenith.value.set(
+                toLinear(zenith.r), toLinear(zenith.g), toLinear(zenith.b));
+        }
+        if (sunNode?.calculateHazeColor) {
+            const haze = sunNode.calculateHazeColor(view.camera.position);
+            sharedUniforms.waterSkyHorizon.value.set(
+                toLinear(haze.r), toLinear(haze.g), toLinear(haze.b));
+        } else {
+            sharedUniforms.waterSkyHorizon.value.copy(sharedUniforms.waterSkyZenith.value);
+        }
+
+        // Radians per pixel, for the footprint that decides how much of the wave
+        // spectrum this pixel can resolve. Taken from the camera's real vertical FOV
+        // and the view's pixel height, not from a nominal value, because the look
+        // view's projection has usually been patched by the time we get here.
+        const camera = view.camera;
+        const heightPx = view.heightPx || view.div?.clientHeight || 1080;
+        sharedUniforms.waterPixelAngle.value =
+            (camera.fov * Math.PI / 180) / Math.max(heightPx, 1);
+        // The mirror camera copies the look camera's projection, so they share a
+        // field of view. This is what tells the shader how much of the reflection
+        // lobe the render target can actually account for.
+        sharedUniforms.waterMirrorFov.value = camera.fov * Math.PI / 180;
+    }
+
     clearUniforms() {
         sharedUniforms.waterReflection.value = 0.0;
         sharedUniforms.waterNightFactor.value = 0.0;
@@ -667,6 +1055,19 @@ export class CNodeWaterReflection extends CNode {
         sharedUniforms.waterMirror.value = 0.0;
         sharedUniforms.waterMirrorMap.value = null;
         sharedUniforms.waterMaxTileSize.value = 0.0;
+        // Every gate and every SAMPLER the ocean path installs has to come back
+        // off here, not just the scalars. Terrain materials are cloned per view and
+        // share these uniform objects BY REFERENCE, so a sampler left bound is a
+        // render-target texture owned by the look view's GL context still reachable
+        // from mainView's cloned material.
+        sharedUniforms.waterOcean.value = 0.0;
+        sharedUniforms.waterWaveData.value = null;
+        sharedUniforms.waterWaveCount.value = 0.0;
+        sharedUniforms.waterDebug.value = 0.0;
+        sharedUniforms.waterSunRadiance.value.set(0, 0, 0);
+        sharedUniforms.waterMoonRadiance.value.set(0, 0, 0);
+        sharedUniforms.waterIrradiance.value = 0.0;
+        sharedUniforms.waterWhitecap.value = 0.0;
     }
 
     // Called immediately before the look view renders GlobalScene. Returns
@@ -694,7 +1095,8 @@ export class CNodeWaterReflection extends CNode {
         const skyBrightness = sunNode ? sunNode.calculateSkyBrightness(view.camera.position) : 0;
         const skyFactor = Math.max(0, 1 - skyBrightness);
 
-        if (this.mode === "mirror") {
+        const oceanMode = this.mode === "ocean";
+        if (this.mode === "mirror" || oceanMode) {
             this.planarMirror ??= new CWaterPlanarMirror(this);
             const skyColor = sunNode ? sunNode.calculateSkyColor(view.camera.position) : view.background;
             // Detect the plane first so the tile tests know where the water is;
@@ -703,7 +1105,27 @@ export class CNodeWaterReflection extends CNode {
             const detected = this.planarMirror.detectPlane(view);
             this.applyTileWaterGating(detected);
             this.hideSkirts(detected);
-            const texture = this.planarMirror.render(view, skyOpacity, skyColor);
+            // OCEAN MODE: take the Sun and Moon OUT of the mirror pass.
+            //
+            // Their discs are added analytically, so leaving them in the render target
+            // counts them twice — and worse, it makes the result depend on the lens.
+            // The render target only ever covers the camera's own field of view, so
+            // the fraction of the reflection lobe it can account for falls as you zoom
+            // in: measured 1.00 at 30 degrees against 0.28 at 8. With the Moon inside
+            // the target, zooming in therefore FADED THE MOONGLADE OUT, when zooming
+            // should be very close to a crop. Radiance from a patch of sea cannot
+            // depend on the focal length used to look at it.
+            //
+            // With the discs analytic-only, the glade is the same at every zoom, and
+            // the render target is left doing what it is good for: the sky gradient,
+            // the clouds, the far shore.
+            if (oceanMode) this.hideCelestialDiscs(nightSky);
+            let texture;
+            try {
+                texture = this.planarMirror.render(view, skyOpacity, skyColor);
+            } finally {
+                this.restoreCelestialDiscs();
+            }
             // No plane found (nothing flat in view, or the camera is under the
             // water): fall back to drawing no reflection at all rather than to
             // the cube, so it is obvious the mirror is not working. pop() will
@@ -713,7 +1135,12 @@ export class CNodeWaterReflection extends CNode {
                 this.restoreTileWaterGating();
                 return false;
             }
-            sharedUniforms.waterMirror.value = 1.0;
+            // The two methods share the mirror capture but consume it differently:
+            // the mirror method looks up a point in it along a perturbed ray, the
+            // ocean method blurs it by the width of a reflection lobe. Exactly one
+            // gate is on.
+            sharedUniforms.waterMirror.value = oceanMode ? 0.0 : 1.0;
+            sharedUniforms.waterOcean.value = oceanMode ? 1.0 : 0.0;
             sharedUniforms.waterMirrorMap.value = texture;
             sharedUniforms.waterMirrorMatrix.value.copy(this.planarMirror.textureMatrix);
             sharedUniforms.waterMirrorOrigin.value.copy(this.planarMirror.origin);
@@ -725,8 +1152,21 @@ export class CNodeWaterReflection extends CNode {
             if (this.mirrorAutoLevel && this.planarMirror.plane) {
                 this.mirrorLevel = this.planarMirror.plane.altitude;
             }
+            if (oceanMode) {
+                // NO SKY CUBE HERE, deliberately. The reflection lobe is tens of
+                // degrees wide at grazing incidence, so a large part of it points
+                // outside the mirror camera's frustum — but those directions are
+                // filled by the two-point sky (waterSkyZenith/waterSkyHorizon,
+                // applied by oceanSkyRadiance), not by a captured cube. Capturing
+                // one anyway costs six 1024 faces of the night sky scene, and the
+                // capture key follows the celestial sphere's orientation, so it
+                // would re-render EVERY FRAME while the timeline runs — for a
+                // sampler the ocean branch never reads.
+                this.applyOceanUniforms(view, skyColor, nightFactor);
+            }
         } else {
             sharedUniforms.waterMirror.value = 0.0;
+            sharedUniforms.waterOcean.value = 0.0;
             // Cube mode reflects a smooth sky, which hides the blotchy mask
             // entirely — so leave its long-standing behaviour alone.
             sharedUniforms.waterMaxTileSize.value = 0.0;
