@@ -75,6 +75,7 @@ import {
     tierBadge,
     coLeaderBadge,
 } from "./TraverseRanking";
+import {mundanenessCost, mundanenessSummary} from "./TraverseMundaneness";
 import {
     terrainAnalysisConfigScalars,
     terrainDependencyMismatch,
@@ -2948,7 +2949,7 @@ function analyzeSolutionSpace(results) {
 }
 
 // The six headline stats for one hypothesis (shared by tile and Details pane).
-function hypothesisStats(h) {
+function hypothesisStats(h, dataset = null) {
     const m = h.metricsFull;
     // Always show the raw residual. The old "≤ reference fit" replacement hid
     // the very number used to grade forward models (GoFast Balloon: 0.297°),
@@ -2966,6 +2967,34 @@ function hypothesisStats(h) {
         ["Max kinematic accel", `${m.gLoad.max.toFixed(2)} g`],
         [errLabel, losErr],
     ];
+    // HOW ORDINARY IS THIS? Disclosure only — it does not move the ranking (see
+    // TraverseMundaneness.js). Reported as the nearest real object class and how
+    // far outside its envelope this candidate sits, because "anomalous" without
+    // a named quantity is not a finding. A high value is a POSITIVE statement
+    // about the object, never a failure to explain it away.
+    const mund = mundanenessCost(dataset, h);
+    if (mund) {
+        const summary = mundanenessSummary(mund);
+        stats.push(["Ordinariness", `${mund.total.toFixed(2)} — ${summary}`]);
+        // The implied physical size is the part a reader can sanity-check by eye
+        // against the video, so show it whenever the file carried an angular
+        // measurement at all.
+        //
+        // A SUB-PIXEL TARGET GIVES AN UPPER BOUND AND NOTHING ELSE, and it must
+        // say so. Printing "0.00–2.11 m" there reads as a measured interval when
+        // the lower half is only the absence of one — measured on the balloon
+        // set, where every scenario's bound sits at the sub-pixel floor. The
+        // upper bound is still real and still refutes a collapsed candidate, so
+        // it is reported; the fictitious lower end is not.
+        if (mund.impliedM?.oneSided) {
+            stats.push(["Implied object size",
+                `under ${mund.impliedM.hi.toFixed(2)} m at this range `
+                + `— target is sub-pixel, so there is no lower bound`]);
+        } else if (mund.impliedM) {
+            stats.push(["Implied object size",
+                `${mund.impliedM.lo.toFixed(2)}–${mund.impliedM.hi.toFixed(2)} m at this range`]);
+        }
+    }
     // What the model's soft priors cost at the solution, in the same units as
     // the residual above. Shown only when it is worth noticing (0.005°, an
     // order of magnitude below the tier boundaries) so a fit the priors barely
@@ -3818,7 +3847,7 @@ function windProfileComparisonHTML(h) {
 
 function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = false) {
     const {ss} = ctx;
-    const stats = hypothesisStats(h);
+    const stats = hypothesisStats(h, ctx?.dataset);
     const statsHTML = stats.map(([k, v]) =>
         `<div class="tg-d-st"><div class="tg-d-stk">${escapeHtml(k)}</div>` +
         `<div class="tg-d-stv">${escapeHtml(v)}</div></div>`).join("");
@@ -5126,7 +5155,7 @@ function showResultGallery(results, uiState = null) {
         const badges = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r), ...windEvidenceBadges(h)];
         const badgesHTML = badges.map((badge) =>
             `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
-        const statsHTML = hypothesisStats(h).map(([k, v]) =>
+        const statsHTML = hypothesisStats(h, dataset).map(([k, v]) =>
             `<div class="tg-st"><div class="tg-stk">${escapeHtml(k)}</div>` +
             `<div class="tg-stv">${escapeHtml(v)}</div></div>`).join("");
         const tieText = tied ? " · display-score tie" : "";
@@ -6144,7 +6173,7 @@ function minRegion(profile, factor = 1.5) {
 
 function buildReportHypothesisDetails(dataset, rankedHyps, ss) {
     return rankedHyps.map(({h, r, tied, category, groupIndex, groupSize}) => {
-        const statsHTML = hypothesisStats(h).map(([k, v]) =>
+        const statsHTML = hypothesisStats(h, dataset).map(([k, v]) =>
             `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
             `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
         const prose = detailProse(h, r, ss);
@@ -6432,7 +6461,7 @@ function buildReportHTML(ctx) {
     const cardsHTML = rankedGroups.map((group) => {
         const cards = group.items.map(({h, r, tied, groupIndex, groupSize}) => {
             const thumb = hypothesisThumbnail(dataset, h);
-            const statsHTML = hypothesisStats(h).map(([k, v]) =>
+            const statsHTML = hypothesisStats(h, dataset).map(([k, v]) =>
                 `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
                 `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
             const badgesHTML = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r)].map((badge) =>

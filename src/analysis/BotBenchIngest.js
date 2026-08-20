@@ -124,6 +124,44 @@ export function botBenchScenarioBase(name = "") {
         .replace(/\.(input|truth|all|scenario)$/i, "");
 }
 
+/**
+ * The keys that pair one walked file with its sidecars.
+ *
+ * The key is DIRECTORY + scenario base, never the base alone: a recursive walk
+ * over a swept tree sees the same basename in every batch folder, and a
+ * bare-name key would pair a scenario with another batch's frame origin — a
+ * wrong answer that looks like a right one.
+ *
+ * TWO LAYOUTS ARE SUPPORTED.
+ *   sibling  Input/x.input.csv + Input/x.scenario.json    (sealed releases)
+ *   meta     Input/x.input.csv + meta/x.scenario.json     (the botset trees)
+ *
+ * A sidecar found inside a `meta/` directory describes the CSVs in that
+ * directory's SIBLINGS, so it indexes one level up (`indexKey`). A CSV looks
+ * up its own directory first and falls back to its parent (`altKey`). Both
+ * keys still carry the full batch path, so the cross-batch collision the
+ * directory scoping exists to prevent stays impossible.
+ *
+ * @param relativePath  path as the directory walk reported it, e.g.
+ *                      "botset_mundane/batch_20s/5pct/All/x.all.csv"
+ * @param name          the file's own name (defaults to the path's last segment)
+ * @returns {{key, altKey, indexKey, dir, base, inMetaDir}}
+ */
+export function botBenchPairingKeys(relativePath = "", name = null) {
+    const fileName = name ?? relativePath.replace(/^.*\//, "");
+    const dir = relativePath.replace(/[^/]*$/, "");
+    const parent = dir.replace(/[^/]+\/$/, "");
+    const base = botBenchScenarioBase(fileName);
+    const inMetaDir = /(^|\/)meta\/$/i.test(dir);
+    return {
+        dir, base, inMetaDir,
+        key: dir + base,
+        altKey: parent + base,
+        indexKey: inMetaDir ? parent + base : dir + base,
+    };
+}
+
+
 // ---------------------------------------------------------------------------
 // CSV
 // ---------------------------------------------------------------------------
@@ -569,6 +607,12 @@ const BOT_COLS = {
     sensorX: ["SensorPositionX"], sensorY: ["SensorPositionY"], sensorZ: ["SensorPositionZ"],
     losX: ["LOSUnitVectorX"], losY: ["LOSUnitVectorY"], losZ: ["LOSUnitVectorZ"],
     maxRange: ["MaxRange"], losUncertainty: ["LOSUncertainty"],
+    // v1.2. UPPER BOUND on the target's observed angular diameter, degrees. A
+    // measurement, not truth: with a minimum plausible diameter for an assumed
+    // object class it gives a range FLOOR (R >= D_min / theta_max), which is the
+    // only quantity in the file that opposes the scale degeneracy of
+    // bearings-only geometry. Absent in v1.1 files, which is why it is optional.
+    angularDiameterMax: ["AngularDiameterMaxDeg"],
     truthX: ["TruePositionX"], truthY: ["TruePositionY"], truthZ: ["TruePositionZ"],
 };
 
@@ -641,6 +685,8 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
             truth: truth && truth.every(Number.isFinite) ? truth : null,
             maxRange: idx.maxRange === -1 ? NaN : cell(r[idx.maxRange]),
             losSigma: idx.losUncertainty === -1 ? NaN : cell(r[idx.losUncertainty]),
+            angDiaMax: idx.angularDiameterMax === -1 ? NaN
+                : cell(r[idx.angularDiameterMax]),
         });
     }
     if (degenerateLOS) {
@@ -930,6 +976,30 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
         };
     }
 
+    // MEDIAN, not mean: the bound's floor is one IFOV, so a clip whose target
+    // recedes past the resolution limit has a long flat tail that a mean would
+    // let dominate. Null when the column is absent (a v1.1 file) or entirely
+    // blank (a scenario that declares no target size) — those are different from
+    // a bound of zero and must not be reported as one.
+    //
+    // Taken over `kept`, NOT `parsed`: the same reason the direction truth
+    // above is gathered by origIndex. `parsed` still holds rows that were
+    // dropped as invalid, rows belonging to another TrackID, and rows outside
+    // the longest uniform run. A median over those describes data the analysis
+    // never saw, and it reaches the reader as an implied object size and as the
+    // size term of the ordinariness score.
+    const angDiaSamples = kept.map((r) => r.angDiaMax).filter(Number.isFinite)
+        .sort((a, b) => a - b);
+    const medianAngularDiameterMax = angDiaSamples.length
+        ? angDiaSamples[Math.floor(angDiaSamples.length / 2)] : null;
+
+    // The angular measurement rides on the DATASET, not only on meta, because
+    // the traverse analysis is handed a dataset and nothing else. Absent on a
+    // v1.1 file, and every consumer must treat it as optional.
+    dataset.angularDiameterMaxDeg = medianAngularDiameterMax;
+    dataset.fovFullDeg = sidecar?.sensor?.fovFullDeg ?? null;
+    dataset.pixelsAcross = sidecar?.sensor?.pixelsAcross ?? null;
+
     return {
         kind: "bot",
         label: label || sidecar?.label || sidecar?.trackId || "BOT scenario",
@@ -978,6 +1048,14 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
             originLLA: [oLat, oLon, oAlt],
             epochISO: sidecar?.epochISO ?? BOT_DEFAULT_EPOCH_ISO,
             fovFullDeg: sidecar?.sensor?.fovFullDeg ?? null,
+            // Frame width the angular bound was computed against. Needed to
+            // read how tight that bound is: its floor is one IFOV.
+            pixelsAcross: sidecar?.sensor?.pixelsAcross ?? null,
+            // Median of the per-frame angular-diameter bound, or null on a v1.1
+            // file that has no such column. A single number because the bound
+            // is what it is for the whole clip; per-frame values live on the
+            // dataset for anything that needs them.
+            angularDiameterMaxDeg: medianAngularDiameterMax,
             windEstimate: sidecar?.wind
                 ? {E: windE, N: windN, sigmaMS: sidecar.wind.sigmaMS ?? null,
                     provenance: sidecar.wind.provenance ?? null}

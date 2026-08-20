@@ -41,6 +41,7 @@ import {
     compareTrackToTruth, meanAngularError, KNOTS_TO_MS, METERS_PER_NM,
 } from "../TraverseAnalysis";
 import {rankAllHypotheses} from "../TraverseRanking";
+import {mundanenessCost} from "../TraverseMundaneness";
 import {BOT_DEFAULT_EPOCH_ISO, botENUToLLA} from "../TrackFiles/CTrackFileBOT";
 // RAYLEIGH_MEAN / RAYLEIGH_SD live in BotBenchIngest, beside assessSourceQuality:
 // they describe the SOURCE's declared pointing error, and the notes builder
@@ -649,6 +650,51 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
     const classes = results.executiveAssessment?.classes ?? [];
     const viable = classes.filter((c) => c.viable).map((c) => c.key);
 
+    // HOW ORDINARY, in bulk. The gallery has shown this per tile since the
+    // mundaneness score landed; the bench could not measure what the gallery
+    // displayed, which made the score unfalsifiable at scale. Same function,
+    // same dataset, so a row and a tile cannot disagree.
+    //
+    // TWO NUMBERS, AND THEY ARE DIFFERENT CLAIMS. `top` is how ordinary the
+    // candidate we PICKED is. `mostOrdinary` is how ordinary the data ALLOWS
+    // any candidate to be — which on a bearings-only problem is usually much
+    // lower, because choosing a different range makes almost any motion
+    // ordinary. Collapsing them to one column would hide exactly that.
+    //
+    // `mostOrdinary` is deliberately UNGATED. A residual gate needs a threshold
+    // and no threshold here is calibrated yet, so the candidate's own residual
+    // is reported beside its cost and the reader applies their own bar rather
+    // than inheriting an invented one.
+    // Both numbers use the SAME admission rule, and an at-infinity winner is
+    // excluded from both. An astronomical hypothesis carries an artificial
+    // finite helper track so the geometry has something to work with; scoring
+    // that track would report a star as "consistent with an ordinary balloon",
+    // which is a physical claim about an object the hypothesis says is not one.
+    const scorable = (h) => !!h && !!h.track && !h.atInfinity && !!h.metricsFull;
+    const topCost = top && scorable(top.h) ? mundanenessCost(results.dataset, top.h) : null;
+    let mostOrdinary = null;
+    for (const h of results.hypotheses) {
+        if (!scorable(h)) continue;
+        const c = mundanenessCost(results.dataset, h);
+        if (!c) continue;
+        if (!mostOrdinary || c.total < mostOrdinary.total) {
+            mostOrdinary = {
+                total: c.total, key: c.key, label: c.label, name: h.name,
+                errDeg: Number.isFinite(h.errDeg) ? h.errDeg : null,
+            };
+        }
+    }
+    const mundaneness = (topCost || mostOrdinary) ? {
+        top: topCost ? {
+            total: topCost.total, key: topCost.key, label: topCost.label,
+            sizeCost: topCost.sizeCost, speedCost: topCost.speedCost, gCost: topCost.gCost,
+            // Recorded so a reader knows whether the size term had a lower bound
+            // to work with at all — see impliedDiameter's `oneSided`.
+            sizeOneSided: topCost.impliedM ? !!topCost.impliedM.oneSided : null,
+        } : null,
+        mostOrdinary,
+    } : null;
+
     // Truth scoring. `relSep` — mean separation over mean truth range — is the
     // scale-free version, and it is the one the BOT Bench classifier protocol
     // treats as the action loss, so a 2 km scene and a 50 km scene compare.
@@ -791,6 +837,7 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
         verdictCode: results.executiveAssessment?.code ?? null,
         headline: results.executiveAssessment?.headline ?? null,
         viableClasses: viable,
+        mundaneness,
         top: top ? {
             key: top.h.key, name: top.h.name,
             errDeg: Number.isFinite(top.h.errDeg) ? top.h.errDeg : null,

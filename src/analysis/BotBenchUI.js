@@ -35,7 +35,7 @@ import {par} from "../par";
 import {showTraverseGallery} from "../AnalyzeTraverse";
 import {METERS_PER_NM} from "../TraverseAnalysis";
 import {
-    botBenchExplicitFileRole, botBenchFileRole, botBenchScenarioBase,
+    botBenchExplicitFileRole, botBenchFileRole, botBenchPairingKeys,
     buildScenarioNotes, ingestBotBenchEntry, srtHasPointing,
     ingestMISBRecords, sourceQualityGrade,
 } from "./BotBenchIngest";
@@ -340,7 +340,11 @@ function csvEscape(value) {
     return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-const CSV_COLUMNS = [
+// THE EXPORT IS THIS LIST, NOT THE RECORD. `resultsToCsv` maps over these
+// names, so a key that `rowToCsvRecord` populates but this array omits is
+// dropped in silence — the CSV simply lacks the column and nothing complains.
+// That has happened; `csvColumnsCoverRecord` in the tests is the guard.
+export const CSV_COLUMNS = [
     "file", "displayName", "kind", "status", "trackId",
     "frames", "durationS", "fps", "sensorSpanM", "sensorPathM", "straightness",
     "sensorAltSpanM", "netSweepDeg", "sweepPathDeg", "rateMedianDegPerS",
@@ -350,6 +354,9 @@ const CSV_COLUMNS = [
     "timeCv", "timeGaps", "invalidFrames", "droppedRows",
     "sourceGrade", "sourceReasons", "earthModel", "surfaceModel",
     "verdictCode", "headline", "viableClasses", "rangeUnobservable",
+    "ordTop", "ordTopClass", "ordTopSize", "ordTopSpeed", "ordTopG",
+    "ordTopSizeOneSided",
+    "ordMin", "ordMinClass", "ordMinName", "ordMinErrDeg",
     "declaredMaxRangeM", "maxRangeViolationCount", "topViolatesMaxRange",
     "optAnchorNM", "optRangeBands", "optMcSweep",
     "probeGeometryPinned", "probeSpeedOverride", "probeRangeM",
@@ -367,7 +374,7 @@ const CSV_COLUMNS = [
     "elapsedMs", "error",
 ];
 
-function rowToCsvRecord(entry) {
+export function rowToCsvRecord(entry) {
     const r = entry.row;
     const q = r?.quality ?? {};
     const grade = r ? sourceQualityGrade(q) : null;
@@ -393,6 +400,21 @@ function rowToCsvRecord(entry) {
         earthModel: r?.earthModel ?? "", surfaceModel: r?.surfaceModel ?? "",
         verdictCode: r?.verdictCode ?? "", headline: r?.headline ?? "",
         viableClasses: (r?.viableClasses ?? []).join("+"),
+        // Mundaneness, exported so an offline study can score it. The per-term
+        // breakdown is what makes a cost falsifiable — a total alone cannot say
+        // whether size, speed or acceleration carried it.
+        ordTop: r?.mundaneness?.top?.total, ordTopClass: r?.mundaneness?.top?.label ?? "",
+        ordTopSize: r?.mundaneness?.top?.sizeCost,
+        ordTopSpeed: r?.mundaneness?.top?.speedCost,
+        ordTopG: r?.mundaneness?.top?.gCost,
+        // Whether the size term had a lower bound at all. On a sub-pixel target
+        // it does not, and a study that missed that would read a zero size cost
+        // as evidence of ordinary size rather than as an absent measurement.
+        ordTopSizeOneSided: r?.mundaneness?.top?.sizeOneSided ?? "",
+        ordMin: r?.mundaneness?.mostOrdinary?.total,
+        ordMinClass: r?.mundaneness?.mostOrdinary?.label ?? "",
+        ordMinName: r?.mundaneness?.mostOrdinary?.name ?? "",
+        ordMinErrDeg: r?.mundaneness?.mostOrdinary?.errDeg,
         rangeUnobservable: r?.rangeUnobservable ?? "",
         optAnchorNM: entry.options ? (entry.options.anchorM / METERS_PER_NM).toFixed(2) : "",
         optRangeBands: entry.options ? entry.options.solutionFamilies : "",
@@ -754,6 +776,16 @@ function buildSummaryReport(entries, options) {
         // The floor beside the residual, so no reader can take a small number
         // for a good one without seeing what a perfect track would score.
         {h: "floor", w: 7, get: (e) => n3(e.row?.separability?.floorDeg), right: true},
+        // HOW ORDINARY. Two columns because they are two claims: what we PICKED
+        // scored, and what the data ALLOWED anywhere in the gallery. On a
+        // bearings-only problem the second is routinely far lower — a different
+        // range makes almost any motion ordinary — and one column would hide it.
+        {h: "Ord", w: 5, get: (e) => n2(e.row?.mundaneness?.top?.total), right: true},
+        {h: "OrdMin", w: 6, get: (e) => n2(e.row?.mundaneness?.mostOrdinary?.total), right: true},
+        // OrdMin's own residual, and it must sit beside it. Ungated, the most
+        // ordinary candidate can be one that fits badly, and a bare "0.00"
+        // would then read as "an ordinary explanation fits" when it does not.
+        {h: "OrdErr", w: 7, get: (e) => n3(e.row?.mundaneness?.mostOrdinary?.errDeg), right: true},
         {h: "RelSep", w: 7, get: (e) => n3(e.row?.truthScore?.topRelSep), right: true},
         {h: "Best", w: 7, get: (e) => n3(e.row?.truthScore?.bestRelSep), right: true},
     ];
@@ -766,6 +798,15 @@ function buildSummaryReport(entries, options) {
     L.push("  floor = the residual a PERFECT track scores against the declared pointing");
     L.push("          error. An |err| at or below it is fitting noise, not the object.");
     L.push("  Best = closest candidate any method produced (ORACLE — truth picked it).");
+    L.push("  Ord  = how ordinary the TOP candidate is, in decades outside the nearest");
+    L.push("         real object's envelope. 0 = every quantity inside some class.");
+    L.push("  OrdMin = the most ordinary candidate ANYWHERE in the gallery, ungated by");
+    L.push("         residual — so READ IT WITH OrdErr, that candidate's own |err|. A low");
+    L.push("         OrdMin at a high OrdErr is an ordinary explanation that does not fit.");
+    L.push("         A low OrdMin at a low OrdErr beside a high Ord is the real finding:");
+    L.push("         an ordinary explanation exists AT A DIFFERENT RANGE and the");
+    L.push("         sightlines alone cannot choose between them.");
+    L.push("  Neither Ord nor OrdMin moves the ranking. Both are disclosure.");
     return L.join("\n");
 }
 
@@ -781,6 +822,17 @@ function buildSummaryReport(entries, options) {
  * directory walk can see them together — by the time a file reaches the
  * ingest it is a lone Blob. So the walk collects every candidate, then this
  * attaches the sidecar TEXT to the row that needs it.
+ *
+ * TWO LAYOUTS, ONE LOOKUP. The pairing key is DIRECTORY + scenario base, not
+ * the base alone: a recursive walk over a swept tree sees the same basename in
+ * every batch folder, and a bare-name key would pair a scenario with another
+ * batch's frame origin — a wrong answer that looks like a right one.
+ *
+ * The botset trees put both sidecars in a `meta/` folder beside Input/, Truth/
+ * and All/ instead of beside each CSV, so a sidecar there is registered under
+ * its PARENT directory as well. A CSV then tries its own directory first (the
+ * sibling layout) and falls back to its parent (the meta layout). Both keys
+ * still carry the batch path, so the cross-batch collision stays impossible.
  */
 async function pairSidecars(found, {explicit = false} = {}) {
     const sidecars = new Map();
@@ -788,21 +840,21 @@ async function pairSidecars(found, {explicit = false} = {}) {
     const rows = [];
     for (const f of found) {
         const role = explicit ? botBenchExplicitFileRole(f.name) : botBenchFileRole(f.name);
-        const key = (f.relativePath.replace(/[^/]*$/, "")) + botBenchScenarioBase(f.name);
-        if (role === "bot-sidecar") sidecars.set(key, f);
-        else if (role === "bot-labels") labels.set(key, f);
+        const {key, altKey, indexKey} = botBenchPairingKeys(f.relativePath, f.name);
+        if (role === "bot-sidecar") sidecars.set(indexKey, f);
+        else if (role === "bot-labels") labels.set(indexKey, f);
         else if (role === "bot-csv" || role === "fmv" || role === "track-file") {
-            rows.push({...f, key});
+            rows.push({...f, key, altKey});
         }
     }
     const queued = explicit ? rows : await keepOnlyPointingSRT(rows);
     for (const r of queued) {
-        const s = sidecars.get(r.key);
+        const s = sidecars.get(r.key) ?? sidecars.get(r.altKey);
         if (s) {
             try { r.sidecarText = await (await s.getFile()).text(); }
             catch (e) { /* ingest warns about the missing sidecar */ }
         }
-        const l = labels.get(r.key);
+        const l = labels.get(r.key) ?? labels.get(r.altKey);
         if (l) {
             try { r.labelsText = await (await l.getFile()).text(); }
             catch (e) { /* labels are optional */ }
