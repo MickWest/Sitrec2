@@ -648,7 +648,13 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         // Check if it's an audio-only file based on extension
         if (isAudioOnlyFormat(fileName)) {
             console.log(`[VideoNew] Using audio-only handler for video[${videoIndex}]`);
-            this.videoData = new CVideoAudioOnly({ id: videoDataId, filename: fileName, videoSpeed: this.videoSpeed },
+            // ownsTimeline is passed here for the same reason the H264/Mp4 sites
+            // below pass it: a secondary view ("video2") must not define the sitch
+            // timeline. Omitting it left CVideoData's `?? true` default in charge,
+            // so CVideoAudioOnly.definesSitchTimeline()'s ownsTimeline test could
+            // never fail and an audio file dropped into a secondary view redefined
+            // the timeline anyway.
+            this.videoData = new CVideoAudioOnly({ id: videoDataId, filename: fileName, videoSpeed: this.videoSpeed, ownsTimeline: this.ownsTimeline },
                 this.loadedCallback.bind(this), this.errorCallback.bind(this))
         } else {
             // Pick the right codec class by filename extension. Without this,

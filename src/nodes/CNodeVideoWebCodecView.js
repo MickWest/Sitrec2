@@ -188,7 +188,9 @@ export class CNodeVideoWebCodecView extends CNodeVideoView {
         if (isAudioOnlyFormat(fileName) ||
             (fileName.endsWith('.mp4') && file.type && file.type.startsWith('audio/'))) {
             console.log("Using audio-only handler for: " + file.name);
-            this.videoData = new CVideoAudioOnly({id: this.id + "_data_" + this.videos.length, dropFile: file},
+            // ownsTimeline, as on the H264/Mp4 branches below — see the note at
+            // the matching site in CNodeVideoView.
+            this.videoData = new CVideoAudioOnly({id: this.id + "_data_" + this.videos.length, dropFile: file, ownsTimeline: this.ownsTimeline},
                 this.loadedCallback.bind(this), this.errorCallback.bind(this));
             this._finishUploadSetup(file);
             return;
