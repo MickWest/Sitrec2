@@ -13,11 +13,37 @@
 //   All/<name>.scenario.json     copies of both sidecars, so All/ is self-
 //   All/<name>.truth.json        contained
 //
+// With opts.sidecarDir (the botset trees pass "meta") the two sidecars move to
+// one shared folder instead and the All/ duplicates are not written:
+//
+//   Input/<name>.input.csv       Truth/<name>.truth.csv    All/<name>.all.csv
+//   meta/<name>.scenario.json    meta/<name>.truth.json
+//
+// That trades folder-level blinding for a tidier tree, so it is for LOCAL
+// benchmark sets only. A sealed release keeps the default layout.
+//
 // All/ IS ANSWER-KEY MATERIAL. It carries TruePosition columns, so it ships
 // with Truth/ and never with Input/. The convenience of one row per frame with
 // the answer beside the measurement is exactly what makes it unshippable to an
 // entrant. A sealed release puts Input/ under challenge/ and both All/ and
 // Truth/ under answers/.
+//
+// v1.2 CHANGES FROM v1.1. One measurement column and two sidecar fields, all
+// additive — a v1.1 reader that selects columns by NAME reads a v1.2 file
+// unchanged, and the major version is untouched because nothing already there
+// means anything different.
+//
+//   AngularDiameterMaxDeg  (input.csv, all.csv) an UPPER BOUND on the target's
+//                  observed angular diameter, degrees. With a minimum plausible
+//                  diameter for an assumed object class it gives a range FLOOR,
+//                  R >= D_min / theta. It is the only quantity in the format
+//                  that opposes the scale degeneracy described at the top of the
+//                  spec. Blank where the scenario declares no target size.
+//   sensor.pixelsAcross    (scenario.json) frame width in pixels, the resolution
+//                  the bound was computed against — its floor is one IFOV, so a
+//                  consumer assuming a different sensor misreads how tight it is.
+//   objectDiameterM        (truth.json) the TRUE physical diameter. Answer-key
+//                  material: the challenge file publishes only the bound.
 //
 // v1.1 CHANGES FROM v1.0. Column names are frame-neutral (X/Y/Z rather than
 // E/N/U, with the axis mapping declared in scenario.json), the Valid and
@@ -56,8 +82,9 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import {WIND_CONFIGS} from "./wind";
+import {angularDiameterMaxDeg, SENSOR_PIXELS} from "./angularSize";
 
-export const INTERCHANGE_SPEC_VERSION = "1.1";
+export const INTERCHANGE_SPEC_VERSION = "1.2";
 
 // ---------------------------------------------------------------------------
 // Integrity commitments
@@ -159,6 +186,13 @@ function targetPart(t) {
 
 function observationPart(o) {
     if (o.kind === "clean") return "clean";
+    // PERCENT-OF-FOV LADDERS NAME THEMSELVES BY THE RUNG, not by the angle it
+    // resolved to. The field of view varies per scenario, so one rung produces
+    // a different absolute amplitude in every variant, and naming by degrees
+    // would give the same rung a different suffix in every file — destroying
+    // the property that a variant's error levels differ ONLY by their folder.
+    // The degrees are still published, in scenario.json's losError.
+    if (o.pctOfFov != null) return `${o.kind}${num(o.pctOfFov)}pct`;
     if (o.kind === "white") {
         // A matched-white member's sigma is set from its partner's realized
         // RMS, so name it by that instead of the (absent) requested sigma.
@@ -274,6 +308,15 @@ const INPUT_COLUMNS = [
     "SensorPositionX", "SensorPositionY", "SensorPositionZ",
     "LOSUnitVectorX", "LOSUnitVectorY", "LOSUnitVectorZ",
     "MaxRange", "LOSUncertainty",
+    // v1.2. An UPPER BOUND on the target's observed angular diameter, degrees.
+    // A measurement, so it belongs in the challenge file: combined with a
+    // minimum plausible diameter for an assumed object class it gives a range
+    // FLOOR, R >= D_min / AngularDiameterMax. That floor is the only thing in
+    // the format that opposes the scale degeneracy of bearings-only geometry.
+    // It is a BOUND, never the exact D/R — publishing the exact angle would let
+    // a consumer that assumes a diameter read range straight off. Empty where
+    // the scenario declares no target size. See lib/angularSize.js.
+    "AngularDiameterMaxDeg",
 ];
 const TRUTH_COLUMNS = ["TruePositionX", "TruePositionY", "TruePositionZ"];
 
@@ -297,7 +340,33 @@ function measurementFields(scenario, i, trackSource, sigmaStr, maxR) {
         f(S[b]), f(S[b + 1]), f(S[b + 2]),
         f(D[b]), f(D[b + 1]), f(D[b + 2]),
         maxR, sigmaStr,
+        angularDiameterMaxField(scenario, i),
     ];
+}
+
+/**
+ * The angular-diameter bound for frame i.
+ *
+ * Uses the TRUE range to compute the true subtended angle and then widens it to
+ * a bound (see angularSize.angularDiameterMaxDeg). Truth is used to MANUFACTURE
+ * the measurement, exactly as the LOS directions are; what ships is the bound,
+ * not the range.
+ *
+ * A target with no declared diameter, and a direction-kind target (no finite
+ * position, so no range), both yield the empty field — the spec's missing-value
+ * representation — rather than a fabricated number.
+ */
+function angularDiameterMaxField(scenario, i) {
+    const diameterM = scenario.spec.target?.diameterM;
+    const fov = scenario.observation?.fovFullDeg;
+    if (!(diameterM > 0) || !(fov > 0)) return "";
+    if (scenario.target.kind === "direction") return "";
+    const P = scenario.target.positionENU;
+    if (!P) return "";
+    const b = i * 3, S = scenario.platform.positionENU;
+    const R = Math.hypot(P[b] - S[b], P[b + 1] - S[b + 1], P[b + 2] - S[b + 2]);
+    const bound = angularDiameterMaxDeg(diameterM, R, fov, SENSOR_PIXELS);
+    return bound === null ? "" : f(bound);
 }
 
 // LOSUncertainty is defined by the spec as a per-axis WHITE 1-sigma in degrees.
@@ -440,6 +509,11 @@ export function buildScenarioJson(scenario, trackId, {
         wind: windEstimate,
         sensor: {
             fovFullDeg: scenario.observation.fovFullDeg,
+            // The frame width the AngularDiameterMaxDeg column was computed
+            // against. Stated rather than assumed: the bound's floor is one
+            // IFOV, so a consumer that assumed a different sensor would
+            // misread how tight the bound is.
+            pixelsAcross: SENSOR_PIXELS,
             // The caller's provenance label, NOT scenario.spec.blockId — the
             // block id names the experimental cell this scenario came from,
             // which is a truth hint in a sealed set.
@@ -503,6 +577,11 @@ export function buildTruthJson(scenario, trackId,
         truthKind: t.kind === "direction" ? "direction" : "position",
         objectClass: t.family ?? null,
         targetKind: scenario.spec.target.kind,
+        // The TRUE physical diameter, in metres. Answer-key material: the
+        // challenge file publishes only the angular BOUND derived from it, so a
+        // scorer needs this to check whether a solver's assumed class size was
+        // defensible. Null where the scenario declares no size.
+        objectDiameterM: scenario.spec.target?.diameterM ?? null,
         anomalous: scenario.spec.target.parameters?.anomalous === true,
         // The whole answer for a direction-kind target, because truth.csv's
         // position columns are empty for one: at effective infinity there is no
@@ -637,17 +716,37 @@ export function writeInterchange(scenario, challengeDir, opts = {}) {
     const answersDir = opts.answersDir ?? challengeDir;
     const saltHex = opts.sealSaltHex ?? null;
 
+    // SIDECAR LAYOUT. By default each sidecar sits beside the CSV it describes,
+    // and All/ carries its own copy of both — the layout a SEALED RELEASE needs,
+    // because blinding is then a property of which FOLDER you ship.
+    //
+    // opts.sidecarDir switches to a single shared directory (the botset trees
+    // use "meta"): the CSV folders hold only CSVs and one meta/ folder holds one
+    // copy of each sidecar. That is tidier and removes the duplicate scenario
+    // .json, but it gives up folder-level blinding, so it must never be combined
+    // with descriptiveName — see the throw below.
+    const sidecarDirName = opts.sidecarDir ?? null;
+    if (sidecarDirName && opts.descriptiveName) {
+        throw new Error("writeInterchange: sidecarDir collapses the challenge and "
+            + "answer-key copies of scenario.json into one file, so a "
+            + "descriptiveName written there would leak into the challenge. "
+            + "Use the default layout for any release that needs blinding.");
+    }
+
     const inputDir = path.join(challengeDir, "Input");
     const truthDir = path.join(answersDir, "Truth");
     const allDir = path.join(answersDir, "All");
+    const metaDir = sidecarDirName
+        ? path.join(answersDir, sidecarDirName) : null;
     fs.mkdirSync(inputDir, {recursive: true});
     fs.mkdirSync(truthDir, {recursive: true});
     fs.mkdirSync(allDir, {recursive: true});
+    if (metaDir) fs.mkdirSync(metaDir, {recursive: true});
 
     const inputFile = path.join(inputDir, `${basename}.input.csv`);
-    const scenarioFile = path.join(inputDir, `${basename}.scenario.json`);
+    const scenarioFile = path.join(metaDir ?? inputDir, `${basename}.scenario.json`);
     const truthFile = path.join(truthDir, `${basename}.truth.csv`);
-    const truthJsonFile = path.join(truthDir, `${basename}.truth.json`);
+    const truthJsonFile = path.join(metaDir ?? truthDir, `${basename}.truth.json`);
     const allFile = path.join(allDir, `${basename}.all.csv`);
 
     const inputCsv = buildInputCsv(scenario, trackId, trackSource);
@@ -696,18 +795,20 @@ export function writeInterchange(scenario, challengeDir, opts = {}) {
     // All/ is answer-key material by definition, so the name leaks nothing
     // the folder does not already contain, while the challenge-side sidecar
     // stays name-free (the sealed-release leak test enforces it).
-    const allScenarioJson = opts.descriptiveName
-        ? JSON.stringify({
-            ...JSON.parse(scenarioJson),
-            descriptiveName: opts.descriptiveName,
-        }, null, 2) + "\n"
-        : scenarioJson;
-    fs.writeFileSync(path.join(allDir, `${basename}.scenario.json`), allScenarioJson);
-    fs.writeFileSync(path.join(allDir, `${basename}.truth.json`), truthJson);
+    if (!metaDir) {
+        const allScenarioJson = opts.descriptiveName
+            ? JSON.stringify({
+                ...JSON.parse(scenarioJson),
+                descriptiveName: opts.descriptiveName,
+            }, null, 2) + "\n"
+            : scenarioJson;
+        fs.writeFileSync(path.join(allDir, `${basename}.scenario.json`), allScenarioJson);
+        fs.writeFileSync(path.join(allDir, `${basename}.truth.json`), truthJson);
+    }
 
     return {
         basename, trackId, inputFile, scenarioFile, truthFile, truthJsonFile,
-        allFile,
+        allFile, metaDir,
         digests: {
             inputCsvSha256: seal.inputCsvSha256,
             scenarioJsonSha256: sha256(scenarioJson),

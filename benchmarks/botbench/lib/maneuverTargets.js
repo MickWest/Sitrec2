@@ -6,9 +6,9 @@
 // raptor flies a corkscrew; an aerobatic plane flies a loop); anomalousness is
 // a PARAMETER (speed, g, amplitude), not the shape — so every generator takes
 // overridable parameters and records the realized peaks in its profile, ready
-// for capability-ladder-style sweeps (the M1 batch in lib/m1Set.js is the
-// first such sweep). Defaults below give one clearly mundane or clearly
-// anomalous instance per kind, per the agreed table:
+// for capability-ladder-style sweeps (the maneuver botsets in
+// lib/botsetManeuvers.js are the first such sweep). Defaults below give one
+// clearly mundane or clearly anomalous instance per kind, per the agreed table:
 //   mundane: static-point, straight-cv, straight-ca, slow-turn, sine-wave,
 //            corkscrew, vertical-loop, figure-eight
 //   anomalous: accel-instant (speed step, no ramp), turn90-instant (infinite

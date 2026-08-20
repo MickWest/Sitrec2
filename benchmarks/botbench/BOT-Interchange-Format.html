@@ -1,4 +1,4 @@
-<title>BOT Interchange Format v1.1</title>
+<title>BOT Interchange Format v1.2</title>
 <style>
   :root {
     --paper:      #f5f7f8;
@@ -170,7 +170,7 @@
   <h1>BOT Interchange Format</h1>
   <p class="standfirst">A CSV interchange for bearings-only tracking problems, so
   algorithms written outside Sitrec can be run on the same scenarios and scored
-  against the same ground truth. Specification v1.1.</p>
+  against the same ground truth. Specification v1.2.</p>
 </header>
 
 <section>
@@ -312,16 +312,18 @@
   <p>One row per frame, per track. All coordinates in metres, in the frame
   declared by <code>scenario.json</code>.</p>
   <pre class="code">TrackID,TrackSource,Time,SensorPositionX,SensorPositionY,SensorPositionZ,
-LOSUnitVectorX,LOSUnitVectorY,LOSUnitVectorZ,MaxRange,LOSUncertainty</pre>
+LOSUnitVectorX,LOSUnitVectorY,LOSUnitVectorZ,MaxRange,LOSUncertainty,
+AngularDiameterMaxDeg</pre>
   <div class="scroll"><table>
     <tr><th>Column</th><th>Req</th><th>Meaning</th></tr>
     <tr><td>TrackID</td><td class="req">yes</td><td class="note">Join key across all three folders.</td></tr>
-    <tr><td>TrackSource</td><td class="req">yes</td><td class="note">Free-text provenance label. Not a sensor key — one sensor per track in v1.1.</td></tr>
+    <tr><td>TrackSource</td><td class="req">yes</td><td class="note">Free-text provenance label. Not a sensor key — one sensor per track in v1.2.</td></tr>
     <tr><td>Time</td><td class="req">yes</td><td class="note">Seconds from <code>epochISO</code>. Uniform grid; the current release is 1 Hz throughout.</td></tr>
     <tr><td>SensorPosition X/Y/Z</td><td class="req">yes</td><td class="note">Sensor position, metres. See <code>frame.axisOrder</code> — X/Y/Z is <em>East/North/Up</em> in this release, and the names are frame-neutral precisely so that a future curved-earth or ECEF set can use the same schema.</td></tr>
     <tr><td>LOSUnitVector X/Y/Z</td><td class="req">yes</td><td class="note">Sightline unit vector, same axes. Consumers may renormalise.</td></tr>
     <tr><td>MaxRange</td><td class="req">col</td><td class="note">Metres; <strong>blank means unconstrained, and every scenario in the current release ships blank</strong>. There is no MinRange column: the floor that stops a solver collapsing onto the sensor is a property of your estimator, not of the measurements, and v1.0 shipped it blank in every scenario anyway.</td></tr>
     <tr><td>LOSUncertainty</td><td class="req">col</td><td class="note">Degrees. Per-axis <em>white</em> 1σ in the pan/tilt tangent plane; total angular RMS is σ√2. <strong>Blank for correlated error models</strong>, which have no white σ — read <code>losError</code> in <code>scenario.json</code> for the model and its scale before weighting anything by this column.</td></tr>
+    <tr><td>AngularDiameterMaxDeg</td><td class="req">col</td><td class="note"><strong>New in v1.2.</strong> Degrees. An <em>upper bound</em> on the target's observed angular diameter — not the exact subtended angle. Combined with a <em>minimum plausible diameter</em> for an assumed object class it gives a range <strong>floor</strong>, <code>R ≥ D<sub>min</sub> / θ</code>, and that floor is the only quantity in this format which opposes the scale degeneracy described at the top of this page. It is deliberately a bound: publishing the exact <code>D/R</code> would let any consumer that assumes a diameter read range straight off. The bound can never be tighter than one instantaneous field of view, so a target far enough to be sub-pixel still reports about 1&nbsp;IFOV — read <code>sensor.pixelsAcross</code> to know what that is. <strong>Blank where the scenario declares no target size</strong>, and blank for direction-kind targets, which have no finite range. Note that a bright unresolved source blooms across neighbouring pixels, so an apparent extent always <em>overstates</em> true size; that is the safe direction here, since overstating θ only weakens the floor it implies.</td></tr>
   </table></div>
 
   <p>Every frame gets a row, including frames where the target was outside the
@@ -349,7 +351,7 @@ LOSUnitVectorX,LOSUnitVectorY,LOSUnitVectorZ,MaxRange,LOSUncertainty</pre>
   the same order, joined on <code>(TrackID, Time)</code>.</p>
   <pre class="code">TrackID,TrackSource,Time,SensorPositionX,SensorPositionY,SensorPositionZ,
 LOSUnitVectorX,LOSUnitVectorY,LOSUnitVectorZ,MaxRange,LOSUncertainty,
-TruePositionX,TruePositionY,TruePositionZ</pre>
+AngularDiameterMaxDeg,TruePositionX,TruePositionY,TruePositionZ</pre>
   <p>It is generated from the same builders as the other two and checked
   column-wise against them at build time, so it cannot drift into being a
   subtly different problem wearing the same name. <code>All/</code> also carries
@@ -371,6 +373,17 @@ TruePositionX,TruePositionY,TruePositionZ</pre>
   "cvDesignLog10RcondObserved": -3.14,               // raw, no verdict attached
   "designIntent":               "no-finite-range"    // editorial
 }</pre>
+  <p><strong>New in v1.2.</strong> <code>scenario.json</code>'s
+  <code>sensor</code> block adds <code>pixelsAcross</code>, the frame width in
+  pixels that <code>AngularDiameterMaxDeg</code> was computed against. It is
+  stated rather than assumed because the bound's floor is one instantaneous
+  field of view: a consumer assuming a different sensor would misread how tight
+  the bound is. <code>truth.json</code> adds <code>objectDiameterM</code>, the
+  target's <em>true</em> physical diameter in metres — answer-key material, since
+  the challenge file publishes only the angular bound derived from it. A scorer
+  needs it to judge whether a solver's assumed class size was defensible. Both
+  are <code>null</code> where the scenario declares no target size.</p>
+
   <p><code>rangeDefined</code> is derived from the truth kind: a target at
   effective infinity has no range to recover, which is categorically different
   from a range that exists but is badly conditioned.
@@ -588,7 +601,7 @@ BOTBENCH_OPAQUE=1 BOTBENCH_SEAL_SALT=$(openssl rand -hex 32) \
 </section>
 
 <footer>
-  BOT Interchange Format v1.1 · Sitrec 2.106.1<br/>
+  BOT Interchange Format v1.2 · Sitrec 2.106.1<br/>
   Generator: <code>benchmarks/botbench/lib/interchangeRelease.js</code><br/>
   Writers: <code>benchmarks/botbench/lib/exportInterchange.js</code><br/>
   Security properties: <code>tests/botbench/interchangeReidentification.test.js</code>,

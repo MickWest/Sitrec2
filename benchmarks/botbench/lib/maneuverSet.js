@@ -5,6 +5,7 @@
 
 import {MANEUVER_ANOMALOUS} from "./maneuverTargets";
 import {DEFAULT_SITE} from "./generateScenario";
+import {MANEUVER_DIAMETER_M, fovForFraction} from "./angularSize";
 
 const ORBIT = {kind: "orbit-point", speedMS: 70, altitudeAGL: 3000};
 
@@ -20,7 +21,7 @@ export const MANEUVER_CASES = {
     "turn90-instant":   {rangeM: 20000,  durationSeconds: 15},
     "zigzag":           {rangeM: 5000,   durationSeconds: 30},
     "highg-turn":       {rangeM: 20000,  durationSeconds: 15},
-    "hypersonic-glide": {rangeM: 100000, durationSeconds: 60, fovFullDeg: 2.0},
+    "hypersonic-glide": {rangeM: 100000, durationSeconds: 60},
     "sine-wave":        {rangeM: 5000,   durationSeconds: 60},
     "corkscrew":        {rangeM: 5000,   durationSeconds: 60},
     "vertical-loop":    {rangeM: 5000,   durationSeconds: 30},
@@ -39,9 +40,15 @@ export function maneuverSpecFor(kind) {
         // so the spec must declare it; the table keeps spec and generator in
         // agreement (the bench asserts they match).
         target: {kind, family: "maneuver",
+            // Same diameter table as M1, imported rather than repeated: the two
+            // sets share these kinds and a drift between them would make their
+            // results incomparable without saying so.
+            diameterM: MANEUVER_DIAMETER_M[kind],
             parameters: {anomalous: MANEUVER_ANOMALOUS[kind]}},
         wind: {kind: "zero"},   // self-propelled shapes; wind is not the subject
-        observation: {kind: "white", fovFullDeg: c.fovFullDeg ?? 0.9,
+        observation: {kind: "white",
+            fovFullDeg: c.fovFullDeg
+                ?? fovForFraction(MANEUVER_DIAMETER_M[kind], c.rangeM),
             gaussianSigmaDeg: 0.03},
     };
 }

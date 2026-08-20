@@ -2,7 +2,7 @@
 // vizBotBench.mjs — visualize a BOTBench results set and keep a registry of
 // every visualized run.
 //
-//   node benchmarks/botbench/vizBotBench.mjs results/m1
+//   node benchmarks/botbench/vizBotBench.mjs results/botset_anomalies
 //   node benchmarks/botbench/vizBotBench.mjs results/maneuvers --name maneuvers
 //   node benchmarks/botbench/vizBotBench.mjs --index-only
 //
@@ -114,17 +114,31 @@ details summary { cursor: pointer; color: var(--ink2); margin: 6px 0; }
 // Loading a results set
 // ---------------------------------------------------------------------------
 
-// Every directory (recursively) that holds a Truth/ with .truth.json files.
+// Every directory (recursively) that holds the truth sidecars for a batch.
+//
+// TWO LAYOUTS. Older trees and sealed releases keep each sidecar beside its CSV,
+// so the answer keys are in Truth/. The botset trees gather both sidecars in one
+// meta/ folder instead. A group is a directory holding either.
+const SIDECAR_SUBDIRS = ["meta", "Truth"];
+
+/** The subdirectory of `dir` that actually holds the .truth.json files. */
+export function truthJsonDir(dir) {
+    for (const sub of SIDECAR_SUBDIRS) {
+        const p = path.join(dir, sub);
+        if (fs.existsSync(p) && fs.readdirSync(p).some((f) => f.endsWith(".truth.json"))) {
+            return p;
+        }
+    }
+    return null;
+}
+
 function findGroups(root) {
     const groups = [];
     const walk = (dir) => {
-        const truth = path.join(dir, "Truth");
-        if (fs.existsSync(truth)
-            && fs.readdirSync(truth).some((f) => f.endsWith(".truth.json"))) {
-            groups.push(dir);
-        }
+        if (truthJsonDir(dir)) groups.push(dir);
         for (const e of fs.readdirSync(dir, {withFileTypes: true})) {
-            if (e.isDirectory() && !["Truth", "Input", "All", "kml"].includes(e.name)) {
+            if (e.isDirectory()
+                && !["Truth", "Input", "All", "kml", "meta"].includes(e.name)) {
                 walk(path.join(dir, e.name));
             }
         }
@@ -199,9 +213,18 @@ function downsample(full, maxN = 200) {
 }
 
 // One scenario record: identity + stats + embedded (downsampled) tracks.
+// A sidecar lives in meta/ (botset trees) or beside its CSV (sealed releases).
+function readSidecar(groupDir, base, suffix, siblingDir) {
+    for (const sub of ["meta", siblingDir]) {
+        const p = path.join(groupDir, sub, `${base}.${suffix}`);
+        if (fs.existsSync(p)) return readJson(p, {});
+    }
+    return {};
+}
+
 function loadScenario(groupDir, base, manifestByBase, groupLabel) {
-    const truthJson = readJson(path.join(groupDir, "Truth", `${base}.truth.json`), {});
-    const scenJson = readJson(path.join(groupDir, "Input", `${base}.scenario.json`), {});
+    const truthJson = readSidecar(groupDir, base, "truth.json", "Truth");
+    const scenJson = readSidecar(groupDir, base, "scenario.json", "Input");
     const allFile = path.join(groupDir, "All", `${base}.all.csv`);
     if (!fs.existsSync(allFile)) return null;
     const full = parseAllCsv(allFile);
@@ -254,25 +277,27 @@ const round4 = (x) => (Number.isFinite(x) ? Math.round(x * 10000) / 10000 : null
 
 function loadSet(setDir) {
     const groups = findGroups(setDir);
-    if (!groups.length) throw new Error(`no Truth/*.truth.json under ${setDir}`);
+    if (!groups.length) {
+        throw new Error(`no meta/*.truth.json or Truth/*.truth.json under ${setDir}`);
+    }
     const scenarios = [];
     for (const g of groups) {
         const label = path.relative(setDir, g) || ".";
         const manifest = readJson(path.join(g, "manifest.json"), []) ?? [];
         const byBase = new Map();
         for (const m of (Array.isArray(manifest) ? manifest : [])) {
-            // m1 manifests key by basename; the real-arm manifest keys by name.
+            // botset manifests key by basename; the real-arm manifest keys by name.
             const key = m.basename ?? m.name;
             if (key) byBase.set(key, m);
         }
-        for (const f of fs.readdirSync(path.join(g, "Truth"))) {
+        for (const f of fs.readdirSync(truthJsonDir(g))) {
             if (!f.endsWith(".truth.json")) continue;
             const base = f.replace(/\.truth\.json$/, "");
             const rec = loadScenario(g, base, byBase, label);
             if (rec) scenarios.push(rec);
         }
     }
-    // Numeric-aware ordering (batch_20sec before batch_120sec) for every list
+    // Numeric-aware ordering (batch_20s before batch_120s) for every list
     // the page derives from the scenario order.
     const natural = new Intl.Collator(undefined, {numeric: true}).compare;
     scenarios.sort((a, b) => natural(a.group, b.group) || natural(a.label, b.label));

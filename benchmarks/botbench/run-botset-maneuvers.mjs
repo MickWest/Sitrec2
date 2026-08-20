@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
- * run-m1-parallel.mjs — worker_threads driver for the M1 batch.
+ * run-botset-maneuvers.mjs — worker_threads driver for the maneuver botsets.
  *
- *     npm run bench-bot-m1-par
- *     node benchmarks/botbench/run-m1-parallel.mjs [--concurrency N]
+ *     npm run bench-bot-maneuvers-par
+ *     node benchmarks/botbench/run-botset-maneuvers.mjs [--concurrency N]
  *
- * The 12 batch folders (4 durations x 3 error levels) are independent — no
- * two touch the same file — so each runs in its own worker thread. Batch
- * generation lives in lib/m1Batch.js, shared verbatim with the sequential
- * bench (m1.bench.test.js), and generation is deterministic per (spec, seed),
+ * The 24 batch folders (2 sets x 4 durations x 3 error levels) are independent
+ * — no two touch the same file — so each runs in its own worker thread. Batch
+ * generation lives in lib/botsetManeuverBatch.js, shared verbatim with the
+ * sequential bench (botset-maneuvers.bench.test.js), and generation is
+ * deterministic per (spec, seed),
  * so this driver's output tree is byte-identical to a sequential run; only
  * timing.json (wall times) differs.
  *
@@ -30,8 +31,8 @@ import {createRequire} from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const OUT_DIR = path.join(__dirname, "results", "m1");
-const ENTRY = path.join(__dirname, "lib", "m1WorkerEntry.js");
+const RESULTS = path.join(__dirname, "results");
+const ENTRY = path.join(__dirname, "lib", "botsetManeuverWorker.js");
 
 // ---- args -------------------------------------------------------------------
 const argv = process.argv.slice(2);
@@ -50,30 +51,30 @@ for (let i = 0; i < argv.length; i++) {
         }
     } else {
         console.error(`unknown option: ${argv[i]}\n`
-            + "usage: run-m1-parallel.mjs [--concurrency N]");
+            + "usage: run-botset-maneuvers.mjs [--concurrency N]");
         process.exit(1);
     }
 }
 
 // ---- build the worker bundle ------------------------------------------------
-// Stub the target families the M1 set never generates: they are lazy
+// Stub the target families the maneuver botsets never generate: they are lazy
 // require()s in generateScenario/targets, and following them would drag the
 // astronomy / vehicle-model / filesystem chains into the bundle. The stub
-// throws on USE, so if the M1 set ever grows one of these families the run
+// throws on USE, so if the maneuver botsets ever grow one of these families the run
 // fails loudly instead of silently producing wrong truth.
 async function buildWorkerBundle() {
     const esbuild = require("esbuild");
     const outfile = path.join(os.tmpdir(),
-        `botbench-m1-worker-${process.pid}.cjs`);
+        `botbench-maneuver-worker-${process.pid}.cjs`);
     const stub = {
-        name: "m1-stubs",
+        name: "botset-maneuver-stubs",
         setup(build) {
             build.onResolve({filter: /\.\/(venus|capabilityTargets|realSegments)$/},
-                (args) => ({path: args.path, namespace: "m1-stub"}));
-            build.onLoad({filter: /.*/, namespace: "m1-stub"}, (args) => ({
+                (args) => ({path: args.path, namespace: "botset-maneuver-stub"}));
+            build.onLoad({filter: /.*/, namespace: "botset-maneuver-stub"}, (args) => ({
                 contents: `module.exports = new Proxy({}, {get() {
-                    throw new Error("module ${args.path} is stubbed in the M1 worker bundle - "
-                        + "the M1 set only generates maneuver targets");
+                    throw new Error("module ${args.path} is stubbed in the maneuver botset worker bundle - "
+                        + "these sets only generate maneuver targets");
                 }});`,
                 loader: "js",
             }));
@@ -97,7 +98,7 @@ function runBatch(bundle, task) {
         const w = new Worker(bundle, {workerData: task});
         w.once("message", (m) => {
             if (m.ok) resolve(m.result);
-            else reject(new Error(`batch ${task.durationSeconds}s/${task.errorLabel}: ${m.error}`));
+            else reject(new Error(`batch ${task.setKey}/${task.durationSeconds}s/${task.errorLabel}: ${m.error}`));
         });
         w.once("error", reject);
         w.once("exit", (code) => {
@@ -113,23 +114,29 @@ async function main() {
 
     // The sweep axes come from the bundle itself (the entry exports them and
     // only runs a batch when parentPort exists), so the task list can never
-    // drift from lib/m1Set.js.
+    // drift from lib/botsetManeuvers.js.
     const {AXES} = require(bundle);
     const tasks = [];
-    for (const durationSeconds of AXES.durations) {
-        for (const errorLabel of AXES.errorLabels) {
-            tasks.push({durationSeconds, errorLabel, outRoot: OUT_DIR});
+    for (const set of AXES.sets) {
+        for (const durationSeconds of AXES.durations) {
+            for (const errorLabel of AXES.errorLabels) {
+                tasks.push({setKey: set.key, durationSeconds, errorLabel,
+                    outRoot: RESULTS});
+            }
         }
     }
 
     const conc2 = conc ?? Math.max(1, Math.min(tasks.length,
         (os.availableParallelism?.() ?? os.cpus().length) - 1));
-    console.log(`[m1-par] ${tasks.length} batches, concurrency ${conc2}, `
+    console.log(`[botset-par] ${tasks.length} batches, concurrency ${conc2}, `
         + `worker bundle in ${buildMs} ms`);
 
-    // Same clean-slate rule as the bench: names encode variant and flags, so
-    // a rename would leave stale files behind.
-    fs.rmSync(OUT_DIR, {recursive: true, force: true});
+    // Same clean-slate rule as the bench: names encode variant and flags, so a
+    // rename would leave stale files behind. Only the botset directories go —
+    // results/ holds many other generated trees.
+    for (const set of AXES.sets) {
+        fs.rmSync(path.join(RESULTS, set.dirName), {recursive: true, force: true});
+    }
 
     const results = [];
     const queue = [...tasks];
@@ -139,7 +146,7 @@ async function main() {
             const task = queue.shift();
             const r = await runBatch(bundle, task);
             results.push(r);
-            console.log(`[m1-par] ${r.batch}: ${r.scenarios} scenarios in ${r.ms} ms`);
+            console.log(`[botset-par] ${r.batch}: ${r.scenarios} scenarios in ${r.ms} ms`);
         }
     });
     try {
@@ -149,13 +156,28 @@ async function main() {
     }
 
     // Deterministic report order + the same timing.json shape as the bench.
-    const order = new Map(tasks.map((t, i) =>
-        [`batch_${t.durationSeconds}sec/${t.errorLabel}`, i]));
-    results.sort((a, b) => order.get(a.batch) - order.get(b.batch));
+    const order = new Map(tasks.map((t, i) => [`${t.setKey}|${t.durationSeconds}|${t.errorLabel}`, i]));
+    const keyOf = (r) => `${r.set}|${r.batch.match(/batch_(\d+)s\//)[1]}|${r.batch.split("/").pop()}`;
+    results.sort((a, b) => order.get(keyOf(a)) - order.get(keyOf(b)));
     const wallMs = Date.now() - t1;
     const cpuMs = results.reduce((s, r) => s + r.ms, 0);
     const filesTotal = results.reduce((s, r) => s + r.files, 0);
-    fs.writeFileSync(path.join(OUT_DIR, "timing.json"), JSON.stringify({
+    // Per-SET timing files, matching the sequential bench: the set directory is
+    // what vizBotBench takes, so its timing belongs inside it.
+    for (const set of AXES.sets) {
+        const mine = results.filter((r) => r.set === set.key);
+        if (!mine.length) continue;
+        fs.writeFileSync(path.join(RESULTS, set.dirName, "timing.json"), JSON.stringify({
+            generatedAt: new Date().toISOString(),
+            set: set.key,
+            scenarios: mine.reduce((s2, r) => s2 + r.scenarios, 0),
+            files: mine.reduce((s2, r) => s2 + r.files, 0),
+            totalMs: wallMs,
+            parallel: {concurrency: conc2},
+            batches: mine.map((r) => ({batch: r.batch, scenarios: r.scenarios, ms: r.ms})),
+        }, null, 2));
+    }
+    fs.writeFileSync(path.join(RESULTS, "botset_maneuvers-timing.json"), JSON.stringify({
         generatedAt: new Date().toISOString(),
         scenarios: results.reduce((s, r) => s + r.scenarios, 0),
         files: filesTotal,
@@ -166,12 +188,12 @@ async function main() {
             scenarios: r.scenarios, ms: r.ms})),
     }, null, 2));
 
-    console.log(`[m1-par] total: ${results.reduce((s, r) => s + r.scenarios, 0)} scenarios, `
+    console.log(`[botset-par] total: ${results.reduce((s, r) => s + r.scenarios, 0)} scenarios, `
         + `${filesTotal} files | wall ${wallMs} ms, summed batch time ${cpuMs} ms `
         + `(~${(cpuMs / wallMs).toFixed(1)}x)`);
 }
 
 main().catch((e) => {
-    console.error(`[m1-par] FAILED: ${e && e.stack || e}`);
+    console.error(`[botset-par] FAILED: ${e && e.stack || e}`);
     process.exit(1);
 });

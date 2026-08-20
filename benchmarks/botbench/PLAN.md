@@ -755,20 +755,41 @@ hypersonic glide, sine wave, corkscrew, vertical loop, and figure-eight.
 Modules: `lib/maneuverTargets.js` and `lib/maneuverSet.js`.
 Bench: `bench-bot-maneuver`.
 
-**The M1 batch** (`lib/m1Set.js`, `bench-bot-m1`) sweeps the full taxonomy as
-23 parameter variants — both directions of the speed step; 20 g and 50 g
-high-g turns with and without a lead-in; hypersonic at Mach ~6 (dive and
-pull-up) and Mach 50; plausible and impossible sine, loop (aero / too slow /
-too fast) and figure-eight members — at four clip durations (20/60/120/300 s)
-and three operator-error levels (clean, 0.15 deg and 0.3 deg wobble
-amplitude). Output tree: `results/m1/batch_<D>sec/<E>deg/{Input,Truth,All}`
-with a manifest per folder and per-batch generation times in
-`results/m1/timing.json`. Error level lives outside the truth key, so one
-variant's three error members are the same flight observed three ways.
+**The maneuver botsets** (`lib/botsetManeuvers.js`, `bench-bot-maneuvers`)
+sweep the full taxonomy as 23 parameter variants — both directions of the speed
+step; 20 g and 50 g high-g turns with and without a lead-in; hypersonic at
+Mach ~6 (dive and pull-up) and Mach 50; plausible and impossible sine, loop
+(aero / too slow / too fast) and figure-eight members — at four clip durations
+(20/60/120/300 s) and three operator-error levels.
 
-Batch generation and its integrity checks live in `lib/m1Batch.js`, shared by
-the sequential bench and by `run-m1-parallel.mjs` (`bench-bot-m1-par`): the
-twelve batch folders are independent, so the driver runs each in its own
+The taxonomy is PARTITIONED BY ANOMALY into two published sets:
+`botset_anomalies` (15 variants, no conventional model should fit) and
+`botset_mundane` (8 variants, a conventional model exists and must be found).
+They share a spec builder, a seed and both ladders, so results are directly
+comparable; what the split buys is that "did we find the mundane answer" and
+"did we correctly report an anomaly" stop being one mixed number over one mixed
+folder.
+
+The ERROR LADDER IS A PERCENTAGE OF THE FIELD OF VIEW (0 / 5 / 20 pct), not an
+absolute angle — see `lib/botsetErrors.js`. Field of view is sized per scenario
+from the target and its range, spanning 0.46 to 3.82 deg, so a fixed angular
+error would be 33% of the frame in one scenario and 3.9% in another and the
+ladder would sweep difficulty and geometry together. The resolved degrees are
+still published in `scenario.json`'s `losError` and in every manifest row.
+
+Output tree: `results/botset_<set>/batch_<D>s/<E>pct/{Input,Truth,All,meta}`
+with a manifest per folder and per-batch generation times in
+`results/botset_<set>/timing.json`. Both sidecars live in `meta/` so the CSV
+folders hold only CSVs; that trades the folder-level blinding a sealed release
+needs, which is why `writeInterchange` keeps the sibling layout as its default
+and refuses to combine `sidecarDir` with `descriptiveName`. Error level lives
+outside the truth key, so one variant's three error members are the same flight
+observed three ways.
+
+Batch generation and its integrity checks live in `lib/botsetManeuverBatch.js`,
+shared by the sequential bench and by `run-botset-maneuvers.mjs`
+(`bench-bot-maneuvers-par`): the twenty-four batch folders are independent, so
+the driver runs each in its own
 worker thread from a single esbuild-built worker bundle (the lazy
 non-maneuver target modules are stubbed, so accidentally pulling the app
 stack into a worker is a loud failure). Generation is deterministic, so the
