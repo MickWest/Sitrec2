@@ -156,6 +156,39 @@ export function balloonConsistency(track) {
 // tells the analyst how unresolved the parameter basin still is.
 export function localFitCompletionWarnings(optimizer) {
     if (!optimizer || optimizer.stopReason !== "iteration_limit") return [];
+
+    // A COLLAPSED SIMPLEX IS CONVERGENCE, even when the cost tolerance was never
+    // met. Nelder-Mead here stops only on BOTH a flat objective and a collapsed
+    // simplex, so a fit can exhaust its budget with the simplex already at xTol
+    // while costSpread sits above tol. No further iteration can help: there is
+    // no x-movement left to shrink the cost spread with. Calling that "budget
+    // exhausted before convergence" is a false negative, not a cautious one.
+    //
+    // It penalised PRECISION, which is the wrong way round. Measured on a
+    // benchmark balloon (botset_balloons_orbit, r3.219 km, habsteady wind): the
+    // fit that recovered truth to relSep 0.00015 drove its simplex to a full
+    // collapse ("spans 0.00% of parameter bounds"), was stamped incomplete, lost
+    // the balloon class its viability, and the file reported "Unresolved". A
+    // deliberately sloppier fit of the same file — residual 100x worse, range
+    // 200 m out, relSep 0.032 — landed in a broad flat basin, met the cost
+    // tolerance, and was stamped complete, so THAT one resolved. The better the
+    // answer, the likelier it was refused.
+    //
+    // The complement of settledButUnidentifiable below: that one handles "cost
+    // settled, some parameters still wide"; this handles "all parameters
+    // collapsed, cost not settled". Between them the only remaining
+    // iteration_limit stop is a search that really was still moving.
+    const xTol = Number.isFinite(optimizer.xTol) ? optimizer.xTol : 1e-6;
+    const spreads = Array.isArray(optimizer.parameterSpreads)
+        ? optimizer.parameterSpreads : null;
+    // Prefer the per-parameter array: the scalar is a summary, and one wide
+    // dimension is what "still moving" means. Missing metadata keeps the
+    // warning — silence is never assumed from an absent measurement.
+    const collapsed = spreads
+        ? spreads.length > 0 && spreads.every((s) => Number.isFinite(s) && s < xTol)
+        : (Number.isFinite(optimizer.parameterSpread) && optimizer.parameterSpread < xTol);
+    if (collapsed) return [];
+
     const spread = Number.isFinite(optimizer.parameterSpread)
         ? `; simplex still spans ${(optimizer.parameterSpread * 100).toFixed(2)}% of parameter bounds`
         : "";
