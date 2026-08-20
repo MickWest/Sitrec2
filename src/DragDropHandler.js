@@ -528,11 +528,26 @@ class CDragDropHandler {
         if (this.shouldResetBeforeImport(list)) {
             console.log(`Reset on Track Import: starting a fresh sitch for `
                 + `${list.length} dropped file(s)`);
-            for (const file of list) this.pendingDropFiles.push(file);
-            setNewSitchObject(SitchMan.findFirstData((s) => s.data.name === "custom"));
+            this.uploadFilesIntoNewSitch(list);
             return;
         }
         for (const file of list) this.uploadDroppedFile(file, file.name);
+    }
+
+    /**
+     * Import these files into a FRESH custom sitch, discarding the current scene.
+     *
+     * The route described above, on its own: the "Reset on Track Import" tweak
+     * decides whether an ordinary drop takes it, but a caller can also ask for it
+     * outright — the Track Browser's "Open as New Sitch" does, because opening a
+     * benchmark scenario beside whatever was already loaded is almost never what
+     * is wanted, tweak or no tweak.
+     */
+    uploadFilesIntoNewSitch(files) {
+        const list = Array.from(files ?? []);
+        if (!list.length) return;
+        for (const file of list) this.pendingDropFiles.push(file);
+        setNewSitchObject(SitchMan.findFirstData((s) => s.data.name === "custom"));
     }
 
     /**

@@ -2411,6 +2411,39 @@ function wireDragAndDrop(state) {
     });
 }
 
+/**
+ * Open BOTBench and immediately analyse a caller-supplied list of files.
+ *
+ * The dialog's own entry points all start from a picker (a folder, or a hand-
+ * picked set). This is the same road from further along: a caller that has
+ * ALREADY chosen the files — the Track Browser's "Open in BOTBench" — hands them
+ * straight over, and they go through pairSidecars and analyzeEntries exactly as a
+ * folder scan's would, so a run started this way is indistinguishable from one
+ * started here.
+ *
+ * `entries` are {name, relativePath, getFile} records; sidecars must be present
+ * in the list for pairSidecars to find them, which is why the caller passes its
+ * whole walk rather than just the files it wants rows for.
+ *
+ * @returns {Promise<number>} how many files were actually queued
+ */
+export async function openBotBenchWithEntries(entries) {
+    openBotBenchDialog();
+    const state = activeDialog;
+    if (!state) return 0;
+    state.status.textContent = "Reading selected files...";
+    const found = await pairSidecars(Array.from(entries ?? [])
+        .filter((e) => isExplicitlyCollectable(e.name)), {explicit: true});
+    if (!found.length) {
+        state.status.textContent = "None of the selected files are ones BOTBench can analyse "
+            + "(BOT interchange CSV, FMV .ts/.klv, a track CSV or .srt with camera pointing, "
+            + "or a STANAG 4676 .xml).";
+        return 0;
+    }
+    await analyzeEntries(state, found);
+    return found.length;
+}
+
 export function openBotBenchDialog() {
     const state = createDialog();
 
