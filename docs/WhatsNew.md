@@ -51,6 +51,8 @@ lockstep with docs/WhatsNew-Details.md.
 
 - Fixed the downloaded MCP Bridge package failing to start its server on macOS and Linux (Help → Documentation → *Download MCP Bridge*). Its guide now covers setting up Codex and Claude Code on each platform, with connection checks, usage examples, update steps and startup troubleshooting.
 
+- Fixed a video file's audio track making the sitch longer than the footage. A transport stream (.ts) holds its picture and its sound as separate streams, and the sound usually runs on a little past the last frame of video — but it was the sound's length, not the picture's, that set how many frames the sitch had, and it rounded the frame rate to a whole number as well. On one test clip that added six frames past the end of the footage, which was enough to extrapolate every track beyond its data: a target's height above ground read 3 ft where it should read 2, a track ran off the edge of the view, and the fan of sightlines shifted slightly. The picture now sets the length and the frame rate, as it always should have. This affects any transport stream that carries sound alongside the video, which is the usual case for MISB/FMV files.
+
 ## Version 2.139.0 (2026-08-18)
 
 ### New Features
