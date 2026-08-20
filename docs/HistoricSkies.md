@@ -81,8 +81,13 @@ Time zones are the largest avoidable error in a historic reconstruction, because
 15° of sky.
 
 - **Set `Sit.timeZone` explicitly** on a historic sitch. Sitrec has no location→timezone
-  lookup, so it falls back to the browser's own zone, which is only right if you happen to
-  be sitting where the sighting happened.
+  lookup, so it otherwise falls back to the browser's own zone, which is only right if you
+  happen to be sitting where the sighting happened.
+- **The fallback zone is worked out once, from the sitch's own start time.** So if you load
+  a modern sitch and *then* type an 1897 date, the zone stays whatever the modern date
+  implied — possibly an hour out, since daylight saving may apply to one date and not the
+  other. Pick the zone from the Time menu after changing the date, or put the historic date
+  in the sitch.
 - **There was no daylight saving.** Not anywhere before 1916 (Germany), and not in the US
   before 31 March 1918. Choosing `CDT` or `BST` for an 1897 date invents an hour that did
   not exist — use `CST UTC-6`, `GMT UTC+0` and so on.

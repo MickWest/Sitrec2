@@ -250,26 +250,43 @@ export class CNodeDateTime extends CNode {
         // so a sitch whose startTime is already historic needs this now.
         this.adjustYearRange();
 
-        const options = { timeZoneName: 'short' };
-        const timeZone = Sit.timeZone ?? new Date().toLocaleTimeString('en-us', options).split(' ')[2];
-
+        // A sitch that names its own zone means it: the sighting happened where it
+        // happened, whatever zone the person looking at it is sitting in. This used
+        // to be looked up and then thrown away again by an unconditional
+        // setTimeZoneNameFromOffset() below - which overwrites the NAME and the
+        // OFFSET both - so Sit.timeZone had no effect at all. SitAriel asks for EET
+        // (UTC+2) and rendered its clock in the viewer's zone: nine hours out from a
+        // California browser. A saved sitch was never affected, because
+        // modDeserialize restores its serialized timeZoneName afterwards.
         this.timeZoneName = "PDT UTC-7";
-        for (let tz of timeZoneKeys) {
-            if (tz.startsWith(timeZone)) {
-                this.timeZoneName = tz;
-                this.timeZoneOffset = timeZoneOffsets[tz];
+        let sitTimeZoneApplied = false;
+        if (Sit.timeZone !== undefined) {
+            for (const tz of timeZoneKeys) {
+                if (tz.startsWith(Sit.timeZone)) {
+                    this.timeZoneName = tz;
+                    this.timeZoneOffset = timeZoneOffsets[tz];
+                    sitTimeZoneApplied = true;
+                }
+            }
+            if (!sitTimeZoneApplied) {
+                console.warn("CNodeDateTime - Sit.timeZone '" + Sit.timeZone
+                    + "' matches no entry in timeZoneOffsets; falling back to the browser zone");
             }
         }
 
-        // Read the offset off the SIMULATION date, not today's. getTimezoneOffset()
-        // is date-aware and carries the whole IANA history, so a Chicago browser
-        // gets UTC-6 for April 1897 and UTC-5 for April 1918 - US daylight saving
-        // only began on 31 March 1918. Using new Date() here picked today's rule and
+        // Nothing asked for a particular zone, so use the viewer's own - but read
+        // the offset off the SIMULATION date, not today's. getTimezoneOffset() is
+        // date-aware and carries the whole IANA history, so a Chicago browser gets
+        // UTC-6 for April 1897 and UTC-5 for April 1918: US daylight saving only
+        // began on 31 March 1918. Reading it from new Date() picked today's rule and
         // put a historic sitch an hour out. dateNow is already set (see above).
-        // This only helps when the browser's zone matches the sighting's; there is
-        // no lat/lon -> timezone lookup, so historic sitches should set Sit.timeZone.
-        const offset = this.dateNow.getTimezoneOffset() / -60; // minutes -> hours, sign flipped
-        this.setTimeZoneNameFromOffset(offset);
+        // There is no lat/lon -> timezone lookup, so this is only the right zone when
+        // the viewer happens to be where the sighting was; historic sitches should
+        // name their zone with Sit.timeZone rather than rely on it.
+        if (!sitTimeZoneApplied) {
+            const offset = this.dateNow.getTimezoneOffset() / -60; // minutes -> hours, sign flipped
+            this.setTimeZoneNameFromOffset(offset);
+        }
 
 
         // add the time zon flag
