@@ -36,15 +36,21 @@ import {
 } from "./CFileManagerUtils";
 import {isProbeableTrackName, probeTrackFile, summarizeTrackFile, trackFileTrackCount} from "./TrackFiles/TrackFileProbe";
 import {botBenchExplicitFileRole, botBenchScenarioBase} from "./analysis/BotBenchIngest";
+import {VIZ} from "./TraverseHypotheses";
 import {openBotBenchWithEntries} from "./analysis/BotBenchUI";
 
 // Track colors by resolved role. Truth is checked before role, so a BOT truth
 // sub-track (role "target", ground truth) reads as the answer key rather than as
 // one more target.
+//
+// The three values come from VIZ so this view, the traverse charts, the 3D scene
+// and the legacy sitches all agree — a camera track used to be a different colour
+// in each of those. Truth and target are the closest pair, and they meet exactly
+// here (a BOT file has both), so truth is drawn DASHED below.
 const TRACK_COLORS = {
-    truth: "#ffb74d",
-    camera: "#4fc3f7",
-    target: "#81c784",
+    truth: VIZ.truth,
+    camera: VIZ.camera,
+    target: VIZ.target,
 };
 
 // Colors for tracks whose format states no roles at all — a multi-aircraft KML, a
@@ -162,10 +168,15 @@ export function drawPlanView(canvas, summary, {overlay = true, lineWidth = 1.5, 
         ctx.lineWidth = lineWidth;
         ctx.lineJoin = "round";
         ctx.lineCap = "round";
+        // Truth is dashed, matching the traverse charts. It shares a hue family
+        // with the target on purpose — on a BOT file they ARE the same object —
+        // so the dash, not the colour, says which one is the answer key.
+        if (track.isTruth) ctx.setLineDash([lineWidth * 3, lineWidth * 2.5]);
         ctx.beginPath();
         ctx.moveTo(sx(xy[0]), sy(xy[1]));
         for (let i = 2; i < xy.length; i += 2) ctx.lineTo(sx(xy[i]), sy(xy[i + 1]));
         ctx.stroke();
+        ctx.setLineDash([]);
 
         // A filled dot at the start, so a closed or doubled-back path still shows
         // which way it was flown.

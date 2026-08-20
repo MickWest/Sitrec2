@@ -43,10 +43,36 @@ export const VIZ = {
     aircraft: "#199e70",   // parametric aircraft fit
     slowObj: "#c98500",    // slow-object plausible trajectory / profile
     fastObj: "#9085e9",    // fast-object plausible profile
-    sensor: "#c3c2b7",     // sensor (jet) path
     ray: "#4a5058",        // LOS rays
-    truth: "#e0569f",      // ground-truth reference track (dashed in 3D graphs)
+
+    // TRACK ROLE COLORS. One definition for every surface that draws a track by
+    // role: the 3D scene (TrackManager), these charts, the Track Browser and the
+    // legacy sitches in CommonSitch. Before this there were four palettes and a
+    // camera track was a different colour in each.
+    //
+    // The three roles do not all share a surface, which is what makes one
+    // palette possible: TARGET is never drawn on a traverse chart, because there
+    // the target IS the hypothesis. So target only has to clear truth, and is
+    // free to keep Sitrec's long-standing red.
+    //
+    // Chosen by measurement, not eye (docs/temp/TrackRoleColorProposal.md):
+    //   camera #7fd4e8  0.63 from its nearest hypothesis colour, vs 0.50 for the
+    //                   Track Browser's old blue against constAir — the most
+    //                   common line on a chart. Chromatic rather than grey so it
+    //                   reads as a role in 3D instead of sinking into terrain.
+    //   target #ff0000  1.14 from truth and 1.10 from slowObj. Softening it to
+    //                   #e8564d would have cut those to 0.47 and 0.61, so the
+    //                   legacy value is also the best-separated one.
+    //   truth  #e0569f  unchanged, and DASHED wherever it shares a surface with
+    //                   target: same object, different provenance.
+    camera: "#7fd4e8",     // camera / sensor / platform track
+    target: "#ff0000",     // the object being tracked
+    truth: "#e0569f",      // ground-truth reference track (dashed)
 };
+
+// The sensor path in these charts is the camera track under another name. Kept
+// as an alias so chart code reads "sensor" where that is the domain word.
+VIZ.sensor = VIZ.camera;
 export function losAngularRateSeries(dataset) {
     const {n, D, fps} = dataset;
     const rate = new Float64Array(n);

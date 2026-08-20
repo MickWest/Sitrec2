@@ -1,5 +1,14 @@
 // Common snippets of data definitions for sitrecs
 
+// Track role colours come from the one shared definition (see VIZ), so a target
+// or camera track is the same colour here, in the 3D scene for imported files,
+// in the Traverse Analysis charts and in the Track Browser.
+//
+// VIZ.target is #ff0000 — the exact value these sitches always used, so nothing
+// about the target changes. The CAMERA does change: it was [1,1,0], the same
+// yellow as the "other" track, so the two could not be told apart.
+import {VIZ} from "../TraverseHypotheses";
+
 
 /*
  Nodes can be converted by using this regular expression / replacement
@@ -12,9 +21,9 @@ $2: { kind: "$1",\n$3},
 
 export const commonTargetTrack = {
     targetTrack: {kind: "trackFromDataFile", file: "TargetTrack", dataID: "TargetTrackData",},
-    displayTargetTrack: {kind: "DisplayTrack", track: "TargetTrackData", color: [1,0,0], width: 1},
-    displaySmoothedTarget: {kind: "DisplayTrack", track: "targetTrack", color: [1,0,0], width: 4,},
-    targetSphereBig: {kind: "DisplayTargetSphere", track: "targetTrack", size: 1000, color: [1,0,0],},
+    displayTargetTrack: {kind: "DisplayTrack", track: "TargetTrackData", color: VIZ.target, width: 1},
+    displaySmoothedTarget: {kind: "DisplayTrack", track: "targetTrack", color: VIZ.target, width: 4,},
+    targetSphereBig: {kind: "DisplayTargetSphere", track: "targetTrack", size: 1000, color: VIZ.target,},
 }
 
 export const commonOtherTrack = {
@@ -29,7 +38,7 @@ export const commonOtherTrack = {
 export const commonTrackedCamera = {
     cameraTrack: {},
     followTrack: {},
-    cameraSphereBig: {kind: "DisplayTargetSphere", track: "cameraTrack", size: 1000, color: [1,1,0],},
+    cameraSphereBig: {kind: "DisplayTargetSphere", track: "cameraTrack", size: 1000, color: VIZ.camera,},
 }
 
 

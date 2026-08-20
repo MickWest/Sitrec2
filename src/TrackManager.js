@@ -31,6 +31,9 @@ import {CNodeLazyMISBFlightTrack} from "./nodes/CNodeLazyMISBFlightTrack";
 import {assert} from "./assert";
 import {getLocalSouthVector, getLocalUpVector, pointOnSphereBelow} from "./SphericalMath";
 import {closestIntersectionTime, trackBoundingBox} from "./trackUtils";
+// Track role colours (camera / target / truth) — one definition, shared with the
+// traverse charts, the Track Browser and CommonSitch.
+import {VIZ} from "./TraverseHypotheses";
 import {collectLOSGroundPoints, collectTrackPoints, computeTrackFraming}
     from "./CameraFraming";
 import {intersectSurface} from "./threeExt";
@@ -348,8 +351,12 @@ class CMetaTrack {
 // Ordering matters: tracks are coloured by rank, so palette[0], palette[1]…
 // go to the first, second… track. The list is arranged so CONSECUTIVE entries
 // are far apart in hue, keeping a typical few-track scene maximally distinct.
+// Colours for tracks with NO declared role. Salmon (1.0,0.5,0.5) and rose
+// (1.0,0.5,0.75) were removed when the role colours landed: they sat 0.46 and
+// 0.43 from target red and truth pink, close enough that an unlabelled track
+// read as the target or the answer key. A reserved hue is one the open palette
+// can no longer spend.
 const TRACK_PALETTE = [
-    new Color(1.0, 0.5,  0.5),   // salmon / red
     new Color(0.5, 1.0,  0.5),   // green
     new Color(0.6, 0.6,  1.0),   // periwinkle / blue
     new Color(1.0, 0.5,  1.0),   // magenta / pink
@@ -358,7 +365,6 @@ const TRACK_PALETTE = [
     new Color(0.7, 0.5,  1.0),   // violet
     new Color(1.0, 0.7,  0.4),   // orange
     new Color(0.4, 1.0,  0.7),   // spring green / mint
-    new Color(1.0, 0.5,  0.75),  // rose
     new Color(0.45, 0.75, 1.0),  // azure / sky blue
     new Color(0.75, 1.0,  0.45), // lime / chartreuse
     new Color(0.85, 0.5,  1.0),  // purple
@@ -1029,10 +1035,26 @@ class CTrackManager extends CManager {
                         && loadedTrackFileForKind.isSondeTrack());
                     trackOb.isSondeTrack = isSondeTrack;
 
+                    // The track's DECLARED role, if its source file states one
+                    // (STANAG, MISB and BOT do; a plain KML or CSV does not).
+                    // The role was already known here and used to CHOOSE the
+                    // camera and target tracks; it just was not used to colour
+                    // them, so a platform took whatever palette slot its name
+                    // happened to sort into.
+                    const roleHintForColor = loadedTrackFileForKind?.trackRoleHint
+                        ? loadedTrackFileForKind.trackRoleHint(trackOb.trackIndex) : null;
+
                     if (trackColor === null) {
                         // Sonde tracks get white by default to distinguish from aircraft
                         if (isSondeTrack) {
                             trackColor = new Color(1, 1, 1);
+                        } else if (roleHintForColor === "camera" || roleHintForColor === "target") {
+                            // A declared role gets the shared role colour and is
+                            // deliberately NOT marked paletteColored, so
+                            // reassignTrackColors() leaves it alone — the role is
+                            // stable, so its colour must not depend on how many
+                            // other tracks loaded or what they were called.
+                            trackColor = new Color(VIZ[roleHintForColor]);
                         } else {
                             // Provisional colour only. Tracks are created in async
                             // load-completion order, so any creation-order index
