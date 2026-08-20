@@ -111,3 +111,78 @@ time. The distinction to establish is between an ARTIFICIAL search-box pin and a
 PHYSICAL domain violation, recording which bound was active and the boundary
 gradient evidence. Relaxation should be proposed only where the same solution
 survives expanded bounds and independent restarts with convergence evidence.
+
+## C6 — The lantern wind bound is a box where the physics is a circle
+
+**An artificial search-box pin, in C5's terms, and it now has the evidence C5
+asks for.** `SkyLanternModel` bounds `windE` and `windN` independently at
+±20 m/s. A per-component box makes wind of magnitude b reachable from EVERY
+bearing but b·√2 only on the diagonal — 39 kt omnidirectional against 55 kt
+diagonal. The reachable set is a square; the physical quantity is a magnitude,
+which is a circle. The corners are the only place the advertised envelope exists.
+
+Measured on `botset_balloons_orbit/batch_20s/0pct`, r3.219 km, steady wind: the
+true wind is 21.5 m/s on bearing ~68°, which needs `windE` = 20.0 — exactly the
+ceiling. The pin is recorded as `windE (max)`. The wind's MAGNITUDE (41.9 kt)
+sits comfortably inside the envelope the model intends; only its direction makes
+it unreachable. That is the definition of an artificial pin rather than a
+physical domain violation.
+
+**C5's relaxation test is satisfied.** The same solution survives expanded
+bounds: at ±20, ±23.2, ±30 and ±40 the shipping (seeded) fit returns the
+identical answer — residual 0.000000°, range 6345 m against a truth of 6356 m,
+relSep 0.00015. The pin disappears at ≥23.2 and nothing else moves.
+
+**DECIDED: the box was widened to ±40 m/s**, matching `FixedWingModel`, with the
+bound's ROLE changed from physical envelope to search range. The reasoning
+against a narrower value is recorded because it constrains any future revision:
+the intermediate window, 23.15–23.6 m/s, is mostly a knife-edge for the
+model-level recovery test, which flips on 0.05 m/s steps (23.15 fail, 23.2 fail,
+23.25 fail, 23.3 pass, 23.4 pass, 23.5 fail) while 20/21/22/26/30/40 all pass.
+Selecting a value because it is green would have been tuning a physical constant
+to a test.
+
+**What widening costs, stated rather than glossed.** The diagonal now admits
+110 kt, which is not lantern-like, so the box no longer excludes non-lantern
+motion — `SkyLanternModel.test.js` was rewritten to say so instead of asserting a
+guarantee that no longer holds. Exclusion rests on the `extraCost` speed prior
+and the kinematic ordinariness screen. Measured over the same 43 scenarios, the
+change moved two verdicts (one mundane balloon gained the balloon class, one
+lost it) and left the anomalous false-positive rate at 2/15. `topRelSep` moved on
+seven files: one improved from 0.146 to 0.00010, one degraded from 0.00001 to
+0.044, the rest marginally. In aggregate close to a wash; on the file that
+prompted it, the balloon class is now viable with relSep 0.00001.
+
+**STILL OPEN — the fix is a magnitude constraint**: reparameterise the wind as
+speed and bearing with the speed bounded, or keep a generous box and carry the
+limit as a magnitude penalty. The reachable set then matches the physics, the
+corner-cutting disappears, and the exclusion the box used to provide can be
+restored honestly at the magnitude where it belongs. Widening to ±40 removes the
+pin; it does not make the shape right.
+
+**One caveat on the knife-edge, which is a separate finding.** It lives entirely
+in the UNSEEDED path: the model test's `fitLantern` helper starts from the
+parameter defaults, whereas shipping seeds via `seedFromTrack` (see
+`TraverseBattery`). The seeded path was stable across every bound tried. The
+unseeded fragility deserves its own look — a fit that marginal is passing by
+luck — but it does not affect shipping results.
+
+## C7 — One ranking regression from the completeness fix
+
+Treating a collapsed simplex as convergence (`localFitCompletionWarnings`) was
+measured over 43 scenarios and moved six, all mundane balloons, all toward the
+correct class; the anomalous false-positive rate was unchanged at 2/15. Because
+the flag also feeds `plausibilityRating`'s `eligible`, five files improved their
+top candidate's `topRelSep` by roughly three orders of magnitude — the
+incompleteness stamp had been demoting the most accurate fits out of the top
+slot.
+
+**One file moved the other way**: `anom-figureeight-implausible` went from
+`topRelSep` 0.051 to 0.187. Its verdict is unchanged and still correct
+(unresolved, no viable class), so nothing user-facing is wrong, but its
+top-ranked candidate is 3.7× further from truth than before.
+
+The likely mechanism is that a previously-ineligible fit is now eligible and
+outranks the more accurate one under the display-score comparator. Worth
+resolving before the RANKING (as distinct from the verdict) is trusted on
+anomalous files, since that is precisely where the ordering carries weight.

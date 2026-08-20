@@ -110,16 +110,39 @@ export class SkyLanternModel extends PhysicsModel {
 
     getParameterDefs() {
         // name, min, max, default, scale (initial simplex perturbation)
-        // Wind components bounded at 20 m/s (~39 kt each, 55 kt vector max).
-        // A lantern is a wind tracer: launch implies calm-ish SURFACE wind,
-        // but 40-45 kt at altitude is ordinary — a ±13 m/s bound encoded the
-        // surface intuition and forced the fit to fake faster drift with the
-        // shear multiplier (pinning both bounds and inflating the residual).
-        // The extraCost speed prior below still prefers light winds.
+        // Wind components bounded at 40 m/s (~78 kt each). A lantern is a wind
+        // tracer: launch implies calm-ish SURFACE wind, but 40-45 kt at altitude
+        // is ordinary — a ±13 m/s bound encoded the surface intuition and forced
+        // the fit to fake faster drift with the shear multiplier (pinning both
+        // bounds and inflating the residual). ±20 fixed that and left a subtler
+        // case behind it.
+        //
+        // A BOX CUTS THE CORNER OFF THE CIRCLE, which is why ±20 still pinned.
+        // A per-component bound b makes wind of magnitude b reachable from EVERY
+        // bearing, but b*sqrt(2) only along the diagonal: at b=20 that is 39 kt
+        // omnidirectional against 55 kt diagonal. The reachable set is a square;
+        // the physical quantity is a magnitude, which is a circle. Measured on a
+        // benchmark scenario, a true wind of 21.5 m/s on bearing 68 deg needed
+        // windE = 20.0 — exactly the ceiling — so an ordinary 42 kt wind pinned
+        // for no reason but its direction, and an active pin makes
+        // judgeRepresentative() report "search incomplete".
+        //
+        // THIS BOUND IS A SEARCH RANGE, NOT A PHYSICAL ENVELOPE. That is a
+        // deliberate change of role: at ±20 the box was doing double duty, both
+        // bracketing the search and quietly excluding non-lantern motion, and
+        // the two jobs wanted different numbers. Exclusion now rests where it
+        // can be reasoned about — the extraCost speed prior below, which still
+        // prefers light winds, and the kinematic ordinariness screen. The box no
+        // longer refuses a fast wind; it declines to prefer one.
+        //
+        // The consequence, stated plainly: the diagonal now admits 110 kt, which
+        // is not lantern-like. A magnitude constraint (speed and bearing, with
+        // speed bounded) would give the circle the physics actually describes
+        // and is the better long-term shape — see the corrections queue.
         return [
             {name: "initialRange", min: 200,    max: 30000, default: 3000,  scale: 500},
-            {name: "windE",        min: -20,    max: 20,    default: 0,     scale: 2},
-            {name: "windN",        min: -20,    max: 20,    default: 0,     scale: 2},
+            {name: "windE",        min: -40,    max: 40,    default: 0,     scale: 2},
+            {name: "windN",        min: -40,    max: 40,    default: 0,     scale: 2},
             {name: "shearPerM",    min: -0.004, max: 0.008, default: 0.001, scale: 0.001},
             {name: "vRise",        min: 0,      max: 4,     default: 1.5,   scale: 0.5},
             {name: "vSink",        min: 0,      max: 4,     default: 1.0,   scale: 0.5},
@@ -205,8 +228,11 @@ export class SkyLanternModel extends PhysicsModel {
 
         this.seed = [
             clamp(range, 200, 30000),
-            clamp(E[0], -20, 20),        // windE  (v at s=0)
-            clamp(N[0], -20, 20),        // windN
+            // Must match the windE/windN bounds above: a seed clamped tighter
+            // than the search starts the optimizer on the wall it exists to let
+            // the fit leave.
+            clamp(E[0], -40, 40),        // windE  (v at s=0)
+            clamp(N[0], -40, 40),        // windN
             0,                           // shearPerM — 0 so mult=1 and the
                                          // quadratic reads straight onto the wind
             vRise, vSink, tBurn, tauCool,

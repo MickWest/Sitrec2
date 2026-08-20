@@ -250,11 +250,33 @@ describe("SkyLanternModel", () => {
         expect(sum / n).toBeLessThan(600);
     }, 120000);
 
-    test("parameter bounds forbid non-lantern motion", () => {
+    test("parameter bounds forbid non-lantern VERTICAL motion; wind is a search range", () => {
         const defs = new SkyLanternModel().getParameterDefs();
         const byName = Object.fromEntries(defs.map(d => [d.name, d]));
-        // wind bounded to ~39 kt per component (55 kt vector); vertical rates to 4 m/s
-        expect(Math.hypot(byName.windE.max, byName.windN.max) / KNOTS_TO_MS).toBeLessThan(60);
+
+        // WIND IS NO LONGER AN EXCLUSION. This assertion used to require the
+        // wind box's diagonal to stay under 60 kt, i.e. the box was doing double
+        // duty — bracketing the search AND excluding non-lantern motion. The two
+        // jobs want different numbers, because a box's reachable set is a square
+        // while wind speed is a magnitude: at ±20 m/s that was 39 kt from every
+        // bearing but 55 kt only along the diagonal, so an ordinary 42 kt wind
+        // pinned for no reason except its direction.
+        //
+        // The bound is now ±40 m/s and is a SEARCH RANGE. Exclusion moved to the
+        // extraCost speed prior and the kinematic ordinariness screen, which can
+        // be reasoned about; the box declines to prefer a fast wind rather than
+        // refusing one. What is still worth asserting is that it is symmetric,
+        // finite, and generous enough to reach ordinary winds aloft from ANY
+        // bearing — the property whose absence caused the pin.
+        expect(byName.windE.max).toBe(-byName.windE.min);
+        expect(byName.windN.max).toBe(-byName.windN.min);
+        const omnidirectionalKt = Math.min(byName.windE.max, byName.windN.max) / KNOTS_TO_MS;
+        expect(omnidirectionalKt).toBeGreaterThanOrEqual(45);   // 40-45 kt aloft is ordinary
+        expect(Number.isFinite(byName.windE.max)).toBe(true);
+        // Recorded, not endorsed: the diagonal admits motion no lantern makes.
+        // A magnitude constraint would remove it — see the corrections queue.
+        expect(Math.hypot(byName.windE.max, byName.windN.max) / KNOTS_TO_MS)
+            .toBeGreaterThan(60);
         expect(byName.vRise.max).toBeLessThanOrEqual(4);
         expect(byName.vSink.max).toBeLessThanOrEqual(4);
         // rise rate cannot be negative (that's what vSink is for)
@@ -384,7 +406,11 @@ describe("SkyLanternModel", () => {
                 expect(s[i]).toBeGreaterThanOrEqual(defs[i].min - 1e-9);
                 expect(s[i]).toBeLessThanOrEqual(defs[i].max + 1e-9);
             }
-            expect(s[1]).toBeCloseTo(20, 6);   // windE clamped to its ceiling
+            // Against the def, not a literal. The point is that the seed is
+            // CLAMPED to whatever the ceiling is, and a hard-coded copy of that
+            // ceiling goes stale silently the moment the bound moves — it did,
+            // reading 20 while the bound became 40.
+            expect(s[1]).toBeCloseTo(defs[1].max, 6);   // windE clamped to its ceiling
         });
 
         test("seeding lands the fit in a far better basin than the model defaults", async () => {
