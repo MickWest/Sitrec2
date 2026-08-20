@@ -87,6 +87,7 @@ import {LoadingManager} from "./CLoadingManager";
 import {convertTiffBufferToPngImage} from "./TIFFUtils";
 import {extractFlightClubInfo, flightClubToCSVStrings, isFlightClubJSON} from "./ParseFlightClubJSON";
 import {CSitchBrowser} from "./CSitchBrowser";
+import {CTrackBrowser} from "./CTrackBrowser";
 import {ViewMan} from "./CViewManager";
 import {isResolvableSitrecReference, resolveURLForFetch, toCanonicalSitrecRef} from "./SitrecObjectResolver";
 import {getEnv, getEnvBool} from "./envUtils";
@@ -589,6 +590,27 @@ export class CFileManager extends CManager {
             }
         }
         return this.sitchBrowser;
+    }
+
+    ensureTrackBrowser() {
+        if (!this.trackBrowser) {
+            this.trackBrowser = new CTrackBrowser(this);
+        }
+        return this.trackBrowser;
+    }
+
+    /**
+     * GUI menu handler: browse a local folder of multi-track files.
+     *
+     * Separate from importFile because it answers a different question. Import
+     * assumes the user already knows which file they want; this is for a folder of
+     * hundreds whose names encode the scenario and whose differences are only
+     * visible as shapes. Whatever it ends up importing goes through the same drop
+     * path importFile uses.
+     */
+    browseTrackFolder() {
+        this.#closeFileMenuIfDropdown();
+        this.ensureTrackBrowser().open();
     }
 
     ensureBrowseButton(tooltipText) {

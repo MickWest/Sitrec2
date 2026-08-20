@@ -53,11 +53,14 @@ import {showError} from "../showError";
  * construction cannot drift apart, and so headless consumers (Jest, the
  * BOTBench bulk ingest) can import it without dragging the scene-heavy
  * CFileManagerParse chain (which re-exports it for its existing importers).
+ * `reportUnknown: false` suppresses the "unhandled CSV type" dialog for callers
+ * that are surveying files rather than importing one — see below.
+ *
  * Returns "Airdata", "MISB_FULL", "MISB1", "STANAG_CSV", "BOT_CSV",
  * "CUSTOM1", "CUSTOM_FLL", "FR24CSV", "AZIMUTH", "ELEVATION", "HEADING",
  * "FOV", "FEATURES", or "Unknown".
  */
-export function detectCSVType(csvRows) {
+export function detectCSVType(csvRows, {reportUnknown = true} = {}) {
 
     if (csvRows[0][0] === "time(millisecond)" && csvRows[0][1] === "datetime(utc)") {
         return "Airdata";
@@ -123,7 +126,11 @@ export function detectCSVType(csvRows) {
         return "FEATURES";
     }
 
-    if (Sit.isCustom && typeof Sit.setup !== 'function' && !Sit.gimbalSetup) {
+    // The dialog is for a file the USER just handed the app, where "we could not
+    // read this" has to be said out loud. A bulk consumer that is merely LOOKING
+    // at a folder passes reportUnknown: false — a sweep meets unrelated CSVs
+    // constantly, and one modal per file buries the tool it interrupted.
+    if (reportUnknown && Sit.isCustom && typeof Sit.setup !== 'function' && !Sit.gimbalSetup) {
         showError("Unhandled CSV type detected.  Please add to detectCSVType() function.");
     }
     return "Unknown";

@@ -79,3 +79,44 @@ export function showLocalFolderAccessUnsupportedMessage() {
     showErrorOnce("local-folder-access-unsupported", message);
     console.warn(message);
 }
+
+/**
+ * Walk a directory handle, collecting the files an `accept(name)` predicate keeps.
+ *
+ * The CHOSEN folder is always read; `recursive` governs its SUBFOLDERS only, which
+ * is the rule the folder-analysis dialogs already use — "recursive" is a statement
+ * about how deep to go, not about whether to read the folder the user picked.
+ *
+ * Each entry carries the leaf directory handle it was found in, so a caller that
+ * writes anything back can put it beside the files it came from.
+ *
+ * @param {FileSystemDirectoryHandle} directoryHandle
+ * @param {object} options
+ * @param {(name: string) => boolean} [options.accept] - keep the file when true; keep all when omitted
+ * @param {boolean} [options.recursive]
+ * @param {string} [options.basePath] - internal, the path accumulated so far
+ * @param {(entry: object) => void} [options.onFound] - progress callback, fired per kept file
+ * @returns {Promise<Array<{name, relativePath, getFile, dirHandle, dirPath}>>} unsorted
+ */
+export async function walkDirectoryForFiles(directoryHandle,
+                                            {accept = null, recursive = false, basePath = "", onFound = null} = {}) {
+    const files = [];
+    for await (const [name, handle] of directoryHandle.entries()) {
+        const relativePath = basePath ? `${basePath}/${name}` : name;
+        if (handle.kind === "file") {
+            if (!accept || accept(name)) {
+                const entry = {
+                    name, relativePath,
+                    getFile: () => handle.getFile(),
+                    dirHandle: directoryHandle, dirPath: basePath,
+                };
+                files.push(entry);
+                onFound?.(entry);
+            }
+        } else if (recursive && handle.kind === "directory") {
+            files.push(...await walkDirectoryForFiles(handle,
+                {accept, recursive, basePath: relativePath, onFound}));
+        }
+    }
+    return files;
+}

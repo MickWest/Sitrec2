@@ -191,6 +191,10 @@ const en = {
             label: "Import File",
             tooltip: "Import a file (or files) from your local system. Same as dragging and dropping a file into the browser window",
         },
+        browseTracks: {
+            label: "Browse Track Folder...",
+            tooltip: "Browse a folder of multi-track files (such as BOT interchange CSVs) as thumbnails of their track shapes, preview one at full size, and import it",
+        },
         server: {
             open: "Open",
             save: {
