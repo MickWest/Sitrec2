@@ -1,6 +1,6 @@
 import {CVideoAndAudio} from "./CVideoAndAudio";
 import {MP4Demuxer, MP4Source} from "./js/mp4-decode/mp4_demuxer";
-import {Sit} from "./Globals";
+import {NodeMan, Sit} from "./Globals";
 import {EventManager} from "./CEventManager";
 import {updateSitFrames} from "./UpdateSitFrames";
 import {isWebAudioFormat} from "./AudioFormats";
@@ -22,6 +22,48 @@ import {quickFetch} from "./quickFetch";
  * - Compatible with existing video player controls
  */
 export class CVideoAudioOnly extends CVideoAndAudio {
+
+    /**
+     * True when this audio-only entry is the one its view is actually SHOWING.
+     *
+     * Every other video class guards its Sit.videoFrames/Sit.fps writes with
+     * `ownsTimeline` — "only the timeline-owning (primary) video defines the
+     * sitch timeline; a secondary must not" (CVideoH264Data, C1 of the 2.70.0
+     * review). This class never did, and that is a real defect once a single
+     * view holds more than one entry.
+     *
+     * It bites on a transport stream. A .ts demuxes to an H.264 video AND an
+     * AAC audio elementary stream, and both are registered as entries in the
+     * SAME view — so `ownsTimeline` is true for both and cannot separate them.
+     * The audio finishes loading last, so its duration overwrote the video's:
+     * measured on the Cheyenne and Truck regression sitches, Sit.frames became
+     * 4445 against the video's 4439 PES timestamps. Six frames past the end of
+     * the footage is enough to extrapolate every track beyond its data — a
+     * target's AGL read 3 ft where it should read 2, and a track ran off the
+     * edge of the view.
+     *
+     * The distinction that actually matters is therefore not which VIEW owns
+     * the timeline but which ENTRY the view is showing, which `videoData`
+     * already answers. An audio track nobody selected does not get to say how
+     * long the sitch is.
+     *
+     * Not yet registered in any view — a standalone audio file still mid-load,
+     * or a unit test — keeps the historical behaviour, because there a lone
+     * audio file genuinely IS the timeline.
+     */
+    definesSitchTimeline() {
+        if (!this.ownsTimeline) return false;
+        let registered = false;
+        let active = false;
+        NodeMan.iterate((id, node) => {
+            if (!node || !Array.isArray(node.videos)) return;
+            if (node.videos.some((e) => e && e.videoData === this)) {
+                registered = true;
+                if (node.videoData === this) active = true;
+            }
+        });
+        return registered ? active : true;
+    }
     constructor(v, loadedCallback, errorCallback) {
         super(v);
         
@@ -209,9 +251,13 @@ export class CVideoAudioOnly extends CVideoAndAudio {
             this.frames *= this.videoSpeed;
             console.log(`[CVideoAudioOnly.decodeMP3Audio] After speed multiplier (${this.videoSpeed}x): ${this.frames} frames`);
             
-            Sit.videoFrames = this.frames;
-            Sit.fps = this.originalFps;
-            updateSitFrames();
+            if (this.definesSitchTimeline()) {
+                Sit.videoFrames = this.frames;
+                Sit.fps = this.originalFps;
+                updateSitFrames();
+            } else {
+                console.log(`[CVideoAudioOnly] not the shown entry — leaving Sit.frames alone`);
+            }
             
             this.initializeMP3AudioHandler(audioContext, audioBuffer);
             
@@ -472,9 +518,13 @@ export class CVideoAudioOnly extends CVideoAndAudio {
             console.log(`[CVideoAudioOnly.startAudioExtraction] After speed multiplier (${this.videoSpeed}x): ${this.frames} frames`);
             
             // Update global frame count
-            Sit.videoFrames = this.frames;
-            Sit.fps = this.originalFps;
-            updateSitFrames();
+            if (this.definesSitchTimeline()) {
+                Sit.videoFrames = this.frames;
+                Sit.fps = this.originalFps;
+                updateSitFrames();
+            } else {
+                console.log(`[CVideoAudioOnly] not the shown entry — leaving Sit.frames alone`);
+            }
             
             // Initialize audio handler
             console.log(`[CVideoAudioOnly.startAudioExtraction] Initializing audio handler...`);
