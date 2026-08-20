@@ -5,6 +5,7 @@ import {setRenderOne} from "./Globals";
 import {showError, showErrorOnce} from "./showError";
 import {CanvasTexture, NearestFilter} from "three";
 import {createTerrainDayNightMaterial} from "./js/map33/material/TerrainDayNightMaterial";
+import {disposeMaterialTextures} from "./QuadTreeTileMaterial";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
 import {assert} from "./assert";
 import {isLocal} from "./configUtils";
@@ -159,7 +160,7 @@ class QuadTreeMapTexture extends QuadTreeMap {
                 if (tile.materialCacheKey && !tile.materialCacheKey.startsWith('static_')) {
                     QuadTreeTile.removeMaterialByCacheKey(tile.materialCacheKey);
                 } else if (tile.mesh.material) {
-                    tile.mesh.getMap()?.dispose();
+                    disposeMaterialTextures(tile.mesh.material);
                     tile.mesh.material.dispose();
                 }
             }
@@ -697,8 +698,12 @@ class QuadTreeMapTexture extends QuadTreeMap {
                             if (currentTile && currentTile.pendingAncestorLoad) {
                                 const ancestorMaterial = currentTile.buildMaterialFromAncestor(loadedAncestor);
                                 if (ancestorMaterial) {
-                                    // Dispose old wireframe material
+                                    // Dispose old wireframe material. Its water
+                                    // mask goes too — a mask is always private to
+                                    // one tile, unlike the map texture, which is
+                                    // left alone here because it may be shared.
                                     if (currentTile.mesh.material) {
+                                        currentTile.mesh.material.uniforms?.waterMaskMap?.value?.dispose();
                                         currentTile.mesh.material.dispose();
                                     }
                                     
@@ -877,7 +882,7 @@ class QuadTreeMapTexture extends QuadTreeMap {
         if (!parentMaterial) return false;
 
         if (tile.mesh?.material && tile.mesh.material !== parentMaterial) {
-            tile.mesh.material.getMap?.()?.dispose();
+            disposeMaterialTextures(tile.mesh.material);
             tile.mesh.material.dispose?.();
         }
 

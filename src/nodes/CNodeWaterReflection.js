@@ -56,6 +56,7 @@ import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame
 import {guiMenus, NodeMan, Sit, setRenderOne, Globals, GlobalDateTimeNode} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {CWaterPlanarMirror} from "../WaterPlanarMirror";
+import {waterMaskAvailable} from "../WaterMaskTiles";
 import {OCEAN_MAX_WAVES} from "../ocean/OceanBRDF.glsl.js";
 import {altitudeHAE} from "../SphericalMath";
 import * as Astronomy from "astronomy-engine";
@@ -151,6 +152,16 @@ export class CNodeWaterReflection extends CNode {
         // current source's tiles line up with OSM's.
         this.combineWithOSM = v.combineWithOSM ?? false;
 
+        // Detect water from vector water polygons instead of from the imagery's
+        // color. Strictly better where it is available — it works on satellite
+        // sources, it cannot confuse a label or a JPEG artifact for water, and
+        // it does not damage the imagery to do it. See WaterMaskTiles.js.
+        //
+        // Default OFF despite that, because it costs one vector-tile fetch per
+        // terrain tile against a metered key. Opting in should be the user's
+        // decision, not a side effect of loading a sitch.
+        this.vectorWaterMask = v.vectorWaterMask ?? false;
+
         // "cube" reflects the celestial sphere only, from a cube map (the
         // original, cheap, and exact for the sky). "mirror" re-renders the
         // entire world from a mirrored camera, so the far shore lands in the
@@ -239,6 +250,7 @@ export class CNodeWaterReflection extends CNode {
             "cubeResolution",
             "occlusion",
             "combineWithOSM",
+            "vectorWaterMask",
         ]);
 
         // Per-renderer cube targets. Each CNodeView3D owns its own
@@ -280,6 +292,33 @@ export class CNodeWaterReflection extends CNode {
                 + "from a camera mirrored through it, so hills, buildings and objects appear in the water too. "
                 + "The mirror costs a second full render of the scene, and treats the lake as flat, which it "
                 + "is not over more than a few kilometres.");
+            // Same reload path as the OSM combine below: every tile's material
+            // is keyed on whether it carries a mask, so the terrain has to be
+            // rebuilt for the toggle to reach tiles already in the cache.
+            const reloadTerrain = () => {
+                const terrainNode = NodeMan.get("TerrainModel", false);
+                if (terrainNode) {
+                    terrainNode.loadMapTexture(terrainNode.UI.mapType);
+                    terrainNode.UI.requestSubdivisionPass();
+                }
+                this._captureKey = null;
+                setRenderOne(true);
+            };
+
+            this.vectorMaskController = this.gui.add(this, "vectorWaterMask")
+                .name("Vector Water Mask").listen()
+                .tooltip("Find water from actual water polygons (MapTiler vector tiles) instead of from the "
+                    + "color of the map imagery. Works on satellite sources, gives a clean antialiased "
+                    + "coastline, and leaves the imagery untouched — unlike Combine Terrain with OSM, which "
+                    + "paints over it. Costs one vector tile fetch per terrain tile.")
+                .onChange(reloadTerrain);
+            if (!waterMaskAvailable()) {
+                // No key, so the switch would be wired to nothing.
+                this.vectorWaterMask = false;
+                this.vectorMaskController.disable();
+                this.vectorMaskController.tooltip("Needs a MapTiler key (MAPTILER_KEY) — none is configured.");
+            }
+
             this.combineController = this.gui.add(this, "combineWithOSM")
                 .name("Combine Terrain with OSM").listen()
                 .tooltip("Also load the matching Open Streetmap tile for each terrain tile and copy its water "
@@ -1078,8 +1117,12 @@ export class CNodeWaterReflection extends CNode {
         // and the shared terrain uniforms would otherwise reach mainView too.
         if (view.id !== "lookView") return false;
 
+        // A water color is only REQUIRED when the color test is what finds the
+        // water. With a vector mask the imagery is never consulted, so demanding
+        // one here is what stopped the whole effect from running on satellite
+        // sources — they declare no water color, and push() bailed on line 2.
         const waterColor = this.getWaterColor();
-        if (waterColor === undefined) return false;
+        if (waterColor === undefined && !this.vectorWaterMask) return false;
 
         const nightSky = NodeMan.get("NightSkyNode", false);
         if (!nightSky) return false;
@@ -1191,7 +1234,12 @@ export class CNodeWaterReflection extends CNode {
         sharedUniforms.waterNightFactor.value = nightFactor;
         sharedUniforms.waterDayColor.value.set(this.dayColor[0], this.dayColor[1], this.dayColor[2]);
 
-        sharedUniforms.waterColor.value.set(waterColor[0] / 255, waterColor[1] / 255, waterColor[2] / 255);
+        // Only meaningful for the color fallback. Left at its previous value
+        // when the source has no water color, which now reaches here because a
+        // vector mask does not need one.
+        if (waterColor !== undefined) {
+            sharedUniforms.waterColor.value.set(waterColor[0] / 255, waterColor[1] / 255, waterColor[2] / 255);
+        }
         sharedUniforms.waterTolerance.value = this.tolerance;
         sharedUniforms.waterStrength.value = this.strength;
         sharedUniforms.waterDarken.value = this.darken;

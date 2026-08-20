@@ -18,7 +18,7 @@ import {
  * @param {number} transparency - Transparency of the terrain (0-1), where 0 is fully transparent and 1 is fully opaque, default 1
  * @returns {ShaderMaterial} The custom shader material
  */
-export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 0.3, doubleSided = false, transparency = 1) {
+export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 0.3, doubleSided = false, transparency = 1, waterMask = null) {
     // V5 shadows: merge Three.js's lights/shadows uniforms so a single
     // DirectionalLight's shadow map can darken this material. Without
     // UniformsLib.lights + the shadow chunks below, ShaderMaterial.lights=true
@@ -38,6 +38,12 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             // above the lake. Set by CNodeWaterReflection each frame; 1 by
             // default so any tile it never reaches behaves exactly as before.
             tileWaterAllowed: { value: 1.0 },
+            // PER-TILE for the same reason as map itself: every tile has its own
+            // mask texture, so these cannot live in sharedUniforms. hasWaterMask
+            // stays 0 until a mask actually arrives, which is what makes the
+            // color test the fallback rather than something to switch off.
+            waterMaskMap: { value: null },
+            hasWaterMask: { value: 0.0 },
             sunDirection: { value: new Vector3() },
             earthCenter: { value: new Vector3(0, 0, 0) },
             terrainShadingStrength: { value: terrainShadingStrength },
@@ -49,6 +55,8 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
         },
     ]);
     mergedUniforms.map.value = texture;
+    mergedUniforms.waterMaskMap.value = waterMask;
+    mergedUniforms.hasWaterMask.value = waterMask ? 1.0 : 0.0;
     mergedUniforms.sunDirection = { value: Globals.sunLight.position };
     for (const k of Object.keys(sharedUniforms)) {
         mergedUniforms[k] = sharedUniforms[k];
@@ -135,6 +143,11 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             uniform float waterMaxTileSize;
             uniform float cameraFocalLength;
             uniform float tileWaterAllowed;
+
+            // PER-TILE water mask rasterised from vector water polygons, and the
+            // flag saying this tile actually got one. See WaterMaskTiles.js.
+            uniform sampler2D waterMaskMap;
+            uniform float hasWaterMask;
 
             uniform float waterMirror;
             uniform sampler2D waterMirrorMap;
@@ -293,11 +306,18 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 // night sky rendered from the origin, in LINEAR radiance — which
                 // is why this is added AFTER the sRGB->linear conversion above.
                 if (waterReflection > 0.0) {
-                    // Detect water by the raw (pre-lighting) map color. This is
-                    // the OSM water fill by default; the tolerance has to absorb
-                    // antialiased shorelines and PNG resampling.
+                    // Where a vector water mask was loaded for this tile, it IS
+                    // the answer: real water polygons, rasterised with the
+                    // canvas's antialiasing, so the shoreline is fractional
+                    // coverage rather than a color guess. Otherwise fall back to
+                    // detecting water by the raw (pre-lighting) map color — the
+                    // OSM water fill, whose tolerance has to absorb antialiased
+                    // shorelines and PNG resampling.
                     float colorDist = distance(textureColor.rgb, waterColor);
-                    float waterMask = 1.0 - smoothstep(waterTolerance * 0.5, waterTolerance, colorDist);
+                    float colorMask = 1.0 - smoothstep(waterTolerance * 0.5, waterTolerance, colorDist);
+                    float waterMask = hasWaterMask > 0.5
+                        ? texture2D(waterMaskMap, vUv).r
+                        : colorMask;
 
                     // Tiles whose blue pixels cannot be the body being reflected
                     // — mountainsides whose only water is streams and rivers,
@@ -322,7 +342,14 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                     // and metres per pixel comes from the focal length. NOT from
                     // fwidth(vWorldPosition): at ECEF magnitudes float32 quantises
                     // world position to ~0.4 m, so its derivative is pure noise.
-                    if (waterMaxTileSize > 0.0 && waterMask > 0.0) {
+                    //
+                    // Does NOT apply to a vector mask. The fade exists purely
+                    // because the COLOR test degrades when a texel spans
+                    // kilometres; a rasterised polygon does not degrade, it just
+                    // gets smaller. Left on, it fades real water out on the
+                    // coarse tiles that draw the distance, putting a hard-edged
+                    // rectangle of plain map color in the middle of the sea.
+                    if (hasWaterMask < 0.5 && waterMaxTileSize > 0.0 && waterMask > 0.0) {
                         float uvPerPixel = length(fwidth(vUv));
                         float metresPerPixel = length(vWorldPosition - cameraPosition)
                                              / max(cameraFocalLength, 1.0);
