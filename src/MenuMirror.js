@@ -184,6 +184,13 @@ function addTwin(source, gui) {
             if (source._elastic) {
                 twin.elastic(source._elasticMin, source._elasticMax, source._elasticInteger, source._elasticShrink);
             }
+            // Typed input has to expand a twin's range the same way it expands the
+            // source's, or the same keystrokes give two different answers depending
+            // on which copy of the menu you happen to be typing into. (syncRange()
+            // below already carries a range that has ALREADY moved; these carry the
+            // permission to move it.)
+            if (source._allowInputExpandMax) twin.allowInputExpandMax(true);
+            if (source._allowInputExpandMin) twin.allowInputExpandMin(true, source._inputExpandMinLimit);
             if (!source.$slider) twin.noSlider();
             return twin;
         }

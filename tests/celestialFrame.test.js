@@ -73,10 +73,18 @@ describe('EQJ → ECEF celestial frame', () => {
             expect(sep * 60).toBeLessThan(1);
         });
 
+    // The historic entries are not padding. Precession from J2000 reaches 1.45 deg
+    // by 1896 - over three lunar diameters - so a sky drawn without it is not
+    // slightly wrong at these dates, it is somewhere else. 1700 and 2200 are the
+    // ends of astronomy-engine's fitted range, and of what the Time menu allows.
     test.each([
+        ['1700-01-01T00:00:00.000Z'],
+        ['1897-04-10T01:30:00.000Z'],
+        ['1918-06-08T22:00:00.000Z'],
         ['2000-01-01T12:00:00.000Z'],
         ['2010-06-15T03:00:00.000Z'],
         ['2035-12-25T18:30:00.000Z'],
+        ['2200-01-01T00:00:00.000Z'],
     ])('holds at %s, not just the epoch it was written for', (iso) => {
         const date = new Date(iso);
         const sep = sepArcmin(

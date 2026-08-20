@@ -165,6 +165,11 @@ export const helpDocs = [
         chatDesc: "The Wind menu: setting wind speed and direction, pulling real-world atmospheric data, and drawing streamlines and arrows.",
     },
     {
+        file: "docs/HistoricSkies", labelKey: "menus.help.documentation.historicSkies",
+        section: "world", role: "reference",
+        chatDesc: "Reconstructing the sky for dates long before the modern UFO era - the 1896-97 airship waves, the 1909 scareships, and anything else back to 1700. How to reach a historic date (Go To box, the Year field, ?datetime=, a sitch's startTime) and how the Year slider's range extends. What is accurate and to what: Sun/Moon/planet positions, the EQJ-to-ECEF frame transform, precession, and Delta-T. What is not: stellar proper motion (catalogue epoch J1991.25, a few arcminutes by 1897), UT1-UTC, and the legacy sidereal helpers that skip precession. Time zones before standard time, and why daylight saving did not exist before 1916/1918. What is anachronistic (modern imagery and buildings, no satellites before 1957). Read for 'can Sitrec do historic dates', 'how far back does it go', 'why is the year slider limited', 'is the sky accurate for 1897', or any question about a 19th- or early-20th-century sighting.",
+    },
+    {
         file: "docs/AtmosphericAerialPerspective", labelKey: "menus.help.documentation.aerialPerspective",
         section: "world", role: "reference",
         chatDesc: "Atmospheric haze and aerial perspective: how distance washes out contrast and colour, and what that implies about how far away something in a photograph was.",

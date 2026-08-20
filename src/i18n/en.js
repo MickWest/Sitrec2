@@ -115,6 +115,7 @@ const en = {
                 gis: "GIS, Geodesy and Altitude",
                 terrain: "Terrain and Elevation",
                 refraction: "Atmospheric Refraction",
+                historicSkies: "Historic Skies",
                 aerialPerspective: "Haze and Aerial Perspective",
                 starlink: "How to Investigate Starlink Flares",
                 customModels: "Objects and 3D Models (Planes)",
@@ -517,13 +518,19 @@ const en = {
         currentTime: {
             tooltip: "The CURRENT time of the video. This is what the below date and time refer to",
         },
-        year: { label: "Year", tooltip: "Year of the current frame" },
+        year: { label: "Year", tooltip: "Year of the current frame.\nThe slider starts at 1947, but you can type an earlier year, or use the Go To box (G), to reach a historic date - the slider range then extends back to 1700." },
         month: { label: "Month", tooltip: "Month (1-12)" },
         day: { label: "Day", tooltip: "Day of month" },
         hour: { label: "Hour", tooltip: "Hour (0-23)" },
         minute: { label: "Minute", tooltip: "Minute (0-59)" },
         second: { label: "Second", tooltip: "Second (0-59)" },
         millisecond: { label: "ms", tooltip: "Millisecond (0-999)" },
+        rangeNote: {
+            label: "Note",
+            tooltip: "Shown only when something about the current date needs care. See Help > Documentation > Historic Skies.",
+            outsideEphemeris: "Outside 1700-2200 - Sun, Moon and planet positions degrade",
+            preSatellite: "Before 1957 - no artificial satellites existed",
+        },
         useTimeZone: {
             label: "Use Time Zone in UI",
             tooltip: "Use the time zone in the UI above\nThis will change the date and time to be in the selected time zone, rather than UTC.\nThis is useful for displaying the date and time in a specific time zone, such as the local time zone of the video or the location.",

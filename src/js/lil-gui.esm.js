@@ -834,6 +834,16 @@ class NumberController extends Controller {
         return this;
     }
 
+    // MICK: the mirror of allowInputExpandMax - a typed value BELOW the current min
+    // lowers the min instead of being clamped up to it. `limit` is a hard floor: a
+    // value under it is clamped as usual rather than expanding the range, so a slip
+    // like "18" in a year field cannot drag the slider somewhere nonsensical.
+    allowInputExpandMin( allow = true, limit = -Infinity ) {
+        this._allowInputExpandMin = allow;
+        this._inputExpandMinLimit = limit;
+        return this;
+    }
+
     // step size for each increment/decrement with the arrow keys, draggin number up/down or mouse wheel
     step( step, explicit = true ) {
         this._step = step;
@@ -1004,6 +1014,11 @@ class NumberController extends Controller {
             } else {
                 if ( this._allowInputExpandMax && this._max !== undefined && value > this._max ) {
                     this._max = value;
+                    this._onUpdateMinMax();
+                }
+                if ( this._allowInputExpandMin && this._min !== undefined
+                     && value < this._min && value >= this._inputExpandMinLimit ) {
+                    this._min = value;
                     this._onUpdateMinMax();
                 }
                 this.setValue( this._clamp( value ) );

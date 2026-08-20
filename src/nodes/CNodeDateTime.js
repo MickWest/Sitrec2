@@ -13,6 +13,25 @@ import {EventManager} from "../CEventManager";
 import {t} from "../i18n";
 import {showTimingAnalysis} from "../showTimingAnalysis";
 
+// The Year slider normally starts at 1947 - Kenneth Arnold, and earlier than the
+// date of any sitch we ship - which keeps dragging fine-grained for ordinary use.
+// Historic sitches (19th-century airship reports, say) need to reach much further
+// back, and a slider spanning three centuries is coarse for everyone else. So the
+// floor MOVES: adjustYearRange() drops it only while the date actually needs it,
+// and puts it back afterwards.
+const DEFAULT_MIN_YEAR = 1947;
+
+// astronomy-engine's VSOP87/ELP models are fitted over 1700-2200; outside that the
+// Sun/Moon/planet positions degrade without warning. 1700 is also safely above 100,
+// below which Date.UTC() remaps two-digit years into the 1900s - updateDateTime()
+// builds its date with Date.UTC(), so a floor under 100 would silently mean 19xx.
+export const EPHEMERIS_MIN_YEAR = 1700;
+export const EPHEMERIS_MAX_YEAR = 2200;
+
+// Sputnik 1, 1957-10-04. Before this there is nothing for the satellite layer to
+// draw, and an empty sky reads as a bug unless we say so.
+const FIRST_SATELLITE_YEAR = 1957;
+
 const timeZoneOffsets = {
     "IDLW UTC-12": -12,     // International Date Line West
     "NT UTC-11": -11,       // Nome Time
@@ -180,13 +199,28 @@ export class CNodeDateTime extends CNode {
         fiveYearsFromNow.setFullYear(fiveYearsFromNow.getFullYear() + 5);
 
       // The UI will update the dateNow member, and then we will update the dateStart member
-        const guiYear = this.dateTimeFolder.add(this.dateTime, "year", 1947, fiveYearsFromNow.getFullYear(), 1).listen().onChange(v => this.updateDateTime(v)).name(t("dateTime.year.label")).tooltip(t("dateTime.year.tooltip"))
+        // DEFAULT_MIN_YEAR, not a literal: adjustYearRange() lowers this floor to
+        // EPHEMERIS_MIN_YEAR whenever the date needs it. allowInputExpandMin lets a
+        // year TYPED into the box push the floor down too - without it lil-gui's
+        // _clamp() silently snaps "1897" to the current minimum, which is what made
+        // historic dates unreachable from this menu.
+        const guiYear = this.dateTimeFolder.add(this.dateTime, "year", DEFAULT_MIN_YEAR, fiveYearsFromNow.getFullYear(), 1).allowInputExpandMin(true, EPHEMERIS_MIN_YEAR).listen().onChange(v => this.updateDateTime(v)).name(t("dateTime.year.label")).tooltip(t("dateTime.year.tooltip"))
         const guiMonth = this.dateTimeFolder.add(this.dateTime, "month", 1, 12, 1).listen().onChange(v => this.updateDateTime(v)).wrap(guiYear).name(t("dateTime.month.label")).tooltip(t("dateTime.month.tooltip"))
         this.guiDay = this.dateTimeFolder.add(this.dateTime, "day", 1, 31, 1).listen().onChange(v => this.updateDateTime(v)).wrap(guiMonth).name(t("dateTime.day.label")).tooltip(t("dateTime.day.tooltip"))
         const guiHour =  this.dateTimeFolder.add(this.dateTime, "hour", 0, 23, 1).listen().onChange(v => this.updateDateTime(v)).wrap(this.guiDay).name(t("dateTime.hour.label")).tooltip(t("dateTime.hour.tooltip"))
         const guiMinute = this.dateTimeFolder.add(this.dateTime, "minute", 0, 59, 1).listen().onChange(v => this.updateDateTime(v)).wrap(guiHour).name(t("dateTime.minute.label")).tooltip(t("dateTime.minute.tooltip"))
         const guiSecond = this.dateTimeFolder.add(this.dateTime, "second", 0, 59, 1).listen().onChange(v => this.updateDateTime(v)).wrap(guiMinute).name(t("dateTime.second.label")).tooltip(t("dateTime.second.tooltip"))
         const guiMillisecond = this.dateTimeFolder.add(this.dateTime, "millisecond", 0, 999, 1).listen().onChange(v => this.updateDateTime(v)).wrap(guiSecond).name(t("dateTime.millisecond.label")).tooltip(t("dateTime.millisecond.tooltip"))
+
+        // A one-line advisory under the sliders, for dates where something in the
+        // simulation is no longer trustworthy. Read-only text, same pattern as the
+        // startTime/nowTime rows above; hidden entirely whenever the date is
+        // somewhere everything works, so ordinary use never sees it.
+        this.dateRangeNote = "";
+        this.guiDateRangeNote = this.dateTimeFolder.add(this, "dateRangeNote")
+            .name(t("dateTime.rangeNote.label")).listen().disable()
+            .tooltip(t("dateTime.rangeNote.tooltip"))
+        this.guiDateRangeNote.hide();
 
         // Double-clicking a slider's label resets it to that controller's
         // _defaultValue (see lil-gui-slider-settings.js). These controllers are
@@ -212,6 +246,9 @@ export class CNodeDateTime extends CNode {
         this.adjustGUIForTimezone();
 
         this.adjustDaysInMonth();
+        // The constructor populated dateTime before the sliders existed (line ~144),
+        // so a sitch whose startTime is already historic needs this now.
+        this.adjustYearRange();
 
         const options = { timeZoneName: 'short' };
         const timeZone = Sit.timeZone ?? new Date().toLocaleTimeString('en-us', options).split(' ')[2];
@@ -224,8 +261,14 @@ export class CNodeDateTime extends CNode {
             }
         }
 
-        // get the time zone offset from a new Date object
-        const offset = new Date().getTimezoneOffset() / -60; // getTimezoneOffset returns in minutes, so divide by -60 to get hours
+        // Read the offset off the SIMULATION date, not today's. getTimezoneOffset()
+        // is date-aware and carries the whole IANA history, so a Chicago browser
+        // gets UTC-6 for April 1897 and UTC-5 for April 1918 - US daylight saving
+        // only began on 31 March 1918. Using new Date() here picked today's rule and
+        // put a historic sitch an hour out. dateNow is already set (see above).
+        // This only helps when the browser's zone matches the sighting's; there is
+        // no lat/lon -> timezone lookup, so historic sitches should set Sit.timeZone.
+        const offset = this.dateNow.getTimezoneOffset() / -60; // minutes -> hours, sign flipped
         this.setTimeZoneNameFromOffset(offset);
 
 
@@ -396,7 +439,12 @@ export class CNodeDateTime extends CNode {
         let days = 31;
         if (this.dateTime.month === 2) {
             days = 28;
-            if (this.dateTime.year % 4 === 0) {
+            // The full Gregorian rule, not just year % 4. Century years are common
+            // years unless divisible by 400, so 1900 has 28 days and 2000 has 29.
+            // A bare % 4 offered 29 February 1900 - inside the range historic
+            // sitches use - and Date.UTC() then rolled it silently to 1 March.
+            const year = this.dateTime.year;
+            if (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) {
                 days = 29;
             }
         } else if ([4, 6, 9, 11].includes(this.dateTime.month)) {
@@ -404,7 +452,40 @@ export class CNodeDateTime extends CNode {
         }
         this.guiDay.max(days);
     }
-    
+
+    // Move the Year slider's floor to suit the date being shown, and refresh the
+    // advisory row. Called from populate(), so every authoritative date change -
+    // sitch load, EXIF, the API, the Go To box, a slider edit - goes through it.
+    //
+    // Only _min moves. lil-gui captures _originalMin on the FIRST min() call (the
+    // controller's constructor), so the right-click slider-settings "Reset" still
+    // restores DEFAULT_MIN_YEAR, and _onUpdateMinMax() is a no-op once the slider
+    // exists, so changing the floor never clamps the value that is already set.
+    adjustYearRange() {
+        if (this.guiYear === undefined) return;
+        const year = this.dateTime.year;
+        const wanted = year < DEFAULT_MIN_YEAR ? EPHEMERIS_MIN_YEAR : DEFAULT_MIN_YEAR;
+        if (this.guiYear._min !== wanted) {
+            this.guiYear.min(wanted);
+        }
+        this.updateDateRangeNote();
+    }
+
+    // What, if anything, to warn about at the current date. Ordered worst-first:
+    // a bad ephemeris matters more than an empty satellite layer.
+    updateDateRangeNote() {
+        if (this.guiDateRangeNote === undefined) return;
+        const year = this.dateTime.year;
+        let note = "";
+        if (year < EPHEMERIS_MIN_YEAR || year > EPHEMERIS_MAX_YEAR) {
+            note = t("dateTime.rangeNote.outsideEphemeris");
+        } else if (year < FIRST_SATELLITE_YEAR) {
+            note = t("dateTime.rangeNote.preSatellite");
+        }
+        this.dateRangeNote = note;
+        this.guiDateRangeNote.show(note !== "");
+    }
+
     framesToDuration(frames) {
         const totalSeconds = frames / Sit.fps;
         const hours = Math.floor(totalSeconds / 3600);
@@ -907,6 +988,7 @@ export class CNodeDateTime extends CNode {
         Sit.nowTime   = this.dateNow.toISOString();
 
         this.adjustDaysInMonth();
+        this.adjustYearRange();
 
     }
 

@@ -259,6 +259,51 @@ describe("applyDateTimeString", () => {
         expect(mid.resolved()).toBe("2024-03-10T00:00:00.000Z");
     });
 
+    // The Go To box is the main way into a 19th-century date, so it has to carry a
+    // pre-epoch instant intact - negative epoch milliseconds all the way through.
+    describe("historic dates", () => {
+        test("a 19th-century date round-trips exactly", () => {
+            const node = makeNode();
+            expect(applyDateTimeString("10 April 1897 1:30", node)).toBe(true);
+            expect(node.dateTime.year).toBe(1897);
+            expect(node.resolved()).toBe("1897-04-10T01:30:00.000Z");
+            // Before 1970, so this only works because nothing assumes a positive epoch.
+            expect(new Date(node.resolved()).getTime()).toBeLessThan(0);
+        });
+
+        test.each([
+            ["1897-04-10", 1897, 4, 10],
+            ["April 10, 1897", 1897, 4, 10],
+            ["4/10/1897", 1897, 4, 10],
+            ["1909-05-13", 1909, 5, 13],
+        ])("%s is read as a historic date", (text, year, month, day) => {
+            const node = makeNode();
+            expect(applyDateTimeString(text, node)).toBe(true);
+            expect([node.dateTime.year, node.dateTime.month, node.dateTime.day]).toEqual([year, month, day]);
+        });
+
+        test("a two-digit year is declined rather than guessed", () => {
+            // "97" must never become 1997 via Date.UTC's 0-99 remap, nor 1897 by
+            // guessing the century. parseDateTimeString requires four digits.
+            const node = makeNode();
+            expect(applyDateTimeString("4/10/97", node)).toBe(false);
+            expect(node.updated).toBe(0);
+        });
+
+        test("29 February 1900 is declined - 1900 was not a leap year", () => {
+            // The century rule: divisible by 100 but not 400, so a common year.
+            const node = makeNode();
+            expect(applyDateTimeString("1900-02-29", node)).toBe(false);
+            expect(node.updated).toBe(0);
+        });
+
+        test("29 February 2000 is accepted - divisible by 400", () => {
+            const node = makeNode();
+            expect(applyDateTimeString("2000-02-29", node)).toBe(true);
+            expect(node.dateTime.day).toBe(29);
+        });
+    });
+
     describe("time zones", () => {
         test("a plain time is read in the displayed zone", () => {
             // Menu shows UTC-7; typing 15:20 means 15:20 local = 22:20 UTC.

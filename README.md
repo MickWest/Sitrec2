@@ -37,6 +37,7 @@ assistant — so if you add a doc, add it there.
 - [Terrain and Elevation - Map vs elevation sources, and which surface a ground query hits](docs/Terrain.md)
 - [Atmospheric Refraction - Horizons, and why distant things look higher than they are](docs/Refraction.md)
 - [Wind in Sitrec - Wind menu, atmospheric data sources, streamlines](docs/Wind.md)
+- [Historic Skies - Reconstructing the sky for dates back to 1700, and what stays accurate there](docs/HistoricSkies.md)
 - [Haze and Aerial Perspective](docs/AtmosphericAerialPerspective.md)
 
 **Video tools**
