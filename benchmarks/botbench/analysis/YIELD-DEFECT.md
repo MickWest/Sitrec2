@@ -312,3 +312,90 @@ dedicated runner rather than a full re-run.
   scenario a `consistent-one: multirotor` verdict with the fixed-wing reading
   still suppressed. The below-terrain blocker is a separate yield question — the
   escalation pilot's C04 raised it independently — and is out of scope here.
+
+---
+
+## 8. Option (d) SCORED AND REJECTED (2026-08-20)
+
+Section 5 asked for evidence before implementing the lower tier: *"score a
+proposed tier against all 28 records for how often it fires on a >50% relSep
+case; the harm is countable offline"*. It was scored twice, over 53 scenarios
+(botset_anomalies + botset_mundane + botset_balloons_orbit at 20 s/0pct, plus
+the real-scenarios arm). Both attempts failed, and the second failure is the
+interesting one.
+
+### Attempt 1 — "the top candidate passes every quality bar"
+
+Fires when nothing is circular or range-unobservable, no class is viable, and the
+top-ranked candidate is a real 3D track that is complete, close and ordinary —
+the same bars the class representatives are held to. It makes no class claim, so
+it avoids the "multirotor, boundary-limited at 116 km" wording the section-5
+table warns about.
+
+    53 scenarios, tier fires on 9
+    of those 9, relSep > 0.5:  SEVEN
+
+Seven of nine firings are on trajectories 90-100% wrong: `Constant Altitude` and
+`Global Fit: Polynomial LSQ (order 5)` thread the sightlines while missing the
+range entirely. **A small residual says the fit threads the sightlines, not that
+it found the object** — which is the range degeneracy this benchmark exists to
+measure, arriving as a false positive in the tier meant to report determinacy.
+
+### Attempt 2 — range AGREEMENT as the determinacy signal
+
+If "determined" means the geometry left no freedom in range, the observable form
+is whether independent methods agree on range without being told the answer.
+Measured as the full spread of mean range across every close-fitting candidate,
+divided by their median. It separates cleanly:
+
+    spread <= 0.20 : fires 16, relSep > 0.5 = 0, relSep <= 0.10 = SIXTEEN
+    spread <= 0.50 : fires 22, relSep > 0.5 = 1
+
+Sorted by spread the table is nearly monotonic in relSep. As a truth-free
+determinacy statistic this is the best thing measured on this project so far, and
+it is worth keeping for its own sake.
+
+**But it does not fire where F5 needs it, and the reason kills the tier:**
+
+    spread <= 0.20, total                       16
+      of those, a class is ALREADY viable       16
+      of those, no class viable (tier fires)     0
+
+When the range is genuinely determined, a class already answers, so the tier has
+nothing to add. When no class answers, the range is not determined — with exactly
+two exceptions, and they are F5's own files:
+
+    real-rubberduckdrone     spread 0.983   relSep 0.0026
+    real-rubberduckballoon   spread 0.981   relSep 0.1501
+
+The study's single best recovery has the WORST range agreement in the set. Its
+top candidate is nearly exact while the other close fits scatter — and truth-free
+that is indistinguishable from the seven cases where the top candidate is
+confidently wrong and the others scatter too.
+
+### What this means for F5
+
+F5 reads as a reporting gap: *"a determined trajectory has no way out of the
+executive layer"*. On this evidence that framing is wrong, or at least
+incomplete. The executive layer is not missing vocabulary. **"Determined" is not
+observable in those cases** — the property that makes the Rubber Duck answers
+right is visible only with the answer key, and every truth-free proxy tried here
+either fires on confidently-wrong fits or does not fire on the Rubber Ducks.
+
+So option (d) is REJECTED as specified: a tier that reports determinacy cannot be
+built from these signals without importing the exact false confidence F2 warned
+about. What survives:
+
+- **Option (b') stands** and is now partly done — the collapsed-simplex fix
+  (2.140.0) removed the unconverged-optimizer condition from the shared blocker
+  string, and C6 split search-box from physical envelope for the lantern.
+  Extending that per-model is the remaining honest work.
+- **The range-agreement statistic should be kept and reported** as a disclosure
+  column, not as a verdict. It is a good answer to "did the geometry pin the
+  range", which is a question worth asking on its own and is where it is sound.
+- **Re-opening (d) needs a new signal**, not a new threshold. Anything that
+  separates "top is right, rest scatter" from "top is wrong, rest scatter"
+  without truth would do it; nothing here does.
+
+Probes: `docs/temp/DeterminedTierProbe.test.js`, `docs/temp/RangeAgreementProbe.test.js`,
+raw dumps `docs/temp/determined-tier.json`, `docs/temp/range-agreement.json`.

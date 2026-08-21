@@ -52,7 +52,18 @@ predicts CV-family collapse (a prior 855-run result, not re-verified here);
 it is not an end-to-end triage score. Triage must be two-axis: geometry AND
 does-any-catalog-class-apply. (Program steps 1, 7, 9.)
 
-**F2 — The verdict code is not a certainty statement.** `consistent-one`
+**F2 — REMEASURED 2026-08-20: the verdict code now tracks recovery quality.**
+Re-scored over 39 scenarios on 2.140.0 code (botsets at 20 s/0pct plus the real
+arm — a different and larger set than the 26 records below, so this is an update
+rather than a like-for-like re-run). Median relSep by code: `consistent-several`
+0.0000 (11/12 at or under 0.10), `consistent-one` 0.0244 (11/16), `unresolved`
+0.9008 (3/25). Resolved verdicts now sit two orders of magnitude better than
+unresolved ones, so the ordering the original finding said was absent is present
+on current code. Anomalous files reporting a conventional verdict: 2/17, the
+hypersonic-glide pair of F3. The original text follows, and its 26-record
+measurement stands as taken.
+
+**F2 (original) — The verdict code is not a certainty statement.** `consistent-one`
 spanned topRelSep 0.033 (Go Fast balloon — right range, though it named
 multirotor) to 0.933 (hypersonic — confidently wrong), and scored 0/2 on
 truth-class inclusion where scorable. `consistent-several` scored 6/6.
@@ -94,7 +105,19 @@ The evidence points at splitting the blocker (an envelope exclusion is a
 finding; a search-box edge is a gap) and giving the executive layer a channel
 below `consistent-one` — not at relaxing the rule. (Steps 7, 22.)
 
-**F5 — Multiple orbits recover the trajectory; they do not recover the class.**
+**F5 — RE-CHECKED 2026-08-20: unchanged, and now known to be harder than a
+reporting gap.** Both Rubber Duck verdicts are still `unresolved` on 2.140.0
+(topRelSep balloon 0.15012, drone 0.00260 — the drone's recovery improved from
+0.004). The collapsed-simplex fix did not move them: their class reps fail on
+`close`, not on `complete`, so removing the completeness stamp reaches a
+different blocker. More importantly, YIELD-DEFECT section 8 scored two truth-free
+determinacy signals against 53 scenarios and both failed — one fired on seven
+90-100%-wrong trajectories, the other never fires where no class is viable. The
+finding below stands, but its closing sentence should be read with care: this is
+not only a reporting gap, because "determined" is not observable on these files
+without the answer key. The original text follows.
+
+**F5 (original) — Multiple orbits recover the trajectory; they do not recover the class.**
 Two 2-km orbits produced the study's single best track recovery (hexarotor,
 topRelSep 0.004) and located the climbing balloon to 15% — but both winning
 fits are GENERIC Constant-Altitude tracks; the class fits failed (quadcopter

@@ -153,12 +153,44 @@ seven files: one improved from 0.146 to 0.00010, one degraded from 0.00001 to
 0.044, the rest marginally. In aggregate close to a wash; on the file that
 prompted it, the balloon class is now viable with relSep 0.00001.
 
-**STILL OPEN — the fix is a magnitude constraint**: reparameterise the wind as
-speed and bearing with the speed bounded, or keep a generous box and carry the
-limit as a magnitude penalty. The reachable set then matches the physics, the
-corner-cutting disappears, and the exclusion the box used to provide can be
-restored honestly at the magnitude where it belongs. Widening to ±40 removes the
-pin; it does not make the shape right.
+**LARGELY RESOLVED ON INSPECTION (2026-08-20) — the magnitude constraint already
+exists, as a soft prior.** This correction asked for the limit to be carried on
+wind MAGNITUDE rather than per component. `SkyLanternModel.extraCost` already
+does exactly that in the free-wind case (`SkyLanternModel.js:359`):
+
+    const spd = Math.hypot(params[1], params[2]);
+    cost = 0.5 * (spd / 10) ** 2;
+
+That is circular, not a box — a Gaussian preference on wind SPEED with sigma
+10 m/s. So the shape the correction asked for is present; only the HARD bound is
+a box, and after the ±40 widening the box's remaining job is to bracket the
+search rather than to exclude.
+
+**And the exclusion is priced, not absent.** The shipping cost function is
+`errDeg / errSigma + extraCost` with `errSigma` defaulting to 0.02 degrees
+(`LOSFitting.js:1260`, `:1412`), so one prior unit is 0.02 degrees of fit at the
+default and rescales with any sigma a scenario declares. At the default:
+
+    10.0 m/s ( 19 kt)   0.50 units = 0.010 deg
+    20.0 m/s ( 39 kt)   2.00 units = 0.040 deg
+    40.0 m/s ( 78 kt)   8.00 units = 0.160 deg
+    56.6 m/s (110 kt)  16.02 units = 0.320 deg
+
+So the 110 kt diagonal this correction worried about is not freely reachable: a
+"lantern" at that speed must buy 0.32 degrees of residual to be preferred, which
+is far more than the tier boundaries. The wording in the ±40 commit and in
+SkyLanternModel's header — "the box declines to prefer a fast wind rather than
+refusing one" — was right, but neither said that the preference doing the work is
+already the circular magnitude constraint this correction was asking to build.
+
+**What actually remains open** is therefore a question about STRENGTH, not shape:
+is sigma = 10 m/s (19 kt) the right preference for a wind tracer, given that the
+same header calls 40-45 kt aloft ordinary? A prior centred well below what the
+model itself calls ordinary is worth a measurement, but it is a calibration
+question and a much smaller one than reparameterising the model. Reparameterising
+to speed-and-bearing is NOT recommended on this evidence: it would perturb every
+lantern basin (see the 0.05 m/s knife-edge above) to buy a shape the prior
+already provides.
 
 **One caveat on the knife-edge, which is a separate finding.** It lives entirely
 in the UNSEEDED path: the model test's `fitLantern` helper starts from the
@@ -182,7 +214,29 @@ slot.
 (unresolved, no viable class), so nothing user-facing is wrong, but its
 top-ranked candidate is 3.7× further from truth than before.
 
-The likely mechanism is that a previously-ineligible fit is now eligible and
-outranks the more accurate one under the display-score comparator. Worth
-resolving before the RANKING (as distinct from the verdict) is trusted on
-anomalous files, since that is precisely where the ordering carries weight.
+**DIAGNOSED 2026-08-20 — the mechanism is confirmed, and it is a consequence
+rather than a new defect.** The swap is:
+
+    BEFORE  top = "Quadcopter"             relSep 0.05093
+    AFTER   top = "Sky Lantern / Balloon"  relSep 0.18651
+    verdict unresolved with no viable class, before AND after
+
+The lantern's simplex had collapsed, so it was carrying the incompleteness stamp
+the fix removed. Now eligible, it competes on the comparator's keys (screen pass,
+eligibility, completeness, tier, bound-pin count) and wins. Nothing in that chain
+consults truth, so a candidate can win it while sitting further from truth — and
+on this file both candidates are wrong anyway, since the scenario is a declared
+anomaly that no conventional model should fit.
+
+So this is not a regression introduced by the fix; it is the fix removing a stamp
+that had been demoting a candidate for the wrong reason, and the ordering that
+results being decided by keys that do not track truth. That is F1 and F2
+territory rather than a bug in the completeness change, and F2's remeasurement
+(above, and in the study) shows the verdict codes themselves now order recovery
+quality well.
+
+**What remains worth doing** is narrower than "resolve C7": the ranking is
+trustworthy at the VERDICT level and unvalidated at the ORDER-WITHIN-A-VERDICT
+level. Any future claim that the top tile is the best answer on an anomalous
+file needs its own measurement; this single swap is one data point that it is
+not guaranteed. No action proposed on the completeness fix itself.
