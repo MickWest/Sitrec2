@@ -21,7 +21,7 @@
 
 import {FileManager, NodeMan, Globals, getEffectiveUserID} from "./Globals";
 import {extractSitrecObjectKey} from "./SitrecObjectResolver";
-import {isGPSetIncomplete, isOMMCSV, GP_QUERY_WINDOW_DAYS} from "./TLEUtils";
+import {isGPSetIncomplete, isOMMCSV, gpQueryFilterField, GP_QUERY_WINDOW_DAYS} from "./TLEUtils";
 import {showChoice} from "./showError";
 import {SITREC_SERVER} from "./configUtils";
 
@@ -74,8 +74,13 @@ function findDatedTLEEntry() {
  * so sitches saved before tleSource existed can still be refreshed.
  */
 function tleSourceFor(id, entry) {
+    // The default Starlink query is recorded with an empty type, so test for a
+    // recorded type rather than a truthy one. Truthiness discarded exactly the
+    // provenance of the commonest set and fell back to inferring it - which on
+    // a sitch holding anything besides Starlink infers something else, or
+    // nothing at all.
     const saved = FileManager.loadedFilesMetadata?.[id]?.tleSource;
-    if (saved?.date && saved?.type) {
+    if (saved?.date && saved.type !== undefined) {
         return {date: saved.date, type: saved.type, inferred: false};
     }
 
@@ -120,7 +125,7 @@ export async function checkAndOfferTLERefresh() {
 
         const setDate = new Date(found.source.date + "T00:00:00Z");
         if (isNaN(setDate.getTime())) return;
-        if (!isGPSetIncomplete(tleData, setDate)) return;
+        if (!isGPSetIncomplete(tleData, setDate, found.source.type)) return;
 
         await offerRefresh(tleData, setDate, found);
     } catch (e) {
@@ -129,28 +134,53 @@ export async function checkAndOfferTLERefresh() {
     }
 }
 
-function describeShortfall(tleData, setDate) {
+/**
+ * How far the set got through the window, measured on the field it was actually
+ * judged by, so the percentage quoted to the user is the one the decision was
+ * made on.
+ *
+ * That field is not always the one the query filtered on. isGPSetIncomplete()
+ * falls back to epochs for a CREATION_DATE-filtered set in TLE format, which
+ * carries no publication times — this mirrors that exactly. Choosing by
+ * filterField alone would read an undefined date here and throw, and the caller
+ * treats a throw as "no offer": the legacy .tle bakes the fallback exists for
+ * would be the very sets it silenced.
+ */
+export function describeShortfall(tleData, setDate, filterField) {
     const windowEnd = new Date(setDate.getTime() + GP_QUERY_WINDOW_DAYS * 86400000);
-    const coveredMs = tleData.endDate.getTime() - setDate.getTime();
+    const measured = (filterField === "creation" && tleData.latestCreationDate instanceof Date)
+        ? "creation" : "epoch";
+    const reached = measured === "creation" ? tleData.latestCreationDate : tleData.endDate;
+    const coveredMs = reached.getTime() - setDate.getTime();
     const totalMs = windowEnd.getTime() - setDate.getTime();
     const pct = Math.max(0, Math.min(100, (coveredMs / totalMs) * 100));
     return {
         windowEnd,
         percent: pct,
-        lastEpoch: tleData.endDate,
+        reached,
+        measured,
     };
 }
 
 async function offerRefresh(tleData, setDate, found) {
-    const {percent, lastEpoch} = describeShortfall(tleData, setDate);
+    const filterField = gpQueryFilterField(found.source.type);
+    const {percent, reached, measured} = describeShortfall(tleData, setDate, filterField);
     const dateStr = found.source.date;
     const typeLabel = found.source.type === "" ? "Starlink" : found.source.type;
+    const stamp = reached.toISOString().slice(0, 16).replace("T", " ");
+
+    // Say which measure fell short, using the field the set was judged by and
+    // not the one its query nominally filters on. Publication time and epoch
+    // mean different things, and quoting one as the other would misdescribe
+    // what is missing.
+    const coverage = measured === "creation"
+        ? `the newest of them published ${stamp} UTC`
+        : `with elements up to ${stamp} UTC`;
 
     const message =
         `This sitch's satellite data was saved before Space-Track had finished ` +
         `publishing for ${dateStr}.\n\n` +
-        `It holds ${tleData.satData.length.toLocaleString()} satellites, with elements ` +
-        `up to ${lastEpoch.toISOString().slice(0, 16).replace("T", " ")} UTC — about ` +
+        `It holds ${tleData.satData.length.toLocaleString()} satellites, ${coverage} — about ` +
         `${percent.toFixed(0)}% of the ${GP_QUERY_WINDOW_DAYS}-day window the data covers. ` +
         `Space-Track has since published the rest.\n\n` +
         `Refreshing fetches the ${typeLabel} set for ${dateStr} again and MERGES it in, ` +

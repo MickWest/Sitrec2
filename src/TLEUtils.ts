@@ -239,28 +239,106 @@ export function isOMMCSV(firstLine: string): boolean {
 }
 
 /**
- * Days a historical query spans: proxyStarlink.php asks for EPOCH in
- * [D, D+2], so a complete set reaches almost exactly D+2.
+ * Days a historical query spans: proxyStarlink.php asks for a two-day window,
+ * [D, D+2], so a complete set reaches almost exactly D+2 - in whichever field
+ * that query filters on. See gpQueryFilterField().
  */
 export const GP_QUERY_WINDOW_DAYS = 2;
 
+/** Which field bounds the window a query asked for. */
+export type GPQueryFilter = "epoch" | "creation" | "unknown";
+
 /**
- * How far short of the window end a set may fall and still count as complete.
+ * What a proxyStarlink.php query filters on, and therefore which field's
+ * coverage says whether the download caught everything.
+ *
+ * The queries are NOT uniform in this, which is the whole reason completeness
+ * has to be judged per type (read them in sitrecServer/proxyStarlink.php):
+ *
+ *   ""/STARLINK  CREATION_DATE/D--D+2  plus OBJECT_NAME/STARLINK~~
+ *   ALL          CREATION_DATE/D--D+2
+ *   LEO/LEOALL   EPOCH/D--D+2          plus mean-motion and payload filters
+ *   SLOW         EPOCH/D--D+2
+ *   CUSTOM       an external URL with the date substituted in - filters unknown
+ */
+export function gpQueryFilterField(queryType: string): GPQueryFilter {
+    switch (queryType) {
+        case "":
+        case "STARLINK":        // what inferQueryType() calls the default query
+        case "ALL":
+            return "creation";
+        case "LEO":
+        case "LEOALL":
+        case "SLOW":
+            return "epoch";
+        default:
+            return "unknown";
+    }
+}
+
+/**
+ * How far short of the window end an EPOCH-filtered set may fall and still
+ * count as complete.
  *
  * Elements are dense near the end of the window - a LEO date carries tens of
  * thousands across two days, so a complete set's newest epoch lands within
- * seconds of the boundary (measured: 12 s). An hour is far beyond that, while
- * still catching a set that was cut short.
+ * seconds of the boundary (measured on three real LEO dates: 0.1 s, 2.7 s,
+ * 0.6 s). An hour is far beyond that, while still catching a set that was cut
+ * short.
  */
-const GP_WINDOW_TOLERANCE_MS = 60 * 60 * 1000;
+const GP_EPOCH_TOLERANCE_MS = 60 * 60 * 1000;
+
+/**
+ * The same, for a CREATION_DATE-filtered set measured on its own field.
+ *
+ * Much wider than the epoch one, for two measured reasons. Both come from the
+ * 2025-09-05 Starlink set (32,783 element sets, 8,231 satellites, refetched
+ * long after it had settled, so it is known-complete).
+ *
+ * 1. Publication arrives in bursts, not continuously, so a complete set's
+ *    newest CREATION_DATE sits at the last burst before the window closed,
+ *    not at the boundary. That set published in 37 bursts: median gap 0.50 h,
+ *    but with quiet periods of 8.3, 6.4 and 5.2 h. Sampling every moment of
+ *    the window as a hypothetical boundary, the share of complete sets a given
+ *    tolerance would wrongly flag runs 41% at 2 h, 17% at 4 h, 5.6% at 6 h,
+ *    0.7% at 8 h, 0% at 12 h. A false flag is not a one-off annoyance either:
+ *    refreshing a complete set adds nothing and cannot move its newest
+ *    CREATION_DATE, so it would ask again on every single load.
+ *
+ * 2. There is almost nothing to gain by tightening it, because a satellite is
+ *    lost only when a download precedes the FIRST publication covering it, and
+ *    the median publication lag is ~7 h. Reconstructing what a download at each
+ *    moment would have held:
+ *
+ *      download at  element sets   satellites missing
+ *      end - 24 h      19,579            103
+ *      end - 18 h      26,076              9
+ *      end - 12 h      32,779              0
+ *      end -  0 h      32,783              0
+ *
+ *    Twelve hours is where satellite loss begins, so the tolerance sits at the
+ *    point that catches every download that actually costs a satellite - which
+ *    is what this prompt is for - and no closer. Below it, the only thing
+ *    recoverable is a handful of element sets that a satellite already in the
+ *    set would be propagated from a few hours more accurately.
+ */
+const GP_CREATION_TOLERANCE_MS = 12 * 60 * 60 * 1000;
 
 /**
  * Was this set downloaded before Space-Track had finished publishing for it?
  *
- * Detected from EPOCH COVERAGE, not from any timestamp. The query asks for
- * epochs across [D, D+2]; download too early and the elements for the later
- * part of that window have not been published yet, so the set is truncated and
- * its newest epoch falls short of the window end. Measured on a real date, by
+ * Judged from COVERAGE of the window the query asked for, and specifically of
+ * the field that query filtered on - which differs by type. Using the wrong
+ * field flags complete sets forever: the Starlink query selects CREATION_DATE
+ * in [D, D+2], and an element is published AFTER its epoch, so even a fully
+ * settled set's newest EPOCH stops short of D+2. Measured on the 2025-09-05
+ * Starlink set: 2.17 h short, across 32,783 element sets whose publication lag
+ * ran from 0.46 h to 9.6 days. Tested against the epoch window that set looks
+ * truncated on every load, however long ago the event was.
+ *
+ * EPOCH-filtered (LEO, LEOALL, SLOW): download too early and the elements for
+ * the later part of the window have not been published yet, so the set is
+ * truncated and its newest epoch falls short. Measured on a real date, by
  * reconstructing what a download at each moment would have contained:
  *
  *   download at D+0.2d ->   13 elements,  8.9% of the window
@@ -268,23 +346,54 @@ const GP_WINDOW_TOLERANCE_MS = 60 * 60 * 1000;
  *   download at D+2.0d -> 53,495,        96.8%
  *   download at D+2.5d -> 73,204,       100.0%   (complete)
  *
- * Deliberately NOT based on CREATION_DATE. That is only a lower bound on when
- * we downloaded: if it falls before the settle point, the set may have been
- * caught mid-publication OR publication may simply have finished early - the
- * two are indistinguishable, and the second is common enough to make it a
- * false-positive machine. Coverage measures the truncation itself, needs no
- * file timestamp (which copying and rehosting destroy), and works for
- * TLE-format data too, which has no CREATION_DATE at all.
+ * CREATION_DATE-filtered (the default Starlink query, and ALL): here the filter
+ * bounds publication itself. Once the window has closed nothing published later
+ * can ever match it, so such a set is complete the moment it is downloaded at
+ * or after D+2, and truncated only if it was downloaded before that. The newest
+ * CREATION_DATE says which, being when the download happened, near enough.
+ * That is NOT a usable test for the epoch-filtered queries, where publication
+ * keeps adding elements for days after the window closes, and an early
+ * CREATION_DATE cannot be told from publication having simply finished early.
+ * Under a query that filters on it, it is exact.
  *
- * @param tleData The loaded set.
- * @param setDate The date the set was requested for (start of the window).
+ * TLE-format data under a CREATION_DATE query carries no publication times, so
+ * it falls back to epoch coverage - but read against the CREATION_DATE
+ * tolerance, never the epoch one. A complete set's epoch shortfall there is the
+ * trailing publication gap plus the lag of its own freshest element, measured
+ * as 0.56 + 1.61 = 2.17 h, while a download 12 h early already shows 14.7 h,
+ * one 18 h early 23.6 h. Twelve hours sits in that gap. This is the only test
+ * available for the legacy .tle bakes older saved sitches hold.
+ *
+ * A set whose query we do not define (CUSTOM) gets no test at all: with nothing
+ * to judge from, say nothing.
+ *
+ * @param tleData   The loaded set.
+ * @param setDate   The date the set was requested for (start of the window).
+ * @param queryType The proxyStarlink.php type it was requested with.
  */
-export function isGPSetIncomplete(tleData: CTLEData, setDate: Date): boolean {
-    if (!tleData || tleData.satData.length === 0 || !(tleData.endDate instanceof Date)) {
+export function isGPSetIncomplete(tleData: CTLEData, setDate: Date, queryType: string): boolean {
+    if (!tleData || tleData.satData.length === 0) {
         return false;
     }
     const windowEnd = setDate.getTime() + GP_QUERY_WINDOW_DAYS * 86400000;
-    return tleData.endDate.getTime() < windowEnd - GP_WINDOW_TOLERANCE_MS;
+
+    switch (gpQueryFilterField(queryType)) {
+        case "epoch":
+            if (!(tleData.endDate instanceof Date)) return false;
+            return tleData.endDate.getTime() < windowEnd - GP_EPOCH_TOLERANCE_MS;
+
+        case "creation":
+            if (tleData.latestCreationDate instanceof Date) {
+                return tleData.latestCreationDate.getTime() < windowEnd - GP_CREATION_TOLERANCE_MS;
+            }
+            // TLE format: no publication times, so read the epochs instead, at
+            // the tolerance this query type needs rather than the epoch one.
+            if (!(tleData.endDate instanceof Date)) return false;
+            return tleData.endDate.getTime() < windowEnd - GP_CREATION_TOLERANCE_MS;
+
+        default:
+            return false;
+    }
 }
 
 // A TLE element line — "1 ..." or "2 ...". Used to spot where a TLE block
@@ -750,6 +859,17 @@ export class CTLEData {
                 if (d < this.startDate) this.startDate = d;
                 if (d > this.endDate) this.endDate = d;
             }
+        }
+
+        // The merged set was published as recently as the newer of the two.
+        // This is what isGPSetIncomplete() reads for a CREATION_DATE-filtered
+        // query, and a refreshed sitch reloads as the baked set merged with the
+        // refreshed one - so without this the merge would keep the stale
+        // publication time and go on reporting the set as truncated.
+        if (other.latestCreationDate !== undefined
+            && (this.latestCreationDate === undefined
+                || other.latestCreationDate > this.latestCreationDate)) {
+            this.latestCreationDate = other.latestCreationDate;
         }
 
         // Append raw text for export. Two OMM CSVs are folded into ONE csv by

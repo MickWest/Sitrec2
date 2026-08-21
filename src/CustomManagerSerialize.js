@@ -1046,6 +1046,15 @@ export const serializeMethods = {
                             console.log("HANDLING LOADED FILE ID: " + id + " filename: " + filename);
                             // Restore dataType and other metadata if available
                             const metadata = FileManager.loadedFilesMetadata[fileID];
+                            // Which Space-Track query produced a satellite set is written
+                            // out from the FileManager entry, but only ever restored into
+                            // the sidecar metadata — so put it back on the entry too.
+                            // Without this a sitch that is saved, reloaded and saved again
+                            // silently drops its own provenance on that second save, and
+                            // a later refresh has to infer the query type instead.
+                            if (metadata?.tleSource && FileManager.list[fileID]) {
+                                FileManager.list[fileID].tleSource = metadata.tleSource;
+                            }
                             if (metadata?.dataType) {
                                 FileManager.list[fileID].dataType = metadata.dataType;
                                 // For kmzImage files, restore kmzHref and populate kmzImageMap
