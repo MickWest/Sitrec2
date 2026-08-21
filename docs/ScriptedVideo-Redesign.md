@@ -4,7 +4,7 @@
 
 # PLAN OF RECORD (post-review)
 
-Reviewed by Codex (gpt-5.6-sol, xhigh), task-msqn31ii-e50ep3. Verdict: *adopt
+Independent design review verdict: *adopt
 shot-local source windows, but not the proposal as written.* The sections below are the
 original proposal; this header is what we are actually building and why it differs.
 
@@ -40,16 +40,70 @@ encodes no cuts, scene scope, or shot identity, and folds backward on replays.
 
 ## Phasing
 
-**Phase 1 — timing model (in progress).**
-Compile shots to an explicit `ShotSchedule`; replace the single global `sitFrameAt`
-(CScriptedVideo.js:279) with a piecewise `worldFrameAt(screenT)`. Explicit
-`world A..B` / `hold A` / `rate N`, resolved at compile time. Honour `Sit.aFrame`/`bFrame`,
-which the current mapper ignores. Gives dwell, replay, freeze and slow-motion.
+**Phase 1 — timing model. DONE.**
+`ScriptTimeMap` compiles shots into ordered segments, each carrying its own resolved
+source range; `sitFrameAt` is a lookup into it. `Sit.aFrame`/`bFrame` are honoured (the
+old mapper ignored them). A shot declares its window with `& world a..b`; endpoints may
+be seconds, `f<frame>`, a wall clock or an absolute instant.
 
-**Phase 2 — cut semantics.** Per-shot `cut` | `continue`. Default a source discontinuity
-to `cut`. Segment camera smoothing (CScriptedVideo.js:475) at boundaries, and feed
-declared transitions into tile warmup classification (CScriptedVideo.js:515) instead of
-inferring cuts from camera jumps.
+**Every shot that occupies screen time must declare a window** — there is no implicit
+default, because deriving an omitted window from a neighbour is the hidden cursor that
+made editing non-local to begin with. Zero-duration beats are snaps and need nothing.
+Missing or out-of-range windows are errors (never clamped: silently showing a different
+moment is the worst failure available); on a compile failure the map falls back to
+uniform so the editor still previews while reporting what to fix.
+
+Requiring explicit windows collapsed freeze, replay, slow-motion and reverse into ONE
+concept with no special cases — a freeze is a zero-width window, a replay is naming an
+earlier range. `hold`, `rate` and `slow` were designed and then deleted as unnecessary.
+
+Validated on the 105 s Coyne video: 23 segments, zero errors, and frame-for-frame
+identical output to the old global mapping except in the final segment, where the window
+correctly stops at the last frame that exists.
+
+**Phase 1b — cinematic rules. DONE.**
+`ScriptCinematics.js` measures each shot and reports findings; nothing here moves a
+camera, because a framing solver is underconstrained while a check is cheap and its worst
+failure is a false warning. `checkCinematics()` samples the shot, the rules judge it.
+
+A shot says what it is for with `& intent feature` or `& intent establish`. A feature shot
+is held to **30-50% of frame height** (`UNDER_FRAMED` / `OVER_FRAMED`, with a 15% floor
+for a failed close-up); an establishing shot only has to be bigger than a speck. Motion is
+judged per second of SCREEN time, in frame heights per second rather than degrees — 60°/s
+is a drift through a 120° shot and an unwatchable smear through a 12° one. Cuts are held
+to the 30-degree rule, and shots to a 0.4 s minimum.
+
+Three measurement mistakes were each worth more than the rules built on them:
+
+- **A bounding sphere is not a silhouette.** It is the longest thing in the object
+  whichever way you look, and craft are long: 155 m directly behind a 12 m helicopter the
+  sphere claims 39% of frame where the render shows 14%. Nor is the length axis knowable
+  by convention — the Huey model runs along local Z, the object's capsule along local X,
+  which is also across its own flight path. Measured now as an ORIENTED box: half-extents
+  from the object's own bounds, axes from its live world matrix, angular radius = the worst
+  of eight corners.
+- **"In frame" is not a cone.** The old test compared the centre angle with half the
+  VERTICAL fov, so it rejected most of a 16:9 picture. It is a rectangle: build the camera
+  basis, put the target in camera space, test the four side planes. And the subject's
+  CENTRE must be inside — asking only whether some part of it clips the frustum passes a
+  shot with the subject half off the bottom edge, which is exactly what shipped.
+- **A lit subject is measured, not exempted.** Reproducing `CNode3DLight.preRender`'s
+  boostScale gives the glow's real angular size, so a beacon 22.7 km away is correctly a
+  readable point of light while a close-up landing on a dim hull is still under-framed.
+
+Two engine defects the rules found, both lens-blindness of the same kind: `follow` led its
+subject by 0.4 × distance (fine wide, off the bottom edge at 12°) and now leads by a
+fraction of the FRAME; `zoom` closed distance linearly, so apparent size — which goes as
+1/d — blew up on arrival at 6.6x/s, and now closes geometrically.
+
+**Phase 2 — cut semantics. PARTLY DONE.** `cut` exists as a command: a zero-duration beat
+that marks the next one as following an edit, so `ride`/`follow` land on their pose instead
+of easing out of a pose that belongs to a different shot (measured at ~100°/s of camera
+swing at the head of otherwise calm shots). Camera smoothing is segmented at cuts —
+averaging across a snap turned a hard cut into a 561°/s whip. Still to do: per-shot
+`continue`, defaulting a source discontinuity to `cut`, and feeding declared transitions
+into tile warmup classification (CScriptedVideo.js:515) instead of inferring cuts from
+camera jumps.
 
 **Phase 3 — deterministic seek.** One awaitable `seekWorld(sourceFrame, {discontinuity,
 settle})` shared by preview, render and probe. Unifies the two paths that exist today
@@ -61,9 +115,10 @@ stable ID so an early insertion does not invalidate every reference. Then
 `scriptCapabilities()` and the contact sheet.
 
 **Deferred / cut.** Reverse playback (largest unverified surface — needs a node-graph
-audit as a release gate). The general `frame A B` solver (underconstrained: `targetPos`
-yields a point, not a bounding volume — ScriptCameraEngine.js:26). Automatic occlusion
-and "no subject in frame" warnings. Bidirectional JSON round-trip while arbitrary JS is
+audit as a release gate). The general `frame A B` solver — still underconstrained (many
+cameras "contain" two subjects) though no longer for want of a bounding volume, since
+`_targetBox` now supplies one. Automatic occlusion. Bidirectional JSON round-trip while
+arbitrary JS is
 canonical. Variants/scene switching per shot — §3a/§3b stay as a design sketch for a
 later phase, not v1. Rate ramps, audio markers, permanent two-track timeline.
 
@@ -171,6 +226,14 @@ shot 5  frame Huey UFO  margin 0.2                    # contain BOTH, 20% margin
 
 `frame A B` is the archetypal recreation shot — two objects converging — and currently
 requires manual trig every time.
+
+*Status:* the CHECK half of this shipped in Phase 1b (`& intent feature` + the 30-50%
+band), and it turned out to be most of the value: the loop is "write the geometry, run
+`checkCinematics()`, adjust", which took the Coyne script from 11 findings to 0 without a
+solver. A `size` that solves distance is now cheap to add — `_targetBox` gives the
+bounding volume it needs — but note what the checking pass proved: a single-shot solve
+would not have caught any of the whip pans, snap zooms or jump cuts, which are all
+properties of a shot's *neighbours*.
 
 ---
 

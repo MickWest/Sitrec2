@@ -33,15 +33,17 @@ import {par} from "./par";
 import {CustomManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "./Globals";
 import {ViewMan} from "./CViewManager";
 import {clamp, smooth} from "./scriptedVideo/ScriptMath";
-import {uniformTimeMap} from "./scriptedVideo/ScriptTimeMap";
+import {compileTimeMap, uniformTimeMap} from "./scriptedVideo/ScriptTimeMap";
 import {VIEW_MAP, layoutForViewEvent, isSettingEvent} from "./scriptedVideo/ScriptCommands";
 import {runScriptViaWorker} from "./scriptedVideo/ScriptRunnerClient";
 import {sitrecAPI} from "./CSitrecAPI";
-import {prepareEvents, computeCamera, applyPoseToCam, poseFromCamNode} from "./scriptedVideo/ScriptCameraEngine";
+import {prepareEvents, computeCamera, applyPoseToCam, poseFromCamNode, targetPos} from "./scriptedVideo/ScriptCameraEngine";
+import {sphereInFrustum, sizeFractionFromAngle, checkScript}
+    from "./scriptedVideo/ScriptCinematics";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {getLocalUpVector} from "./SphericalMath";
 import {elevationAtLL} from "./threeExt";
-import {Vector3} from "three";
+import {Box3, Matrix4, Vector3} from "three";
 import {CScriptTimelineWidget} from "./scriptedVideo/ScriptTimelineWidget";
 import {CScriptEditorWindow, STORAGE_KEY, TABS_KEY, DEFAULT_SCRIPT} from "./scriptedVideo/ScriptEditorWindow";
 import {renderScriptedVideo} from "./scriptedVideo/ScriptRenderer";
@@ -250,6 +252,7 @@ class CScriptedVideoManager {
         this.events = r.events;
         this.cameraBeats = r.cameraBeats;
         this.totalDuration = r.totalDuration;
+        this._timeMapRev = (this._timeMapRev || 0) + 1;   // recompile the time map
         this.parseErrors = r.errors;
         this._numLanes = r.numLanes;
         // validate set/show/hide targets against the live menus (the runner is
@@ -298,8 +301,8 @@ class CScriptedVideoManager {
         return this.timeMap().rateAt(t);
     }
 
-    // The compiled map, rebuilt on demand when the script duration or the sitch's
-    // length/in-out points have changed since it was last built.
+    // The compiled map, rebuilt on demand when the script or the sitch's length/in-out
+    // points have changed since it was last built.
     timeMap() {
         const frames = (Sit && Sit.frames) ? Sit.frames : 1;
         const aFrame = Sit ? Sit.aFrame : undefined;
@@ -307,11 +310,52 @@ class CScriptedVideoManager {
         const k = this._timeMapKey;
         if (!this._timeMap || !k
             || k.frames !== frames || k.dur !== this.totalDuration
-            || k.a !== aFrame || k.b !== bFrame) {
-            this._timeMap = uniformTimeMap(this.totalDuration, frames, aFrame, bFrame);
-            this._timeMapKey = {frames, dur: this.totalDuration, a: aFrame, b: bFrame};
+            || k.a !== aFrame || k.b !== bFrame || k.rev !== this._timeMapRev) {
+            this._timeMap = this._buildTimeMap(frames, aFrame, bFrame);
+            this._timeMapKey = {frames, dur: this.totalDuration, a: aFrame, b: bFrame,
+                rev: this._timeMapRev};
         }
         return this._timeMap;
+    }
+
+    // Compile the shots' declared world windows into the map.
+    //
+    // Every shot that occupies screen time must declare one (`& world a..b`). There is
+    // deliberately no implicit default: deriving an omitted window from neighbouring
+    // shots is exactly the hidden cursor that made editing non-local in the first place.
+    // Zero-duration beats are snaps — they consume no screen time, so they need nothing.
+    //
+    // Missing or bad windows become parse errors and we fall back to the uniform map, so
+    // the editor still previews something while it tells you what to fix.
+    _buildTimeMap(frames, aFrame, bFrame) {
+        const beats = (this.cameraBeats || []).filter(b => b.dur > 0);
+        const uniform = () => uniformTimeMap(this.totalDuration, frames, aFrame, bFrame);
+        if (beats.length === 0) return uniform();
+
+        // a `world` marker belongs to the shot it starts with
+        const windows = (this.events || []).filter(e => e.type === "world" && !e.invalid);
+        if (windows.length === 0) return uniform();     // no windows declared at all yet
+
+        const withWindows = beats.map(b => {
+            const w = windows.find(e => Math.abs(e.start - b.start) < 1e-6);
+            return {
+                start: b.start, dur: b.dur, id: b.camId,
+                label: `${b.type} at ${b.start}s`,
+                source: w ? {from: w.from, to: w.to} : undefined,
+            };
+        });
+
+        const {map, errors} = compileTimeMap(withWindows, {
+            frames, fps: (Sit && Sit.fps) ? Sit.fps : 30,
+            startTimeMS: Date.parse(Sit && Sit.startTime ? Sit.startTime : 0) || 0,
+            tzOffsetMinutes: (GlobalDateTimeNode?.timeZoneOffset ?? 0) * 60,
+        });
+
+        if (!map) {
+            this.parseErrors = (this.parseErrors || []).concat(errors);
+            return uniform();
+        }
+        return map;
     }
 
     // the view event active at time t (last view cut at or before t), or null
@@ -478,6 +522,240 @@ class CScriptedVideoManager {
         return `moveto ${fmt(pose.position)} 3 ${fmt(pose.lookTarget)}`;
     }
 
+    // Measure every shot against the cinematic rules (ScriptCinematics.js) and return the
+    // findings. Pure measurement — nothing here moves a camera. Intended both for the
+    // author (a "check my edit" button) and for an agent, which can otherwise only judge
+    // framing by taking screenshots and eyeballing them.
+    checkCinematics(samplesPerShot = 12) {
+        const beats = (this.cameraBeats || []).filter(b => b.dur > 0);
+        const shots = [];
+        const lights = this._lightBillboards();
+        let prevWasSnap = true;             // the first shot is a cut from nothing
+
+        for (const b of beats) {
+            const target = b.lookAt || b.target;
+            const box = this._targetBox(target);
+            const fallbackRadius = box ? 0 : this._targetRadius(target);
+            const samples = [];
+            // Sample over [start, end) with the LAST sample just inside the end, not a
+            // whole interval short of it. A shot still moving when it ends — a push-in is
+            // usually closing fastest at its last frame — otherwise reports the framing it
+            // had an interval earlier, which for the zoom that opens the Coyne script read
+            // 4.7% of frame where the shot actually lands on 11%. Sampling AT the end is
+            // wrong the other way: there computeCamera already belongs to the next shot.
+            const eps = Math.min(1e-3, b.dur * 1e-3);
+            const n = Math.max(2, samplesPerShot);
+            for (let i = 0; i < n; i++) {
+                const t = b.start + ((b.dur - eps) * i) / (n - 1);
+                const cam = this._smoothedCamera(t);
+                const sf = this.sitFrameAt(t);
+                const tp = target ? targetPos(target, sf) : null;
+                if (!cam || !tp) continue;
+
+                const toTarget = tp.clone().sub(cam.pose.position);
+                const dist = toTarget.length();
+                const aim = cam.pose.lookTarget.clone().sub(cam.pose.position);
+                const fov = cam.pose.fov || 30;
+                // What the viewer sees is the LARGER of the hull's silhouette and any glow
+                // attached to it: Sitrec floors a light billboard's angular size, so a lit
+                // subject stays readable at any range and measuring only the hull would
+                // report a speck where the frame shows a lamp.
+                const hullAng = box
+                    ? this._angularRadius(box, tp, cam.pose.position)
+                    : Math.asin(Math.min(1, fallbackRadius / dist));
+                const lightR = this._lightRadiusAt(lights, tp, sf, dist, fov);
+                const angRadius = Math.max(hullAng, Math.asin(Math.min(1, lightR / dist)));
+                samples.push({
+                    t, fov,
+                    sizeFrac: sizeFractionFromAngle(angRadius, fov),
+                    // The subject's CENTRE must be in frame, not merely some part of it.
+                    // Passing its radius here asks "does any of it clip the frustum",
+                    // which passes a shot with the subject half off the bottom edge — and
+                    // that is exactly what a 12-degree follow shot rendered. Whether the
+                    // subject is too big for the frame is the OVER_FRAMED rule's job.
+                    inFrame: sphereInFrustum(aim, cam.pose.up, toTarget, 0, fov,
+                        this._frameAspectAt(t, b.viewId)),
+                    aim: {x: aim.x, y: aim.y, z: aim.z},
+                });
+            }
+            shots.push({
+                shot: {label: `${b.type} ${target ?? ""} @${b.start}s`.trim(), kind: b.type,
+                    intent: this._declaredIntentFor(b),
+                    screenIn: b.start, screenOut: b.start + b.dur},
+                samples, isCut: prevWasSnap,
+            });
+            prevWasSnap = false;
+        }
+
+        // a zero-duration beat between shots is a snap, i.e. a cut into the next shot
+        for (const b of (this.cameraBeats || [])) {
+            if (b.dur > 0) continue;
+            const next = shots.find(s => Math.abs(s.shot.screenIn - b.start) < 1e-6);
+            if (next) next.isCut = true;
+        }
+
+        return checkScript(shots);
+    }
+
+    // The ORIENTED box of a script target: three half-extent vectors in world space, so a
+    // subject can be measured as the shape it is rather than as the sphere that contains
+    // it. Returns null when the target has no 3D object (a "lat,lon,alt" literal, say).
+    //
+    // A sphere is the length of the longest thing in the object whichever way you look at
+    // it, and craft are long: 155 m directly behind a 12 m helicopter, the sphere claims
+    // 39% of frame height where the render shows 14%, because what faces the camera is the
+    // 3 m cross-section. Nor is the object's LENGTH axis knowable by convention — the Huey
+    // model runs along local Z and the object's procedural capsule along local X, which is
+    // also across its own flight path, so a heading taken from the motion foreshortens a
+    // subject the render shows broadside.
+    //
+    // The half-extents come from the object's own bounds in its own space, and the axes
+    // from its live world matrix, so the measurement follows the rotation the scene is
+    // actually drawing. Two consequences worth knowing: run the check on a SETTLED scene
+    // (before a GLB resolves every object reports the same placeholder bounds), and the
+    // orientation is the one currently rendered rather than one sampled per frame — which
+    // is right for a subject holding an attitude and approximate for one rolling through
+    // the shot.
+    _targetBox(target) {
+        if (!target) return null;
+        for (const id of [target + "_ob", target, "Track_" + target]) {
+            const n = NodeMan.get(id, false);
+            const obj = n && n._object;
+            if (!obj || !obj.matrixWorld) continue;
+            obj.updateWorldMatrix(true, true);
+            const toLocal = obj.matrixWorld.clone().invert();
+            const local = new Box3();
+            obj.traverse((c) => {
+                if (!c.isMesh || !c.geometry) return;
+                if (!c.geometry.boundingBox) c.geometry.computeBoundingBox();
+                if (!c.geometry.boundingBox) return;
+                const b = c.geometry.boundingBox.clone();
+                b.applyMatrix4(new Matrix4().multiplyMatrices(toLocal, c.matrixWorld));
+                local.union(b);
+            });
+            if (local.isEmpty()) continue;
+            const h = local.getSize(new Vector3()).multiplyScalar(0.5);
+            const m = obj.matrixWorld.elements;
+            return [
+                new Vector3(m[0], m[1], m[2]).multiplyScalar(h.x),
+                new Vector3(m[4], m[5], m[6]).multiplyScalar(h.y),
+                new Vector3(m[8], m[9], m[10]).multiplyScalar(h.z),
+            ];
+        }
+        return null;
+    }
+
+    // Angular RADIUS of that box seen from `camPos` with its centre at `centre`: the
+    // largest angle any corner subtends off the line of sight. This is the silhouette the
+    // frame has to hold, and it needs no assumption about which way the model is built.
+    _angularRadius(box, centre, camPos) {
+        const axis = centre.clone().sub(camPos);
+        const dist = axis.length();
+        if (!(dist > 0)) return 0;
+        axis.multiplyScalar(1 / dist);
+        let worst = 0;
+        for (let i = 0; i < 8; i++) {
+            const c = centre.clone()
+                .addScaledVector(box[0], (i & 1) ? 1 : -1)
+                .addScaledVector(box[1], (i & 2) ? 1 : -1)
+                .addScaledVector(box[2], (i & 4) ? 1 : -1)
+                .sub(camPos);
+            const along = c.dot(axis);
+            const across = Math.sqrt(Math.max(0, c.lengthSq() - along * along));
+            const ang = Math.atan2(across, along);
+            if (ang > worst) worst = ang;
+        }
+        return worst;
+    }
+
+    // Fallback radius when a target has no 3D object to measure.
+    _targetRadius(target) {
+        for (const id of [target, target + "_ob", "Track_" + target]) {
+            const n = target && NodeMan.get(id, false);
+            const r = n && n.cachedBoundingSphere && n.cachedBoundingSphere.radius;
+            if (r > 0) return r;
+        }
+        return 10;    // a nominal aircraft-sized 10 m — better to measure something
+    }
+
+    // Every visible light billboard in the scene, gathered ONCE per check.
+    // `size` is the billboard plane's world size before the distance boost; it comes from
+    // the geometry rather than the node's live scale, which holds whatever the last
+    // rendered camera happened to need.
+    //
+    // `owner` is what the light is attached to, since a light node has no position of its
+    // own to sample. Ids come in two shapes — "Craft_ob_SomeLight" and "Craft_PointLight" —
+    // and a light whose owner cannot be named is dropped rather than guessed at: asking
+    // for the position of the light's own id walks back into the light node, whose p() is
+    // not implemented and asserts.
+    _lightBillboards() {
+        const out = [];
+        NodeMan.iterate((id, n) => {
+            if (!n || !n.light || n.lightVisible === false) return;
+            const owner = id.replace(/_ob_.*$/, "").replace(/_[A-Za-z]*Light$/, "");
+            if (!owner || owner === id) return;
+            const g = n._object && n._object.geometry;
+            const size = (g && g.parameters && g.parameters.width > 0)
+                ? g.parameters.width : (n.light.intensity || 0) / 100;
+            if (size > 0) out.push({owner, size});
+        });
+        return out;
+    }
+
+    // World radius of the largest light billboard belonging to whatever is at `pos`, as
+    // it would be drawn from `distance` through a `fovDeg` lens — 0 if there is none.
+    //
+    // This mirrors CNode3DLight.preRender's boostScale, which grows the billboard with
+    // distance so that its angular radius is atan(1.25/D) + 0.005·fov: a floor of half a
+    // percent of the frame, whatever the range. Reproducing it here means a lit subject is
+    // MEASURED rather than exempted — a beacon 13 km away is correctly a readable point of
+    // light, while a close-up that lands on a dim hull is still called under-framed.
+    //
+    // A light counts as belonging to the subject when it is close enough to share its part
+    // of the frame, not within a fixed radius: a craft's lights are often separate tracked
+    // objects with their own ids, and the distance at which one reads as "on" the subject
+    // scales with how far away the whole thing is.
+    _lightRadiusAt(lights, pos, sf, distance, fovDeg) {
+        if (!lights.length || !pos || !(distance > 0) || !(fovDeg > 0)) return 0;
+        const fovRad = fovDeg * Math.PI / 180;
+        const withinM = Math.max(2 * distance * Math.tan(fovRad / 2) * 0.05, 5);
+        let best = 0;
+        for (const L of lights) {
+            const p = targetPos(L.owner, sf);
+            if (!p || p.distanceTo(pos) > withinM) continue;
+            // The whole billboard, not just the shader's hard core: the falloff around it
+            // is the glow, and the glow is what the viewer sees. At 22.7 km the Coyne
+            // object's bow light comes to about 2% of frame height, which is the ~20-pixel
+            // blob the render actually shows, against 0.38% for the hull it is bolted to.
+            const boosted = (2 * distance / 5)
+                * Math.tan(Math.atan(1.25 / distance) + 0.005 * fovRad);
+            best = Math.max(best, boosted * L.size / 2);
+        }
+        return best;
+    }
+
+    // Aspect ratio of the pane this beat's camera is drawn into at time t. The frustum is
+    // a rectangle, not a cone, and a 16:9 pane is nearly twice as wide as it is tall — so
+    // measuring "in frame" against the vertical fov alone rejects most of the picture.
+    _frameAspectAt(t, viewId) {
+        const frameAR = (this.outW > 0 && this.outH > 0) ? this.outW / this.outH : 16 / 9;
+        const rect = viewId && this.activeLayoutAt(t)[viewId];
+        if (!rect || !(rect.width > 0) || !(rect.height > 0)) return frameAR;
+        return frameAR * (rect.width / rect.height);
+    }
+
+    // The `& intent feature|establish` attached to this shot, or undefined to let the
+    // rules infer it. Matched by start time, the same way `world` windows attach.
+    _declaredIntentFor(beat) {
+        let found;
+        for (const e of (this.events || [])) {
+            if (e.type === "intent" && !e.invalid && Math.abs(e.start - beat.start) < 1e-6) {
+                found = e.intent;
+            }
+        }
+        return found;
+    }
+
     // Apply the menu settings in effect at scripted time t: for each touched
     // control, the latest set/show/hide at or before t — or its pre-preview
     // snapshot if none has fired yet (so scrubbing backwards un-does them).
@@ -507,10 +785,18 @@ class CScriptedVideoManager {
         const W = this.cameraSmoothing || 0;
         if (!base || W <= 0) return base;
         const N = 4;
+        // Never average ACROSS a cut. Sampling both sides of a snap blends two unrelated
+        // poses, which turns a hard cut into a whip: measured at 561°/s across a cut whose
+        // shots either side are both calm 4°/s moves. Clamping the window to the current
+        // continuous run leaves gliding motion untouched (the clamp only binds within W of
+        // a cut) while letting a cut actually be a cut.
+        const [runStart, runEnd] = this._continuousRunAt(t);
         const pos = new Vector3(), look = new Vector3();
         let fov = 0, wsum = 0;
         for (let i = -N; i <= N; i++) {
-            const tt = clamp(t + (i / N) * W, 0, this.totalDuration);
+            // half-open at the top: AT the cut time computeCamera already returns the
+            // NEXT shot's pose, so including it samples across the very cut we segmented
+            const tt = clamp(t + (i / N) * W, runStart, runEnd - 1e-4);
             const r = this.computeCamera(tt);
             if (!r || r.camId !== base.camId) continue;
             const x = i / N, wt = Math.exp(-2 * x * x);   // gaussian-ish weights
@@ -522,6 +808,33 @@ class CScriptedVideoManager {
         pos.multiplyScalar(1 / wsum); look.multiplyScalar(1 / wsum);
         const clamped = this._clampAboveGround(pos);
         return {camId: base.camId, pose: {position: clamped, up: getLocalUpVector(clamped), lookTarget: look, fov: fov / wsum}};
+    }
+
+    // Screen times at which the camera CUTS. A zero-duration camera beat (`from X 0 …`)
+    // is a snap to a new pose, so it bounds the continuous runs either side of it.
+    _cutTimes() {
+        if (this._cutTimesCache && this._cutTimesRev === this._timeMapRev) return this._cutTimesCache;
+        const cuts = new Set([0, this.totalDuration]);
+        for (const b of (this.cameraBeats || [])) if (!(b.dur > 0)) cuts.add(b.start);
+        this._cutTimesCache = Array.from(cuts).sort((a, b) => a - b);
+        this._cutTimesRev = this._timeMapRev;
+        return this._cutTimesCache;
+    }
+
+    // The continuous run [start, end] containing t — the span the camera glides through
+    // without cutting.
+    // The boundary must be the one computeCamera uses, with NO tolerance: at exactly the
+    // cut time the next shot's beat is already the active one, and just before it the
+    // previous shot still is. A tolerance here puts a timestamp a microsecond before a cut
+    // into the run AFTER it, so the smoothing window is clamped to the wrong side and
+    // averages across the very cut it exists to preserve.
+    _continuousRunAt(t) {
+        let lo = 0, hi = this.totalDuration;
+        for (const c of this._cutTimes()) {
+            if (c <= t) lo = c;
+            else { hi = c; break; }
+        }
+        return [lo, hi];
     }
 
     // Keep an ECEF camera position at least groundClearance metres above the

@@ -39,7 +39,17 @@ function followPose(e, sf, fov, targetPos, makePose, localUp) {
     if (head.lengthSq() < 1e-6) head = e._follow.fallbackDir.clone();
     head.normalize();
     const camPos = o.clone().addScaledVector(head, -e.distance).addScaledVector(up, e.height);
-    const lookAt = o.clone().addScaledVector(head, e.distance * 0.4);   // look ahead, past the target
+    // LEAD ROOM: aim a little ahead of the subject, so the shot shows where it is going
+    // rather than pinning it dead centre. Measured as a fraction of the FRAME, not of the
+    // follow distance — leading by 0.4 x distance is a gentle offset through a wide lens
+    // and throws the subject clean out of shot through a long one (60 m behind a
+    // helicopter at 12 degrees put it 1.15 frame-heights below centre, i.e. off the bottom
+    // edge). Offsetting the aim point by 2*tan(fov/2)*distance*LEAD displaces the subject
+    // by exactly LEAD of a frame height whatever the lens or the range.
+    const LEAD = 0.15;
+    const toTarget = o.clone().sub(camPos).length();
+    const lead = 2 * Math.tan(radians(fov) / 2) * toTarget * LEAD;
+    const lookAt = o.clone().addScaledVector(head, lead);
     return makePose(camPos, lookAt, fov);
 }
 
@@ -190,6 +200,56 @@ export const COMMANDS = {
         overflowHint: "use `world from..to`, `world from to`, or `world at` to freeze",
     },
 
+    // An explicit CUT: the next shot starts on its own pose instead of easing out of the
+    // previous one.
+    //
+    //     zoom Huey 4 150       # establish the aircraft from outside...
+    //     cut
+    //     ride Huey 6 UFO 2 6   # ...then cut to the crew's view
+    //
+    // `ride` and `follow` ease out of the pose they inherit, which is what makes a
+    // continuous move glide; across an edit there is nothing to ease from, so the camera
+    // swings round hunting its subject (measured at ~100 deg/s here) and the shot opens on
+    // a smear. `from X 0` already implies a cut because it snaps somewhere new, but a POV
+    // shot has no `from` to write — its pose belongs to the ride. This is how to say it.
+    //
+    // It occupies no time and moves nothing itself: the next beat supplies the new pose.
+    cut: {
+        cameraBeat: true,
+        color: "#666666",
+        label: () => "cut",
+        args: [],
+        finish(e) { e.dur = 0; return e; },     // occupies no time on the spine
+        prepare(e, {startPose}) { return startPose; },
+        sample(e, {sp}) { return sp; },
+    },
+
+    // Declare what a shot is FOR, so the cinematic check knows what to hold it to.
+    // Attach it to a shot with `&`, the same way `world` attaches:
+    //
+    //     zoom UFO 3
+    //     & intent feature                  # we have come to LOOK at it: 30-50% of frame
+    //     orbit site 8
+    //     & intent establish                # showing where we are: small is fine
+    //
+    // Without one the intent is inferred from the move, which cannot tell a push-in from
+    // a subject flying towards a locked-off camera. Saying so is always better.
+    intent: {
+        cameraBeat: false,
+        color: "#8c7ae6",
+        label: (e) => "intent " + e.intent,
+        args: [{name: "intent", type: "string", required: true}],
+        finish(e, error) {
+            const v = String(e.intent || "").toLowerCase();
+            if (v !== "establish" && v !== "feature") {
+                return error(`intent — "${e.intent}" is not one of establish, feature`);
+            }
+            e.intent = v;
+            e.dur = 0;              // a marker on the shot, it consumes no time itself
+            return e;
+        },
+    },
+
     text: {
         cameraBeat: false,
         color: "#d05a8c",
@@ -223,7 +283,15 @@ export const COMMANDS = {
         },
         sample(e, {sp, sf, localT, targetPos, makePose}) {
             const obj = targetPos(e.target, sf) || sp.lookTarget;
-            const d = lerp(e._zoom.d0, e._zoom.dEnd, smooth(localT));
+            // Close the distance GEOMETRICALLY, not linearly. Apparent size goes as 1/d, so
+            // a linear approach accelerates the framing wildly as it arrives: closing
+            // 7.7 km to 200 m linearly spends most of the shot barely changing the picture
+            // and then blows the subject up at 6.6x a second in the last half-second —
+            // measurably a snap zoom, and it looks like one. Interpolating the LOG of the
+            // distance makes the subject grow at a constant proportional rate, which is
+            // what a zoom lens does and what the eye reads as an even push-in.
+            const {d0, dEnd} = e._zoom;
+            const d = d0 * Math.pow(dEnd / d0, smooth(localT));
             return makePose(obj.clone().addScaledVector(e._zoom.dir0, d), obj, sp.fov);
         },
     },
@@ -292,8 +360,10 @@ export const COMMANDS = {
         },
         sample(e, {sp, sf, localT, targetPos, makePose, localUp}) {
             const ideal = followPose(e, sf, sp.fov, targetPos, makePose, localUp);
-            // ease OUT of the previous beat's pose into the follow over the first 35%
-            const blend = smooth(clamp(localT / 0.35, 0, 1));
+            // ease OUT of the previous beat's pose into the follow over the first 35% —
+            // but not across a cut, where the previous pose belongs to a different shot
+            // and easing from it reads as the camera hunting for its subject
+            const blend = e.afterCut ? 1 : smooth(clamp(localT / 0.35, 0, 1));
             return makePose(
                 sp.position.clone().lerp(ideal.position, blend),
                 sp.lookTarget.clone().lerp(ideal.lookTarget, blend),
@@ -342,8 +412,10 @@ export const COMMANDS = {
         sample(e, {sp, sf, localT, targetPos, makePose, localUp}) {
             const ideal = ridePose(e, sf, sp.fov, targetPos, makePose, localUp);
             if (!ideal) return sp;
-            // ease OUT of the previous beat's pose over the first 25%
-            const blend = smooth(clamp(localT / 0.25, 0, 1));
+            // ease OUT of the previous beat's pose over the first 25% — but not across a
+            // cut, where the previous pose belongs to a different shot and easing from it
+            // reads as the camera hunting for its subject
+            const blend = e.afterCut ? 1 : smooth(clamp(localT / 0.25, 0, 1));
             return makePose(
                 sp.position.clone().lerp(ideal.position, blend),
                 sp.lookTarget.clone().lerp(ideal.lookTarget, blend),
