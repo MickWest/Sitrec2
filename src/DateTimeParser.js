@@ -68,7 +68,11 @@ export function parseDateTimeString(input) {
     // in "17:33utc" there is no boundary between the digit and the "u". A word
     // that merely contains "utc" ("Dutch") still fails the trailing \b, and
     // anything that slipped through would be caught by the leftover check.
-    take(/\s*(?:utc|gmt)\b|(?<=\d)\s*z\b/, () => { utc = true; });
+    // No leading \s* before "utc"/"gmt": an unanchored \s* is retried from every index,
+    // so a long run of spaces costs quadratic time (CodeQL js/polynomial-redos). The space
+    // it used to eat is left in `rest`, which changes nothing - take() writes a space back
+    // in place of the match anyway, and the leftover check below ignores whitespace.
+    take(/(?:utc|gmt)\b|(?<=\d)\s*z\b/, () => { utc = true; });
 
     take(/\bnoon\b/, () => { time = {hour: 12, minute: 0, second: 0, millisecond: 0}; });
     take(/\bmidnight\b/, () => { time = {hour: 0, minute: 0, second: 0, millisecond: 0}; });
@@ -112,14 +116,17 @@ export function parseDateTimeString(input) {
 
     // "Jan 5", "Jan 6, 2020", and the day-first order "5 Jan 2020".
     if (!date) {
-        take(/\b([a-z]{3,9}\.?)\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?\b/, (m) => {
+        // \s*(?:,\s*)? rather than \s*,?\s* : same strings, but two adjacent \s* can
+        // divide a run of spaces every possible way before the year fails to match
+        // (CodeQL js/polynomial-redos). Tying the second run to the comma removes the choice.
+        take(/\b([a-z]{3,9}\.?)\s+(\d{1,2})(?:\s*(?:,\s*)?(\d{4}))?\b/, (m) => {
             const month = monthFromWord(m[1]);
             if (month === null || !validDate(month, +m[2])) return false;
             date = {month, day: +m[2], year: m[3] ? +m[3] : undefined};
         });
     }
     if (!date) {
-        take(/\b(\d{1,2})\s+([a-z]{3,9}\.?)(?:\s*,?\s*(\d{4}))?\b/, (m) => {
+        take(/\b(\d{1,2})\s+([a-z]{3,9}\.?)(?:\s*(?:,\s*)?(\d{4}))?\b/, (m) => {
             const month = monthFromWord(m[2]);
             if (month === null || !validDate(month, +m[1])) return false;
             date = {month, day: +m[1], year: m[3] ? +m[3] : undefined};

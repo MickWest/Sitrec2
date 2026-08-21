@@ -82,7 +82,9 @@ export async function takeFileHandoff(id) {
     try {
         rec = await indexedDBManager.getCachedData(KEY_PREFIX + id);
     } catch (e) {
-        console.warn("FileHandoff: could not read handoff " + id + ":", e);
+        // id passed as its own argument, not concatenated: console.warn reads the first
+        // argument as a format string, so an id containing %s or %c would rewrite the line.
+        console.warn("FileHandoff: could not read handoff", id, e);
         return null;
     }
     if (!rec || !Array.isArray(rec.files) || !rec.files.length) return null;

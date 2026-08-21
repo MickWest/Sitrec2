@@ -19,6 +19,17 @@ import {
     keyProviderForBYOK,
 } from "../CDirectLLMClient";
 
+// Names the server's copy of a user-supplied API key, so it has to be unguessable
+// rather than merely unique - Math.random() is not a source for that. randomUUID()
+// needs a secure context and is absent over plain http://, but getRandomValues() is
+// there either way, so the fallback draws from it too.
+function randomSessionId() {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    return "sitrec-" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 // What the model gets back from a tool call.
 //
 // On success that is just the return value, as before. On failure it is the whole
@@ -65,8 +76,7 @@ class CNodeViewChat extends CNodeViewText {
         // Initialize chat-specific properties
         this.chatHistory = [];
         this.historyPosition = 0; // For navigating chat history
-        this.byokSessionId = globalThis.crypto?.randomUUID?.()
-            || `sitrec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        this.byokSessionId = randomSessionId();
 
         // Create input box
         this.createInputBox();
@@ -590,7 +600,9 @@ class CNodeViewChat extends CNodeViewText {
             if (!res.ok) {
                 return {success: false, error: `Doc file not found: ${docName} (HTTP ${res.status})`};
             }
-            let content = (await res.text()).replace(/<!--[\s\S]*?-->/g, "");
+            // (?:-->|$) so an unterminated "<!--" at the end of a truncated file is
+            // dropped too, rather than leaving a half-comment in the text handed to the model.
+            let content = (await res.text()).replace(/<!--[\s\S]*?(?:-->|$)/g, "");
             if (content.length > AI_DOC_CHAR_LIMIT) {
                 content = content.slice(0, AI_DOC_CHAR_LIMIT)
                     + `\n\n[Content truncated - showing first ${AI_DOC_CHAR_LIMIT} characters of this document.`

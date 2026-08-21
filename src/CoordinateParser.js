@@ -9,7 +9,12 @@ const DEGREE_CHARS = "°˚º";
 
 // A plain decimal number, exponent notation included — ECEF metres are often
 // written as 4.51e6.
-const NUMBER_TOKEN = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+// \d+(?:\.\d*)? rather than \d+\.?\d* : the two accept the same strings, but the
+// looser form lets \d+ and \d* share a run of digits, so a long non-matching token
+// ("000...0x") is re-split every way before it fails - quadratic, and reachable from
+// pasted text (CodeQL js/polynomial-redos). Requiring the '.' before the second run
+// makes each backtrack fail at once.
+const NUMBER_TOKEN = /^[-+]?(\d+(?:\.\d*)?|\.\d+)([eE][-+]?\d+)?$/;
 
 // Nothing in an x,y,z triple says "these are metres from the Earth's centre", so
 // the only test available is to convert it and see where it lands: a real ECEF
@@ -190,11 +195,15 @@ function extractDirection(input) {
             direction: leadingMatch[1]
         };
     }
-    const trailingMatch = upper.match(/\s*([NSEW])$/);
-    if (trailingMatch) {
+    // Checked character-wise, not with /\s*([NSEW])$/: that regex is unanchored, so a
+    // long run of trailing spaces is rescanned from every index before it fails -
+    // quadratic (CodeQL js/polynomial-redos). Dropping the letter and trimming what
+    // precedes it consumes exactly what the regex match did.
+    const trailing = upper.slice(-1);
+    if (upper.length > 0 && "NSEW".includes(trailing)) {
         return {
-            value: input.slice(0, -trailingMatch[0].length).trim(),
-            direction: trailingMatch[1]
+            value: input.slice(0, -1).trim(),
+            direction: trailing
         };
     }
     return {value: input, direction: null};

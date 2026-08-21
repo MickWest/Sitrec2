@@ -99,15 +99,19 @@ if (invalid.length) {
 //
 // A presence check cannot catch it: an earlier version tested membership of a
 // Set built from the rows, and a duplicated key is trivially present.
+// The id and the config are kept alongside the joined key, so the message can be
+// built from them directly. Splitting the key back apart would misreport any id
+// that itself contains the "|" separator.
 const counts = new Map();
 for (const r of rows) {
     const k = `${r.id}|${r.config}`;
-    counts.set(k, (counts.get(k) ?? 0) + 1);
+    const seen = counts.get(k);
+    counts.set(k, seen ? {...seen, n: seen.n + 1} : {id: r.id, config: r.config, n: 1});
 }
-const dupes = [...counts.entries()].filter(([, c]) => c > 1);
+const dupes = [...counts.values()].filter((d) => d.n > 1);
 if (dupes.length) {
     refuse(`${dupes.length} (scenario, config) pair(s) appear more than once`,
-        dupes.map(([k, c]) => `${k.replace("|", " [")}] appears ${c} times`));
+        dupes.map((d) => `${d.id} [${d.config}] appears ${d.n} times`));
 }
 
 // TRUTH LABELS — the fields score() BRANCHES on, and the ones whose absence is

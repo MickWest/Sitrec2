@@ -309,8 +309,11 @@ function loadSet(setDir) {
 // Batch page
 // ---------------------------------------------------------------------------
 
+// Quotes are escaped as well as the angle brackets: esc() is used inside attribute
+// values (href="runs/${esc(r.runId)}.html"), where a bare " would close the attribute.
 function esc(s) {
-    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 // JSON destined for an inline <script>: "</script>" inside any string value

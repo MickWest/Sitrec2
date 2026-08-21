@@ -37,14 +37,26 @@ function rewriteMdLinks(text) {
     );
 }
 
+// Applied until it stops changing the string. A single pass over "<<b>b>" leaves a
+// "<b>" the pass itself created, so one replace() is not a reliable way to remove
+// markup (CodeQL js/incomplete-multi-character-sanitization). Real markdown-it output
+// has no such shape and reaches the fixpoint on the second pass.
+function stripTags(s) {
+    let prev;
+    do {
+        prev = s;
+        s = s.replace(/<[^>]*>/g, '');
+    } while (s !== prev);
+    return s;
+}
+
 // markdown-it emits bare <h1>..<h6> with no id, so a link like Foo.md#some-heading rewrites
 // to a valid page but a fragment with nothing to jump to. Add GitHub-style slug ids after
 // rendering, so intra- and inter-document anchors actually land on their section.
 function addHeadingIds(html) {
     const used = new Map();
     return html.replace(/<h([1-6])>([\s\S]*?)<\/h\1>/g, (match, level, inner) => {
-        const text = inner
-            .replace(/<[^>]*>/g, '')                           // strip inline markup
+        const text = stripTags(inner)
             // Decode the entities markdown-it emits, so "What's New" slugs to
             // "whats-new" (what an author would write) and not "what39s-new".
             .replace(/&#39;|&apos;/g, "'")
