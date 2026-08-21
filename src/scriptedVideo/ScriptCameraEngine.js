@@ -23,6 +23,16 @@ const TARGET_ALIASES = {
     observer: "cameraObject",
 };
 
+// The names a target may go by, friendly alias first — so "object" is also
+// "traverseObject". Anything that MEASURES a target (the cinematic check's bounds lookup)
+// must go through the same table targetPos does, or it measures a different node from the
+// one the camera is pointed at: no node is literally called "object", so a lookup by the
+// bare name falls through to a nominal size.
+export function targetNames(target) {
+    const alias = target && TARGET_ALIASES[target.toLowerCase()];
+    return alias ? [alias, target] : [target];
+}
+
 // Resolve a target name to an ECEF Vector3 at fractional sitch-frame sf.
 // <target> is a track short-name (e.g. OE-LNC, resolved to node "Track_OE-LNC"),
 // a friendly alias (object/witness), a node id, or a "lat,lon,alt" triple.
@@ -47,11 +57,17 @@ export function targetPos(target, sf) {
         if (!node) continue;
         // A 3D OBJECT's p(f) returns its CURRENT rendered position, not a frame
         // sample — useless for velocity (the `follow` cam) or for sampling a frame
-        // other than the current one. A createWalker object carries its underlying
-        // track id, so sample that (which IS frame-accurate) instead.
+        // other than the current one. Find the track actually driving it and sample
+        // that, which IS frame-accurate: a createWalker object carries its track id,
+        // and anything else positioned by a track has a controller holding it.
         if (node._walkerTrackID) {
             const track = NodeMan.get(node._walkerTrackID, false);
             if (track) node = track;
+        } else if (node.inputs) {
+            for (const k in node.inputs) {
+                const c = node.inputs[k];
+                if (c && c.isController && c.in && c.in.sourceTrack) { node = c.in.sourceTrack; break; }
+            }
         }
         try {
             if (typeof node.p === "function") {
@@ -104,6 +120,7 @@ export function applyPoseToCam(camNode, pose) {
 export function prepareEvents(events, defaultView, sitFrameAt) {
     const camPose = {};   // camId -> running pose
     let activeView = defaultView;
+    const lastBeat = {};  // camId -> the beat immediately before, for cut detection
 
     for (const e of events) {
         if (e.type === "view") { activeView = e.view; continue; }
@@ -113,6 +130,19 @@ export function prepareEvents(events, defaultView, sitFrameAt) {
         // preset / custom-layout views have no scripted camera of their own —
         // beats elapsing there keep advancing the main camera for continuity
         const camId = (VIEW_MAP[activeView] && VIEW_MAP[activeView].camId) || "mainCamera";
+        // the pane it is drawn into, so a measurement can know the frame's real aspect
+        e.viewId = (VIEW_MAP[activeView] && VIEW_MAP[activeView].viewId) || "mainView";
+        // Does this beat follow a CUT? A zero-duration beat is a snap to a new pose, and
+        // the first beat has nothing before it. Commands that normally EASE OUT of the
+        // previous pose (ride, follow) must not do so across a cut: there is nothing to
+        // ease from, so they swing the camera round hunting their subject — measured at
+        // 88-117 deg/s at the start of shots whose motion is otherwise calm.
+        // Tracked PER CAMERA, since each camera has its own pose continuity: a snap on
+        // the look camera says nothing about whether the main camera just cut.
+        const prev = lastBeat[camId];
+        e.afterCut = (prev === undefined) || !(prev.dur > 0);
+        lastBeat[camId] = e;  // the IMMEDIATELY preceding beat, snaps included — tracking
+                              // only time-consuming ones hides the snap that marks the cut
         if (!camPose[camId]) camPose[camId] = poseFromCamNode(camId);
         const startPose = camPose[camId] || makePose(new Vector3(0, 0, 1), new Vector3(), 30);
         e.camId = camId;

@@ -5,7 +5,7 @@ import {V3} from "../threeUtils";
 import {assert} from "../assert";
 import {Matrix4} from "three";
 import {radians} from "../utils";
-import {getLocalUpVector} from "../SphericalMath";
+import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {CNodeSmoothedPositionTrack} from "./CNodeSmoothedPositionTrack";
 import {getGlareAngleFromFrame} from "../JetUtils";
 import {t} from "../i18n";
@@ -16,6 +16,7 @@ import {t} from "../i18n";
 const allTiltOptions = {
     "No Banking":"none",
     "Physical Banking":"banking",
+    "Fixed Heading":"fixedHeading",
     frontPointing:"frontPointing",
     frontPointingAir:"frontPointingAir",
     axialPush:"axialPush",
@@ -31,6 +32,7 @@ const allTiltOptions = {
 const simpleTiltOptions = {
     "No Banking":"none",
     "Physical Banking":"banking",
+    "Fixed Heading":"fixedHeading",
 };
 
 export class CNodeControllerObjectTilt extends CNodeController {
@@ -40,6 +42,9 @@ export class CNodeControllerObjectTilt extends CNodeController {
         this.input("track")
         this.optionalInputs(["wind", "airTrack"])
         this.tiltType = v.tiltType ?? "none"
+        // Compass heading (degrees true) the model holds when tiltType is "fixedHeading",
+        // i.e. when the object's attitude is independent of its direction of travel.
+        this.fixedHeading = v.fixedHeading ?? 0
         this._savedQuaternion = null;
 
 
@@ -66,6 +71,7 @@ export class CNodeControllerObjectTilt extends CNodeController {
         // Add orientation type menu
         this.noMenu = v.noMenu;
         this.tiltTypeGui = null;
+        this.fixedHeadingGui = null;
         this.tiltTypeGuiParent = null;
         if (!v.noMenu) {
             this.tiltTypeGuiParent = v.guiFolder ?? guiMenus.physics;
@@ -105,20 +111,47 @@ export class CNodeControllerObjectTilt extends CNodeController {
             this.tiltTypeGui.destroy();
             this.tiltTypeGui = null;
         }
+        if (this.fixedHeadingGui) {
+            this.fixedHeadingGui.destroy();
+            this.fixedHeadingGui = null;
+        }
     }
 
     _createTiltGui(parent, options) {
         if (this.tiltTypeGui) {
             this.tiltTypeGui.destroy();
         }
+        if (this.fixedHeadingGui) {
+            this.fixedHeadingGui.destroy();
+            this.fixedHeadingGui = null;
+        }
         this.tiltTypeGuiParent = parent;
         this.tiltTypeGui = parent.add(this, "tiltType", options)
             .name(t("misc.banking.label"))
             .tooltip(t("misc.banking.tooltip"))
+            .onChange(() => { this._updateFixedHeadingGui() })
             .listen(() => { setRenderOne(true) })
         // Mark as common so CNode3DObject.destroyNonCommonUI() preserves it
         // when rebuilding geometry-specific GUI controls during deserialization
         this.tiltTypeGui.isCommon = true;
+
+        this.fixedHeadingGui = parent.add(this, "fixedHeading", 0, 360, 0.1)
+            .name(t("misc.fixedHeading.label"))
+            .tooltip(t("misc.fixedHeading.tooltip"))
+            .listen(() => { setRenderOne(true) })
+        this.fixedHeadingGui.isCommon = true;
+        this._updateFixedHeadingGui();
+    }
+
+    // The heading only means anything in "fixedHeading" mode, so it is only shown there.
+    _updateFixedHeadingGui() {
+        if (!this.fixedHeadingGui) return;
+        if (this.tiltType.toLowerCase() === "fixedheading") {
+            this.fixedHeadingGui.show();
+        } else {
+            this.fixedHeadingGui.hide();
+        }
+        setRenderOne(true);
     }
 
     // Move the tilt type GUI from physics menu to the object's GUI folder
@@ -133,12 +166,57 @@ export class CNodeControllerObjectTilt extends CNodeController {
         return {
             ...super.modSerialize(),
             tiltType: this.tiltType,
+            fixedHeading: this.fixedHeading,
         }
     }
 
     modDeserialize(v) {
         super.modDeserialize(v)
         this.tiltType = v.tiltType
+        if (v.fixedHeading !== undefined) this.fixedHeading = v.fixedHeading
+        this._updateFixedHeadingGui()
+    }
+
+    // Point the model at a compass bearing rather than along its track, so an object can
+    // translate without turning - crabbing sideways, drifting, or holding station with its
+    // nose somewhere else. Independent of speed, so it works for a stationary object too.
+    applyFixedHeading(object, objectNode, pos) {
+        const h = radians(this.fixedHeading)
+
+        let north = getLocalNorthVector(pos)
+        let east = getLocalEastVector(pos)
+
+        // At exactly +/-90 degrees latitude the local north/east basis collapses: every
+        // horizontal direction is south (or north), so the projection leaves a zero vector
+        // and normalize() returns (0,0,0). lookAt() would then get a zero-length direction
+        // and silently pick an arbitrary axis. CoordinateParser accepts those latitudes, so
+        // fall back to GRID NORTH - the prime-meridian direction, the convention polar
+        // navigation already uses - which keeps the requested heading deterministic there.
+        if (north.lengthSq() < 1e-12 || east.lengthSq() < 1e-12) {
+            const up = getLocalUpVector(pos)
+            north = V3(1, 0, 0).sub(up.clone().multiplyScalar(up.x)).normalize()
+            east = V3().crossVectors(up, north.clone().negate())
+        }
+
+        const target = pos.clone()
+            .add(north.multiplyScalar(Math.cos(h) * 100))
+            .add(east.multiplyScalar(Math.sin(h) * 100))
+
+        // lookAt() reads the object's own position, which clampAboveGround may have moved,
+        // so aim from the track position and put it back (as the velocity path below does)
+        const oldPos = object.position.clone();
+        object.position.copy(pos)
+        object.up = objectNode.getUpVector(object.position)
+        object.lookAt(target)
+        object.position.copy(oldPos);
+        object.updateMatrix()
+        object.updateMatrixWorld()
+
+        if (this._savedQuaternion) {
+            this._savedQuaternion.copy(object.quaternion);
+        } else {
+            this._savedQuaternion = object.quaternion.clone();
+        }
     }
 
     apply(f, objectNode ) {
@@ -155,6 +233,16 @@ export class CNodeControllerObjectTilt extends CNodeController {
                 // original mutated its own fresh copy.
                 var rawNext = this.in.track.p(f + 1)
                 const currentPos = this.in.track.p(f)
+
+                // "Fixed Heading" does not read the track direction at all, so it is applied
+                // BEFORE the degenerate-position check below. An object that is genuinely
+                // stationary - hovering, or parked, or simply on the last frame of its track,
+                // where p(f+1) clamps to p(f) - would otherwise take that early return and
+                // keep the default quaternion, never getting its heading at all.
+                if (this.tiltType.toLowerCase() === "fixedheading") {
+                    this.applyFixedHeading(object, objectNode, currentPos)
+                    return;
+                }
 
                 // FIX B/C: distance check on RAW positions (before wind),
                 // store/restore quaternion for degenerate positions
@@ -405,6 +493,11 @@ export class CNodeControllerObjectTilt extends CNodeController {
                         break;
 
                     case "none":
+                        break;
+
+                    // Unreachable - applyFixedHeading() returns before this switch. Kept
+                    // because the default branch below asserts, which halts the app.
+                    case "fixedheading":
                         break;
 
                     default:
