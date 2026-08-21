@@ -40,3 +40,38 @@ export function osmTileForTile(z, x, y, osmMaxZoom) {
         },
     };
 }
+
+/**
+ * Canvas transform placing a vector tile's coordinates onto a mask canvas.
+ *
+ * The raster path above crops PIXELS out of an ancestor image. Vector data has
+ * no pixels to crop: the polygons are scaled up instead, which is why the mask
+ * stays sharp past the source's max zoom where a cropped raster goes blocky.
+ *
+ * A vector tile's coordinates run 0..extent across the whole tile. srcRect (from
+ * osmTileForTile) says which fraction of that tile the terrain tile occupies, so
+ * the transform maps that sub-rectangle onto the full `size`-pixel canvas.
+ *
+ * Lives here rather than in WaterMaskTiles.js so it can be tested without
+ * pulling in three or a canvas — an error here offsets every coastline by a
+ * fraction of a tile, which looks entirely plausible and is very hard to catch
+ * by eye.
+ *
+ * @param {?{fx: number, fy: number, fw: number, fh: number}} srcRect null for a 1:1 tile
+ * @param {number} size mask canvas size in pixels
+ * @param {number} extent vector tile coordinate extent (4096 in practice)
+ * @returns {[number, number, number, number, number, number]} ctx.setTransform arguments
+ */
+export function maskTransform(srcRect, size, extent) {
+    const fx = srcRect ? srcRect.fx : 0;
+    const fy = srcRect ? srcRect.fy : 0;
+    const fw = srcRect ? srcRect.fw : 1;
+    const fh = srcRect ? srcRect.fh : 1;
+
+    return [
+        size / (fw * extent), 0,
+        0, size / (fh * extent),
+        -fx * size / fw,
+        -fy * size / fh,
+    ];
+}

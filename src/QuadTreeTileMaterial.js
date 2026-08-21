@@ -25,7 +25,50 @@ import {createTerrainDayNightMaterial} from "./js/map33/material/TerrainDayNight
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {materialCache, textureLoadPromises} from "./QuadTreeTileCache";
 import {osmTileForTile} from "./OSMWaterTileMapping";
+import {loadWaterMaskTexture, waterMaskAvailable} from "./WaterMaskTiles";
 import {unpaintedTextureImage} from "./GroundPaintState";
+
+// Crop a parent's or ancestor's water mask down to the region one child tile
+// covers, using the same fractional rectangle as the imagery crop beside it.
+//
+// The fallback materials are built SYNCHRONOUSLY, so they cannot wait for the
+// child's own mask to be fetched and rasterised. Without this the child falls
+// back to the color test for as long as its imagery takes to load — and on
+// satellite imagery the color test finds no water at all, so stretches of
+// coastline blink out and back during a camera sweep. A cropped parent mask is
+// softer than a freshly rasterised one, but it is the right shape, and the
+// material it belongs to is replaced the moment the real texture arrives.
+//
+// Returns null when the source has no mask, which correctly leaves the child on
+// the color fallback.
+function cropWaterMask(sourceMaterial, fx, fy, fw, fh) {
+    const img = sourceMaterial?.uniforms?.waterMaskMap?.value?.image;
+    if (!img) return null;
+
+    const size = 256;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img,
+        fx * img.width, fy * img.height, fw * img.width, fh * img.height,
+        0, 0, size, size);
+
+    const texture = new CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return texture;
+}
+
+// Every GPU texture a cached material owns. The water mask is a second texture
+// alongside the map, so the three eviction paths below would leak one per tile
+// if they only disposed getMap().
+// Also reached from QuadTreeMapTexture, where the material being replaced can be
+// a plain wireframe with no getMap at all — hence the optional CALL, not just the
+// optional chain on its result.
+export function disposeMaterialTextures(material) {
+    material.getMap?.()?.dispose();
+    material.uniforms?.waterMaskMap?.value?.dispose();
+}
 
 // Module-level implementations of the cache-management statics that used to live
 // on the QuadTreeTile class. They're re-exposed as statics on the class from
@@ -33,7 +76,7 @@ import {unpaintedTextureImage} from "./GroundPaintState";
 // keep working.
 export function clearMaterialCacheImpl() {
     materialCache.forEach((material, cacheKey) => {
-        material.getMap()?.dispose();
+        disposeMaterialTextures(material);
         material.dispose();
     });
     materialCache.clear();
@@ -50,7 +93,7 @@ export function removeMaterialByCacheKeyImpl(cacheKey) {
     if (!cacheKey) return;
     const material = materialCache.get(cacheKey);
     if (material) {
-        material.getMap()?.dispose();
+        disposeMaterialTextures(material);
         material.dispose();
         materialCache.delete(cacheKey);
     }
@@ -65,7 +108,7 @@ export function removeMaterialFromCacheImpl(url) {
             cacheKey === `static_${url}` ||
             cacheKey.startsWith(`static_${url}_z`) ||
             cacheKey === `static_${url}_base`) {
-            material.getMap()?.dispose();
+            disposeMaterialTextures(material);
             material.dispose();
             keysToDelete.push(cacheKey);
         }
@@ -177,6 +220,25 @@ export function osmWaterSourceForTile(tile) {
     return {url, srcRect, waterColor: osmDef.waterColor};
 }
 
+// Should this tile carry a vector water mask?
+//
+// Gated on the same node as the OSM combine because it feeds the same effect,
+// but unlike the combine it places NO requirement on the imagery source — it
+// never looks at the imagery. That is the point: ESRI, USGS and every other
+// satellite source declare no water color, so the color path does nothing at
+// all on them, while a vector mask works identically on all of them.
+export function vectorWaterMaskWanted(tile) {
+    if (!NodeMan.get("waterReflection", false)?.vectorWaterMask) return false;
+    if (!waterMaskAvailable()) return false;
+
+    // Web Mercator only. `mapping: 4326` selects GoogleCRS84Quad, whose tiles do
+    // not line up with the vector source's grid — the same restriction the OSM
+    // combine has, for the same reason.
+    if (tile.map.terrainNode.getMapSourceDef()?.mapping === 4326) return false;
+
+    return true;
+}
+
 // In-flight OSM water tiles, shared between terrain tiles. Past OSM's max zoom
 // several terrain tiles crop from the SAME OSM ancestor, and loadTextureWithRetries
 // has no dedup of its own — without this they each issue their own request to a
@@ -234,8 +296,24 @@ export const materialMethods = {
         // do nothing for every tile already in the cache.
         const osmWater = osmWaterSourceForTile(this);
         const osmWaterSuffix = osmWater ? '_osmwater' : '';
+        // Same argument for the vector mask — but NEVER on a static texture.
+        //
+        // A static source serves one URL to every tile (Flat Shading's grey,
+        // RGB Test's color bars), and the `static_` cache key exists precisely
+        // so all of them share ONE material. A mask is per-tile, so attaching
+        // one would force a distinct material and a distinct mask texture per
+        // tile while keeping the `static_` prefix — and the URL-based eviction
+        // in removeMaterialFromCacheImpl() only matches `static_${url}`,
+        // `static_${url}_z...` and `static_${url}_base`, so none of them would
+        // ever be freed on a map reload.
+        //
+        // Nothing is lost by excluding them: a uniform fill is a debug source
+        // with no imagery to reflect in, and the color test never matched one
+        // either.
+        const wantMask = vectorWaterMaskWanted(this) && !isStaticTexture;
+        const maskSuffix = wantMask ? `_vwmask_${this.z}_${this.x}_${this.y}` : '';
         const cacheKey = isStaticTexture ? `static_${url}${processColorsSuffix}${osmWaterSuffix}` :
-            (sourceDef.generateMipmaps ? `${url}_z${this.z}${processColorsSuffix}${osmWaterSuffix}` : `${url}${processColorsSuffix}${osmWaterSuffix}`);
+            (sourceDef.generateMipmaps ? `${url}_z${this.z}${processColorsSuffix}${osmWaterSuffix}${maskSuffix}` : `${url}${processColorsSuffix}${osmWaterSuffix}${maskSuffix}`);
 
         // Check if we already have a cached material for this cache key
         if (materialCache.has(cacheKey)) {
@@ -264,7 +342,15 @@ export const materialMethods = {
         // starvation while Google 3D tiles stream, brief network blip) must not
         // permanently dead-branch the tile. Deterministic failures
         // (PlaceholderTile) skip the retry inside the loader.
+        // The water mask is an independent fetch from an independent server, so
+        // it starts alongside the imagery rather than after it. Held in the
+        // enclosing scope because it is needed at material construction, several
+        // .then() hops later.
+        let maskLoad = Promise.resolve(null);
+
         const loadPromise = delayPromise.then(() => {
+            maskLoad = wantMask ? loadWaterMaskTexture(this.z, this.x, this.y) : Promise.resolve(null);
+
             const mainLoad = loadTextureWithRetries(url, 1, 500, 0, 0, abortSignal);
             if (!osmWater) return mainLoad;
 
@@ -316,16 +402,20 @@ export const materialMethods = {
             }
 
             const transparency = this.map.terrainNode.UI.transparency ?? 1;
-            const material = createTerrainDayNightMaterial(finalTexture, 0.3, false, transparency);
-            // Cache the material for future use
-            materialCache.set(cacheKey, material);
-            // Record the key on the tile so prune can evict the cache entry
-            this.materialCacheKey = cacheKey;
-            // Clean up the promise cache once loading is complete
-            textureLoadPromises.delete(cacheKey);
-            // Clear the abort controller since loading is complete
-            this.textureAbortController = null;
-            return material;
+            // A mask that failed resolves null, which leaves hasWaterMask at 0
+            // and the color test in charge — the tile still renders.
+            return maskLoad.then((waterMask) => {
+                const material = createTerrainDayNightMaterial(finalTexture, 0.3, false, transparency, waterMask);
+                // Cache the material for future use
+                materialCache.set(cacheKey, material);
+                // Record the key on the tile so prune can evict the cache entry
+                this.materialCacheKey = cacheKey;
+                // Clean up the promise cache once loading is complete
+                textureLoadPromises.delete(cacheKey);
+                // Clear the abort controller since loading is complete
+                this.textureAbortController = null;
+                return material;
+            });
         }).catch((error) => {
             // Terminal fetch failures are recorded in badTextureUrls by
             // loadTextureWithRetries itself (so processing errors here — mipmap
@@ -526,9 +616,13 @@ export const materialMethods = {
         // in sRGB space (Phase 4 will convert it to linear workflow)
         texture.needsUpdate = true;
 
-        // Create and return material
+        // Create and return material. The mask takes the SAME quadrant as the
+        // imagery above, so the temporary tile keeps its coastline instead of
+        // dropping to the color test while its own texture loads.
         const transparency = this.map.terrainNode.UI.transparency ?? 1;
-        const material = createTerrainDayNightMaterial(texture, 0.3, false, transparency);
+        const waterMask = cropWaterMask(parentTile.mesh.material,
+            quadrantX / 2, quadrantY / 2, 0.5, 0.5);
+        const material = createTerrainDayNightMaterial(texture, 0.3, false, transparency, waterMask);
 
         return material;
     },
@@ -598,9 +692,12 @@ export const materialMethods = {
         // in sRGB space (Phase 4 will convert it to linear workflow)
         texture.needsUpdate = true;
 
-        // Create and return material
+        // Create and return material, with the mask cropped to the same region
+        // as the imagery — see buildMaterialFromParent for why.
         const transparency = this.map.terrainNode.UI.transparency ?? 1;
-        const material = createTerrainDayNightMaterial(texture, 0.3, false, transparency);
+        const waterMask = cropWaterMask(ancestorTile.mesh.material,
+            regionX, regionY, regionWidth, regionHeight);
+        const material = createTerrainDayNightMaterial(texture, 0.3, false, transparency, waterMask);
 
         return material;
     },
