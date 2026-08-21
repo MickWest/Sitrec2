@@ -23,6 +23,16 @@ const TARGET_ALIASES = {
     observer: "cameraObject",
 };
 
+// The names a target may go by, friendly alias first — so "object" is also
+// "traverseObject". Anything that MEASURES a target (the cinematic check's bounds lookup)
+// must go through the same table targetPos does, or it measures a different node from the
+// one the camera is pointed at: no node is literally called "object", so a lookup by the
+// bare name falls through to a nominal size.
+export function targetNames(target) {
+    const alias = target && TARGET_ALIASES[target.toLowerCase()];
+    return alias ? [alias, target] : [target];
+}
+
 // Resolve a target name to an ECEF Vector3 at fractional sitch-frame sf.
 // <target> is a track short-name (e.g. OE-LNC, resolved to node "Track_OE-LNC"),
 // a friendly alias (object/witness), a node id, or a "lat,lon,alt" triple.

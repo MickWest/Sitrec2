@@ -37,7 +37,8 @@ import {compileTimeMap, uniformTimeMap} from "./scriptedVideo/ScriptTimeMap";
 import {VIEW_MAP, layoutForViewEvent, isSettingEvent} from "./scriptedVideo/ScriptCommands";
 import {runScriptViaWorker} from "./scriptedVideo/ScriptRunnerClient";
 import {sitrecAPI} from "./CSitrecAPI";
-import {prepareEvents, computeCamera, applyPoseToCam, poseFromCamNode, targetPos} from "./scriptedVideo/ScriptCameraEngine";
+import {prepareEvents, computeCamera, applyPoseToCam, poseFromCamNode, targetPos, targetNames}
+    from "./scriptedVideo/ScriptCameraEngine";
 import {sphereInFrustum, sizeFractionFromAngle, checkScript}
     from "./scriptedVideo/ScriptCinematics";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
@@ -617,8 +618,7 @@ class CScriptedVideoManager {
     // is right for a subject holding an attitude and approximate for one rolling through
     // the shot.
     _targetBox(target) {
-        if (!target) return null;
-        for (const id of [target + "_ob", target, "Track_" + target]) {
+        for (const id of this._targetIds(target)) {
             const n = NodeMan.get(id, false);
             const obj = n && n._object;
             if (!obj || !obj.matrixWorld) continue;
@@ -643,6 +643,15 @@ class CScriptedVideoManager {
             ];
         }
         return null;
+    }
+
+    // The node ids a target may stand for, in the order its 3D object is most likely
+    // found. Resolved through the same alias table as targetPos, so `zoom object` measures
+    // traverseObject — the node the camera is actually pointed at — instead of falling
+    // through to the nominal radius because no node is literally called "object".
+    _targetIds(target) {
+        if (!target) return [];
+        return targetNames(target).flatMap(n => [n + "_ob", n, "Track_" + n]);
     }
 
     // Angular RADIUS of that box seen from `camPos` with its centre at `centre`: the
@@ -670,8 +679,8 @@ class CScriptedVideoManager {
 
     // Fallback radius when a target has no 3D object to measure.
     _targetRadius(target) {
-        for (const id of [target, target + "_ob", "Track_" + target]) {
-            const n = target && NodeMan.get(id, false);
+        for (const id of this._targetIds(target)) {
+            const n = NodeMan.get(id, false);
             const r = n && n.cachedBoundingSphere && n.cachedBoundingSphere.radius;
             if (r > 0) return r;
         }
