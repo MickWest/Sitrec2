@@ -529,6 +529,11 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
             this.line.computeLineDistances();
             this.line.scale.setScalar(1);
             this.group.add(this.line)
+            // Flat Earth rendering: this Line2 is new on every update, so it
+            // would be frustum-culled at its globe-space bounds until the
+            // scenario's periodic sweep happened to catch it (seen as the
+            // frustum flickering in for single frames). Prepare it now.
+            Globals.flatEarthPrepareObject?.(this.line);
         }
         this.propagateLayerMask();
         this.lastFOV = this.camera.fov;

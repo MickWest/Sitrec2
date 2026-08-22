@@ -28,6 +28,7 @@ import {
 } from "../terrainSourceUtils";
 import {getEnv} from "../envUtils";
 import {ServiceAvailability} from "../ServiceAvailability";
+import {isPaidTileSource, pickFreeSourceType} from "../paidTileProviders";
 import {badTextureUrls} from "../QuadTreeTileCache";
 import {identifyServiceFromUrl} from "../TileUsageTracker";
 import {
@@ -620,21 +621,7 @@ export class CNodeTerrainUI extends CNode {
         this.oldElevationScale = this.elevationScale;
 
 
-        this.mapTypeMenu.onChange(v => {
-
-            this.layer = null; // reset the layer so setMapType can set it to default for new map type
-            // do this async, as we might need to wait for the capabilities to be loaded
-            this.setMapType(v).then(() => {
-                this.terrainNode.loadMapTexture(v)
-                // Force a subdivision/render pass after the async texture
-                // load resolves — same reason as the elevationType handler
-                // above and doRefresh(): when paused, the camera-fingerprint
-                // gate blocks any new tile work until the camera moves.
-                this.requestSubdivisionPass();
-            })
-            this.updateAttribution();
-            this.terrainNode.updateGreySphereVisibility();
-        })
+        this.mapTypeMenu.onChange(v => this.onMapTypeChanged(v));
 
         this.debugElevationGrid = false;
 
@@ -955,6 +942,11 @@ export class CNodeTerrainUI extends CNode {
         // too, so it must not need a Google/Cesium key to reach.
         setupRefractionGUI();
 
+        // Flat Earth rendering may already be on (a save carrying the mode
+        // re-activates it before this node exists): apply the paid-provider
+        // lock to the initial selection BEFORE anything is fetched.
+        if (Globals.flatEarthRendering) this.setPaidProvidersLocked(true, {reload: false});
+
         console.log("CNodeTerrainUI: calling setMapType for initial map type " + this.mapType);
         // setMapType is async because it loads the capabilities
         this.setMapType(this.mapType).then(() => {
@@ -1024,6 +1016,104 @@ export class CNodeTerrainUI extends CNode {
         this.requestSubdivisionPass();
     }
 
+    // Shared handler for a map-source change (the dropdown's onChange and the
+    // programmatic switches both call this); this.mapType already holds v.
+    onMapTypeChanged(v) {
+        this.layer = null; // reset the layer so setMapType can set it to default for new map type
+        // do this async, as we might need to wait for the capabilities to be loaded
+        this.setMapType(v).then(() => {
+            this.terrainNode.loadMapTexture(v)
+            // Force a subdivision/render pass after the async texture
+            // load resolves — same reason as the elevationType handler
+            // above and doRefresh(): when paused, the camera-fingerprint
+            // gate blocks any new tile work until the camera moves.
+            this.requestSubdivisionPass();
+        })
+        this.updateAttribution();
+        this.terrainNode.updateGreySphereVisibility();
+    }
+
+    // Rebuild the map dropdown from mapSources, honouring the paid-provider
+    // lock. Same lil-gui .options() dance as rebuildElevationMenu below.
+    rebuildMapTypeMenu() {
+        this.mapTypesKV = {};
+        for (const mapType in this.mapSources) {
+            const mapDef = this.mapSources[mapType];
+            if (mapDef.excludeFromMenu || !hasRequiredToken(mapDef)) continue;
+            if (this._paidProvidersLocked && isPaidTileSource(mapDef)) continue;
+            this.mapTypesKV[mapDef.name] = mapType;
+        }
+        if (this.mapTypeMenu && typeof this.mapTypeMenu.options === "function") {
+            this.mapTypeMenu = this.mapTypeMenu
+                .options(this.mapTypesKV)
+                .listen()
+                .name(t("terrainUI.mapType.label"))
+                .tooltip(t("terrainUI.mapType.tooltip"));
+            this.mapTypeMenu.onChange(v => this.onMapTypeChanged(v));
+        }
+    }
+
+    // Flat Earth rendering has no horizon: the quadtree subdivides out to the
+    // disc rim, so a per-tile-billed provider (Mapbox, MapTiler — see
+    // paidTileProviders.js) would be charged for the whole far band on every
+    // camera stop. While locked, those sources leave the map and elevation
+    // dropdowns, a selected one is swapped for a free source, and Cesium OSM
+    // buildings (Cesium ion, metered) go off. Google 3D tiles stay: Google
+    // bills per session, not per tile. Unlock restores the dropdowns and
+    // whatever was swapped out. reload:false only adjusts the selection — for
+    // the constructor, ahead of the initial loads.
+    setPaidProvidersLocked(locked, {reload = true} = {}) {
+        locked = !!locked;
+        if (locked === !!this._paidProvidersLocked) return;
+        this._paidProvidersLocked = locked;
+        if (locked) {
+            const restore = this._paidLockRestore = {};
+            if (isPaidTileSource(this.mapSources[this.mapType])) {
+                const free = pickFreeSourceType(this.mapSources,
+                    ["ESRI", "osm", "eox", "NoClouds", "FlatShading", "Debug"]);
+                if (free && free !== this.mapType) {
+                    console.warn(`CNodeTerrainUI: Flat Earth rendering — map source "${this.mapType}" bills per tile; using "${free}" while the mode is on.`);
+                    restore.mapType = this.mapType;
+                    this.mapType = free;
+                    if (reload) this.onMapTypeChanged(free);
+                }
+            }
+            if (isPaidTileSource(this.elevationSources[this.elevationType])) {
+                const free = pickFreeSourceType(this.elevationSources,
+                    ["AWS_Terrarium", "NationalMap", "Local", "Flat"]);
+                if (free && free !== this.elevationType) {
+                    console.warn(`CNodeTerrainUI: Flat Earth rendering — elevation source "${this.elevationType}" bills per tile; using "${free}" while the mode is on.`);
+                    restore.elevationType = this.elevationType;
+                    this.elevationType = free;
+                    if (reload) this.onElevationTypeChanged();
+                }
+            }
+            if (this.showBuildings && this.buildingsSource === "cesium-osm") {
+                restore.buildings = true;
+                this.showBuildings = false;
+                if (reload) this.toggleBuildings(false);
+            }
+        } else {
+            const restore = this._paidLockRestore || {};
+            this._paidLockRestore = null;
+            if (restore.mapType && this.mapSources[restore.mapType]) {
+                this.mapType = restore.mapType;
+                if (reload) this.onMapTypeChanged(restore.mapType);
+            }
+            if (restore.elevationType && this.elevationSources[restore.elevationType]) {
+                this.elevationType = restore.elevationType;
+                if (reload) this.onElevationTypeChanged();
+            }
+            if (restore.buildings) {
+                this.showBuildings = true;
+                if (reload) this.toggleBuildings(true);
+            }
+        }
+        this.rebuildMapTypeMenu();
+        this.rebuildElevationMenu();
+        this.gui?.controllers?.find(c => c.property === "showBuildings")?.updateDisplay?.();
+    }
+
     // Rebuild the elevation dropdown from the current elevationSources (e.g. after
     // a source has been removed). lil-gui's .options() destroys and recreates the
     // controller, so we re-apply listen/name/tooltip/onChange.
@@ -1031,6 +1121,7 @@ export class CNodeTerrainUI extends CNode {
         this.elevationTypesKV = {};
         for (const elevationType in this.elevationSources) {
             const def = this.elevationSources[elevationType];
+            if (this._paidProvidersLocked && isPaidTileSource(def)) continue;
             if (hasRequiredToken(def)) {
                 this.elevationTypesKV[def.name] = elevationType;
             }

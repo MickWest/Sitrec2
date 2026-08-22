@@ -15,6 +15,9 @@ import {removeMaterialByCacheKeyImpl} from "./QuadTreeTileMaterial";
 // Reused across all tile visibility calculations within a single pass.
 const _cameraPositionClone = new Vector3();
 const _cullingSphere = new Sphere();
+// Flat Earth: the tile's globe-space sphere, kept from before the warp hook
+// mutates _cullingSphere, for the radial-gap range test.
+const _flatGlobeCenter = new Vector3();
 // Scratch sphere for the prospective-child visibility guard (anyProspectiveChildVisible).
 const _childCullSphere = new Sphere();
 
@@ -1522,16 +1525,20 @@ export class QuadTreeMap {
         // Flat Earth rendering (Physics → Scenarios → Flat Earth): cull and
         // LOD against the tile's RENDERED position on the AEP disc, not its
         // globe position. The hook warps the sphere centre and inflates the
-        // radius by the projection's east-west stretch, returning true where
-        // the warp is locally rigid (the near field around the disc's tangent
-        // point) — there the globe-space OBB narrow phase and OBB LOD
-        // distance are still valid and stay on, keeping near terrain sharp.
-        // Elsewhere the OBB paths are skipped (a globe OBB is meaningless
-        // after the warp), and the horizon gate is skipped everywhere —
-        // nothing on a flat disc hides below a horizon.
+        // radius by the projection's east-west stretch. Its return value
+        // says whether the globe-space OBB narrow phase and OBB LOD distance
+        // may still be used; while the mode is on it is always false (see
+        // flatEarthWarpSphere for why a "locally rigid" near field was
+        // abandoned — against the warped camera a globe OBB is only exact
+        // where it has not moved at all), so the OBB paths are skipped, and
+        // the horizon gate is skipped everywhere — nothing on a flat disc
+        // hides below a horizon.
         const _flatWarp = Globals.flatEarthWarpSphere;
         let _flatRigid = false;
+        let _flatGlobeRadius = 0;
         if (_flatWarp) {
+            _flatGlobeCenter.set(cx, cy, cz);
+            _flatGlobeRadius = radius;
             _flatRigid = _flatWarp(_cullingSphere) === true;
             cx = _cullingSphere.center.x;
             cy = _cullingSphere.center.y;
@@ -1601,6 +1608,22 @@ export class QuadTreeMap {
             const projDistance = _lodDistance;
             screenSpaceError = (metersPerTexel * viewportHeightPx) /
                                (projDistance * 2 * Math.tan(fovRad / 2));
+
+            // Flat Earth: range cap on refinement (Globals.flatEarthRefineLimit
+            // — a flat disc has no horizon, and the far band would otherwise
+            // refine to the rim). closestDistance uses the stretch-inflated
+            // radius, which swallows the camera near the projection's
+            // antipode; the radial gap is the exact lower bound that survives
+            // the inflation. sse 0 blocks subdivision and lets children merge;
+            // visibility below is untouched.
+            if (_flatWarp) {
+                const farGap = Math.max(closestDistance,
+                    Globals.flatEarthRadialGap(_flatGlobeCenter, _flatGlobeRadius, camera.position));
+                if (farGap > Globals.flatEarthRefineLimit(camera.position)) {
+                    screenSpaceError = 0;
+                    if (diag) diag.flatRangeCapped = (diag.flatRangeCapped || 0) + 1;
+                }
+            }
 
             if (closestDistance < radius * 0.1) {
                 // Camera is essentially inside the bounding sphere — obviously

@@ -317,12 +317,15 @@ const _asMaterials = m => (Array.isArray(m) ? m : [m]);
 // Frustum culling tests the UNWARPED bounds, so an object whose globe
 // position is off-screen would vanish even though its disc position is in
 // view. Culling is switched off on every swept renderable (only ones that
-// had it on) and switched back on from this set when the mode is disabled.
-// Strong Sets, not WeakMaps restored by a scene walk: tile meshes routinely
-// leave the scene during LOD churn, and a disable while they are detached
-// must still restore them for when they re-enter. The strong references
-// live only until the next disable; they hold no GPU resources.
-const _culledOff = new Set();
+// had it on), recorded ON the object (_flatEarthCulledOff), and switched
+// back on by a scene walk when the mode is disabled. This was a strong Set
+// so that tile meshes detached during LOD churn at disable time would still
+// be restored when they re-entered — but the Set also pinned every object
+// ever swept, and a renderable rebuilt every frame (the look-camera
+// frustum's Line2, see Globals.flatEarthPrepareObject) turned that into a
+// leak of one dead mesh per frame. A mesh detached at disable time now
+// simply stays unculled if it re-enters: Three skips its frustum test,
+// which is harmless (tiles are culled by their own library anyway).
 
 // Objects that are pure garbage under the warp: the satellite flare-band
 // circles are globe-girdling fat lines whose segments cross the antipode,
@@ -344,7 +347,7 @@ function sweepFlatEarth(root) {
                 if (m && !_installed.has(m)) installFlatEarthOnMaterial(m);
             }
             if (o.frustumCulled) {
-                _culledOff.add(o);
+                o._flatEarthCulledOff = true;
                 o.frustumCulled = false;
             }
         }
@@ -358,8 +361,16 @@ function sweepFlatEarth(root) {
 }
 
 function restoreSceneState() {
-    for (const o of _culledOff) o.frustumCulled = true;
-    _culledOff.clear();
+    const stack = [GlobalScene];
+    while (stack.length) {
+        const o = stack.pop();
+        if (o._flatEarthCulledOff) {
+            o.frustumCulled = true;
+            o._flatEarthCulledOff = false;
+        }
+        const children = o.children;
+        for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+    }
     for (const o of _hiddenByFlat) o.visible = true;
     _hiddenByFlat.clear();
 }
@@ -493,10 +504,13 @@ function warpDirection(p, dir, target) {
     return true;
 }
 
+// Returns true when THIS call warped the camera, false when it did nothing
+// (mode off, unsupported camera, or a pose already warped by an enclosing
+// bracket) — so nested brackets restore only what they opened.
 function warpCameraPose(camera) {
-    if (flatEarthUniforms.uFlatOn.value <= 0) return;
-    if (!camera || camera._flatEarthSavedPose) return;
-    if (camera.parent && !camera.parent.isScene) return;
+    if (flatEarthUniforms.uFlatOn.value <= 0) return false;
+    if (!camera || camera._flatEarthSavedPose) return false;
+    if (camera.parent && !camera.parent.isScene) return false;
     const saved = camera._flatEarthSavedPose = {
         position: camera.position.clone(),
         quaternion: camera.quaternion.clone(),
@@ -514,7 +528,7 @@ function warpCameraPose(camera) {
             _wcM.makeBasis(_wcR, _wcU, _wcF.negate());
             camera.quaternion.setFromRotationMatrix(_wcM);
             camera.updateMatrixWorld(true);
-            return;
+            return true;
         }
     }
     // Degenerate Jacobian (projection center/antipode): fall back to the
@@ -522,6 +536,7 @@ function warpCameraPose(camera) {
     flatEarthFrameQuat(saved.position, _camQ);
     camera.quaternion.premultiply(_camQ);
     camera.updateMatrixWorld(true);
+    return true;
 }
 
 function restoreCameraPose(camera) {
@@ -749,30 +764,98 @@ export function flatEarthUnwarpPoint(f, target = new Vector3()) {
 // sphere merely passes the frustum test, which is the conservative
 // direction.
 //
-// Returns true when the warp is LOCALLY RIGID for this sphere — the centre
-// barely moved relative to the tile's own size and the stretch is modest.
-// That is the near field around the disc's tangent point, where the
-// globe-space OBB narrow phase and OBB LOD distance are still valid; the
-// quadtree keeps them there (tight LOD for the terrain underfoot) and only
-// falls back to the fat warped sphere in the far field.
-const _sphereP = new Vector3();
-
+// Returns true only when the mode is off (the stock globe-space test is
+// then exact). While the mode is on it is ALWAYS false: the callers test
+// against the camera's WARPED render pose, so their stock globe-space
+// OBB/horizon paths are exact only if a tile's volume sits where its image
+// is drawn — and no cheap test separates the tiles for which that holds.
+// The previous "locally rigid" answer (centre moved by less than its own
+// radius) allowed a full radius of error, enough for a narrow-FOV frustum
+// test to reject a tile that is on screen, and its centre-at-the-earth's-
+// centre shortcut declared the planet-scale ROOT tiles rigid while their
+// hemisphere-sized boxes sat nowhere near their images: from a main camera
+// over the Irish Sea the whole western-hemisphere branch of the Google
+// tileset — the British Isles with it — failed the frustum test at depth
+// 1 and was never traversed, leaving a gap under the look camera. A fat
+// warped sphere can admit extra tiles; it can never make a hole.
+//
+// A sphere containing the earth's centre (the tileset roots) has no
+// meaningful image, so it is inflated to cover the entire disc instead.
 function flatEarthWarpSphere(sphere) {
     const u = flatEarthUniforms;
     const k = u.uFlatOn.value;
     if (k <= 0) return true;
     const c = sphere.center;
     const r0 = c.length();
-    if (r0 < 1000) return true;
+    const R0 = u.uFlatR0.value;
+    if (r0 < 1000) {
+        sphere.radius += u.uFlatCImage.value.length() + R0 * Math.PI;
+        return false;
+    }
     const C = u.uFlatCDir.value;
     const cosD = Math.min(1, Math.max(-1, (c.x * C.x + c.y * C.y + c.z * C.z) / r0));
-    const R0 = u.uFlatR0.value;
     const deltaFar = Math.min(Math.acos(cosD) + sphere.radius / R0, Math.PI - 0.002);
     const stretch = Math.min(deltaFar / Math.sin(deltaFar), 2000);
-    flatEarthWarpPoint(_sphereP.copy(c), c);
-    const moved = _sphereP.distanceTo(c);
+    flatEarthWarpPoint(c, c);
     sphere.radius *= 1 + (stretch - 1) * k;
-    return moved < sphere.radius && stretch < 1.5;
+    return false;
+}
+
+// Lower bound on the disc-plane distance between a camera's IMAGE and the
+// image of a globe-space bounding sphere. Installed on
+// Globals.flatEarthRadialGap while enabled.
+//
+// The stretch-inflated sphere above is conservative for the frustum test
+// but useless as a DISTANCE near the projection's antipode: a tile a few
+// degrees from it maps to most of the rim, its inflated sphere (radius
+// × up to 2000) swallows the entire disc, camera included, and a
+// distance-to-surface collapses to 0 — screen-space error ∞, so a
+// ground-level camera refined the whole antipodal hemisphere of the Google
+// tileset (parse queue 5,000+ deep, cache at its cap) for terrain drawn
+// 20,000 km away on the rim. The AEP maps every point of the tile into the
+// radial band ρ ∈ R0·[Δc − ε, Δc + ε] of the disc (Δc the centre's angular
+// distance from the projection centre, ε the sphere's angular radius), so
+// the camera's radial distance to that band is an exact lower bound on its
+// distance to any point of the image, independent of the inflation.
+// Returns 0 when the band contains the camera's radius or the sphere
+// contains the earth's centre (a tileset root).
+function flatEarthRadialGap(globeCenter, radius, cameraImage) {
+    const u = flatEarthUniforms;
+    if (u.uFlatOn.value <= 0) return 0;
+    const r = globeCenter.length();
+    if (r < 1000 || radius >= r) return 0;
+    const C = u.uFlatCDir.value;
+    const cosD = Math.min(1, Math.max(-1,
+        (globeCenter.x * C.x + globeCenter.y * C.y + globeCenter.z * C.z) / r));
+    const R0 = u.uFlatR0.value;
+    const rhoTile = R0 * Math.acos(cosD);
+    const halfBand = R0 * Math.asin(radius / r);
+    const I = u.uFlatCImage.value;
+    const dx = cameraImage.x - I.x, dy = cameraImage.y - I.y, dz = cameraImage.z - I.z;
+    const U = u.uFlatMapU.value, V = u.uFlatMapV.value;
+    const rhoCam = Math.hypot(dx * U.x + dy * U.y + dz * U.z, dx * V.x + dy * V.y + dz * V.z);
+    return Math.max(0, Math.abs(rhoCam - rhoTile) - halfBand);
+}
+
+// Range cap on quadtree refinement while the mode is on — installed on
+// Globals.flatEarthRefineLimit. A flat disc has no horizon, so without a cap
+// the terrain quadtree refines the far band all the way to the rim at
+// pixel-correct LOD, for a view in which that band is a sliver on the
+// horizon: 2–3× the tiles of a globe view for a narrow look view, an order
+// of magnitude for a wide one — every tile a billed request on a per-tile
+// provider. A tile whose nearest point lies beyond the limit keeps whatever
+// level it has and merges back, so the far band settles into a natural
+// staircase of coarser tiles. The limit grows with the camera's height
+// above the disc so an orbit view, whose entire ground is "far", is not
+// starved of detail.
+const FLAT_EARTH_REFINE_RANGE_M = 500e3;
+const FLAT_EARTH_REFINE_ALTITUDE_FACTOR = 4;
+
+function flatEarthRefineLimit(cameraImage) {
+    const u = flatEarthUniforms;
+    const I = u.uFlatCImage.value, UP = u.uFlatUp.value;
+    const h = (cameraImage.x - I.x) * UP.x + (cameraImage.y - I.y) * UP.y + (cameraImage.z - I.z) * UP.z;
+    return Math.max(FLAT_EARTH_REFINE_RANGE_M, FLAT_EARTH_REFINE_ALTITUDE_FACTOR * Math.abs(h));
 }
 
 // ── Screen picking ──────────────────────────────────────────────────
@@ -895,7 +978,9 @@ class CNodeFlatEarth extends CNode {
     dispose() {
         if (flatEarth.enabled) {
             flatEarth.enabled = false;
-            applyFlatEarthState();
+            // The sitch is going away: do not restore a paid map source onto it
+            // (that would start a billed reload of a scene about to be dropped).
+            applyFlatEarthState({tearingDown: true});
         }
         super.dispose();
     }
@@ -907,7 +992,11 @@ export function activateFlatEarth() {
     }
 }
 
-function applyFlatEarthState() {
+// opts.tearingDown: called from the state node's dispose during a sitch
+// switch — skip the provider restore. (The GUI passes its new value as the
+// first argument; a boolean has no tearingDown property, so it reads false.)
+function applyFlatEarthState(opts) {
+    const tearingDown = !!(opts && opts.tearingDown === true);
     if (flatEarth.enabled) {
         // The state node is what makes a save carry the mode; nodes are
         // per-sitch, so re-create on first enable after any sitch load.
@@ -915,6 +1004,12 @@ function applyFlatEarthState() {
         Globals.flatEarthRendering = true;
         Globals.flatEarthPickGround = flatEarthPickGround;
         Globals.flatEarthWarpSphere = flatEarthWarpSphere;
+        Globals.flatEarthRadialGap = flatEarthRadialGap;
+        Globals.flatEarthRefineLimit = flatEarthRefineLimit;
+        // Live reference to the disc normal (refreshFlatEarthOrigin updates
+        // it in place) — the tiles far field foreshortens its in-plane
+        // error terms by the sightline's elevation above the disc.
+        Globals.flatEarthUp = flatEarthUniforms.uFlatUp.value;
         Globals.flatEarthWarpPoint = flatEarthWarpPoint;
         // Pose pair for code that must see the RENDER camera outside a
         // render — the quadtree's tile selection tests warped spheres, so
@@ -928,6 +1023,15 @@ function applyFlatEarthState() {
         // already gone. Identical patched materials share a program via
         // the cache key, so this costs no per-tile shader compile.
         Globals.flatEarthPatchMaterial = installFlatEarthOnMaterial;
+        // Same idea for whole OBJECTS: a renderable rebuilt every frame
+        // (CNodeDisplayCameraFrustum recreates its Line2 in each update)
+        // lives for one frame, so the 500 ms sweep almost never sees it —
+        // its globe-space bounding sphere then fails Three's frustum test
+        // against the warped camera and it is culled, showing only on the
+        // odd frame the sweep happens to catch (a flicker). Creation sites
+        // hand the new object here instead of waiting; it gets the same
+        // treatment as the sweep (material patch, culling off).
+        Globals.flatEarthPrepareObject = sweepFlatEarth;
         if (!refreshFlatEarthOrigin()) {
             // No anchor point to build the projection from — hard-disable
             // (one-deep recursion into the else branch below) rather than
@@ -948,10 +1052,14 @@ function applyFlatEarthState() {
         Globals.flatEarthRendering = false;
         Globals.flatEarthPickGround = null;
         Globals.flatEarthWarpSphere = null;
+        Globals.flatEarthRadialGap = null;
+        Globals.flatEarthRefineLimit = null;
+        Globals.flatEarthUp = null;
         Globals.flatEarthWarpPoint = null;
         Globals.flatEarthWarpCamera = null;
         Globals.flatEarthRestoreCamera = null;
         Globals.flatEarthPatchMaterial = null;
+        Globals.flatEarthPrepareObject = null;
         flatEarthUniforms.uFlatOn.value = 0.0;
         restoreSceneState();
     }
@@ -959,6 +1067,11 @@ function applyFlatEarthState() {
     // logic reads Globals.flatEarthRendering.
     if (NodeMan.exists("TerrainModel")) {
         NodeMan.get("TerrainModel").updateGreySphereVisibility?.();
+    }
+    // Per-tile-billed map providers are locked out while the mode is on
+    // (CNodeTerrainUI.setPaidProvidersLocked, paidTileProviders.js).
+    if (!tearingDown && NodeMan.exists("terrainUI")) {
+        NodeMan.get("terrainUI").setPaidProvidersLocked?.(flatEarth.enabled);
     }
     setRenderOne(true);
 }

@@ -30,7 +30,6 @@ import {
     resolveTerrestrialK,
 } from "../atmosphere/terrestrialRefraction";
 import {currentTerrestrialLiftContext} from "../atmosphere/refractionSettings";
-import {flatEarthWarpPoint} from "../scenarios/FlatEarthScenario";
 
 const DEG2RAD = Math.PI / 180;
 
@@ -81,8 +80,6 @@ function applyMeshOpacity(mesh, opacity) {
 const _tilesSizeTmp = new Vector2();
 /** Scratch for the camera world position handed to the refraction lift context. */
 const _tilesCamWorldPos = new Vector3();
-/** Scratch for the flat-Earth-warped camera position (flat-mode lift context). */
-const _tilesCamWarpedPos = new Vector3();
 
 // ── Flat Earth aware tile selection ─────────────────────────────────
 //
@@ -109,32 +106,40 @@ const _tilesCamWarpedPos = new Vector3();
 //    (_terrestrialRefractionRetest) — itself a no-op when refraction is
 //    off, so refraction-off remains the stock method bit-for-bit.
 //    Refraction stays active in flat mode too (the flat scene hook chains
-//    it after the warp), so both flat branches below carry the lift as
-//    well: the near field via the same retest, the far field by lifting
-//    the globe-space sphere before warping it.
-//  - Near field ("locally rigid": the warp moved the tile's bounding
-//    sphere by less than its own radius, with modest stretch): also the
-//    stock method. There the physical camera vs unwarped volumes are a
-//    consistent pair, and the exact OBB frustum test and exact SSE are
-//    strictly better than a sphere approximation.
-//  - Far field: the tile's bounding sphere (derived from whatever volume
-//    type the tileset supplied — box/sphere/region — via getSphere) is
-//    taken to world space through group.matrixWorld, warped through the
-//    same Globals.flatEarthWarpSphere hook the terrain quadtree uses, and
-//    taken back into the tiles-group frame the library's cached camera
-//    frustums and positions live in (projection × matrixWorldInverse ×
-//    group.matrixWorld — see prepareForTraversal). Frustum test and SSE
-//    then run against that warped sphere, with the tile's geometricError
-//    magnified by the sphere's inflation ratio: the AEP stretches
-//    east-west distances (σ = (π/2−lat)/cos lat), and a stretched mesh's
-//    real on-screen error grows by the same factor.
+//    it after the warp), so the flat path carries the lift as well, by
+//    lifting the globe-space sphere before warping it.
+//  - Flat mode on: ALWAYS the warped-sphere path. The tile's bounding
+//    sphere (derived from whatever volume type the tileset supplied —
+//    box/sphere/region — via getSphere) is taken to world space through
+//    group.matrixWorld, warped through the same Globals.flatEarthWarpSphere
+//    hook the terrain quadtree uses, and taken back into the tiles-group
+//    frame the library's cached camera frustums and positions live in
+//    (projection × matrixWorldInverse × group.matrixWorld — see
+//    prepareForTraversal). The camera is in its WARPED render pose
+//    throughout the traversal (PerViewTiles.update opens the same bracket
+//    the terrain quadtree does), so the pair is consistent. Frustum test
+//    and SSE then run against that warped sphere, with the tile's
+//    geometricError magnified by the sphere's inflation ratio: the AEP
+//    stretches east-west distances (σ = (π/2−lat)/cos lat), and a
+//    stretched mesh's real on-screen error grows by the same factor.
 //
-// The deliberate globe-space OBB skip in the far field mirrors
-// src/QuadTreeMap.js calculateTileVisibility, which pioneered this exact
-// near/far split for Sitrec's own terrain tiles.
+// There is deliberately NO near-field exception that falls back to the
+// stock globe-space OBB test. Against the warped camera that test is exact
+// only if the tile's volume sits where its image is drawn; the old
+// "locally rigid" criterion (centre moved by less than its radius) allowed
+// a full radius of error, and declared the planet-scale root tiles rigid
+// while their hemisphere boxes sat nowhere near their images — which
+// culled the whole western-hemisphere branch (British Isles included)
+// from a main camera over the Irish Sea. A fat warped sphere can admit
+// extra tiles; it can never make a hole. See flatEarthWarpSphere. The
+// globe-space OBB skip mirrors src/QuadTreeMap.js calculateTileVisibility.
 const _feLocalSphere = new Sphere();
 const _feWorldSphere = new Sphere();
 const _feFlatSphere = new Sphere();
+const _feGlobeCenter = new Vector3();
+const _feCamWorld = new Vector3();
+const _feUpGroup = new Vector3();
+const _feDir = new Vector3();
 const _feInvGroup = new Matrix4();
 
 // Scratch for the terrestrial-refraction retest — module-level for the same
@@ -170,17 +175,11 @@ class FlatAwareTilesRenderer extends TilesRenderer {
         boundingVolume.getSphere(_feLocalSphere);
         _feWorldSphere.copy(_feLocalSphere).applyMatrix4(this.group.matrixWorld);
         const originalRadius = _feWorldSphere.radius;
+        _feGlobeCenter.copy(_feWorldSphere.center);
 
-        // Mutates the sphere; true means the warp is locally rigid here.
-        if (warpSphere(_feWorldSphere) === true) {
-            super.calculateTileViewError(tile, target);
-            // Near field: a locally rigid warp preserves camera-relative
-            // geometry, so the unwarped camera + unwarped volumes + unwarped
-            // lift used by the retest are a self-consistent pair that the
-            // warp maps onto the rendered one — the same repair as flat-off.
-            this._terrestrialRefractionRetest(tile, target);
-            return;
-        }
+        // Mutates the sphere: centre onto the disc, radius inflated by the
+        // projection stretch (see the header — no near-field exception).
+        warpSphere(_feWorldSphere);
 
         // Terrestrial refraction stays active in flat mode, and the render
         // applies it AROUND THE WARPED OBSERVER: the flat scene hook warps
@@ -226,7 +225,18 @@ class FlatAwareTilesRenderer extends TilesRenderer {
             (originalRadius * originalRadius) / 6.37e6,
             (_feWorldSphere.radius * _feWorldSphere.radius) / 4e7,
         );
-        const flatGeometricError = tile.geometricError * warpScale + chordSagitta;
+        // The stretch magnification and the chord sagitta are displacements
+        // IN the disc plane. On screen they are foreshortened by the sine of
+        // the sightline's elevation above the plane: a camera over the disc
+        // sees them in full (the "grey bands across the disc" they exist
+        // for), while a ground-level camera sees the rim 20,000 km away
+        // edge-on, where an in-plane sag has no visible height. Treating
+        // them as isotropic refined the antipodal rim to depth 13+ —
+        // thousands of tiles, the cache at its cap — for a horizontal look
+        // view. The tile's own geometricError (a 3D mesh error) is not
+        // foreshortened. Applied per camera below.
+        const inPlaneError = tile.geometricError * (warpScale - 1) + chordSagitta;
+        const upGroup = _feUpGroup.copy(Globals.flatEarthUp).transformDirection(_feInvGroup);
 
         // Stock aggregation semantics (max error / min distance over
         // in-view cameras; all-camera fallbacks for load priority), with
@@ -243,10 +253,24 @@ class FlatAwareTilesRenderer extends TilesRenderer {
             let error;
             let distance;
             if (info.isOrthographic) {
-                error = flatGeometricError / info.pixelSize;
+                error = (tile.geometricError + inPlaneError) / info.pixelSize;
                 distance = Infinity;
             } else {
                 distance = Math.max(_feFlatSphere.distanceToPoint(info.position), 0);
+                // Near the projection's antipode the inflated sphere swallows
+                // the whole disc, camera included, and this distance collapses
+                // to 0 (error ∞ — the entire antipodal hemisphere refined from
+                // a ground-level camera). The radial gap between the camera's
+                // image and the tile's image band is an exact lower bound on
+                // the true distance, independent of the inflation; take the
+                // larger. See flatEarthRadialGap.
+                _feCamWorld.copy(info.position).applyMatrix4(this.group.matrixWorld);
+                distance = Math.max(distance,
+                    Globals.flatEarthRadialGap(_feGlobeCenter, originalRadius, _feCamWorld));
+                _feDir.subVectors(_feFlatSphere.center, info.position);
+                const dirLen = _feDir.length();
+                const sinElev = dirLen > 0 ? Math.abs(_feDir.dot(upGroup)) / dirLen : 1;
+                const flatGeometricError = tile.geometricError + inPlaneError * sinElev;
                 error = distance === 0
                     ? Infinity
                     : flatGeometricError / (distance * info.sseDenominator);
@@ -639,6 +663,7 @@ class PerViewTiles {
         const ownsBracket = displayedDiffers && view._lodSavedZoom === undefined;
 
         let savedOffsetQuat = null;
+        let flatWarped = false;
         try {
             if (ownsBracket) {
                 view.prepareCameraForLOD();
@@ -646,8 +671,23 @@ class PerViewTiles {
                 savedOffsetQuat = view.applyCameraOffset();
             }
             view.camera.updateMatrixWorld();
+            // Flat Earth rendering: tile selection tests WARPED bounding
+            // spheres (FlatAwareTilesRenderer's far field), so the camera
+            // the library caches its frustums and positions from must be
+            // the warped RENDER pose — the same bracket the terrain
+            // quadtree opens (CNodeTerrainUI). Without it the far field
+            // measured disc-space volumes against the globe-space camera:
+            // with the disc's tangent point far from the scene, the ground
+            // under the camera sat ~10,000 km from it, never refined, and
+            // the look view showed sky. The warp also lands in the camera
+            // fingerprint below, so toggling the mode re-traverses a
+            // settled tileset. True only when warped HERE (an enclosing
+            // bracket may already hold the pose), and restored in the
+            // finally on the same condition.
+            flatWarped = Globals.flatEarthWarpCamera?.(view.camera) === true;
             this._updateWithCurrentCamera(view);
         } finally {
+            if (flatWarped) Globals.flatEarthRestoreCamera(view.camera);
             if (ownsBracket) {
                 view.restoreCameraAfterLOD();
             } else if (savedOffsetQuat) {
@@ -730,15 +770,17 @@ class PerViewTiles {
         // Observer-relative lift context for _terrestrialRefractionRetest,
         // resolved once per traversal from this view's camera. Null when
         // refraction is off, which keeps the retest a strict no-op.
+        //
+        // In flat mode the camera is already in its WARPED render pose here
+        // (update() opens the bracket), which is the observer the render's
+        // refraction is relative to — the flat scene hook warps the pose
+        // first, then the chained refraction hook derives its uniforms from
+        // it. So the one context serves both flat branches of
+        // calculateTileViewError; warping the position again here would
+        // double-warp it.
         _tilesCamWorldPos.setFromMatrixPosition(cam.matrixWorld);
         this.renderer._terrLiftCtx = currentTerrestrialLiftContext(_tilesCamWorldPos);
-        // Flat mode renders refraction relative to the WARPED camera — the
-        // flat scene hook warps the pose first, then the chained refraction
-        // hook derives its uniforms from it — so the far-field flat culling
-        // needs a context built around that same warped observer.
-        this.renderer._terrLiftCtxFlat = (this.renderer._terrLiftCtx && Globals.flatEarthWarpSphere)
-            ? currentTerrestrialLiftContext(flatEarthWarpPoint(_tilesCamWorldPos, _tilesCamWarpedPos))
-            : null;
+        this.renderer._terrLiftCtxFlat = Globals.flatEarthWarpSphere ? this.renderer._terrLiftCtx : null;
 
         this.renderer.setCamera(cam);
         this.renderer.setResolutionFromRenderer(cam, view.renderer);
