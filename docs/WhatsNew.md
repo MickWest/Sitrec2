@@ -9,6 +9,32 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.141.0 (2026-08-21)
+
+### New Features
+
+- **Vector Water Mask** (Effects → Water Reflection): water reflections can now find the water from real water polygons instead of from the color of the map imagery. That means reflections work on satellite imagery without *Combine Terrain with OSM* painting over it, coastlines come out clean and antialiased and stay sharp however close you zoom, and labels, roads and compression artifacts no longer punch holes in a lake — and because a polygon does not blur with distance, the far-field fade the color test needs is not applied, so distant sea stays water right out to the horizon. Rivers and lakes count; swimming pools do not. Off by default, because it costs one extra map-data fetch per terrain tile against a metered key, and greyed out when the server has no MapTiler key; wherever a mask is not available the old color test still applies.
+
+- **Fixed Heading** (Objects → *object* → *Banking*): an object can now hold a compass heading while it moves, instead of always turning to face along its track. Choose *Fixed Heading* and set *Fixed Heading°* — for an object that crabs sideways, drifts, or holds its attitude while pacing something else, such as the Coyne object keeping its bow light toward the helicopter behind it. It works for a stationary object too, and the heading saves with the sitch.
+
+- **Point Light model** (Objects → *object* → *Model* → *Point Light*): a model that is nothing but a light. A sphere shrinks below a pixel and vanishes a few kilometres out, whereas a model light is drawn as a point of light that stays visible at any distance. Its color, brightness and visibility are in the object's *Lights* folder, so one model serves any colored light.
+
+- **Scripts can switch and dim a model's lights by name** (Video → Scripting): instead of a long menu path, a script addresses a light by its object's name and the light's name as shown in the *Lights* folder — *hide RedBow_ob_PointLight* turns one off, *set WhiteStern_ob_PointLight 6000* makes one brilliant — and the slider and the script now take the same path.
+
+- **Scripting: each shot declares its own slice of world time** (Video → Scripting → *Scripting Window…*): a new *world* marker attached to a shot says which moment it covers — *& world 23:04:39..23:04:49* plays ten seconds of world in however long the shot is on screen, and *& world 23:04:44* freezes on one instant — so a script can dwell on, slow down, freeze, replay or reverse a moment, and lengthening one shot no longer re-times every other shot. Times can be seconds, a frame number, a wall clock (a time before the sitch starts rolls to the next day) or a full date and time; a bad or out-of-range time is reported as an error rather than silently showing a different moment. Once any shot declares a window, every shot must. Scripts without one play exactly as before, except that they now respect *In Frame* and *Out Frame*, so a video can be scoped to part of a sitch. A new *cut* command marks an edit, so *ride* and *follow* open on their shot instead of swinging round from the previous one, and the camera smoothing no longer averages across a cut into a whip. An *intent* marker (*& intent feature* or *& intent establish*) says what a shot is for; it is accepted now and used by a shot-framing check that is not yet exposed in the editor.
+
+### Improvements
+
+- **Scripting: smoother *follow* and *zoom* shots** (Video → Scripting): *follow* now leads the subject by a fixed fraction of the frame, so through a long lens it no longer drops the subject off the bottom edge; *zoom* closes distance at a steady proportional rate, so the subject grows evenly instead of barely changing and then blowing up on arrival; and a camera following a tracked object now samples that object's track exactly, for steadier motion.
+
+### Bug Fixes
+
+- Fixed the *Satellite data may be incomplete* prompt appearing every time you loaded your own sitch, even when its Starlink data was complete; a refreshed and merged set no longer keeps reporting itself as incomplete; a sitch saved, reloaded and saved again keeps the record of which satellite query it came from; and older sitches holding TLE-format satellite data, which were never offered a refresh at all, now are.
+
+### Security
+
+- Hardened the coordinate and date/time parsers (the Lat/Lon boxes in the Camera and Terrain menus, the Lookup box and the Go To prompt) against pasted text that could stall the page for a second or more, and the AI chat's bring-your-own-key session id is now drawn from a cryptographic random source everywhere, including over plain http.
+
 ## Version 2.140.0 (2026-08-20)
 
 ### New Features
