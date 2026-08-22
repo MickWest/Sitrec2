@@ -1,4 +1,4 @@
-// blocks.js — the 9-block scenario matrix, 765 scenarios total (PLAN.md
+// blocks.js — the 10-block scenario matrix, 855 scenarios total (PLAN.md
 // "Block matrix"). Emits spec ENTRIES; the runner generates wobble members
 // first and feeds their realized RMS into the paired matched-white members
 // (entry.matchedRmsFrom / entry.rmsKey).
@@ -187,7 +187,7 @@ export function buildAllScenarioEntries() {
             })));
         }
 
-    // --- RECOVERABLE-NOISE (round 1.1, Codex R3): 2 x 3 x 3 x 5 = 90 ---------
+    // --- RECOVERABLE-NOISE (round 1.1, review round 3): 2 x 3 x 3 x 5 = 90 ----
     // Q1/Q3 in the RECOVERABLE regime: 2 km range x 60 s gives the geometry
     // real parallax, so noise color and KS-vs-CV are measured on working fits
     // rather than on competing collapse modes. Wobble members source the

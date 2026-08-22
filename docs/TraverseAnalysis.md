@@ -14,11 +14,13 @@ For how to conduct and write up an investigation, see
 
 LOS-only data never uniquely determines a trajectory: near-perfect fits exist
 at many ranges, provided the object is allowed to maneuver. The tools in this
-section make that ambiguity explicit, and resolve it with *soft physical
-targets* (a preferred speed, roughly straight and level flight, low
-kinematic acceleration) rather than exact constraints. The interesting output is the
-family of plausible solutions — and how much maneuvering every *other*
-interpretation would require.
+section make that ambiguity explicit. Each fit adds one *stated assumption* (a
+nominal speed, roughly straight and level flight, low kinematic acceleration)
+as a soft target rather than an exact constraint, so that it can report, for
+every range, how much maneuvering the sightlines would force on that
+assumption. The targets define the question each fit asks; they are not a
+preference of the analysis. The interesting output is the family of plausible
+solutions — and how much maneuvering every *other* interpretation would require.
 
 ### Global Fit: Minimum Acceleration
 
@@ -92,9 +94,13 @@ ground track. Vertical motion follows the lantern life cycle — rise while the
 flame burns, exponential buoyancy decay after flame-out, terminal sink — and
 the solved flame-out time can fall before the clip (a lantern already in its
 cooling descent, the Aguadilla case), inside it, or after it (still climbing
-throughout). The base-wind components are bounded to ±20 m/s, the shear
+throughout). The base-wind components are bounded to ±40 m/s, the shear
 multiplier to 0.25–3, and rise/sink parameters to 4 m/s. Those are broad search
-constraints, not a certified lantern envelope. Its residual measures
+constraints, not a certified lantern envelope: the wind box is wide enough to
+reach ordinary winds aloft from any bearing, and along its diagonal it admits
+110 kt, which is not lantern-like. Excluding non-lantern motion is the job of
+the light-wind speed prior and the kinematic ordinariness screen, not of the
+box. Its residual measures
 compatibility with this particular wind-tracer/life-cycle model, not the
 probability that the object is a lantern. Bound-pinned and shear-clamped
 solutions therefore need explicit scrutiny.
@@ -208,7 +214,7 @@ cannot determine:
   Camera Center), the gallery and verdict carry a prominent
   "Constructed LOS — validation only" banner. Fits recovering the target then
   confirm internal consistency, not an independent discovery.
-- **No global object winner**: every tile carries a coloured **category label**
+- **No global object winner**: every tile carries a colored **category label**
   — *Physically based* (balloon, drone, aircraft), *LOS Constrained* (constant
   air speed / altitude / minimum acceleration), *Geometric* (stationary, ground,
   at-infinity), *Geometric Approximations* (the curve/Kalman/least-squares fits),
@@ -234,14 +240,23 @@ cannot determine:
   that threads the rays exactly being hidden as merely a good fit. Search-edge,
   active-model-limit, inactive-bound, internal-clamp, and optimizer-incomplete
   badges remain independently visible; a tier is never relabelled upward, and an
-  incomplete result cannot receive an affirmative global winner badge.
-- **Balloon-consistency tie-break**: a *Physically based* balloon whose fitted
-  motion is genuinely balloon-like — a steady climb, level, or descent drifting
-  in one direction — earns a small ranking boost, and one that had to yo-yo
-  vertically or curve back on itself is nudged down. It is bounded and only ever
-  reorders otherwise equally-well-fitting candidates (it can never lift a balloon
-  over a clearly better-fitting drone), so a "looks like a balloon" reading
-  surfaces first when the motion supports it without foreclosing a genuine
+  incomplete result cannot receive an affirmative global winner badge. Two more
+  labels exist. **Not fully tested** replaces a tier label only when a model
+  limit is the binding constraint — the fit and the motion would both grade
+  higher, but a pinned bound stopped the search, so the model was never fully
+  tested rather than measured and found wanting (a fit that pins *and* fits
+  poorly keeps the stronger "Poor fit"). **Co-leader** marks tiles that tie on
+  every comparable key (screen pass, eligibility, completeness, tier, pin
+  count), so the one shown first leads only by category priority; with a truth
+  track selected, truth separation breaks the tie instead.
+- **Balloon-consistency tie-break**: a *Physically based* balloon tile is
+  scored on whether its own fitted motion is self-consistent with a passive
+  wind tracer — a steady climb, level, or descent drifting in one direction is
+  credited, and a "balloon" that had to yo-yo vertically or curve back on
+  itself is debited by the same amount. It is a consistency check on the model,
+  not a preference for the object: it is bounded and only ever reorders
+  otherwise equally-well-fitting candidates (it can never lift a balloon over a
+  clearly better-fitting drone), so it cannot foreclose a genuine
   better-fitting energetic or maneuvering solution.
 - **Family bands**: flat solution valleys are reported as bands ("50–650 kt at
   19–41 NM fit about equally") with a deterministic representative (nearest
@@ -270,7 +285,7 @@ cannot determine:
   differentiation window clamps to the selection length — short analyses
   report real (noisier) metrics; a window too short for any statistics reads
   as invalid, never as zeros.
-- **Make/model labels are envelopes, not identifications**: "Closest envelope:
+- **Make/model labels are envelopes, not identifications**: "Closest containing envelope:
   Boeing 737-800 (not an ID)" means the solved speed/climb sits nearest that
   catalog entry's performance envelope — nothing more.
 
@@ -278,13 +293,20 @@ cannot determine:
 
 **Traverse ▸ Analyze Traverse Methods...** runs the full battery against the current
 LOS data and opens a single flat, best-first hypothesis gallery — each tile
-carrying a coloured category label rather than being buried under a section
-heading, so the best-screening candidates an analyst wants to inspect (for
-example, "looks like a balloon") surface early when the evidence supports them.
-This is a screening order, not an object verdict. The standalone HTML report is
-built on demand. **Use This** installs the analyzed trajectory as a frozen
-Analysis Snapshot; it does not silently rewrite the speed/range assumptions
-used by the next run.
+carrying a colored category label rather than being buried under a section
+heading, so that object-model tiles are not buried under curve fits that merely
+thread the same rays; which tile leads is decided by the screen, not by its
+name. This is a screening order, not an object verdict. The standalone HTML
+report is built on demand. **Use exact result** installs the analyzed
+trajectory as a frozen Analysis Snapshot; it does not silently rewrite the
+speed/range assumptions used by the next run.
+
+The analyzed window can be narrower than the A-B range. A track holds its last
+sample past the end of its data, and a frozen sensor on a frozen ray is not an
+observation, so held frames at either end of the window are dropped and the
+console reports how many, and which frames were analyzed. If more than half the
+window is held frames nothing is trimmed — that is a scene problem (check that
+the clip's In/Out range covers real data), and the analysis says so.
 
 1. **Constant-air-speed sweep** — a grid over (start distance × air speed,
    15–650 kt log-spaced so slow drifters are representable alongside jets).
@@ -330,7 +352,7 @@ a half-loaded start could be genuinely wrong rather than marginally off.
 Notes on the gallery tiles:
 
 - The ray-following tiles (Constant Air Speed, Constant Altitude, Minimum
-  Acceleration) show their analyzed, lightly smoothed paths. **Use This**
+  Acceleration) show their analyzed, lightly smoothed paths. **Use exact result**
   installs that exact sampled path as a snapshot, so preview, metrics, and
   applied output refer to the same result.
 - Tiles are shown in one flat, best-first order, each labelled with its
@@ -360,6 +382,22 @@ Notes on the gallery tiles:
 - The flexible constant-acceleration residual shown for scale is a
   **model-reference residual**, not an estimate of sensor noise. It must not be
   used to make statistical confidence or likelihood claims.
+- **Ordinariness** and **Implied object size** are disclosure lines, not
+  ranking inputs. Ordinariness measures how far the candidate's required size,
+  speed and acceleration sit outside the envelope of the nearest ordinary
+  object class (bird, balloon, quadcopter, fixed-wing), judged on all the
+  quantities together: 0.00 means some ordinary class contains it, and a high
+  value is a positive statement about the object, never a failure to explain
+  it. Implied object size converts the file's angular-size bound to metres at
+  the candidate's range; a sub-pixel target gives an upper bound only, and the
+  line says so rather than printing a fictitious lower end. Neither line moves
+  the order of the tiles. See
+  [How ordinary is the answer?](BOTBench.md#how-ordinary-is-the-answer) for the
+  definition and the measured behaviour.
+- The **Sky Lantern / Balloon (measured wind)** variant pins the drift to a
+  supplied wind. When no wind source is loaded (winds aloft, or the sitch wind)
+  it is reported as "not tested — no wind was supplied", never silently
+  omitted, so a missing tile is not mistaken for a failed fit.
 
 ### Solution families — the range band a model admits
 
@@ -377,7 +415,7 @@ fixed-wing) is re-fitted at a ladder of **held** ranges: the start distance is
 locked to each rung and every other parameter is re-solved under the same
 model. The rungs whose fit stays acceptable are the model's **admitted band**.
 
-- Admitted members are drawn as faint tracks in the tile's own colour, with
+- Admitted members are drawn as faint tracks in the tile's own color, with
   the headline solution solid on top. A member that follows the sightlines but
   fails the physical screen (underground, extreme kinematics) is drawn dashed
   and dimmer — visible, because "the rays allow this and physics does not" is
@@ -452,8 +490,8 @@ categories, before anything model-specific is consulted:
    commensurable across categories (catalogue and at-infinity tiles score
    raw degrees; the rest a smoothness composite roughly an order of
    magnitude larger).
-   "Looks like a balloon" leading a curve fit that merely threads the same
-   rays is the intended effect.
+   An object model leading a curve fit that answers no object question is the
+   intended effect.
 7. **Within-category secondary score**, then raw LOS residual as the final
    tie-break.
 
@@ -482,7 +520,14 @@ solver-fidelity allowance subtracted): ≤ 0.05° is the top grade, then
 (still ≤ 650 kt) is *Moderate*; above 4 g or 650 kt is *Low*; above 9 g or
 900 kt is *Kinematically extreme*. One locally load-bearing model limit
 caps the tier at 2, two or more at 1, and an unconverged optimizer caps it
-at 1 as a *Provisional fit*. Catalogue and at-infinity tiles have no
+at 1 as a *Provisional fit*. Two iteration-limit stops are **not** counted as
+unconverged: a Nelder-Mead simplex that has collapsed to its position tolerance
+on every parameter has converged even if the cost spread has not settled (no
+further iteration can move it), and a fit whose cost has settled while some
+parameters stay wide is reported as settled but unidentifiable on the named
+parameters — an identifiability limit of the clip, not an optimizer failure.
+Before this distinction the most precise fits were the likeliest to be refused;
+see [Why a good fit can still read "Unresolved"](BOTBench.md#why-a-good-fit-can-still-read-unresolved). Catalogue and at-infinity tiles have no
 kinematics to grade: they are tiered on angular offset alone, with the
 visibility / illumination check folded in for catalogue objects.
 
@@ -529,3 +574,17 @@ forced. And when nothing passes, the verdict is *Unresolved* — stated
 with what was and wasn't tested — rather than either a manufactured
 conventional winner or an anomaly claim the uncalibrated noise floor
 cannot support.
+
+## The executive verdict
+
+The analysis ends with a one-line **executive verdict** above the gallery. It
+has five codes: *insufficient* (two wordings — independent evidence is lacking
+because the sightlines were constructed from the target under test, or the
+range is undetermined because the sensor's motion gives no usable parallax),
+*probably a wind-blown balloon* (the only affirmative verdict, gated on an
+independent wind measurement), *consistent with one* conventional
+interpretation, *consistent with several*, and *unresolved* (the safety valve,
+not an anomaly claim). Exactly what each wording licenses you to say, and the
+list of causes Sitrec has no model for at all, are in
+[Reading the executive verdict without over-reading it](DefensibleAnalysis.md#7-reading-the-executive-verdict-without-over-reading-it)
+and [What a fit does and does not license](DefensibleAnalysis.md#5-what-a-fit-does-and-does-not-license).

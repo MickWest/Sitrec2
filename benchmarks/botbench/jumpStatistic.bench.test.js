@@ -5,8 +5,8 @@
  *     npx jest benchmarks/botbench/jumpStatistic.bench.test.js \
  *         --testPathIgnorePatterns /node_modules/ --forceExit
  *
- * (No npm script: package.json is not this package's to edit. The command
- * above is the same shape every other bench script in this directory runs.)
+ * (No npm script, deliberately: this is a one-off measurement, not a sweep to
+ * repeat. The command above is the same shape every other bench script runs.)
  *
  * THE QUESTION. The dossier's kinematic profile reports `jumpRatio` — the
  * largest single-frame jump in sightline angular rate divided by the median
@@ -90,7 +90,7 @@ const SET_ORDER = ["real", "maneuver", "standard"];
 
 // ---------------------------------------------------------------------------
 // Records: joined later-file-wins by (setId,label), identical to the join
-// dossiers.bench.test.js uses, so both read the same 26 scenarios.
+// dossiers.bench.test.js uses, so both read the same scenario set.
 // ---------------------------------------------------------------------------
 function loadRecords() {
     if (!fs.existsSync(DIR)) return new Map();

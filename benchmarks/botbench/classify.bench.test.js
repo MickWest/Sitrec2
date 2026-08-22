@@ -1,7 +1,7 @@
 /**
  * classify.bench.test.js — M3: the Q4 solver-selection protocol over an
  * existing sweep's records (audit-corrected version; see PLAN.md
- * "Post-audit amendments" and the Codex M3 audit).
+ * "Post-audit amendments" and the M3 audit).
  *
  *     npm run bench-bot-classify        (after `npm run bench-bot`)
  *
@@ -137,7 +137,7 @@ describe("BOT Bench Q4 classifier (audit-corrected)", () => {
         report.push("# BOT Bench Q4 classifier report (M3, audit-corrected)");
         report.push("");
         report.push("POST-HOC CAVEAT: models refit on the repaired grouping after the");
-        report.push("Codex M3 audit; the test partition had been observed before the");
+        report.push("M3 audit; the test partition had been observed before the");
         report.push("corrections. Model form and hyperparameters are unchanged and not");
         report.push("test-driven, but treat this as an audit-corrected re-evaluation,");
         report.push("not a fresh preregistered result. Direction-regime conclusions use");

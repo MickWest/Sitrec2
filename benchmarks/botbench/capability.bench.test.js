@@ -7,7 +7,7 @@
  *     BOTBENCH_CAP=pilot  npm run bench-bot-capability   # calibrate thresholds from λ=1 controls
  *     BOTBENCH_CAP=holdout ...                            # frozen thresholds (publishable claim)
  *
- * Detector v2 (post-smoke redesign, Codex-reviewed):
+ * Detector v2 (post-smoke redesign, independently reviewed):
  *  - S1' NOMINAL catalog-model failure (residual + envelope prior/pins), NOT a
  *    relaxation sweep;
  *  - S2  range-profile family exceedance lower bound (no speed prior), NOT KS;

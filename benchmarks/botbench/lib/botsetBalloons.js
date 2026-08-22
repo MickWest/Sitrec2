@@ -116,8 +116,8 @@ export function botsetBalloonSpec(v, platform, errorLevel) {
         platform: {...platform.spec},
         // This family keeps its FIXED 3 deg FOV because the drift ladder needs
         // the target to survive the 20pct rung, so framing here is whatever the
-        // physics gives: a 0.35 m balloon subtends 1.2% of frame at 2 miles and
-        // 0.05% at 50. That is the honest picture — at long range the
+        // physics gives: a 0.35 m balloon subtends 0.21% of frame at 2 miles and
+        // 0.008% at 50. That is the honest picture — at long range the
         // apparent-size channel supplies only a weak range floor, which is
         // exactly what it should supply. It also makes this the one family
         // where the apparent-size channel varies independently of range.

@@ -18,7 +18,7 @@
  *   - the empirical noise self-check (lib/noiseSelfCheck.js): does the data
  *     agree with the scenario's DECLARED pointing error.
  *
- * What this can and cannot show. With 26 heterogeneous scenarios, one seed
+ * What this can and cannot show. With a few dozen heterogeneous scenarios, one seed
  * each, this is a DESCRIPTIVE join: it establishes that the signals compute
  * over real records, what values they take, and whether their ordering looks
  * related to outcome. It cannot establish a threshold, and it must not be read
@@ -137,7 +137,7 @@ describe("triage features vs recorded outcomes", () => {
         L.push("# Triage features vs recorded outcomes");
         L.push("");
         L.push(`${rows.length} records joined${stale.length ? `, ${stale.length} skipped as stale` : ""}.`);
-        L.push("DESCRIPTIVE ONLY: 26 heterogeneous scenarios, one seed each. This shows what");
+        L.push(`DESCRIPTIVE ONLY: ${rows.length} heterogeneous scenarios, one seed each. This shows what`);
         L.push("the signals compute and how they order, not that any threshold is valid.");
         L.push("");
         if (stale.length) {

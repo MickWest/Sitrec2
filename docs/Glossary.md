@@ -161,8 +161,9 @@ from the camera with a near-zero residual, because the geometry cannot tell it o
 traverse* that walks forward frame by frame.
 
 **Executive verdict** — the one-line summary at the top of the traverse analysis. There are
-five possible wordings and each licenses something different. See
-[Traverse Analysis](TraverseAnalysis.md).
+five verdict codes (six wordings — *Insufficient* has two) and each licenses something
+different. See [Reading the executive verdict](DefensibleAnalysis.md#7-reading-the-executive-verdict-without-over-reading-it)
+and [Traverse Analysis](TraverseAnalysis.md#the-executive-verdict).
 
 **Solution family** — the range of distances at which a given model can still explain the
 sightlines. Reporting the family rather than a single number is usually the honest answer.

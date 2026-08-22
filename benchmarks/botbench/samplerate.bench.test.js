@@ -22,8 +22,8 @@
  *   cost        — solver wall time vs n.
  *
  * Output: results/samplerate-records-<fps>.jsonl (one file per rate).
- * Analysis/report: results/samplerate-report.md (written by the analysis
- * step, not this bench).
+ * Analysis/report: results/samplerate-report.md is a hand-written summary of
+ * these records; no script in this directory produces it.
  */
 
 import fs from "fs";

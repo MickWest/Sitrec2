@@ -296,7 +296,7 @@ disappoints.
 - **Verdict** — the [executive verdict](#executive-verdict) for this file,
   shortened to fit the cell; hover for the full headline. The wordings and exactly what each one
   licenses you to say are documented in
-  [Traverse Analysis and the Verdict](TraverseAnalysis.md). "Unresolved" on a
+  [Doing Defensible Analysis §7](DefensibleAnalysis.md#7-reading-the-executive-verdict-without-over-reading-it). "Unresolved" on a
   row whose Src column says **hard** or **weak** is the system being honest
   about data that cannot support a conclusion.
 - **Top interpretation** — the highest-ranked candidate (e.g. *Sky Lantern /
@@ -457,8 +457,9 @@ than left to be discovered:
   samples, or a median at or above the lowest sensor height, falls back to sea
   level. The row records which model was used (hover **Src**).
 - **No wind field.** The free balloon fit still runs and infers its own wind;
-  only the "balloon using measured wind" variant, which needs a scene wind
-  node, is absent.
+  only the *Sky Lantern / Balloon (measured wind)* variant, which needs a wind
+  source, is skipped — and it is reported per file as "not tested — no wind was
+  supplied", never silently omitted.
 - **No scene [hypotheses](#hypothesis).** No astronomy sweep, no satellite catalogue, no live
   line-of-sight-fitting method nodes from the interactive scene. These are
   listed under *absent hypotheses* in every
@@ -480,7 +481,7 @@ named, because "anomalous" without a named quantity is not a finding — for
 example *"nearest ordinary object is a light aircraft, and this misses that
 envelope by 12x on acceleration"*. A bulk run carries the **same score from the
 same function**: three columns in the **Summary** report, and in the CSV export
-the per-term breakdown (size, speed, acceleration) beside each total, since a
+the per-term breakdown (size, speed, acceleration) beside the **Ord** total, since a
 total alone cannot say which term carried it.
 
 **It is disclosure, and it does not move the ranking.** That is deliberate: the
@@ -698,7 +699,7 @@ ranks them; the **Top interpretation** column shows the winner.
 The one-line overall assessment the analysis issues for a file ("Consistent:
 wind-blown balloon", "Unresolved", …). The exact wordings, and precisely what
 each one does and does not claim, are documented in
-[Traverse Analysis and the Verdict](TraverseAnalysis.md).
+[Doing Defensible Analysis §7](DefensibleAnalysis.md#7-reading-the-executive-verdict-without-over-reading-it).
 
 #### Constant Velocity (CV) family
 

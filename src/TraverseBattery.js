@@ -168,7 +168,7 @@ export function prepareSweep(dataset, overrides = null) {
         // that objective falls monotonically as a trajectory scales toward the
         // sensor — the sensor's own path is an exact zero-residual solution
         // whenever the sensor flies a CV-representable trajectory (see the
-        // contract at LOSFitting.js:80-88). Without this floor the seed below
+        // contract in LOSFitting.js, above fitConstantVelocity). Without this floor the seed below
         // can collapse onto the camera, and because the Monte Carlo fits sample
         // range only within 0.9-1.1x of that seed, a collapsed seed silently
         // pins ALL of their tiles to a near-zero range. 500 m matches the
@@ -181,7 +181,8 @@ export function prepareSweep(dataset, overrides = null) {
     if (Number.isFinite(overrides?.numTrials)) opts.numTrials = overrides.numTrials;
     if (Number.isFinite(overrides?.losUncertaintyDeg)) opts.losUncertaintyDeg = overrides.losUncertaintyDeg;
     // Per-frame range estimates from a constant-velocity fit focus the random
-    // range sampling, exactly as CNodeLOSFitMonteCarlo does — without them the
+    // range sampling, as CNodeLOSFitMonteCarlo does (the live node seeds WITHOUT
+    // the minRange floor above, so its seed can still collapse) — without them the
     // sampler draws blindly out to 10x the scene extent and the higher orders
     // degenerate into noise. (Only the Monte Carlo fits use these; the
     // alternating fit derives and then freely moves its own ranges.)

@@ -22,9 +22,10 @@ detailed metrics on three questions:
 - How can observable features alone identify those situations?
 - How much of a practical situation can the analysis recover?
 
-The generator makes each scenario on demand, deterministically. It does not
-store them. Similar sets collapse where possible. The first round uses only
-the fast solvers.
+The generator makes each scenario on demand, deterministically. The swept
+scenario sets are written out as gitignored local trees (see the round-3
+amendment), never committed. Similar sets collapse where possible. The first
+round uses only the fast solvers.
 
 ## The five paper-facing questions
 
@@ -145,7 +146,7 @@ superpressure balloon, UWYO/GFS sounding fixtures, thermalling bird.
 Non-climbing targets sample only their local layer — not claimed to exercise
 vertical shear. HAB block uses u=20, v=8 m/s, no gust.
 
-## Block matrix — 765 scenarios
+## Block matrix — 765 scenarios (855 with the round-1.1 RECOVERABLE-NOISE block)
 
 | Block | Exact axes | Count | Questions |
 |---|---|---:|---|
@@ -191,7 +192,7 @@ velocity-change vector scaled to the largest magnitude achievable without
 exceeding 2.5 g. Impulse controls: discontinuity replaced by a 2 s
 raised-cosine acceleration capped at 2.5 g.
 
-## Solver configurations (8 primary = 6,120 runs)
+## Solver configurations (8 primary = 6,840 runs over 855 scenarios)
 
 `cv`, `ca`, `ks-default` (q=1e-4), `ks-q1e-5`, `ks-q1e-3` (KS grid reported as
 a sensitivity study, not calibration), `alsq2` (`{order:2, iterations:12}`),
@@ -508,7 +509,7 @@ benchmarks/botbench/lib/adapters.js          # the three adapters
 benchmarks/botbench/lib/diagnostics.js       # cvDesignRcond (6x6 Jacobi eigen)
 benchmarks/botbench/lib/solvers.js           # 8 solver configs + MC2 sentinel wrapper
 benchmarks/botbench/lib/metrics.js           # angular/truth/kinematics/anomaly
-benchmarks/botbench/lib/blocks.js            # the 9-block matrix -> specs
+benchmarks/botbench/lib/blocks.js            # the 10-block matrix -> specs
 benchmarks/botbench/lib/runner.js            # runSolver, sweep, aggregation
 benchmarks/botbench/botbench.bench.test.js   # deliberate Jest entry; writes results/
 tests/botbench/generator.test.js             # fast CI smoke: determinism, feasibility,
@@ -524,7 +525,7 @@ tests/botbench/generator.test.js             # fast CI smoke: determinism, feasi
 - Generate each scenario once; run all solvers against it; retain compact
   records only. Timings under Jest/Babel are ratios, not absolute (~17×
   slower than the bundle).
-- Runtime budget: laptop minutes. 765 scenarios × 8 cheap solvers; KS is the
+- Runtime budget: laptop minutes. 855 scenarios × 8 cheap solvers; KS is the
   only one needing a timing check before scaling; MC2 sentinel-only; no live
   fetches, no DE physics fits, no real terrain, Venus ephemeris computed once
   per scenario block and interpolated.
@@ -588,7 +589,7 @@ explicit deviations from the original contract text:
 
 - **M1** — lib/rng, platforms, targets, wind, observation, generateScenario,
   diagnostics, adapters + tests/botbench smoke tests green.
-- **M2** — solvers, metrics, blocks, runner, bench entry; full 765-scenario
+- **M2** — solvers, metrics, blocks, runner, bench entry; full 855-scenario
   sweep runs locally; results JSON + aggregated per-block markdown tables
   answering Q1–Q3, Q5 descriptively and exporting Q4 features.
 - **M3** — classifier protocol (CART + baselines + split hygiene) over M2
@@ -601,6 +602,10 @@ explicit deviations from the original contract text:
 - **Round 2 (deferred, recorded)** — physics/spline solvers on interesting
   cells; UWYO/GFS wind fixtures; burst/superpressure balloons; real terrain
   in-app; sitch-JSON bridge for visual MCP inspection of selected scenarios.
+  - **Physics/spline solvers DONE (2026-08-06)**: `lib/physicsSolvers.js` and
+    `physics.bench.test.js` (`npm run bench-bot-physics`; parallel driver
+    `run-physics-parallel.mjs`, `bench-bot-physics-par`). UWYO/GFS fixtures,
+    burst/superpressure balloons and real terrain remain open.
   - **Sitch bridge DONE (2026-07-22)**: `lib/exportKml.js` +
     `export.bench.test.js` (`npm run bench-bot-export`) emit per-track KML
     (one file per track — sibling placemarks in one Document import as
@@ -620,6 +625,11 @@ explicit deviations from the original contract text:
   - **Round-2 lead**: the Sky Lantern/Balloon tile came back "Provisional
     fit — Optimizer incomplete" on a GENUINE balloon scenario (right range,
     but flagged). Investigate the in-app DE budget/window against this cell.
+    **Likely resolved in 2.140.0**: the "incomplete" stamp was the
+    iteration-limit rule counting a fully collapsed simplex as an unfinished
+    search; `localFitCompletionWarnings` (`src/TraverseRanking.js`) now treats
+    a simplex at its position tolerance on every parameter as converged, and
+    the measured effect was exactly this symptom on a benchmark balloon.
 
 ## Q6 — Solution families and calibrated class percentages (2026-07-27)
 
@@ -777,6 +787,21 @@ error would be 33% of the frame in one scenario and 3.9% in another and the
 ladder would sweep difficulty and geometry together. The resolved degrees are
 still published in `scenario.json`'s `losError` and in every manifest row.
 
+**The balloon botsets** (`lib/botsetBalloons.js`, `bench-bot-balloons`) are the
+buoyant half: `botset_balloons_straight`, `botset_balloons_curve` and
+`botset_balloons_orbit`, 60 scenarios each — 20 variants (party and
+neutral-buoyancy balloons at 2 / 8 / 20 / 50 statute miles, five drift
+behaviours) at ONE clip duration, 20 s, times the three error rungs. They
+separate on PLATFORM PATH rather than on duration: a maneuver's detectability is
+a question about time, a balloon's about geometry, and the orbit is the upper
+bound on what parallax can buy. Their ladder is one-way DRIFT rather than
+zero-mean wobble, because a slow slide off the target is the error a short
+clip cannot distinguish from the target genuinely drifting. The field of view
+is pinned at 3 deg so the target survives the 20 pct rung, which makes a
+0.35 m balloon sub-pixel at every range in the set; every scenario therefore
+publishes the 2 x IFOV angular-diameter bound, an upper bound with no lower
+end.
+
 Output tree: `results/botset_<set>/batch_<D>s/<E>pct/{Input,Truth,All,meta}`
 with a manifest per folder and per-batch generation times in
 `results/botset_<set>/timing.json`. Both sidecars live in `meta/` so the CSV
@@ -794,7 +819,7 @@ worker thread from a single esbuild-built worker bundle (the lazy
 non-maneuver target modules are stubbed, so accidentally pulling the app
 stack into a worker is a loud failure). Generation is deterministic, so the
 parallel tree is byte-identical to a sequential run — verified by per-file
-sha256 over all 1,944 files — with only `timing.json` differing; wall time
+sha256 over the whole tree — with only `timing.json` differing; wall time
 drops from ~8–10 s to under 1 s. The physics bench parallelizes differently
 (Jest process shards) because its solvers need the app stack; see
 `run-physics-parallel.mjs`.
@@ -848,8 +873,9 @@ Method rules, all load-bearing:
    The wording is "observed reliability on these designed scenarios".
 6. One seed per scenario in round 1: claims are about these realizations.
 
-Findings and the derived programme live in `analysis/BOT-Tractability-Study.md`
-and `analysis/BOT-Tractability-Plan.md`. The programme's near-term tier is
+Findings and the derived programme (the tractability study and its 38-step
+research programme) are maintained with the other in-progress analysis
+documents, outside this repository. The programme's near-term tier is
 adopted as the next round of contract work: harden the conditioning statistic
 into a per-class stack, add sham-splice controls and a triviality gate,
 certify coverage with exact bounds, add an empirical noise self-check, install

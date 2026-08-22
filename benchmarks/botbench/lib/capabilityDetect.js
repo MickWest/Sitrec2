@@ -1,6 +1,6 @@
 // capabilityDetect.js — detection/attribution statistics for the
 // emerging-threats capability blocks (v2, redesigned after the smoke run +
-// Codex review).
+// an independent review).
 //
 // S1'  NOMINAL catalog-model failure: fit the constrained model at the
 //      NOMINAL catalog envelope (lambda=1) and measure how badly it fits —
@@ -173,12 +173,12 @@ export async function nominalModelFailure(scenario, dim, catalogId, family) {
         : meanAngularError(toTraverseDataset(scenario), fit.positions) * RAD2DEG;
     // Envelope-pressure: the model's soft prior cost at the solution, in
     // residual-equivalent degrees. params.priors is {total, terms} (the
-    // earlier Number.isFinite check silently nulled it — Codex catch).
+    // earlier Number.isFinite check silently nulled it — review catch).
     const priorDeg = (fit.params?.priors && Number.isFinite(fit.params.priors.total))
         ? fit.params.priors.total : 0;
     // Load-bearing bound pins on the exceeded dimension. Pins are objects
     // {name, side, loadBearing, ...} (BoundedFit.js) — the earlier String(p)
-    // test stringified "[object Object]" and always matched zero (Codex catch).
+    // test stringified "[object Object]" and always matched zero (review catch).
     const pins = Array.isArray(fit.params?.pinned) ? fit.params.pinned : [];
     const dimPins = pins.filter((p) => p && p.loadBearing
         && /speed|tas|climb|accel|ascent/i.test(String(p.name ?? ""))).length;

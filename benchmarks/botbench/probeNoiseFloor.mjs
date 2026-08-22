@@ -4,7 +4,7 @@
  *
  * Run: node benchmarks/botbench/probeNoiseFloor.mjs
  *
- * This exists because docs/TraverseInterchangeFindings.md (F1/P2) makes numerical
+ * This exists because private/notes/TraverseInterchangeFindings.md (F1/P2) makes numerical
  * claims about noise estimation, and a claim presented as a measurement needs a
  * script anyone can re-run. Review correctly flagged that the first version of
  * those numbers had no committed source.
@@ -67,7 +67,12 @@ import path from "path";
 import {fileURLToPath} from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DIR = path.resolve(__dirname, "results/interchange/answers/All");
+// `answers/` exists only in a SEALED build (lib/interchangeRelease.js); the
+// documented default publishes All/ at the top level. Take whichever is there.
+const DIR = [
+    path.resolve(__dirname, "results/interchange/answers/All"),
+    path.resolve(__dirname, "results/interchange/All"),
+].find((d) => fs.existsSync(d)) || path.resolve(__dirname, "results/interchange/All");
 
 const LAGS = [1, 2, 4, 8];
 const DEG = 180 / Math.PI;

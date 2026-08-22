@@ -130,7 +130,8 @@ Down each error ladder the **truth is shared by construction**: the rung changes
 only the observation model, which sits outside the key truth is generated from,
 so the three rungs of one variant are the *same flight observed three ways*.
 Generation is deterministic, so the sequential and parallel maneuver runners
-produce byte-identical trees.
+produce byte-identical trees (only `timing.json`, which records wall time,
+differs).
 
 ```bash
 npm run bench-bot-viz -- results/botset_anomalies

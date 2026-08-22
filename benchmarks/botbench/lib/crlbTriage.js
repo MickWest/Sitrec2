@@ -58,6 +58,16 @@
  * assumed class the bound says nothing at all about it — a 2% predicted
  * fractional range error on a constant-velocity hypothesis is not 2% accuracy,
  * and is not a precision guarantee under any reading.
+ *
+ * TWO "GEOMETRY-LIMITED" CLAIMS, AND THEY ARE DIFFERENT CLAIMS. `rangeObservable`
+ * is STRUCTURAL: it asks whether the Fisher information is finite along the
+ * range direction at all, and when it is singular no sample count helps — the
+ * reported sigma_r/r as N -> infinity is then Infinity, and 0 otherwise
+ * (independent noise has no finite floor). The noise-limited /
+ * geometry-limited LABEL is OPERATIONAL: a case is also called geometry-limited
+ * when reaching TARGET_SIGMA_R_OVER_R would need more than MAX_SAMPLE_GROWTH
+ * times the samples actually present — a declared cutoff on what an analyst
+ * could plausibly obtain, not a limit of the geometry. Quote them separately.
  */
 
 // Coarse by design: the grid is a sweep over an unknown range, not a search.

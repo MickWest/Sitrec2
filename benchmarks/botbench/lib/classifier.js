@@ -1,6 +1,6 @@
 // classifier.js — M3: the Q4 regime/solver-selection protocol
 // (PLAN.md "Q4 classifier protocol" + "Post-audit amendments" 10, corrected
-// per the Codex M3 audit of 2026-07-22).
+// per the M3 audit of 2026-07-22).
 //
 // Audit corrections implemented here:
 //  - UNION supergroups: all noise variants AND all seed-duplicates of

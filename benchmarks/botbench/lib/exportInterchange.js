@@ -170,7 +170,7 @@ function targetPart(t) {
         const {MANEUVER_ANOMALOUS} = require("./maneuverTargets");
         const dflt = MANEUVER_ANOMALOUS[t.kind] ?? false;
         const resolved = params.anomalous ?? dflt;
-        // Variant label (M1 parameter sweeps): two variants of one kind are
+        // Variant label (maneuver-botset parameter sweeps): two variants of one kind are
         // different truths and must not share a name. Hyphens survive — they
         // are the in-field sub-part separator.
         const v = params.variant

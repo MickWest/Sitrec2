@@ -39,7 +39,12 @@ import {readInterchangeScenario, listInterchangeScenarios} from "./lib/readInter
 import {runVerdict} from "./lib/verdictRunner";
 import {METERS_PER_NM} from "../../src/TraverseAnalysis";
 
-const DIR = path.resolve(__dirname, "results/interchange/answers/All");
+// `answers/` exists only in a SEALED build (lib/interchangeRelease.js); the
+// documented default publishes All/ at the top level. Take whichever is there.
+const DIR = [
+    path.resolve(__dirname, "results/interchange/answers/All"),
+    path.resolve(__dirname, "results/interchange/All"),
+].find((d) => fs.existsSync(d)) || path.resolve(__dirname, "results/interchange/All");
 const OUT = process.env.BOTBENCH_IV_OUT
     || path.resolve(__dirname, "results/interchange-verdict.json");
 // In-progress rows land here and are promoted to OUT only after validation, so

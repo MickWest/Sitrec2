@@ -1,6 +1,7 @@
 /**
- * maneuver.bench.test.js — first pass over the MANEUVER-CLASS track taxonomy:
- * generate one scenario per track type and write it out both ways —
+ * maneuver.bench.test.js — the TRACTABILITY maneuver set in file form:
+ * generate one scenario per track kind (lib/maneuverSet.js) and write it out
+ * both ways —
  *
  *   results/maneuvers/{Input,Truth,All}/   BOT interchange trios (BotBench dialog)
  *   results/maneuvers/kml/                 platform+target KML pairs (live app)
@@ -9,8 +10,10 @@
  *     npm run bench-bot-maneuver
  *
  * One scenario per kind at a deliberately DECISIVE geometry (orbiting sensor),
- * so the first look at each shape is about the shape, not about collapse.
- * Parameter ladders, controls, and degenerate-geometry sweeps come later.
+ * so the look at each shape is about the shape, not about collapse. The swept
+ * ladders (durations, error rungs, controls) are the botsets —
+ * `bench-bot-maneuvers` / `bench-bot-balloons` — which write no KML; this bench
+ * is still the only source of KML pairs for the live app.
  */
 
 import fs from "fs";

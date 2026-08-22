@@ -340,7 +340,7 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
     const rng = mulberry32((options.seed ?? MC_DEFAULT_SEED) >>> 0);
 
     // Per-frame range estimates from a prior fit (e.g. CV). When provided,
-    // random range sampling is centered on these values (0.5x to 1.5x) instead
+    // random range sampling is centered on these values (0.9x to 1.1x) instead
     // of sampling blindly from [0, maxDistance].
     const rangeEstimates = options.rangeEstimates ?? null;
 

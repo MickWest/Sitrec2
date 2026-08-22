@@ -48,7 +48,8 @@ Sitrec offers two families of traverse:
 
 ### Global Fits
 
-In the menu these appear with a "Global Fit:" prefix (e.g. "Global Fit: Constant Velocity").
+In the menu most of these appear with a "Global Fit:" prefix (e.g. "Global Fit: Constant
+Velocity"); *Ground Vehicle* is listed without it.
 
 ⚠ = this method belongs to the constant-velocity family and can **collapse onto the sensor**
 on narrow-baseline scenes, returning a near-zero residual for a range that is an artifact.
@@ -300,8 +301,8 @@ The backward pass is what distinguishes this from a plain Kalman filter. Every s
 For excluded frames (gaps in the data), positions are linearly interpolated between the nearest smoothed states.
 
 **Tuning parameters**:
-- *Process Noise* (default 1e-4): Velocity random walk variance per unit time. Higher values let the filter track rapid maneuvers but produce noisier output. Lower values enforce smoother trajectories but may lag behind true motion. Note this is an implementation tuning quantity, not a calibrated physical variance.
-- *Measurement Noise* (default 1.0): variance on the projected positional pseudo-measurement (not an angular noise in degrees). Higher values tell the filter the LOS data is noisy, producing smoother output. Lower values trust the LOS data more closely.
+- *Process Noise* (slider **KF Process**, a log10 exponent; default −4, i.e. 1e-4): Velocity random walk variance per unit time. Higher values let the filter track rapid maneuvers but produce noisier output. Lower values enforce smoother trajectories but may lag behind true motion. Note this is an implementation tuning quantity, not a calibrated physical variance.
+- *Measurement Noise* (slider **KF Noise**, a log10 exponent; default 0, i.e. 1.0): variance on the projected positional pseudo-measurement (not an angular noise in degrees). Higher values tell the filter the LOS data is noisy, producing smoother output. Lower values trust the LOS data more closely.
 
 **Minimum data**: 2 frames.
 
@@ -382,7 +383,8 @@ In practice, start with **Global Fit: Constant Velocity** to get a baseline. If 
 
 - **[Traverse Analysis and the Verdict](TraverseAnalysis.md)** — the *Analyze Traverse
   Methods…* button: running every method at once, reading the hypothesis gallery, solution
-  families and range bands, and what each executive verdict does and does not license.
+  families and range bands, and the executive verdict. What each verdict wording does and
+  does not license is in [Doing Defensible Analysis §7](DefensibleAnalysis.md#7-reading-the-executive-verdict-without-over-reading-it).
 - **[Doing Defensible Analysis](DefensibleAnalysis.md)** — the method around the methods:
   what to check before you fit, what a residual licenses, what to do about uncertainty, and
   how to write a result up.

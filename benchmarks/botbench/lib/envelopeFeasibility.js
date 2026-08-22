@@ -1,5 +1,5 @@
 // envelopeFeasibility.js — the emerging-threats CONSTRAINED-ENVELOPE EXISTENCE
-// test (Codex-designed unified S1'/S2, replacing the retired range-family
+// test (the unified S1'/S2 design, replacing the retired range-family
 // verdict).
 //
 // THE SOUND QUESTION. Bearings-only data constrains the object to the rays:
@@ -85,7 +85,7 @@ function evalRatio(dataset, B, c, envelope, family, minRange) {
         track[b + 2] = S[b + 2] + lam * D[b + 2];
     }
     const km = trackMetrics(dataset, track, {smoothSeconds: 0.5});
-    // Hard limits, matching the catalog's own definitions (Codex correctness
+    // Hard limits, matching the catalog's own definitions (review correctness
     // fix): the catalog maxSpeed/tasMax are HORIZONTAL limits, so the metric
     // must use HORIZONTAL speed — km.airSpeed.max is 3-D and overcounts for a
     // climbing/descending track, inflating α̂ toward false forced-
@@ -124,7 +124,7 @@ function peakHorizontalSpeed(track, dataset) {
 }
 
 // Soft-max surrogate of the peak over the three dimensions AND over frames is
-// The objective IS the reported metric (Codex correctness fix): minimize the
+// The objective IS the reported metric (review correctness fix): minimize the
 // peak envelope-violation ratio directly, with NO soft curvature penalty. The
 // bandwidth limit is enforced STRUCTURALLY by the B-spline knot count K (one
 // knot per ~bandwidthSec), which already prevents the range profile from

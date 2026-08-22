@@ -4,10 +4,10 @@
  * NOT part of the normal test run (benchmarks/ is in testPathIgnorePatterns).
  * Run deliberately:
  *
- *     npm run bench-bot                          # full 765-scenario sweep
+ *     npm run bench-bot                          # full 855-scenario sweep
  *     BOTBENCH_BLOCKS=GEO-DURATION npm run bench-bot   # subset by block id
  *
- * Contract: benchmarks/botbench/PLAN.md (v2, agreed with Codex). Assertions
+ * Contract: benchmarks/botbench/PLAN.md (v2, the agreed contract). Assertions
  * here are loose invariants — the real output is
  * benchmarks/botbench/results/{records.jsonl, scenarios.jsonl, summary.md}.
  * Timings under Jest/Babel are ratios, not absolute (~17x slower than a

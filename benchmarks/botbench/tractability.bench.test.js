@@ -16,7 +16,7 @@
  *
  * Sets:
  *   real      the 10 case-geometry scenarios cut from real GPS tracks
- *   maneuver  the 10 maneuver-taxonomy shapes
+ *   maneuver  the maneuver-taxonomy shapes, one per kind in lib/maneuverSet.js
  *   standard  a 6-scenario GEO-DURATION ladder (orbit/straight x 5/15/60 s)
  *             — the known recoverable->hopeless gradient, as the baseline the
  *             triage score must at minimum reproduce

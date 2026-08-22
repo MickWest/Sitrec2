@@ -164,9 +164,9 @@ export function mundanenessSummary(cost) {
     if (!cost) return null;
     const c = cost.total;
     if (c < 0.05) return `consistent with an ordinary ${cost.label}`;
-    // Name the binding quantity. Ties go to the larger term; a tie between two
-    // is reported as both, because saying "too fast" about a solution that is
-    // also impossibly small would be a half-truth.
+    // Name every quantity that carries the cost, not just the largest: saying
+    // "too fast" about a solution that is also impossibly small would be a
+    // half-truth.
     const parts = [];
     if (cost.sizeCost > 0.05) parts.push("size");
     if (cost.speedCost > 0.05) parts.push("speed");

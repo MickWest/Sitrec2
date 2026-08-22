@@ -5,7 +5,7 @@
 // along its own sightlines leaves every bearing unchanged while scaling every
 // speed and acceleration down with it. A fit scored on residual and kinematic
 // mildness therefore has no reason not to collapse toward the sensor, and
-// measurement on the M1 set showed exactly that — the reported range of most
+// measurement on the maneuver botsets showed exactly that — the reported range of most
 // candidates was whichever guard constant their fitter carried.
 //
 // Apparent angular size is the missing observable. For an object of physical
@@ -25,7 +25,7 @@
 // a sub-pixel speck cannot exercise this channel at all. Each set asks for the
 // target to subtend about FRAME_FRACTION_TARGET of the frame width at its
 // nominal range, subject to the FOV staying inside a real targeting pod's
-// range. Where a set has its own reason for a fixed FOV (M2's drift ladder
+// range. Where a set has its own reason for a fixed FOV (the balloon botsets' drift ladder
 // needs the target to stay in frame through a 0.5 deg slide) that FOV wins and
 // the framing is whatever the physics gives — a 0.35 m party balloon at 80 km
 // really is a fraction of a pixel, and inventing a 63 m balloon to fill the
@@ -142,5 +142,5 @@ export const MANEUVER_DIAMETER_M = {
     "hypersonic-glide": 12.0,
 };
 
-/** Physical diameter for the buoyant M2 targets: a latex party balloon. */
+/** Physical diameter for the buoyant balloon-botset targets: a latex party balloon. */
 export const BALLOON_DIAMETER_M = 0.35;

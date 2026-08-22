@@ -549,7 +549,7 @@ L.push("those, scored two ways: the PRIMARY trajectory endpoint (topRelSep above
 L.push("tolerance, or no finite rank-1 outcome at all) and truth-class inclusion,");
 L.push("whose denominator is smaller because maneuver shapes have no true class.");
 L.push("The gate itself is truth-free; truth enters only to score what it let through.");
-L.push("n is printed at every point: at 26 scenarios most points are tiny and the");
+L.push(`n is printed at every point: at ${records.length} scenarios most points are tiny and the`);
 L.push("exact intervals below are the honest width of each claim.");
 L.push("");
 L.push("| gate log10rcond > | committed n | coverage | error (topRelSep > 0.15) | error (> 0.25) | class error |");
@@ -599,7 +599,7 @@ L.push("");
         : "tightens: the gate strips correct commitments at least as fast as wrong ones.");
     L.push("No setting yields an error-free commit set. That is F1 restated in");
     L.push("operating-point terms — conditioning is not the variable that decides whether");
-    L.push("a commitment is right — and a gate tuned on 26 scenarios with single-digit");
+    L.push(`a commitment is right — and a gate tuned on ${records.length} scenarios with single-digit`);
     L.push("commit counts is a picture of this set, not a shippable operating point.");
 }
 L.push("");

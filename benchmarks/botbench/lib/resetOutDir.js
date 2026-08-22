@@ -7,7 +7,7 @@
 // after it has already deleted most of the tree. The failure is therefore
 // destructive: the bench aborts with the set half gone, and the half that
 // remains looks like a complete run to anything that reads it. Measured on the
-// M1 tree, which came back with two of its four duration folders.
+// maneuver botset tree, which came back with two of its four duration folders.
 //
 // Retrying is the whole fix: the recreated file is deleted on the next pass and
 // the directory goes. A handful of attempts is plenty — this is a race with a

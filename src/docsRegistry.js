@@ -88,7 +88,7 @@ export const helpDocs = [
         // newest-first: the limit buys the assistant many recent releases, which is what
         // "what's new" questions are about. It stopped being a real problem once the
         // epistemic contract (verdict wordings, the not-modelled list) was promoted out of
-        // the changelog and into docs/TraverseAnalysis.md and docs/DefensibleAnalysis.md —
+        // the changelog and into docs/DefensibleAnalysis.md (sections 5 and 7) —
         // before that, the changelog was the only place those were written down, and
         // truncating it hid them.
         aiTruncationExpected: true,
@@ -216,7 +216,7 @@ export const helpDocs = [
     {
         file: "docs/TraverseAnalysis", labelKey: "menus.help.documentation.traverseAnalysis",
         section: "analysis", menuId: "traverse", role: "reference",
-        chatDesc: "The Analyze Traverse Methods button and what it produces: the hypothesis gallery, how tiles are ranked, solution families and range bands, the plausibility checks, and the executive verdict — all five verdict wordings, exactly what each one licenses you to say, and the list of causes Sitrec has no model for at all. Read this for 'what does the verdict mean', 'what does Probably a wind-blown balloon mean', 'what does Unresolved mean', 'how do I read the analysis gallery', or 'can I quote this result'.",
+        chatDesc: "The Analyze Traverse Methods button and what it produces: the hypothesis gallery, how tiles are ranked, solution families and range bands, the plausibility checks, the Ordinariness and Implied object size disclosure lines, and a summary of the executive verdict's five codes. Read this for 'how do I read the analysis gallery', 'what do the tile badges mean', 'what is a solution family', or 'why does a good fit read Unresolved'. For exactly what each verdict wording licenses you to say, and the list of causes Sitrec has no model for at all, read Doing Defensible Analysis instead.",
     },
     {
         file: "docs/BOTBench", labelKey: "menus.help.documentation.botBench",

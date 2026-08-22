@@ -308,7 +308,8 @@ From Sitrec's own benchmark harness, which is stricter about this than the app:
 
 ## 7. Reading the executive verdict without over-reading it
 
-The analysis ends with one of five verdicts. Each licenses something different.
+The analysis ends with one of five verdict codes — six wordings, since *Insufficient* has two.
+Each licenses something different.
 
 **"Insufficient independent evidence to discriminate."** — your sightlines were constructed
 from the target being tested (§2.8). The results validate the scene's internal consistency and
@@ -337,7 +338,7 @@ outright: it is not by itself evidence of anomalous motion, and it always disclo
 noise floor is uncalibrated and that model envelopes were not exhaustively excluded.
 
 The interface deliberately styles "Unresolved" and "Insufficient" in the same neutral way as
-the others, with no alarm colouring — precisely because in a UAP tool that headline is the one
+the others, with no alarm coloring — precisely because in a UAP tool that headline is the one
 most likely to be screenshotted out of context.
 
 > ### The publication rule

@@ -29,7 +29,12 @@ import {fileURLToPath} from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const IN = process.argv[2] || path.resolve(__dirname, "results/interchange-verdict.json");
-const ALL = path.resolve(__dirname, "results/interchange/answers/All");
+// `answers/` exists only in a SEALED build (lib/interchangeRelease.js); the
+// documented default publishes All/ at the top level. Take whichever is there.
+const ALL = [
+    path.resolve(__dirname, "results/interchange/answers/All"),
+    path.resolve(__dirname, "results/interchange/All"),
+].find((d) => fs.existsSync(d)) || path.resolve(__dirname, "results/interchange/All");
 
 // The three truth classes Sitrec actually models. Declared here rather than
 // beside score(), because the input validation below needs it — a `const` is in

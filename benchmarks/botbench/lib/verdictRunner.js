@@ -525,9 +525,6 @@ function familySpecs({physicsDS, physicsOpts, clipDurationSec, seedTrack,
 // only works if bins are countable and stable. Everything here is read off the
 // analysis; nothing is read off truth.
 
-export const CONSISTENCY_BUCKETS = ["low", "mid", "high"];
-export const BAND_BUCKETS = ["none", "collapsed", "moderate", "wide", "disjoint", "boundary"];
-
 export function consistencyBucket(c) {
     if (!Number.isFinite(c)) return "na";
     return c < 0.45 ? "low" : c < 0.75 ? "mid" : "high";

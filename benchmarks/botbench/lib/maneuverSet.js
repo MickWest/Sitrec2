@@ -1,7 +1,10 @@
-// maneuverSet.js — the first-pass MANEUVER-CLASS scenario definitions, shared
-// by the file-writing bench (maneuver.bench.test.js) and the tractability
-// runner. One scenario per track type at a deliberately DECISIVE geometry
-// (orbiting sensor), so results are about the shape, not about collapse.
+// maneuverSet.js — the TRACTABILITY maneuver set: one scenario per track kind
+// at a deliberately DECISIVE geometry (orbiting sensor), so results are about
+// the shape, not about collapse. Shared by the tractability runner
+// (tractability.bench.test.js, whose records feed triage/dossiers) and by the
+// file-writing bench (maneuver.bench.test.js). The swept, published maneuver
+// sets are the botsets (lib/botsetManeuvers.js); this set is the single-point
+// companion that the tractability study is measured on, not a predecessor.
 
 import {MANEUVER_ANOMALOUS} from "./maneuverTargets";
 import {DEFAULT_SITE} from "./generateScenario";
@@ -40,7 +43,7 @@ export function maneuverSpecFor(kind) {
         // so the spec must declare it; the table keeps spec and generator in
         // agreement (the bench asserts they match).
         target: {kind, family: "maneuver",
-            // Same diameter table as M1, imported rather than repeated: the two
+            // Same diameter table as the maneuver botsets, imported rather than repeated: the two
             // sets share these kinds and a drift between them would make their
             // results incomparable without saying so.
             diameterM: MANEUVER_DIAMETER_M[kind],
