@@ -1,7 +1,7 @@
 
 export const extraCSS = `
 /* ============================================================================
-   SITREC DESIGN TOKENS  (single source of truth — see docs/temp/ui-redesign/DESIGN-LANGUAGE.md,
+   SITREC DESIGN TOKENS  (single source of truth — see private/notes/ui-redesign/DESIGN-LANGUAGE.md,
    a local-only working document; git history has it under docs/ui-redesign/ before 2026-08-17)
    D1: the app stays DARK; only per-window headers are light-grey.
    Values for existing surfaces preserve the current appearance (no visual change);

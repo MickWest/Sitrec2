@@ -107,6 +107,7 @@
       "<rootDir>/dist-standalone/",
       "<rootDir>/dist-serverless/",
       "<rootDir>/benchmarks/",
+      "<rootDir>/private/",
       "<rootDir>/tools/SitrecBridge/"
     ],
     "roots": [

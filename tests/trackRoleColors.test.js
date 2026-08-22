@@ -2,7 +2,7 @@
  * trackRoleColors.test.js — the shared camera/target/truth palette.
  *
  * These colors were chosen by measurement, not by eye
- * (docs/temp/TrackRoleColorProposal.md), and the measurements are the reason the
+ * (private/notes/TrackRoleColorProposal.md), and the measurements are the reason the
  * values are what they are. Without a test the next person to "tidy" the palette
  * has no way to know that softening the target red or adopting a brighter camera
  * blue quietly reintroduces a collision.

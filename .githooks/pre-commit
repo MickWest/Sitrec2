@@ -28,6 +28,36 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -qx "config/shared.en
     fi
 fi
 
+# Boundary guard for the nested private repository at private/. It is gitignored,
+# but `git add -f private` would still stage it as a gitlink (mode 160000), which
+# publishes its commit hash and breaks every clone. Also refuse any staged symlink
+# that points into private/ from a directory the build copies verbatim (docs/,
+# data/, tools/, assets/, sitrecServer/): copy-webpack-plugin and the docs walker
+# would dereference it straight into dist/.
+while IFS= read -r -d '' staged; do
+    case "$staged" in
+        private|private/*)
+            echo "❌ '$staged' belongs to the private repository and must never be committed here."
+            exit 1 ;;
+    esac
+    mode=$(git ls-files -s -- "$staged" | awk '{print $1}')
+    if [ "$mode" = "160000" ]; then
+        echo "❌ '$staged' is a gitlink (nested repository). Submodules are not allowed in this repo."
+        exit 1
+    fi
+    if [ "$mode" = "120000" ]; then
+        case "$staged" in
+            docs/*|data/*|tools/*|assets/*|sitrecServer/*)
+                target=$(git cat-file -p "$(git ls-files -s -- "$staged" | awk '{print $2}')")
+                case "$target" in
+                    private|private/*|*/private|*/private/*)
+                        echo "❌ '$staged' is a symlink into private/ inside a directory the build copies."
+                        exit 1 ;;
+                esac ;;
+        esac
+    fi
+done < <(git diff --cached --name-only -z --diff-filter=ACMR)
+
 # Fast path: no files staged under src/ → nothing to lint.
 STAGED_SRC=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^src/.*\.(js|mjs|ts)$' || true)
 if [ -z "$STAGED_SRC" ]; then

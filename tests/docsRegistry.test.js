@@ -154,8 +154,8 @@ describe("docs on disk", () => {
     // doc in the Help menu" but "is anyone allowed to see this at all".
     //
     // Plans, roadmaps, review reports and other agent-facing working documents must not
-    // be under docs/ AT ALL. They live in docs/temp/, which is gitignored and skipped by
-    // the build. docs/plans/ used to exist and every file in it shipped, which is the
+    // be under docs/ AT ALL. They live in private/notes/, in the nested private repo, outside
+    // docs/ and gitignored. docs/plans/ used to exist and every file in it shipped, which is the
     // failure these tests are shaped around.
 
     // Mirrors the walk in webpack.common.js: skip docs/temp, skip dot-entries. If that
@@ -212,7 +212,7 @@ describe("docs on disk", () => {
 
         // If this fires, either add the doc to src/docsRegistry.js or, if it is an
         // internal note, add it to INTENTIONALLY_UNREGISTERED above with a reason.
-        // If it is a plan, roadmap or review, it belongs in docs/temp/ instead.
+        // If it is a plan, roadmap or review, it belongs in private/notes/ instead.
         expect(unregistered).toEqual([]);
     });
 
@@ -221,7 +221,7 @@ describe("docs on disk", () => {
 
         // If this fires, a file in a docs/ subdirectory is about to be published and
         // nothing has vouched for it. If it is a plan, roadmap, review or working note,
-        // move it to docs/temp/. If it is a real developer reference, add it to
+        // move it to private/notes/. If it is a real developer reference, add it to
         // NESTED_DOCS above with a one-line description.
         expect(unlisted).toEqual([]);
     });

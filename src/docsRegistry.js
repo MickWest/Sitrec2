@@ -43,7 +43,7 @@
 // references must NOT be listed here.
 //
 // Plans, roadmaps and review reports must not be under docs/ AT ALL — they belong in
-// docs/temp/, which is gitignored and skipped by the build. Everything under docs/ is
+// private/notes/ — the nested private repo, outside docs/ and gitignored. Everything under docs/ is
 // published to the live site both as rendered .html and as raw .md, and the raw .md is
 // what getHelpDoc feeds the assistant, so a plan left in docs/ ships and gets quoted.
 //

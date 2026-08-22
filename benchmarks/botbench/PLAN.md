@@ -519,8 +519,8 @@ tests/botbench/generator.test.js             # fast CI smoke: determinism, feasi
   path + `--testPathIgnorePatterns /node_modules/ --forceExit`); Jest in-band
   for reproducible timings.
 - Results to `benchmarks/botbench/results/` — gitignored via the exact root
-  rule `/benchmarks/botbench/results/`. `benchmarks/botbench/analysis/` stays
-  tracked for human-authored notes.
+  rule `/benchmarks/botbench/results/`. the in-progress analysis notes live in the
+  private repo (`private/botbench/`), not in this tree.
 - Generate each scenario once; run all solvers against it; retain compact
   records only. Timings under Jest/Babel are ratios, not absolute (~17×
   slower than the bundle).
@@ -596,7 +596,7 @@ explicit deviations from the original contract text:
 - **M4 (Mick, 2026-07-22)** — a USER-FACING document with diagrams and tables
   explaining what was done and the results, written after the current tasks
   (M1/M2 sweep + initial analysis) are complete. DONE 2026-07-22 (after the
-  audit's "M4-GO"): benchmarks/botbench/analysis/BOTBench-Report.html — also
+  audit's "M4-GO"): private/botbench/BOTBench-Report.html — also
   published as a private artifact.
 - **Round 2 (deferred, recorded)** — physics/spline solvers on interesting
   cells; UWYO/GFS wind fixtures; burst/superpressure balloons; real terrain

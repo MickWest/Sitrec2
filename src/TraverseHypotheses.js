@@ -55,7 +55,7 @@ export const VIZ = {
     // the target IS the hypothesis. So target only has to clear truth, and is
     // free to keep Sitrec's long-standing red.
     //
-    // Chosen by measurement, not eye (docs/temp/TrackRoleColorProposal.md):
+    // Chosen by measurement, not eye (private/notes/TrackRoleColorProposal.md):
     //   camera #7fd4e8  0.63 from its nearest hypothesis colour, vs 0.50 for the
     //                   Track Browser's old blue against constAir — the most
     //                   common line on a chart. Chromatic rather than grey so it

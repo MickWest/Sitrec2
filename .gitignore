@@ -58,21 +58,21 @@ AGENTS.md
 # and per-machine, so it belongs to whoever opened the repo, not to the repo.
 .idea/
 
-# A transfer note about the Gimbal arguments: what the BOT tractability results
-# do and do not say about them. Reading and commentary rather than a result of
-# this benchmark, so it stays local — the same reasoning as the working notes
-# below. The rest of benchmarks/botbench/analysis/ IS tracked, so this names the
-# one file rather than the directory.
-/benchmarks/botbench/analysis/GIMBAL-APPLICABILITY.md
 
 # Local code-review / audit reports (not part of the codebase)
 /CODE-REVIEW-*.md
 
-# Working notes: investigation write-ups, findings reports, scratch analysis.
-# These are drafts that get rewritten as a task progresses — often several times
-# in a session — so they are kept local rather than committed. Anything that
-# earns a permanent home belongs in docs/ proper.
+# Former home of the working notes, now private/notes/ (see below). Kept as a
+# tripwire: nothing should be written here any more, and if something is, it
+# must still never be committed or published (webpack.common.js skips it too).
 /docs/temp/
+
+# The PRIVATE nested repository: agent instructions, Claude/Codex commands and
+# skills, working notes, probes, in-progress analysis and review reports. It has
+# its own .git and its own branches (wt pairs them with this repo's worktrees).
+# Ignored, never a submodule: a gitlink here would publish its commit hash and
+# break every public clone. The pre-commit hook refuses it even with `git add -f`.
+/private/
 
 # Solar/lunar alignment reference photographs, for checking refraction and
 # celestial positions against real images with known camera position and time.
@@ -80,4 +80,4 @@ AGENTS.md
 /alignment-tests/
 
 # Local AI-agent skills and configuration
-/.agents/
+/.agents

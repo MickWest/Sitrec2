@@ -283,11 +283,12 @@ module.exports = (env = {}) => ({
                     const rootReadme = path.resolve(__dirname, 'README.md');
                     const outputRootReadme = path.resolve(outputBaseDir, 'README.html');
 
-                    // Local-only working notes that live under docs/ but must never ship.
-                    // This walk emits three things per file — the rendered .html, the raw
-                    // .md (for chatbot access), and any non-markdown file verbatim — so an
-                    // un-skipped directory here publishes its whole contents. Kept in step
-                    // with the /docs/temp/ entry in .gitignore.
+                    // docs/temp/ was the home of local-only working notes (now private/notes/,
+                    // outside docs/ entirely). The skip stays as a tripwire: this walk emits
+                    // three things per file — the rendered .html, the raw .md (for chatbot
+                    // access), and any non-markdown file verbatim — so an un-skipped directory
+                    // here publishes its whole contents. Kept in step with the /docs/temp/ entry
+                    // in .gitignore.
                     const skipDirs = new Set(['temp']);
 
                     const convertMarkdownFiles = async (dir) => {

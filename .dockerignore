@@ -1,0 +1,8 @@
+# Keep local-only material out of the Docker build context. The Dockerfiles only
+# ever COPY named directories, so nothing here would reach an image anyway —
+# this is belt-and-braces so that a future `COPY . .` cannot leak it either.
+# Do NOT add dist/ or dist-*/ here: Dockerfile.release copies dist/ into the image.
+private/
+docs/temp/
+.DS_Store
+**/.DS_Store
