@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="370" viewBox="0 0 760 370" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="370" fill="#FFFFFF"/>
+<defs></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">Two ladders, and two kinds of range</text>
+<text x="40.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">two unrelated ladders</text>
+<text x="60.0" y="90.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">pointing-drift ladder</text>
+<line x1="60.0" y1="112.0" x2="84.0" y2="112.0" stroke="#4E5A66" stroke-width="2"/>
+<text x="92.0" y="116.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">0 %</text>
+<line x1="60.0" y1="136.0" x2="84.0" y2="136.0" stroke="#4E5A66" stroke-width="2"/>
+<text x="92.0" y="140.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">5 %</text>
+<line x1="60.0" y1="160.0" x2="84.0" y2="160.0" stroke="#4E5A66" stroke-width="2"/>
+<text x="92.0" y="164.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">20 %</text>
+<line x1="64.0" y1="100.0" x2="64.0" y2="170.0" stroke="#7E8893" stroke-width="1"/>
+<line x1="80.0" y1="100.0" x2="80.0" y2="170.0" stroke="#7E8893" stroke-width="1"/>
+<text x="60.0" y="190.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">of the 3° field, slid over the clip</text>
+<text x="250.0" y="90.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">held-range ladder</text>
+<line x1="250.0" y1="112.0" x2="274.0" y2="112.0" stroke="#4E5A66" stroke-width="2"/>
+<text x="282.0" y="116.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">1 km</text>
+<line x1="250.0" y1="136.0" x2="274.0" y2="136.0" stroke="#4E5A66" stroke-width="2"/>
+<text x="282.0" y="140.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">2 km</text>
+<line x1="250.0" y1="160.0" x2="274.0" y2="160.0" stroke="#4E5A66" stroke-width="2"/>
+<text x="282.0" y="164.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">4 km</text>
+<line x1="250.0" y1="184.0" x2="274.0" y2="184.0" stroke="#4E5A66" stroke-width="2"/>
+<text x="282.0" y="188.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">8 km …</text>
+<line x1="254.0" y1="100.0" x2="254.0" y2="194.0" stroke="#7E8893" stroke-width="1"/>
+<line x1="270.0" y1="100.0" x2="270.0" y2="194.0" stroke="#7E8893" stroke-width="1"/>
+<text x="250.0" y="214.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the fit re-solved at each held range</text>
+<text x="470.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">slant vs horizontal range</text>
+<polygon points="530.0,282.0 640.0,282.0 640.0,92.0" fill="none" stroke="#17202A" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="585.0" y="300.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">horizontal (map) range: the set&#x27;s name, &#x27;2 mi&#x27; = 3.2 km</text>
+<text x="648.0" y="184.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">height</text>
+<text x="648.0" y="198.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">difference: 5.5 km</text>
+<text x="574.0" y="181.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;" transform="rotate(-60 574.0 181.0)">slant range 6.4 km: what the fit sees</text>
+<circle cx="530.0" cy="282.0" r="6" fill="#2F6FD6"/>
+<text x="522.0" y="272.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#2F6FD6" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">platform</text>
+<circle cx="640.0" cy="92.0" r="6" fill="#0A9384"/>
+<text x="652.0" y="96.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">balloon</text>
+<text x="380.0" y="340.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">&#x27;Rung&#x27; is one step of a test series; this programme has two ladders that never meet.</text>
+<text x="380.0" y="356.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Ranges in these pages are slant unless marked horizontal.</text>
+</svg>

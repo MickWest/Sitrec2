@@ -128,6 +128,7 @@ const en = {
                 lensGhost: "Lens Ghosts and Reflections",
                 scriptedVideo: "Scripted Camera Moves",
                 wind: "Wind",
+                traverseConcepts: "Traverse Analysis: the Ideas First",
                 traverseMethods: "Traverse Methods",
                 traverseAnalysis: "Traverse Analysis and the Verdict",
                 botBench: "BOTBench — Bearings-Only Traversal Bulk Analysis",

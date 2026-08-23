@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="306" viewBox="0 0 760 306" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="306" fill="#FFFFFF"/>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#4E5A66"/></marker></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">A camera gives a direction, not a distance</text>
+<line x1="110.0" y1="230.0" x2="700.0" y2="70.0" stroke="#7E8893" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#ai)"/>
+<circle cx="110.0" cy="230.0" r="7" fill="#2F6FD6"/>
+<text x="110.0" y="254.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#2F6FD6" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">camera</text>
+<text x="154.0" y="238.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">it recorded one direction: this ray</text>
+<circle cx="275.2" cy="185.2" r="7" fill="#C9690F"/>
+<text x="275.2" y="171.2" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#C9690F" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">near</text>
+<circle cx="434.5" cy="142.0" r="7" fill="#0A9384"/>
+<text x="434.5" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">true</text>
+<circle cx="611.5" cy="94.0" r="7" fill="#A83A9F"/>
+<text x="611.5" y="80.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#A83A9F" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">far</text>
+<text x="380.0" y="275.0" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Every dot on the ray looks identical to the camera. A bearing is a direction, never a distance.</text>
+</svg>

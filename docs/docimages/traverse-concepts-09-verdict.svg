@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="398" viewBox="0 0 760 398" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="398" fill="#FFFFFF"/>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#4E5A66"/></marker></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">The verdict is a survivor count, with one wording per count</text>
+<rect x="40.0" y="60.0" width="134.0" height="44.0" rx="4" fill="#F4F6F5" stroke="#D3D8DC" stroke-width="1"/>
+<text x="107.0" y="86.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#17202A" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">wind-blown balloon</text>
+<rect x="182.0" y="60.0" width="134.0" height="44.0" rx="4" fill="#F4F6F5" stroke="#D3D8DC" stroke-width="1"/>
+<text x="249.0" y="86.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#17202A" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">fixed-wing aircraft</text>
+<rect x="324.0" y="60.0" width="134.0" height="44.0" rx="4" fill="#F4F6F5" stroke="#D3D8DC" stroke-width="1"/>
+<text x="391.0" y="86.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#17202A" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">multirotor drone</text>
+<rect x="466.0" y="60.0" width="134.0" height="44.0" rx="4" fill="#F4F6F5" stroke="#D3D8DC" stroke-width="1"/>
+<text x="533.0" y="86.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#17202A" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">stationary / ground</text>
+<rect x="608.0" y="60.0" width="134.0" height="44.0" rx="4" fill="#F4F6F5" stroke="#D3D8DC" stroke-width="1"/>
+<text x="675.0" y="86.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#17202A" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">satellite or star</text>
+<text x="40.0" y="50.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the five interpretation classes the verdict counts (geometric and curve fits are screens, not classes)</text>
+<rect x="40.0" y="130.0" width="700.0" height="36.0" rx="4" fill="#F6E6D6" stroke="#C9690F" stroke-width="1"/>
+<text x="390.0" y="153.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#C9690F" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the screen: complete search? fits the rays (about 0.05° after the solver allowance)? ordinary motion (≤ 1.5 g, ≤ 650 kt)?</text>
+<line x1="107.0" y1="104.0" x2="107.0" y2="128.0" stroke="#7E8893" stroke-width="1" marker-end="url(#ai)"/>
+<line x1="249.0" y1="104.0" x2="249.0" y2="128.0" stroke="#7E8893" stroke-width="1" marker-end="url(#ai)"/>
+<line x1="391.0" y1="104.0" x2="391.0" y2="128.0" stroke="#7E8893" stroke-width="1" marker-end="url(#ai)"/>
+<line x1="533.0" y1="104.0" x2="533.0" y2="128.0" stroke="#7E8893" stroke-width="1" marker-end="url(#ai)"/>
+<line x1="675.0" y1="104.0" x2="675.0" y2="128.0" stroke="#7E8893" stroke-width="1" marker-end="url(#ai)"/>
+<text x="390.0" y="364.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">a catalogued satellite or star is held to 0.10–0.15° and skips the motion screen: its motion is known</text>
+<text x="390.0" y="378.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">not modelled, and disclosed as such: birds and insects, airborne debris, helicopters and rockets, reflections and glare, video artefacts</text>
+<line x1="390.0" y1="166.0" x2="390.0" y2="196.0" stroke="#7E8893" stroke-width="1.5" marker-end="url(#ai)"/>
+<text x="404.0" y="186.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">count the survivors</text>
+<rect x="140.0" y="210.0" width="40.0" height="26.0" rx="3" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<text x="160.0" y="228.0" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">0</text>
+<text x="192.0" y="228.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">unresolved — nothing conventional passed; not an anomaly claim</text>
+<rect x="140.0" y="244.0" width="40.0" height="26.0" rx="3" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<text x="160.0" y="262.0" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">1</text>
+<text x="192.0" y="262.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">consistent with ONE class, but not identified</text>
+<rect x="140.0" y="278.0" width="40.0" height="26.0" rx="3" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<text x="160.0" y="296.0" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">2+</text>
+<text x="192.0" y="296.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">consistent with SEVERAL conventional classes</text>
+<rect x="40.0" y="318.0" width="700.0" height="28.0" rx="3" fill="#DCE6F8" stroke="#2F6FD6" stroke-width="1"/>
+<text x="390.0" y="337.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#2F6FD6" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">side door — &#x27;probably a wind-blown balloon&#x27; — opens only when an independent wind measurement agrees with the fit</text>
+</svg>

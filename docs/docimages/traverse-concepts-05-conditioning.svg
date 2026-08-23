@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="476" viewBox="0 0 760 476" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="476" fill="#FFFFFF"/>
+<defs></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">Conditioning: can the rays pin a range at all?</text>
+<text x="40.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">rays crossing steeply: a crisp intersection</text>
+<text x="400.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">rays nearly parallel: a smear</text>
+<line x1="60.0" y1="240.0" x2="300.0" y2="100.0" stroke="#7E8893" stroke-width="1.5" stroke-dasharray="5 4"/>
+<line x1="300.0" y1="240.0" x2="60.0" y2="100.0" stroke="#7E8893" stroke-width="1.5" stroke-dasharray="5 4"/>
+<circle cx="180.0" cy="170.0" r="7" fill="#0A9384"/>
+<text x="215.0" y="174.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">range determined</text>
+<circle cx="60.0" cy="240.0" r="5" fill="#2F6FD6"/>
+<text x="60.0" y="258.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#2F6FD6" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">camera, frame 1</text>
+<circle cx="300.0" cy="240.0" r="5" fill="#2F6FD6"/>
+<text x="300.0" y="258.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#2F6FD6" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">camera, frame N</text>
+<line x1="420.0" y1="195.0" x2="740.0" y2="140.0" stroke="#7E8893" stroke-width="1.5" stroke-dasharray="5 4"/>
+<line x1="420.0" y1="178.0" x2="740.0" y2="150.0" stroke="#7E8893" stroke-width="1.5" stroke-dasharray="5 4"/>
+<circle cx="420.0" cy="195.0" r="5" fill="#2F6FD6"/>
+<circle cx="420.0" cy="178.0" r="5" fill="#2F6FD6"/>
+<text x="420.0" y="214.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#2F6FD6" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">camera, frames 1 and N</text>
+<ellipse cx="600" cy="163" rx="120" ry="9" fill="#DDEFEC" stroke="#0A9384" stroke-width="1.5" transform="rotate(-7.5 600 163)"/>
+<text x="600.0" y="206.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">anywhere along here fits</text>
+<text x="380.0" y="284.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">with nearly parallel rays the cost is flat in range; the only slope left is a dip at the camera</text>
+<line x1="120.0" y1="392.0" x2="640.0" y2="392.0" stroke="#D3D8DC" stroke-width="1"/>
+<line x1="120.0" y1="292.0" x2="120.0" y2="392.0" stroke="#D3D8DC" stroke-width="1"/>
+<text x="640.0" y="408.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">assumed range →</text>
+<text x="112.0" y="304.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">cost ↑</text>
+<polyline points="120.0,388.0 128.7,378.1 137.3,371.5 146.0,367.0 154.7,364.1 163.3,362.1 172.0,360.7 180.7,359.8 189.3,359.2 198.0,358.8 206.7,358.5 215.3,358.4 224.0,358.2 232.7,358.2 241.3,358.1 250.0,358.1 258.7,358.0 267.3,358.0 276.0,358.0 284.7,358.0 293.3,358.0 302.0,358.0 310.7,358.0 319.3,358.0 328.0,358.0 336.7,358.0 345.3,358.0 354.0,358.0 362.7,358.0 371.3,358.0 380.0,358.0 388.7,358.0 397.3,358.0 406.0,358.0 414.7,358.0 423.3,358.0 432.0,358.0 440.7,358.0 449.3,358.0 458.0,358.0 466.7,358.0 475.3,358.0 484.0,358.0 492.7,358.0 501.3,358.0 510.0,358.0 518.7,358.0 527.3,358.0 536.0,358.0 544.7,358.0 553.3,358.0 562.0,358.0 570.7,358.0 579.3,358.0 588.0,358.0 596.7,358.0 605.3,358.0 614.0,358.0 622.7,358.0 631.3,358.0 640.0,358.0" fill="none" stroke="#17202A" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="120.0" cy="388.0" r="6" fill="#B5372E"/>
+<text x="122.0" y="408.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#B5372E" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">a free fit rolls into the dip at range 0: the &#x27;collapse&#x27;</text>
+<text x="380.0" y="446.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">rcond scores how sharply the rays cross, 0 to 1, quoted as log10:</text>
+<text x="380.0" y="462.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">near −1 is a clean crossing; −3 or below means range is undetermined by the rays.</text>
+</svg>

@@ -209,6 +209,11 @@ export const helpDocs = [
 
     // ── Analysis ────────────────────────────────────────────────────────────
     {
+        file: "docs/TraverseConcepts", labelKey: "menus.help.documentation.traverseConcepts",
+        section: "analysis", menuId: "traverse", role: "tutorial",
+        chatDesc: "The ideas a reader needs before the traverse analysis, one picture each, in the order they build: a ray gives direction not distance; the exact-ray family; residual; parallax and why a turning platform prices wrong ranges; conditioning and rcond; priors; the ordinariness cost and object classes; search box versus envelope; the verdict as a survivor count; relSep, rank-1 and blind; the Nelder-Mead simplex and its stop rule; IFOV and sub-pixel size bounds; the two ladders and slant versus horizontal range; the existence test; dynamics order and the fast-far trap; the benchmark botsets. Read this for 'what is a residual', 'what is a prior', 'what is a simplex', 'what does rcond mean', 'what is relSep', 'what is the exact-ray family', 'what is a bound hit', or any other term the analysis pages use without defining.",
+    },
+    {
         file: "docs/TraverseMethods", labelKey: "menus.help.documentation.traverseMethods",
         section: "analysis", menuId: "traverse", role: "reference",
         chatDesc: "How the target/UAP path (the 'traverse') is computed from the camera lines of sight, method by method — constant distance, constant speed, constant altitude, straight line, wind-blown, terrain, and the global fits (constant velocity, constant acceleration, Kalman, Monte Carlo, minimum acceleration, minimum speed, and the physics models for balloons, sky lanterns, fixed-wing aircraft and quadcopters). Each method's entry says what it ASSUMES and what it does NOT establish. Read for 'how does method X work', 'which traverse should I use', or 'why do the methods disagree'.",

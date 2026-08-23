@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="306" viewBox="0 0 760 306" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="306" fill="#FFFFFF"/>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#4E5A66"/></marker></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">Residual: how far a candidate misses the rays</text>
+<line x1="120.0" y1="240.0" x2="700.0" y2="90.0" stroke="#7E8893" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#ai)"/>
+<line x1="120.0" y1="240.0" x2="559.0" y2="205.0" stroke="#4E5A66" stroke-width="1.5"/>
+<circle cx="120.0" cy="240.0" r="7" fill="#2F6FD6"/>
+<text x="120.0" y="264.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#2F6FD6" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">camera</text>
+<circle cx="559.0" cy="205.0" r="7" fill="#4E5A66"/>
+<text x="559.0" y="231.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">candidate track, this frame</text>
+<text x="696.0" y="80.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7E8893" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">where the ray points</text>
+<polyline points="207.1,217.5 207.3,218.2 207.5,219.0 207.7,219.7 207.9,220.5 208.0,221.3 208.2,222.0 208.3,222.8 208.5,223.6 208.6,224.3 208.8,225.1 208.9,225.9 209.0,226.6 209.1,227.4 209.2,228.2 209.3,229.0 209.4,229.7 209.5,230.5 209.6,231.3 209.6,232.1 209.7,232.8" fill="none" stroke="#17202A" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="216.0" y="252.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">residual: this angle, in degrees</text>
+<text x="380.0" y="278.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Averaged over every frame. Zero means the track sits on every ray;</text>
+<text x="380.0" y="294.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">about 0.05° after the ray-solver allowance passes the gallery&#x27;s screen; the benchmark&#x27;s existence test uses a 0.02° floor.</text>
+</svg>

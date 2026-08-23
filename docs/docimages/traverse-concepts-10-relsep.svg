@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="378" viewBox="0 0 760 378" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="378" fill="#FFFFFF"/>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#4E5A66"/></marker></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">relSep: how far the found track is from the truth</text>
+<line x1="60.0" y1="212.0" x2="104.0" y2="122.2" stroke="#7E8893" stroke-width="1" stroke-dasharray="4 3"/>
+<circle cx="60.0" cy="212.0" r="6" fill="#2F6FD6"/>
+<text x="72.0" y="216.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#2F6FD6" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">platform</text>
+<text x="72.0" y="230.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">(true range: platform to true track)</text>
+<polyline points="110.0,110.0 215.0,116.7 320.0,117.3 425.0,111.1 530.0,103.9 635.0,102.3" fill="none" stroke="#0A9384" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="645.0" y="106.3" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">true track</text>
+<polyline points="110.0,181.8 215.0,182.7 320.0,172.0 425.0,159.4 530.0,156.6 635.0,166.1" fill="none" stroke="#C9690F" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="645.0" y="170.1" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">found track</text>
+<text x="645.0" y="184.1" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">(rank-1 tile)</text>
+<line x1="110.0" y1="179.8" x2="110.0" y2="112.0" stroke="#4E5A66" stroke-width="1.2" marker-end="url(#ai)"/>
+<circle cx="110.0" cy="110.0" r="4" fill="#0A9384"/>
+<circle cx="110.0" cy="181.8" r="4" fill="#C9690F"/>
+<line x1="215.0" y1="180.7" x2="215.0" y2="118.7" stroke="#4E5A66" stroke-width="1.2" marker-end="url(#ai)"/>
+<circle cx="215.0" cy="116.7" r="4" fill="#0A9384"/>
+<circle cx="215.0" cy="182.7" r="4" fill="#C9690F"/>
+<line x1="320.0" y1="170.0" x2="320.0" y2="119.3" stroke="#4E5A66" stroke-width="1.2" marker-end="url(#ai)"/>
+<circle cx="320.0" cy="117.3" r="4" fill="#0A9384"/>
+<circle cx="320.0" cy="172.0" r="4" fill="#C9690F"/>
+<line x1="425.0" y1="157.4" x2="425.0" y2="113.1" stroke="#4E5A66" stroke-width="1.2" marker-end="url(#ai)"/>
+<circle cx="425.0" cy="111.1" r="4" fill="#0A9384"/>
+<circle cx="425.0" cy="159.4" r="4" fill="#C9690F"/>
+<line x1="530.0" y1="154.6" x2="530.0" y2="105.9" stroke="#4E5A66" stroke-width="1.2" marker-end="url(#ai)"/>
+<circle cx="530.0" cy="103.9" r="4" fill="#0A9384"/>
+<circle cx="530.0" cy="156.6" r="4" fill="#C9690F"/>
+<line x1="635.0" y1="164.1" x2="635.0" y2="104.3" stroke="#4E5A66" stroke-width="1.2" marker-end="url(#ai)"/>
+<circle cx="635.0" cy="102.3" r="4" fill="#0A9384"/>
+<circle cx="635.0" cy="166.1" r="4" fill="#C9690F"/>
+<text x="380.0" y="247.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">relSep = mean arrow length ÷ mean true range.  0 = exact;  0.05 = within 5%;  1 = wrong by the object&#x27;s whole distance.</text>
+<text x="380.0" y="268.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">&#x27;rank-1&#x27; = the top tile in the gallery; &#x27;blind&#x27; = the truth was never shown to the ranking.</text>
+<text x="116.0" y="286.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">relSep is plotted on a log ruler — the score&#x27;s own scale, not an axis of the tracks above:</text>
+<rect x="116.0" y="292.0" width="528.0" height="56.0" rx="4" fill="none" stroke="#D3D8DC" stroke-width="1"/>
+<line x1="140.0" y1="320.0" x2="620.0" y2="320.0" stroke="#17202A" stroke-width="1.2"/>
+<line x1="140.0" y1="315.0" x2="140.0" y2="325.0" stroke="#17202A" stroke-width="1.2"/>
+<text x="140.0" y="340.0" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">0.0001</text>
+<text x="200.0" y="308.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">one decade = ×10</text>
+<line x1="260.0" y1="315.0" x2="260.0" y2="325.0" stroke="#17202A" stroke-width="1.2"/>
+<text x="260.0" y="340.0" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">0.001</text>
+<text x="320.0" y="308.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">one decade = ×10</text>
+<line x1="380.0" y1="315.0" x2="380.0" y2="325.0" stroke="#17202A" stroke-width="1.2"/>
+<text x="380.0" y="340.0" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">0.01</text>
+<text x="440.0" y="308.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">one decade = ×10</text>
+<line x1="500.0" y1="315.0" x2="500.0" y2="325.0" stroke="#17202A" stroke-width="1.2"/>
+<text x="500.0" y="340.0" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">0.1</text>
+<text x="560.0" y="308.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">one decade = ×10</text>
+<line x1="620.0" y1="315.0" x2="620.0" y2="325.0" stroke="#17202A" stroke-width="1.2"/>
+<text x="620.0" y="340.0" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">1</text>
+<text x="380.0" y="364.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">a log ruler: &#x27;four decades&#x27; means a factor of ten thousand, not forty years</text>
+</svg>

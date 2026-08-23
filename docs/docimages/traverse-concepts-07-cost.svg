@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="364" viewBox="0 0 760 364" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="364" fill="#FFFFFF"/>
+<defs><marker id="an" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#C9690F"/></marker></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">Ordinariness cost: what a candidate would have to be</text>
+<text x="158.0" y="100.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">size (m, log)</text>
+<line x1="170.0" y1="95.0" x2="650.0" y2="95.0" stroke="#D3D8DC" stroke-width="2"/>
+<rect x="218.2" y="85.0" width="256.3" height="20.0" rx="3" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<text x="346.3" y="79.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">balloon class band</text>
+<circle cx="322.7" cy="95.0" r="6" fill="#C9690F"/>
+<text x="322.7" y="119.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9690F" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">0.9 m</text>
+<text x="158.0" y="170.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">speed (kt)</text>
+<line x1="170.0" y1="165.0" x2="650.0" y2="165.0" stroke="#D3D8DC" stroke-width="2"/>
+<rect x="170.0" y="155.0" width="54.9" height="20.0" rx="3" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<text x="197.4" y="149.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">balloon class band</text>
+<circle cx="285.2" cy="165.0" r="6" fill="#C9690F"/>
+<text x="285.2" y="189.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9690F" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">168 kt</text>
+<line x1="226.9" y1="165.0" x2="277.2" y2="165.0" stroke="#C9690F" stroke-width="2" marker-end="url(#an)"/>
+<text x="299.2" y="155.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">outside by log10(168/80) = 0.32 decades</text>
+<text x="158.0" y="240.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">turning g</text>
+<line x1="170.0" y1="235.0" x2="650.0" y2="235.0" stroke="#D3D8DC" stroke-width="2"/>
+<rect x="170.0" y="225.0" width="24.0" height="20.0" rx="3" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<text x="182.0" y="219.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">balloon class band</text>
+<circle cx="174.3" cy="235.0" r="6" fill="#C9690F"/>
+<text x="174.3" y="259.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9690F" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">0.09 g</text>
+<text x="170.0" y="283.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">total for the balloon class: 0 + 0.32 + 0 = 0.32 decades, about twice outside the band</text>
+<text x="380.0" y="310.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Cost = the decades each requirement sits outside the band, summed; take the best class. 0 = some ordinary class contains it.</text>
+<text x="380.0" y="328.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Reported beside each candidate as a diagnostic: it never changes the ranking.</text>
+<text x="380.0" y="346.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">scale, per requirement: 0 inside · 0.3 a factor of two outside · 1 ten times · 2 a hundred times</text>
+</svg>

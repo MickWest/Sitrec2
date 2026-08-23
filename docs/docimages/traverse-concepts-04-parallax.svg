@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="498" viewBox="0 0 760 498" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="498" fill="#FFFFFF"/>
+<defs><marker id="ap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#2F6FD6"/></marker><marker id="an" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#C9690F"/></marker><marker id="af" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#A83A9F"/></marker></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">Parallax: the rays pivot about the object</text>
+<line x1="114.0" y1="400.0" x2="368.9" y2="140.4" stroke="#7E8893" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+<line x1="150.0" y1="400.0" x2="319.9" y2="140.4" stroke="#7E8893" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+<line x1="186.0" y1="400.0" x2="271.0" y2="140.4" stroke="#7E8893" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+<line x1="222.0" y1="400.0" x2="222.0" y2="140.4" stroke="#7E8893" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+<line x1="258.0" y1="400.0" x2="173.0" y2="140.4" stroke="#7E8893" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+<polyline points="114.0,400.0 132.0,400.0 150.0,400.0 168.0,400.0 186.0,400.0 204.0,400.0 222.0,400.0 240.0,400.0 258.0,400.0" fill="none" stroke="#2F6FD6" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<line x1="168.0" y1="400.0" x2="178.8" y2="400.0" stroke="none" stroke-width="1.5" marker-end="url(#ap)"/>
+<circle cx="258.0" cy="400.0" r="5" fill="#2F6FD6"/>
+<text x="268.0" y="405.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#2F6FD6" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">platform</text>
+<circle cx="222.0" cy="290.0" r="7" fill="#0A9384"/>
+<text x="234.0" y="294.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">balloon (the pivot)</text>
+<polyline points="168.0,345.0 177.0,345.0 186.0,345.0 195.0,345.0 204.0,345.0 213.0,345.0 222.0,345.0 231.0,345.0 240.0,345.0" fill="none" stroke="#C9690F" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<line x1="195.0" y1="345.0" x2="200.4" y2="345.0" stroke="none" stroke-width="1.5" marker-end="url(#an)"/>
+<text x="142.0" y="349.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9690F" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">near: with the platform,</text>
+<text x="142.0" y="363.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9690F" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">at half its speed</text>
+<polyline points="362.4,147.0 339.0,147.0 315.6,147.0 292.2,147.0 268.8,147.0 245.4,147.0 222.0,147.0 198.6,147.0 175.2,147.0" fill="none" stroke="#A83A9F" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<line x1="292.2" y1="147.0" x2="268.8" y2="147.0" stroke="none" stroke-width="1.5" marker-end="url(#af)"/>
+<text x="222.0" y="133.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#A83A9F" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">far: against it, at 1.3× its speed</text>
+<text x="80.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">straight platform</text>
+<text x="245.0" y="442.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">near and far members are straight too:</text>
+<text x="245.0" y="456.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">only their speeds differ</text>
+<line x1="463.3" y1="406.3" x2="726.9" y2="131.8" stroke="#7E8893" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+<line x1="516.3" y1="379.3" x2="654.8" y2="168.6" stroke="#7E8893" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+<line x1="575.0" y1="370.0" x2="575.0" y2="181.2" stroke="#7E8893" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+<line x1="633.7" y1="379.3" x2="495.2" y2="168.6" stroke="#7E8893" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+<line x1="686.7" y1="406.3" x2="423.1" y2="131.8" stroke="#7E8893" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+<polyline points="463.3,406.3 488.7,390.7 516.3,379.3 545.3,372.3 575.0,370.0 604.7,372.3 633.7,379.3 661.3,390.7 686.7,406.3" fill="none" stroke="#2F6FD6" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<line x1="545.3" y1="372.3" x2="563.1" y2="370.9" stroke="none" stroke-width="1.5" marker-end="url(#ap)"/>
+<circle cx="686.7" cy="406.3" r="5" fill="#2F6FD6"/>
+<text x="696.7" y="411.3" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#2F6FD6" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">platform</text>
+<circle cx="575.0" cy="290.0" r="7" fill="#0A9384"/>
+<text x="587.0" y="294.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">balloon (the pivot)</text>
+<polyline points="519.2,348.1 531.9,340.4 545.6,334.6 560.1,331.2 575.0,330.0 589.9,331.2 604.4,334.6 618.1,340.4 630.8,348.1" fill="none" stroke="#C9690F" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<line x1="560.1" y1="331.2" x2="569.1" y2="330.5" stroke="none" stroke-width="1.5" marker-end="url(#an)"/>
+<text x="493.2" y="352.1" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9690F" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">near: with the platform,</text>
+<text x="493.2" y="366.1" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9690F" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">at half its speed</text>
+<polyline points="720.2,138.8 687.1,159.1 651.3,173.9 613.6,183.0 575.0,186.0 536.4,183.0 498.7,173.9 462.9,159.1 429.8,138.8" fill="none" stroke="#A83A9F" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<line x1="613.6" y1="183.0" x2="575.0" y2="186.0" stroke="none" stroke-width="1.5" marker-end="url(#af)"/>
+<text x="575.0" y="124.8" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#A83A9F" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">far: against it, at 1.3× its speed</text>
+<text x="410.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">turning platform</text>
+<text x="575.0" y="442.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">both members inherit the turn as a bow,</text>
+<text x="575.0" y="456.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">and a bow costs sideways g</text>
+<text x="380.0" y="482.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">The rays all pass through the balloon, so sliding a track along them pivots it about the balloon.</text>
+</svg>

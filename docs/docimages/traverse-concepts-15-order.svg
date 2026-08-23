@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="336" viewBox="0 0 760 336" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="336" fill="#FFFFFF"/>
+<defs></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">Dynamics order: how much motion the rays can still range</text>
+<rect x="50.0" y="245.0" width="162.0" height="34.0" rx="3" fill="#F4DEDB" stroke="#B5372E" stroke-width="1"/>
+<text x="58.0" y="259.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">order 0</text>
+<text x="58.0" y="273.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">not even constant velocity</text>
+<text x="119.0" y="238.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the rays cannot range any motion model</text>
+<rect x="222.0" y="191.0" width="162.0" height="34.0" rx="3" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<text x="230.0" y="205.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">order 1</text>
+<text x="230.0" y="219.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">constant velocity</text>
+<text x="291.0" y="184.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">a straight line at one speed can be ranged</text>
+<rect x="394.0" y="137.0" width="162.0" height="34.0" rx="3" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<text x="402.0" y="151.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">order 2</text>
+<text x="402.0" y="165.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">+ constant acceleration</text>
+<text x="463.0" y="130.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">a curve can be ranged</text>
+<rect x="566.0" y="83.0" width="162.0" height="34.0" rx="3" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<text x="574.0" y="97.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">order 3</text>
+<text x="574.0" y="111.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">+ changing acceleration</text>
+<text x="635.0" y="76.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">a wiggle can be ranged</text>
+<text x="380.0" y="306.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">&#x27;Max observable dynamics order&#x27; is the highest step the geometry supports.</text>
+<text x="380.0" y="322.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">The benchmark&#x27;s Mach-5 case read 0: the rays could not range even a straight line.</text>
+</svg>

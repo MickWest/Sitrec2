@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="326" viewBox="0 0 760 326" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="326" fill="#FFFFFF"/>
+<defs></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">The benchmark: a deck of scenarios with answer keys</text>
+<rect x="84.0" y="70.0" width="140.0" height="80.0" rx="4" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<rect x="90.0" y="76.0" width="140.0" height="80.0" rx="4" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<rect x="96.0" y="82.0" width="140.0" height="80.0" rx="4" fill="#DDEFEC" stroke="#0A9384" stroke-width="1"/>
+<text x="166.0" y="116.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">balloons</text>
+<text x="166.0" y="184.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">party balloons drifting with the wind</text>
+<text x="166.0" y="199.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">four ranges × three platform paths</text>
+<text x="166.0" y="222.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">answer key on the back</text>
+<rect x="320.0" y="70.0" width="140.0" height="80.0" rx="4" fill="#F1F3F5" stroke="#4E5A66" stroke-width="1"/>
+<rect x="326.0" y="76.0" width="140.0" height="80.0" rx="4" fill="#F1F3F5" stroke="#4E5A66" stroke-width="1"/>
+<rect x="332.0" y="82.0" width="140.0" height="80.0" rx="4" fill="#F1F3F5" stroke="#4E5A66" stroke-width="1"/>
+<text x="402.0" y="116.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">ordinary manoeuvres</text>
+<text x="402.0" y="184.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">straight, turning, looping flight</text>
+<text x="402.0" y="199.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">that a real class can fly</text>
+<text x="402.0" y="222.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">answer key on the back</text>
+<rect x="556.0" y="70.0" width="140.0" height="80.0" rx="4" fill="#F4DEDB" stroke="#B5372E" stroke-width="1"/>
+<rect x="562.0" y="76.0" width="140.0" height="80.0" rx="4" fill="#F4DEDB" stroke="#B5372E" stroke-width="1"/>
+<rect x="568.0" y="82.0" width="140.0" height="80.0" rx="4" fill="#F4DEDB" stroke="#B5372E" stroke-width="1"/>
+<text x="638.0" y="116.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#B5372E" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">declared anomalies</text>
+<text x="638.0" y="184.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">deliberately impossible objects:</text>
+<text x="638.0" y="199.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">instant turns, 50 g, Mach 5 and Mach 50</text>
+<text x="638.0" y="222.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">answer key on the back</text>
+<text x="380.0" y="276.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Every scenario has known truth and is run blind: the analysis never sees the key.</text>
+<text x="380.0" y="292.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Scoring compares the answer with the key afterwards.</text>
+<text x="380.0" y="312.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Impossible objects test that nothing is explained away; balloons test that the ordinary answer is found when it exists.</text>
+</svg>

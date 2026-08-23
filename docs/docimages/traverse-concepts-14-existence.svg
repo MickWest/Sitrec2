@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="362" viewBox="0 0 760 362" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="362" fill="#FFFFFF"/>
+<defs><marker id="at" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#0A9384"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#B5372E"/></marker></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">The existence test: success is not finding the truth</text>
+<text x="40.0" y="62.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">success: something as ordinary as the truth fits</text>
+<rect x="40.0" y="80.0" width="340.0" height="190.0" rx="0" fill="none" stroke="#D3D8DC" stroke-width="1"/>
+<rect x="40.0" y="80.0" width="240.0" height="190.0" rx="0" fill="#DDEFEC"/>
+<line x1="280.0" y1="80.0" x2="280.0" y2="270.0" stroke="#17202A" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="46.0" y="250.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">admitted: fits at least</text>
+<text x="46.0" y="264.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">as well as the truth</text>
+<text x="374.0" y="264.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">residual →</text>
+<text x="46.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">cost ↑</text>
+<circle cx="80.0" cy="170.0" r="7" fill="#0A9384"/>
+<text x="92.0" y="164.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">truth</text>
+<text x="92.0" y="178.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">its cost is the target</text>
+<circle cx="330.0" cy="230.0" r="6" fill="#7E8893"/>
+<text x="374.0" y="208.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">fits worse:</text>
+<text x="374.0" y="222.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">not admitted</text>
+<circle cx="120.0" cy="215.0" r="7" fill="#C9690F"/>
+<line x1="85.0" y1="180.0" x2="114.0" y2="207.0" stroke="#0A9384" stroke-width="1.5" marker-end="url(#at)"/>
+<text x="132.0" y="209.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">found:</text>
+<text x="132.0" y="223.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">admitted, lower cost —</text>
+<text x="132.0" y="237.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">an ordinary story exists</text>
+<text x="400.0" y="62.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">a miss, provable</text>
+<rect x="400.0" y="80.0" width="340.0" height="190.0" rx="0" fill="none" stroke="#D3D8DC" stroke-width="1"/>
+<rect x="400.0" y="80.0" width="240.0" height="190.0" rx="0" fill="#DDEFEC"/>
+<line x1="640.0" y1="80.0" x2="640.0" y2="270.0" stroke="#17202A" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="406.0" y="250.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">admitted: fits at least</text>
+<text x="406.0" y="264.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">as well as the truth</text>
+<text x="734.0" y="264.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">residual →</text>
+<text x="406.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">cost ↑</text>
+<circle cx="440.0" cy="170.0" r="7" fill="#0A9384"/>
+<text x="452.0" y="164.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">truth</text>
+<text x="452.0" y="178.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">its cost is the target</text>
+<circle cx="690.0" cy="230.0" r="6" fill="#7E8893"/>
+<text x="734.0" y="208.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">fits worse:</text>
+<text x="734.0" y="222.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#7E8893" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">not admitted</text>
+<circle cx="460.0" cy="110.0" r="7" fill="#B5372E"/>
+<line x1="446.0" y1="160.0" x2="456.0" y2="120.0" stroke="#B5372E" stroke-width="1.5" marker-end="url(#aa)"/>
+<text x="472.0" y="108.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#B5372E" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the only admitted candidate</text>
+<text x="472.0" y="122.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#B5372E" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">is less ordinary: a miss</text>
+<text x="380.0" y="290.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">bar = the truth&#x27;s own residual (or the 0.02° floor); a candidate left of it fits at least as well</text>
+<text x="380.0" y="326.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">The rays cannot pick a range, so the question is not &#x27;did we find the truth&#x27; but &#x27;does ANY ordinary object fit as well as the truth does&#x27;.</text>
+<text x="380.0" y="344.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">If one does, the case is not evidence of anything unusual; how much more ordinary it is — the gap — is the measurement.</text>
+</svg>
