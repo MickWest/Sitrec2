@@ -464,9 +464,14 @@ class CDragDropHandler {
         // If files were dragged and dropped
         if (dt.files && dt.files.length > 0) {
             console.log("LOADING DROPPED FILE:" + dt.files[0].name);
-            // The whole drop at once — "Reset on Track Import" is a decision
-            // about the selection, not about each file in turn.
-            this.uploadDroppedFiles(dt.files);
+            // Folders out first — they can only be told apart from files here,
+            // inside the drop event (see filesFromDrop).
+            const files = this.filesFromDrop(dt);
+            if (files.length > 0) {
+                // The whole drop at once — "Reset on Track Import" is a decision
+                // about the selection, not about each file in turn.
+                this.uploadDroppedFiles(files);
+            }
         }
 // If a plain text snippet or URL was dragged and dropped
         else {
@@ -476,6 +481,48 @@ class CDragDropHandler {
             }
         }
 
+    }
+
+    /**
+     * The FILES in a drop, with any dropped FOLDERS removed.
+     *
+     * Chrome puts a File object into dataTransfer.files for a dropped folder
+     * too — empty type, and unreadable: a FileReader on it fails with
+     * "NotFoundError: A requested file or directory could not be found".
+     * Fed through the normal import path that queued a null buffer, and the
+     * parser then threw from inside the render loop, which stopped rendering
+     * until the next interaction woke it again. A folder can only be told
+     * from a file with webkitGetAsEntry() on dataTransfer.items, and items is
+     * only readable inside the drop event — so this runs here, not later.
+     *
+     * With no folder in the drop the result is dt.files unchanged, so the
+     * ordinary file drop takes exactly the path it always did.
+     */
+    filesFromDrop(dt) {
+        const items = dt.items;
+        if (!items || items.length === 0) {
+            return Array.from(dt.files);
+        }
+        const files = [];
+        const folders = [];
+        for (const item of items) {
+            if (item.kind !== "file") continue;
+            const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+            if (entry && entry.isDirectory) {
+                folders.push(entry.name);
+                continue;
+            }
+            const file = item.getAsFile();
+            if (file) files.push(file);
+        }
+        if (folders.length === 0) {
+            return Array.from(dt.files);
+        }
+        const quoted = folders.map(name => `"${name}"`).join(", ");
+        console.warn("Ignoring dropped folder(s): " + quoted);
+        showError(`Folders can't be dropped into Sitrec (${quoted}). `
+            + `Drop the files inside the folder instead.`);
+        return files;
     }
 
     getDroppedText(dataTransfer) {
@@ -1288,15 +1335,25 @@ class CDragDropHandler {
         while (this.dropQueue.length > 0) {
             const drop = this.dropQueue.shift();
             console.log("checkDropQueue: Parsing queued file " + drop.filename)
-            FileManager.parseResult(drop.filename, drop.result, drop.newStaticURL, {returnMeta: true})
-                .then(({changesSerializedState}) => {
-                    if (changesSerializedState) {
-                        markSitchDirty();
-                    }
-                })
-                .catch((error) => {
-                    console.error("checkDropQueue: Failed to parse dropped file " + drop.filename, error);
-                });
+            // parseResult is not async: it calls parseAsset directly, so a parser
+            // that throws before any promise exists throws HERE, synchronously —
+            // the .catch below never sees it. This runs inside renderMain, and an
+            // exception out of animate() skips its re-arm, so the render loop
+            // stopped until the next interaction woke it. Catch, log, report.
+            try {
+                FileManager.parseResult(drop.filename, drop.result, drop.newStaticURL, {returnMeta: true})
+                    .then(({changesSerializedState}) => {
+                        if (changesSerializedState) {
+                            markSitchDirty();
+                        }
+                    })
+                    .catch((error) => {
+                        console.error("checkDropQueue: Failed to parse dropped file " + drop.filename, error);
+                    });
+            } catch (error) {
+                console.error("checkDropQueue: Failed to parse dropped file " + drop.filename, error);
+                showError(`Could not import "${drop.filename}": ${error.message}`, error);
+            }
         }
     }
 }
