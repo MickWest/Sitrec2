@@ -74,6 +74,7 @@ import {NodeMan} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {refractionUniforms, REFRACTION_VERTEX_GLSL} from "../atmosphere/refraction";
 import {aberrationUniforms, ABERRATION_VERTEX_GLSL} from "../CelestialMath";
+import {fisheyeUniforms, FISHEYE_VERTEX_GLSL} from "../FisheyeProjection";
 
 /**
  * GPU-accelerated point light cloud renderer for stars, satellites, and similar objects.
@@ -227,6 +228,7 @@ export class CPointLightCloud extends CNode3D {
             ${this.useLogDepth ? 'varying float vDepth;' : ''}
 
             ${useRefraction ? ABERRATION_VERTEX_GLSL + REFRACTION_VERTEX_GLSL : ''}
+            ${FISHEYE_VERTEX_GLSL}
 
             void main() {
                 if (brightness <= 0.0) {
@@ -243,6 +245,10 @@ export class CPointLightCloud extends CNode3D {
                     : 'vec3 refractedPos = position;'}
                 vec4 mvPosition = modelViewMatrix * vec4(refractedPos, 1.0);
                 gl_Position = projectionMatrix * mvPosition;
+                // Fisheye (allsky) projection for the look view — a hand-written
+                // ShaderMaterial opts in explicitly, like the refraction chunks above.
+                // Before the vDepth capture so log depth reads the fisheye w.
+                if (uFishOn > 0.0) { gl_Position = fisheyeClip(mvPosition); }
                 ${this.useLogDepth ? 'vDepth = gl_Position.w;' : ''}
 
                 float effectiveBrightness = brightness;
@@ -294,6 +300,10 @@ export class CPointLightCloud extends CNode3D {
             cameraFOV: { value: 45 },
             uRadius: { value: this.uRadius },
         };
+
+        // Shared BY REFERENCE with every other fisheye-aware material, so the
+        // per-render gate/params set in the scene hooks reach the stars too.
+        Object.assign(uniforms, fisheyeUniforms);
 
         if (useRefraction) {
             uniforms.uAberration = aberrationUniforms.uAberration;
@@ -373,19 +383,21 @@ export class CPointLightCloud extends CNode3D {
             varying float vAlpha;
             varying float vBrightness;
             ${this.useLogDepth ? 'varying float vDepth;' : ''}
-            
+            ${FISHEYE_VERTEX_GLSL}
+
             void main() {
                 if (brightness <= 0.0) {
                     gl_Position = vec4(0.0);
                     gl_PointSize = 0.0;
                     return;
                 }
-                
+
                 ${usesPerPointColor ? 'vColor = color;' : 'vColor = uColor;'}
                 vBrightness = brightness;
-                
+
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                 gl_Position = projectionMatrix * mvPosition;
+                if (uFishOn > 0.0) { gl_Position = fisheyeClip(mvPosition); }
                 ${this.useLogDepth ? 'vDepth = gl_Position.w;' : ''}
                 
                 float dist = length(mvPosition.xyz);
@@ -445,6 +457,7 @@ export class CPointLightCloud extends CNode3D {
             farScale: { value: farScale },
             uRadius: { value: this.uRadius },
         };
+        Object.assign(uniforms, fisheyeUniforms);
 
         if (!usesPerPointColor) {
             const color = new Color(this.singleColor);

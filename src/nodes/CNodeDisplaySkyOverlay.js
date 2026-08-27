@@ -11,6 +11,16 @@ import {calculateAltitude} from "../threeExt";
 import {getHUDColor} from "../HUDColor";
 import {viewControlLabel, viewMenuKey} from "../ViewUIBarMenus";
 import {renderedRect, withDisplayedCamera} from "../ViewUtils";
+import {fisheyeProjectVector, isFisheyeCamera} from "../FisheyeProjection";
+
+// World-space Vector3 → NDC through whatever projection the view is actually
+// rendering: the fisheye twin when the fisheye applies to this camera,
+// otherwise the camera's own (pinhole) projection. Mutates and returns pos,
+// like Vector3.project, so labels land on the rendered dots in both modes.
+function projectForCamera(pos, camera) {
+    if (!fisheyeProjectVector(pos, camera)) pos.project(camera);
+    return pos;
+}
 
 // The text a satellite label is drawn with. Cached on the record because the Label List
 // filter needs it for every visible satellite, every frame, and satData runs to ~11,000
@@ -112,6 +122,11 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
     // untouched, only the view matrix changes.
     displayedCamera(live, atOrigin = false) {
         const camera = live.clone();
+        // The fisheye gate compares camera IDENTITY against the live look
+        // camera; a clone would silently fail it and put every label back on
+        // the pinhole projection while the dots render fisheye. Tag the copy
+        // so isFisheyeCamera can unwrap it.
+        camera._fisheyeProxyFor = live;
         if (atOrigin) {
             camera.position.set(0, 0, 0);
             camera.updateMatrix();
@@ -249,7 +264,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                     continue
                 }
                 pos.applyMatrix4(this.nightSky.celestialSphere.matrix)
-                pos.project(camera)
+                projectForCamera(pos, camera)
 
                 if (pos.z > -1 && pos.z < 1 && pos.x >= -1 && pos.x <= 1 && pos.y >= -1 && pos.y <= 1) {
                     const [x, y] = this.labelXY(pos);
@@ -263,7 +278,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
             const pos = planet.equatorial.clone()
             pos.applyMatrix4(this.nightSky.celestialSphere.matrix)
-            pos.project(camera)
+            projectForCamera(pos, camera)
 
             // Apply alpha to the planet's own color
             const c = planet.color;
@@ -327,10 +342,14 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             const distSq = sat.ecef.distanceToSquared(cameraPos);
             if (!sat.userFiltered && distSq >= arrowRangeSq) continue;
 
+            // Behind-the-camera-plane rejection is a PINHOLE concept: a fisheye
+            // field past 180° legitimately images that sky (the projection twin
+            // parks anything past its cull cap outside the z window instead).
             const viewPos = satRender.clone().applyMatrix4(camera.matrixWorldInverse);
-            if (viewPos.z >= 0) continue;
+            if (viewPos.z >= 0 && !isFisheyeCamera(camera)) continue;
 
-            const satScreenPos = satRender.clone().project(camera);
+            const satScreenPos = projectForCamera(satRender.clone(), camera);
+            if (satScreenPos.z < -1 || satScreenPos.z > 1) continue;
             const isInsideFrustum = satScreenPos.x >= -1 && satScreenPos.x <= 1 &&
                 satScreenPos.y >= -1 && satScreenPos.y <= 1;
 
@@ -393,7 +412,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 label.preRender(this.overlayView);
             }
 
-            const screenPos = label.textPosition.clone().project(camera);
+            const screenPos = projectForCamera(label.textPosition.clone(), camera);
             if (screenPos.z < -1 || screenPos.z > 1) continue;
             if (screenPos.x < -1.5 || screenPos.x > 1.5
                 || screenPos.y < -1.5 || screenPos.y > 1.5) continue;

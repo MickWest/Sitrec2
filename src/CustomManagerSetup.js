@@ -31,6 +31,7 @@ import {CNodeEffect} from "./nodes/CNodeEffect";
 import {setupCameraMotionMenu} from "./CameraMotionFromVideo";
 import {makeStarTrackCameraController, setupStarTrackerMenu} from "./starTrack/StarTrackerUI";
 import {ScenarioManager} from "./CScenarioManager";
+import {setupFisheye} from "./FisheyeProjection";
 import {setupStreetViewPanoMenu} from "./StreetViewPanoUI";
 import {CustomGraphManager} from "./CCustomGraphManager";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
@@ -2004,6 +2005,16 @@ export const setupMethods = {
         // an un-activated scenario is a 100% no-op (no nodes, no menu
         // entries, no per-frame cost). See CScenarioManager.
         ScenarioManager.setup();
+
+        // Fisheye (allsky) projection for the look view: the Camera →
+        // FOV (Zoom) → Fisheye sub-menu and its serialization node. Created
+        // here (never in SitCustom.js) for the same reason as the sensor
+        // effects above — setup() runs for fresh AND saved custom sitches,
+        // and the node must exist before the save's mods apply. Gated to the
+        // custom sitch: legacy sitches keep their hand-tuned camera UI.
+        if (Sit.isCustom && NodeMan.exists("lookCamera")) {
+            setupFisheye();
+        }
 
         // Orbit camera - orbits around a selected target track at a given radius and period
         if (!NodeMan.exists("orbitCameraPosition") && NodeMan.exists("fixedCameraPosition")) {

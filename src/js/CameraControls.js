@@ -31,6 +31,7 @@ import {GlobalScene} from "../LocalFrame";
 import * as LAYER from "../LayerMasks";
 import {isViewDragging} from "../DragResizeUtils";
 import {fitViewSyncActive, fitViewSyncPan, fitViewSyncWheel} from "../FitViewSync";
+import {fisheye, fisheyeEquivalentFOVDeg, isFisheyeCamera, setFisheyeFov} from "../FisheyeProjection";
 
 // Eye height above the ground for WASD walking — 5 feet, the height the user
 // asked the camera to hold above the 3D tile surface directly below.
@@ -273,6 +274,15 @@ class CameraMapControls {
 		// would change the very thing the fit is solving for.
 		if (fitViewSyncActive(this.view)) {
 			fitViewSyncWheel(this.view, event);
+			return;
+		}
+
+		// Fisheye look view: the wheel zooms the fisheye FOV (zoomBy below), whatever
+		// controller drives the camera. The pinhole fov is ignored by that render, and
+		// the dolly/sphere-rotate paths below would move the camera instead of the field.
+		if (isFisheyeCamera(this.camera)) {
+			this.zoomBy(Math.sign(event.deltaY));
+			setRenderOne(true);
 			return;
 		}
 
@@ -630,6 +640,14 @@ class CameraMapControls {
 
 	zoomBy(delta) {
 		if (!this.zoomGestures || !this.enableZoom) return;
+
+		// While the fisheye is on, every zoom gesture on the look view (wheel, pinch,
+		// keyboard) scales the fisheye FOV. Same per-step ratio as the PTZ fov zoom;
+		// clamped to the projection's range by setFisheyeFov, slider follows via listen().
+		if (isFisheyeCamera(this.camera)) {
+			setFisheyeFov(this.zoomScale(fisheye.fov, delta, 1.5, 0.95));
+			return;
+		}
 
 		const ptzControls = getInteractivePTZController(this.view.cameraNode);
 
@@ -1035,12 +1053,17 @@ class CameraMapControls {
 				// if we have ptzControls in this view, then update them
 				if (ptzControls !== undefined) {
 
+					// Drag rate follows the field on screen: under the fisheye that is the
+					// equivalent pinhole FOV (same degrees-per-pixel at the image centre),
+					// not the ignored pinhole fov.
+					const dragFov = fisheyeEquivalentFOVDeg(this.camera) ?? ptzControls.fov;
+
 					if (ptzControls.satellite) {
 						// Satellite mode: camera-local rotations via quaternion
-						ptzControls.applySatelliteMouseDelta(xRotate, yRotate);
+						ptzControls.applySatelliteMouseDelta(xRotate, yRotate, dragFov);
 					} else {
-						ptzControls.az -= degrees(xRotate) * ptzControls.fov / 45
-						ptzControls.el += degrees(yRotate) * ptzControls.fov / 45
+						ptzControls.az -= degrees(xRotate) * dragFov / 45
+						ptzControls.el += degrees(yRotate) * dragFov / 45
 
 						if (ptzControls.az < -180) ptzControls.az += 360
 						if (ptzControls.az >= 180) ptzControls.az -= 360

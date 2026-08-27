@@ -120,6 +120,7 @@ const en = {
                 starlink: "How to Investigate Starlink Flares",
                 customModels: "Objects and 3D Models (Planes)",
                 cameraModes: "Camera Modes (Normal & Satellite)",
+                fisheye: "Fisheye (Allsky) Projection",
                 video: "Rendering and Exporting Video",
                 longExposure: "Long Exposure Simulation",
                 masking: "Masking Out Part of the Video",

@@ -595,12 +595,14 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     }
 
     // Apply incremental mouse drag as camera-local rotations.
-    applySatelliteMouseDelta(xRotate, yRotate) {
+    // dragFov: the on-screen field the drag rate scales with — the pinhole fov by
+    // default; the caller passes the fisheye's equivalent FOV when that render is on.
+    applySatelliteMouseDelta(xRotate, yRotate, dragFov = this.fov) {
         if (this._satQuatDirty) {
             this.buildSatQuatFromAngles();
         }
 
-        const fovScale = this.fov / 45;
+        const fovScale = dragFov / 45;
 
         // Horizontal drag: rotate around camera's local Y (screen-up)
         if (Math.abs(xRotate) > 1e-10) {

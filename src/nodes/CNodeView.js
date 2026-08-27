@@ -6,6 +6,7 @@
 //
 import {CNode} from './CNode'
 import {Globals, guiShowHideGraphs, guiShowHideViews, NodeMan, setRenderOne, UndoManager} from "../Globals";
+import {fisheyeEquivalentFOVDeg} from "../FisheyeProjection";
 import {assert} from "../assert";
 import {ViewMan} from "../CViewManager";
 import {LayoutMan} from "../CLayoutManager";
@@ -1161,7 +1162,12 @@ class CNodeView extends CNode {
         // the true tangent ratio for a sprite to hold its size across a FOV change, which
         // is precisely what Match Video Aspect does — it narrows the FOV and shrinks the
         // render target together, and those two have to cancel exactly.
-        scale *= Math.tan(45 * Math.PI / 360) / Math.tan(view.camera.fov * Math.PI / 360);
+        //
+        // Under the fisheye projection camera.fov is not what is rendered; use the
+        // pinhole FOV with the same pixels-per-radian at the image circle's centre, so
+        // stars and satellites keep a correct size where the plate scale matters most.
+        const fovForScale = fisheyeEquivalentFOVDeg(view.camera) ?? view.camera.fov;
+        scale *= Math.tan(45 * Math.PI / 360) / Math.tan(fovForScale * Math.PI / 360);
 
         // calculations here:
         // infoDiv.innerHTML += " - Adjusted Scale = "+scale+"<br>";

@@ -243,6 +243,11 @@ export const helpDocs = [
         chatDesc: "Look-camera orientation modes (Normal vs Satellite PTZ) — how the camera points and how the look angle is defined.",
     },
     {
+        file: "docs/Fisheye", labelKey: "menus.help.documentation.fisheye",
+        section: "analysis", menuId: "camera", role: "reference",
+        chatDesc: "The fisheye / allsky projection for the look view (Camera → FOV (Zoom) → Fisheye): rendering fields of view of 180° and beyond through real lens curves (equidistant, equisolid, stereographic, orthographic), the image circle size/centre controls for matching a cropped 16:9 allsky frame, Roll, and the Point Straight Up allsky orientation (north up, east on the LEFT). Read this for 'how do I recreate an allsky/meteor camera video', 'why can't the FOV go past 170', 'the whole sky in one view', or any question about the Fisheye sub-menu.",
+    },
+    {
         file: "docs/Starlink", labelKey: "menus.help.documentation.starlink",
         section: "analysis", menuId: "satellites", role: "tutorial",
         chatDesc: "Investigating Starlink satellite flares, and more generally recreating a sighting seen from a fixed spot on the ground: loading satellites for a date (Satellite menu, 'Load LEO Satellites For Date'), orbital data and why very recent events need a few days' wait, and the flare band / sun-angle tools. Its step-by-step walkthrough (date and time, camera location by street address, pointing direction, adding the video, refining) applies to any ground-observer case, not just Starlink.",

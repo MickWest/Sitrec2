@@ -31,6 +31,7 @@ import {
 } from "../Globals";
 import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
+import {renderFisheyeMask} from "../FisheyeProjection";
 import {DRAG} from "../mouseMoveView";
 import {GPUMemoryMonitor} from "../GPUMemoryMonitor";
 import {
@@ -2726,6 +2727,13 @@ export class CNodeView3D extends CNodeViewCanvas {
                     this.fullscreenQuad.material = this.copyMaterial;  // Set the material to the copy material
                     this.renderer.setRenderTarget(null);
                     this.renderer.render(this.fullscreenQuad, this.fullscreenQuadCamera);
+                }
+
+                // Fisheye image-circle mask: black out the area outside the lens's
+                // image circle, like the unexposed border of a real allsky frame.
+                // Drawn onto the finished canvas so it also covers the effects chain.
+                if (Globals.renderDebugFlags.dbg_copyToScreen) {
+                    renderFisheyeMask(this);
                 }
                 if (globalProfiler) globalProfiler.pop();
 
