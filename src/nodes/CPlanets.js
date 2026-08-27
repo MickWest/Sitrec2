@@ -40,10 +40,110 @@ import {
     REFRACTION_VERTEX_GLSL,
     REFRACTION_DEFAULTS,
 } from "../atmosphere/refraction";
+import {lunarEclipseRender, MOON_MEAN_RADIUS_KM, SUN_RADIUS_KM} from "../CLunarEclipseCalc";
 import {SITREC_APP} from "../configUtils";
 import {assert} from "../assert";
 import {radians} from "../utils";
 import * as Astronomy from "astronomy-engine";
+
+// Lunar-eclipse shading for the Moon's fragment shader.
+//
+// Everything is done per-fragment from the surface point's true 3-D position,
+// so the shadow's curvature across the disc, and the foreshortening of the
+// terminator near the limb, are exact rather than a screen-space circle.
+//
+// The DIRECT term is the fraction of the Sun's disc that the Earth hides, as
+// seen from that point, put through a limb-darkening curve. That single
+// expression gives the whole geometric shadow: the long soft penumbral
+// gradient, the feathered umbral edge, and hard zero inside the umbra. It is
+// the GLSL twin of directSunlightAt() in CLunarEclipseCalc, which the unit
+// tests pin against astronomy-engine's cone model.
+//
+// The REFRACTED term is looked up from a 1-D profile of the light that has
+// been bent into the umbra by the Earth's atmosphere - the blood-moon colour.
+// See atmosphere/umbralLight.js for how that profile is computed. It is
+// sqrt-encoded in a half-float texture so three decades of dynamic range
+// survive; squaring on read undoes that.
+const MOON_ECLIPSE_GLSL = /* glsl */`
+    const float ECLIPSE_PI = 3.141592653589793;
+
+    // Fraction of disc A (radius ra) hidden by disc B (radius rb), with their
+    // centres d apart. All three in the SAME units; the caller scales by the
+    // Sun's angular radius so the terms are O(1), because in raw radians
+    // (~0.005) the lens-area formula cancels catastrophically in 32-bit floats
+    // right where it matters - at tangency.
+    float eclipseDiscOverlap(float ra, float rb, float d) {
+        if (ra <= 0.0 || rb <= 0.0) return 0.0;
+        if (d >= ra + rb) return 0.0;
+        if (d <= abs(rb - ra)) return rb >= ra ? 1.0 : (rb * rb) / (ra * ra);
+        float ra2 = ra * ra, rb2 = rb * rb, d2 = d * d;
+        float a1 = acos(clamp((d2 + ra2 - rb2) / (2.0 * d * ra), -1.0, 1.0));
+        float a2 = acos(clamp((d2 + rb2 - ra2) / (2.0 * d * rb), -1.0, 1.0));
+        float tri = 0.5 * sqrt(max(0.0,
+            (-d + ra + rb) * (d + ra - rb) * (d - ra + rb) * (d + ra + rb)));
+        return clamp((ra2 * a1 + rb2 * a2 - tri) / (ECLIPSE_PI * ra2), 0.0, 1.0);
+    }
+
+    // Surviving photospheric FLUX for a given fraction of the disc AREA
+    // covered. The limb goes first and comes back last, and the limb is only
+    // ~40% as bright as disc centre, so flux does not track area. Same closed
+    // form as eclipseLightFraction() in CEclipseCalc.
+    float eclipseLimbFlux(float O) {
+        O = clamp(O, 0.0, 1.0);
+        return clamp(1.0 - O + sin(2.0 * ECLIPSE_PI * O) / (4.0 * ECLIPSE_PI), 0.0, 1.0);
+    }
+
+    vec3 eclipseIllumination() {
+        if (uEclipse < 0.5) return vec3(1.0);
+
+        // This fragment's surface point, relative to the Moon's centre, in the
+        // Moon's body-fixed frame - the frame vNormal already lives in.
+        vec3 xKm = normalize(vNormal) * uMoonRadiusKm;
+
+        vec3 toEarth = uEarthDirML * uEarthDistKm - xKm;
+        float dE = length(toEarth);
+        vec3 dirE = toEarth / dE;
+
+        // The Sun is 1.5e8 km away, so forming its position outright would
+        // throw away the low bits. normalize(S*D - x) == normalize(S - x/D)
+        // keeps every term near unity.
+        vec3 dirS = normalize(uSunDirEclipseML - xKm / uSunDistKm);
+        float dS = uSunDistKm - dot(xKm, uSunDirEclipseML);
+
+        float rhoE = asin(clamp(uEarthShadowRadiusKm / dE, 0.0, 1.0));
+        float rhoS = asin(clamp(${SUN_RADIUS_KM.toFixed(1)} / dS, 0.0, 1.0));
+        // atan2 form: the two directions are nearly parallel during an
+        // eclipse, which is exactly where acos(dot) loses its precision.
+        float sep = atan(length(cross(dirE, dirS)), dot(dirE, dirS));
+
+        float direct = 1.0;
+        if (sep < rhoE + rhoS) {
+            direct = eclipseLimbFlux(eclipseDiscOverlap(1.0, rhoE / rhoS, sep / rhoS));
+        }
+
+        // Refracted light: indexed by this point's perpendicular distance from
+        // the shadow axis.
+        vec3 refracted = vec3(0.0);
+        vec3 axis = -uSunDirEclipseML;
+        vec3 pE = xKm - uEarthDirML * uEarthDistKm;
+        float along = dot(pE, axis);
+        float rPerp = length(pE - axis * along);
+        if (rPerp < uUmbraLUTScaleKm) {
+            vec3 enc = texture2D(uUmbraLUT, vec2(rPerp / uUmbraLUTScaleKm, 0.5)).rgb;
+            refracted = enc * enc * uUmbraLUTGain;
+            refracted = mix(vec3(dot(refracted, vec3(0.2126, 0.7152, 0.0722))),
+                            refracted, uBloodMoon);
+        }
+
+        vec3 illum = (vec3(direct) + refracted) * uEclipseExposure;
+
+        // Soft shoulder above 0.8, so a photographic exposure boost rolls the
+        // un-eclipsed limb off instead of clipping it flat. Branch-free, and a
+        // strict no-op at exposure 1 where nothing ever exceeds 1.
+        vec3 over = max(illum - 0.8, 0.0);
+        return min(illum, 0.8) + 0.2 * (1.0 - exp(-over / 0.2));
+    }
+`;
 
 export class CPlanets {
     /**
@@ -126,6 +226,20 @@ export class CPlanets {
                 observerDirection: { value: new Vector3(0, 0, -1) },
                 skyColor: { value: new Vector3(0, 0, 0) },
                 skyBrightness: { value: 0.0 },
+                // Lunar eclipse. uEclipse is the hard no-op switch: at 0 the
+                // fragment shader never reads any of the rest.
+                uEclipse: { value: 0.0 },
+                uEarthDirML: { value: new Vector3(0, 0, 1) },
+                uEarthDistKm: { value: 384400.0 },
+                uSunDirEclipseML: { value: new Vector3(0, 0, 1) },
+                uSunDistKm: { value: 1.4959787e8 },
+                uEarthShadowRadiusKm: { value: 6459.0 },
+                uMoonRadiusKm: { value: MOON_MEAN_RADIUS_KM },
+                uUmbraLUT: { value: null },
+                uUmbraLUTScaleKm: { value: 8263.0 },
+                uUmbraLUTGain: { value: 1.0 },
+                uEclipseExposure: { value: 1.0 },
+                uBloodMoon: { value: 1.0 },
                 ...refractionUniforms,
             },
             vertexShader: `
@@ -150,8 +264,22 @@ export class CPlanets {
                 uniform vec3 observerDirection;
                 uniform vec3 skyColor;
                 uniform float skyBrightness;
+                uniform float uEclipse;
+                uniform vec3 uEarthDirML;
+                uniform float uEarthDistKm;
+                uniform vec3 uSunDirEclipseML;
+                uniform float uSunDistKm;
+                uniform float uEarthShadowRadiusKm;
+                uniform float uMoonRadiusKm;
+                uniform sampler2D uUmbraLUT;
+                uniform float uUmbraLUTScaleKm;
+                uniform float uUmbraLUTGain;
+                uniform float uEclipseExposure;
+                uniform float uBloodMoon;
                 varying vec3 vNormal;
                 varying vec2 vUv;
+
+                ${MOON_ECLIPSE_GLSL}
 
                 void main() {
                     vec3 sunDir = normalize(sunDirection);
@@ -169,7 +297,10 @@ export class CPlanets {
                     vec2 uv = vUv;
                     uv.x = fract(uv.x + 0.25);
                     vec4 textureColor = texture2D(moonTexture, uv);
-                    vec3 moonLit = textureColor.rgb * reflectance;
+                    // Lunar eclipse: how much sunlight actually arrives here.
+                    // Exactly 1.0, and free of any texture fetch, when there is
+                    // no eclipse.
+                    vec3 moonLit = textureColor.rgb * reflectance * eclipseIllumination();
 
                     // skyColor uniform is in sRGB space; linearize to match
                     // the linear moon color and the linear render target.
@@ -580,6 +711,10 @@ export class CPlanets {
             this.moonDayMaterial.uniforms.sunDirection.value.copy(sunInMoonLocal);
             this.moonDayMaterial.uniforms.observerDirection.value.copy(observerInMoonLocal);
         }
+
+        // Earth's shadow on the Moon. Done here because this is where the
+        // body-fixed rotation is in hand, and the shader works in that frame.
+        this._applyLunarEclipse(invRotMatrix);
         
         // Apparent center always tracks the most recent sync — picker /
         // overlay labels use it, and per-view re-syncs (storeState:false)
@@ -595,6 +730,48 @@ export class CPlanets {
                 // consumers (HDR moon disk, Moonlight mode) need the real one
                 this.planetSprites["Moon"].mag = Astronomy.Illumination("Moon", date).mag;
             }
+        }
+    }
+
+    // Push the current lunar-eclipse state into both Moon materials, rotated
+    // into the Moon's body-fixed frame.
+    //
+    // HARD NO-OP: with no eclipse under way this writes a single 0 to uEclipse
+    // per material and returns; the fragment shader then takes its early-out
+    // and never touches a shadow uniform or the profile texture.
+    _applyLunarEclipse(invRotMatrix) {
+        const materials = [this.moonMaterial, this.moonDayMaterial];
+        const r = lunarEclipseRender;
+        if (!r.active || r.state.kind === "none") {
+            for (const m of materials) {
+                if (m) m.uniforms.uEclipse.value = 0;
+            }
+            return;
+        }
+
+        const st = r.state;
+        // Moon -> Earth centre, and Moon -> Sun centre, in the body frame.
+        this._eclipseEarthDir ??= new Vector3();
+        this._eclipseSunDir ??= new Vector3();
+        this._eclipseEarthDir.copy(st.moonEQJ).negate().normalize().applyMatrix4(invRotMatrix);
+        this._eclipseSunDir.subVectors(st.sunEQJ, st.moonEQJ).normalize().applyMatrix4(invRotMatrix);
+        const sunDistKm = st.sunEQJ.distanceTo(st.moonEQJ);
+
+        for (const m of materials) {
+            if (!m) continue;
+            const u = m.uniforms;
+            u.uEclipse.value = 1;
+            u.uEarthDirML.value.copy(this._eclipseEarthDir);
+            u.uEarthDistKm.value = st.moonDistKm;
+            u.uSunDirEclipseML.value.copy(this._eclipseSunDir);
+            u.uSunDistKm.value = sunDistKm;
+            u.uEarthShadowRadiusKm.value = st.shadowRadiusKm;
+            u.uMoonRadiusKm.value = MOON_MEAN_RADIUS_KM;
+            u.uUmbraLUT.value = r.lutTexture;
+            u.uUmbraLUTScaleKm.value = r.lutScaleKm;
+            u.uUmbraLUTGain.value = r.lutTexture ? r.lutGain : 0;
+            u.uEclipseExposure.value = r.exposure;
+            u.uBloodMoon.value = r.bloodMoon;
         }
     }
 

@@ -4,6 +4,7 @@ import {CNode} from "./CNode";
 import {GlobalDateTimeNode, Globals, NodeMan} from "../Globals";
 import {getCelestialDirection} from "../CelestialMath";
 import {getEclipseState, isEclipseLightingEnabled, NO_ECLIPSE} from "../CEclipseCalc";
+import {lunarEclipseDimming} from "../CLunarEclipseCalc";
 import {degrees} from "../utils";
 import {altitudeHAE, getLocalUpVector} from "../SphericalMath";
 import {Color, MathUtils, Vector3} from "three";
@@ -292,7 +293,12 @@ export class CNodeSunlight extends CNode {
                     const moonDir = getCelestialDirection("Moon", date, camera.position);
                     const moonAngle = 90 - degrees(moonDir.angleTo(getLocalUpVector(camera.position)));
                     const moonMag = NodeMan.get("NightSkyNode", false)?.planets?.planetSprites?.Moon?.mag ?? -12.7;
-                    const ratio = Math.pow(10, -0.4 * (moonMag - SUN_APPARENT_MAG));
+                    let ratio = Math.pow(10, -0.4 * (moonMag - SUN_APPARENT_MAG));
+                    // A lunar eclipse takes the Moon down by up to ten
+                    // magnitudes, which for a long exposure lit only by
+                    // moonlight is the whole story. A hard no-op otherwise:
+                    // lunarEclipseDimming returns exactly 1 with no eclipse.
+                    ratio *= lunarEclipseDimming(date);
                     sun.sunPos = moonDir.clone().multiplyScalar(60000);
                     sun.sunIntensity = this.sunIntensity * brightnessOfSun(moonAngle, this.darkeningAngle) * Math.PI * this.sunBoost * ratio;
                     sun.ambientIntensity = 0;

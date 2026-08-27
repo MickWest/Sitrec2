@@ -927,6 +927,10 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // The sky scenes are shared across views, so resync the Sun/Moon
                 // meshes to the camera that is actually being rendered right now.
                 // Without this, the main view can inherit the look-camera observer.
+                // BEFORE the planet sprites: the Moon's shader reads what the
+                // lunar-eclipse node publishes, and updateMoonMesh runs inside
+                // syncPlanetSpritesToObserver.
+                NodeMan.get("theLunarEclipse", true)?.syncToObserver(lookCamera.position);
                 nightSkyNode.syncPlanetSpritesToObserver(lookCamera.position, undefined, {storeState: false});
                 NodeMan.get("theHalos", true)?.syncToObserver(lookCamera.position);
                 NodeMan.get("theEclipse", true)?.syncToObserver(lookCamera.position);
@@ -3299,6 +3303,10 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // Same shared-scene issue as above: render the Sun/Moon from this
                 // view's observer, but keep global arrow/debug ephemeris state
                 // owned by the NightSkyNode update step.
+                // BEFORE the planet sprites: the Moon's shader reads what the
+                // lunar-eclipse node publishes, and updateMoonMesh runs inside
+                // syncPlanetSpritesToObserver.
+                NodeMan.get("theLunarEclipse", true)?.syncToObserver(this.camera.position);
                 nightSkyNode.syncPlanetSpritesToObserver(this.camera.position, undefined, {storeState: false});
                 NodeMan.get("theHalos", true)?.syncToObserver(this.camera.position);
                 NodeMan.get("theEclipse", true)?.syncToObserver(this.camera.position);

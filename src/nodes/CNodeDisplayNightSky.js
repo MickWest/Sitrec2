@@ -1,6 +1,7 @@
 import {CNode3DGroup} from "./CNode3DGroup";
 import {CNodeAtmosphericOptics} from "./CNodeAtmosphericOptics";
 import {CNodeEclipse} from "./CNodeEclipse";
+import {CNodeLunarEclipse} from "./CNodeLunarEclipse";
 import {CNodeWaterReflection} from "./CNodeWaterReflection";
 import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene, setupNightSkyScene, setupSunSkyScene} from "../LocalFrame";
 import {Color, Group, Matrix4, Ray, Raycaster, Scene, Sphere, Vector3} from "three";
@@ -1178,6 +1179,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             this.celestialDaySphere.applyMatrix4(this._eqjToECEF)
         }
 
+        // BEFORE the sprites: the Moon's shader reads the lunar-eclipse state
+        // this publishes, and updateMoonMesh runs inside the call below. Each
+        // view re-syncs both in renderSky() anyway, so this only matters for
+        // paths that read the Moon's uniforms without rendering — but the two
+        // must not be left able to disagree.
+        NodeMan.get("theLunarEclipse", true)?.syncToObserver(this.camera.position, nowDate);
+
         // Keep the canonical ephemeris state tied to the look camera because the
         // celestial arrows/debug tools are anchored there. syncPlanetSpritesToObserver
         // refreshes the refraction uniforms internally, so we don't need to
@@ -1896,6 +1904,12 @@ export function addNightSky(def) {
     // corona/prominences). A hard no-op unless the Moon overlaps the Sun.
     if (!NodeMan.exists("theEclipse")) {
         new CNodeEclipse({id: "theEclipse"});
+    }
+
+    // Lunar eclipses: the Earth's shadow on the Moon, and the optional shadow
+    // disc at lunar distance. A hard no-op unless the Moon is in the penumbra.
+    if (!NodeMan.exists("theLunarEclipse")) {
+        new CNodeLunarEclipse({id: "theLunarEclipse"});
     }
 
     // Reflect this sky in water. Created here, alongside the sky it captures,
