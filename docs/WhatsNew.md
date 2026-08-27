@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.143.0 (2026-08-27)
+
+### New Features
+
+- **Star Tracker on allsky and fisheye footage** (Video → Star Tracker): with the Fisheye lens switched on (Camera → FOV (Zoom) → Fisheye), the Star Tracker now takes that lens as the camera's optics instead of trying to fit one from the star motion — a mounted allsky camera never turns, which is what a fit needs. A new **Fixed camera** checkbox tells the solver the camera never moved, turned or zoomed, so the whole clip's sky motion is solved as one rotation about one axis at one rate — far more robust on sparse, very wide fields such as star timelapses — and the *Lens* readout reports the exposure interval recovered from how fast the fitted sky turns. Once the stars are identified by name, they calibrate the lens itself, and **Sync Camera to Star Field** sets the fisheye's FOV and image-circle centre from that calibration as well as pointing the camera. See Help → Documentation → *Star Tracker*, "Allsky and fisheye footage".
+
+- **Use 0-360 for Pan** (Camera → Heading): show the Pan (Az) slider as a 0-360 compass bearing instead of -180 to +180. It is the same direction written two ways — west is -90 or 270 — and nothing but the slider changes: the camera, saves, exports and photo matches come out identical either way. Typing a bearing above 180 into Pan ticks the box automatically, so the number you typed is the number you keep; the slider wraps at both ends in either mode; and the choice is saved with the sitch, so a sitch written with a compass bearing opens showing one. Mirrored copies of the Camera controls follow the switch too.
+
+### Improvements
+
+- Water Reflection (Effects → Water Reflection) now works with custom map sources defined in shared.env: the standard OpenStreetMap tile servers are recognized automatically, and a new SITREC_CUSTOM_MAP_&lt;NAME&gt;_WATER_COLOR setting declares the water color of a self-hosted or restyled map. *Combine Terrain with OSM* also now works on installs whose only OpenStreetMap source is defined that way — and no longer falls back to the road-highlight map variant (which has no visible water) when the standard one is removed.
+
 ## Version 2.142.0 (2026-08-27)
 
 ### New Features
