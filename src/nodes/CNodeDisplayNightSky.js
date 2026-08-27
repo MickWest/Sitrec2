@@ -1357,6 +1357,26 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.fullBrightnessUpdate = false;
     }
 
+    /**
+     * Extra satellite brightness while the NVG pass is running on this view.
+     * An image intensifier shows satellites the naked eye cannot, so the NVG
+     * effect carries a "NVG Sat Boost" slider that multiplies the same point
+     * scale the Sat Brightness slider drives. Gated on the view actually
+     * rendering effects (CNodeView3D skips every pass when effectsEnabled is
+     * off) and on the effect node's own enable flag.
+     * @param {CNodeView3D} view - the view about to render
+     * @returns {number} multiplier, 1 when NVG is not active
+     */
+    nvgSatBoost(view) {
+        if (!view.effectsEnabled) return 1;
+        const nvg = NodeMan.get("Custom_NightVision", true);
+        if (!nvg || !nvg.enabled) return 1;
+        // CCustomManager.setup() attaches this input to an older effect node
+        // that predates the slider, so it should always be here; the fallback
+        // just means no boost rather than a crash if it ever is not.
+        return nvg.in.satBoost?.v(0) ?? 1;
+    }
+
     updateSatelliteScales(view) {
         if (!this.satellites.showSatellites || !this.satellites.TLEData) {
             return;
@@ -1370,7 +1390,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         if (isLookView) {
             const uniforms = this.satellites.lightCloud.material.uniforms;
-            let shaderScale = Sit.satScale;
+            let shaderScale = Sit.satScale * this.nvgSatBoost(view);
             shaderScale = view.adjustPointScale(shaderScale * 2);
 
             if (this.satellites.lightCloud.useSkyAttenuation) {

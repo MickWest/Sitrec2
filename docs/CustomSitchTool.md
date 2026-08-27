@@ -219,6 +219,8 @@ Here I bring in the Tv Out Black and White to simulate the haze. I also defocus 
 
 For infrared or night-vision footage there are two dedicated sensor simulations in the effects menu: **Thermal** (white-hot/black-hot polarity, an Ironbow color palette, sensitivity, hot-spot bloom, and sensor noise) and **NightVision** (an image-intensifier look with phosphor green, gain, bloom, and a circular tube mask). Both live in the Effects menu's **Thermal/NV** folder — enable checkboxes and parameter sliders together.
 
+NightVision also has an **NVG Sat Boost** slider (default 4). Real intensifier tubes show satellites the naked eye cannot, so while NightVision is enabled this multiplies satellite brightness in the look view — the same brightness the Sat Brightness slider controls. Set it to 1 for no boost.
+
 Note in situation like this, the target is often darker than anticipated. That's due to the (current) lack of High Dynamic Range rending in Sitrec. 
 
 You can also drag in an image (JPG or PNG) and it will act like a video. The current number of frames will not be changed. 

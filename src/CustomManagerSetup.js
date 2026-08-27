@@ -1550,7 +1550,19 @@ export const setupMethods = {
                 // in array order, so position IS chain order, and the sensor
                 // stage sits after FLIRShader, before Invert/Levels/JPEG.
                 const insertSensorEffect = (effectName, id, anchorName, inputs) => {
-                    if (NodeMan.exists(id)) return;   // interim save already embedded it
+                    if (NodeMan.exists(id)) {
+                        // Interim save already embedded it — so the node was built
+                        // from THAT save's input list and predates any parameter
+                        // added since. The sliders above are created either way, so
+                        // without this they would show in the GUI driving nothing.
+                        const existing = NodeMan.get(id);
+                        for (const [key, source] of Object.entries(inputs)) {
+                            if (existing.in[key] === undefined) {
+                                existing.addInput(key, source);
+                            }
+                        }
+                        return;
+                    }
                     const node = new CNodeEffect({
                         id, effectName, enabled: false, enabledGUI: "thermalNV", inputs,
                     });
@@ -1589,6 +1601,13 @@ export const setupMethods = {
                         "Barrel distortion of the NVG lens"),
                     vignette: sensorSlider("NVG Tube Mask", 1.0, 0.0, 1.0, 0.01,
                         "Circular tube mask (0 = full frame)"),
+                    // Not a shader uniform: satellites are scene geometry, drawn
+                    // long before this post-process pass. CNodeEffect.updateUniforms
+                    // ignores an input with no matching uniform, so the slider rides
+                    // along here purely so it lives and serializes with the effect —
+                    // CNodeDisplayNightSky.updateSatelliteScales reads it.
+                    satBoost: sensorSlider("NVG Sat Boost", 4, 1, 50, 0.1,
+                        "Multiplier on satellite brightness while NVG is on (an intensifier shows satellites the eye cannot)"),
                 });
             }
         }
