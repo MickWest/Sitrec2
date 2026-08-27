@@ -116,6 +116,7 @@ const en = {
                 terrain: "Terrain and Elevation",
                 refraction: "Atmospheric Refraction",
                 historicSkies: "Historic Skies",
+                lunarEclipse: "Lunar Eclipses",
                 aerialPerspective: "Haze and Aerial Perspective",
                 starlink: "How to Investigate Starlink Flares",
                 customModels: "Objects and 3D Models (Planes)",
