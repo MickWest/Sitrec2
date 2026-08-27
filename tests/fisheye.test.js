@@ -6,12 +6,13 @@
 // the curves in agreement with it.
 
 import {PerspectiveCamera, Vector3} from "three";
-import {LENS_PRESETS} from "../src/CameraLens";
+import {LENS_PRESETS, rayToPixel, lensToRay} from "../src/CameraLens";
 import {
     fisheye,
     fisheyeProjectView,
     fisheyeEquivalentFOVDegRaw,
     clampFisheyeFov,
+    fisheyeStarLens,
     patchFisheyeVertexShader,
     FISHEYE_VERTEX_GLSL,
     FISHEYE_TYPE_INDEX,
@@ -142,6 +143,53 @@ describe("fisheyeProjectView", () => {
         // Rectilinear at circle=100%: same lens as a pinhole at the same FOV.
         resetState({lensType: "rectilinear", fov: 90, circlePct: 100});
         expect(fisheyeEquivalentFOVDegRaw()).toBeCloseTo(90, 10);
+    });
+});
+
+describe("fisheyeStarLens - the render's lens as a Star Track lens", () => {
+    test("null while the mode is off", () => {
+        resetState({enabled: false});
+        expect(fisheyeStarLens([1280, 720])).toBeNull();
+    });
+
+    test("focal and principal follow the render's height-fraction definitions", () => {
+        // The D'Antonio settings: equisolid, 158.6 deg, circle 137.5% of height, centre
+        // (-0.6%, -0.5%).
+        resetState({enabled: true, lensType: "equisolidFisheye", fov: 158.6, circlePct: 137.5,
+            centerX: -0.6, centerY: -0.5});
+        const lens = fisheyeStarLens([1280, 720]);
+        const rhoEdge = 2 * Math.sin(158.6 * Math.PI / 360 / 2);
+        expect(lens.type).toBe("equisolidFisheye");
+        expect(lens.source).toBe("fisheye");
+        expect(lens.focalPx).toBeCloseTo(1.375 * 360 / rhoEdge, 9);
+        expect(lens.principal[0]).toBeCloseTo(640 - 0.006 * 720, 9);
+        expect(lens.principal[1]).toBeCloseTo(360 + 0.005 * 720, 9);
+        expect(lens.refSize).toEqual([1280, 720]);
+    });
+
+    test("the lens lands rays on the same pixels the render does", () => {
+        // Same directions through the lens (rayToPixel, camera space +x right +y down +z
+        // forward) and through the vertex projection (fisheyeProjectView, Three.js view space
+        // +y up -z forward), compared in video pixels. No roll: the lens has none by design.
+        resetState({enabled: true, lensType: "equidistantFisheye", fov: 170, circlePct: 140,
+            centerX: 3, centerY: -2});
+        const size = [1280, 720];
+        const lens = fisheyeStarLens(size);
+        const aspect = size[0] / size[1];
+        for (const [theta, az] of [[0, 0], [20, 30], [60, 200], [84, 275], [45, 90]]) {
+            const v = viewDir(theta, az, 100);
+            const ndc = fisheyeProjectView(v.clone(), aspect);
+            const px = [size[0] / 2 + ndc.x * size[0] / 2, size[1] / 2 - ndc.y * size[1] / 2];
+            const ray = [v.x / 100, -v.y / 100, -v.z / 100];
+            const got = rayToPixel(lens, ray, size);
+            expect(got[0]).toBeCloseTo(px[0], 8);
+            expect(got[1]).toBeCloseTo(px[1], 8);
+            // and back
+            const back = lensToRay(lens, got[0], got[1], size);
+            expect(back[0]).toBeCloseTo(ray[0], 9);
+            expect(back[1]).toBeCloseTo(ray[1], 9);
+            expect(back[2]).toBeCloseTo(ray[2], 9);
+        }
     });
 });
 

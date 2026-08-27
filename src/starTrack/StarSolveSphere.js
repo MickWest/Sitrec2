@@ -22,9 +22,9 @@
 // the measured clip - so there is no single "plate scale" that could convert an angular residual
 // to pixels without silently recalibrating the thresholds as a function of where a star sits.
 
-import {lensToRay} from "../CameraLens";
+import {lensToRay, rayToPixel} from "../CameraLens";
 import {
-    Q_IDENTITY, qMul, qConj, qNormalize, qRotate, qAngle, qBetween, qAlign, qSlerp,
+    Q_IDENTITY, qMul, qConj, qNormalize, qRotate, qAngle, qBetween, qAlign, qSlerp, qExp, qLog,
     makeFrameState, frameToRef, refToFrame, fitRotationRobust, fitRotationWahba,
     refineRotationPixels,
 } from "./StarSphere";
@@ -805,6 +805,222 @@ export function refineGlobalSpherical(tracks, initialStates, lens, size, opts = 
     for (let i = 0; i < nTracks; i++) tracks[i].ref = refs[i];
 
     return {states, map: unpackMap(map, nTracks), rms, iterations, converged, refs};
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fixed camera: one axis, one rate
+// ---------------------------------------------------------------------------------------------
+//
+// A camera that does not move, turn or zoom sees the whole sky turn RIGIDLY about one axis (the
+// celestial pole) at one rate (the Earth's). So every frame's orientation is
+//
+//     q_f = exp( v * (f - f0) )        v = rate * axis, in the reference (frame f0) camera frame
+//
+// and the entire clip's camera motion is THREE numbers instead of three per frame. That is not a
+// small saving on the footage this exists for - an allsky fisheye timelapse - because the free
+// per-frame solve is fed by a 2D similarity chain that is wrong by tens of pixels on a 160-degree
+// field, and with the sky moving under a pixel per frame there is little in any one frame to pull
+// an orientation back from a bad seed. The constrained model cannot wander frame to frame at all:
+// every observation of every star in every frame votes on the same three parameters.
+//
+// The rate is FITTED, not taken from the sitch clock. A timelapse's frames are equal steps of
+// unknown length (the sitch may map them to any playback speed), and the classification does not
+// need to know how long a step is - only that the steps are equal. Comparing the fitted rate with
+// the sidereal rate then REPORTS the exposure interval, which is a useful check rather than an
+// assumption. What the model cannot express is an uneven timeline (dropped frames, a gap): those
+// show up as a raised rms, and the free per-frame solve remains available for them.
+
+/**
+ * A fixed-axis seed from any set of per-frame states: the least-squares rotation vector per
+ * frame, `v = sum f*log(q_f) / sum f^2`, with f measured from the first solved frame. Frames
+ * whose state is missing simply do not vote.
+ */
+export function seedFixedAxis(states) {
+    let f0 = -1, sff = 0;
+    const sfv = [0, 0, 0];
+    for (let f = 0; f < states.length; f++) {
+        const st = states[f];
+        if (!st) continue;
+        if (f0 < 0) f0 = f;
+        const df = f - f0;
+        if (df === 0) continue;
+        const rv = qLog(st.q);
+        sff += df * df;
+        sfv[0] += df * rv[0]; sfv[1] += df * rv[1]; sfv[2] += df * rv[2];
+    }
+    if (f0 < 0) return {v: [0, 0, 0], f0: 0};
+    return {v: sff > 0 ? [sfv[0] / sff, sfv[1] / sff, sfv[2] / sff] : [0, 0, 0], f0};
+}
+
+/** Per-frame states for a fixed-axis model - the gauge is frame f0 = identity by construction. */
+function fixedAxisStates(v, f0, initialStates) {
+    const out = new Array(initialStates.length);
+    for (let f = 0; f < initialStates.length; f++) {
+        const st = initialStates[f];
+        if (!st) { out[f] = null; continue; }
+        const df = f - f0;
+        out[f] = makeFrameState({q: qExp([v[0] * df, v[1] * df, v[2] * df]), s: st.s,
+            status: "solved", converged: true, inliers: st.inliers ?? 0});
+    }
+    return out;
+}
+
+/**
+ * Pixel residuals of every voting observation under a rotation vector, with the map held.
+ * Returns flat arrays so the fit can trim on them and the caller can pool them for sigma.
+ */
+function fixedAxisResiduals(v, f0, initialStates, obs, map, excludeMask, lens, size) {
+    const states = fixedAxisStates(v, f0, initialStates);
+    const rx = [], ry = [], mag = [];
+    for (let ti = 0; ti < obs.n; ti++) {
+        if (excludeMask[ti]) continue;
+        const b = ti * 3;
+        if (Number.isNaN(map[b])) continue;
+        const dir = [map[b], map[b + 1], map[b + 2]];
+        for (let k = obs.off[ti]; k < obs.off[ti + 1]; k++) {
+            const st = states[obs.f[k]];
+            if (!st) { rx.push(NaN); ry.push(NaN); mag.push(NaN); continue; }
+            const p = rayToPixel(lens, qRotate(st.q, dir), size, st.s);
+            if (!p) { rx.push(NaN); ry.push(NaN); mag.push(NaN); continue; }
+            const dx = obs.x[k] - p[0], dy = obs.y[k] - p[1];
+            rx.push(dx); ry.push(dy); mag.push(Math.hypot(dx, dy));
+        }
+    }
+    return {rx, ry, mag};
+}
+
+/**
+ * Fit the rotation vector `v` (rate * axis) to the map by Gauss-Newton on pixel residuals, with a
+ * numeric Jacobian (three parameters - an analytic one would buy nothing but convention risk) and
+ * a hard trim at `gatePx` so a mover or a mis-associated track cannot steer the axis.
+ */
+function fitFixedAxis(v0, f0, initialStates, obs, map, excludeMask, lens, size, gatePx, maxSteps) {
+    const h = 1e-7;                      // rad/frame; ~3e-3 px on a 400 px lens over 80 frames
+    let v = v0.slice();
+    const costOf = (vv) => {
+        const r = fixedAxisResiduals(vv, f0, initialStates, obs, map, excludeMask, lens, size);
+        let sse = 0, n = 0;
+        for (let i = 0; i < r.mag.length; i++) {
+            const m = r.mag[i];
+            if (!(m <= gatePx)) continue;      // NaN (no image) and trimmed both drop out
+            sse += m * m; n++;
+        }
+        return {sse, n};
+    };
+    let cost = costOf(v);
+    for (let step = 0; step < maxSteps; step++) {
+        const base = fixedAxisResiduals(v, f0, initialStates, obs, map, excludeMask, lens, size);
+        const J = [];
+        for (let k = 0; k < 3; k++) {
+            const vv = v.slice(); vv[k] += h;
+            J.push(fixedAxisResiduals(vv, f0, initialStates, obs, map, excludeMask, lens, size));
+        }
+        // Normal equations over the un-trimmed residuals. Residual = obs - pred, so the model
+        // Jacobian is -(d residual / d v).
+        const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], g = [0, 0, 0];
+        for (let i = 0; i < base.mag.length; i++) {
+            if (!(base.mag[i] <= gatePx)) continue;
+            const jx = [], jy = [];
+            let ok = true;
+            for (let k = 0; k < 3; k++) {
+                const dxk = J[k].rx[i], dyk = J[k].ry[i];
+                if (Number.isNaN(dxk) || Number.isNaN(dyk)) { ok = false; break; }
+                jx.push(-(dxk - base.rx[i]) / h); jy.push(-(dyk - base.ry[i]) / h);
+            }
+            if (!ok) continue;
+            for (let a = 0; a < 3; a++) {
+                for (let c = 0; c < 3; c++) M[a][c] += jx[a] * jx[c] + jy[a] * jy[c];
+                g[a] += jx[a] * base.rx[i] + jy[a] * base.ry[i];
+            }
+        }
+        const d = solveN(M, g, 3);
+        if (!d) break;
+        // Damped: halve the step until the trimmed cost falls, so a poor seed cannot overshoot
+        // into a worse basin. Five halvings is 1/32 of the step; below that it is noise.
+        let accepted = false;
+        let scale = 1;
+        for (let tries = 0; tries < 6; tries++) {
+            const vn = [v[0] + scale * d[0], v[1] + scale * d[1], v[2] + scale * d[2]];
+            const cn = costOf(vn);
+            if (cn.n > 0 && cn.sse / cn.n < cost.sse / Math.max(1, cost.n)) {
+                v = vn; cost = cn; accepted = true;
+                break;
+            }
+            scale *= 0.5;
+        }
+        if (!accepted) break;
+        if (Math.hypot(d[0], d[1], d[2]) * scale < 1e-12) break;
+    }
+    return v;
+}
+
+/**
+ * Solve the clip as a FIXED CAMERA: one rotation axis and one rate for every frame, and every
+ * star's direction against them.
+ *
+ * Same alternating shape as refineGlobalSpherical and the same kernels for the map half, so the
+ * result has the same fields and the classification downstream does not know which solver ran.
+ * The orientation half is the three-parameter fit above instead of a fit per frame.
+ *
+ * Async only so a caller on the UI thread can yield between iterations (`onYield`) and report
+ * progress (`onProgress`, the same {iteration, iterations, rms} shape the pool emits); the work
+ * itself is small - a few hundred thousand projections on a dense clip - and stays on the
+ * calling thread. Returns null when `shouldAbort` says so.
+ *
+ * @returns {{states, map, rms, iterations, converged, refs, axis, ratePerFrame, f0}|null}
+ *   `axis` is the unit rotation axis in the reference (frame f0) camera frame, `ratePerFrame`
+ *   the rotation per frame in radians; together they are the rotation vector `v` above.
+ */
+export async function refineFixedAxisSpherical(tracks, initialStates, lens, size, opts = {}) {
+    const O = {...STAR_SPHERE_DEFAULTS, ...opts};
+    const nFrames = initialStates.length;
+    const plan = planGlobalSpherical(tracks, nFrames, opts);
+    const {nTracks, obs, excludeMask} = plan;
+    let map = plan.map;
+
+    const seed = opts.seed ?? seedFixedAxis(initialStates);
+    const f0 = seed.f0;
+    let v = seed.v.slice();
+    let states = fixedAxisStates(v, f0, initialStates);
+
+    let rms = Infinity, iterations = 0, converged = false;
+    for (let iter = 0; iter < O.refineIterations; iter++) {
+        iterations = iter + 1;
+
+        // --- axis and rate, given the map ---
+        // The trim gate follows the CURRENT residual spread (robust sigma from the median), so a
+        // rough seed is not trimmed against a tolerance it cannot yet meet, and a settled fit is
+        // held to a tight one. Floored at the per-frame fit's own base gate.
+        const r = fixedAxisResiduals(v, f0, initialStates, obs, map, excludeMask, lens, size);
+        const mags = r.mag.filter((m) => !Number.isNaN(m)).sort((a, b) => a - b);
+        const sigma = mags.length ? mags[mags.length >> 1] / 1.1774 : O.refineTrimPx;
+        const gatePx = Math.max(O.refineTrimPx, O.refineTrimSigma * sigma);
+        v = fitFixedAxis(v, f0, initialStates, obs, map, excludeMask, lens, size, gatePx, 8);
+        states = fixedAxisStates(v, f0, initialStates);
+
+        // --- map and cost, given the orientations ---
+        const chunk = updateMapChunk(obs, excludeMask, 0, nTracks, states, lens, size);
+        map = chunk.dirs;
+        let sse = 0, count = 0;
+        for (let i = 0; i < nTracks; i++) { sse += chunk.sse[i]; count += chunk.count[i]; }
+        const next = count ? Math.sqrt(sse / count) : Infinity;
+
+        opts.onProgress?.({iteration: iterations, iterations: O.refineIterations, rms: next});
+        if (opts.onYield) await opts.onYield();
+        if (opts.shouldAbort?.()) return null;
+
+        if (Math.abs(rms - next) < O.refineTolerance) { rms = next; converged = true; break; }
+        rms = next;
+    }
+
+    const refs = unpackMap(finalRefsChunk(obs, 0, nTracks, map, states, lens, size), nTracks);
+    for (let i = 0; i < nTracks; i++) tracks[i].ref = refs[i];
+
+    const ratePerFrame = Math.hypot(v[0], v[1], v[2]);
+    const axis = ratePerFrame > 1e-15
+        ? [v[0] / ratePerFrame, v[1] / ratePerFrame, v[2] / ratePerFrame] : null;
+    return {states, map: unpackMap(map, nTracks), rms, iterations, converged, refs,
+        axis, ratePerFrame, f0};
 }
 
 // ---------------------------------------------------------------------------------------------

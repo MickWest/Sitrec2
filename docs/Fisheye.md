@@ -74,6 +74,16 @@ name labels follow.
    edge drifts, it is the projection type (or the FOV) that is wrong —
    different lens curves agree on-axis and diverge toward the rim.
 
+## Star Tracker
+
+With the fisheye on, **Video → Star Tracker** takes this lens as the camera's optics instead of
+fitting one (an allsky camera never turns, which is what a fit needs). Tick **Fixed camera** in
+that folder for a mounted camera: the sky is then solved as one rotation axis and one rate for
+the whole clip. After **Identify Stars**, the named stars calibrate the lens, and **Sync
+Camera to Star Field** sets **Fisheye FOV** and **Center X/Y** from them — projection type and
+**Circle Size** are left as you set them — and points the camera. See
+[Star Tracker → Allsky and fisheye footage](StarTracker.md#allsky-and-fisheye-footage).
+
 ## Limitations
 
 - Geometry is still projected per-vertex, so a *line* spanning tens of

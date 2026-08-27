@@ -46,7 +46,7 @@ import {Material, ShaderMaterial, Vector2, Vector3} from "three";
 import {Globals, guiMenus, NodeMan, setRenderOne} from "./Globals";
 import {CNode} from "./nodes/CNode";
 import {GlobalScene, GlobalNightSkyScene, GlobalDaySkyScene, GlobalSunSkyScene} from "./LocalFrame";
-import {LENS_PRESETS} from "./CameraLens";
+import {LENS_PRESETS, makeLens} from "./CameraLens";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 
 // ── Shared uniforms ─────────────────────────────────────────────────
@@ -411,6 +411,36 @@ function refreshFisheyeParams() {
     const deg = Math.PI / 180;
     u.uFishCullTheta.value = Math.min(halfFovRad + 25 * deg,
         Math.max(178 * deg, halfFovRad + 0.5 * deg));
+}
+
+// The fisheye the look view renders through, as a Star Track LENS in `size` pixels - so an
+// analysis of footage the user has already matched by eye can take the lens as KNOWN instead
+// of fitting one from the star field (a fit needs the camera to turn, and an allsky camera
+// never does).
+//
+// The render defines everything in fractions of the VIEW HEIGHT: the image circle's radius is
+// circlePct/100 half-heights, and its centre is offset by centerX/centerY percent of the
+// height on both axes. The video is analysed in its own decoded pixels, so those fractions
+// are taken against the VIDEO height - exact whenever the look view's framing matches the
+// video's (which is the state anyone who has matched the render to the footage is in).
+//
+//   render: r_ndc = rho(theta) / rho(fov/2) * circlePct/100      (in half-heights)
+//   lens:   r_px  = focalPx * rho(theta)
+//
+// so focalPx = (circlePct/100) * (h/2) / rho(fov/2). Roll is NOT part of a lens - it is a
+// rotation about the principal point, which the solver's per-frame orientation absorbs; the
+// camera sync is where it has to be put back (see StarTrackerUI). Null while the mode is off.
+export function fisheyeStarLens(size) {
+    if (!fisheye.enabled || !size) return null;
+    const [w, h] = size;
+    if (!(w > 0 && h > 0)) return null;
+    refreshFisheyeParams();
+    const rhoEdge = fisheyeUniforms.uFishRhoEdge.value;
+    if (!(rhoEdge > 0) || !isFinite(rhoEdge)) return null;
+    const focalPx = (fisheye.circlePct / 100) * (h / 2) / rhoEdge;
+    // centerY positive moves the circle UP on screen; pixel y runs down.
+    const principal = [w / 2 + (fisheye.centerX / 100) * h, h / 2 - (fisheye.centerY / 100) * h];
+    return makeLens({type: fisheye.lensType, focalPx, principal, refSize: [w, h], source: "fisheye"});
 }
 
 // Is this render's camera the one the fisheye applies to (the look camera)?

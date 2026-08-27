@@ -83,7 +83,8 @@ The Star Tracker folder lives under **Video**.
 | **Optimize Adjustments for Frame** | Tune the picture for this analysis — the same thing as *Optimize For Star Tracking* under Video Adjustments, offered here because this is where you are when you want it. See [Optimize For Star Tracking](#optimize-for-star-tracking). Its *Enough* / *Abort* controls appear in whichever folder you can see, so a run started here can be stopped here |
 | **Status** | What the last stage did, or what it found |
 | **Fit lens from stars** | Measure the camera's actual optics from the star field, and judge motion on a sphere rather than with a flat model. Reasonable to leave on: it declines when the clip does not constrain a lens, and says so. See [why this matters](#why-fitting-the-lens-matters) |
-| **Lens** | The fitted lens, e.g. `custom, 96 deg, rms 0.15 px`, or why it declined |
+| **Fixed camera** | The camera did not move, turn or zoom during the clip — a mounted allsky or meteor camera. The sky then turns rigidly about one axis at one rate, so the solver fits three numbers for the whole clip instead of an orientation per frame. Far more robust on a sparse or very wide field, and the **Lens** field reports the exposure interval the fitted rate implies. Off by default; leave it off for hand-held or panned footage. See [Allsky and fisheye footage](#allsky-and-fisheye-footage) |
+| **Lens** | The fitted lens, e.g. `custom, 96 deg, rms 0.15 px`, or why it declined. When the Fisheye render is on it reports that lens instead, e.g. `fisheye (Camera menu) Equisolid-angle fisheye, 158.6 deg circle, rms 0.30 px` — plus, after identification, the lens calibrated from the named stars |
 | **Show stars** | Draw the green circles |
 | **Show moving** | Draw the red circles |
 | **Show light clusters** | Draw the orange rings |
@@ -323,6 +324,45 @@ The fit works from a pair of frames far enough apart to have moved appreciably (
 
 **What the lens fit does not change.** It improves the *verdicts* — which tracks are called stars — and the placement of the circles. It does **not** migrate the rest of the pipeline onto the sphere: detections are still associated in 2D, and star identification and cluster placement still work from the flat chart. See [Limitations](#limitations-and-when-it-refuses).
 
+### Allsky and fisheye footage
+
+An allsky camera breaks two of the assumptions above at once: its field is far too wide for any
+flat model, and it never turns — so the lens fit, which needs the camera to move, refuses. Both
+are handled by telling Sitrec what it already knows.
+
+**A known lens.** When **Camera → FOV (Zoom) → Fisheye** is on, the Star Tracker takes that
+lens — the projection, the image circle's size and centre — as the camera's optics and skips the
+fit entirely; the **Lens** field says `fisheye (Camera menu) …`. The lens is read in fractions
+of the frame height exactly as the render defines it, so it is exact whenever the look view is
+framed like the video (which is the state you are in once you have matched the render to the
+footage by eye). The classification then runs on the sphere through that lens, as it does after
+a successful fit. Roll is not part of a lens: the solved orientation absorbs it, and the camera
+sync puts it back.
+
+**Fixed camera.** Tick **Fixed camera** and the sky-rotation solve stops fitting an orientation
+per frame. A camera that does not move sees the whole sky turn rigidly about one axis (the
+celestial pole) at one rate (the Earth's), so the clip's entire camera motion is three numbers,
+and every star in every frame votes on the same three. That is what makes a timelapse whose
+stars move under a pixel per frame solvable: there is too little in any one frame to pin its
+orientation, but plenty across all of them to pin one axis. The rate is *fitted*, not taken from
+the clock, and comparing it with the sidereal rate reports the exposure interval — on the
+reference STLS allsky clip, `0.0628 deg/frame (15.0 s/frame)`, which is the camera's 15 s
+exposures recovered from the stars alone. The frames must be equal time steps; a gap in the
+timelapse shows up as a raised rms.
+
+**Identification, and the lens calibrated from it.** A 160° field has no flat chart, so a
+known-lens run identifies from a gnomonic chart of the solved *sphere*, limited to the central
+70° a plane can carry, and verified at a wider tolerance than usual because a hand-matched
+lens is right to a few percent, not to half a percent. Once stars are named, every one of them
+is a pixel-to-catalog correspondence, and those calibrate the lens far more strongly than any
+pair of frames could: focal length, centre and orientation are fitted for the projection you
+chose, the match is then widened to every star out to the rim, and the other projections are
+scored on the same stars so the **Lens** field can say if one of them fits better. **Sync
+Camera to Star Field** then sets the Fisheye render's **FOV** and **Center X/Y** from that fit
+(the projection and the drawn circle are left as you set them) and points the camera. On the
+reference clip the render's stars land within a pixel of the video's across the whole field,
+where the hand-matched lens had been fifteen pixels out at 30° off-axis.
+
 ### Stage 4 — group the movers
 
 Several red detections moving together are usually one object — an aircraft's navigation lights, say. Tracks that are not stars and share a common motion are grouped into a single cluster, drawn as an orange ring. Notably this includes tracks that were individually dismissed as *short* or *incoherent*, which is exactly what a flashing light looks like on its own.
@@ -345,7 +385,8 @@ The result is the field centre in RA/Dec, the roll angle, and a field of view. R
 - **Star identification needs enough stars.** A handful of bright points in a narrow field may not produce a unique quad match.
 - **A still image is a special case.** With one real frame there is no motion to solve, so every detected point is taken as a star — which is all a single exposure can honestly claim. The **Enough** button is not offered, since there is nothing to stop short of.
 - **The frame range is the In/Out range**, not the whole video. If the analysis covers less than you expected, check your A–B markers.
-- **Identification runs on the flat 2D map, even when a lens has been fitted.** The two features are deliberately decoupled for now: the matcher is calibrated end to end against what the flat chart produces, and feeding it the extra edge stars the lens fit recovers costs it its match consensus. So a fitted lens improves what is *called a star*, but does not currently widen what gets *named*.
+- **Identification runs on the flat 2D map when a lens has been *fitted*.** The two features are deliberately decoupled for now: the matcher is calibrated end to end against what the flat chart produces, and feeding it the extra edge stars the lens fit recovers costs it its match consensus. So a fitted lens improves what is *called a star*, but does not currently widen what gets *named*. A *known* fisheye lens is the exception — its identification runs on a chart of the sphere (see [Allsky and fisheye footage](#allsky-and-fisheye-footage)), but only the central 70° of the field takes part in the blind match; the rim stars are named afterwards, through the calibrated lens.
+- **Fixed camera assumes equal time steps.** Dropped frames or a gap in a timelapse cannot be expressed by one rate, and show up as a raised rms; untick it and the free per-frame solve handles them.
 
 ## Troubleshooting
 
@@ -355,6 +396,7 @@ The result is the field centre in RA/Dec, the roll angle, and a field of view. R
 | Very few stars found | **Detect threshold (sigma)** too high, or **Min blob area** too large for this footage. Run **Detect Star Size** on a representative frame first |
 | A visible star is not circled | Turn on **Show rejected**: if it appears, it was followed but judged `incoherent` or `cameraFixed`. If it does not, it never got past detection — lower **Detect threshold (sigma)** or **Min blob area** |
 | Identification finds nothing | Too few solved stars, or a field too sparse for a unique quad. Try a longer In/Out range |
+| Fisheye footage: many real stars called *moving*, or the sphere solve fails | Turn on **Fixed camera** for a mounted camera. Check the Fisheye render is roughly matched to the footage first — the solve takes that lens as given |
 | The run is taking forever | Press **Enough (solve what we have)** — a few hundred frames is usually plenty |
 
 ## See also

@@ -24,12 +24,15 @@ import {STAR_CLUSTER_DEFAULTS, groupMovingClusters} from "./StarCluster";
 import {calibrateLens} from "./StarCalibrate";
 import {
     attachRays, classifyTracksSpherical, gnomonicChart, statesFromChain2D,
+    refineFixedAxisSpherical, tangentBasis,
 } from "./StarSolveSphere";
 import {refineGlobalSphericalAsync} from "./StarSphereSolvePool";
 import {detectInPool, detectWorkersAvailable, ensureDetectPool, terminateDetectWorkers}
     from "./StarDetectPool";
-import {framePixelToFrame, refToFrame} from "./StarSphere";
-import {LENS_PRESETS, lensFOV, serializeLens} from "../CameraLens";
+import {framePixelToFrame, frameToRef, refToFrame, qConj, qMul, qRotate} from "./StarSphere";
+import {LENS_PRESETS, lensFOV, lensToRay, rayToPixel, serializeLens} from "../CameraLens";
+import {applyFisheyeState, clampFisheyeFov, fisheye, fisheyeStarLens} from "../FisheyeProjection";
+import {fitLensToCatalog, matchCatalogToPixels, rankLensTypes} from "./StarLensFromCatalog";
 import {
     STAR_IDENTIFY_DEFAULTS,
     buildQuadIndex,
@@ -151,6 +154,11 @@ const params = {
     // on costs nothing on the narrow-field footage that was always fine.
     fitLens: true,
     lensStatus: "not run",
+    // The camera did not move, turn or zoom: solve the whole clip's sky motion as ONE axis and
+    // ONE rate (the Earth's) instead of an orientation per frame. Three unknowns for the clip
+    // rather than three per frame, which is what makes a sparse, sub-pixel-per-frame allsky
+    // timelapse solvable at all. Off by default: most footage is hand-held or panned.
+    fixedCamera: false,
     // Display
     showStars: true,
     showMoving: true,
@@ -759,6 +767,246 @@ export function makeStarChart() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Identification on the sphere: a gnomonic chart of the solved map
+// ---------------------------------------------------------------------------------------------
+//
+// The identifier works on a flat chart - quads hashed with a planar-similarity code, verified
+// against a gnomonic projection of the catalog - and on a normal clip the 2D reference chart is
+// close enough to one. Through a KNOWN fisheye it is not: a 160-degree field has no plane, and
+// the 2D chain that built that chart is wrong by tens of pixels across it. So when the lens came
+// from the Fisheye render, the settled star DIRECTIONS are projected gnomonically about the
+// camera's own axis, keeping only the central field a tangent plane can carry (the gnomonic
+// scale is 1/cos^2(theta): 2x at 45 deg, 4x at 60), and that chart is what gets identified. The
+// chart's scale is chosen so it is the size of the video frame, which keeps the identifier's
+// pixel tolerances (fractions of the field width) at their tuned meaning.
+
+const SPHERE_CHART_MAX_THETA_DEG = 35;
+// A hand-matched render lens is right to a few percent, not to the identifier's usual half a
+// percent of the field: the sphere solve does not care (each star's direction is free), the
+// plate verification does. So the sphere chart is verified at a wider pixel tolerance; the
+// identifier's chance gate still scales with the catalog density inside it.
+const SPHERE_CHART_VERIFY_FRACTION = 0.012;
+
+/** Direction -> chart pixel. Null past the chart's usable field. */
+function sphereChartProject(chart, d) {
+    const {centre, e1, e2, focalPx, offset, cosMax} = chart;
+    const z = d[0] * centre[0] + d[1] * centre[1] + d[2] * centre[2];
+    if (!(z > cosMax)) return null;
+    const a = d[0] * e1[0] + d[1] * e1[1] + d[2] * e1[2];
+    const b = d[0] * e2[0] + d[1] * e2[1] + d[2] * e2[2];
+    return [focalPx * a / z + offset, focalPx * b / z + offset];
+}
+
+/** Chart pixel -> unit direction (the inverse of sphereChartProject). */
+function sphereChartUnproject(chart, x, y) {
+    const {centre, e1, e2, focalPx, offset} = chart;
+    const a = (x - offset) / focalPx, b = (y - offset) / focalPx;
+    const v = [
+        centre[0] + a * e1[0] + b * e2[0],
+        centre[1] + a * e1[1] + b * e2[1],
+        centre[2] + a * e1[2] + b * e2[2],
+    ];
+    const n = Math.hypot(v[0], v[1], v[2]);
+    return [v[0] / n, v[1] / n, v[2] / n];
+}
+
+/**
+ * The identify input for a known-lens run: stars charted from the sphere, or null when this run
+ * is not one (the 2D chart path stands). Verdicts here are the SPHERE's (`klass`), not the 2D
+ * ones the normal path deliberately keeps - on a fisheye the 2D verdicts are the wrong ones.
+ */
+function sphereIdentifyChart(r, minIdentifyObs) {
+    const li = r?.lensInfo;
+    if (!li?.lens || li.lens.source !== "fisheye" || !li.states) return null;
+    // The camera's own axis in the reference frame - the gauge pins frame f0 to the identity,
+    // so this is simply +z; read through the lens anyway so a gauge change cannot silently
+    // move it.
+    const size = [r.videoW, r.videoH];
+    const f0 = li.states.findIndex((st) => st);
+    if (f0 < 0) return null;
+    const centre = frameToRef(li.states[f0], li.lens, li.lens.principal[0], li.lens.principal[1], size)
+        ?? [0, 0, 1];
+    const {e1, e2} = tangentBasis(centre);
+    const focalPx = r.videoW / 2 / Math.tan(SPHERE_CHART_MAX_THETA_DEG * Math.PI / 180);
+    const chart = {centre, e1, e2, focalPx, offset: r.videoW / 2,
+        cosMax: Math.cos(SPHERE_CHART_MAX_THETA_DEG * Math.PI / 180)};
+    const stars = [];
+    for (const c of r.solved.classified) {
+        if (c.klass !== "star" || !Number.isFinite(c.magnitude)) continue;
+        if (c.n < minIdentifyObs || r.disabledStars?.has(c.index)) continue;
+        const track = r.solved.tracks[c.index];
+        const p = track?.ref ? sphereChartProject(chart, track.ref) : null;
+        if (!p) continue;
+        stars.push({x: p[0], y: p[1], mag: c.magnitude, index: c.index,
+            obsF: track.obs.map((o) => o.f), ...pointSourceStats(track)});
+    }
+    return {chart, stars, fovDeg: 2 * SPHERE_CHART_MAX_THETA_DEG};
+}
+
+/**
+ * The camera pose for a sphere-charted identification: the optical axis and the camera's UP
+ * through this frame's solved orientation, onto the chart, and through the plate solution to
+ * the sky. Up is the render's roll undone - the lens carries no roll, the solved orientation
+ * absorbed it, and the camera the sync drives will have the render put it back.
+ */
+function sphereChartPose(r, globalFrame) {
+    const id = r.identify, li = r.lensInfo;
+    const states = li?.states;
+    if (!states || !id?.chart) return null;
+    const i = Math.max(0, Math.min(states.length - 1, Math.round(globalFrame) - r.frame0));
+    let st = states[i];
+    if (!st) {
+        // Hold the nearest solved frame, as the 2D path holds its nearest transform.
+        for (let d = 1; d < states.length && !st; d++) st = states[i - d] ?? states[i + d];
+        if (!st) return null;
+    }
+    const size = [r.videoW, r.videoH];
+    const [px, py] = li.lens.principal;
+    const up = Math.max(50, r.videoH * 0.1);
+    const roll = (li.rollDeg ?? 0) * Math.PI / 180;
+    // Camera-up appears on screen rotated by the render's roll (positive = counterclockwise),
+    // so in pixel coordinates (y down) it is the (-sin, -cos) direction from the axis.
+    const centreDir = frameToRef(st, li.lens, px, py, size);
+    const aboveDir = frameToRef(st, li.lens, px - up * Math.sin(roll), py - up * Math.cos(roll), size);
+    if (!centreDir || !aboveDir) return null;
+    const c = sphereChartProject(id.chart, centreDir);
+    const a = sphereChartProject(id.chart, aboveDir);
+    if (!c || !a) return null;
+    return {centre: id.solved.refToSky(c[0], c[1]), above: id.solved.refToSky(a[0], a[1])};
+}
+
+/**
+ * Calibrate the render's fisheye lens from the identified stars.
+ *
+ * Starts from the identifier's matches (bright stars inside the sphere chart's central field),
+ * fits focal + principal + orientation for the user's projection type, then projects the whole
+ * verification catalog through that model and matches it to EVERY star track's frame-f0 pixel -
+ * which reaches the rim, where the lens curve is actually decided - and refits, twice, with a
+ * tightening gate. The other projections are scored on the final set so the Lens field can say
+ * whether the chosen one is the footage's.
+ *
+ * Returns null when there is nothing to fit from; the sphere-chart pose then stands.
+ */
+function fitFisheyeLensFromCatalog(r, catalog, solved, stars) {
+    const li = r.lensInfo;
+    const states = li?.states;
+    if (!li?.lens || !states) return null;
+    const f0 = states.findIndex((st) => st);
+    if (f0 < 0) return null;
+    const size = [r.videoW, r.videoH];
+    const pixelAt = (track) => {
+        const o = track?.obs?.find((ob) => ob.f === f0);
+        return o ? [o.x, o.y] : null;
+    };
+    const D2R = Math.PI / 180;
+    const corr = [];
+    for (const m of solved.matches) {
+        const px = pixelAt(r.solved.tracks[stars[m.image]?.index]);
+        if (!px) continue;
+        corr.push({px, dir: raDecToVec(m.raDeg * D2R, m.decDeg * D2R)});
+    }
+    const opts = {type: li.lens.type, seedLens: li.lens};
+    let fit = fitLensToCatalog(corr, size, opts);
+    if (!fit) {
+        console.log(`[StarTrack] catalog lens fit: not enough correspondences (${corr.length})`);
+        return null;
+    }
+    // Widen to the whole frame: every sphere-verdict star's f0 pixel against the catalog
+    // projected through the current model.
+    const pixels = [];
+    for (const c of r.solved.classified) {
+        if (c.klass !== "star") continue;
+        const px = pixelAt(r.solved.tracks[c.index]);
+        if (px) pixels.push({px, index: c.index});
+    }
+    let matched = corr;
+    for (const tol of [8, 5]) {
+        const m = matchCatalogToPixels(fit.lens, fit.q, catalog, pixels, size,
+            STAR_IDENTIFY_DEFAULTS.verifyMagLimit, tol);
+        if (m.length < corr.length) break;
+        const next = fitLensToCatalog(m, size, {...opts, seedLens: fit.lens, seedQ: fit.q});
+        if (!next) break;
+        fit = next; matched = m;
+    }
+    const ranked = rankLensTypes(matched, size, fit.lens, fit.q);
+    const L = fit.lens;
+    console.log(`[StarTrack] catalog lens fit (${L.type}): f ${L.focalPx.toFixed(1)} px `
+        + `(render ${li.lens.focalPx.toFixed(1)}), principal (${L.principal[0].toFixed(1)}, `
+        + `${L.principal[1].toFixed(1)}) (render ${li.lens.principal[0].toFixed(1)}, `
+        + `${li.lens.principal[1].toFixed(1)}), rms ${fit.rms.toFixed(2)} px over ${fit.inliers}/${fit.n} `
+        + `stars (${corr.length} from identify); projections: `
+        + ranked.map((k) => `${k.type} ${k.rms.toFixed(2)}`).join(", "));
+    const best = ranked[0];
+    params.lensStatus += `; catalog fit f ${L.focalPx.toFixed(0)} px, rms ${fit.rms.toFixed(2)} px `
+        + `over ${fit.inliers} stars`
+        + (best && best.type !== L.type && best.rms < fit.rms * 0.7
+            ? ` (${LENS_PRESETS[best.type].label} fits better: ${best.rms.toFixed(2)} px)` : "");
+    return {lens: L, q: fit.q, rms: fit.rms, inliers: fit.inliers, n: fit.n, f0, ranked,
+        fromIdentify: corr.length};
+}
+
+/**
+ * The camera pose from the catalog-fitted lens: exact at frame f0 (the fit's own orientation),
+ * carried to other frames by the sky solve's per-frame rotation relative to f0. Up is the
+ * render's roll undone, as in sphereChartPose.
+ */
+function catalogFitPose(r, globalFrame) {
+    const fit = r.lensFit, li = r.lensInfo;
+    const states = li?.states;
+    if (!fit || !states) return null;
+    const i = Math.max(0, Math.min(states.length - 1, Math.round(globalFrame) - r.frame0));
+    let st = states[i];
+    if (!st) {
+        for (let d = 1; d < states.length && !st; d++) st = states[i - d] ?? states[i + d];
+        if (!st) return null;
+    }
+    const size = [r.videoW, r.videoH];
+    const [px, py] = fit.lens.principal;
+    const up = Math.max(50, r.videoH * 0.1);
+    const roll = (li.rollDeg ?? 0) * Math.PI / 180;
+    // sky -> camera at frame i: the fit's orientation at f0, then the solve's f0 -> i rotation
+    // (the solve's reference frame IS frame f0's camera, pinned to the identity by its gauge).
+    const qi = qMul(st.q, fit.q);
+    const toSky = (rayPx) => {
+        const ray = lensToRay(fit.lens, rayPx[0], rayPx[1], size);
+        if (!ray) return null;
+        const v = qRotate(qConj(qi), ray);
+        const rd = vecToRaDec(v);
+        return {raDeg: rd.ra * 180 / Math.PI, decDeg: rd.dec * 180 / Math.PI};
+    };
+    const centre = toSky([px, py]);
+    const above = toSky([px - up * Math.sin(roll), py - up * Math.cos(roll)]);
+    if (!centre || !above) return null;
+    return {centre, above};
+}
+
+/**
+ * Put the catalog-fitted lens into the Fisheye render: same projection, the drawn image circle
+ * kept as the user measured it, and the circle's FIELD ANGLE and the centre offsets set from
+ * the fit. Returns a description of the change, or null when there is nothing to apply.
+ */
+function applyFittedLensToFisheye(r) {
+    const fit = r?.lensFit;
+    if (!fit || !fisheye.enabled || !r.videoW || !r.videoH) return null;
+    const L = fit.lens;
+    const preset = LENS_PRESETS[L.type];
+    if (!preset) return null;
+    const W = r.videoW, H = r.videoH;
+    const before = {fov: fisheye.fov, centerX: fisheye.centerX, centerY: fisheye.centerY};
+    // The image circle is what the footage shows; its angular radius is what the lens says.
+    const circleRadiusPx = (fisheye.circlePct / 100) * H / 2;
+    const rho = circleRadiusPx / L.focalPx;
+    const maxRho = preset.maxRho ?? Infinity;
+    const thetaEdge = preset.theta(Math.min(rho, maxRho));
+    fisheye.lensType = L.type;
+    fisheye.fov = clampFisheyeFov(2 * thetaEdge * 180 / Math.PI);
+    fisheye.centerX = (L.principal[0] - W / 2) / H * 100;
+    fisheye.centerY = (H / 2 - L.principal[1]) / H * 100;
+    applyFisheyeState();
+    return {before, after: {fov: fisheye.fov, centerX: fisheye.centerX, centerY: fisheye.centerY}};
+}
+
+// ---------------------------------------------------------------------------------------------
 // Sync Camera: drive the look camera through the star field
 // ---------------------------------------------------------------------------------------------
 
@@ -776,6 +1024,8 @@ function starTrackPose(globalFrame) {
     const r = result;
     const id = r?.identify;
     if (!id?.solved?.refToSky || !r.videoW) return null;
+    if (r.lensFit) return catalogFitPose(r, globalFrame);
+    if (id.chart) return sphereChartPose(r, globalFrame);
     const transforms = r.solved.transforms;
     const i = Math.max(0, Math.min(transforms.length - 1, Math.round(globalFrame) - r.frame0));
     const T = transforms[i];
@@ -905,7 +1155,10 @@ class CNodeControllerStarTrack extends CNodeController {
         }
         this.frame0 = r.frame0;
         this.poseTrack = track;
-        this.vfovDeg = r.videoH ? starTrackVfovDeg(r.identify.solved, r.videoH) : null;
+        // A sphere-charted solve's plate scale is the CHART's, not the video's, and the video's
+        // field is the fisheye's own - which the render already has. No FOV is baked for it.
+        this.vfovDeg = r.videoH && !r.identify.chart
+            ? starTrackVfovDeg(r.identify.solved, r.videoH) : null;
         // A windowed solve carries one plate scale PER WINDOW, and on a zoom-during-pan clip
         // those genuinely differ - baking one window's constant would render the sky at the
         // wrong framing everywhere else. So the FOV is baked per frame, blended across window
@@ -1202,6 +1455,9 @@ export function syncCameraToStarTrack() {
         params.status = "no star track controller in this sitch";
         return;
     }
+    // A fisheye run with a catalog lens fit syncs the LENS as well as the pose: the render's
+    // FOV and centre are set from the stars, the projection type and the drawn circle kept.
+    const lensChange = applyFittedLensToFisheye(result);
     // Bake BEFORE attaching: the controller drives the camera from its baked track, so
     // attaching one that is still empty would point the camera at nothing.
     if (!controller.bakeFrom(result)) {
@@ -1228,7 +1484,12 @@ export function syncCameraToStarTrack() {
             + result.identify.covered
                 .map(([a, b]) => `${result.frame0 + a}-${result.frame0 + b - 1}`).join(", ")
             + " calibrated, the rest approximate"
-        : "camera synced to the star field";
+        : "camera synced to the star field"
+            + (lensChange
+                ? ` - fisheye FOV ${lensChange.before.fov.toFixed(1)} -> ${lensChange.after.fov.toFixed(1)} deg, `
+                    + `centre (${lensChange.before.centerX.toFixed(1)}, ${lensChange.before.centerY.toFixed(1)}) -> `
+                    + `(${lensChange.after.centerX.toFixed(1)}, ${lensChange.after.centerY.toFixed(1)}) %`
+                : "");
     setRenderOne();
 }
 
@@ -1331,7 +1592,12 @@ export async function identifyStars(opts = {}) {
         // then spans the true ~87 deg rather than the ~21 deg the similarity chain compressed it
         // to, which is a wider field than the identifier's tiers cover. Migrating Identify to the
         // sphere is its own piece of work; until then the two features stay decoupled.
-        const stars = myResult.solved.classified
+        // A KNOWN fisheye lens has no usable 2D chart - a 160-degree field is not a plane -
+        // so the identifier is handed a gnomonic chart of the solved SPHERE instead, limited to
+        // the central field a plane can represent. See sphereIdentifyChart.
+        const sphereChart = sphereIdentifyChart(myResult, minIdentifyObs);
+        myResult.sphereChart = sphereChart;
+        const stars = sphereChart ? sphereChart.stars : myResult.solved.classified
             .filter((c) => (c.klass2D ?? c.klass) === "star" && c.position
                 && Number.isFinite(c.magnitude)
                 && c.n >= minIdentifyObs
@@ -1365,7 +1631,7 @@ export async function identifyStars(opts = {}) {
         const fovWdeg = scalePrior
             ? 2 * Math.atan(scalePrior * Math.max(myResult.videoW, myResult.videoH) / 2)
                 * 180 / Math.PI
-            : 0;
+            : (sphereChart ? sphereChart.fovDeg : 0);
         const tierOrder = STAR_IDENTIFY_DEFAULTS.tiers.map((_, i) => i);
         if (fovWdeg > 35) tierOrder.reverse();
 
@@ -1373,6 +1639,7 @@ export async function identifyStars(opts = {}) {
         // they all share the same scale prior and live-display options.
         const commonSolveOpts = {
             ...(scalePrior ? {scalePrior} : {}),
+            ...(sphereChart ? {verifyPixelFraction: SPHERE_CHART_VERIFY_FRACTION} : {}),
             ...(params.showDuringAnalysis ? {
                 onYield: yieldToBrowser,
                 onCandidate: (q) => {
@@ -1434,8 +1701,23 @@ export async function identifyStars(opts = {}) {
         // fit (the windowed-identification block in StarIdentify.js holds the measurements).
         // Such clips are identified per time window and the labels merged; everything else
         // takes the single whole-chart solve below, exactly as before.
+        // The bounds the blind solve verifies within. On the 2D chart: the UNION of the video
+        // rectangle and the map's bounding box (see below). On a sphere chart there is no video
+        // rectangle - the chart is its own frame - so the stars' own extent is the field.
+        const starBounds = (set) => {
+            let bx0 = sphereChart ? Infinity : 0, by0 = sphereChart ? Infinity : 0;
+            let bx1 = sphereChart ? -Infinity : (myResult.videoW || 0);
+            let by1 = sphereChart ? -Infinity : (myResult.videoH || 0);
+            for (const s of set) {
+                if (s.x < bx0) bx0 = s.x;
+                if (s.x > bx1) bx1 = s.x;
+                if (s.y < by0) by0 = s.y;
+                if (s.y > by1) by1 = s.y;
+            }
+            return {bx0, by0, bx1, by1};
+        };
         const transforms = myResult.solved.transforms;
-        if (!myResult.still && myResult.videoW && transforms?.length > 1
+        if (!myResult.still && !sphereChart && myResult.videoW && transforms?.length > 1
             && chartSpansBeyondFrame(stars, myResult.videoW, myResult.videoH)) {
             const indexes = [];
             for (const tier of tierOrder) {
@@ -1503,13 +1785,7 @@ export async function identifyStars(opts = {}) {
             // MOST evidence). The field is therefore the UNION of the video rectangle and the
             // map's own bounding box: never smaller than the frame - so a sparse or lopsided
             // sky cannot misstate a narrow field - and exactly as large as the pan made it.
-            let bx0 = 0, by0 = 0, bx1 = myResult.videoW || 0, by1 = myResult.videoH || 0;
-            for (const s of stars) {
-                if (s.x < bx0) bx0 = s.x;
-                if (s.x > bx1) bx1 = s.x;
-                if (s.y < by0) by0 = s.y;
-                if (s.y > by1) by1 = s.y;
-            }
+            const {bx0, by0, bx1, by1} = starBounds(stars);
             const boundsPad = 12;
             solved = await solveField(stars, catalog, [quadIndexes[tier]], {
                 ...(myResult.videoW ? {
@@ -1533,13 +1809,7 @@ export async function identifyStars(opts = {}) {
             // the full input's own arithmetic. Labels then come from that certification, so
             // a rescued solve still names every star the pose explains, not just the view.
             const boundsOpts = (set) => {
-                let bx0 = 0, by0 = 0, bx1 = myResult.videoW || 0, by1 = myResult.videoH || 0;
-                for (const s of set) {
-                    if (s.x < bx0) bx0 = s.x;
-                    if (s.x > bx1) bx1 = s.x;
-                    if (s.y < by0) by0 = s.y;
-                    if (s.y > by1) by1 = s.y;
-                }
+                const {bx0, by0, bx1, by1} = starBounds(set);
                 return {
                     center: [(bx0 + bx1) / 2, (by0 + by1) / 2],
                     width: Math.max(bx1 - bx0, by1 - by0),
@@ -1579,7 +1849,15 @@ export async function identifyStars(opts = {}) {
         }
 
         myResult.identify = {solved,
-            identified: joinNames(solved.matches.map((m) => [stars[m.image].index, m]))};
+            identified: joinNames(solved.matches.map((m) => [stars[m.image].index, m])),
+            // The chart the plate solution is expressed in, when it is the sphere's: the
+            // camera pose then goes pixel -> direction -> chart -> sky (sphereChartPose).
+            chart: sphereChart ? sphereChart.chart : null};
+        // Named stars are pixel <-> catalog correspondences, and on a known-lens run they are
+        // used to CALIBRATE that lens: the hand-matched render is right to a few percent, the
+        // stars say exactly. The user's projection type is kept; focal, centre and the
+        // orientation are fitted, then widened to every star the frame holds.
+        myResult.lensFit = sphereChart ? fitFisheyeLensFromCatalog(myResult, catalog, solved, stars) : null;
         refreshSyncedCamera();
         const raH = solved.centerRaDeg / 15;
         params.status = `identified ${solved.matches.length}/${stars.length} stars - `
@@ -2127,25 +2405,39 @@ export async function runStarTracker(opts = {}) {
         // an 11.7 px worst case and reports ~70 real stars as moving; one rotation through the
         // fitted lens explains all of them under 2.5 px.
         let lensInfo = null;
-        if (!still && params.fitLens && solved.tracks.length) {
+        // A KNOWN lens beats a fitted one. When the look view is rendering through the Fisheye
+        // mode, the user has already matched that lens to this footage by eye, and it is taken
+        // as the camera's optics outright: no calibration scan, no gate - which matters,
+        // because a mounted allsky camera never turns, and calibrateLens rightly refuses a
+        // clip that does not exercise the lens.
+        const size = [videoW, videoH];
+        const knownLens = still ? null : fisheyeStarLens(size);
+        if (!still && (knownLens || params.fitLens) && solved.tracks.length) {
             try {
                 // Awaited, and handed a yield: the scans inside take tens of seconds on a
                 // well-populated clip and this is the UI thread. Without it the page stops
                 // answering for the duration - long enough that even tooling times out.
-                const tLens = Date.now();
-                updateProgress({percent: 96, status: "Fitting camera lens"});
-                await yieldToBrowser();
-                const cal = await calibrateLens(solved.tracks, solved.transforms.length,
-                    [videoW, videoH], {
-                        onYield: yieldToBrowser,
-                        ...(params.showDuringAnalysis ? {
-                            onProgress: (p) => { liveStage = {kind: "lens", ...p}; setRenderOne(); },
-                        } : {}),
-                    });
-                console.log(`[StarTrack] calibrateLens ${Date.now() - tLens}ms`);
+                let cal;
+                if (knownLens) {
+                    cal = {accepted: true, lens: knownLens, diagnostics: {source: "fisheye"}};
+                    console.log(`[StarTrack] lens from the Fisheye render: ${knownLens.type}, `
+                        + `f ${knownLens.focalPx.toFixed(1)} px, principal `
+                        + `(${knownLens.principal[0].toFixed(1)}, ${knownLens.principal[1].toFixed(1)})`);
+                } else {
+                    const tLens = Date.now();
+                    updateProgress({percent: 96, status: "Fitting camera lens"});
+                    await yieldToBrowser();
+                    cal = await calibrateLens(solved.tracks, solved.transforms.length,
+                        [videoW, videoH], {
+                            onYield: yieldToBrowser,
+                            ...(params.showDuringAnalysis ? {
+                                onProgress: (p) => { liveStage = {kind: "lens", ...p}; setRenderOne(); },
+                            } : {}),
+                        });
+                    console.log(`[StarTrack] calibrateLens ${Date.now() - tLens}ms`);
+                }
                 if (cal.accepted) {
                     const lens = cal.lens;
-                    const size = [videoW, videoH];
                     const states = statesFromChain2D(solved.transforms, lens, size);
                     attachRays(solved.tracks, states, lens, size);
 
@@ -2160,32 +2452,48 @@ export async function runStarTracker(opts = {}) {
                         if (c.klass === "cameraFixed") artifacts.add(c.index);
                     }
 
-                    // Off the UI thread and across a worker pool. On a dense field this stage
-                    // used to be ~121 s of a ~150 s run, synchronous, with the page unresponsive
-                    // throughout - Chrome offered to kill it repeatedly. The pool returns the
-                    // same numbers, not merely close ones; see StarSphereSolvePool.js.
-                    const tSph = Date.now();
-                    updateProgress({percent: 96.5, status: "Solving sky rotation"});
-                    await yieldToBrowser();
-                    let refined = await refineGlobalSphericalAsync(solved.tracks, states, lens, size,
-                        {
-                            exclude: artifacts,
+                    // The sky-rotation solve, in one of two forms. Free: an orientation per
+                    // frame, off the UI thread and across a worker pool (on a dense field this
+                    // stage used to be ~121 s of a ~150 s run, synchronous, with the page
+                    // unresponsive throughout - Chrome offered to kill it repeatedly; the pool
+                    // returns the same numbers, not merely close ones, see
+                    // StarSphereSolvePool.js). Fixed camera: one axis and one rate for the
+                    // whole clip - three unknowns, cheap enough to stay on this thread with a
+                    // yield per iteration.
+                    const fixedCam = params.fixedCamera;
+                    const solveSky = (states0, exclude, note, pct0, pctSpan) => {
+                        const common = {
+                            exclude,
                             shouldAbort: () => ctx.stale(),
                             onProgress: (p) => {
                                 updateProgress({
-                                    percent: 96.5 + 1.5 * (p.iteration - 1) / p.iterations,
-                                    status: `Solving sky rotation: pass 1, iteration ${p.iteration}`,
+                                    percent: pct0 + pctSpan * (p.iteration - 1) / p.iterations,
+                                    status: `${note.status}: iteration ${p.iteration}`,
                                 });
-                                noteSphereProgress("Solving sky rotation (pass 1)", p);
+                                noteSphereProgress(note.stage, p);
                             },
-                        });
+                        };
+                        // Three unknowns make an iteration cheap, and the alternation with
+                        // the map settles more slowly than the per-frame fit's - so it is
+                        // given more of them rather than reported unconverged at 0.33 px.
+                        return fixedCam
+                            ? refineFixedAxisSpherical(solved.tracks, states0, lens, size,
+                                {...common, onYield: yieldToBrowser, refineIterations: 40})
+                            : refineGlobalSphericalAsync(solved.tracks, states0, lens, size, common);
+                    };
+                    const tSph = Date.now();
+                    updateProgress({percent: 96.5, status: "Solving sky rotation"});
+                    await yieldToBrowser();
+                    let refined = await solveSky(states, artifacts,
+                        {status: "Solving sky rotation: pass 1", stage: "Solving sky rotation (pass 1)"},
+                        96.5, 1.5);
                     if (!refined) {
                         params.status = aborted ? "aborted" : "cancelled (video changed)";
                         return null;
                     }
-                    console.log(`[StarTrack] refineGlobalSpherical#1 ${Date.now() - tSph}ms `
-                        + `(${solved.tracks.length} tracks, ${refined.iterations} iterations, `
-                        + `converged=${refined.converged})`);
+                    console.log(`[StarTrack] ${fixedCam ? "refineFixedAxisSpherical" : "refineGlobalSpherical"}#1 `
+                        + `${Date.now() - tSph}ms (${solved.tracks.length} tracks, `
+                        + `${refined.iterations} iterations, converged=${refined.converged})`);
                     const classifyOpts = {
                         minObservations: ctx.minObservations,
                         driftSignificance: ctx.driftSignificance,
@@ -2205,25 +2513,17 @@ export async function runStarTracker(opts = {}) {
                         const tSph2 = Date.now();
                         updateProgress({percent: 98, status: "Re-solving on stars only"});
                         await yieldToBrowser();
-                        const re = await refineGlobalSphericalAsync(solved.tracks, refined.states,
-                            lens, size, {
-                                exclude: notSky,
-                                shouldAbort: () => ctx.stale(),
-                                onProgress: (p) => {
-                                    updateProgress({
-                                        percent: 98 + 1.0 * (p.iteration - 1) / p.iterations,
-                                        status: `Re-solving on stars only: iteration ${p.iteration}`,
-                                    });
-                                    noteSphereProgress("Re-solving on stars only", p);
-                                },
-                            });
+                        const re = await solveSky(refined.states, notSky,
+                            {status: "Re-solving on stars only", stage: "Re-solving on stars only"},
+                            98, 1.0);
                         if (!re) {
                             params.status = aborted ? "aborted" : "cancelled (video changed)";
                             return null;
                         }
                         refined = re;
-                        console.log(`[StarTrack] refineGlobalSpherical#2 ${Date.now() - tSph2}ms `
-                            + `(${refined.iterations} iterations, converged=${refined.converged})`);
+                        console.log(`[StarTrack] ${fixedCam ? "refineFixedAxisSpherical" : "refineGlobalSpherical"}#2 `
+                            + `${Date.now() - tSph2}ms (${refined.iterations} iterations, `
+                            + `converged=${refined.converged})`);
                         sph = classifyTracksSpherical(solved.tracks, refined.states, lens, size,
                             {...classifyOpts, exclude: notSky});
                     }
@@ -2242,7 +2542,9 @@ export async function runStarTracker(opts = {}) {
                         // its match consensus (measured on the reference clip: identify succeeded
                         // before, failed after). Until Identify is migrated to the spherical map
                         // it keeps the input it was tuned for. This decouples the two features
-                        // rather than trading one regression for another.
+                        // rather than trading one regression for another. (A KNOWN fisheye lens
+                        // is the exception - its 2D chart is meaningless, so identifyStars
+                        // charts the sphere instead; see sphereIdentifyChart.)
                         c.klass2D = c.klass;
                         c.klass = s.klass;
                         c.totalDrift = s.totalDrift;
@@ -2263,9 +2565,39 @@ export async function runStarTracker(opts = {}) {
 
                     const fov = lensFOV(lens, size);
                     lensInfo = {lens, diagnostics: cal.diagnostics, changed, rms: refined.rms,
-                        chart, chartCentre: chartOut.centre, states: refined.states};
-                    params.lensStatus = `${lens.type}, ${fov.hfov.toFixed(0)} deg, rms ${refined.rms.toFixed(2)} px`
-                        + (changed ? `, ${changed} reclassified` : "");
+                        chart, chartCentre: chartOut.centre, states: refined.states,
+                        // The render's roll is not part of the lens (the per-frame orientation
+                        // absorbs it); the camera sync puts it back. Zero for a fitted lens.
+                        rollDeg: knownLens ? fisheye.roll : 0};
+                    const lensLabel = knownLens
+                        ? `fisheye (Camera menu) ${LENS_PRESETS[lens.type]?.label ?? lens.type}`
+                        : lens.type;
+                    let fixedNote = "";
+                    if (fixedCam && refined.axis) {
+                        // The fitted rate against the sidereal rate gives the exposure interval
+                        // the timeline implies - a check on the timelapse, not an assumption of
+                        // it. The rotation axis is the celestial pole; whichever of its two ends
+                        // lies in front of the camera is the one the footage can show.
+                        const rateDeg = refined.ratePerFrame * 180 / Math.PI;
+                        const siderealDegPerSec = 360 / 86164.0905;
+                        const secondsPerFrame = rateDeg / siderealDegPerSec;
+                        const ax = refined.axis;
+                        const front = ax[2] >= 0 ? ax : [-ax[0], -ax[1], -ax[2]];
+                        const polePx = rayToPixel(lens, front, size);
+                        lensInfo.fixedAxis = {axis: ax, ratePerFrameDeg: rateDeg, secondsPerFrame,
+                            polePx, f0: refined.f0};
+                        fixedNote = `; fixed camera, sky ${rateDeg.toFixed(4)} deg/frame`
+                            + ` (${secondsPerFrame.toFixed(1)} s/frame)`;
+                        console.log(`[StarTrack] fixed camera: rate ${rateDeg.toFixed(5)} deg/frame = `
+                            + `${secondsPerFrame.toFixed(2)} s/frame at the sidereal rate; celestial pole at `
+                            + (polePx ? `(${polePx[0].toFixed(1)}, ${polePx[1].toFixed(1)}) px` : "no image")
+                            + ` in analysed frame ${refined.f0}`);
+                    }
+                    // A known lens is described by its image circle, as the Camera menu does;
+                    // lensFOV's frame-edge figure would quote the model well past the circle.
+                    const fovNote = knownLens ? `${fisheye.fov.toFixed(1)} deg circle` : `${fov.hfov.toFixed(0)} deg`;
+                    params.lensStatus = `${lensLabel}, ${fovNote}, rms ${refined.rms.toFixed(2)} px`
+                        + (changed ? `, ${changed} reclassified` : "") + fixedNote;
                 } else {
                     params.lensStatus = `not fitted: ${cal.reason}`;
                 }
@@ -2907,12 +3239,22 @@ export function drawStarTrackerOverlay() {
     // unmistakable.
     if (liveQuads.length) {
         liveQuads.forEach((q, qi) => {
+            const sChart = result.sphereChart?.chart;
             const pts = q.points.map(([qx, qy]) => {
                 // The solver codes each quad in both parities, and a mirrored hit carries
                 // negated y. Undo that before drawing, or half the quads land reflected about
                 // the chart's x-axis, nowhere near their stars.
-                const [vx, vy] = applyTransform(T, qx, q.mirrored ? -qy : qy);
-                return toCanvas(vx, vy);
+                const cy = q.mirrored ? -qy : qy;
+                // A sphere chart's quad comes back through the chart's projection and this
+                // frame's orientation; the 2D chart's through the frame transform.
+                let v;
+                if (sChart && sphState) {
+                    v = refToFrame(sphState, lensInfo.lens, sphereChartUnproject(sChart, qx, cy), sphSize);
+                    if (!v) return [NaN, NaN];
+                } else {
+                    v = applyTransform(T, qx, cy);
+                }
+                return toCanvas(v[0], v[1]);
             });
             if (pts.some(([px, py]) => !Number.isFinite(px) || !Number.isFinite(py))) return;
 
@@ -3109,6 +3451,13 @@ export function setupStarTrackerMenu() {
             + "of with a flat 2D model. On a wide-angle clip the flat model is biased at the frame "
             + "edges and reports edge stars as moving. Refuses to fit when the clip does not "
             + "constrain a lens, so it is safe to leave on.");
+    folder.add(params, "fixedCamera").name("Fixed camera")
+        .tooltip("The camera did not move, turn or zoom during the clip (a mounted allsky or "
+            + "meteor camera). The sky then turns rigidly about one axis at one rate, so the "
+            + "solver fits three numbers for the whole clip instead of an orientation per "
+            + "frame - far more robust on a sparse or very wide field, and it reports the "
+            + "exposure interval the fitted rate implies. Leave off for hand-held or panned "
+            + "footage.");
     folder.add(params, "lensStatus").name("Lens").listen().disable();
     folder.add(params, "showStars").name("Show stars").onChange(setRenderOne);
     folder.add(params, "showMoving").name("Show moving").onChange(setRenderOne);
