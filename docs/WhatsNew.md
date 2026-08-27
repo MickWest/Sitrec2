@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.144.0 (2026-08-27)
+
+### New Features
+
+- **Lunar eclipses** (Lighting → Lunar Eclipse): set the time to a lunar eclipse and the Moon is now eclipsed — the long soft gradient of the penumbra, the feathered edge of the umbra, and the deep red of totality. There is nothing to switch on. The red is computed from sunlight refracted through the Earth's atmosphere rather than painted on, so the darker centre of the umbra and the turquoise ozone fringe just inside its edge appear by themselves, and a single **Atmospheric Clarity** slider covers the whole range from an almost invisible Moon (as after the Pinatubo eruption) to a bright coppery one. **Auto Exposure** makes a totally eclipsed Moon visible at all — it is about ten thousand times fainter than a full Moon — while still letting it visibly darken as it enters the shadow, the way a fixed-exposure photo sequence of totality does. **Shadow Outlines** (off by default) rings the whole umbra in gold and the penumbra in orange out at the Moon's distance, so you can see how big the shadow is and watch the Moon cross it. The **Eclipse** readout at the bottom of the folder tells you what the current time works out to: the kind of eclipse, how far into the shadow the Moon is, and the Danjon number for how dark totality looks. Long-exposure renders in Moonlight mode (Video → Long Exposure) dim to match. See Help → Documentation → *Lunar Eclipses*.
+
+- **NVG Sat Boost** (Effects → Thermal/NV): a real image intensifier shows satellites the naked eye cannot, so the NightVision effect now has an **NVG Sat Boost** slider (default 4) that multiplies satellite brightness in the look view while NightVision is on. Set it to 1 for no boost.
+
+### Improvements
+
+- The **Simulation Speed** slider (Time menu) now goes up to 1200x instead of 120x. As before, this changes the simulation's time calculations, not video replay speed.
+
 ## Version 2.143.0 (2026-08-27)
 
 ### New Features
