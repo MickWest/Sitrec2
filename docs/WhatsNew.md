@@ -9,6 +9,25 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.142.0 (2026-08-27)
+
+### New Features
+
+- **Fisheye (allsky) lens** (Camera → FOV (Zoom) → Fisheye, custom sitches): the look view can now render through a true fisheye projection with fields of view of 180° and beyond, for matching all-sky and meteor camera footage. Pick the lens curve under *Projection* (equidistant, equisolid-angle, stereographic, orthographic, or rectilinear as a check), set *Fisheye FOV °*, size and offset the image circle with *Circle Size %* and *Center X/Y %* to match a cropped 16:9 frame, rotate it with *Roll °*, black out everything outside the circle with *Show Image Circle*, and press *Point Straight Up (Allsky)* to aim at the zenith with north up and east on the left. Stars, satellites, planets, tracks, terrain and the night-sky name labels all follow the lens; while it is on, the scroll wheel, pinch and keyboard zoom in the look view adjust the fisheye FOV instead of the normal zoom, and the settings save with the sitch. Long lines still draw as straight chords, mouse picking stays on the normal projection, and it cannot be combined with Flat Earth. See Help → Documentation → *Fisheye (Allsky) Projection*.
+
+- **Thermal and NightVision sensor effects** (Effects → Thermal/NV, custom sitches): two new looks for the look view — *Thermal* (white-hot or black-hot, an Ironbow color palette, sensitivity, hot-spot bloom, sensor pixelation and a circular lens mask) and *NightVision* (a phosphor-green image intensifier with gain, bloom, pixelation, barrel distortion and a circular tube mask). Their enable checkboxes and sliders, together with the existing FLIR effect's checkbox, are in the new *Thermal/NV* folder of the Effects menu. Both are off by default and appear in previously saved custom sitches too.
+
+- **Import ADS-B Track...** (Contents): enter an aircraft's ICAO 24-bit hex address (shown on most flight trackers) and Sitrec fetches its last ~24 hours of positions from adsb.lol and adds them as a track named from the callsign or registration — no KML export needed. A downloaded adsb.lol / tar1090 trace file can be dragged in as well. GPS (geometric) altitude is used when the trace carries it, barometric altitude otherwise. The data is ODbL-licensed; credit adsb.lol when publishing imagery made with it.
+
+### Improvements
+
+- **Flat Earth rendering loads fewer map tiles and never bills a per-tile provider** (Physics → Scenarios → Flat Earth): terrain detail now stops refining beyond 500 km (further from a high camera) instead of all the way to the disc rim, and while the mode is on the Mapbox and MapTiler map and elevation sources and Cesium OSM buildings are removed from the Terrain menus — a selected one is swapped for a free source and put back when the mode is turned off. Google 3D tiles are unaffected.
+
+### Bug Fixes
+
+- Fixed Flat Earth rendering with Google 3D tiles: the look view could show only sky because the ground under the camera never loaded when the sitch origin was far from the scene, a whole hemisphere of tiles could vanish from the main view, a ground-level view churned through thousands of tiles on the far rim, and the look camera's frustum outline flickered.
+- Fixed dropping a folder onto Sitrec stopping the display from updating until the next click or key. Folders are now refused with a message naming them, and a file that fails to import during a drop reports an error instead of halting rendering.
+
 ## Version 2.141.0 (2026-08-21)
 
 ### New Features
