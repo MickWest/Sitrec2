@@ -28,6 +28,10 @@ The most common track source. Export a KML or KMZ file from a flight tracking se
 
 KML files can contain **multiple tracks** (e.g., all flights in an area during a time window). When you import a KML with three or more tracks, Sitrec shows a selection dialog so you can choose which tracks to load.
 
+### ADS-B Trace by Aircraft (adsb.lol)
+
+If you know the aircraft's ICAO 24-bit hex address (shown on most flight trackers, e.g. `a1b2c3`), **Contents → Import ADS-B Track...** fetches roughly the **last 24 hours** of its positions directly from [adsb.lol](https://adsb.lol) — no file export needed. The track is named from the aircraft's callsign or registration. You can also drag in a downloaded readsb/tar1090 `trace_full_*.json` file. Geometric (GPS) altitude is used when the trace carries it, with barometric altitude as the fallback. Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery made with it.
+
 ### DJI Drone Data (CSV)
 
 DJI drone flight logs exported from [Airdata](https://airdata.com) in CSV format. These include full IMU data: position, altitude, heading, pitch, roll, and gimbal orientation.

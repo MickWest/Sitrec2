@@ -26,6 +26,8 @@ import {
 } from "./Globals";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {setupHorizonExtractorMenu} from "./CHorizonExtractor";
+import {importADSBTraceDialog} from "./ADSBTraceFetch";
+import {CNodeEffect} from "./nodes/CNodeEffect";
 import {setupCameraMotionMenu} from "./CameraMotionFromVideo";
 import {makeStarTrackCameraController, setupStarTrackerMenu} from "./starTrack/StarTrackerUI";
 import {ScenarioManager} from "./CScenarioManager";
@@ -1499,6 +1501,95 @@ export const setupMethods = {
             .name(t("custom.showHide.removeAllTracks.label"))
             .moveToFirst()
             .tooltip(t("custom.showHide.removeAllTracks.tooltip"))
+
+        // Fetch an aircraft's recent ADS-B trace from adsb.lol by ICAO hex
+        // and add it as a track (see src/ADSBTraceFetch.js).
+        this._importADSBTrace = async () => {
+            await importADSBTraceDialog();
+        };
+        guiMenus.contents.add(this, "_importADSBTrace")
+            .name(t("custom.showHide.importADSBTrace.label"))
+            .moveToFirst()
+            .tooltip(t("custom.showHide.importADSBTrace.tooltip"))
+
+        // ── Sensor-look effects: Thermal + NightVision ──────────────────
+        // Created HERE, never in SitCustom.js: SitCustom is a serialized
+        // sitch definition, so nodes added there are frozen out of old saves
+        // (whose embedded effects block predates them). setup() runs on
+        // every custom load — fresh and saved — so these exist everywhere
+        // with no migration. Their GUI lives in the permanent
+        // Effects > Thermal/NV folder (registered in index.js).
+        // Gated to the CUSTOM sitch: setup() also runs for legacy sitches
+        // (agua, gimbal, ...) and must not graft new effects onto their
+        // hand-tuned chains.
+        if (Sit.isCustom && NodeMan.exists("lookView")) {
+            const lookView = NodeMan.get("lookView");
+            if (Array.isArray(lookView.effectPasses)) {
+
+                // The legacy FLIRShader flag joins the same folder. Its def
+                // lives in the sitch — possibly an old save — so it cannot
+                // carry enabledGUI itself; relocate the toggle instead.
+                if (NodeMan.exists("Custom_FLIRShader")) {
+                    NodeMan.get("Custom_FLIRShader").setEnabledGUI("thermalNV");
+                }
+
+                // One slider node per effect parameter; returns the node id
+                // for the effect's inputs map. Guarded for interim saves that
+                // embedded these nodes in their definition.
+                const sensorSlider = (desc, value, start, end, step, tip) => {
+                    if (!NodeMan.exists(desc)) {
+                        new CNodeGUIValue({id: desc, value, start, end, step, desc, gui: "thermalNV", tip});
+                    }
+                    return desc;
+                };
+
+                // Insert an effect into the lookView chain right AFTER the
+                // named anchor pass — the render loop iterates effectPasses
+                // in array order, so position IS chain order, and the sensor
+                // stage sits after FLIRShader, before Invert/Levels/JPEG.
+                const insertSensorEffect = (effectName, id, anchorName, inputs) => {
+                    if (NodeMan.exists(id)) return;   // interim save already embedded it
+                    const node = new CNodeEffect({
+                        id, effectName, enabled: false, enabledGUI: "thermalNV", inputs,
+                    });
+                    const passes = lookView.effectPasses;
+                    const at = passes.findIndex(e => e.effectName === anchorName);
+                    passes.splice((at < 0 ? passes.length - 1 : at) + 1, 0, node);
+                };
+
+                insertSensorEffect("Thermal", "Custom_Thermal", "FLIRShader", {
+                    intensity: sensorSlider("Thermal Intensity", 1.0, 0.0, 1.0, 0.01,
+                        "Crossfade between the unstyled image and the thermal look"),
+                    sensitivity: sensorSlider("Thermal Sensitivity", 0.75, 0.0, 1.0, 0.01,
+                        "Contrast/range of the temperature mapping"),
+                    bloom: sensorSlider("Thermal Bloom", 0.65, 0.0, 1.0, 0.01,
+                        "Hot-spot bloom/bleed around bright (hot) areas"),
+                    mode: sensorSlider("Thermal Black Hot", 0, 0, 1, 1,
+                        "0 = white hot, 1 = black hot"),
+                    palette: sensorSlider("Thermal Ironbow", 0.0, 0.0, 1.0, 0.01,
+                        "Blend from monochrome to the Ironbow color palette"),
+                    pixelation: sensorSlider("Thermal Pixelation", 1.5, 1.0, 6.0, 0.1,
+                        "Simulated sensor resolution (grid size in pixels)"),
+                    vignette: sensorSlider("Thermal Vignette", 0.0, 0.0, 1.0, 0.01,
+                        "Circular lens mask (0 = full frame sensor)"),
+                });
+
+                insertSensorEffect("NightVision", "Custom_NightVision", "Thermal", {
+                    intensity: sensorSlider("NVG Intensity", 1.0, 0.0, 1.0, 0.01,
+                        "Crossfade between the unstyled image and the NVG look"),
+                    gain: sensorSlider("NVG Gain", 0.55, 0.0, 1.0, 0.01,
+                        "Intensifier gain: amplification, noise, and bloom balance"),
+                    bloom: sensorSlider("NVG Bloom", 0.30, 0.0, 1.0, 0.01,
+                        "Halo intensity around bright sources"),
+                    pixelation: sensorSlider("NVG Pixelation", 2.5, 1.0, 6.0, 0.1,
+                        "Simulated intensifier resolution (grid size in pixels)"),
+                    distortion: sensorSlider("NVG Distortion", 0.5, 0.0, 1.0, 0.01,
+                        "Barrel distortion of the NVG lens"),
+                    vignette: sensorSlider("NVG Tube Mask", 1.0, 0.0, 1.0, 0.01,
+                        "Circular tube mask (0 = full frame)"),
+                });
+            }
+        }
 
 
         // guiMenus.physics.add(this, "calculateBestPairs").name("Calculate Best Pairs");

@@ -12,6 +12,7 @@ import {loadGeoTIFF} from "./geotiffLoader";
 import {
     CTrackFile,
     CTrackFileJSON,
+    CTrackFileADSBTrace,
     CTrackFileKML,
     CTrackFileMISB,
     CTrackFileSonde,
@@ -27,6 +28,7 @@ const trackFileClasses = [
     CTrackFileKML,
     CTrackFileSTANAG,
     CTrackFileSRT,
+    CTrackFileADSBTrace, // readsb/tar1090 trace_full JSON (adsb.lol) — object with icao/timestamp/trace
     CTrackFileJSON,
     CTrackFileMISB,
     CTrackFileSonde,  // Last: handles text files, content-detected to avoid false positives

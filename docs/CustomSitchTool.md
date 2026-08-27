@@ -91,6 +91,7 @@ The position of the camera, and the other known objects, is defined by a **track
 To get a track into Sitrec, just import it (again, either via the "import" option on the file menu, or by dragging and dropping it directly into the browser window). The currently supported track formats are:
 
 - **KML or KMZ formatted ADS-B tracks.** *ADS-B* is the position signal airliners broadcast continuously; flight-tracking sites record it and let you export a flight as a KML file. These are typically exported from FlightRadar24, Planefinder.net, FlightAware.com, or ADSB Exchange — see [Where to Get Flight Data](KMLDataSources.md) for which export button to press on each, and which altitude option to choose.
+- **ADS-B traces fetched by aircraft.** For a sighting within roughly the last 24 hours you can skip the file export: **Contents → Import ADS-B Track...** asks for the aircraft's ICAO 24-bit hex address (shown on most flight trackers) and fetches its recent positions directly from adsb.lol. Dragging in a downloaded readsb `trace_full_*.json` file works too.
 - **DJI drone data in CSV format.** This has to be extracted from the encrypted data file using an online service.
 - **CSV files.** These currently need the relevant columns with headers matching the default MISB field names — see the Generic CSV section of [Tracks](Tracks.md) for the exact headers.
 - **MISB KLV files.** *MISB* is a military standard for metadata recorded alongside video: where the camera was, where it was pointing, and its zoom. *KLV* is the binary container that metadata travels in, usually embedded in a `.TS` video file. To import it into Sitrec you need to extract it, for example with ffmpeg (`ffmpeg -i truck.ts -map 0:1 -c copy -f data output.klv`). These files vary in format.
@@ -215,6 +216,8 @@ With that you can adjust the effects to more closely match atmospheric, optical,
 ![michigan-effects.jpg](docimages/michigan-effects.jpg)
 
 Here I bring in the Tv Out Black and White to simulate the haze. I also defocus slightly and reduced the resolution. 
+
+For infrared or night-vision footage there are two dedicated sensor simulations in the effects menu: **Thermal** (white-hot/black-hot polarity, an Ironbow color palette, sensitivity, hot-spot bloom, and sensor noise) and **NightVision** (an image-intensifier look with phosphor green, gain, bloom, and a circular tube mask). Both live in the Effects menu's **Thermal/NV** folder — enable checkboxes and parameter sliders together.
 
 Note in situation like this, the target is often darker than anticipated. That's due to the (current) lack of High Dynamic Range rending in Sitrec. 
 

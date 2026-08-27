@@ -12,7 +12,9 @@ import {CompressShader} from "../shaders/CompressShader";
 import {LevelsShader} from "../shaders/LevelsShader";
 import {GreyscaleShader} from "../shaders/GreyscaleShader";
 import {JPEGArtifactsShader} from "../shaders/JPEGArtifactsShader";
-import {Globals, guiTweaks} from "../Globals";
+import {ThermalShader} from "../shaders/ThermalShader";
+import {NightVisionShader} from "../shaders/NightVisionShader";
+import {Globals, guiMenus, guiTweaks, Sit} from "../Globals";
 import {CopyShader} from "../shaders/CopyShader";
 import {assert} from "../assert";
 
@@ -37,6 +39,8 @@ export class CNodeEffect extends CNode {
         "Greyscale": GreyscaleShader,
         "JPEGArtifacts": JPEGArtifactsShader,
         "Copy": CopyShader,
+        "Thermal": ThermalShader,
+        "NightVision": NightVisionShader,
     }
 
     effectTips = {
@@ -54,6 +58,8 @@ export class CNodeEffect extends CNode {
         "Greyscale": "Greyscale (black and white)",
         "JPEGArtifacts": "Simulated JPEG Artifacts",
         "Copy": "Copy",
+        "Thermal": "Advanced FLIR simulation (white/black hot, Ironbow palette, bloom, sensor noise)",
+        "NightVision": "Night vision image intensifier (P43 phosphor, gain, bloom, tube mask)",
     }
 
 
@@ -77,7 +83,23 @@ export class CNodeEffect extends CNode {
         this.addSimpleSerial("enabled");
         this.filter  = v.filter  ?? "Nearest"; // filter for the source RenderBuffer texture
 
-        guiOnOffFolder.add(this, "enabled").name(this.id).listen().onChange((v)=>{
+        // Optional named GUI destination for the enabled checkbox (e.g.
+        // enabledGUI: "thermalNV" puts the flag in Effects > Thermal/NV);
+        // defaults to the shared "Effects On/Off" folder.
+        const flagFolder = (v.enabledGUI && guiMenus[v.enabledGUI]) ? guiMenus[v.enabledGUI] : guiOnOffFolder;
+        this.enabledController = this._addEnabledToggle(flagFolder);
+
+
+        Globals.defaultGui = null;
+
+
+    }
+
+    // Create the enabled checkbox in the given folder. Shared by the
+    // constructor and setEnabledGUI, so a relocated toggle cannot drift
+    // from the original behavior.
+    _addEnabledToggle(folder) {
+        return folder.add(this, "enabled").name(this.id).listen().onChange((v)=>{
             if (!v) {
                 // if this.guiDisabled is true, then
                 // don't allow anything else to turn it back on
@@ -86,11 +108,18 @@ export class CNodeEffect extends CNode {
                 this.guiHasDisabled = false;
             }
         }).tooltip(this.effectTips[this.effectName]);
+    }
 
-
-        Globals.defaultGui = null;
-
-
+    // Move the enabled checkbox to a named GUI folder (e.g. "thermalNV").
+    // Used by CCustomManager.setup() to relocate an effect whose definition
+    // lives in a (possibly old, saved) sitch and so cannot carry enabledGUI
+    // itself. A no-op when the toggle is already there.
+    setEnabledGUI(guiName) {
+        const target = guiMenus[guiName];
+        if (!target || !this.enabledController) return;
+        if (this.enabledController.parent === target) return;
+        this.enabledController.destroy();
+        this.enabledController = this._addEnabledToggle(target);
     }
 
     updateUniforms(f, view) {
@@ -129,6 +158,12 @@ export class CNodeEffect extends CNode {
                 // time (the frame number) essentially acts as a random seed
                 // so the noise is the same for any given frame
                 uniforms['time'].value = par.frame;
+                break;
+            case "Thermal":
+            case "NightVision":
+                // time in seconds, derived from the frame number so the
+                // drifting sensor noise is deterministic per frame
+                uniforms['time'].value = par.frame / (Sit?.fps ?? 30);
                 break;
         }
 

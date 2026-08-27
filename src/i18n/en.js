@@ -1025,6 +1025,7 @@ const en = {
             filterTracks: { label: "Filter Tracks", tooltip: "Show/hide tracks based on altitude, direction, or frustum intersection" },
             removeAllTracks: { label: "Remove All Tracks", tooltip: "Remove all tracks from the scene\nThis will not remove the objects, just the tracks\nYou can add them back later by dragging and dropping the files again" },
             addTrackFromCameraLOS: { label: "Track from Camera LOS", tooltip: "Create a two-point synthetic track along the current camera's line of sight.\nFirst point is at the camera, second point is where the LOS hits the ground,\nor 300 miles along the LOS if it does not hit the ground." },
+            importADSBTrace: { label: "Import ADS-B Track...", tooltip: "Fetch an aircraft's last ~24 hours of ADS-B positions from adsb.lol\nby its ICAO 24-bit hex address (e.g. a1b2c3), and add it as a track.\nData: adsb.lol (ODbL)" },
         },
         objects: {
             globalScale: { label: "Global Scale", tooltip: "Scale factor applied to all 3D objects in the scene - useful for finding things. Set back to 1 for real size" },
