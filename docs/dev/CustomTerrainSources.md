@@ -17,6 +17,19 @@ Map sources and elevation sources are configured with a map definition. These ar
 
 A custom source's `mapURL` function receives the tile `z, x, y` directly, so if a particular server's tiling is offset by a fixed amount from Sitrec's standard slippy-map zoom you can apply the shift inside the function (e.g. build the URL from `z - 1`). For sources defined via environment variables instead of `config.js` — the `SITREC_CUSTOM_MAP_<NAME>_*` / `SITREC_CUSTOM_ELEVATION_<NAME>_*` vars documented in `config/shared.env.example` — the same shift is available declaratively as `_ZOFFSET`: an integer that is ADDED to `z` before it is substituted into the URL's `{z}` placeholder (`0` is a no-op, e.g. `SITREC_CUSTOM_MAP_ESRI_ZOFFSET=-1`). A companion `_MIN_ZOOM` (default 0) sets the lowest zoom Sitrec requests from the source (below it the terrain uses a placeholder tile rather than making a request); a negative `_ZOFFSET` automatically raises that effective minimum, so the value sent in `{z}` can never go negative regardless of `_MIN_ZOOM`.
 
+## Water colour, and the Water Reflection effect
+
+The Water Reflection effect (**Effects → Water Reflection**) finds water by matching the loaded map texture against the colour the source paints water with, declared as `waterColor: [r, g, b]` on the map definition. A source that does not declare one gets no reflections at all — the check is on the *declared* colour, not on the pixels, so that satellite imagery cannot invent lakes out of similarly-coloured ground.
+
+Two backfills mean you rarely have to write it yourself:
+
+- A `config.js` source keyed `osm` or `osmHighlight` is given OSM's fill `[170, 211, 223]` (`#AAD3DF`) if it does not set one. `config/config.js` is per-install and not checked in, so existing installs would otherwise silently lack it.
+- An env-defined source whose URL points at the standard OSM tile servers (`tile.openstreetmap.org`, `tile.osm.org`, including when routed through `cachemaps.php`) gets the same colour. This keys off the **URL**, not the `<NAME>` segment, because a source may be named anything and pointed anywhere.
+
+A source that sets `waterColor` itself always wins over both. For env-defined sources that is `SITREC_CUSTOM_MAP_<NAME>_WATER_COLOR`, written as `"170,211,223"` or `"#AAD3DF"` — needed for a self-hosted or restyled OSM whose water is some other colour. An unparseable value is ignored rather than trusted: an OSM tile server still gets its automatic colour, and any other source is left with none, so the effect stays off instead of matching water of some arbitrary wrong colour.
+
+Satellite sources have no flat water colour and should not be given one. Water Reflection covers them by other means: *Vector Water Mask*, which rasterises real water polygons and ignores the imagery entirely (needs a MapTiler key), or *Combine Terrain with OSM*, which stamps OSM's water fill into the loaded imagery. The combine needs some OSM-like source present to stamp *from*; it prefers the `config.js` `osm` key and otherwise uses any other source that declares a water colour and is not `mapping: 4326`, so an install that defines OSM only through `SITREC_CUSTOM_MAP_OSM_*`, or one running with `SITREC_ENABLE_DEFAULT_MAP_SOURCES=false`, still gets the option.
+
 Example: Open Streetmap:
 
 ```javascript

@@ -24,7 +24,10 @@ import {
     defaultSourcesEnabled,
     filterSourcesForServerless,
     filterToCustomAndOfflineSources,
+    findOSMWaterSource,
+    OSM_WATER_COLOR,
     pickAvailableSourceType,
+    waterColorForCustomSource,
 } from "../terrainSourceUtils";
 import {getEnv} from "../envUtils";
 import {ServiceAvailability} from "../ServiceAvailability";
@@ -169,11 +172,13 @@ export class CNodeTerrainUI extends CNode {
         // Backfill the OSM water fill colour (#AAD3DF) that the Water
         // Reflection effect keys off. config/config.js is per-install and not
         // checked in, so existing installs would otherwise silently lack it.
-        // A config that sets waterColor itself always wins.
+        // A config that sets waterColor itself always wins. The equivalent
+        // backfill for env-defined sources is in the SITREC_CUSTOM_MAP_* parser
+        // below, which keys off the URL rather than the source name.
         for (const key of ["osm", "osmHighlight"]) {
             const source = this.mapSources[key];
             if (source !== undefined && source.waterColor === undefined) {
-                source.waterColor = [170, 211, 223];
+                source.waterColor = [...OSM_WATER_COLOR];
             }
         }
 
@@ -417,6 +422,16 @@ export class CNodeTerrainUI extends CNode {
                     // equirectangular / CRS84 tile sources (e.g. a WMTS GoogleCRS84Quad layer).
                     if (Globals.env[prefix + 'MAPPING']) {
                         this.mapSources[sourceKey].mapping = parseInt(Globals.env[prefix + 'MAPPING']);
+                    }
+                    // WATER_COLOR ("170,211,223" or "#AAD3DF") is the flat colour this source
+                    // paints water with. Water Reflection finds water by matching the map texture
+                    // against it, so a source without one gets no reflection — which is why the
+                    // standard OSM tile servers are recognised by URL and given OSM's fill
+                    // automatically. An explicit value always wins, and is the way to support a
+                    // self-hosted or restyled OSM whose water is some other colour.
+                    const waterColor = waterColorForCustomSource(Globals.env[prefix + 'WATER_COLOR'], template);
+                    if (waterColor !== undefined) {
+                        this.mapSources[sourceKey].waterColor = waterColor;
                     }
                     console.log(`Added custom map source from env: ${sourceKey}`, this.mapSources[sourceKey].name);
                 }
@@ -1758,9 +1773,13 @@ export class CNodeTerrainUI extends CNode {
     // Only offer the OSM combine where the tiles actually line up: a source
     // using `mapping: 4326` (GoogleCRS84Quad) has a different grid entirely, and
     // combining OSM with OSM is a no-op.
+    //
+    // The source to stamp from is not necessarily the config.js `osm` key — see
+    // findOSMWaterSource. Must agree with osmWaterSourceForTile, or the checkbox
+    // is offered and does nothing (or the reverse).
     canCombineWithOSM() {
-        const osmDef = this.mapSources?.osm;
-        if (!osmDef || !osmDef.waterColor) return false;
+        const osmDef = findOSMWaterSource(this.mapSources);
+        if (!osmDef) return false;
         const sourceDef = this.mapSources?.[this.mapType];
         if (!sourceDef || sourceDef === osmDef) return false;
         return sourceDef.mapping !== 4326 && osmDef.mapping !== 4326;

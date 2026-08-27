@@ -57,6 +57,7 @@ import {guiMenus, NodeMan, Sit, setRenderOne, Globals, GlobalDateTimeNode} from 
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {CWaterPlanarMirror} from "../WaterPlanarMirror";
 import {waterMaskAvailable} from "../WaterMaskTiles";
+import {findOSMWaterSource} from "../terrainSourceUtils";
 import {OCEAN_MAX_WAVES} from "../ocean/OceanBRDF.glsl.js";
 import {altitudeHAE} from "../SphericalMath";
 import * as Astronomy from "astronomy-engine";
@@ -586,12 +587,24 @@ export class CNodeWaterReflection extends CNode {
     // imagery is loaded and so makes any compatible source detectable.
     getWaterColor() {
         const ui = NodeMan.get("TerrainModel", false)?.UI;
-        const ownColor = ui?.getSourceDef?.()?.waterColor;
-        if (ownColor) return ownColor;
+
+        // The combine is tested FIRST, because where it stamps it OVERWRITES the
+        // imagery's water pixels — so the colour it stamps is what is actually on
+        // the tile, and what the shader must match. Preferring the active
+        // source's own colour here would be wrong for any source that declares
+        // one and is not itself the stamp source: its water has just been painted
+        // OSM blue, so matching its own colour finds nothing where the stamp
+        // landed, and turning the combine on would make detection worse. That
+        // combination became reachable once SITREC_CUSTOM_MAP_<NAME>_WATER_COLOR
+        // let a source other than config.js's `osm` declare a water colour.
+        //
+        // findOSMWaterSource MUST pick the same source as osmWaterSourceForTile,
+        // or the tiles get one colour stamped and the shader looks for another.
         if (this.combineWithOSM && ui?.canCombineWithOSM()) {
-            return ui.mapSources?.osm?.waterColor;
+            const stampedColor = findOSMWaterSource(ui.mapSources)?.waterColor;
+            if (stampedColor) return stampedColor;
         }
-        return undefined;
+        return ui?.getSourceDef?.()?.waterColor;
     }
 
     getCubeTarget(renderer) {

@@ -26,6 +26,7 @@ import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {materialCache, textureLoadPromises} from "./QuadTreeTileCache";
 import {osmTileForTile} from "./OSMWaterTileMapping";
 import {loadWaterMaskTexture, waterMaskAvailable} from "./WaterMaskTiles";
+import {findOSMWaterSource} from "./terrainSourceUtils";
 import {unpaintedTextureImage} from "./GroundPaintState";
 
 // Crop a parent's or ancestor's water mask down to the region one child tile
@@ -202,9 +203,11 @@ export function osmWaterSourceForTile(tile) {
     const terrainNode = tile.map.terrainNode;
     const ui = terrainNode.UI;
     const sourceDef = terrainNode.getMapSourceDef();
-    const osmDef = ui.mapSources?.osm;
+    // Not necessarily the config.js `osm` key — an install may define OSM only
+    // through SITREC_CUSTOM_MAP_OSM_*, or run with the config sources stripped.
+    // Must agree with CNodeTerrainUI.canCombineWithOSM.
+    const osmDef = findOSMWaterSource(ui.mapSources);
     if (!osmDef || sourceDef === osmDef) return null;      // already OSM, nothing to combine
-    if (!osmDef.waterColor) return null;
 
     // Same tiling scheme only. `mapping: 4326` selects GoogleCRS84Quad, whose
     // tiles do not line up with OSM's Web Mercator grid at all.
