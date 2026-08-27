@@ -272,14 +272,59 @@ describe("a mirrored copy of the menu", () => {
         expect(twin._allowInputExpandMin).toBe(true);
 
         ptz.pan360 = true;
-        ptz.updatePanRange();
-        twin._min = 0; twin._max = 360;          // what syncRange() carries across
-        twin.updateDisplay();
+        ptz.updatePanRange();                    // carries the new range across on its own
 
         // Arrowing down off the bottom of the twin continues round, as on the original.
         twin.$input.dispatchEvent(new KeyboardEvent('keydown', {code: 'ArrowDown', bubbles: true}));
         expect(ptz.panDisplay).toBeCloseTo(359.99, 6);
         expect(ptz.az).toBeCloseTo(-0.01, 6);
+    });
+
+    test("follows the original when the CONVENTION is switched", () => {
+        // The checkbox moves the range without moving the value, so the mirror's
+        // value-change sync never fires. A twin left on -180..180 would then draw a
+        // compass bearing against the signed range - 270 pinned past the end of its own
+        // track - and clamp anything typed into it to 180.
+        const {ptz, pan} = makePTZ();
+        const other = new GUI({autoPlace: false});
+        const twin = pan.mirrorTo(other);
+        expect(twin._min).toBe(-180);
+        expect(twin._max).toBe(180);
+
+        ptz.az = -90;
+        ptz.pan360 = true;
+        ptz.updatePanRange();          // what the checkbox's onChange does
+
+        expect(twin._min).toBe(0);
+        expect(twin._max).toBe(360);
+        expect(twin.$input.value).toBe("270");
+        expect(twin._fillPercent()).toBeCloseTo(0.75, 6);
+
+        ptz.pan360 = false;
+        ptz.updatePanRange();
+        expect(twin._min).toBe(-180);
+        expect(twin._max).toBe(180);
+        expect(twin.$input.value).toBe("-90");
+    });
+
+    test("mirroring the same control twice does not stack range hooks", () => {
+        const {ptz, pan} = makePTZ();
+        const a = new GUI({autoPlace: false}), b = new GUI({autoPlace: false});
+        const twinA = pan.mirrorTo(a);
+        const twinB = pan.mirrorTo(b);
+
+        ptz.pan360 = true;
+        ptz.updatePanRange();
+        expect(twinA._max).toBe(360);
+        expect(twinB._max).toBe(360);
+        expect(pan._menuMirrorRangeTwins.length).toBe(2);
+
+        // A closed mirror menu drops out rather than being carried for ever.
+        twinA.destroy();
+        ptz.pan360 = false;
+        ptz.updatePanRange();
+        expect(pan._menuMirrorRangeTwins).toEqual([twinB]);
+        expect(twinB._min).toBe(-180);
     });
 
     test("typing 270 into the twin works exactly as it does in the original", () => {

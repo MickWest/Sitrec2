@@ -143,6 +143,37 @@ function buildTwin(source, targetGui, opts = {}) {
         twin.onFinishChange(function (value) { source._onFinishChange.call(source, value); });
     }
 
+    // syncRange() below runs when the VALUE changes, which is not the only way a range
+    // moves: the Pan (Az) slider swaps between -180..180 and 0..360 when its convention
+    // is switched, and a CNodeGUIValue rescales on a units change — both without touching
+    // the value. A twin left on the old bounds draws its fill against them and clamps
+    // typed input to them, so it must hear about those too. Hooking the two methods that
+    // move a range is the only place that catches every caller.
+    //
+    // Installed once per source, with a list of its twins, so mirroring the same control
+    // again does not stack wrappers; the list drops twins that have since been destroyed
+    // (a mirrored menu that was closed), so opening and closing one does not accumulate
+    // dead controllers.
+    if (typeof source.min === "function" && typeof source.max === "function") {
+        if (!source._menuMirrorRangeTwins) {
+            source._menuMirrorRangeTwins = [];
+            for (const method of ["min", "max"]) {
+                const inherited = source[method];
+                source[method] = function (value) {
+                    const result = inherited.call(this, value);
+                    this._menuMirrorRangeTwins = this._menuMirrorRangeTwins
+                        .filter(live => live.parent?.controllers.includes(live));
+                    for (const live of this._menuMirrorRangeTwins) {
+                        syncRange(this, live);
+                        forceUpdateDisplay(live);
+                    }
+                    return result;
+                };
+            }
+        }
+        source._menuMirrorRangeTwins.push(twin);
+    }
+
     // Inherit the source's listening state. This is what lets a twin recover from a change that
     // bypassed every controller — but only in a polled root (GUIRootRegistry).
     //
