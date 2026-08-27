@@ -191,6 +191,16 @@ function addTwin(source, gui) {
             // permission to move it.)
             if (source._allowInputExpandMax) twin.allowInputExpandMax(true);
             if (source._allowInputExpandMin) twin.allowInputExpandMin(true, source._inputExpandMinLimit);
+            // Same argument for wrapping. A control that runs off the end of its track
+            // and continues round in one copy of the menu, but sticks there in another,
+            // is not the same control - and it is most obvious on the Pan (Az) slider in
+            // its 0-360 spelling, where both ends are NORTH. The receiver comes along
+            // too: it is a controller on the shared bound value, so a twin carrying into
+            // it (Second 59 -> 0 bumping Hour) does what the source would have done.
+            if (source._canWrap) {
+                twin.wrap(source._wrapReceiver);
+                if (source._wrapPeriod !== undefined) twin.wrapPeriod(source._wrapPeriod);
+            }
             if (!source.$slider) twin.noSlider();
             return twin;
         }

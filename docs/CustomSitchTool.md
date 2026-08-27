@@ -120,7 +120,7 @@ By default when you load a single simple track (i.e. a track with no heading or 
 
 ### Camera Heading: Manual & PTZ
 
-You can adjust the camera heading using the PTZ controls. These default to absolute values (the "Relative Heading" check box is off). So a pan of 0° means north, and a tilt of 0° means level with the ground under the camera. A positive tilt goes up, negative goes down. 
+You can adjust the camera heading using the PTZ controls. These default to absolute values (the "Relative Heading" check box is off). So a pan of 0° means north, and a tilt of 0° means level with the ground under the camera. A positive tilt goes up, negative goes down. Pan runs from -180° to +180°, so west is -90°; tick **Use 0-360 for Pan** if you would rather give it as a compass bearing (west = 270°). It is the same angle written two ways, and nothing but the slider changes. 
 
 Changing the PTZ mode to "Relative Heading" (check the box) means that the heading is relative to the ground track of the jet. This allows you to simulate looking forward (Pan = 0°), or to the pilot's left or right. 
 

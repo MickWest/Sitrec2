@@ -16,6 +16,16 @@ Normal mode uses conventional **Azimuth/Elevation** angles to point the camera. 
 
 This is the natural choice when the camera is looking roughly toward the horizon, as in aircraft-based scenarios.
 
+### Pan: -180 to +180, or 0 to 360
+
+An azimuth is an angle on a circle, so 270 and -90 are the same direction — one is a compass bearing, the other is signed. Pan (Az) shows the signed spelling by default, and the **Use 0-360 for Pan** checkbox at the bottom of the Heading folder switches it to the compass one.
+
+The checkbox changes only how the angle is *written*. It does not move the camera, and it does not change anything else in Sitrec: the angle is stored signed either way, so a saved sitch, a traverse, an exported track and a photo match all come out identical whichever box is ticked.
+
+Type a bearing above 180 into Pan and the box ticks itself, because that is the only way the number you typed can be shown — enter 270 and it stays 270 rather than turning into -90 under you. It works the other way round too: with the box ticked, entering -90 shows 270. The slider wraps at both ends in either mode, so dragging past north continues round instead of stopping.
+
+The setting is saved with the sitch, and a sitch written with a pan above 180 opens showing the convention it was written in.
+
 ![Normal mode: looking toward the horizon over terrain](images/satcam-normal-page.jpg)
 *Normal mode over Los Angeles at 30,000 ft. The left panel shows the overview; the right panel shows the look camera view toward the horizon.*
 

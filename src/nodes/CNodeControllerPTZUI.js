@@ -1,4 +1,5 @@
 import {degrees, ExpandKeyframes, radians} from "../utils";
+import {azTo360, normalizeAzSigned} from "../mathUtils";
 import {RollingAverage} from "../smoothing";
 import {
     getAzElFromPositionAndForward,
@@ -30,7 +31,14 @@ export class CNodeControllerAzElZoom extends CNodeController {
     get az() { return this._az; }
     set az(value) {
         assert(!isNaN(value), "CNodeControllerAzElZoom: setting az to NaN, id=" + this.id);
-        this._az = value;
+        // Azimuth is STORED signed, -180..180, no matter which spelling the writer
+        // used. An EXIF heading and the AR compass both arrive as 0..360, the Pan
+        // slider can be set to either, and a file-driven az can accumulate past a
+        // full turn - 270, -90 and 630 are all the same direction. Folding here is
+        // what lets everything downstream compare two azimuths without first asking
+        // which convention each one is in. Only the Pan slider's DISPLAY tells the
+        // spellings apart (see panDisplay / pan360 below).
+        this._az = normalizeAzSigned(value);
     }
 
     get el() { return this._el; }
@@ -150,6 +158,12 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         this.relative = false;
         this.satellite = v.satellite ?? false;
         this.rotation = v.rotation ?? 0; // screen-space rotation around camera look axis (satellite mode only)
+        // Which spelling the Pan slider shows: signed -180..180 (off, the default) or
+        // compass 0..360 (on). A DISPLAY setting only - this.az stays signed either
+        // way. Saves made before this existed have no flag, so an az above 180 in the
+        // sitch (an EXIF heading, say) selects the convention it was written in rather
+        // than being shown as a negative the file never mentioned.
+        this.pan360 = v.pan360 ?? (v.az > 180);
         this.satQuat = new Quaternion(); // satellite mode orientation (relative to nadir frame)
         this._satQuatDirty = true;       // rebuild from angles on next applySatellite
 
@@ -172,7 +186,7 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             this.setGUI(v,"camera");
             const guiPTZ = this.gui;
 
-            this.azController = guiPTZ.add(this, "az", -180, 180, 0.01, false).listen().name(t("ptzUI.panAz.label")).tooltip(t("ptzUI.panAz.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor).wrap()
+            this.makePanController(guiPTZ);
             this.elController = guiPTZ.add(this, "el", -89, 89, 0.01, false).listen().name(t("ptzUI.tiltEl.label")).tooltip(t("ptzUI.tiltEl.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
             if (this.fov !== undefined) {
                 // The Zoom (fov) slider lives in the FOV (Zoom) sub-folder, not with
@@ -278,6 +292,7 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
                 this.syncModeTransition();
             }).setLabelColor(pszUIColor)
             this.rotationController = guiPTZ.add(this, "rotation", -180, 180, 0.1).listen().name(t("ptzUI.rotation.label")).tooltip(t("ptzUI.rotation.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
+            this.pan360Controller = guiPTZ.add(this, "pan360").listen().name(t("ptzUI.pan360.label")).tooltip(t("ptzUI.pan360.tooltip")).onChange(() => this.updatePanRange()).setLabelColor(pszUIColor)
 
             if (this.satellite) {
                 this.updateSatelliteSliderRanges();
@@ -285,6 +300,79 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             this.updateSatelliteSliderVisibility();
         }
        // this.refresh()
+    }
+
+    /**
+     * Build the Pan (Az) slider.
+     *
+     * Its own method so this exact chain is stated once, and can be built by a test
+     * against a real lil-gui folder. Each link matters:
+     *
+     *  - bound to panDisplay, not az, so the slider shows whichever spelling pan360
+     *    selects while the stored angle stays signed;
+     *  - wrap() + wrapPeriod(360) because the two ends of an ANGLE slider are the same
+     *    direction rather than two values one step apart, so stepping off one end must
+     *    arrive at the other end exactly, not one step short of it;
+     *  - the expand-on-input pair, which is what lets a typed value outside the current
+     *    range reach panDisplay's setter at all instead of being clamped at the end of
+     *    the track. Typing 270 into a -180..180 slider is the whole point, and the
+     *    setter puts the bounds back the moment it has read the number.
+     */
+    makePanController(guiPTZ) {
+        this.azController = guiPTZ.add(this, "panDisplay", -180, 180, 0.01, false)
+            .listen()
+            .name(t("ptzUI.panAz.label"))
+            .tooltip(t("ptzUI.panAz.tooltip"))
+            .onChange(v => this.refresh())
+            .setLabelColor(pszUIColor)
+            .wrap()
+            .wrapPeriod(360)
+            .allowInputExpandMax()
+            .allowInputExpandMin();
+        this.updatePanRange();
+        return this.azController;
+    }
+
+    // ---------- the Pan slider's two spellings ----------
+    //
+    // panDisplay is NOT a second stored angle. It reads and writes this.az through
+    // whichever convention pan360 selects, so the slider can show 270 while every
+    // other part of Sitrec sees -90 - the same direction, spelled the way the user
+    // asked for.
+
+    get panDisplay() {
+        return this.pan360 ? azTo360(this.az) : this.az;
+    }
+
+    set panDisplay(value) {
+        if (!Number.isFinite(value)) return;
+        // Typing a number above 180 into a signed slider is a request for the compass
+        // convention: it is the only way that number can be shown. Tick the box and
+        // keep what was typed (270 stays 270, stored as -90) rather than answering an
+        // edit with a different number. The reverse is not symmetrical - a negative
+        // typed into a 0..360 slider IS representable there, so it just wraps (-90
+        // shows as 270) and leaves the box the user explicitly ticked alone.
+        if (value > 180 && !this.pan360) {
+            this.pan360 = true;
+        }
+        this.az = value;   // the az setter folds it back into -180..180
+        // Also puts the slider bounds back if a typed out-of-range value expanded
+        // them on its way in (see allowInputExpandMax/Min where the slider is made).
+        this.updatePanRange();
+    }
+
+    /**
+     * Point the Pan slider at the selected convention. The stored azimuth does not
+     * move - only the range the track spans and the number in the box.
+     */
+    updatePanRange() {
+        if (!this.azController) return;
+        if (this.pan360) {
+            this.azController.min(0).max(360);
+        } else {
+            this.azController.min(-180).max(180);
+        }
+        this.azController.updateDisplay();
     }
 
     // ---------- vertical / horizontal FOV and the aspect that links them ----------
@@ -476,6 +564,7 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             relative: this.relative,
             satellite: this.satellite,
             rotation: this.rotation,
+            pan360: this.pan360,
         }
     }
 
@@ -493,8 +582,10 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         this.relative = v.relative ?? false;
         this.satellite = v.satellite ?? false;
         this.rotation = v.rotation ?? 0;
+        this.pan360 = v.pan360 ?? (v.az > 180);
         this.lockAspect = v.lockAspect ?? false;
         this.lockedAspect = v.lockedAspect ?? 16 / 9;
+        this.updatePanRange();
         this.updateSatelliteSliderVisibility();
     }
 
@@ -714,11 +805,14 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             this.azController?.hide();
             this.elController?.hide();
             this.rollController?.hide();
+            // Nothing to apply a convention to while Pan is hidden.
+            this.pan360Controller?.hide();
             this.rotationController?.show();
         } else {
             this.azController?.show();
             this.elController?.show();
             this.rollController?.show();
+            this.pan360Controller?.show();
             this.rotationController?.hide();
         }
     }

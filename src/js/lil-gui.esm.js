@@ -868,6 +868,18 @@ class NumberController extends Controller {
         return this;
     }
 
+    // MICK: override the wrap period used by the step-based wrap (arrow keys, wheel).
+    // It defaults to max-min+step, which is right for the INTEGER date/time sliders
+    // where the two endpoints are distinct values one step apart (0-59 minutes). On a
+    // continuous circular slider the endpoints are the SAME value - an angle slider
+    // spanning 0..360 has one direction at both ends, not two - so stepping off the
+    // end with the +step period lands one step short and appears to stick. Such a
+    // slider passes its true period (360) here.
+    wrapPeriod( period ) {
+        this._wrapPeriod = period;
+        return this;
+    }
+
     // elastic will expand or contract the range if you push against the min or max
     // this allows finer control
     elastic( min = 100, max = 1000000, integer = false, shrink = false ) {
@@ -1747,7 +1759,7 @@ class NumberController extends Controller {
     // matching the integer date/time sliders (0-59, 1-31, etc.)
     _snapWrapSetValue( value ) {
         if ( this._canWrap && this._hasMin && this._hasMax ) {
-            const range = this._max - this._min + this._step;
+            const range = this._wrapPeriod ?? ( this._max - this._min + this._step );
             let carry = 0;
             if ( range > 0 ) {
                 while ( value > this._max ) { value -= range; carry++; }

@@ -1062,11 +1062,12 @@ class CameraMapControls {
 						// Satellite mode: camera-local rotations via quaternion
 						ptzControls.applySatelliteMouseDelta(xRotate, yRotate, dragFov);
 					} else {
+						// No wrap needed on az: its setter folds the angle back into
+						// -180..180 (CNodeControllerAzElZoom), which is also what keeps
+						// a 0-360 Pan slider reading 359.9 instead of -0.1.
 						ptzControls.az -= degrees(xRotate) * dragFov / 45
 						ptzControls.el += degrees(yRotate) * dragFov / 45
 
-						if (ptzControls.az < -180) ptzControls.az += 360
-						if (ptzControls.az >= 180) ptzControls.az -= 360
 						if (ptzControls.el <= -89) ptzControls.el = -89
 						if (ptzControls.el >= 89) ptzControls.el = 89
 

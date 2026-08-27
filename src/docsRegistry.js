@@ -240,7 +240,7 @@ export const helpDocs = [
     {
         file: "docs/satcam", labelKey: "menus.help.documentation.cameraModes",
         section: "analysis", menuId: "camera", role: "reference",
-        chatDesc: "Look-camera orientation modes (Normal vs Satellite PTZ) — how the camera points and how the look angle is defined.",
+        chatDesc: "Look-camera orientation modes (Normal vs Satellite PTZ) — how the camera points and how the look angle is defined. Also the two spellings of Pan (Az): signed -180..180 by default, or a 0-360 compass bearing via the 'Use 0-360 for Pan' checkbox, which changes the display only. Read for 'why is my pan negative', 'can I enter a heading of 270', or 'how do I show pan as a compass bearing'.",
     },
     {
         file: "docs/Fisheye", labelKey: "menus.help.documentation.fisheye",

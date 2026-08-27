@@ -1715,6 +1715,14 @@ const en = {
             label: "Pan (Az)",
             tooltip: "Camera azimuth / pan angle in degrees",
         },
+        pan360: {
+            label: "Use 0-360 for Pan",
+            tooltip: "Show the Pan (Az) slider as a 0-360 compass bearing instead of " +
+                "-180 to +180.\n\nThis only changes how the angle is WRITTEN - 270 and " +
+                "-90 are the same direction, and everything else in Sitrec is unaffected " +
+                "either way. Typing a value above 180 into Pan ticks this automatically, " +
+                "so the number you typed is the number you keep.",
+        },
         tiltEl: {
             label: "Tilt (El)",
             tooltip: "Camera elevation / tilt angle in degrees",

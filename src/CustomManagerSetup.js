@@ -241,6 +241,7 @@ export const setupMethods = {
                 const manual = headSwitch.choice === "Manual";
                 const consumesRoll = manual || headSwitch.choice === "To Target";
                 set(ptz.azController, manual);
+                set(ptz.pan360Controller, manual);
                 set(ptz.elController, manual);
                 set(ptz.relativeController, manual);
                 set(ptz.satelliteController, manual);
