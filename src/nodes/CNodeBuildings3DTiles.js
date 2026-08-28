@@ -1263,6 +1263,16 @@ export class CNodeBuildings3DTiles extends CNode {
         return best.clone();
     }
 
+    // The tile surface moved because it was EDITED, not because tiles streamed.
+    // update()'s settle edge cannot see that: every path below mutates loaded
+    // geometry synchronously and idempotently, so the per-frame reapply pass that
+    // would raise `active` finds nothing left to do and the edge never fires.
+    // Tree flattening and the Remove Geometry brush move the ground by metres, and
+    // anything standing on it — a synthetic building — has to hear about it.
+    announceSurfaceEdited() {
+        EventManager.dispatchEvent("visibleGroundChanged", this);
+    }
+
     // "Apply Edits" toggle. Restore so the change shows immediately; the update
     // reapply pass re-applies when on, and leaves geometry original when off.
     setApplyEdits(on) {
@@ -1271,6 +1281,7 @@ export class CNodeBuildings3DTiles extends CNode {
             if (pv.treeFlattener) pv.treeFlattener.restoreAll();
         }
         setRenderOne(true);
+        this.announceSurfaceEdited();
     }
 
     // "Restore Geometry" — reset everything: drop the saved dab list and restore
@@ -1284,6 +1295,7 @@ export class CNodeBuildings3DTiles extends CNode {
             if (pv.treeFlattener) pv.treeFlattener.restoreAll();
         }
         setRenderOne(true);
+        this.announceSurfaceEdited();
     }
 
     // --- Undo/redo for manual brush strokes ---------------------------------
@@ -1320,6 +1332,7 @@ export class CNodeBuildings3DTiles extends CNode {
             }
         }
         setRenderOne(true);
+        this.announceSurfaceEdited();
     }
 
     // Push an undo action for a completed brush stroke. `before` is the snapshot
@@ -1334,6 +1347,11 @@ export class CNodeBuildings3DTiles extends CNode {
             undo: () => this.restoreDabsState(before),
             redo: () => this.restoreDabsState(after),
         });
+        // End of the stroke, not each dab: applyManualBrush() runs on every pointer
+        // move, and re-snapping a building per dab would rebuild its mesh dozens of
+        // times a second to no visible benefit. The early return above is the right
+        // gate — a stroke that appended no dab edited no geometry.
+        this.announceSurfaceEdited();
     }
 
     // Non-destructive hover preview: hide the triangles the brush covers in the
