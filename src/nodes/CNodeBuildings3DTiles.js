@@ -22,6 +22,7 @@ import {TreeManualBrush} from "../TreeManualBrush";
 import {ECEFToLLAVD_radii, RLLAToECEF_radii} from "../LLA-ECEF-ENU";
 import {getLocalUpVector} from "../SphericalMath";
 import {getPointBelow} from "../threeExt";
+import {EventManager} from "../CEventManager";
 import {intersectDisplayed} from "../raycastGround";
 import {undoManager as UndoManager} from "../UndoManager";
 import {
@@ -1423,6 +1424,18 @@ export class CNodeBuildings3DTiles extends CNode {
         // loop, which re-runs this update, re-detects work via the per-view
         // grace/pending check above, and re-arms.
         this.updateWhilePaused = active;
+
+        // Tile geometry stops moving the moment `active` falls away: nothing queued,
+        // downloading, parsing or fading, and no LOD swap left in flight. Announce
+        // that edge for anything anchored to the tile SURFACE rather than to the
+        // elevation map. Synthetic buildings need it because a saved sitch
+        // deserializes long before the first tile arrives, so their initial snap has
+        // only the elevation map to reach — metres from what is on screen here.
+        // CNodeTerrainUI raises the same event when the tiles/basemap swap changes
+        // WHICH surface is the ground.
+        const settled = this._wasStreaming === true && !active;
+        this._wasStreaming = active;
+        if (settled) EventManager.dispatchEvent("visibleGroundChanged", this);
     }
 
     /**

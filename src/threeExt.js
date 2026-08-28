@@ -890,12 +890,37 @@ function tilesGroundTolerance() {
 // a pixel wants the surface they pointed at, roof included — but it is why this
 // must not be wired into a query that promises buildings-free terrain.
 //
-// Deliberately the single encoding of that rule: clampAboveGround() and
-// adjustHeightAboveGround() both need it and differ only in what they do with
-// the answer — clamp toward it, or set from it.
+// Deliberately the single encoding of that rule: clampAboveGround(),
+// adjustHeightAboveGround() and getVisiblePointBelow() all need it and differ only
+// in what they do with the answer — clamp toward it, set from it, or return it.
 function visibleGroundBelow(point) {
     if (!terrainBasemapHidden()) return null;
     return getTilesPointBelow(point);
+}
+
+// The ground to SIT something ON: the surface actually on screen. Same rule as
+// visibleGroundBelow(), but never null — it falls back to the elevation map — so
+// it is a drop-in for getPointBelow() wherever a call site is PLACING something on
+// the ground rather than measuring bare terrain.
+//
+// The two answers are metres apart whenever Google Photorealistic 3D tiles are the
+// rendered ground. Measured under the synthetic buildings of the Arizona test
+// sitch, the elevation map sits 1.7–2.3 m ABOVE the tile surface — most of a small
+// building's own height, so a base snapped to the elevation map visibly floats.
+//
+// Costs a tile raycast (~0.2 ms) while the tiles are the ground, so keep it out of
+// per-frame bulk loops; it is for the handful of things the user places and edits.
+export function getVisiblePointBelow(A) {
+    const ground = getPointBelow(A);
+    if (!terrainBasemapHidden()) return ground;
+    // Query the tiles from the elevation-map ground rather than from `A` itself.
+    // groundBelow() opens its downward ray only 1 km above the point it is handed,
+    // so a query taken at ellipsoid altitude 0 — which is how a footprint's corner
+    // lat/lons get converted — would start BENEATH any terrain higher than that and
+    // miss the surface completely. `ground` is on the same lat/lon column, so this
+    // changes nothing but the ray's starting height.
+    const visible = getTilesPointBelow(ground);
+    return visible !== null ? visible : ground;
 }
 
 // given a point in ECEF, ensure it is at least "height" meters above the ground

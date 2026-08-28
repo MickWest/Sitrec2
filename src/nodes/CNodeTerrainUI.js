@@ -9,6 +9,7 @@ import {CNodeSwitch} from "./CNodeSwitch";
 import {ECEFToLLAVD_radii, LLAToECEF, updateEarthRadii} from "../LLA-ECEF-ENU";
 import {CNodeTerrain} from "./CNodeTerrain";
 import {CNodeBuildings3DTiles} from "./CNodeBuildings3DTiles";
+import {EventManager} from "../CEventManager";
 import {TREE_FLATTEN_DEFS, makeDefaultTreeFlattenParams} from "../TilesTreeFlatten";
 import {CGroundPainter, GROUND_PAINT_DEFS, makeDefaultGroundPaintParams} from "../GroundPaint";
 import {GlobalScene} from "../LocalFrame";
@@ -1734,9 +1735,20 @@ export class CNodeTerrainUI extends CNode {
         const googleActive = this.isGooglePhotorealisticActive();
         const wasSuppressed = this.mapImagerySuppressed;
         this.mapImagerySuppressed = this.suppressMapImagery();
+        const wasGoogleActive = this._googleWasActive;
+        this._googleWasActive = googleActive;
 
         this.setTerrainVisible(!googleActive);
         this.setOceanSurfaceVisible(googleActive && this.showOceanSurface);
+
+        // Toggling the Google tiles swaps WHICH surface is the ground, and the two
+        // disagree by metres (1.7-2.3 m in the Arizona synthetic-building sitch).
+        // Anything snapped to the one that just went away is now floating above, or
+        // buried under, the one that replaced it, so tell it to re-snap. Skipped on
+        // the first call, where nothing has been placed against either surface yet.
+        if (wasGoogleActive !== undefined && wasGoogleActive !== googleActive) {
+            EventManager.dispatchEvent("visibleGroundChanged", this);
+        }
 
         // Tiles built while imagery was suppressed kept the placeholder material and
         // never fetched a texture, so the basemap would come back untextured. Reload

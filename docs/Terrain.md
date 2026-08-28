@@ -69,6 +69,14 @@ source, `threeExt.js`) had the tile surface about 12 m above the DEM in most col
 to 6 m below it in a fifth of them — indicative of the scale of the disagreement rather than
 a general figure.
 
+**Things you place on the ground follow the visible surface.** A synthetic building snaps its
+base to (4) while the 3D tiles are the rendered ground, and to (3) otherwise. No tile has
+streamed in at the moment a saved sitch loads, so the first snap can only reach (3); the base
+drops onto the tile surface as soon as the tileset settles, and re-snaps again each time you
+toggle the tiles on or off. Measured under the synthetic buildings of an Arizona test site,
+(3) sat 1.7-2.3 m **above** (4) — most of a small building's own height, which is why a base
+left on the DEM visibly floats.
+
 Also worth knowing: the fast ray-marcher used for long line-of-sight queries **never sees 3D
 tiles at all**. It works against the elevation model only.
 

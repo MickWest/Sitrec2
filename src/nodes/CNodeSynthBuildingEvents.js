@@ -15,7 +15,7 @@
 import {Plane, Vector3} from "three";
 import {CustomManager, Globals, NodeMan, setRenderOne, UndoManager} from "../Globals";
 import {getLocalUpVector} from "../SphericalMath";
-import {getPointBelow} from "../threeExt";
+import {getVisiblePointBelow} from "../threeExt";
 import {EventManager} from "../CEventManager";
 import {ViewMan} from "../CViewManager";
 import {assert} from "../assert";
@@ -33,13 +33,50 @@ export const eventMethods = {
         document.addEventListener('pointermove', this.onPointerMoveBound);
         document.addEventListener('pointerup', this.onPointerUpBound);
         
-        // Listen for elevation changes (flat elevation toggle, resolution changes, etc.)
-        EventManager.addEventListener("elevationChanged", () => {
-            this.recalculateVerticesFromTerrain();
-            this.buildMesh();
-            this.updateGUIControllers();
-            setRenderOne();
-        });
+        // EITHER ground a building can stand on can move underneath it, and the
+        // answer to both is the same: put the building back on it.
+        //  - "elevationChanged" is the elevation map (flat-elevation toggle,
+        //    resolution change, quality preset).
+        //  - "visibleGroundChanged" is the Google 3D tile surface, which is the
+        //    VISIBLE ground whenever those tiles are what's rendered. Raised when a
+        //    tileset settles and when the tiles are toggled on or off. Both matter:
+        //    not one tile has streamed in at the moment a saved sitch deserializes,
+        //    so the first snap can only reach the elevation map — 1.7-2.3 m away in
+        //    the Arizona test sitch, most of a small building's height.
+        const onGroundMoved = () => {
+            // Stale listener belonging to a disposed building. Returning true is how
+            // CEventManager unregisters a callback; an id check alone would not do,
+            // because a later building can be created under the same id and would
+            // then keep every dead predecessor's listener alive and working.
+            if (NodeMan.get(this.id, false) !== this) return true;
+            // Don't fight a drag — it snaps each vertex as it moves. But a ground
+            // move is a one-shot edge, so remember it: releasing the mouse without a
+            // further move would otherwise leave the building on the old surface.
+            if (this.isDragging || this.isRotating) {
+                this.groundMovedDuringDrag = true;
+                return;
+            }
+            this.resnapToGround();
+        };
+        EventManager.addEventListener("elevationChanged", onGroundMoved);
+        EventManager.addEventListener("visibleGroundChanged", onGroundMoved);
+    },
+
+    /**
+     * Put the building back on the ground after the ground itself moved, keeping its
+     * footprint lat/lons and its heights.
+     *
+     * Refreshes in the same order as restoreState(), and for the same reason: the
+     * editing handles are built FROM the vertices, so rebuilding the mesh without
+     * rebuilding them would leave them metres from the building — and the next drag
+     * picks its target by raycasting those handles, so it would edit the wrong thing.
+     */
+    resnapToGround() {
+        this.recalculateVerticesFromTerrain();
+        this.buildMesh();
+        this.updateGUIControllers();
+        if (this.editMode) this.createControlPoints();
+        setRenderOne();
     },
     
     /**
@@ -775,9 +812,10 @@ export const eventMethods = {
                 // Calculate new horizontal position
                 const newHorizontalPos = oldPosition.clone().add(horizontalDisplacement);
                 
-                // Snap to terrain — pass directly without lifting to avoid
+                // Snap to the visible ground (the 3D tile surface when those tiles
+                // are what's rendered) — pass directly without lifting to avoid
                 // lat/lon drift on ellipsoid (non-raycast path only needs lat/lon)
-                const terrainPoint = getPointBelow(newHorizontalPos);
+                const terrainPoint = getVisiblePointBelow(newHorizontalPos);
                 
                 // Move the dragged vertex to the terrain position
                 draggedVertex.position.copy(terrainPoint);
@@ -816,8 +854,8 @@ export const eventMethods = {
                     const projectedMovement1 = horizontalDisp.dot(edgeDir1);
                     const neighbor1NewPos = neighbor1.position.clone().add(edgeDir1.multiplyScalar(projectedMovement1));
                     
-                    // Snap neighbor1 to terrain (no lift — avoids ellipsoid lat/lon drift)
-                    neighbor1.position.copy(getPointBelow(neighbor1NewPos));
+                    // Snap neighbor1 to the visible ground (no lift — avoids ellipsoid lat/lon drift)
+                    neighbor1.position.copy(getVisiblePointBelow(neighbor1NewPos));
                     
                     // Update the linked top vertex for neighbor1
                     const linkedTop1 = this.vertices[neighbor1.linkedVertex];
@@ -837,8 +875,8 @@ export const eventMethods = {
                     const projectedMovement2 = horizontalDisp.dot(edgeDir2);
                     const neighbor2NewPos = neighbor2.position.clone().add(edgeDir2.multiplyScalar(projectedMovement2));
                     
-                    // Snap neighbor2 to terrain (no lift — avoids ellipsoid lat/lon drift)
-                    neighbor2.position.copy(getPointBelow(neighbor2NewPos));
+                    // Snap neighbor2 to the visible ground (no lift — avoids ellipsoid lat/lon drift)
+                    neighbor2.position.copy(getVisiblePointBelow(neighbor2NewPos));
                     
                     // Update the linked top vertex for neighbor2
                     const linkedTop2 = this.vertices[neighbor2.linkedVertex];
@@ -984,7 +1022,16 @@ export const eventMethods = {
         this.draggingPoint = null;
         this.draggingVertexIndex = -1;
         this.dragLocalUp = null;
-        
+
+        // The ground moved while the drag was running, so the snap the drag was doing
+        // was against a surface that no longer exists. Apply it now. Safe after the
+        // undo capture above: that stores the footprint lat/lons and the heights, and
+        // re-snapping only recomputes vertex positions from those.
+        if (this.groundMovedDuringDrag) {
+            this.groundMovedDuringDrag = false;
+            this.resnapToGround();
+        }
+
         // Check hover after releasing to update cursor appropriately
         if (this.editMode) {
             this.checkHandleHover(event);

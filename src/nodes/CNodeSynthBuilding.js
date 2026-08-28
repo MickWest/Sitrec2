@@ -29,7 +29,7 @@ import {screenToNDC} from "../mouseMoveView";
 import {ViewMan} from "../CViewManager";
 import {CustomManager, Globals, guiMenus, markShadowCastersDirty, setRenderOne, Synth3DManager, UndoManager} from "../Globals";
 import {mouseInViewOnly} from "../ViewUtils";
-import {getPointBelow, patchMaterialForLinearOutput, pointAbove} from "../threeExt";
+import {getVisiblePointBelow, patchMaterialForLinearOutput, pointAbove} from "../threeExt";
 import {EventManager} from "../CEventManager";
 import {isInLeftSidebar, isInRightSidebar} from "../PageStructure";
 import {t} from "../i18n";
@@ -99,6 +99,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         this.draggingPoint = null;
         this.draggingVertexIndex = -1;
         this.dragLocalUp = null;
+        // Set when the ground moves mid-drag; consumed by onPointerUp. See
+        // CNodeSynthBuildingEvents.setupEventListeners.
+        this.groundMovedDuringDrag = false;
         this.hoveredHandle = null;  // Track which handle is being hovered
         this.rotationStartAngle = 0; // Initial angle when rotation starts
         this.totalRotationThisSession = 0; // Accumulated rotation in radians during this rotation session
@@ -472,10 +475,12 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             
             const currentPos = groundVertex.position.clone();
 
-            // Snap to terrain — no need to lift first for the non-raycast path;
-            // lifting along the geodetic normal shifts lat/lon on an ellipsoid,
-            // causing systematic drift.
-            const terrainPoint = getPointBelow(currentPos);
+            // Snap to the VISIBLE ground, which is the Google 3D tile surface
+            // whenever those tiles are what is being rendered — the elevation map
+            // is metres away from it there, and a base snapped to the elevation map
+            // floats. No need to lift first for the non-raycast path; lifting along
+            // the geodetic normal shifts lat/lon on an ellipsoid, causing drift.
+            const terrainPoint = getVisiblePointBelow(currentPos);
             
             // Update ground vertex position
             groundVertex.position.copy(terrainPoint);
@@ -537,7 +542,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
     
     /**
      * Recalculate all vertex positions from cornerLatLons and height parameters
-     * This method uses getPointBelow() to find ground positions and then calculates
+     * This method uses getVisiblePointBelow() to find ground positions and then calculates
      * all vertices relative to the highest ground point.
      */
     recalculateVerticesFromTerrain() {
@@ -551,7 +556,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         for (let i = 0; i < 4; i++) {
             const {lat, lon} = this.cornerLatLons[i];
             const surfacePoint = LLAToECEF(lat, lon, 0);
-            const groundPoint = getPointBelow(surfacePoint);
+            const groundPoint = getVisiblePointBelow(surfacePoint);
             groundCorners.push(groundPoint);
         }
         
