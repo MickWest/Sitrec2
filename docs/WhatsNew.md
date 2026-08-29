@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.145.0 (2026-08-29)
+
+### New Features
+
+- **Wind Tracer global fit** (Traverse → LOS Traverse Method → Global Fit: Wind Tracer): fits passively drifting objects from camera-boresight sightlines, accounts for faster camera-operator pointing wobble, and reports the solved motion, wind, range, residuals and important limitations.
+
+### Bug Fixes
+
+- Fixed the new Wind Tracer fit missing strong rises and descents; it now searches rising, neutral and sinking motion symmetrically.
+
+- Fixed synthetic buildings floating above or sinking below the rendered ground when Google Photorealistic 3D tiles load or are toggled; they now follow the visible tile surface and fall back to terrain when the tiles are not the ground.
+
+- Fixed synthetic buildings being left behind after tile geometry changes through Terrain → Remove Geometry, including *Flatten Trees*, manual brush strokes, *Apply Edits*, *Restore Geometry* and undo/redo.
+
 ## Version 2.144.0 (2026-08-27)
 
 ### New Features
