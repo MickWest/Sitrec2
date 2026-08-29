@@ -126,6 +126,13 @@ class ObjectTracker {
         // Maximum number of keyframes to display (0 = none, 100 = all)
         this.showMaxKeyframes = 20;
 
+        // "Edit Head Only": restrict dragging to the head - the point at the
+        // current frame, under the yellow cursor. With a dense track the older
+        // keyframes crowd the cursor and win the click, so nudging the current
+        // point silently moves a neighbour instead. Everything still DRAWS; the
+        // parts that can no longer be grabbed just fade back (see renderOverlay).
+        this.editHeadOnly = false;
+
         // Optical flow state (for absolute tracking from initial frame)
         this.initialGrayImage = null;
         this.initialPyramid = null;
@@ -189,7 +196,11 @@ class ObjectTracker {
                 const y = mouse.y;
                 const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(x, y);
                 
-                const clickedKeyframe = this.findClickedKeyframe(vX, vY);
+                // Edit Head Only: skip the keyframe hit-test entirely, so an
+                // old keyframe lying near the cursor cannot take the drag. What
+                // is left is isWithinTrackPoint, which moves the head.
+                const clickedKeyframe = this.editHeadOnly
+                    ? null : this.findClickedKeyframe(vX, vY);
                 if (clickedKeyframe !== null) {
                     this.isDragging = true;
                     this.draggingKeyframe = clickedKeyframe;
@@ -1519,8 +1530,11 @@ class ObjectTracker {
         const status = this.tracking ? 'TRACKING' : 'ENABLED';
         ctx.fillText(`${status} (${Math.round(this.trackX)}, ${Math.round(this.trackY)})`, cx + canvasRadius + 10, cy);
         
+        // Edit Head Only fades back everything a drag can no longer reach, so
+        // what stays bright is exactly what is still editable.
         if (this.trackedPositions.size > 1) {
-            ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+            ctx.strokeStyle = this.editHeadOnly
+                ? 'rgba(0, 255, 255, 0.25)' : 'rgba(0, 255, 255, 0.5)';
             ctx.lineWidth = 1;
             ctx.beginPath();
             let started = false;
@@ -1547,12 +1561,16 @@ class ObjectTracker {
             keyframesToDraw.sort((a, b) => Math.abs(a - frame) - Math.abs(b - frame));
             keyframesToDraw = keyframesToDraw.slice(0, this.showMaxKeyframes);
         }
+        const headFrame = Math.floor(frame);
         for (const f of keyframesToDraw) {
             const pos = this.trackedPositions.get(f);
             if (pos) {
                 const offset = getStabOffset(f);
                 const [kx, ky] = this.videoView.videoToCanvasCoordsOriginal(pos.x + offset.x, pos.y + offset.y);
-                ctx.strokeStyle = '#ff00ff';
+                // The keyframe at the current frame sits under the yellow cursor
+                // and IS the head, so it keeps full opacity; the others recede.
+                ctx.strokeStyle = (this.editHeadOnly && f !== headFrame)
+                    ? 'rgba(255, 0, 255, 0.1)' : '#ff00ff';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.arc(kx, ky, keyframeRadius, 0, Math.PI * 2);
@@ -2498,6 +2516,22 @@ export function addObjectTrackingMenu() {
         .listen()
         .perm();
 
+    const editHeadOnlyParams = {
+        get editHeadOnly() { return objectTracker?.editHeadOnly ?? false; },
+        set editHeadOnly(v) {
+            if (objectTracker) {
+                objectTracker.editHeadOnly = v;
+                setRenderOne(true);
+            }
+        }
+    };
+
+    trackingFolder.add(editHeadOnlyParams, 'editHeadOnly')
+        .name(t("tracking.editHeadOnly.label"))
+        .tooltip(t("tracking.editHeadOnly.tooltip"))
+        .listen()
+        .perm();
+
     const showMaxKeyframesParams = {
         get showMaxKeyframes() { return objectTracker?.showMaxKeyframes ?? 20; },
         set showMaxKeyframes(v) {
@@ -2545,6 +2579,7 @@ export function serializeAutoTracking() {
         featureSize: objectTracker.featureSize,
         trackingMethod: objectTracker.trackingMethod,
         showMaxKeyframes: objectTracker.showMaxKeyframes,
+        editHeadOnly: objectTracker.editHeadOnly,
         trackedPositions: Array.from(objectTracker.trackedPositions.entries()),
         // Which frames were placed manually (vs auto-tracked) — drives the
         // keyframe overlay (magenta circles) and the "delete keyframe under
@@ -2627,6 +2662,7 @@ export async function deserializeAutoTracking(data) {
     objectTracker.colorDistance = data.colorDistance ?? 80;
     objectTracker.featureSize = data.featureSize ?? 1.5;
     objectTracker.showMaxKeyframes = data.showMaxKeyframes ?? 20;
+    objectTracker.editHeadOnly = data.editHeadOnly ?? false;
     // Legacy migration: pre-2.50.7 saves used separate centerOnBright/Dark
     // checkboxes. Map them onto the unified trackingMethod dropdown.
     if (data.trackingMethod) {

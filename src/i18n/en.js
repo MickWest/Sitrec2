@@ -403,6 +403,10 @@ const en = {
             label: "Clear Track",
             tooltip: "Clear all point-track positions and start fresh",
         },
+        editHeadOnly: {
+            label: "Edit Head Only",
+            tooltip: "Only the point at the current frame - the one inside the yellow cursor - can be dragged.\nThe rest of the track still draws, faded back, but clicks pass over it.\nUse it on a dense track, where an earlier keyframe near the cursor would otherwise take the drag.",
+        },
         stabilize: {
             label: "Stabilize",
             tooltip: "Apply point-track positions to stabilize the video",

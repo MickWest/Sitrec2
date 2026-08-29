@@ -64,6 +64,7 @@ leaves the existing track alone. Either way, choose before you invest in a long 
 | **Use Mask** | on | — | Ignore masked-out parts of the frame — for the centroid methods only, see below |
 | **Brightness Threshold** | 128 | 0–255 | Cutoff for the centroid methods |
 | **Color Distance** | 80 | 0–442 | How far a pixel may be from the target colour and still count, for *Center on Color*. 442 is "everything matches" |
+| **Edit Head Only** | off | — | Only the point at the current frame can be dragged; the rest of the track fades back. See [Edit Head Only](#edit-head-only) |
 | **Stabilize Centers** | on | — | See below |
 | **Include Video Info Display** | off | — | Burn the readouts into a stabilized render |
 
@@ -101,6 +102,23 @@ use one of the centroid methods.
   keyframe is created by the drag, not the click.
 - **`Delete`** or **`Backspace`** removes the keyframe under the mouse.
 - Re-seeding mid-track is normal and expected — it is better than fighting the parameters.
+
+### Edit Head Only
+
+On a slow-moving object the track doubles back on itself, and a dozen earlier keyframes end
+up sitting inside the yellow cursor. A click anywhere in that pile grabs whichever keyframe
+it lands on — so trying to nudge the current point silently drags a keyframe from two seconds
+ago instead, and the mistake is invisible until you scrub back.
+
+**Edit Head Only** fixes that. With it on, the only thing a drag can move is the *head* — the
+point at the current frame, inside the yellow cursor. The rest of the track still draws, so
+you keep the context, but faded back: the cyan path at 25% and the other keyframes at 10%.
+Clicks pass straight over them. What is bright is what you can move.
+
+Turn it off again to go back and adjust an earlier keyframe directly.
+
+`Delete` / `Backspace` is unaffected — it still removes the keyframe under the mouse,
+whichever frame that belongs to.
 
 ---
 
