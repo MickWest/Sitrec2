@@ -2,19 +2,128 @@
  * LOSFitting.js — Global LOS Trajectory Fitting Algorithms
  *
  * Ported from lostool/web/js/trajectory.js.
- * Pure math functions with zero dependencies (no Three.js, no DOM, no Node.js).
+ * The fitters themselves are pure math. The Sitrec adapter functions near the
+ * end of the file depend on Three.js and Sitrec's coordinate/time globals.
  *
- * All functions operate on flat Float32Array data in a local coordinate system
- * (typically ENU). The caller is responsible for coordinate conversion.
+ * The math functions operate on flat Float32Array or Float64Array data in a
+ * local Cartesian coordinate system (typically ENU). LOS directions must be
+ * unit vectors; callers supplying raw data are responsible for conversion and
+ * normalization. Frame indices in `excluded` are relative to this dataset,
+ * not necessarily to the source video's absolute frame numbers.
  *
  * Dataset format:
  *   {
- *     sensorPos: Float32Array,  // stride-3: [sx0,sy0,sz0, sx1,sy1,sz1, ...]
- *     losDir:    Float32Array,  // stride-3: [dx0,dy0,dz0, dx1,dy1,dz1, ...] (unit vectors)
+ *     sensorPos: Float32Array|Float64Array, // stride-3 sensor positions
+ *     losDir:    Float32Array|Float64Array, // stride-3 unit direction vectors
  *     times:     Float64Array,  // per-frame timestamps (seconds)
  *     count:     number,        // number of frames
- *     maxRange:  Float32Array|null, // optional per-frame max range
+ *     minRange:  number|null,    // optional common minimum range (metres)
+ *     maxRange:  Float32Array|Float64Array|null, // optional per-frame maximum
  *   }
+ *
+ * Most fits return {positions, residuals, params, activeCount}. Positions are
+ * stride-3 local coordinates for every dataset frame; excluded frames are
+ * still populated but have NaN residuals. Residual units are family-specific:
+ * CV, CA, and Kalman use perpendicular metres, while Monte Carlo, alternating
+ * LSQ, and physics fits use angular radians. Callers must not compare these raw
+ * arrays without converting to a common metric.
+ *
+ * Glossary (terms have their meaning in this module):
+ *
+ *   Active frame — A frame whose observation participates in a fit; an
+ *     `excluded` frame is still given an output position but has no influence
+ *     on the fitted parameters and normally keeps a NaN residual.
+ *   Batch fit — A fit that uses the complete set of active observations at
+ *     once, rather than updating an estimate as each frame arrives.
+ *   Bound / pinned parameter — A bound is an allowed minimum or maximum. A
+ *     fitted parameter is pinned when the best result presses against one and
+ *     moving inward makes the fit materially worse.
+ *   CA (constant acceleration) — Motion with one fixed 3D acceleration vector:
+ *     P(t)=P0+Vt+0.5At^2. It has nine fitted components: P0, V, and A.
+ *   Conditioning / rcond — How sensitive a linear solution is to small input
+ *     errors. `rcond` is an estimated reciprocal condition number: values near
+ *     zero mean weak geometry and a potentially unstable range solution.
+ *   Covariance — A matrix describing estimated uncertainty in state variables
+ *     and how errors in those variables vary together.
+ *   CV (constant velocity) — Straight-line motion with fixed 3D velocity:
+ *     P(t)=P0+Vt. It has six fitted components: P0 and V.
+ *   DE (differential evolution) — A population-based global optimizer that
+ *     combines existing candidates to explore a bounded parameter space.
+ *   Design matrix — The rectangular matrix A that maps unknown parameters x
+ *     to predicted observations Ax in a linear model.
+ *   ECEF (Earth-Centered, Earth-Fixed) — A global Cartesian coordinate system
+ *     whose origin is Earth's center and whose axes rotate with Earth.
+ *   ENU (East, North, Up) — A local Cartesian tangent frame used here so the
+ *     fitting coordinates remain small and have intuitive metre-scale axes.
+ *   Float32Array / Float64Array — JavaScript numeric arrays with fixed 32-bit
+ *     or 64-bit floating-point precision; Float64 retains more significant
+ *     digits.
+ *   Fit / fitted trajectory — The model parameters, and resulting positions,
+ *     chosen to minimize the selected mismatch and plausibility costs.
+ *   Gaussian elimination with partial pivoting — A direct linear-system solve
+ *     that swaps in a numerically safer pivot before eliminating each column.
+ *   Gram matrix — The square matrix A^T A, which gathers how the columns of a
+ *     design matrix constrain and couple the unknown parameters.
+ *   Kalman filter — A recursive state estimator that alternates a motion-model
+ *     prediction with a measurement correction, carrying uncertainty forward.
+ *   LOS (line of sight) — The measured unit direction from the sensor toward
+ *     the target. It supplies a bearing but no target distance by itself.
+ *   LOS ray / supporting line — The ray begins at the sensor and extends only
+ *     forward; its supporting line extends in both directions. Perpendicular
+ *     line distance alone cannot tell whether a fitted point is behind the
+ *     sensor.
+ *   LSQ (least squares) — Choose parameters that minimize the sum of squared
+ *     residual components across all active observations.
+ *   Macrotask yield — Briefly return control to the browser event loop so UI
+ *     updates and cancellation can run during a long optimizer search.
+ *   Monte Carlo fit — Generate many random candidate data realizations and
+ *     retain the best-scoring result. Fixed seeds make these fits repeatable.
+ *   NaN (Not a Number) — The floating-point marker used here when a residual
+ *     is deliberately unavailable, especially at an excluded frame.
+ *   Nelder-Mead / polish — Nelder-Mead is a derivative-free local search over
+ *     a simplex (a small set of nearby parameter vectors); here it can refine,
+ *     or "polish," DE's best candidate.
+ *   Normal equations — The compact linear system A^T A x=A^T b whose solution
+ *     gives the ordinary least-squares parameters without explicitly inverting
+ *     A.
+ *   Observability / identifiability — Whether the observations and model make
+ *     a state or parameter distinguishable from alternatives. More frames do
+ *     not resolve a parameter if they repeat essentially the same geometry.
+ *   Prior / extra cost — A soft plausibility preference added to measurement
+ *     error; it can select among LOS-compatible solutions but is not new data.
+ *   Polynomial order / degree — The highest time power in a polynomial; order
+ *     k uses k+1 coefficients, from the constant term through t^k.
+ *   Projection / ray filter — M=I-dd^T removes the component parallel to unit
+ *     LOS d, retaining only the sideways component that a bearing constrains.
+ *   Pseudo-linear — The original bearing/range relation is nonlinear, but the
+ *     ray filter makes it linear in target state when measured d is treated as
+ *     known.
+ *   Process noise / measurement noise — Kalman covariance terms controlling,
+ *     respectively, permitted departures from the motion model and trust in
+ *     LOS data.
+ *   Range / signed range — Distance along an LOS. Signed range is positive in
+ *     the measured direction, zero at the sensor, and negative behind it.
+ *   RANSAC-style — Build candidates from small random subsets and score them on
+ *     all data. The Monte Carlo 1 fit resembles RANSAC but uses mean error, not
+ *     a formal inlier/outlier consensus.
+ *   Residual — The mismatch left after fitting. In this file it is reported as
+ *     either perpendicular distance in metres or angular separation in radians
+ *     (pi radians is 180 degrees).
+ *   RK4 (fourth-order Runge-Kutta) — A numerical method that advances a physics
+ *     state through time by sampling its derivatives four times per step.
+ *   RTS (Rauch-Tung-Striebel) smoother — A backward pass over Kalman results
+ *     that lets later observations refine state estimates at earlier frames.
+ *   Soft constraint — A preference enforced with a large cost rather than an
+ *     absolute rule; a sufficiently expensive competing error can still
+ *     violate it.
+ *   State vector — The ordered numerical variables describing a model at one
+ *     time, such as [position, velocity] for the Kalman smoother.
+ *   Stride-3 array — A flat array storing each 3D vector in three consecutive
+ *     entries: x,y,z for frame 0, then x,y,z for frame 1, and so on.
+ *   Unit vector — A vector of length one; this makes its dot product with a
+ *     displacement equal the signed distance along that direction.
+ *   Vandermonde matrix — A polynomial design matrix whose row contains powers
+ *     of one sample time: [1,t,t^2,...].
  */
 
 import {assessBoundPins} from "./BoundedFit";
@@ -23,6 +132,9 @@ import {assessBoundPins} from "./BoundedFit";
 // Linear algebra helpers
 // ---------------------------------------------------------------------------
 
+// Gaussian elimination with partial pivoting. This deliberately mutates A and
+// b while reducing them; callers that need to preserve normal equations pass
+// copies. null means the system is singular at the scale used by this module.
 function _solveLinearSystem(A, b) {
     const n = b.length;
     for (let col = 0; col < n; col++) {
@@ -71,6 +183,9 @@ const _macroYield = (() => {
     return () => new Promise((resolve) => { pending.push(resolve); channel.port2.postMessage(0); });
 })();
 
+// Perpendicular distance to the infinite line supporting the LOS ray. It does
+// not distinguish a point in front of the sensor from one behind it; signed
+// range limits are handled separately by _solveSoftConstrained or diagnostics.
 function _pointToRayDistance(P, O, D) {
     const dx = P[0] - O[0], dy = P[1] - O[1], dz = P[2] - O[2];
     const proj = dx * D[0] + dy * D[1] + dz * D[2];
@@ -95,6 +210,9 @@ function _solveSoftConstrained(AtA, Atb, nUnknowns, active, dataset, rowFn, t0) 
     const minRange = dataset.minRange ?? null;
     const PENALTY = 1e4;
 
+    // First solve the unconstrained least-squares problem. For a fitted point
+    // p and unit LOS d from sensor s, signed range is lambda = d·(p-s).
+    // rowFn supplies the coefficients of d·p for the chosen motion model.
     const sol = _solveLinearSystem(AtA.map(r => r.slice()), Atb.slice());
     if (!sol) return null;
 
@@ -122,6 +240,11 @@ function _solveSoftConstrained(AtA, Atb, nUnknowns, active, dataset, rowFn, t0) 
 
     if (violations.length === 0) return sol;
 
+    // This is intentionally a soft, one-pass correction rather than a hard
+    // active-set/QP solve: every range violation found in the free solution is
+    // added as a heavily weighted equality at its nearest allowed boundary.
+    // The resulting trajectory remains a global CV/CA curve instead of being
+    // clipped independently frame by frame.
     const A2 = AtA.map(r => r.slice());
     const b2 = Atb.slice();
     for (const {lambdaRow: r, dDotS, target} of violations) {
@@ -138,6 +261,26 @@ function _solveSoftConstrained(AtA, Atb, nUnknowns, active, dataset, rowFn, t0) 
 // Constant Velocity Least Squares Fit
 // ---------------------------------------------------------------------------
 
+/**
+ * Recover one straight 3D track with a direct pseudo-linear batch least-squares
+ * solve. For frame i, the known data are time t_i, camera/sensor position C_i,
+ * and unit LOS direction d_i; range along d_i is unknown.
+ *
+ * The implementation follows this chain:
+ *
+ *   1. x = [P0,V] describes every candidate constant-velocity track.
+ *   2. T_i x = P0 + t_i V evaluates that track at frame i.
+ *   3. M_i = I-d_i d_i^T removes the unknown along-ray component.
+ *   4. A_i = M_i T_i and b_i = M_i C_i give A_i x ≈ b_i.
+ *   5. Accumulate every frame directly into A^T A and A^T b.
+ *   6. Solve the six normal equations, then evaluate P0+tV at every frame.
+ *
+ * A_i x-b_i is the sideways miss from the candidate point to the LOS. Each
+ * per-frame 3-row block has only two independent constraints because M_i removes
+ * the LOS direction. This is a direct linear solve, not an iterative trajectory
+ * search; uniqueness still depends on the observer motion providing enough
+ * parallax for the six columns of A to be independent.
+ */
 export function fitConstantVelocity(dataset, excluded) {
     const {sensorPos, losDir, times, count} = dataset;
 
@@ -147,6 +290,8 @@ export function fitConstantVelocity(dataset, excluded) {
     }
     if (active.length < 2) return null;
 
+    // Shift time so P0 is the position at the first active frame. This preserves
+    // the derivation above while avoiding unnecessarily large absolute times.
     const t0 = times[active[0]];
     const AtA = Array.from({length: 6}, () => new Array(6).fill(0));
     const Atb = new Array(6).fill(0);
@@ -157,10 +302,12 @@ export function fitConstantVelocity(dataset, excluded) {
         const sx = sensorPos[b], sy = sensorPos[b + 1], sz = sensorPos[b + 2];
         const dx = losDir[b], dy = losDir[b + 1], dz = losDir[b + 2];
 
+        // Components of the explainer's ray-filter matrix M_i = I-d_i d_i^T.
         const p00 = 1 - dx * dx, p01 = -dx * dy, p02 = -dx * dz;
         const p10 = -dy * dx, p11 = 1 - dy * dy, p12 = -dy * dz;
         const p20 = -dz * dx, p21 = -dz * dy, p22 = 1 - dz * dz;
 
+        // `rows` is the 3x6 block A_i=M_i*T_i; `rhs` is b_i=M_i*C_i.
         const rows = [
             [p00, p01, p02, p00 * ti, p01 * ti, p02 * ti],
             [p10, p11, p12, p10 * ti, p11 * ti, p12 * ti],
@@ -172,6 +319,8 @@ export function fitConstantVelocity(dataset, excluded) {
             p20 * sx + p21 * sy + p22 * sz,
         ];
 
+        // Add A_i^T A_i and A_i^T b_i directly. Stacking all A_i/b_i first
+        // would produce the same normal equations but require a 3N-row matrix.
         for (let r = 0; r < 3; r++) {
             for (let c = 0; c < 6; c++) {
                 for (let k = 0; k < 6; k++) AtA[c][k] += rows[r][c] * rows[r][k];
@@ -180,6 +329,8 @@ export function fitConstantVelocity(dataset, excluded) {
         }
     }
 
+    // d·p(t) is linear in [P0,V]; the shared constraint solver subtracts
+    // d·s to turn this into the signed range along the ray.
     function cvLambdaRow(idx, ti) {
         const b = idx * 3;
         const dx = losDir[b], dy = losDir[b + 1], dz = losDir[b + 2];
@@ -230,6 +381,10 @@ export function fitConstantAcceleration(dataset, excluded) {
     }
     if (active.length < 3) return null;
 
+    // This extends the CV ray-filter derivation to x=[P0,V,A], giving nine
+    // unknowns. Use dimensionless tau in [0,1] while solving so the position,
+    // and acceleration columns have comparable magnitudes on long clips. The
+    // solved tau coefficients are converted back to metres/second units below.
     const t0 = times[active[0]];
     const tLast = times[active[active.length - 1]];
     const T_span = tLast - t0 || 1;
@@ -278,14 +433,16 @@ export function fitConstantAcceleration(dataset, excluded) {
     const solution = _solveSoftConstrained(AtA, Atb, 9, active, dataset, caLambdaRow, t0);
     if (!solution) return null;
 
+    // In tau coordinates the polynomial is P0 + Vtau*tau + 0.5*Atau*tau^2.
+    // Since tau=(t-t0)/T_span, divide once by T_span for velocity and twice for
+    // acceleration to recover physical derivatives with respect to seconds.
     const P0 = [solution[0], solution[1], solution[2]];
     const V = [solution[3] / T_span, solution[4] / T_span, solution[5] / T_span];
     const A = [solution[6] / (T_span * T_span), solution[7] / (T_span * T_span), solution[8] / (T_span * T_span)];
 
-    // Float64: these are ENU positions (tens of km). float32 quantizes them to
-    // ~1 cm, and the g-force graph (a second difference x fps^2) turns that into
-    // a residual ~0.7 g sawtooth. Float64 keeps a constant-velocity fit's track
-    // a true straight line, so its acceleration graph reads flat ~0.
+    // Float64: centimetre-scale Float32 quantization at ENU scene magnitudes is
+    // greatly amplified by downstream second-difference acceleration graphs.
+    // Keeping the analytic CA curve in Float64 prevents that display artifact.
     const positions = new Float64Array(count * 3);
     const residuals = new Float32Array(count).fill(NaN);
 
@@ -344,6 +501,9 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
     // of sampling blindly from [0, maxDistance].
     const rangeEstimates = options.rangeEstimates ?? null;
 
+    // With no explicit search range, use ten times the sensor track's largest
+    // axis span. This is only a search-domain heuristic; maxRange, when present,
+    // still narrows individual frames below it.
     let maxDistance = options.maxDistance;
     if (maxDistance == null) {
         let sceneExtent = 1;
@@ -374,6 +534,7 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
 
     const t0 = times[active[0]];
 
+    // Rodrigues' formula: rotate v about the unit axis a by theta.
     function _rotate(vx, vy, vz, ax, ay, az, theta) {
         const cosT = Math.cos(theta), sinT = Math.sin(theta);
         const dot = ax * vx + ay * vy + az * vz;
@@ -385,6 +546,8 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
         ];
     }
 
+    // Construct a stable unit vector perpendicular to d by crossing it with
+    // whichever coordinate axis is least parallel to it.
     function _perpUnit(dx, dy, dz) {
         const ax = Math.abs(dx), ay = Math.abs(dy), az = Math.abs(dz);
         let ux = 0, uy = 0, uz = 0;
@@ -396,6 +559,8 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
         return [px / len, py / len, pz / len];
     }
 
+    // A trial chooses exactly order+1 points, so the square Vandermonde solve
+    // interpolates those samples rather than performing a least-squares fit.
     function _fitPoly1D(ts, ys) {
         const n = ts.length;
         const V = [];
@@ -426,6 +591,10 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
     let bestScore = Infinity;
     let bestCoeffsX = null, bestCoeffsY = null, bestCoeffsZ = null;
 
+    // Each trial turns a minimal set of uncertain rays into concrete 3D points,
+    // interpolates one time polynomial per axis, then scores that candidate on
+    // every active LOS. This is RANSAC-like sampling, but the score is mean
+    // angular error rather than an inlier count.
     for (let trial = 0; trial < numTrials; trial++) {
         const pool = active.slice();
         const chosen = [];
@@ -443,6 +612,8 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
 
             let pdx, pdy, pdz;
             if (losUncertRad > 1e-10) {
+                // Pick a random azimuth around the measured LOS, then tilt by
+                // an angle uniformly sampled from zero to the uncertainty cap.
                 const theta = rng() * losUncertRad;
                 const [ex, ey, ez] = _perpUnit(dx, dy, dz);
                 const phi = rng() * 2 * Math.PI;
@@ -495,10 +666,8 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
 
     if (!bestCoeffsX) return null;
 
-    // Float64: these are ENU positions (tens of km). float32 quantizes them to
-    // ~1 cm, and the g-force graph (a second difference x fps^2) turns that into
-    // a residual ~0.7 g sawtooth. Float64 keeps a constant-velocity fit's track
-    // a true straight line, so its acceleration graph reads flat ~0.
+    // Float64 preserves the polynomial's smooth derivatives; Float32 position
+    // quantization would appear as artificial acceleration downstream.
     const positions = new Float64Array(count * 3);
     const residuals = new Float32Array(count).fill(NaN);
 
@@ -512,6 +681,8 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
         positions[i * 3 + 2] = fz;
         if (!excluded.has(i)) {
             const b = i * 3;
+            // Monte Carlo residuals are angular radians, unlike the metre
+            // residuals returned by the linear CV/CA and Kalman families.
             residuals[i] = _angularError(fx, fy, fz,
                 sensorPos[b], sensorPos[b + 1], sensorPos[b + 2],
                 losDir[b], losDir[b + 1], losDir[b + 2]);
@@ -535,6 +706,7 @@ export function fitMonteCarlo2(dataset, excluded, options = {}) {
 
     const rangeEstimates = options.rangeEstimates ?? null;
 
+    // Same fallback range domain as Monte Carlo 1: ten sensor-track extents.
     let maxDistance = options.maxDistance;
     if (maxDistance == null) {
         let sceneExtent = 1;
@@ -626,7 +798,8 @@ export function fitMonteCarlo2(dataset, excluded, options = {}) {
         return Math.acos(dot);
     }
 
-    // Precompute per-frame perpendicular vectors (fixed per frame, reused across trials)
+    // Precompute one basis vector in each LOS-normal plane. A trial still gets
+    // a random perturbation azimuth by rotating this basis around the LOS.
     let perpVecs = null;
     if (losUncertRad > 1e-10) {
         perpVecs = new Float32Array(count * 3);
@@ -637,7 +810,9 @@ export function fitMonteCarlo2(dataset, excluded, options = {}) {
         }
     }
 
-    // Precompute normalized times for active frames
+    // Unlike Monte Carlo 1's minimal interpolation, this overdetermined solve
+    // uses every active frame. Normalizing the time domain to [0,1] keeps the
+    // Vandermonde normal equations usable at higher orders and long durations.
     const normTimes = new Float64Array(count);
     for (const fi of active) {
         normTimes[fi] = (times[fi] - t0) / tSpan;
@@ -646,6 +821,8 @@ export function fitMonteCarlo2(dataset, excluded, options = {}) {
     let bestScore = Infinity;
     let bestCoeffsX = null, bestCoeffsY = null, bestCoeffsZ = null;
 
+    // Perturb every sightline and range in a trial, fit an LSQ polynomial to
+    // the resulting point cloud, and retain the lowest all-frame angular error.
     for (let trial = 0; trial < numTrials; trial++) {
         const sampleTs = [], sampleX = [], sampleY = [], sampleZ = [];
         for (const fi of active) {
@@ -705,10 +882,8 @@ export function fitMonteCarlo2(dataset, excluded, options = {}) {
 
     if (!bestCoeffsX) return null;
 
-    // Float64: these are ENU positions (tens of km). float32 quantizes them to
-    // ~1 cm, and the g-force graph (a second difference x fps^2) turns that into
-    // a residual ~0.7 g sawtooth. Float64 keeps a constant-velocity fit's track
-    // a true straight line, so its acceleration graph reads flat ~0.
+    // Float64 preserves the polynomial's smooth derivatives; Float32 position
+    // quantization would appear as artificial acceleration downstream.
     const positions = new Float64Array(count * 3);
     const residuals = new Float32Array(count).fill(NaN);
 
@@ -722,6 +897,7 @@ export function fitMonteCarlo2(dataset, excluded, options = {}) {
         positions[i * 3 + 2] = fz;
         if (!excluded.has(i)) {
             const b = i * 3;
+            // Angular radians, matching Monte Carlo 1's result contract.
             residuals[i] = _angularError(fx, fy, fz,
                 sensorPos[b], sensorPos[b + 1], sensorPos[b + 2],
                 losDir[b], losDir[b + 1], losDir[b + 2]);
@@ -881,6 +1057,8 @@ export function fitAlternatingLSQ(dataset, excluded, options = {}) {
 
     for (let iter = 0; iter < iterations; iter++) {
         // Step 1: put a point on each ray at its currently guessed distance.
+        // Excluded frames are populated for a continuous output track, but
+        // lsqPoly's active-only loop prevents them from influencing the fit.
         for (let i = 0; i < count; i++) {
             const b = i * 3;
             px[i] = sensorPos[b] + range[i] * losDir[b];
@@ -897,6 +1075,9 @@ export function fitAlternatingLSQ(dataset, excluded, options = {}) {
             const b = i * 3;
             const fx = evalPoly(cx, tn[i]), fy = evalPoly(cy, tn[i]), fz = evalPoly(cz, tn[i]);
             positions[b] = fx; positions[b + 1] = fy; positions[b + 2] = fz;
+            // Orthogonal projection onto a unit ray gives d·(curve-sensor).
+            // The one-metre floor keeps the update on the forward half-line and
+            // avoids the direction singularity at the sensor itself.
             range[i] = Math.max(1,
                 (fx - sensorPos[b]) * losDir[b]
                 + (fy - sensorPos[b + 1]) * losDir[b + 1]
@@ -915,6 +1096,8 @@ export function fitAlternatingLSQ(dataset, excluded, options = {}) {
         if (rl < 1e-12) continue;
         const dot = Math.max(-1, Math.min(1,
             (rx * losDir[b] + ry * losDir[b + 1] + rz * losDir[b + 2]) / rl));
+        // The polynomial generally lies near, not exactly on, each LOS; report
+        // that discrepancy as an angle in radians for range-independent scoring.
         const e = Math.acos(dot);
         if (!excluded.has(i)) { residuals[i] = e; sumErr += e; }
     }
@@ -929,6 +1112,11 @@ export function fitAlternatingLSQ(dataset, excluded, options = {}) {
 // Kalman Filter (RTS Forward-Backward Smoother)
 // ---------------------------------------------------------------------------
 
+// State is [px, py, pz, vx, vy, vz]. The forward filter uses a constant-
+// velocity transition with process noise, while each LOS supplies only the two
+// observable components of position perpendicular to its direction. The RTS
+// backward pass then lets later sightlines refine earlier states; this is a
+// batch smoother, not a causal real-time track.
 export function fitKalmanFilter(dataset, excluded, options = {}) {
     const {sensorPos, losDir, times, count} = dataset;
 
@@ -947,7 +1135,8 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
     active.sort((a, b) => times[a] - times[b]);
     if (active.length < 2) return null;
 
-    // 6x6 matrix helpers (flat row-major)
+    // Small fixed-size matrix helpers use flat row-major arrays to avoid
+    // allocating nested matrices in every predict/update step.
     function _mat6Mul(A, B) {
         const C = new Array(36).fill(0);
         for (let i = 0; i < 6; i++)
@@ -1038,7 +1227,9 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
         return inv;
     }
 
-    // Seed from CV fit
+    // Seed from the all-frame CV fit when possible. The first active sample is
+    // represented by this seed; measurement updates begin at active[1], and the
+    // backward smoother later incorporates evidence from the remaining clip.
     const _cvSeed = fitConstantVelocity(dataset, excluded);
 
     let x;
@@ -1065,6 +1256,8 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
     let P = P_init.slice();
 
     function _buildQ(dt) {
+        // Couple position and velocity uncertainty for each axis. processNoise
+        // is a tunable model variance, not a directly reported acceleration.
         const Q = new Array(36).fill(0);
         const q = processNoise;
         const qp = (dt * dt * 0.25) * q;
@@ -1116,6 +1309,9 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
         const dx = losDir[bi], dy = losDir[bi + 1], dz = losDir[bi + 2];
         const sx = sensorPos[bi], sy = sensorPos[bi + 1], sz = sensorPos[bi + 2];
 
+        // Measurement equation P*position = P*sensor, P=I-dd^T. P removes the
+        // unobservable along-LOS component, leaving the cross-LOS displacement
+        // that should be zero when the state lies on the sightline.
         const p00 = 1 - dx * dx, p01 = -dx * dy, p02 = -dx * dz;
         const p10 = -dy * dx, p11 = 1 - dy * dy, p12 = -dy * dz;
         const p20 = -dz * dx, p21 = -dz * dy, p22 = 1 - dz * dz;
@@ -1135,6 +1331,8 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
 
         const HPHT = _computeHPHT(H, Pp);
         const r = measurementNoise;
+        // P has rank two, but adding isotropic R makes the 3x3 innovation
+        // covariance invertible while retaining the LOS-null direction.
         HPHT[0] += r; HPHT[4] += r; HPHT[8] += r;
 
         const Sinv = _inv3x3(HPHT);
@@ -1164,7 +1362,8 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
         filtP.push(P.slice());
     }
 
-    // RTS backward smoother
+    // Rauch-Tung-Striebel backward smoother. G maps the difference between the
+    // next smoothed state and its forward prediction back into this state.
     const n = active.length;
     const smoothX = filtX.map(s => s.slice());
     const smoothP = filtP.map(p => p.slice());
@@ -1199,15 +1398,16 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
         smoothP[ai] = PsNew;
     }
 
+    // Only active frames own filtered states. The output pass linearly fills
+    // excluded gaps (and any leading frames) and extrapolates from the last
+    // active state so every source frame still receives a renderable position.
     const stateAtFrame = new Map();
     for (let ai = 0; ai < active.length; ai++) {
         stateAtFrame.set(active[ai], smoothX[ai]);
     }
 
-    // Float64: these are ENU positions (tens of km). float32 quantizes them to
-    // ~1 cm, and the g-force graph (a second difference x fps^2) turns that into
-    // a residual ~0.7 g sawtooth. Float64 keeps a constant-velocity fit's track
-    // a true straight line, so its acceleration graph reads flat ~0.
+    // Float64 prevents position quantization from masquerading as acceleration
+    // when downstream graphs take finite differences of the smoothed track.
     const positions = new Float64Array(count * 3);
     const residuals = new Float32Array(count).fill(NaN);
     let activePtr = 0;
@@ -1239,6 +1439,8 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
 
         if (!excluded.has(i)) {
             const bi = i * 3;
+            // Kalman residuals are perpendicular metres, like CV/CA (and unlike
+            // the angular-radian residuals of Monte Carlo/ALS/physics fits).
             residuals[i] = _pointToRayDistance(
                 [fx, fy, fz],
                 [sensorPos[bi], sensorPos[bi + 1], sensorPos[bi + 2]],
@@ -1290,7 +1492,9 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     const paramDefs = model.getParameterDefs();
     const nParams = paramDefs.length;
 
-    // Build initial guess, bounds, and scales from model definition
+    // Build the optimizer vector in the model's declared parameter order.
+    // `scale` controls the initial simplex size; it does not rescale the model
+    // parameter passed to getInitialState/derivatives/extraCost.
     const x0 = paramDefs.map(p => p.default);
     const lo = paramDefs.map(p => p.min);
     const hi = paramDefs.map(p => p.max);
@@ -1335,12 +1539,14 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         return full;
     };
 
-    // Collect sample times relative to first active frame
+    // Model time zero is the first active observation. Physics models therefore
+    // receive clip-relative seconds even when source timestamps are epoch values.
     const t0 = times[active[0]];
     const T = times[active[active.length - 1]] - t0; // total duration, seconds
 
-    // Strided subset of active frames for the optimizer cost (always keep the
-    // last frame so the whole engagement is constrained). stride 1 = all frames.
+    // Strided subset of active frames for the expensive optimizer cost (always
+    // keep the last frame so the whole engagement is constrained). stride 1 =
+    // all frames. This subsampling never changes the final output resolution.
     const stride = Math.max(1, Math.floor(options.sampleStride ?? 1));
     const costFrames = [];
     for (let k = 0; k < active.length; k += stride) costFrames.push(active[k]);
@@ -1402,7 +1608,9 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     // default fit is unchanged.
     const groundPrior = options.groundPrior || null;
 
-    // Composite cost: scaled mean angular error (degrees) + model plausibility
+    // Composite cost: scaled mean angular error (degrees) + model plausibility.
+    // EARTH_R supplies the second-order curvature correction that converts
+    // tangent-plane ENU up into approximate height above the reference ellipsoid.
     const EARTH_R = 6371000;   // tangent-plane curvature for the ground prior
     function costFn(params) {
         const errRad = _meanErrRad(params, costFrames, costTimes);
@@ -1436,6 +1644,9 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     // maxDtOverride coarsens the step for the SEARCH only (see fitMaxDt); the
     // final trajectory passes none, so it integrates at the model's own maxDt.
     function _integrateRK4_inline(mdl, initState, prms, sTimes, maxDtOverride) {
+        // Integration begins at sTimes[0], which must be part of a nondecreasing
+        // sequence. The final substep is clipped to land exactly on each
+        // observation time, keeping states index-aligned with requested samples.
         const results = [];
         const state = initState.slice();
         const n = state.length;
@@ -1556,10 +1767,8 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         return null;
     }
 
-    // Float64: these are ENU positions (tens of km). float32 quantizes them to
-    // ~1 cm, and the g-force graph (a second difference x fps^2) turns that into
-    // a residual ~0.7 g sawtooth. Float64 keeps a constant-velocity fit's track
-    // a true straight line, so its acceleration graph reads flat ~0.
+    // Float64 prevents ENU position quantization from being amplified into
+    // artificial acceleration by downstream finite-difference graphs.
     const positions = new Float64Array(count * 3);
     const residuals = new Float32Array(count).fill(NaN);
 
@@ -1576,6 +1785,8 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         positions[i * 3 + 2] = s[2];
         if (!excluded.has(i)) {
             const b = i * 3;
+            // Physics residuals are pure angular radians. Model priors appear
+            // only in the composite cost and the `priors` result metadata.
             residuals[i] = _angularError(s[0], s[1], s[2],
                 sensorPos[b], sensorPos[b + 1], sensorPos[b + 2],
                 losDir[b], losDir[b + 1], losDir[b + 2]);
@@ -1688,7 +1899,7 @@ import {Sit} from "./Globals";
 import {Vector3} from "three";
 
 /**
- * Pack a sitrec LOS node into a flat-array dataset in ENU coordinates.
+ * Pack a Sitrec LOS node into a flat-array dataset in ENU coordinates.
  * Returns { dataset, originLat, originLon } where lat/lon are in radians.
  */
 // Pack the LOS into flat ENU arrays for the fitters. frame0/frame1 window the
@@ -1701,6 +1912,9 @@ export function buildLOSDataset(losNode, frame0 = 0, frame1 = (losNode.frames ??
     frame1 = Math.max(frame0, Math.min(losNode.frames - 1, Math.round(frame1)));
     const n = frame1 - frame0 + 1;
 
+    // Center the tangent plane on the mean sensor position. Keeping local
+    // coordinates small improves the normal-equation solves; the paired
+    // conversion helpers only need this origin's latitude and longitude.
     let meanX = 0, meanY = 0, meanZ = 0;
     for (let f = frame0; f <= frame1; f++) {
         const los = losNode.v(f);
@@ -1731,6 +1945,8 @@ export function buildLOSDataset(losNode, frame0 = 0, frame1 = (losNode.frames ??
         sensorPos[i * 3 + 1] = posENU.y;
         sensorPos[i * 3 + 2] = posENU.z;
 
+        // `true` selects vector rotation: a heading must not receive the ECEF
+        // origin translation used when converting a position.
         const dirENU = ECEF2ENU_radii(los.heading, originLat, originLon, true);
         losDir[i * 3] = dirENU.x;
         losDir[i * 3 + 1] = dirENU.y;
@@ -1743,7 +1959,7 @@ export function buildLOSDataset(losNode, frame0 = 0, frame1 = (losNode.frames ??
         // the g-force graph (a second difference assuming a uniform 1/fps step,
         // amplified by fps^2) blows up into tens of spurious g. Frames are
         // uniformly spaced in real time for a constant-fps sitch. One video
-        // frame spans simSpeed/fps REAL seconds (simSpeed was ignored before,
+        // frame spans simSpeed/fps real seconds (simSpeed was ignored before,
         // inflating fitted speeds by simSpeed on time-compressed sitches).
         times[i] = i * (Sit.simSpeed ?? 1) / Sit.fps;
     }
@@ -1756,7 +1972,8 @@ export function buildLOSDataset(losNode, frame0 = 0, frame1 = (losNode.frames ??
 }
 
 /**
- * Unpack a Float32Array of ENU positions into an array of {position: Vector3} in ECEF.
+ * Unpack a Float32Array or Float64Array of ENU positions into an array of
+ * {position: Vector3} objects in ECEF.
  */
 // Unpack fitted ENU positions (nWin entries — the fitted A-B window) into a
 // {position} array covering totalFrames: frames before the window hold its
@@ -1765,6 +1982,8 @@ export function buildLOSDataset(losNode, frame0 = 0, frame1 = (losNode.frames ??
 // identical to the historical behaviour.
 export function unpackFitPositions(positions, nWin, originLat, originLon,
                                    frame0 = 0, totalFrames = nWin) {
+    // Convert the fitted window first; outside it, endpoint holds deliberately
+    // avoid inventing motion in frames that were not part of the fit.
     const win = [];
     for (let f = 0; f < nWin; f++) {
         const enuPos = new Vector3(
@@ -1818,6 +2037,8 @@ export const LINEAR_RCOND_MARGINAL = 1e-2;
 const ON_SENSOR_EPS_M = 1e-6;
 
 // Eigenvalues of a symmetric m x m matrix (flat row-major) by cyclic Jacobi.
+// The fixed small matrix (m=6 here) makes this dependency-free iteration
+// simpler than introducing a general SVD solely for a conditioning metric.
 function _symmetricEigenvalues(A, m) {
     const a = A.slice();
     for (let sweep = 0; sweep < 64; sweep++) {
@@ -1895,8 +2116,10 @@ export function assessLinearFitConditioning(dataset, options = {}) {
         const halfSpan = (tMax - tMin) / 2 || 1;
 
         // G = sum B^T B with B_i = P_i [I, tau_i I], P_i = I - d d^T, tau
-        // centered/normalized time. Equilibrate columns, then rcond =
-        // sqrt(lambdaMin/lambdaMax) of the standardized system.
+        // centered/normalized time. Since P is symmetric and idempotent,
+        // P^T P=P, which is why the blocks below accumulate P directly.
+        // Equilibrate columns, then rcond = sqrt(lambdaMin/lambdaMax) of the
+        // standardized design system.
         const G = new Float64Array(36);
         for (const f of active) {
             const b = f * 3;
@@ -1918,6 +2141,9 @@ export function assessLinearFitConditioning(dataset, options = {}) {
                 }
             }
         }
+        // Normalize each column by sqrt(G_ii). This removes arbitrary position-
+        // versus-velocity units, so the diagnostic measures geometric dependence
+        // rather than raw column magnitudes.
         const dinv = new Float64Array(6);
         for (let i = 0; i < 6; i++) {
             const dii = G[i * 6 + i];
@@ -1929,6 +2155,8 @@ export function assessLinearFitConditioning(dataset, options = {}) {
         const ev = _symmetricEigenvalues(C, 6);
         const lambdaMax = ev[5];
         if (lambdaMax > 0) {
+            // Roundoff can make the smallest eigenvalue microscopically
+            // negative even though a Gram matrix is positive semidefinite.
             const rcond = Math.sqrt(Math.max(0, ev[0]) / lambdaMax);
             out.rcond = rcond;
             out.log10Rcond = Math.log10(Math.max(rcond, Number.MIN_VALUE));
