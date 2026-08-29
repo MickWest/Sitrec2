@@ -143,7 +143,7 @@ import {addScriptedVideoMenu} from "./CScriptedVideo";
 import {addLongExposureMenu} from "./LongExposure";
 import {QuadTreeTile} from "./QuadTreeTile";
 import {initI18n, t} from "./i18n";
-import {showError, showConfirm} from "./showError";
+import {showError, showConfirm, showPrompt} from "./showError";
 import {destroyGlobalProfiler, globalProfiler, initGlobalProfiler} from "./VisualProfiler";
 import {fileSystemFetch} from "./fileSystemFetch";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
@@ -1874,13 +1874,20 @@ async function initializeOnce() {
     
     // Add "Add Object" menu item
     const objectMenuActions = {
-        addObject: () => {
-            const input = prompt(t("menus.objects.addObject.prompt"));
+        addObject: async () => {
+            // showPrompt/showError rather than native prompt()/alert(): the native
+            // dialogs block the whole page, cannot be styled or translated, and stall
+            // headless runs - showPrompt resolves to null under Globals.validationMode
+            // instead of hanging. lil-gui ignores the returned promise, which is fine;
+            // nothing here needs the result.
+            const input = await showPrompt(t("menus.objects.addObject.prompt"), {
+                title: t("menus.objects.addObject.label"),
+            });
             if (input === null || input.trim() === "") return;
             
             const parsed = CustomManager.parseObjectInput(input);
             if (!parsed) {
-                alert(t("menus.objects.addObject.invalidInput"));
+                showError(t("menus.objects.addObject.invalidInput"));
                 return;
             }
             
@@ -3313,6 +3320,15 @@ function disposeEverything() {
     // camera motion data is per-video; clear so the next sitch reloads its own cache
     Globals.cameraMotionData = undefined;
     Globals.cameraMotionRaw = undefined;
+
+    // Every undo/redo action closes over nodes, tracks and GUI folders belonging to
+    // the sitch we are tearing down. Carrying the stacks across a sitch load meant
+    // Ctrl-Z in the NEW sitch ran the OLD sitch's undo: at best a no-op logging
+    // "Tried to unlinkDisposeRemove a node that does not exist", at worst a redo
+    // re-creating a track from the previous sitch into this one. Cleared here rather
+    // than in newSitch() because disposeEverything() is the single chokepoint every
+    // teardown goes through.
+    undoManager.clear();
 
     // dispose of any remaining GUI, except for the permanent folders and items
     Globals.menuBar.destroy(false);

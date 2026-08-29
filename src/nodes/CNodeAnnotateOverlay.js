@@ -14,6 +14,7 @@ import {undoManager} from "../UndoManager";
 import {assert} from "../assert";
 import {CNodeVideoView} from "./CNodeVideoView";
 import {viewMenuKey} from "../ViewUIBarMenus";
+import {showPrompt} from "../showError";
 
 const TOOLS = ["select", "pencil", "brush", "line", "arrow", "rect", "ellipse", "text", "image", "eraser"];
 
@@ -665,19 +666,33 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
         }
 
         if (this.tool === "text") {
-            const text = window.prompt("Annotation text:", "");
-            if (text && text.trim().length > 0) {
-                const stroke = {
-                    tool: "text",
-                    color: this.color,
-                    width: this.strokeWidth,
-                    opacity: this.opacity,
-                    text: text,
-                    points: [{x: vx, y: vy}],
-                    frame: par.frame,
-                };
-                this._commitStroke(stroke);
-            }
+            // This handler must return true SYNCHRONOUSLY - its caller reads the return
+            // value to decide the event was consumed - so the modal cannot be awaited
+            // here; the stroke is committed in the continuation instead.
+            //
+            // The stroke's properties are captured NOW, before the modal opens, so the
+            // annotation belongs to the frame and tool settings the user actually
+            // clicked with. showPrompt additionally holds playback for the modal's
+            // lifetime, so the frame captured here is still the frame on screen when
+            // the user hits OK - without that hold a running video walks past it and,
+            // with Fade Frames set, the stroke commits already fully faded
+            // (getStrokeOpacity returns 0 once age >= fadeFrames) and looks like
+            // nothing happened.
+            const stroke = {
+                tool: "text",
+                color: this.color,
+                width: this.strokeWidth,
+                opacity: this.opacity,
+                text: "",
+                points: [{x: vx, y: vy}],
+                frame: par.frame,
+            };
+            showPrompt("Annotation text:", {title: "Add Annotation"}).then((text) => {
+                if (text && text.trim().length > 0) {
+                    stroke.text = text;
+                    this._commitStroke(stroke);
+                }
+            });
             return true;
         }
 

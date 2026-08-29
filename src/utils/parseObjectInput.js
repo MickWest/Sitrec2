@@ -81,3 +81,31 @@ export function parseObjectInput(inputString) {
         hasExplicitAlt: hasExplicitAlt
     };
 }
+
+/**
+ * Pick the next free "Object N" name given every name already in use.
+ *
+ * Split out from CCustomManager.getNextObjectName so the numbering rule can be
+ * tested without a live node graph; the manager method supplies the names.
+ *
+ * @param {Iterable<string>} existingNames - names already in use (node ids,
+ *        menuText, anything a previously created object could be carrying).
+ *        Non-string and empty entries are ignored.
+ * @returns {string} "Object <highest+1>", or "Object 1" when none are in use.
+ */
+export function nextSequentialObjectName(existingNames) {
+    let maxNumber = 0;
+
+    for (const name of existingNames ?? []) {
+        if (typeof name !== "string") continue;
+        const match = name.match(/^Object (\d+)$/);
+        if (match) {
+            const number = parseInt(match[1], 10);
+            if (number > maxNumber) {
+                maxNumber = number;
+            }
+        }
+    }
+
+    return `Object ${maxNumber + 1}`;
+}

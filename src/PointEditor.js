@@ -17,7 +17,7 @@ import {assert} from "./assert";
 import {V3} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
 import {mouseInViewOnly, mouseToViewNormalized} from "./ViewUtils";
-import {setRenderOne, Sit} from "./Globals";
+import {NodeMan, setRenderOne, Sit} from "./Globals";
 import {radians} from "./utils";
 import {undoManager as UndoManager} from "./UndoManager";
 import * as LAYER from "./LayerMasks";
@@ -122,6 +122,12 @@ export class PointEditor {
         // Generate unique IDs for this editor instance
         const uniqueId = Math.random().toString(36).substr(2, 9);
         
+        // Snapshot the registry before building the measurement nodes. Both of these
+        // create sub-nodes of their own (the position's _x/_y/_z GUI values, the
+        // altitude's ground point _Below and its _color_colorInput), and dispose()
+        // has to unregister every one of them - see the sweep there.
+        const preMeasureNodeIDs = new Set(Object.keys(NodeMan.list));
+
         // Create a position node for the track position
         this.measurePoint = new CNodePositionXYZ({id: `pointEditor_measure_${uniqueId}`, x:0, y:0, z:0});
         
@@ -135,6 +141,8 @@ export class PointEditor {
             text: "AGL",
             layers: LAYER.MASK_MAIN | LAYER.MASK_LOOK,
         });
+
+        this._measureNodeIDs = Object.keys(NodeMan.list).filter(id => !preMeasureNodeIDs.has(id));
         
         // Initially hide the measurement
         this.measureAltitude.group.visible = false;
@@ -862,16 +870,21 @@ export class PointEditor {
             this.positionIndicatorCone = null;
         }
 
-        // Clean up measurement nodes
-        // Note: measureAltitude.dispose() will also dispose its internal ground point node
-        if (this.measureAltitude) {
-            this.measureAltitude.dispose();
-            this.measureAltitude = null;
+        // Clean up measurement nodes.
+        // These used to call node.dispose() directly, which frees the node's own
+        // resources but leaves it REGISTERED in NodeMan - so every editor teardown
+        // (a synthetic track removed, or an undone "Add Object") leaked 7 nodes:
+        // pointEditor_measure_<uid> plus its _x/_y/_z, and pointEditor_measureAlt_<uid>
+        // plus its _Below ground point and _color_colorInput. unlinkDisposeRemove()
+        // severs the edges, calls the same dispose(), AND unregisters. The recorded id
+        // list is used rather than the two handles because neither node's sub-nodes are
+        // reachable from it (_color_colorInput is not even an input).
+        this.measureAltitude = null;
+        this.measurePoint = null;
+        for (const id of this._measureNodeIDs ?? []) {
+            if (NodeMan.exists(id)) NodeMan.unlinkDisposeRemove(id);
         }
-        if (this.measurePoint) {
-            this.measurePoint.dispose();
-            this.measurePoint = null;
-        }
+        this._measureNodeIDs = [];
 
         // Clean up transform controls
         if (this.transformControl) {

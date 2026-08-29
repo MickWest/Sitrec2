@@ -33,6 +33,33 @@ class CManager {
         return this.list[id] !== undefined
     }
 
+    // Given a desired name, return one that is free in this manager.
+    //
+    // Returns the name UNCHANGED when nothing holds it, which is what nearly every
+    // caller gets and why ids stay readable. Only on a collision does it append
+    // "_1", then "_2", and so on until one is free.
+    //
+    // The motivating case is the `${prefix}_${Date.now()}` id pattern used for
+    // synthetic objects, tracks and balloons. Millisecond timestamps are not unique:
+    // two objects created in the same millisecond produced the SAME id and the second
+    // one threw out of CManager.add ("seem to be adding <id> twice to a CManager").
+    // Measured live, two Add Object calls landed 19 ms apart, so this is narrow but
+    // entirely reachable — a double click, a script, or a deserialize loop.
+    //
+    // Note this is a point-in-time answer: it is only safe to use the returned name
+    // if you add() it before anything else can claim it, which is how all the id
+    // generation here works (generate, then immediately construct).
+    UniqueName(prefix) {
+        if (!this.exists(prefix)) {
+            return prefix;
+        }
+        let i = 1;
+        while (this.exists(`${prefix}_${i}`)) {
+            i++;
+        }
+        return `${prefix}_${i}`;
+    }
+
 
     remove(id) {
         if (typeof id === "object") {

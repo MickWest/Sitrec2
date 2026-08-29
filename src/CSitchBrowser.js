@@ -6,7 +6,7 @@
  * Right-click context menu with label checkboxes.
  */
 import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
-import {showConfirm} from "./showError";
+import {showConfirm, showError, showPrompt} from "./showError";
 import {getEffectiveUserID, Globals, NodeMan, setNewSitchObject, SitchMan, withTestUser} from "./Globals";
 import {DragDropHandler} from "./DragDropHandler";
 import {extractWarGovPRCode} from "./WarGovUFOUtils";
@@ -1964,13 +1964,17 @@ export class CSitchBrowser {
 
     // ==================== LABEL MUTATIONS ====================
 
-    _promptAddLabel(assignToSitches) {
-        const name = prompt("Enter label name:");
+    async _promptAddLabel(assignToSitches) {
+        // showPrompt/showError rather than the native dialogs, which block the page and
+        // cannot be styled; showPrompt also resolves to null under Globals.validationMode
+        // so a headless run never stalls here. Both call sites are click/drop handlers
+        // that ignore the returned promise.
+        const name = await showPrompt("Enter label name:", {title: "Add Label"});
         if (!name || !name.trim()) return;
         const trimmed = name.trim().substring(0, 50);
 
         if (this._isPermanentLabel(trimmed)) {
-            alert(`"${trimmed}" is a reserved label name.`);
+            showError(`"${trimmed}" is a reserved label name.`);
             return;
         }
 

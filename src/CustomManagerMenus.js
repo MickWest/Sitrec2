@@ -49,7 +49,7 @@ import {showError} from "./showError";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
-import {parseObjectInput as parseObjectInputUtil} from "./utils/parseObjectInput";
+import {nextSequentialObjectName, parseObjectInput as parseObjectInputUtil} from "./utils/parseObjectInput";
 import {initializeSettings, SettingsSaver} from "./SettingsManager";
 import {CNodeCurveEditor2} from "./nodes/CNodeCurveEdit2";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
@@ -111,26 +111,26 @@ export const menuMethods = {
      * @returns {string} Next sequential object name
      */
     getNextObjectName() {
-        let maxNumber = 0;
-
-        // Iterate through all nodes to find existing "Object N" names
-        const allNodes = NodeMan.getAllNodes();
-        for (const nodeId in allNodes) {
-            const node = allNodes[nodeId];
-            // Check both node.id and node.menuName for "Object N" pattern
-            const names = [node.id, node.menuName].filter(n => n);
-            for (const name of names) {
-                const match = name.match(/^Object (\d+)$/);
-                if (match) {
-                    const number = parseInt(match[1], 10);
-                    if (number > maxNumber) {
-                        maxNumber = number;
-                    }
-                }
+        // Collect every name an already-created object could be carrying.
+        // NodeMan is a CManager: it has iterate(), not getAllNodes(), and its
+        // this.list entries are {data, original} wrappers rather than the nodes
+        // themselves - iterate() hands us the node.
+        //
+        // menuText, not menuName, is where the name lands: createObjectFromInput()
+        // passes it to TrackManager.addSyntheticTrack(), which sets it as menuText
+        // on the spline editor node. The node ids are timestamped
+        // (syntheticObject_<ms>), so scanning ids alone would never see an
+        // "Object N" and the counter would be stuck at 1 forever. menuName is a
+        // sitch-level property (Sit.menuName), not a node one.
+        const names = [];
+        NodeMan.iterate((id, node) => {
+            names.push(id);
+            if (node.menuText) {
+                names.push(node.menuText);
             }
-        }
+        });
 
-        return `Object ${maxNumber + 1}`;
+        return nextSequentialObjectName(names);
     },
 
     /**
@@ -153,9 +153,22 @@ export const menuMethods = {
         // Convert LLA to ECEF coordinates
         const ecefPosition = LLAToECEF(lat, lon, finalAlt);
 
-        // Generate unique IDs
-        const objectID = `syntheticObject_${Date.now()}`;
-        const trackID = `syntheticTrack_${Date.now()}`;
+        // Generate unique IDs. Date.now() alone is NOT unique - two objects created
+        // in the same millisecond produced the same id and the second threw out of
+        // CManager.add. UniqueName() returns the timestamped name untouched in the
+        // normal case and only disambiguates on an actual collision. Both ids become
+        // CNode ids, and their manager entries (TrackManager) mirror those, so
+        // NodeMan is the registry to check.
+        const objectID = NodeMan.UniqueName(`syntheticObject_${Date.now()}`);
+        const trackID = NodeMan.UniqueName(`syntheticTrack_${Date.now()}`);
+
+        // Snapshot the node ids that exist BEFORE construction. Anything under
+        // `${objectID}_` that appears afterwards was auto-created by CNode3DObject
+        // (_size, _color_colorInput, _modelLength, the controllers and their GUI
+        // values) and is owned by this object alone, so undo can sweep exactly those
+        // and nothing else. The prefix is unique by construction - objectID carries a
+        // timestamp - so the sweep can never reach an unrelated node.
+        const preObjectNodeIDs = new Set(Object.keys(NodeMan.list));
 
         // Create the 3D object
         const objectNode = new CNode3DObject({
@@ -177,6 +190,9 @@ export const menuMethods = {
             startFrame: par.frame
         });
 
+        const ownedNodeIds = Object.keys(NodeMan.list)
+            .filter(id => id.startsWith(objectID + "_") && !preObjectNodeIDs.has(id));
+
         console.log(`Created object "${name}" at ${lat}, ${lon}, ${finalAlt}m`);
 
         // Make object creation undoable. Both entry points — the "Add Object" menu
@@ -184,7 +200,8 @@ export const menuMethods = {
         // previously neither pushed an undo action, so a created object could not be
         // undone (unlike synth buildings/clouds/overlays, which already register undo in
         // this file). Mirror that pattern: undo removes the synthetic track (which tears
-        // down its display/data nodes) plus the separate 3D object node; redo re-creates
+        // down its display/data nodes), the sub-nodes the object auto-created
+        // (ownedNodeIds, gathered above) and the 3D object node itself; redo re-creates
         // via this same method. We hold the live ids in closure vars because redo gets
         // fresh ids — the nested add() below is a no-op while UndoManager.isRedoing, so it
         // does not stack a duplicate action.
@@ -193,6 +210,7 @@ export const menuMethods = {
                 name,
                 objectID,
                 trackID: trackOb.trackID ?? trackID,
+                ownedNodeIds,
                 trackManager: TrackManager,
                 nodeMan: NodeMan,
                 // Redo re-creates via this same method (the nested UndoManager.add is a no-op
@@ -200,12 +218,16 @@ export const menuMethods = {
                 // fresh ids so a subsequent undo targets the recreated pair.
                 recreate: () => {
                     const r = this.createObjectFromInput(name, lat, lon, finalAlt, true);
-                    return {objectID: r.objectID, trackID: r.trackOb?.trackID ?? r.trackID};
+                    return {
+                        objectID: r.objectID,
+                        trackID: r.trackOb?.trackID ?? r.trackID,
+                        ownedNodeIds: r.ownedNodeIds,
+                    };
                 },
             }));
         }
 
-        return { objectNode, trackOb, objectID, trackID };
+        return { objectNode, trackOb, objectID, trackID, ownedNodeIds };
     },
 
     /**
@@ -422,9 +444,10 @@ export const menuMethods = {
                 }
             },
             createTrackWithObject: () => {
-                // Create a 3D object at the clicked point
-                const objectID = `syntheticObject_${Date.now()}`;
-                const trackID = `syntheticTrack_${Date.now()}`;
+                // Create a 3D object at the clicked point (see createObjectFromInput
+                // for why the timestamped ids go through UniqueName)
+                const objectID = NodeMan.UniqueName(`syntheticObject_${Date.now()}`);
+                const trackID = NodeMan.UniqueName(`syntheticTrack_${Date.now()}`);
 
                 // Create a simple grey sphere object (5m radius) with phong material
                 const objectNode = new CNode3DObject({
@@ -459,8 +482,9 @@ export const menuMethods = {
                 this.groundContextMenu = null;
                 menu.destroy();
 
-                // Create a unique feature ID
-                const featureID = `feature_${Date.now()}`;
+                // Create a unique feature ID. CNodeFeatureMarker registers in NodeMan
+                // and FeatureManager mirrors that id, so NodeMan is the registry to check.
+                const featureID = NodeMan.UniqueName(`feature_${Date.now()}`);
 
                 // Create the feature at the ground location
                 const featureNode = FeatureManager.addFeature({

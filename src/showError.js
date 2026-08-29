@@ -1,4 +1,5 @@
 import {Globals} from "./Globals";
+import {par} from "./par";
 
 /**
  * Show a copyable error dialog to the user.
@@ -344,6 +345,9 @@ export function showConfirm(message, {title = "Confirm", yesLabel = "Yes", noLab
  * @param {string} [opts.inputType="text"] - HTML input type (e.g. "text", "number")
  * @returns {Promise<string|null>}
  */
+// True while a showPrompt modal is on screen. See the guard inside showPrompt.
+let promptIsOpen = false;
+
 export function showPrompt(message, {title = "Enter Value", defaultValue = "", okLabel = "OK", cancelLabel = "Cancel", inputType = "text"} = {}) {
     return new Promise((resolve) => {
         // No user to type in validation/regression runs — resolve to null (cancelled).
@@ -352,6 +356,37 @@ export function showPrompt(message, {title = "Enter Value", defaultValue = "", o
             resolve(null);
             return;
         }
+
+        // Two properties below are restored from the native prompt() this replaces.
+        // Native prompt() froze the entire page; callers were written against that and
+        // silently depend on it. Being a normal in-page modal, this one does not — so
+        // both are re-established explicitly.
+
+        // 1. ONE AT A TIME. A second activation while a prompt is up (an impatient
+        // double-click on a menu item) used to be swallowed by the blocked thread.
+        // Without this guard it stacks a second modal, and submitting both runs the
+        // caller's action twice — two objects from one Add Object double-click.
+        // The extra request resolves as cancelled, so callers already handling a
+        // null (they all do) treat it as the no-op it used to be.
+        if (promptIsOpen) {
+            console.log("showPrompt: a prompt is already open, ignoring: " + message);
+            resolve(null);
+            return;
+        }
+        promptIsOpen = true;
+
+        // 2. PLAYBACK HOLDS. Callers read frame-dependent state around the prompt —
+        // CNodeAnnotateOverlay stamps a stroke with the frame clicked, CTextExtraction
+        // pulls the video image at par.frame, createObjectFromInput starts a track at
+        // par.frame. A running video used to be unable to advance past them. Now it can,
+        // and the results are wrong in ways that look like nothing happened: a faded-out
+        // annotation (getStrokeOpacity is 0 once age >= fadeFrames), a character template
+        // learned from the wrong frame. Holding playback for the modal's lifetime
+        // restores the guarantee for every caller at once.
+        // pausedLock is respected by the setter, so an analysis holding the frame
+        // counter keeps it.
+        const wasPaused = par.paused;
+        par.paused = true;
 
         const {overlay, modal} = buildModalShell(title, message);
 
@@ -364,7 +399,11 @@ export function showPrompt(message, {title = "Enter Value", defaultValue = "", o
         `;
         modal.appendChild(input);
 
+        // Single exit path, so the open flag and the playback state are always
+        // restored — including on backdrop click and Escape.
         const cleanup = (result) => {
+            promptIsOpen = false;
+            par.paused = wasPaused;
             if (overlay.parentNode) document.body.removeChild(overlay);
             resolve(result);
         };

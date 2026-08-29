@@ -3,6 +3,7 @@ import {par} from "./par";
 import {getTesseract, loadTesseract} from "./tesseractLoader";
 import {isLocal} from "./configUtils";
 import {t} from "./i18n";
+import {showPrompt} from "./showError";
 
 let textExtractor = null;
 let textExtractionFolder = null;
@@ -288,8 +289,13 @@ class TextExtractor {
         setRenderOne(true);
     }
 
-    promptLearnCharacter(charIndex) {
-        const char = prompt(tt("prompts.learnCharacter", {index: charIndex + 1}));
+    async promptLearnCharacter(charIndex) {
+        // showPrompt, not native prompt(): non-blocking and styled, and it resolves to
+        // null under Globals.validationMode instead of hanging a headless run. The
+        // caller is a mouse-down handler that ignores the returned promise.
+        const char = await showPrompt(tt("prompts.learnCharacter", {index: charIndex + 1}), {
+            title: tt("menu.learnTemplates.label"),
+        });
         if (char && char.length === 1) {
             this.learnCharacter(charIndex, char);
         }

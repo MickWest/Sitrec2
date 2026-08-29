@@ -15,7 +15,7 @@
 // timeline widget reads/writes it too.
 
 import {blockViewEvents, clampBelowMenuBar} from "../DragResizeUtils";
-import {showConfirm} from "../showError";
+import {showConfirm, showPrompt} from "../showError";
 import {CNodeView} from "../nodes/CNodeView";
 import {CustomManager, guiMenus, markSitchDirty, NodeMan, TrackManager} from "../Globals";
 import {VIEW_MAP} from "./ScriptCommands";
@@ -233,8 +233,13 @@ export class CScriptEditorWindow extends CNodeView {
             const label = document.createElement("span");
             label.textContent = t.name;
             label.addEventListener("click", () => sv.selectTab(i));
-            label.addEventListener("dblclick", () => {
-                const n = prompt("Rename script:", t.name);
+            label.addEventListener("dblclick", async () => {
+                // showPrompt, matching the showConfirm on the close button just below:
+                // non-blocking, styled, and null under Globals.validationMode.
+                const n = await showPrompt("Rename script:", {
+                    title: "Rename Script",
+                    defaultValue: t.name,
+                });
                 if (n && n.trim()) sv.renameTab(i, n.trim());
             });
             tab.appendChild(label);

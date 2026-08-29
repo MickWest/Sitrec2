@@ -44,7 +44,7 @@ import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
-import {showError, showConfirm} from "./showError";
+import {showError, showConfirm, showPrompt} from "./showError";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
@@ -400,11 +400,17 @@ export const subSitchMethods = {
         this.rebuildSubSitchMenu();
     },
 
-    renameCurrentSubSitch() {
+    async renameCurrentSubSitch() {
         if (this.subSitches.length === 0) return;
 
         const currentSub = this.subSitches[this.currentSubIndex];
-        const newName = prompt("Enter new name for Sub Sitch:", currentSub.name);
+        // showPrompt, not native prompt(): non-blocking, styled to match the app, and
+        // it resolves to null under Globals.validationMode so headless runs don't hang.
+        // Both callers (the menu item and the dblclick handler) ignore the promise.
+        const newName = await showPrompt("Enter new name for Sub Sitch:", {
+            title: "Rename Sub Sitch",
+            defaultValue: currentSub.name,
+        });
 
         if (newName && newName.trim()) {
             currentSub.name = newName.trim();

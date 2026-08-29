@@ -2308,9 +2308,13 @@ class CTrackManager extends CManager {
         // Use provided shortName or generate unique short name for display (like "synth_01_d")
         const shortName = options.shortName || `synth_${String(trackNumber + 1).padStart(2, '0')}_d`;
         
-        // Use provided IDs if available (for deserialization), otherwise generate new ones
-        const trackID = options.trackID || `syntheticTrack_${Date.now()}`;
-        const displayTrackID = options.displayTrackID || `syntheticTrackDisplay_${Date.now()}`;
+        // Use provided IDs if available (for deserialization), otherwise generate new
+        // ones. Only the GENERATED ids go through UniqueName - a deserialize must
+        // restore the saved id verbatim or the graph's references stop resolving.
+        // Date.now() is not unique on its own: two tracks made in the same millisecond
+        // collided and the second threw out of CManager.add.
+        const trackID = options.trackID || NodeMan.UniqueName(`syntheticTrack_${Date.now()}`);
+        const displayTrackID = options.displayTrackID || NodeMan.UniqueName(`syntheticTrackDisplay_${Date.now()}`);
         
         // Get the main view ID
         const viewID = "mainView";
@@ -2784,6 +2788,17 @@ class CTrackManager extends CManager {
         // Remove from manager
         this.remove(trackID);
         
+        // Reap the auto-created constants that wrapping a scalar input leaves behind.
+        // CNode.addInput() wraps a plain number (here the display track's `width: 1`)
+        // in a CNodeConstant id'ed `<nodeId>_<inputKey>` and flags it pruneIfUnused,
+        // precisely because "these auto nodes are not managed by their creators".
+        // unlinkDisposeRemove(displayTrackID) above detaches it but disposes only the
+        // display track, so syntheticTrackDisplay_<ts>_width was left registered on
+        // every removal. CMetaTrack.dispose() already ends with this same prune - the
+        // synthetic path never reaches it, because we this.remove() rather than
+        // disposeRemove() the track object.
+        NodeMan.pruneUnusedFlagged();
+
         console.log(`Deleted synthetic track: ${trackID}`);
         
         // Full sitch teardown is already disposing the entire graph, so a
@@ -2818,9 +2833,10 @@ class CTrackManager extends CManager {
      * @returns {Object|null} The created CMetaTrack entry
      */
     addBalloonTrack(options) {
-        const trackID = options.trackID || `balloonTrack_${Date.now()}`;
-        const objectID = options.objectID || `balloonObject_${Date.now()}`;
-        const displayTrackID = options.displayTrackID || `balloonTrackDisplay_${Date.now()}`;
+        // Generated ids only - a deserialize passes its saved ids and must keep them.
+        const trackID = options.trackID || NodeMan.UniqueName(`balloonTrack_${Date.now()}`);
+        const objectID = options.objectID || NodeMan.UniqueName(`balloonObject_${Date.now()}`);
+        const displayTrackID = options.displayTrackID || NodeMan.UniqueName(`balloonTrackDisplay_${Date.now()}`);
         const lineWidth = options.lineWidth || 1;
 
         // unique short name: Balloon, Balloon_1, ...
