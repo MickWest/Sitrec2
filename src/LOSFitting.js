@@ -1936,6 +1936,21 @@ export function buildLOSDataset(losNode, frame0 = 0, frame1 = (losNode.frames ??
     // in an otherwise double-precision pipeline (buildAnalysisDataset is f64).
     const sensorPos = new Float64Array(n * 3);
     const losDir = new Float64Array(n * 3);
+    // The camera's IMAGE-PLANE basis, which a boresight-aware fit needs: an
+    // operator's pointing error is smooth in image coordinates, not in world
+    // ones (see WindTracerFit.js). LOS nodes expose up/right only optionally,
+    // so fall back to a world-referenced pair built from the heading — that
+    // ignores camera roll, which costs a rolled fit a little accuracy but never
+    // correctness, since the two axes still span the plane orthogonal to the
+    // sightline.
+    const camUp = new Float64Array(n * 3);
+    const camRight = new Float64Array(n * 3);
+    // Per-frame vertical field of view, degrees, where the LOS reports one.
+    // A fit can then ask whether its residual would have put the object OUTSIDE
+    // the frame — the one hard fact anyone has about a hand-slewed boresight.
+    // NaN where unknown, so a consumer must handle absence rather than assume a
+    // default that quietly licenses any residual.
+    const vFOV = new Float64Array(n).fill(NaN);
     const times = new Float64Array(n);
 
     for (let i = 0; i < n; i++) {
@@ -1952,6 +1967,27 @@ export function buildLOSDataset(losNode, frame0 = 0, frame1 = (losNode.frames ??
         losDir[i * 3 + 1] = dirENU.y;
         losDir[i * 3 + 2] = dirENU.z;
 
+        let rx, ry, rz, ux, uy, uz;
+        if (los.right && los.up) {
+            const rENU = ECEF2ENU_radii(los.right, originLat, originLon, true);
+            const uENU = ECEF2ENU_radii(los.up, originLat, originLon, true);
+            rx = rENU.x; ry = rENU.y; rz = rENU.z;
+            ux = uENU.x; uy = uENU.y; uz = uENU.z;
+        } else {
+            // right = normalize(heading x ENU-up), up = right x heading
+            rx = dirENU.y; ry = -dirENU.x; rz = 0;
+            const rn = Math.hypot(rx, ry, rz);
+            if (rn < 1e-9) { rx = 1; ry = 0; rz = 0; } else { rx /= rn; ry /= rn; rz /= rn; }
+            ux = ry * dirENU.z - rz * dirENU.y;
+            uy = rz * dirENU.x - rx * dirENU.z;
+            uz = rx * dirENU.y - ry * dirENU.x;
+        }
+        const rn = Math.hypot(rx, ry, rz) || 1;
+        const un = Math.hypot(ux, uy, uz) || 1;
+        camRight[i * 3] = rx / rn; camRight[i * 3 + 1] = ry / rn; camRight[i * 3 + 2] = rz / rn;
+        camUp[i * 3] = ux / un; camUp[i * 3 + 1] = uy / un; camUp[i * 3 + 2] = uz / un;
+        if (Number.isFinite(los.vFOV) && los.vFOV > 0) vFOV[i] = los.vFOV;
+
         // Uniform frame spacing. GlobalDateTimeNode.frameToMS quantizes to
         // integer milliseconds, so its per-frame deltas jitter (e.g. 33,34,33
         // ms at 30fps). A fit places its output at P0+V*t, so that time jitter
@@ -1965,7 +2001,7 @@ export function buildLOSDataset(losNode, frame0 = 0, frame1 = (losNode.frames ??
     }
 
     return {
-        dataset: {sensorPos, losDir, times, count: n, maxRange: null, frame0, frame1},
+        dataset: {sensorPos, losDir, camUp, camRight, vFOV, times, count: n, maxRange: null, frame0, frame1},
         originLat,
         originLon,
     };

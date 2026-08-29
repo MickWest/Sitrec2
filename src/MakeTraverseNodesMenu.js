@@ -24,6 +24,9 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
     traverseInputs2["Global Fit: Physics"] = "LOSFitPhysics" + idExtra;
     traverseInputs2["Global Fit: Plausible"] = "LOSFitPlausible" + idExtra;
     traverseInputs2["Global Fit: Minimum Speed"] = "LOSFitMinSpeed" + idExtra;
+    // Wind Tracer: a passive drifter fitted with the operator's boresight
+    // motion modelled rather than believed (src/WindTracerFit.js).
+    traverseInputs2["Global Fit: Wind Tracer"] = "LOSFitWindTracer" + idExtra;
     // Stationary-point family: the fixed world point that best fits every
     // sightline (free, or pinned to the sea-level plane = Ground Object), and
     // the moving sightline-meets-ground point (Ground Vehicle). These are the

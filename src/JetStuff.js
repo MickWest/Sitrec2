@@ -32,7 +32,7 @@ import {GlobalScene, LocalFrame} from "./LocalFrame";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {CNodeConstant} from "./nodes/CNode";
 import {scaleNodeF2M} from "./nodes/CNodeScale";
-import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
+import {CNodeGUIValue, CNodeGUIFlag} from "./nodes/CNodeGUIValue";
 import {CNodeLOSTraverse} from "./nodes/CNodeLOSTraverse";
 import {CNodeLOSTraverseConstantSpeed} from "./nodes/CNodeLOSTraverseConstantSpeed";
 import {CNodeMunge} from "./nodes/CNodeMunge";
@@ -51,6 +51,7 @@ import {CNodeLOSFitMonteCarlo2} from "./nodes/CNodeLOSFitMonteCarlo2";
 import {CNodeLOSFitPhysics} from "./nodes/CNodeLOSFitPhysics";
 import {CNodeLOSFitPlausible} from "./nodes/CNodeLOSFitPlausible";
 import {CNodeLOSFitMinSpeed} from "./nodes/CNodeLOSFitMinSpeed";
+import {CNodeLOSFitWindTracer} from "./nodes/CNodeLOSFitWindTracer";
 import {CNodeLOSFitStationaryPoint} from "./nodes/CNodeLOSFitStationaryPoint";
 import {CNodeLOSFitGroundVehicle} from "./nodes/CNodeLOSFitGroundVehicle";
 import {CNodeLOSFitAnalysisResult} from "./nodes/CNodeLOSFitAnalysisResult";
@@ -993,6 +994,39 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
         windFrom: "physicsWindFrom",
         initialRange: "physicsInitialRange",
     })
+
+    // Wind Tracer — a drifting, slowly descending object fitted with the
+    // camera's own pointing motion modelled instead of believed. The anchor is
+    // eliminated in closed form, so there is no start-distance input; see
+    // src/WindTracerFit.js.
+    if (!NodeMan.exists("windTracerPointingSigma")) {
+        new CNodeGUIValue({
+            id: "windTracerPointingSigma",
+            value: 0.4, start: 0.02, end: 3, step: 0.01,
+            desc: "Tracer Pointing σ (°)",
+            color: "#C0FFC0",
+            tooltip: "How far off the object the operator's boresight plausibly wanders, in degrees.\nRoughly the frame half-width. Larger values let the fit attribute more of the residual to camera motion rather than to the object.",
+        }, guiMenus.traverse)
+
+        new CNodeGUIFlag({
+            id: "windTracerLooseShear",
+            value: false,
+            desc: "Tracer Loose Shear",
+            tooltip: "Widen the wind-shear bound past the physical marine value (about 5e-4 per metre).\nA fit that needs the loose bound is telling you the drift decelerates more than any ordinary wind profile can explain.",
+        }, guiMenus.traverse)
+    }
+
+    if (!NodeMan.exists("LOSFitWindTracer"+idExtra)) {
+        // No wind input: the fit resolves targetWind by name at fit time and
+        // samples it at a fixed frame, so a track-driven wind cannot cascade a
+        // multi-second refit per MISB row. See CNodeLOSFitWindTracer._windPrior.
+        new CNodeLOSFitWindTracer({
+            id: "LOSFitWindTracer"+idExtra,
+            LOS: los,
+            pointingSigma: "windTracerPointingSigma",
+            looseShear: "windTracerLooseShear",
+        });
+    }
 
     // Best-fit smooth traverse with soft speed target — reads the same
     // "Tgt Start Dist" and "Target Speed" sliders as the Const Air Spd
