@@ -2648,6 +2648,13 @@ class CTrackManager extends CManager {
             exportSpline: () => splineEditorNode.exportSplineJSON()
         }, "exportSpline").name(t("trackManager.exportSpline"));
 
+        // ...and the full set under File > Export, alongside every other track:
+        // the same control points, plus the per-frame track this spline
+        // generates as CSV, MISB CSV and KML. Registered here, not in the
+        // CNodeSplineEditor constructor, because it needs both the display name
+        // (set above) and the smoothed wrapper node to exist.
+        splineEditorNode.addTrackExportButtons();
+
         // Add delete button to the folder
         const dummy = {
             deleteTrack: async () => {

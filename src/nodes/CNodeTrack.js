@@ -404,7 +404,7 @@ export class CNodeTrack extends CNodeEmptyArray {
                 csv: csv,
             }
         } else {
-            saveAs(new Blob([csv]), "MISB-" + this.id + ".csv")
+            saveAs(new Blob([csv]), "MISB-" + this.exportFileStem() + ".csv")
         }
     }
 

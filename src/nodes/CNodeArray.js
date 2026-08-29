@@ -2,7 +2,7 @@ import {CNode} from "./CNode";
 import {GlobalDateTimeNode, NodeMan, Sit} from "../Globals";
 import {assert} from "../assert";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
-import {roundIfClose} from "../utils";
+import {escapeXML, roundIfClose} from "../utils";
 import {saveAs} from "file-saver";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 
@@ -46,6 +46,14 @@ export class CNodeArray extends CNode {
         NodeMan.addExportButton(this, "exportTrackKML")
     }
 
+    // Filename stem for the files these exports write. Defaults to the node id,
+    // which for a synthetic track is a generated timestamp
+    // ("syntheticTrack_1785271794788"). Nodes that have a human-readable name
+    // set exportName, so the download is called after the track instead.
+    exportFileStem() {
+        return this.exportName ?? this.id;
+    }
+
     // generic export function
     // if just a value, then export the value
     exportArray(inspect=false) {
@@ -55,10 +63,16 @@ export class CNodeArray extends CNode {
             return null;
         }
 
+        // Inspect mode only feeds the makeExportButton tooltip, which reads the
+        // header and ONE example row - and the probe runs at node CREATION. Bound
+        // the loop the same way exportMISBCompliantCSV does, rather than building
+        // (and throwing away) a full 7000-row CSV before the node is usable.
+        const frameCount = inspect ? Math.min(1, this.frames) : this.frames;
+
         let csv;
         if (typeof this.array[0] !== "object") {
             csv = "frame, time, value\n";
-            for (let f = 0; f < this.frames; f++) {
+            for (let f = 0; f < frameCount; f++) {
                 // if it's not an object, then just export the value
                 const time = GlobalDateTimeNode.frameToMS(f)
                 let value = this.array[f];
@@ -71,7 +85,7 @@ export class CNodeArray extends CNode {
             // might need to convert from feet to meters
             // however I need to verify that's actually used
             csv = "Frame,Time,Lat,Lon,Alt(m)\n"
-            for (let f = 0; f < this.frames; f++) {
+            for (let f = 0; f < frameCount; f++) {
                 let pos = this.array[f].lla
                 let LLAm = []
                 if (pos === undefined) {
@@ -102,7 +116,7 @@ export class CNodeArray extends CNode {
             }
         }
         else {
-            saveAs(new Blob([csv]), "sitrecArray-" + this.id + ".csv")
+            saveAs(new Blob([csv]), "sitrecArray-" + this.exportFileStem() + ".csv")
         }
     }
 
@@ -124,7 +138,12 @@ export class CNodeArray extends CNode {
             return {desc: "KML Track Export"};
         }
 
-        const trackName = Sit.name + "-" + this.id;
+        const trackName = Sit.name + "-" + this.exportFileStem();
+        // trackName is a human-readable track/sitch name now, so it can hold
+        // characters XML reserves. Escaped for the <name> elements, raw for the
+        // filename. CTrackFileKML re-imports by that name; the XML parser
+        // unescapes it, so the round trip is unchanged.
+        const trackNameXML = escapeXML(trackName);
         // <Document>, not <Folder>: CTrackFileKML.legacyTrackName resolves a name for
         // Document>Placemark but NOT for Folder>Placemark, where it deliberately leaves
         // the name unset for back-compat — so a Folder-rooted export re-imports as
@@ -132,9 +151,9 @@ export class CNodeArray extends CNode {
         let kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
 <Document>
-<name>${trackName}</name>
+<name>${trackNameXML}</name>
 <Placemark>
-<name>${trackName}</name>
+<name>${trackNameXML}</name>
 <Style>
 <LineStyle><color>ff0000ff</color><width>4</width></LineStyle>
 <IconStyle><Icon><href>http://maps.google.com/mapfiles/kml/shapes/airports.png</href></Icon></IconStyle>

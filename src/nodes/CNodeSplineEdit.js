@@ -110,6 +110,15 @@ export class CNodeSplineEditor extends CNodeTrack {
 
         this.recalculate()
         this.splineEditor.updatePointEditorGraphics()
+
+        // A sitch-built spline IS the track, so it can register its File > Export
+        // entries itself - but only after recalculate(), because the CSV probe
+        // returns null (and so adds no button) on a still-empty array. A
+        // synthetic track's spline is wrapped by TrackManager, which calls this
+        // itself once the wrapper node and the display name exist.
+        if (!v.skipGUI) {
+            this.addTrackExportButtons();
+        }
     }
 
     dispose() {
@@ -346,6 +355,56 @@ export class CNodeSplineEditor extends CNodeTrack {
         if (!c) return undefined;
         const hex = (Math.round(c.r * 255) << 16) | (Math.round(c.g * 255) << 8) | Math.round(c.b * 255);
         return "#" + hex.toString(16).padStart(6, "0");
+    }
+
+    // File > Export entries for this spline: the control points as a droppable
+    // .spline.json, plus the per-frame track the spline generates, in the same
+    // three formats every other track offers. Both the Export subfolder title
+    // and the downloaded filenames use the spline's display name rather than the
+    // node id, which for a synthetic track is a generated timestamp.
+    //
+    // Called from the constructor for sitch-built splines, and from
+    // TrackManager.addSyntheticTrack once a synthetic track's wrapper node and
+    // menuText exist.
+    addTrackExportButtons() {
+        this.exportFolderName = this.splineName();
+        this.exportName = this.splineName();
+        // The wrapper is what actually writes the per-frame files, so it needs
+        // the display name too - otherwise they come out as
+        // "MISB-syntheticTrack_1785271794788.csv".
+        const smoothed = this.smoothedTrackNode();
+        if (smoothed) smoothed.exportName = this.exportName;
+        NodeMan.addExportButton(this, "exportSplineJSON");
+        NodeMan.addExportButton(this, "exportTrackCSV");
+        NodeMan.addExportButton(this, "exportMISBCompliantCSV");
+        NodeMan.addExportButton(this, "exportTrackKML");
+    }
+
+    // The node holding the per-frame track this spline generates. For a
+    // synthetic track TrackManager wraps the spline in a
+    // CNodeSmoothedPositionTrack, and THAT is trackOb.trackNode - what the
+    // displayed line draws and what the Smoothing window control acts on - so
+    // the exported CSV/KML must come from it, not from the raw spline. A
+    // sitch-built spline has no wrapper and exports itself (null here).
+    smoothedTrackNode() {
+        const trackOb = TrackManager.get(this.id.replace(/_unsmoothed$/, ""), false);
+        const node = trackOb?.trackNode;
+        return (node && node !== this) ? node : null;
+    }
+
+    exportTrackCSV(inspect = false) {
+        const node = this.smoothedTrackNode();
+        return node ? node.exportTrackCSV(inspect) : super.exportTrackCSV(inspect);
+    }
+
+    exportMISBCompliantCSV(inspect = false) {
+        const node = this.smoothedTrackNode();
+        return node ? node.exportMISBCompliantCSV(inspect) : super.exportMISBCompliantCSV(inspect);
+    }
+
+    exportTrackKML(inspect = false) {
+        const node = this.smoothedTrackNode();
+        return node ? node.exportTrackKML(inspect) : super.exportTrackKML(inspect);
     }
 
     // Write the control points out as a .spline.json interchange file — the

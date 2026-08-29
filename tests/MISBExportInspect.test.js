@@ -36,6 +36,7 @@ jest.mock("../src/Globals", () => {
 });
 
 import {Vector3} from "three";
+import {CNodeArray} from "../src/nodes/CNodeArray";
 import {CNodeTrack} from "../src/nodes/CNodeTrack";
 import {saveAs} from "file-saver";
 
@@ -57,6 +58,10 @@ function makeLOSTrack() {
         },
         frameCenterGroundPoint: jest.fn(() => null),
         resolveTruthTargetTrack: () => null,
+        // The real export names its file through this CNodeArray helper, so the
+        // stub has to model it too. Borrowed rather than reimplemented, so the
+        // test keeps exercising the production naming rule.
+        exportFileStem: CNodeArray.prototype.exportFileStem,
     };
 }
 

@@ -41,7 +41,7 @@ import {par} from "./par";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {getAzElFromPositionAndForward, getLocalUpVector} from "./SphericalMath";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
-import {degrees, getExportPrefix, radians} from "./utils";
+import {degrees, escapeXML, getExportPrefix, radians} from "./utils";
 import {showError} from "./showError";
 
 // How big the photo rectangle is, in metres across. `near` is then derived from it and the
@@ -61,14 +61,6 @@ import {showError} from "./showError";
 // viewpoint — and Google Earth still fills the screen with it when you fly into the
 // overlay, whatever the distance works out to be.
 const PHOTO_WIDTH_M = 10;
-
-function escapeXML(s) {
-    return String(s)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-}
 
 // Trim to a sane number of decimals. Lat/lon get 8 (about a millimetre), angles 4.
 // "-0.0000" is a legal but confusing way to write zero, and it is what a camera pointing

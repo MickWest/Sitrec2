@@ -185,7 +185,12 @@ export class CNodeManager extends CManager{
             return;
         }
 
-        const button = FileManager.makeExportButton(node, node.exportFunction, node.exportType, node.id);
+        // The Export subfolder is titled by the node id unless the node offers a
+        // human-readable name. A synthetic track's id is a generated timestamp,
+        // which makes a useless folder title.
+        const folderName = node.exportFolderName ?? node.id;
+
+        const button = FileManager.makeExportButton(node, node.exportFunction, node.exportType, folderName);
 
         if (button) {
             // Tagged rather than counted, so a probe that returned null (no data

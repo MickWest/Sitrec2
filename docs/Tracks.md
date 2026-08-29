@@ -169,8 +169,10 @@ one made with **Add Track**, with the control points already placed and editable
 
 This is how a hand-authored solution moves between sitches as a data file instead of
 being hard-coded in a `Sit*.js`. Write one out with the **Export Spline** button, found
-both in a synthetic track's folder under **Contents** and in the spline editor's own
-folder under **Physics**.
+in a synthetic track's folder under **Contents** and in the spline editor's own folder
+under **Physics**, or as **Spline Control Points (JSON)** in the track's sub-folder
+under **File ▸ Export** — where it sits alongside the per-frame exports of the track
+the spline generates.
 
 ```json
 {
@@ -537,10 +539,18 @@ Sitrec can export tracks in several formats via the export buttons in the **Expo
 | **CSV** | Frame, Time, Lat, Lon, Alt(m) — simple tabular data |
 | **KML** | Google Earth compatible with `<gx:Track>`, timestamps, and altitude mode |
 | **MISB CSV** | Full 12-column MISB-standard format including heading, pitch, roll, FOV, gimbal angles |
-| **Spline JSON** | Control points of a hand-drawn spline track — see [Sitrec Spline](#sitrec-spline-splinejson). Exported with the **Export Spline** button rather than from the Export folder |
+| **Spline JSON** | Control points of a hand-drawn spline track — see [Sitrec Spline](#sitrec-spline-splinejson). Also available as the **Export Spline** button in the track's **Contents** folder |
 | **FOV JSON** | Camera zoom keyframes — see [Sitrec Camera FOV](#sitrec-camera-fov-fovjson). Exported with **Camera ▸ FOV (Zoom) ▸ Export for FOV Editor** |
 
-Exported files are downloaded directly to your browser's download folder.
+Exported files are downloaded directly to your browser's download folder, named after
+the track (e.g. `MISB-Aguadilla Ground Spline.csv`).
+
+A spline track — one made with **Add Track**, dropped in as a `.spline.json`, or built
+into a sitch — gets all four: its control points *and* the per-frame track it generates,
+in CSV, MISB CSV and KML. The per-frame formats export the **smoothed** track, so they
+match the line drawn on screen and reflect the track's Smoothing window, altitude offset
+and altitude lock. The control points do not carry the altitude offset, which is stored
+separately in the file and re-applied on import.
 
 ### Export Altitude Datums
 

@@ -651,6 +651,17 @@ export function roundIfClose(value, epsilon = 1e-9) {
     return value;
 }
 
+// Escape a string for use as XML text or an attribute value. Track and sitch
+// names reach the KML exporters verbatim, and a name as ordinary as
+// "Search & Rescue" makes the whole document unparseable without this.
+export function escapeXML(s) {
+    return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
 
 /**
  * findStep function
