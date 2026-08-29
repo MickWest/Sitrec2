@@ -133,8 +133,34 @@ export const WIND_TRACER_PARAMS = [
     {name: "windE", min: -40, max: 40, scale: 2},
     {name: "windN", min: -40, max: 40, scale: 2},
     {name: "shearPerM", min: SHEAR_BOUNDS_PHYSICAL[0], max: SHEAR_BOUNDS_PHYSICAL[1], scale: 0.0003},
-    // Buoyancy ratio at clip start. 1.0 is exactly neutral; below 1 sinks.
-    {name: "beta0", min: 0.90, max: 1.60, scale: 0.05},
+    // Buoyancy ratio at clip start: lift over weight. 1.0 is exactly neutral,
+    // above 1 rises, below 1 sinks, and 0 is a COLD envelope with no lift left,
+    // falling at its terminal velocity.
+    //
+    // The floor used to be 0.90, which capped a still-lit sink at
+    // vTerm*sqrt(0.1) ~ 1 m/s and made anything faster reachable only through
+    // the flame-out branch. That split one physical motion — a steady sink —
+    // across two representations separated by a kink in time, and the cost
+    // surface between them is not a ridge but a DEAD FLAT PLATEAU: once tOut is
+    // past the clip end it has no effect on the trajectory at all, so the
+    // simplex sees exactly zero gradient in it. Measured on a synthetic 2 m/s
+    // sink, the fit sat on that plateau at cost 1800 returning -0.98 m/s while
+    // the correct basin, 540 s away in tOut, sat at 1204.
+    //
+    // Taking the floor to 0 makes the whole vertical rate continuously reachable
+    // by moving beta0 alone, which IS a gradient direction. The flame-out
+    // machinery then does only what it should: describe WHEN the buoyancy went
+    // away, for a clip where the descent rate changes.
+    //
+    // The ceiling is 2.0 for the matching reason, so the range is symmetric
+    // about neutral: b = beta0 - 1 spans [-1, +1] and |w| <= vTerm in BOTH
+    // directions. beta0 = 0 is no lift, a net downward force of one weight;
+    // beta0 = 2 is twice the lift, a net UPWARD force of one weight. The old
+    // ceiling of 1.6 capped the climb at vTerm*sqrt(0.6) ~ 2.5 m/s and made a
+    // 2 m/s ascent pin the bound — measured, and the mirror image of the sink
+    // problem above. Real lanterns climb at 1-3 m/s, so the cap was inside the
+    // ordinary range.
+    {name: "beta0", min: 0.0, max: 2.0, scale: 0.05},
     // Cold terminal fall speed, from measured lantern masses and volumes.
     {name: "vTerm", min: 1.6, max: 3.2, scale: 0.3},
     // Flame-out time relative to clip start. Past the clip end means the flame
@@ -691,22 +717,125 @@ export function fitWindTracer(dataset, options = {}) {
     if (!ctx) return null;
     const costOf = (th) => windTracerCost(searchDS, clamp(th), ctx, options).cost;
 
-    // --- global seed: the wind rose ---
+    // --- global seed: a wind rose, then a vertical-regime sweep ---
+    //
+    // The rose alone is not enough. It used to carry a single vertical seed
+    // (flame-out past the clip end) at every node, so the whole global seed sat
+    // on one branch of the model and the simplex had to find the others by
+    // luck. It could not: tOut is EXACTLY unidentifiable once flame-out is past
+    // the clip end, so the cost is dead flat in it and there is no descent
+    // direction to follow.
+    //
+    // The fix is two staged sweeps rather than one bigger cross product, which
+    // keeps the cost about where it was. The wind and the vertical profile are
+    // nearly separable — the wind sets the horizontal displacement, the vertical
+    // seed sets the altitude profile — so sweep the rose with three cheap
+    // vertical probes to rank the WIND, then cross only the best few winds with
+    // the full set of vertical regimes.
+    const VERTICAL_SEEDS = [
+        // beta0, tOut, vTerm            regime
+        [1.70,   600,  2.4],   // rising briskly, lit throughout
+        [1.30,   600,  2.4],   // rising, lit throughout
+        [1.05,   600,  2.4],   // gently rising
+        [0.99,   600,  2.4],   // near neutral
+        [0.94,   600,  2.4],   // gently sinking
+        [0.60,   600,  2.4],   // sinking well below neutral
+        [0.20,   600,  3.0],   // near-cold, sinking close to terminal
+        [1.00,  -300,  2.0],   // cold branch: flame-out before the clip, slow terminal
+        [1.00,  -300,  3.2],   // cold branch: fast terminal
+    ];
+    const I_BETA = 3, I_VTERM = 4, I_TOUT = 5;
+    // A seed may only set a parameter the caller has not pinned, either with a
+    // lock or with an explicit initial-guess override.
+    const maySeed = (i) => freeIdx.includes(i)
+        && !(options.paramOverrides && options.paramOverrides[defs[i].name] !== undefined);
+
+    const branchBest = new Map();   // "lit" | "cold" -> {c, th}
+    const offerSeed = (th, tOut) => {
+        const c = costOf(th);
+        if (!Number.isFinite(c)) return;
+        const branch = (maySeed(I_TOUT) && tOut < 0) ? "cold" : "lit";
+        const cur = branchBest.get(branch);
+        if (!cur || c < cur.c) branchBest.set(branch, {c, th: clamp(th.slice())});
+    };
+
     if (!locks || (locks.windE === undefined && locks.windN === undefined)) {
-        let best = null;
+        // Stage 1: rank the wind. Keep the best few, not just the best one — the
+        // wind that wins under a neutral vertical probe is not always the wind
+        // that wins under a cold one.
+        const TOP_WINDS = 8;
+        const top = [];
         for (let spd = 1; spd <= 26; spd += 1.5) {
             for (let dir = 0; dir < 360; dir += 10) {
-                const th = theta.slice();
-                th[0] = -spd * Math.sin(dir * Math.PI / 180);
-                th[1] = -spd * Math.cos(dir * Math.PI / 180);
+                const wE = -spd * Math.sin(dir * Math.PI / 180);
+                const wN = -spd * Math.cos(dir * Math.PI / 180);
+                let bestHere = null;
                 for (const beta of [0.94, 0.99, 1.05]) {
-                    th[3] = beta;
+                    const th = theta.slice();
+                    th[0] = wE; th[1] = wN;
+                    if (maySeed(I_BETA)) th[3] = beta;
                     const c = costOf(th);
-                    if (!best || c < best.c) best = {c, th: th.slice()};
+                    if (Number.isFinite(c) && (!bestHere || c < bestHere.c)) bestHere = {c, wE, wN};
+                }
+                if (!bestHere) continue;
+                top.push(bestHere);
+                if (top.length > TOP_WINDS * 4) {
+                    top.sort((a, b) => a.c - b.c);
+                    top.length = TOP_WINDS;
                 }
             }
         }
-        if (best) theta = clamp(best.th);
+        top.sort((a, b) => a.c - b.c);
+        top.length = Math.min(top.length, TOP_WINDS);
+
+        // Stage 2: cross the surviving winds with every vertical regime.
+        for (const w of top) {
+            for (const [beta, tOut, vTerm] of VERTICAL_SEEDS) {
+                const th = theta.slice();
+                th[0] = w.wE; th[1] = w.wN;
+                if (maySeed(I_BETA)) th[3] = beta;
+                if (maySeed(I_VTERM)) th[4] = vTerm;
+                if (maySeed(I_TOUT)) th[5] = tOut;
+                offerSeed(th, tOut);
+            }
+        }
+    } else {
+        // Wind is pinned; still choose between the vertical regimes.
+        for (const [beta, tOut, vTerm] of VERTICAL_SEEDS) {
+            const th = theta.slice();
+            if (maySeed(I_BETA)) th[3] = beta;
+            if (maySeed(I_VTERM)) th[4] = vTerm;
+            if (maySeed(I_TOUT)) th[5] = tOut;
+            offerSeed(th, tOut);
+        }
+    }
+
+    // --- choose the branch by refining each briefly on a COMMON context ---
+    // Seed cost alone is a poor branch selector: a seed sitting further from its
+    // own optimum can score worse than a rival that is already near its own, and
+    // then the better basin is discarded before it is ever explored. Give each
+    // branch a short simplex run and compare where they GET to, not where they
+    // start. Both are scored on the same frozen ranges, so the comparison is
+    // exact, and the whole thing is deterministic.
+    if (branchBest.size === 1) {
+        theta = clamp([...branchBest.values()][0].th);
+    } else if (branchBest.size > 1) {
+        let winner = null;
+        for (const cand of branchBest.values()) {
+            let th = clamp(cand.th);
+            const sub = freeIdx.map(i => th[i]);
+            const scale = freeIdx.map(i => defs[i].scale);
+            const res = nelderMead((v) => {
+                const t2 = th.slice();
+                freeIdx.forEach((i, k) => t2[i] = v[k]);
+                return costOf(t2);
+            }, sub, scale, options.branchProbeIter ?? 300);
+            freeIdx.forEach((i, k) => th[i] = res.x[k]);
+            th = clamp(th);
+            const c = costOf(th);
+            if (Number.isFinite(c) && (!winner || c < winner.c)) winner = {c, th};
+        }
+        if (winner) theta = winner.th;
     }
 
     // --- refine, re-freezing the ranges between passes (outer IRLS) ---

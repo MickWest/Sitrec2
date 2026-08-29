@@ -328,6 +328,45 @@ describe("Wind Tracer recovery against operator-like pointing error", () => {
             .toBeLessThan(byKey["white noise 0.30deg|false"].sepM);
     });
 
+    // The fit is named for a DESCENDING object because that is what drove it,
+    // but its vertical law is sign-symmetric — w = sign(b)*vTerm*sqrt(|b|) — and
+    // nothing in the cost prefers one direction. This test holds it to that.
+    //
+    // It exists because the bounds, not the physics, once broke the symmetry.
+    // With beta0 floored at 0.90 a still-lit sink was capped at vTerm*sqrt(0.1)
+    // ~ 1 m/s, and anything faster was reachable only through the flame-out
+    // branch — a separate basin across a DEAD FLAT plateau, since tOut has
+    // exactly no effect on the trajectory once flame-out is past the clip end.
+    // Measured then: a 2.0 m/s sink came back as 0.98 m/s, 71 m from truth, at
+    // 0.663 deg. The floor is now 0 (a cold envelope, no lift) and the ceiling
+    // 2.0 (twice the lift), so b spans [-1, +1] and |w| <= vTerm both ways.
+    test("recovers rising, neutral and sinking tracers alike", () => {
+        const cases = [
+            ["strong ascent  +2.0", {ascentRate: +2.0, startAltMSL: 120}],
+            ["gentle ascent  +0.6", {ascentRate: +0.6, startAltMSL: 200}],
+            ["neutral         0.0", {ascentRate: 0.0, startAltMSL: 320}],
+            ["gentle descent -0.6", {ascentRate: -0.6, startAltMSL: 320}],
+            ["strong descent -2.0", {ascentRate: -2.0, startAltMSL: 700}],
+        ];
+        console.log("\ncase                   sep(m)   vz truth -> fit    beta0   resid");
+        for (const [label, opts] of cases) {
+            const scene = makeScene({pointing: "none", ...opts});
+            const n = scene.dataset.count;
+            const res = fitWindTracer(scene.dataset, {sigmaPointDeg: 0.4, searchSamples: 600});
+            expect(res).toBeTruthy();
+            const T = scene.dataset.times[n - 1] - scene.dataset.times[0];
+            const vzTruth = (scene.truth[(n - 1) * 3 + 2] - scene.truth[2]) / T;
+            const vzFit = (res.positions[(n - 1) * 3 + 2] - res.positions[2]) / T;
+            const sep = meanSeparation(scene.truth, res.positions, n);
+            console.log(`${label.padEnd(22)}${sep.toFixed(0).padStart(7)}`
+                + `${vzTruth.toFixed(2).padStart(11)} ->${vzFit.toFixed(2).padStart(6)}`
+                + `${res.params.beta0.toFixed(3).padStart(9)}${res.params.errDeg.toFixed(3).padStart(8)}`);
+            // Loose, but far tighter than the pre-fix behaviour on the -2.0 case.
+            expect(Math.abs(vzFit - vzTruth)).toBeLessThan(0.25);
+            expect(sep).toBeLessThan(60);
+        }
+    });
+
     test("the operator basis stays above the azimuth-sweep frequency", () => {
         // The identifiability condition, asserted rather than assumed. A basis
         // that reaches down to the sweep frequency can represent the
