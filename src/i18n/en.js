@@ -2240,6 +2240,14 @@ const en = {
         aiAssistant: {
             label: "AI Assistant",
         },
+        voice: {
+            start: "Talk to the assistant (needs your own OpenAI key — Settings, API Keys)",
+            stop: "Stop listening",
+            // Said once when the connection is live, so the user knows the microphone is
+            // open and that the assistant is waiting rather than thinking.
+            listening: "Listening — just talk. Press the microphone again to stop.",
+            stopped: "Voice stopped. The microphone is off.",
+        },
         hide: {
             label: "Hide",
             tooltip: "Hide this tabbed canvas view\nTo show it again, use the 'Show/Hide -> Views' menu.",

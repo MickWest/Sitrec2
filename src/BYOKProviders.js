@@ -47,6 +47,28 @@ export const BYOK_PROVIDERS = [
         limits: [],
     },
     {
+        id: 'openai',
+        label: 'OpenAI (voice)',
+        category: 'ai',
+        auth: 'key',
+        keyHint: 'sk-proj-… or sk-…',
+        // Deliberately narrow: this key drives the SPOKEN assistant only. OpenAI's text
+        // completion endpoints send no CORS headers, which is exactly why the OpenRouter
+        // entry below exists for typed chat — but the Realtime API is designed to be
+        // reached from a browser, so voice can use the user's key directly with no
+        // aggregator in between. Saying "voice" in the label stops a user pasting a key
+        // here and wondering why the typed chat still bills Sitrec.
+        unlocks: 'The spoken voice assistant. Your microphone audio and the assistant\'s '
+            + 'spoken replies stream directly between this browser and OpenAI, and are '
+            + 'billed to you. Enables the microphone button in the Assistant window. '
+            + 'This key is NOT used for typed chat — see OpenRouter for that.',
+        signupURL: 'https://platform.openai.com/api-keys',
+        usage: 'spend',
+        usageModelPrefixes: ['gpt-realtime'],
+        unitPrice: null,        // priced per model in BYOKUsage, not per request
+        limits: [],
+    },
+    {
         id: 'openrouter',
         label: 'OpenRouter',
         category: 'ai',
