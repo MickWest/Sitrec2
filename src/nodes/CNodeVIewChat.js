@@ -78,6 +78,19 @@ class CNodeViewChat extends CNodeViewText {
         this.historyPosition = 0; // For navigating chat history
         this.byokSessionId = randomSessionId();
 
+        // Voice state, initialised HERE rather than lazily on first press.
+        //
+        // voiceGeneration in particular: startVoice does `++this.voiceGeneration`,
+        // and `++undefined` is NaN. NaN is never equal to itself, so the
+        // `this.voiceGeneration !== generation` cancellation check fired on its
+        // very first test and every startup returned silently right after the
+        // dynamic import — the microphone button did nothing at all, with no
+        // error and no message. A counter that is only ever compared for
+        // inequality has to start as a number.
+        this.voiceGeneration = 0;
+        this.voiceSession = null;
+        this.voiceStarting = false;
+
         // Create input box
         this.createInputBox();
 
