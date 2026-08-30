@@ -633,7 +633,15 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
     status() {
         if (!this.polling) return "off";
         if (this.promoting) return `importing ${this.promoting}…`;
-        if (this.lastError) return `error: ${this.lastError}`;
+        // A warning sign and a plain sentence, because this row is a disabled
+        // (greyed, low-contrast) control under a checkbox — an error phrased as
+        // "HTTP 502" in small grey text is easy to scroll past, which is exactly
+        // what happened: the layer reported the outage correctly and the user
+        // still had to ask why no aircraft were showing.
+        if (this.lastError) {
+            const retryIn = Math.max(0, Math.round((this.nextPollAllowedMs - performance.now()) / 1000));
+            return `\u26a0 ${this.lastError}` + (retryIn > 0 ? ` — retrying in ${retryIn}s` : " — retrying");
+        }
         // Before the first poll answers, "no aircraft in range" would be a claim
         // about the sky that has not been checked yet.
         if (!this.lastPollMs) return "loading…";

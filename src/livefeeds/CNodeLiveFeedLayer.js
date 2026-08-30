@@ -540,7 +540,10 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         // A missing key is not an error and not an empty result — it is a thing
         // the user can fix, and saying so names the fix.
         if (this.needsKey) return "needs a key — Settings, API Keys";
-        if (this.lastError) return `error: ${this.lastError}`;
+        if (this.lastError) {
+            const retryIn = Math.max(0, Math.round((this.nextPollAllowedMs - performance.now()) / 1000));
+            return `\u26a0 ${this.lastError}` + (retryIn > 0 ? ` — retrying in ${retryIn}s` : " — retrying");
+        }
         // Before the first poll answers there is no result yet, and saying "none"
         // would claim one. Same class of lie as reporting stale data as current.
         if (!this.lastPollMs) return "loading…";

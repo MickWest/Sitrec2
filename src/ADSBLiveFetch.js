@@ -170,7 +170,18 @@ export async function fetchLiveTraffic({lat, lon, radiusNM, signal} = {}) {
     const res = await fetch(adsbLiveURL(lat, lon, clamped), {signal});
     if (!res.ok) {
         const detail = await res.text().catch(() => "");
-        throw new Error(`Live traffic unavailable (HTTP ${res.status}). ${detail.slice(0, 200)}`);
+        // 502 is specifically OUR proxy saying the upstream failed, which is by
+        // far the most common failure here — adsb.lol is volunteer-run and its
+        // API went down twice in one day during development. Say that in plain
+        // words: "HTTP 502" tells a user nothing about whose fault it is or
+        // whether waiting will help.
+        if (res.status === 502) {
+            throw new Error("adsb.lol is not responding");
+        }
+        if (res.status === 429) {
+            throw new Error("too many requests — waiting before retrying");
+        }
+        throw new Error(`HTTP ${res.status}. ${detail.slice(0, 160)}`);
     }
     const json = await res.json();
     const normalized = normalizeResponse(json);
