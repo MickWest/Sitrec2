@@ -102,6 +102,19 @@ const ALTITUDE_COLORS = [
     {maxFt: Infinity, color: 0x9a7dff},
 ];
 
+/**
+ * A short, readable position for a status line: "31.7\u00b0N 118.0\u00b0W".
+ *
+ * Hemisphere letters rather than signs, and one decimal — this is for a human
+ * glancing at a menu row to see roughly where the search happened, not for
+ * anything that needs precision.
+ */
+function formatLatLon({lat, lon}) {
+    const ns = lat >= 0 ? 'N' : 'S';
+    const ew = lon >= 0 ? 'E' : 'W';
+    return `${Math.abs(lat).toFixed(1)}\u00b0${ns} ${Math.abs(lon).toFixed(1)}\u00b0${ew}`;
+}
+
 function colorForAltitude(altitudeM, onGround) {
     if (onGround) return 0x999999;
     if (altitudeM === null) return 0x999999;
@@ -148,6 +161,7 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         this.pollTimer = null;
         this.inFlight = null;
         this.lastPollMs = 0;
+        this.lastCenter = null;
         this.lastError = null;
         this.stale = false;
         this.promoting = null;
@@ -294,6 +308,7 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
             controller.abort();
         }, POLL_TIMEOUT_MS);
         const center = this._queryCenter();
+        this.lastCenter = center;
         try {
             const result = await fetchLiveTraffic({
                 lat: center.lat,
@@ -646,6 +661,14 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         // about the sky that has not been checked yet.
         if (!this.lastPollMs) return "loading…";
         const count = this.aircraft.size;
+        // An empty result has to say WHERE it looked. This layer follows the
+        // camera, and a fresh custom sitch sits at its default origin in the open
+        // Pacific — so "no aircraft in range" is true, unhelpful, and reads as a
+        // broken feature. Naming the position makes "I am over empty ocean"
+        // obvious at a glance, which is the actual answer.
+        if (count === 0 && !this.stale && this.lastCenter) {
+            return `none within ${Math.round(this.radiusNM)}nm of ${formatLatLon(this.lastCenter)}`;
+        }
         if (this.stale) {
             return count === 0
                 ? "feed unreachable — nothing current to show"
