@@ -105,6 +105,7 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         this.selected = null;
         this.selectedUntilMs = 0;
         this.needsKey = false;
+        this.streamFatal = false;
         this.socket = null;
         this.reconnectTimer = null;
         this.streamed = new Map();
@@ -197,6 +198,7 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         this.consecutiveFailures = 0;
         this.nextPollAllowedMs = 0;
         this.lastError = null;
+        this.streamFatal = false;
         this.group.visible = false;
         setRenderOne(true);
     }
@@ -278,6 +280,7 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
 
     async _openSocket() {
         this._closeSocket();
+        this.streamFatal = false;
         const key = await byokGetKey(this.feed.keyProvider);
         if (!key) {
             this.needsKey = true;
@@ -321,6 +324,21 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
             // the layer sits silently empty forever.
             if (msg?.error || msg?.Error) {
                 this.lastError = String(msg.error || msg.Error).slice(0, 120);
+                // FATAL, not transient. An error delivered as a message on an
+                // otherwise healthy socket is a rejected key or a malformed
+                // subscription — neither fixes itself, and reconnecting in a
+                // loop against a provider that allows three connections per
+                // account is antisocial as well as pointless.
+                //
+                // Marking it stops status() claiming "retrying" when nothing is:
+                // the previous code set lastError and returned, leaving the
+                // socket open with no backoff scheduled, so the readout promised
+                // a retry forever and told the user to wait for something that
+                // was never going to happen. Toggling the layer off and on is
+                // the deliberate retry, which is right when the fix is to go and
+                // correct the key.
+                this.streamFatal = true;
+                this._closeSocket();
                 return;
             }
             const marker = this.feed.onMessage(msg);
@@ -337,7 +355,7 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         });
 
         socket.addEventListener('close', () => {
-            if (this.socket !== socket || !this.polling) return;
+            if (this.socket !== socket || !this.polling || this.streamFatal) return;
             this.socket = null;
             // Reconnect with backoff. A dropped stream that never comes back
             // leaves a layer that looks on but is frozen.
@@ -541,6 +559,12 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         // the user can fix, and saying so names the fix.
         if (this.needsKey) return "needs a key — Settings, API Keys";
         if (this.lastError) {
+            // Only promise a retry when one is actually scheduled. A fatal
+            // stream error has none, and telling the user to wait when the fix
+            // is in their hands is worse than saying nothing.
+            if (this.streamFatal) {
+                return `\u26a0 ${this.lastError} — check the key in Settings, API Keys`;
+            }
             const retryIn = Math.max(0, Math.round((this.nextPollAllowedMs - performance.now()) / 1000));
             return `\u26a0 ${this.lastError}` + (retryIn > 0 ? ` — retrying in ${retryIn}s` : " — retrying");
         }

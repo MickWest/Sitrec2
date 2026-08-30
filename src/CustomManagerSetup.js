@@ -1572,13 +1572,25 @@ export const setupMethods = {
             }
         };
 
-        guiMenus.contents.add(this, "liveTraffic")
+        // Civil ADS-B belongs WITH the other live feeds, not beside them. It is
+        // the same kind of thing — a live overlay with an on/off switch and a
+        // count — and having it outside the folder while military aircraft sat
+        // inside made the grouping look arbitrary.
+        //
+        // moveToFirst: a folder added here otherwise lands below the per-track
+        // folders (cameraDisplayTrack, the satellite tracks, the traverse), each
+        // of which expands to a dozen controls — several screens of scrolling
+        // before the user ever sees any of this exists.
+        const feedsFolder = guiMenus.contents.addFolder(t("custom.showHide.liveFeeds.label"))
+            .tooltip(t("custom.showHide.liveFeeds.tooltip"))
+            .moveToFirst();
+
+        feedsFolder.add(this, "liveTraffic")
             .name(t("custom.showHide.liveTraffic.label"))
-            .moveToFirst()
             .tooltip(t("custom.showHide.liveTraffic.tooltip"))
             .onChange(v => this._setLiveTraffic(v));
 
-        guiMenus.contents.add(this, "liveTrafficRadiusNM", 5, 250, 5)
+        feedsFolder.add(this, "liveTrafficRadiusNM", 5, 250, 5)
             .name(t("custom.showHide.liveTrafficRadius.label"))
             .tooltip(t("custom.showHide.liveTrafficRadius.tooltip"))
             .onChange(v => {
@@ -1591,7 +1603,7 @@ export const setupMethods = {
         // A readout, not decoration: "on" and "no aircraft in range" and
         // "error: ..." are three very different states that otherwise look
         // identical, because all three draw an empty sky.
-        this._liveTrafficStatusControl = guiMenus.contents
+        this._liveTrafficStatusControl = feedsFolder
             .add(this, "liveTrafficStatus")
             .name(t("custom.showHide.liveTrafficStatus.label"))
             .listen()
@@ -1612,13 +1624,6 @@ export const setupMethods = {
         // three.js geometry and instancing. Splitting the table out too would buy
         // nothing measurable and would risk the menu and the registry drifting
         // apart, which is the failure this table exists to prevent.
-        // moveToFirst: a folder added here otherwise lands below the per-track
-        // folders (cameraDisplayTrack, the satellite tracks, the traverse), each
-        // of which expands to a dozen controls — several screens of scrolling
-        // before the user ever sees these exist.
-        const feedsFolder = guiMenus.contents.addFolder(t("custom.showHide.liveFeeds.label"))
-            .tooltip(t("custom.showHide.liveFeeds.tooltip"))
-            .moveToFirst();
         this._liveFeedNodes = {};
 
         for (const feed of LIVE_FEEDS) {

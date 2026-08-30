@@ -162,6 +162,7 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         this.inFlight = null;
         this.lastPollMs = 0;
         this.lastCenter = null;
+        this.lastRadiusNM = null;
         this.lastError = null;
         this.stale = false;
         this.promoting = null;
@@ -308,7 +309,7 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
             controller.abort();
         }, POLL_TIMEOUT_MS);
         const center = this._queryCenter();
-        this.lastCenter = center;
+        const radius = this.radiusNM;
         try {
             const result = await fetchLiveTraffic({
                 lat: center.lat,
@@ -318,6 +319,13 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
             });
             if (!this.polling) return;   // switched off while in flight
             this._ingest(result);
+            // Recorded on SUCCESS, and captured BEFORE the await so a slider drag
+            // mid-flight cannot relabel the result either. Setting these at poll
+            // start meant a failed poll, or a camera move, described the previous
+            // (still-displayed) results as a search at the new place and range —
+            // which is the exact dishonesty the position was added to prevent.
+            this.lastCenter = center;
+            this.lastRadiusNM = radius;
             this.lastError = null;
             this.stale = !!result.stale;
             this.consecutiveFailures = 0;
@@ -667,7 +675,7 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         // broken feature. Naming the position makes "I am over empty ocean"
         // obvious at a glance, which is the actual answer.
         if (count === 0 && !this.stale && this.lastCenter) {
-            return `none within ${Math.round(this.radiusNM)}nm of ${formatLatLon(this.lastCenter)}`;
+            return `none within ${Math.round(this.lastRadiusNM)}nm of ${formatLatLon(this.lastCenter)}`;
         }
         if (this.stale) {
             return count === 0
