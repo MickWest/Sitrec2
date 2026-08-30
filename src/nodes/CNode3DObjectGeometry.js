@@ -557,6 +557,10 @@ export const gradientFragmentShader = `
     uniform float baseMix;
     uniform float nearPlane;
     uniform float farPlane;
+    // A ShaderMaterial does not get three.js's built-in opacity uniform, so alpha was
+    // hardcoded to 1.0 here and material.opacity did nothing. The move widget fades the
+    // object it is editing, which a gradient object has to obey like any other.
+    uniform float opacity;
 
     varying float vGradientD;
     varying vec3 vWorldNormal;
@@ -587,7 +591,7 @@ export const gradientFragmentShader = `
         t = clamp(t, 0.0, 1.0);
 
         vec4 gradientColor = texture2D(gradientMap, vec2(t, 0.5));
-        gl_FragColor = vec4(mix(gradientColor.rgb, baseColor, baseMix), 1.0);
+        gl_FragColor = vec4(mix(gradientColor.rgb, baseColor, baseMix), opacity);
 
         // Logarithmic depth (matching other shaders in the codebase). Orthographic
         // projection makes clip-space w a constant 1.0, collapsing the log formula

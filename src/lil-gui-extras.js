@@ -2076,6 +2076,85 @@ export class CGuiMenuBar {
         containerDiv.style.top = top + "px";
     }
 
+    /**
+     * Move a standalone menu sideways so it does not cover the point it was opened at.
+     *
+     * A right-click on a 3D object opens that object's menu under the cursor — which is
+     * exactly where the object is, so the menu hides the thing you just asked to edit.
+     * Shift it right by half its width; if that would run its right edge past the
+     * viewport, put it to the LEFT of the click instead, by one and a half widths.
+     *
+     * Call once the menu is populated, so the width read here is the real one.
+     *
+     * @param {GUI} gui - a menu from createStandaloneMenu()
+     * @param {number} x - the clientX the menu was created at
+     */
+    placeMenuBesidePoint(gui, x) {
+        const containerDiv = gui?._standaloneContainer;
+        if (!containerDiv) return;
+
+        const width = containerDiv.getBoundingClientRect().width || parseInt(containerDiv.style.width);
+        if (!(width > 0)) return;
+
+        const viewportWidth = window.innerWidth;
+
+        let left = x + width / 2;
+        if (left + width > viewportWidth) {
+            left = x - width * 1.5;
+        }
+
+        if (left < 0) {
+            // Neither offset fits — the viewport is narrower than the rule assumes.
+            // Simply clamping to 0 here would put the menu back OVER the click (a 240px
+            // menu at a click of x=200 in a 500px window spans 0-240), which is the
+            // obstruction this whole method exists to avoid. So fall back to whichever
+            // side can still hold the menu CLEAR of the click, pushed as far from it as
+            // that side allows, and prefer the side with the bigger gap.
+            const flushRight = viewportWidth - width;   // clears the click when >= x
+            const rightGap = flushRight - x;
+            const leftGap = x - width;                  // flush left clears when >= 0
+            if (rightGap >= 0 || leftGap >= 0) {
+                left = rightGap >= leftGap ? flushRight : 0;
+            } else {
+                // Too wide for either side to clear it; just keep the menu on screen.
+                left = Math.min(Math.max(0, x), Math.max(0, flushRight));
+            }
+        }
+
+        containerDiv.style.left = left + "px";
+        // Kept in step, or undocking would snap the menu back over the object:
+        // originalLeft is what restores the position (see reattach paths).
+        gui.originalLeft = left;
+    }
+
+    /**
+     * Pin a standalone menu one menu line below the top menu bar.
+     *
+     * An object's edit menu opens at the cursor, which is ON the object. Shifting it
+     * sideways (placeMenuBesidePoint) stops it covering that object, but it still lands
+     * at whatever height the click happened to be — over the middle of the scene as
+     * often as not. Dropping it to a fixed row just under the bar puts every object menu
+     * in the same, predictable, out-of-the-way place.
+     *
+     * Measured in the container's OWN coordinate space, which shares an origin with the
+     * bar (both are pushed down by the banner when there is one), so no banner offset
+     * enters into it.
+     */
+    pinMenuBelowBar(gui) {
+        const containerDiv = gui?._standaloneContainer;
+        if (!containerDiv) return;
+
+        // A "menu line" is one title bar. barHeight is deliberately a pixel more than
+        // those, so it is the right fallback when the title has not been laid out yet.
+        const lineHeight = gui.$title?.getBoundingClientRect().height || this.barHeight;
+        const top = this.barHeight + lineHeight;
+
+        containerDiv.style.top = top + "px";
+        // Kept in step for the same reason as originalLeft: the reattach paths restore
+        // the position from it.
+        gui.originalTop = top;
+    }
+
     applyModeStyles(gui) {
         const titleElement = gui.$title;
 

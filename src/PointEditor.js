@@ -205,7 +205,13 @@ export class PointEditor {
         }
 
         while (new_positions.length < this.positions.length) {
+            const before = this.positions.length;
             this.removePoint();
+            // removePoint() declines below minimumPoints, and this loop tests only the
+            // length — so a load asking for fewer points than the editor will give up
+            // spun here forever. It could not happen while minimumPoints was 4 and every
+            // saved track had at least that many; it can now that tracks go down to one.
+            if (this.positions.length === before) break;
         }
 
         for (let i = 0; i < this.positions.length; i++) {
@@ -404,6 +410,60 @@ export class PointEditor {
         this.onDownButton = event.button;
     }
 
+    /**
+     * Right-click a control point to delete it.
+     *
+     * Called from the view's context-menu path (CNodeView3DMouse.onContextMenuInner)
+     * rather than from a pointerdown of our own, so that "delete this point" and "open
+     * the track menu" are decided in one place: whichever the click landed on wins, and
+     * there is no race between two listeners over the same button press.
+     *
+     * The point under the widget is hittable too — attach() hides the cube, but a
+     * Raycaster ignores .visible, so the point you are currently positioned on deletes
+     * like any other.
+     *
+     * @returns {boolean} true if a point was deleted, and the caller should not open a menu
+     */
+    deletePointAtEvent(event) {
+        if (!this.enable) return false;
+        if (!this.setupRaycasterForEvent(event)) return false;
+
+        const object = this.getIntersectedControlPoint();
+        if (!object) return false;
+
+        const index = this.splineHelperObjects.findIndex(ob => ob === object);
+        if (index < 0) return false;
+
+        // Never the last one — see removePointByIndex. Reported rather than silently
+        // ignored, or a click that does nothing looks like a missed hit.
+        if (this.numPoints <= 1) {
+            console.log("Not deleting the only control point of this track");
+            return false;
+        }
+
+        const frame = this.frameNumbers[index];
+        const position = this.positions[index].clone();
+
+        if (!this.removePointByIndex(index)) return false;
+
+        if (UndoManager) {
+            UndoManager.add({
+                description: "Delete track control point",
+                // By frame, not by the index captured here: an unrelated edit in between
+                // would have shifted it. insertPoint replaces at a matching frame, so
+                // repeating either direction is harmless.
+                undo: () => this.insertPoint(frame, position.clone()),
+                redo: () => {
+                    const at = this.frameNumbers.indexOf(frame);
+                    if (at >= 0) this.removePointByIndex(at);
+                },
+            });
+        }
+
+        setRenderOne(true);
+        return true;
+    }
+
     onPointerUp(event) {
         if (!this.enable) return;
 
@@ -478,6 +538,48 @@ export class PointEditor {
       //  this.updatePointEditorGraphics();
       //  if (this.onChange) this.onChange();
 
+    }
+
+
+    /**
+     * Remove the control point at `index`, whatever the point count, and refresh
+     * everything derived from it.
+     *
+     * Deliberately NOT removePoint(), which pops the LAST point and refuses to go below
+     * minimumPoints. That guard stops a user destroying a curve by hand; undoing an
+     * insertion is the opposite case — it has to return the editor to a state it was
+     * demonstrably in a moment ago, and a one-point track is exactly what "Create Track
+     * with Object" leaves behind. Both SplineEditor.getPoint() and updateSplineMesh()
+     * already fall back below two points, so short editors are a supported state.
+     *
+     * The one thing it will not do is empty the editor: a track with no control points
+     * has no position at all, and getPointFrame() asserts on it.
+     *
+     * @returns {boolean} false if the index was out of range, or this is the last point
+     */
+    removePointByIndex(index) {
+        if (!(index >= 0 && index < this.numPoints)) return false;
+        if (this.numPoints <= 1) return false;
+
+        const point = this.splineHelperObjects[index];
+        if (this.transformControl.object === point) this.transformControl.detach();
+        this.scene.remove(point);
+        // makePointEditorObject() gives every point its own material (the geometry is
+        // shared), and nothing else can reach this one now.
+        point.material.dispose();
+
+        this.frameNumbers.splice(index, 1);
+        this.positions.splice(index, 1);
+        this.splineHelperObjects.splice(index, 1);
+        this.numPoints--;
+
+        if (this.editingIndex >= this.numPoints) {
+            this.editingIndex = this.numPoints - 1;
+        }
+
+        this.updatePointEditorGraphics();
+        if (this.onChange) this.onChange();
+        return true;
     }
 
 
