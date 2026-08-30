@@ -1,30 +1,19 @@
-// The 3D half of "Fit Camera to Points": a ground point you drag with a flat 2D handle.
+// The 3D half of "Fit Camera to Points": a landmark you drag with a flat 2D handle.
 //
-// The thing being edited is a position ON THE GROUND — a headland, a building corner, the end of
-// a runway. That is a two-dimensional choice: the analyst is not thinking "east a bit, up a bit",
-// they are thinking "there, that spot". So the widget is presented the way the choice is made —
-// the same circle-and-crosshair used on the video, dragged in screen space — and the third
-// dimension is supplied by the terrain rather than by the user.
+// The widget, the gesture and the cross-view behaviour are shared with the Ground Track editor and
+// live in TerrainHandles3D.js — read its header for WHY a point on the ground is placed in screen
+// space rather than with a gizmo. What is here is the part that is only true of a camera fit:
 //
-// Dragging casts a ray from THAT view's camera through the cursor and takes where it meets the
-// ground. Which means the same control point sits at different screen positions in the main view
-// and the look view, and dragging it in one moves it in the other. That is not a quirk to hide;
-// it is the point. Each view is a different question about the same place, and being able to say
-// "that spot" from whichever view shows it most clearly is the whole value.
-//
-// This replaced a disc-and-arrows gizmo (the one the track editor uses). That widget is right for
-// a target in mid-air, which has a genuine vertical degree of freedom to set. A landmark does
-// not: it is on the ground, and offering a vertical handle for it only invites putting it
-// underground.
+//   * the points are LANDMARKS, one set, all belonging to a single fit keyframe — so a handle
+//     grabbed on any other frame is not editable, and says so rather than moving;
+//   * the frustum's video quad is a picture of what the camera sees, so a marker showing through
+//     the front of it would read as a point in mid-air rather than a place on the ground beyond;
+//   * the main view also draws each point where it falls ON that video quad, which is the far end
+//     of the sight lines FitPointSightLines3D draws.
 
-import {CNodeViewUI} from "./nodes/CNodeViewUI";
-import {NodeMan, setRenderOne} from "./Globals";
-import {ViewMan} from "./CViewManager";
 import {mouseToCanvas} from "./ViewUtils";
-import {drawFitHandle, GRAB_RADIUS, OFF_FRAME_ALPHA} from "./FitHandleDraw";
-
-/** The 3D views a handle is offered in. */
-const HANDLE_VIEWS = ["mainView", "lookView"];
+import {drawFitHandle, OFF_FRAME_ALPHA} from "./FitHandleDraw";
+import {CTerrainHandleOverlay, TerrainHandles3D} from "./TerrainHandles3D";
 
 /**
  * The view the convergence display is drawn in.
@@ -69,53 +58,20 @@ function behindQuad(occluder, eye, world) {
 }
 
 /**
- * One overlay per 3D view: draws that view's handles and owns dragging in it.
+ * One overlay per 3D view: draws that view's control points and owns dragging in it.
  */
-class CFitHandleOverlay extends CNodeViewUI {
-    constructor(v) {
-        super(v);
-        this.owner = v.owner;
-        this.hostId = v.overlayView;
-        this.doubleClickResizes = false;
-        this.doubleClickFullScreen = false;
-        this.draggingId = null;
-        this.visible = false;
-        // Required for `visible = false` to actually hide anything. ViewMan.updateDOMVisibility
-        // only touches an overlay's canvas when the overlay declares separate visibility;
-        // everything else is left to the PARENT div's display, and this overlay's parent is the
-        // main or look view, which stays up. So without this, switching Enable Fit off dropped
-        // the overlay out of the render loop — _computeEV went false — while its canvas stayed
-        // on screen holding the last handles it drew, frozen there because the view that would
-        // have cleared them was no longer being rendered. Clear All Points could not shift them
-        // either, for the same reason. The fit's own video overlay (CNodeFitCameraPoints) has
-        // always set this; the 3D handles were the odd ones out.
-        this.separateVisibility = true;
-    }
-
-    get host() {
-        return ViewMan.get(this.hostId, false);
-    }
-
+class CFitHandleOverlay extends CTerrainHandleOverlay {
     /** Canvas position of every point in this view, as [{id, color, index, cx, cy}]. */
     projected() {
-        const host = this.host;
-        const out = [];
-        if (!host) return out;
-        const points = this.owner.getPoints();
-        // The handles are drawn on an overlay and so are never hidden by the terrain, which is
-        // deliberate: a landmark you are trying to place is exactly the thing you still need to see
-        // when a ridge is in the way. The video quad is the one exception — it is a picture of what
-        // the camera sees, so a marker showing through the FRONT of it would read as a point in
-        // mid-air rather than a place on the ground beyond.
+        return this.projectPoints(this.owner.getPoints());
+    }
+
+    /** The video quad, in the one view that draws it. See behindQuad. */
+    occlusionTest() {
         const occluder = this.hostId === RAY_VIEW ? this.owner.getOccluder() : null;
-        const eye = occluder ? host.camera.position : null;
-        for (let i = 0; i < points.length; i++) {
-            if (occluder && behindQuad(occluder, eye, points[i].position)) continue;
-            const p = projectToCanvas(host, points[i].position);
-            if (p === null) continue;
-            out.push({id: points[i].id, color: points[i].color, index: i, cx: p[0], cy: p[1]});
-        }
-        return out;
+        if (!occluder) return null;
+        const eye = this.host.camera.position;
+        return (world) => behindQuad(occluder, eye, world);
     }
 
     renderCanvas(frame) {
@@ -158,10 +114,7 @@ class CFitHandleOverlay extends CNodeViewUI {
         if (!this.owner.enabled || e.button !== 0) return false;
 
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
-        let hit = null;
-        for (const h of this.projected()) {
-            if (Math.hypot(cx - h.cx, cy - h.cy) <= GRAB_RADIUS) hit = h;   // last = topmost
-        }
+        const hit = this.pick(cx, cy, this.projected());
         if (!hit) return false;
 
         // Tested AFTER the hit, not before. Off-keyframe this offers to go to the nearest one,
@@ -174,49 +127,20 @@ class CFitHandleOverlay extends CNodeViewUI {
             return false;
         }
 
-        this.draggingId = hit.id;
         this.owner.beginUndo();
-        // The 3D view orbits from its own canvas listeners, independent of this overlay, so the
-        // only way to stop the camera swinging under the drag is to switch its controls off.
-        this.setControlsEnabled(false);
+        this.beginDrag(hit.id);
         return true;
     }
 
-    onMouseDrag(e, mouseX, mouseY) {
-        if (this.draggingId === null) return;
-        const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
-        const ground = groundUnderCanvasPoint(this.host, cx, cy,
-                                              this.owner.getUseTiles(), this.owner.getUseObjects());
-        // No surface under the cursor (dragged into the sky, or past the horizon): leave the point
-        // where it is rather than inventing a position at some arbitrary range.
-        if (!ground) return;
-        this.owner.setPointPosition(this.draggingId, ground);
-        setRenderOne(true);
+    movePoint(id, position) {
+        this.owner.setPointPosition(id, position);
     }
 
-    onMouseUp() {
-        if (this.draggingId === null) return;
-        const id = this.draggingId;
-        this.draggingId = null;
-        this.setControlsEnabled(true);
-
+    endDrag(id) {
         // Commit BEFORE closing the undo span, so the entry captures the refitted camera as well
         // as the moved point — the two are one edit, and undoing either alone is incoherent.
         this.owner.commitPointMove(id);
         this.owner.endUndo("Move camera fit point");
-    }
-
-    /** Gate EVERY 3D view's controls, not just this one — a drag must not orbit the other. */
-    setControlsEnabled(enabled) {
-        for (const id of HANDLE_VIEWS) {
-            const v = ViewMan.get(id, false);
-            if (v && v.controls) v.controls.enabled = enabled;
-        }
-    }
-
-    /** True while this overlay owns a drag, so the host view knows not to also act on it. */
-    get isDragging() {
-        return this.draggingId !== null;
     }
 }
 
@@ -237,8 +161,12 @@ class CFitHandleOverlay extends CNodeViewUI {
  * @param {Function} v.onBeginEdit   () => void, opens an undo span at the start of a drag
  * @param {Function} v.onEndEdit     (description) => void, closes it on release
  */
-export class FitPointHandles3D {
+export class FitPointHandles3D extends TerrainHandles3D {
     constructor(v) {
+        // No `owner`: the overlays' owner defaults to this wrapper, which is what holds the
+        // callbacks below and what answers `enabled`. The node behind it is reached only
+        // through them.
+        super({overlayClass: CFitHandleOverlay, idPrefix: "fitHandles"});
         this.getPoints = v.getPoints;
         this.getRayDisplay = v.getRayDisplay ?? (() => null);
         this.getOccluder = v.getOccluder ?? (() => null);
@@ -251,30 +179,11 @@ export class FitPointHandles3D {
         this.onBeginEdit = v.onBeginEdit ?? (() => {});
         this.onEndEdit = v.onEndEdit ?? (() => {});
         this.enabled = false;
-        this.overlays = [];
     }
 
     setEnabled(on) {
         this.enabled = on;
-        // Built on first use rather than up front: a sitch that never opens this feature should
-        // not carry two extra views around for the whole session.
-        if (on && this.overlays.length === 0) this.build();
-        for (const o of this.overlays) {
-            o.visible = on;
-            if (!on) o.draggingId = null;
-        }
-        setRenderOne(true);
-    }
-
-    build() {
-        for (const hostId of HANDLE_VIEWS) {
-            if (!ViewMan.exists(hostId)) continue;
-            this.overlays.push(new CFitHandleOverlay({
-                id: "fitHandles_" + hostId,
-                overlayView: hostId,
-                owner: this,
-            }));
-        }
+        this.setVisible(on);
     }
 
     setPointPosition(id, position) {
@@ -293,25 +202,5 @@ export class FitPointHandles3D {
 
     endUndo(description) {
         this.onEndEdit(description);
-    }
-
-    /** True while any view is dragging a handle. */
-    get isDragging() {
-        return this.overlays.some((o) => o.isDragging);
-    }
-
-    dispose() {
-        // Go through the manager, not straight to the node. These overlays are constructed with
-        // an id, so they are registered in NodeMan; disposing one directly tears down its DOM
-        // but leaves the registration behind. NodeMan.disposeAll then reaches the same node and
-        // disposes it a second time, and the second pass throws on removeChild(null) — which is
-        // what killed the transition when one fit sitch was loaded after another. It also left a
-        // dead id registered, so re-enabling the fit tried to build "fitHandles_mainView" when
-        // one already existed. disposeRemove does both halves.
-        for (const o of this.overlays) {
-            if (o?.id !== undefined && NodeMan.exists(o.id)) NodeMan.disposeRemove(o.id);
-            else o?.dispose?.();
-        }
-        this.overlays = [];
     }
 }
