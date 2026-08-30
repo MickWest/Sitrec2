@@ -2,9 +2,9 @@
   "name": "sitrec",
   "version": "1.0.0",
   "scripts": {
-    "test": "npm --prefix tools/SitrecBridge test && npx jest tests/",
+    "test": "node scripts/runTests.mjs --fits",
     "test-fits": "node scripts/jestFits.mjs --only",
-    "test-nofits": "npm --prefix tools/SitrecBridge test && node scripts/jestFits.mjs --skip",
+    "test-nofits": "node scripts/runTests.mjs --nofits",
     "need-fit-tests": "node scripts/needFitTests.mjs",
     "test-regression": "node scripts/run-regression-tests.js",
     "test-fast": "node tests_regression/fast-regression/run.mjs",

@@ -9,6 +9,44 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.146.0 (2026-08-30)
+
+### New Features
+
+- **Ground Track** (Traverse → Ground Track): mark the hillside, field or stretch of coast the object passes in front of, and you get a line of sight that needs no field of view — plus a hard ceiling on how far away the object could have been. In the look or main view, Ctrl+click places the point for the current frame, a click on another point takes you to its frame, a second click picks it up to drag over the ground, and Alt+click deletes it; dragging empty space still orbits as usual. **Between Points** chooses whether the gaps follow a smooth curve or are made to meet the real ground. Choose **Camera + Ground Track** as the LOS Source to use it for a traverse. See Help → Documentation → *Ground Track (Points on the Ground)*.
+
+- **Talk to the assistant** (the microphone button in the Assistant window): speak to Sitrec and hear it answer, on your own OpenAI key added under Settings → API Keys…. It can do everything the typed assistant can. Your key, your voice and the conversation go straight from your browser to OpenAI — Sitrec's server never sees any of them.
+
+- **Live ADS-B Traffic** (Contents → Live Feeds): every aircraft adsb.lol can currently see around the camera, drawn as small aircraft shapes pointing along their course, coloured by altitude, with fading trails, names on the ones there is room for, and a hover box giving type, registration, altitude, speed and heading. Click one to import its full 24-hour track; click it again and it tells you it is already imported instead of stacking a second copy. Switching it on sets the clock to now and pauses playback, so the sky and the traffic agree. It is never saved with the sitch, and it needs the Sitrec server.
+
+- **Seven more live feeds** (Contents → Live Feeds): military aircraft, marine traffic, webcams, road traffic incidents, weather balloons, rocket launches and earthquakes, each with its own switch and a live count underneath so an empty result can be told apart from a feed that is not working. Click a military aircraft to import its track, a webcam to open its current image, or a launch or quake to open its source page. Marine traffic, webcams and road traffic use your own free key (Settings → API Keys…) and work in the desktop app too; the rest need the Sitrec server.
+
+- **Move an object by dragging it**: hold Option/Alt and drag any object that sits on a hand-drawn track or at a fixed position, or open the object's edit menu and drag it there. The handles fade in as the cursor comes near and the object fades back so you can see what you are grabbing. Objects driven by imported data — ADS-B, KML, MISB, satellites — stay read-only, and no handles appear on them.
+
+- **Export any spline track** (File → Export): every hand-drawn and synthetic spline track now has its own Export folder holding its control points, a per-frame CSV, a MISB CSV and a KML — named after the track rather than an internal number, and taking any smoothing you have dialled in.
+
+- **Edit Head Only** (Video → Point Track): only the point at the current frame can be dragged, so on a track that doubles back an older keyframe sitting under the cursor can no longer steal the click. The rest of the track still draws, faded back, and Delete still works on whichever point is under the mouse.
+
+### Improvements
+
+- Right-click a track's control point to delete it. Tracks can now be taken all the way down to a single point, and fall back to straight lines when there are too few points for a curve.
+- An object's edit menu no longer opens on top of the object it edits — it steps aside and drops to the same fixed row under the menu bar every time.
+- Text entry boxes — Add Object, Add Label, Rename Sub Sitch, Rename Script, annotation text and character learning — now use Sitrec's own dialog instead of the browser's, so they match the app, can be translated, and no longer freeze the page or let the video run on underneath.
+- Picking a traverse method no longer re-opens the FOV curve editor over a sitch that was saved with it closed.
+- The never-used Reflection Analysis folder is hidden from the object menu.
+
+### Bug Fixes
+
+- Fixed **Add Object** (Objects → Add Object) failing with an error instead of creating an object.
+- Fixed double-clicking Add Object creating two objects.
+- Fixed undo leaving parts of a created object behind, and undo history from one sitch surviving into the next.
+- Fixed two objects created in the same instant clashing, so the second one failed.
+- Fixed exported KML files being unreadable when the track or situation name contains an ampersand or an angle bracket.
+- Fixed a track's old curve staying on screen after its points were deleted down to one.
+- Fixed an unresponsive adsb.lol being able to hang the Sitrec server, which stopped other server features working; an ADS-B track import now gives up and says so instead of waiting forever.
+- Fixed releasing a camera-fit landmark drag switching the camera controls on instead of putting them back, which overruled Free Look.
+- Fixed a delay when creating tracks, caused by the export tooltips building an entire spreadsheet just to read its first line.
+
 ## Version 2.145.0 (2026-08-29)
 
 ### New Features
