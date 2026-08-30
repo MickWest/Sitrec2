@@ -1048,6 +1048,15 @@ const en = {
                 label: "Traffic",
                 tooltip: "How many aircraft the live feed is currently reporting.\n\"stale\" means adsb.lol could not be reached and older positions are being shown.",
             },
+            liveFeeds: {
+                label: "Live Feeds",
+                tooltip: "Other live data overlaid on the world: military aircraft, ships,\n"
+                    + "webcams, weather balloons, rocket launches and earthquakes.\n"
+                    + "Each shows a count while it is on, so an empty result can be told\n"
+                    + "apart from a feed that is not working.\n"
+                    + "Some feeds are regional — see each one's tooltip.\n"
+                    + "All need the Sitrec server.",
+            },
         },
         objects: {
             globalScale: { label: "Global Scale", tooltip: "Scale factor applied to all 3D objects in the scene - useful for finding things. Set back to 1 for real size" },

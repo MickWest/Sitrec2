@@ -634,6 +634,9 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         if (!this.polling) return "off";
         if (this.promoting) return `importing ${this.promoting}…`;
         if (this.lastError) return `error: ${this.lastError}`;
+        // Before the first poll answers, "no aircraft in range" would be a claim
+        // about the sky that has not been checked yet.
+        if (!this.lastPollMs) return "loading…";
         const count = this.aircraft.size;
         if (this.stale) {
             return count === 0

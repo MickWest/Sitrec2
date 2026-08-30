@@ -185,10 +185,34 @@ export const mouseMethods = {
      */
     _beginTrafficClick(mouseX, mouseY) {
         this._trafficClick = null;
+
+        // The ADS-B layer first: an aircraft promotes to a full track, which is a
+        // more useful outcome than an info line, so it wins a tie.
         const traffic = this._trafficLayer();
-        if (!traffic?.polling) return;
-        const hit = traffic.findAircraftAtScreen(this, mouseX, mouseY);
-        if (hit) this._trafficClick = {hex: hit.hex, aircraft: hit.aircraft, x: mouseX, y: mouseY};
+        if (traffic?.polling) {
+            const hit = traffic.findAircraftAtScreen(this, mouseX, mouseY);
+            if (hit) {
+                this._trafficClick = {kind: 'aircraft', hex: hit.hex, aircraft: hit.aircraft,
+                    x: mouseX, y: mouseY};
+                return;
+            }
+        }
+
+        // Then the generic live-feed layers. Found through NodeMan by id prefix
+        // rather than by importing the registry, so this file stays free of the
+        // lazy chunk — an import here would pull it into the main bundle for
+        // every user whether or not they ever switch a feed on.
+        let best = null;
+        NodeMan.iterate((id, node) => {
+            if (!id.startsWith("LiveFeed_")) return;
+            if (typeof node.findMarkerAtScreen !== "function") return;
+            const hit = node.findMarkerAtScreen(this, mouseX, mouseY);
+            if (hit && (!best || hit.distancePx < best.distancePx)) best = hit;
+        });
+        if (best) {
+            this._trafficClick = {kind: 'marker', marker: best.marker, feed: best.feed,
+                x: mouseX, y: mouseY};
+        }
     },
 
     /**
@@ -216,6 +240,11 @@ export const mouseMethods = {
             return;     // that was a camera drag, not a click on an aircraft
         }
 
+        if (click.kind === 'marker') {
+            this._openFeedMarker(click.marker, click.feed);
+            return;
+        }
+
         const traffic = this._trafficLayer();
         const label = click.aircraft?.callsign || click.aircraft?.registration || click.hex;
         // Shown in the Traffic readout while the fetch runs. A click with no
@@ -226,6 +255,37 @@ export const mouseMethods = {
 
         importADSBTraceByHex(click.hex)
             .finally(() => traffic?.setPromoting(null));
+    },
+
+    /**
+     * What clicking a live-feed marker does, which depends on what it is.
+     *
+     * A military aircraft promotes to a real track, exactly like a civil one —
+     * it is the same data from the same provider, and the only difference is
+     * which endpoint listed it. A webcam opens its current image, because a
+     * webcam you cannot look through is not worth marking. Anything with a
+     * source URL opens it. Everything else reports what it is, since for a
+     * launch or a quake the marker plus its details IS the answer.
+     */
+    _openFeedMarker(marker, feed) {
+        if (feed.id === 'mil' && marker.hex) {
+            console.log(`Live feed: importing full trace for ${marker.label} (${marker.hex})`);
+            importADSBTraceByHex(marker.hex);
+            return;
+        }
+        const href = marker.imageURL || marker.url;
+        if (href) {
+            // noopener: the opened page must not get a handle on Sitrec's window.
+            window.open(href, "_blank", "noopener,noreferrer");
+            return;
+        }
+        // No link to follow — a ship or a radiosonde. The details go into that
+        // feed's own readout rather than a modal: an error dialog is the wrong
+        // shape for "here is what you clicked", and a dialog per click would make
+        // browsing a busy layer unbearable.
+        const layer = NodeMan.exists(`LiveFeed_${feed.id}`) ? NodeMan.get(`LiveFeed_${feed.id}`) : null;
+        layer?.setSelected(marker);
+        console.log(`Live feed ${feed.id}: ${marker.label}${marker.detail ? " — " + marker.detail : ""}`);
     },
 
     // Wrapper: pick with the displayed camera orientation (see _refreshCursorFromMouse).

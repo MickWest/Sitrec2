@@ -62,6 +62,32 @@ The live layer is for situational awareness; promote an aircraft when you want t
 
 Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery made with it.
 
+### Other Live Feeds
+
+**Contents → Live Feeds** overlays other live data on the world. Each has its own on/off switch and a count underneath it, so an empty result can be told apart from a feed that is not working — the count reads `loading…` before the first answer, a number once it has one, and says so plainly when the source is unreachable.
+
+| Feed | What | Coverage | Source |
+|---|---|---|---|
+| **Military Aircraft** | Aircraft flagged military or government, as magenta darts | Worldwide | adsb.lol (ODbL) |
+| **Marine Traffic (AIS)** | Vessel positions, as teal boxes pointing along their course | **Baltic Sea only** | Fintraffic Digitraffic (CC BY 4.0) |
+| **Webcams** | Roadside cameras; click one to open its current image | **Finland only** | Fintraffic Digitraffic (CC BY 4.0) |
+| **Weather Balloons** | Radiosondes currently aloft, with altitude and climb rate | Worldwide | SondeHub |
+| **Rocket Launches** | The last 40 orbital launches, at their pads | Worldwide | Launch Library 2 |
+| **Earthquakes** | Magnitude 2.5+ in the last 24 hours, sized by magnitude | Worldwide | USGS |
+
+Two of these are regional, and deliberately so: **live AIS and webcam feeds that need no key are hard to find**, and the Finnish open-data service is the one that does both without an account or a data-sharing agreement. If you switch on Marine Traffic over California you will correctly see nothing.
+
+Some notes on reading them:
+
+- **Shape as well as colour.** Ships are boxes, webcams octahedra, balloons spheres, launches cones, aircraft darts. With several layers on at once colour alone stops being enough, and it is no help at all to a colour-blind viewer.
+- **Clicking does something different per feed.** A military aircraft imports its full track, exactly like a civil one. A webcam opens its live image. A launch or earthquake opens its source page. A ship or balloon shows its details in the count line for a few seconds.
+- **Weather balloons answer a real question.** "Could it have been a weather balloon?" is one of the standard mundane explanations, and this says whether one was actually up there.
+- **Earthquakes are drawn at the epicentre**, on the surface. Depth is in the details rather than the position — a quake plotted at its true hypocentre is inside the Earth and invisible.
+- **None of it is saved with your sitch.** These are views of the live present, not part of a recreation.
+- **All need the Sitrec server**, so they are unavailable in the desktop app and other serverless builds.
+
+Credit the source shown in the table when publishing imagery made with one of these feeds.
+
 ### DJI Drone Data (CSV)
 
 DJI drone flight logs exported from [Airdata](https://airdata.com) in CSV format. These include full IMU data: position, altitude, heading, pitch, roll, and gimbal orientation.
