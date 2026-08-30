@@ -48,3 +48,30 @@ export async function fetchLiveFeed(feedId, {params, signal} = {}) {
         stale: res.headers.get("X-Feed-Cache") === "stale",
     };
 }
+
+/**
+ * Fetch a KEYED feed straight from this browser to the provider.
+ *
+ * Deliberately does NOT go through sitrecServer/proxyLiveFeed.php.
+ * docs/APIKeys.md promises that a user's keys are never sent to the Sitrec
+ * server, and proxying a keyed feed would quietly break that promise — so every
+ * keyed provider here was checked to serve CORS to a browser first
+ * (Windy allows x-windy-api-key by preflight; TomTom echoes the Origin).
+ *
+ * The trade is that these work in serverless and desktop builds too, since no
+ * PHP is involved.
+ */
+export async function fetchKeyedFeed(feed, key, center, {signal} = {}) {
+    const {url, headers} = feed.buildRequest(key, center);
+    const res = await fetch(url, {headers, signal});
+    if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        // 401/403 almost always means the key, so say so rather than making the
+        // user decode an HTTP status.
+        if (res.status === 401 || res.status === 403) {
+            throw new Error(`${feed.attribution} rejected the key (HTTP ${res.status}).`);
+        }
+        throw new Error(`HTTP ${res.status}. ${detail.slice(0, 160)}`);
+    }
+    return {json: await res.json(), stale: false};
+}

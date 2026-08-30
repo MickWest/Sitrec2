@@ -12,7 +12,17 @@ describe('registry shape', () => {
         for (const f of LIVE_FEEDS) {
             expect(typeof f.id).toBe('string');
             expect(typeof f.label).toBe('string');
-            expect(typeof f.parse).toBe('function');
+            // A websocket feed handles messages instead of parsing a response body.
+            if (f.transport === 'websocket') {
+                expect(typeof f.onMessage).toBe('function');
+                expect(typeof f.buildSocket).toBe('function');
+            } else {
+                expect(typeof f.parse).toBe('function');
+            }
+            // A keyed feed must be able to build its own request, because its key
+            // goes straight from the browser to the provider and never through
+            // Sitrec's proxy.
+            if (f.keyProvider) expect(typeof f.buildRequest === 'function' || f.transport === 'websocket').toBe(true);
             expect(typeof f.pollMs).toBe('number');
             expect(typeof f.color).toBe('number');
             // Coverage and attribution are shown to the user, and the attribution
@@ -28,75 +38,121 @@ describe('registry shape', () => {
     });
 
     it('returns an empty list rather than throwing on junk', () => {
-        for (const f of LIVE_FEEDS) {
+        for (const f of LIVE_FEEDS.filter(x => x.transport !== 'websocket')) {
             expect(f.parse(null)).toEqual([]);
             expect(f.parse({})).toEqual([]);
         }
     });
+
+    it('ignores a junk websocket message rather than throwing', () => {
+        for (const f of LIVE_FEEDS.filter(x => x.transport === 'websocket')) {
+            expect(f.onMessage(null)).toBeNull();
+            expect(f.onMessage({})).toBeNull();
+        }
+    });
 });
 
-describe('ships (Digitraffic AIS GeoJSON)', () => {
-    // Real response shape, trimmed.
-    const json = {
-        features: [{
-            mmsi: 273380040,
-            type: 'Feature',
-            geometry: {type: 'Point', coordinates: [28.381667, 59.704263]},
-            properties: {mmsi: 273380040, sog: 12.5, cog: 42.6, navStat: 0},
-        }],
+describe('ships (AISStream websocket)', () => {
+    const f = feed('ships');
+    const msg = {
+        MessageType: 'PositionReport',
+        MetaData: {MMSI: 368207620, Latitude: 25.7617, Longitude: -80.1918, ShipName: 'EVER GIVEN  '},
+        Message: {PositionReport: {UserID: 368207620, Sog: 12.4, Cog: 86.7}},
     };
 
-    it('reads GeoJSON as [lon, lat], not [lat, lon]', () => {
-        // The whole point. Getting this backwards does not throw — it silently
-        // puts a Gulf of Finland vessel in the Indian Ocean, and 28N/59E is a
-        // real place, so nothing downstream would flag it either.
-        const [ship] = feed('ships').parse(json);
-        expect(ship.lat).toBeCloseTo(59.704263, 6);
-        expect(ship.lon).toBeCloseTo(28.381667, 6);
+    it('reads position, name, speed and course out of a position report', () => {
+        const m = f.onMessage(msg);
+        expect(m.lat).toBeCloseTo(25.7617, 4);
+        expect(m.lon).toBeCloseTo(-80.1918, 4);
+        expect(m.label).toBe('EVER GIVEN');
+        expect(m.headingDeg).toBeCloseTo(86.7, 1);
+        expect(m.detail).toContain('12.4 kt');
     });
 
-    it('puts vessels at the surface rather than at ellipsoid zero', () => {
-        const [ship] = feed('ships').parse(json);
-        expect(ship.altitudeM).toBeNull();
+    it('keys the marker by MMSI so repeated reports replace rather than accumulate', () => {
+        // A vessel transmits every few seconds; appending would grow without bound.
+        expect(f.onMessage(msg).id).toBe('mmsi368207620');
     });
 
-    it('carries course over ground so the marker can point along it', () => {
-        const [ship] = feed('ships').parse(json);
-        expect(ship.headingDeg).toBe(42.6);
-        expect(ship.detail).toContain('12.5 kt');
+    it('treats the AIS not-available course sentinels as no course', () => {
+        // 360 and 511 mean "not available". Drawn literally they point every
+        // unknown vessel due north, which looks like a fleet under way.
+        for (const cog of [360, 511]) {
+            const m = f.onMessage({...msg, Message: {PositionReport: {UserID: 1, Cog: cog}}});
+            expect(m.headingDeg).toBeNull();
+        }
+    });
+
+    it('ignores message types other than position reports', () => {
+        expect(f.onMessage({MessageType: 'ShipStaticData', MetaData: {Latitude: 1, Longitude: 2}}))
+            .toBeNull();
+    });
+
+    it('builds a bounding box around the camera, lat first, clamped to the poles', () => {
+        const {url, subscribe} = f.buildSocket('KEY', {lat: 89.0, lon: -80});
+        expect(url).toBe('wss://stream.aisstream.io/v0/stream');
+        expect(subscribe.APIKey).toBe('KEY');
+        const [[sw, ne]] = subscribe.BoundingBoxes;
+        expect(sw[0]).toBeCloseTo(84, 6);
+        expect(ne[0]).toBe(90);          // clamped, not 94
+        expect(subscribe.FilterMessageTypes).toEqual(['PositionReport']);
     });
 });
 
-describe('webcams', () => {
-    const station = (id, status, presets) => ({
-        type: 'Feature',
-        id,
-        geometry: {type: 'Point', coordinates: [23.99616, 60.05374, 0.0]},
-        properties: {id, name: 'kt51_Inkoo', collectionStatus: status, presets},
+describe('webcams (Windy)', () => {
+    const f = feed('webcams');
+
+    it('sends the key as a header, which is what Windy CORS-allows', () => {
+        const {url, headers} = f.buildRequest('KEY123', {lat: 34.05, lon: -118.25});
+        expect(headers['x-windy-api-key']).toBe('KEY123');
+        // The key must NOT be in the URL: URLs end up in logs and referrers.
+        expect(url).not.toContain('KEY123');
+        expect(url).toContain('nearby=34.050%2C-118.250%2C250');
     });
 
-    it('builds a working image URL from the first collecting preset', () => {
-        const [cam] = feed('webcams').parse({
-            features: [station('C01503', 'GATHERING', [
-                {id: 'C0150301', inCollection: false},
-                {id: 'C0150302', inCollection: true},
-            ])],
-        });
-        expect(cam.imageURL).toBe('https://weathercam.digitraffic.fi/C0150302.jpg');
-        expect(cam.lat).toBeCloseTo(60.05374, 5);
+    it('parses location and the current preview image', () => {
+        const [cam] = f.parse({webcams: [{
+            webcamId: 1234, title: 'Santa Monica Pier',
+            location: {latitude: 34.008, longitude: -118.498, city: 'Santa Monica', country: 'US'},
+            images: {current: {preview: 'https://images.windy.com/1234.jpg'}},
+        }]});
+        expect(cam.lat).toBeCloseTo(34.008, 3);
+        expect(cam.imageURL).toBe('https://images.windy.com/1234.jpg');
+        expect(cam.detail).toBe('Santa Monica, US');
     });
 
-    it('drops cameras that are not collecting', () => {
-        // A marker for a decommissioned camera is a click that leads nowhere.
-        const out = feed('webcams').parse({
-            features: [station('C1', 'REMOVED_TEMPORARILY', [{id: 'C1_1', inCollection: true}])],
-        });
-        expect(out).toHaveLength(0);
+    it('skips a webcam with no coordinates', () => {
+        expect(f.parse({webcams: [{webcamId: 1, title: 'nowhere'}]})).toHaveLength(0);
+    });
+});
+
+describe('traffic (TomTom)', () => {
+    const f = feed('traffic');
+
+    it('builds a bbox in TomTom order: minLon,minLat,maxLon,maxLat', () => {
+        // The opposite order from the lat-first pairs used everywhere else, which
+        // is exactly the kind of thing that silently queries the wrong continent.
+        const {url} = f.buildRequest('K', {lat: 34, lon: -118});
+        const bbox = decodeURIComponent(new URL(url).searchParams.get('bbox'));
+        expect(bbox).toBe('-118.5000,33.5000,-117.5000,34.5000');
     });
 
-    it('drops a station with no presets at all', () => {
-        const out = feed('webcams').parse({features: [station('C2', 'GATHERING', [])]});
-        expect(out).toHaveLength(0);
+    it('takes the first vertex of a LineString incident', () => {
+        const [inc] = f.parse({incidents: [{
+            geometry: {type: 'LineString', coordinates: [[-118.4, 34.02], [-118.3, 34.05]]},
+            properties: {iconCategory: 6, events: [{description: 'Queuing traffic'}]},
+        }]});
+        expect(inc.lat).toBeCloseTo(34.02, 3);
+        expect(inc.lon).toBeCloseTo(-118.4, 3);
+        expect(inc.label).toBe('Queuing traffic');
+    });
+
+    it('handles a Point incident too', () => {
+        const [inc] = f.parse({incidents: [{
+            geometry: {type: 'Point', coordinates: [-118.1, 33.9]},
+            properties: {events: [{description: 'Roadworks'}]},
+        }]});
+        expect(inc.lat).toBeCloseTo(33.9, 3);
     });
 });
 

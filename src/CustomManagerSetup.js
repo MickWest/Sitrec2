@@ -1633,7 +1633,11 @@ export const setupMethods = {
                     this[statusKey] = "off";
                     return;
                 }
-                if (isServerless) {
+                // Only the KEYLESS feeds need the server: those go through the
+                // proxy, which is PHP. A keyed feed talks to its provider
+                // directly from the browser (its key must never reach Sitrec's
+                // server), so it works in serverless and desktop builds too.
+                if (isServerless && !feed.keyProvider) {
                     showError(`The ${feed.label} feed needs the Sitrec server, so it is not available in this build.`);
                     this[flagKey] = false;
                     return;

@@ -115,6 +115,9 @@ Each key goes to exactly one destination — the provider that issued it:
 | OpenRouter | `openrouter.ai` | Runs OpenAI-family models through OpenRouter on your account |
 | Google | `tile.googleapis.com` | Photorealistic 3D tiles |
 | Cesium Ion | Cesium Ion servers | Terrain and building tilesets |
+| Windy | `api.windy.com` | Worldwide live webcams |
+| AISStream | `stream.aisstream.io` | Worldwide live ship positions |
+| TomTom | `api.tomtom.com` | Live road traffic incidents |
 | Mapbox / MapTiler | Their tile servers | Map imagery |
 | Space-Track | `space-track.org` | Satellite element sets |
 

@@ -1051,11 +1051,12 @@ const en = {
             liveFeeds: {
                 label: "Live Feeds",
                 tooltip: "Other live data overlaid on the world: military aircraft, ships,\n"
-                    + "webcams, weather balloons, rocket launches and earthquakes.\n"
+                    + "webcams, road traffic, weather balloons, rocket launches and earthquakes.\n"
                     + "Each shows a count while it is on, so an empty result can be told\n"
                     + "apart from a feed that is not working.\n"
-                    + "Some feeds are regional — see each one's tooltip.\n"
-                    + "All need the Sitrec server.",
+                    + "Ships, webcams and road traffic need your own free API key —\n"
+                    + "there is no keyless source with worldwide coverage. Add one under\n"
+                    + "Settings, API Keys. The others need the Sitrec server.",
             },
         },
         objects: {

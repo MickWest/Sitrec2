@@ -26,7 +26,10 @@ import {ViewMan} from "../CViewManager";
 import {LLAToECEFInto} from "../LLA-ECEF-ENU";
 import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
-import {fetchLiveFeed} from "./LiveFeedFetch";
+import {fetchLiveFeed, fetchKeyedFeed} from "./LiveFeedFetch";
+import {ECEFToLLA_radii} from "../LLA-ECEF-ENU";
+import {getKey as byokGetKey} from "../BYOKKeyStore";
+import {Sit} from "../Globals";
 import {dispose} from "../threeExt";
 
 const MAX_MARKERS = 2048;
@@ -101,6 +104,10 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         this.nextPollAllowedMs = 0;
         this.selected = null;
         this.selectedUntilMs = 0;
+        this.needsKey = false;
+        this.socket = null;
+        this.reconnectTimer = null;
+        this.streamed = new Map();
 
         this._buildMesh();
 
@@ -130,14 +137,45 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         this.group.add(this.instances);
     }
 
+    /**
+     * Where a location-scoped feed should look: the camera, not the sitch origin.
+     *
+     * Sit.lat/lon stays at the custom sitch's default (32, -118) — open Pacific —
+     * until the user runs Reset Origin, so an origin-scoped query would show an
+     * empty result to anyone who had simply flown somewhere.
+     *
+     * ECEFToLLA_radii returns RADIANS despite every other lat/lon here being
+     * degrees; the degrees wrapper beside it goes through the spherical
+     * conversion and gives up the geodetic accuracy that is the point of _radii.
+     */
+    _queryCenter() {
+        const cameraNode = NodeMan.exists("mainCamera") ? NodeMan.get("mainCamera") : null;
+        const p = cameraNode?.camera?.position;
+        if (p) {
+            const [latRad, lonRad] = ECEFToLLA_radii(p.x, p.y, p.z);
+            const lat = latRad * 180 / Math.PI;
+            const lon = lonRad * 180 / Math.PI;
+            if (Number.isFinite(lat) && Number.isFinite(lon)) return {lat, lon};
+        }
+        return {lat: Sit.lat, lon: Sit.lon};
+    }
+
     // ── Polling ──────────────────────────────────────────────────────────────
 
     start() {
         if (this.polling) return;
         this.polling = true;
         this.group.visible = true;
-        this._poll();
-        this.pollTimer = setInterval(() => this._poll(), Math.min(this.feed.pollMs, 60000));
+        if (this.feed.transport === 'websocket') {
+            this._openSocket();
+            // The stream pushes; this timer only rebuilds the markers from
+            // whatever has arrived, so the geometry is not rewritten on every
+            // one of the many messages a second a busy shipping lane produces.
+            this.pollTimer = setInterval(() => this._rebuildFromStream(), this.feed.pollMs);
+        } else {
+            this._poll();
+            this.pollTimer = setInterval(() => this._poll(), Math.min(this.feed.pollMs, 60000));
+        }
     }
 
     stop() {
@@ -150,7 +188,9 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         // the layer off and repopulate it.
         this.inFlight?.abort();
         this.inFlight = null;
+        this._closeSocket();
         this.markers = [];
+        this.streamed?.clear();
         this.instances.count = 0;
         // Toggling off and on is the user asking to try NOW, so a backoff left
         // over from an earlier outage must not silently delay the retry.
@@ -177,7 +217,24 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         }, POLL_TIMEOUT_MS);
 
         try {
-            const result = await fetchLiveFeed(this.feed.id, {signal: controller.signal});
+            // A KEYED feed goes straight from this browser to the provider,
+            // NEVER through Sitrec's proxy: docs/APIKeys.md promises the user's
+            // keys are never sent to the Sitrec server, and routing a keyed feed
+            // through the proxy would quietly break that promise.
+            let result;
+            if (this.feed.keyProvider) {
+                const key = await byokGetKey(this.feed.keyProvider);
+                if (!key) {
+                    this.needsKey = true;
+                    this.lastPollMs = performance.now();
+                    return;
+                }
+                this.needsKey = false;
+                result = await fetchKeyedFeed(this.feed, key, this._queryCenter(),
+                    {signal: controller.signal});
+            } else {
+                result = await fetchLiveFeed(this.feed.id, {signal: controller.signal});
+            }
             if (!this.polling) return;
             this.lastPollMs = performance.now();
             this.markers = this.feed.parse(result.json) || [];
@@ -210,6 +267,107 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         this.consecutiveFailures = Math.min(this.consecutiveFailures + 1, MAX_BACKOFF_STEPS);
         const delay = this.feed.pollMs * Math.pow(2, this.consecutiveFailures);
         this.nextPollAllowedMs = performance.now() + delay;
+    }
+
+    // ── Websocket transport ──────────────────────────────────────────────────
+    //
+    // A pushed stream rather than a poll. Positions accumulate into a Map keyed
+    // by the feed's own id (MMSI for AIS), so a vessel reporting every few
+    // seconds REPLACES its previous position instead of adding another marker —
+    // appending would grow without bound within minutes.
+
+    async _openSocket() {
+        this._closeSocket();
+        const key = await byokGetKey(this.feed.keyProvider);
+        if (!key) {
+            this.needsKey = true;
+            return;
+        }
+        this.needsKey = false;
+        if (!this.polling) return;   // switched off while the key was being read
+
+        const {url, subscribe} = this.feed.buildSocket(key, this._queryCenter());
+        this.streamed = this.streamed || new Map();
+
+        let socket;
+        try {
+            socket = new WebSocket(url);
+        } catch (e) {
+            this.lastError = e?.message || String(e);
+            return;
+        }
+        this.socket = socket;
+
+        socket.addEventListener('open', () => {
+            // AISStream drops a connection that has not subscribed within three
+            // seconds, so this must be the first thing sent.
+            try {
+                socket.send(JSON.stringify(subscribe));
+                this.lastError = null;
+            } catch (e) {
+                this.lastError = e?.message || String(e);
+            }
+        });
+
+        socket.addEventListener('message', (event) => {
+            let msg;
+            try {
+                msg = JSON.parse(event.data);
+            } catch (e) {
+                return;
+            }
+            // A provider reports a bad key as a message on an otherwise healthy
+            // socket, not as a connection failure, so it has to be read here or
+            // the layer sits silently empty forever.
+            if (msg?.error || msg?.Error) {
+                this.lastError = String(msg.error || msg.Error).slice(0, 120);
+                return;
+            }
+            const marker = this.feed.onMessage(msg);
+            if (marker) {
+                this.streamed.set(marker.id, marker);
+                this.lastPollMs = performance.now();
+            }
+        });
+
+        socket.addEventListener('error', () => {
+            // The error event carries no detail by design (it would leak
+            // cross-origin information), so this says only what is known.
+            this.lastError = "the stream connection failed";
+        });
+
+        socket.addEventListener('close', () => {
+            if (this.socket !== socket || !this.polling) return;
+            this.socket = null;
+            // Reconnect with backoff. A dropped stream that never comes back
+            // leaves a layer that looks on but is frozen.
+            this._backOff();
+            const delay = Math.max(1000, this.nextPollAllowedMs - performance.now());
+            this.reconnectTimer = setTimeout(() => {
+                if (this.polling) this._openSocket();
+            }, delay);
+        });
+    }
+
+    _closeSocket() {
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        if (this.socket) {
+            const socket = this.socket;
+            this.socket = null;   // cleared first, so the close handler does not reconnect
+            try {
+                socket.close();
+            } catch (e) { /* already closing */ }
+        }
+    }
+
+    /** Rebuild the markers from whatever the stream has delivered so far. */
+    _rebuildFromStream() {
+        if (!this.polling || !this.streamed) return;
+        this.markers = [...this.streamed.values()];
+        this._rebuild();
     }
 
     // ── Drawing ──────────────────────────────────────────────────────────────
@@ -379,6 +537,9 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         if (this.selected && performance.now() < this.selectedUntilMs) {
             return `${this.selected.label}${this.selected.detail ? " — " + this.selected.detail : ""}`;
         }
+        // A missing key is not an error and not an empty result — it is a thing
+        // the user can fix, and saying so names the fix.
+        if (this.needsKey) return "needs a key — Settings, API Keys";
         if (this.lastError) return `error: ${this.lastError}`;
         // Before the first poll answers there is no result yet, and saying "none"
         // would claim one. Same class of lie as reporting stale data as current.

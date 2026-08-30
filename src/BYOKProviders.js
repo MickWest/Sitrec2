@@ -169,6 +169,48 @@ export const BYOK_PROVIDERS = [
         limits: [],
     },
     {
+        id: 'windy',
+        label: 'Windy Webcams',
+        category: 'data',
+        auth: 'key',
+        unlocks: 'Worldwide live webcams in the Live Feeds menu. Sitrec asks Windy for '
+            + 'cameras near where you are looking; your key and that location go straight '
+            + 'from this browser to Windy.',
+        signupURL: 'https://api.windy.com/webcams',
+        usage: 'requests',
+        rate: {label: 'Your rate per 1000 requests (USD)', per: 1000, placeholder: 'free tier: 0'},
+        unitPrice: null,
+        limits: [],
+    },
+    {
+        id: 'aisstream',
+        label: 'AISStream (marine AIS)',
+        category: 'data',
+        auth: 'key',
+        unlocks: 'Worldwide live ship positions in the Live Feeds menu. Opens a websocket '
+            + 'from this browser straight to aisstream.io and subscribes to the area you '
+            + 'are looking at.',
+        signupURL: 'https://aisstream.io/authenticate',
+        // A websocket streams continuously rather than making countable requests,
+        // so a request tally would be meaningless here.
+        usage: 'none',
+        unitPrice: null,
+        limits: [],
+    },
+    {
+        id: 'tomtom',
+        label: 'TomTom Traffic',
+        category: 'data',
+        auth: 'key',
+        unlocks: 'Live road traffic incidents — jams, closures, roadworks — in the Live '
+            + 'Feeds menu, worldwide.',
+        signupURL: 'https://developer.tomtom.com/user/register',
+        usage: 'requests',
+        rate: {label: 'Your rate per 1000 requests (USD)', per: 1000, placeholder: 'free tier: 0'},
+        unitPrice: null,
+        limits: [],
+    },
+    {
         id: 'adsbx',
         // No consumer reads this key yet — hidden from non-admins so nobody stores a
         // credential that silently does nothing. Drop this line when it is wired up.

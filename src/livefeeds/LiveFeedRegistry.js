@@ -37,6 +37,7 @@ const COLOR_WEBCAM = 0xffffff;     // white — cameras
 const COLOR_BALLOON = 0xffe86b;    // pale yellow — radiosondes
 const COLOR_LAUNCH = 0xff7a3d;     // orange — launch sites
 const COLOR_QUAKE = 0xff3b3b;      // red — earthquakes
+const COLOR_TRAFFIC = 0xff9e2c;    // amber — road incidents
 
 function num(v) {
     const n = Number(v);
@@ -101,38 +102,126 @@ export const LIVE_FEEDS = [
     {
         id: 'ships',
         label: 'Marine Traffic (AIS)',
-        tooltip: 'Live vessel positions from AIS.\n'
-            + 'COVERAGE IS THE BALTIC ONLY — it is the one live AIS stream that needs\n'
-            + 'no key and no data-sharing agreement.\nData: Fintraffic / Digitraffic (CC BY 4.0)',
-        attribution: 'Fintraffic Digitraffic (CC BY 4.0)',
-        coverage: 'Baltic Sea',
-        pollMs: 20000,
+        tooltip: 'Live ship positions worldwide, streamed from aisstream.io.\n'
+            + 'Needs your own free AISStream key — Settings, API Keys.\n'
+            + 'Data: aisstream.io',
+        attribution: 'aisstream.io',
+        coverage: 'Worldwide (needs a key)',
+        // The stream pushes; this is only how often the markers are rebuilt from
+        // whatever has arrived.
+        pollMs: 5000,
         color: COLOR_SHIP,
         shape: 'box',
+        keyProvider: 'aisstream',
+        transport: 'websocket',
+        needsLocation: true,
+
+        /**
+         * AISStream wants a bounding box, not a centre and radius, and it wants
+         * the first subscription within 3 seconds of the socket opening.
+         *
+         * The box is clamped: latitude to the poles, and a maximum span so that a
+         * fully zoomed-out camera does not subscribe to the entire ocean traffic
+         * of the planet and drown the browser in messages.
+         */
+        buildSocket(key, center) {
+            const span = 5;   // degrees each way — a few hundred km
+            const minLat = Math.max(-90, center.lat - span);
+            const maxLat = Math.min(90, center.lat + span);
+            const minLon = center.lon - span;
+            const maxLon = center.lon + span;
+            return {
+                url: 'wss://stream.aisstream.io/v0/stream',
+                subscribe: {
+                    APIKey: key,
+                    BoundingBoxes: [[[minLat, minLon], [maxLat, maxLon]]],
+                    FilterMessageTypes: ['PositionReport'],
+                },
+            };
+        },
+
+        /**
+         * One websocket message into a marker, or null to ignore it.
+         *
+         * MetaData carries the normalised position and is preferred; the raw
+         * PositionReport is the fallback. Returning a marker keyed by MMSI lets
+         * the layer replace a vessel's previous position rather than accumulate
+         * one marker per report — a ship transmits every few seconds, so
+         * appending would grow without bound.
+         */
+        onMessage(msg) {
+            if (msg?.MessageType !== 'PositionReport') return null;
+            const meta = msg.MetaData || {};
+            const report = msg.Message?.PositionReport || {};
+            const lat = num(meta.Latitude ?? report.Latitude);
+            const lon = num(meta.Longitude ?? report.Longitude);
+            if (lat === null || lon === null) return null;
+            const mmsi = meta.MMSI ?? report.UserID;
+            const sog = num(report.Sog);
+            const cog = num(report.Cog);
+            return {
+                id: 'mmsi' + mmsi,
+                lat,
+                lon,
+                altitudeM: null,
+                altitudeIsHAE: false,
+                label: (meta.ShipName || '').trim() || ('MMSI ' + mmsi),
+                detail: [
+                    sog !== null ? `${sog.toFixed(1)} kt` : null,
+                    cog !== null ? `course ${Math.round(cog)}\u00b0` : null,
+                ].filter(Boolean).join(' \u00b7 '),
+                // 360 and 511 are the AIS "not available" sentinels for course;
+                // drawn literally they would point every unknown ship due north.
+                headingDeg: (cog !== null && cog < 360) ? cog : null,
+            };
+        },
+    },
+
+    {
+        id: 'webcams',
+        label: 'Webcams',
+        tooltip: 'Live webcams near where you are looking, worldwide.\n'
+            + 'Needs your own free Windy key — Settings, API Keys.\n'
+            + 'Click a camera to open its current image.\nData: Windy.com',
+        attribution: 'Windy.com',
+        coverage: 'Worldwide (needs a key)',
+        pollMs: 300000,
+        color: COLOR_WEBCAM,
+        shape: 'octahedron',
+        keyProvider: 'windy',
+        transport: 'rest',
+        needsLocation: true,
+
+        // Windy authenticates with a header rather than a query parameter, which
+        // is why its CORS preflight has to allow x-windy-api-key — it does.
+        buildRequest(key, center) {
+            const params = new URLSearchParams({
+                nearby: `${center.lat.toFixed(3)},${center.lon.toFixed(3)},250`,
+                limit: '50',
+                include: 'location,images',
+            });
+            return {
+                url: 'https://api.windy.com/webcams/api/v3/webcams?' + params.toString(),
+                headers: {'x-windy-api-key': key},
+            };
+        },
+
         parse(json) {
             const out = [];
-            for (const f of (Array.isArray(json?.features) ? json.features : [])) {
-                const p = geoJSONPoint(f);
-                if (!p) continue;
-                const props = f.properties || {};
-                const sog = num(props.sog);
-                const cog = num(props.cog);
+            for (const w of (Array.isArray(json?.webcams) ? json.webcams : [])) {
+                const lat = num(w?.location?.latitude);
+                const lon = num(w?.location?.longitude);
+                if (lat === null || lon === null) continue;
                 out.push({
-                    id: 'mmsi' + (props.mmsi ?? f.id),
-                    lat: p.lat,
-                    lon: p.lon,
-                    // At sea level. Left null rather than 0 so the layer puts the
-                    // marker on the terrain/sea surface, which is not the same as
-                    // the ellipsoid.
+                    id: 'windy' + w.webcamId,
+                    lat,
+                    lon,
                     altitudeM: null,
                     altitudeIsHAE: false,
-                    label: 'MMSI ' + (props.mmsi ?? '?'),
-                    detail: [
-                        sog !== null ? `${sog.toFixed(1)} kt` : null,
-                        cog !== null ? `course ${Math.round(cog)}°` : null,
-                    ].filter(Boolean).join(' · '),
-                    // Course over ground, so the marker can point where it is going.
-                    headingDeg: cog,
+                    label: w.title || w.location?.city || 'webcam',
+                    detail: [w.location?.city, w.location?.country].filter(Boolean).join(', ')
+                        || 'Click to open the current image',
+                    imageURL: w.images?.current?.preview || w.images?.daylight?.preview || null,
                 });
             }
             return out;
@@ -140,40 +229,64 @@ export const LIVE_FEEDS = [
     },
 
     {
-        id: 'webcams',
-        label: 'Webcams',
-        tooltip: 'Roadside cameras, with a live image on click.\n'
-            + 'COVERAGE IS FINLAND ONLY — global webcam APIs all require a key.\n'
-            + 'Data: Fintraffic / Digitraffic (CC BY 4.0)',
-        attribution: 'Fintraffic Digitraffic (CC BY 4.0)',
-        coverage: 'Finland',
-        // The station LIST barely changes; the images it points at are what
-        // update, and those are fetched on click.
-        pollMs: 900000,
-        color: COLOR_WEBCAM,
-        shape: 'octahedron',
+        id: 'traffic',
+        label: 'Road Traffic Incidents',
+        tooltip: 'Live jams, closures and roadworks near where you are looking, worldwide.\n'
+            + 'Needs your own free TomTom key — Settings, API Keys.\nData: TomTom',
+        attribution: 'TomTom',
+        coverage: 'Worldwide (needs a key)',
+        pollMs: 120000,
+        color: COLOR_TRAFFIC,
+        shape: 'cone',
+        keyProvider: 'tomtom',
+        transport: 'rest',
+        needsLocation: true,
+
+        buildRequest(key, center) {
+            // TomTom takes a bounding box as minLon,minLat,maxLon,maxLat — the
+            // opposite order from the lat-first pairs used everywhere else here.
+            const span = 0.5;
+            const bbox = [
+                (center.lon - span).toFixed(4), (center.lat - span).toFixed(4),
+                (center.lon + span).toFixed(4), (center.lat + span).toFixed(4),
+            ].join(',');
+            const params = new URLSearchParams({
+                key,
+                bbox,
+                fields: '{incidents{type,geometry{type,coordinates},properties{iconCategory,events{description}}}}',
+                language: 'en-GB',
+            });
+            return {
+                url: 'https://api.tomtom.com/traffic/services/5/incidentDetails?' + params.toString(),
+                headers: {},
+            };
+        },
+
         parse(json) {
             const out = [];
-            for (const f of (Array.isArray(json?.features) ? json.features : [])) {
-                const p = geoJSONPoint(f);
-                if (!p) continue;
-                const props = f.properties || {};
-                // Only cameras actually collecting have a current image; a marker
-                // for a decommissioned camera is a click that leads nowhere.
-                if (props.collectionStatus && props.collectionStatus !== 'GATHERING') continue;
-                const preset = (props.presets || []).find(x => x.inCollection) || (props.presets || [])[0];
-                if (!preset) continue;
+            for (const inc of (Array.isArray(json?.incidents) ? json.incidents : [])) {
+                const g = inc?.geometry;
+                if (!g) continue;
+                // An incident is a Point for a spot event and a LineString for a
+                // stretch of road; the first vertex locates both well enough for a
+                // marker, and drawing the whole line is not what this layer is for.
+                const c = g.type === 'Point' ? g.coordinates
+                    : (Array.isArray(g.coordinates) ? g.coordinates[0] : null);
+                if (!Array.isArray(c) || c.length < 2) continue;
+                const lon = num(c[0]);
+                const lat = num(c[1]);
+                if (lat === null || lon === null) continue;
+                const events = inc.properties?.events || [];
                 out.push({
-                    id: 'cam' + (props.id ?? f.id),
-                    lat: p.lat,
-                    lon: p.lon,
+                    id: 'inc' + (inc.id ?? `${lat},${lon}`),
+                    lat,
+                    lon,
                     altitudeM: null,
                     altitudeIsHAE: false,
-                    label: props.name || props.id || 'camera',
-                    detail: 'Click to open the current image',
-                    // Digitraffic serves the latest frame for a preset at a stable
-                    // URL, so no second API call is needed to show a picture.
-                    imageURL: `https://weathercam.digitraffic.fi/${preset.id}.jpg`,
+                    label: events[0]?.description || 'incident',
+                    detail: events.slice(1).map(e => e.description).filter(Boolean).join(' \u00b7 ')
+                        || (inc.properties?.iconCategory !== undefined
+                            ? `category ${inc.properties.iconCategory}` : ''),
                 });
             }
             return out;

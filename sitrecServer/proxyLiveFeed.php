@@ -43,16 +43,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 // cURL sends none unless told to.
 const SITREC_UA = 'User-Agent: Sitrec/1.0 (+https://www.metabunk.org/sitrec)';
 
-// Digitraffic requires BOTH a Digitraffic-User identifier and gzip. It answers
-// 406 "Use of gzip compression is required" to a plain request, so the
-// Accept-Encoding is not an optimisation — the feed does not work without it.
-const DIGITRAFFIC_HEADERS = [
-    SITREC_UA,
-    'Digitraffic-User: Sitrec/1.0',
-    'Accept-Encoding: gzip',
-    'Accept: application/json',
-];
-
 /**
  * The feed table.
  *
@@ -75,31 +65,6 @@ $FEEDS = [
         'timeout' => 10,
         'headers' => [SITREC_UA],
         'check' => 'ac',
-    ],
-
-    // AIS vessel positions. Finnish Transport Infrastructure Agency open data,
-    // CC BY 4.0. Coverage is the Baltic, not the world — the only live AIS
-    // stream found that needs no key and no data-contribution agreement.
-    'ships' => [
-        'url' => 'https://meri.digitraffic.fi/api/ais/v1/locations',
-        'params' => [],
-        'ttl' => 20,
-        'timeout' => 12,
-        'headers' => DIGITRAFFIC_HEADERS,
-        'check' => 'features',
-    ],
-
-    // Roadside cameras with coordinates and image URLs. Same provider/licence
-    // as the ships; Finland only.
-    'webcams' => [
-        'url' => 'https://tie.digitraffic.fi/api/weathercam/v1/stations',
-        // The station list is near-static; the IMAGES it points at are what
-        // updates, so this can be cached hard.
-        'ttl' => 900,
-        'params' => [],
-        'timeout' => 15,
-        'headers' => DIGITRAFFIC_HEADERS,
-        'check' => 'features',
     ],
 
     // Radiosondes — weather balloons — worldwide, from the SondeHub community
