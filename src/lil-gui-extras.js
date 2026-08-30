@@ -609,6 +609,24 @@ Controller.prototype.moveToFirst = function () {
     return this; // Return the controller to allow method chaining
 };
 
+// Move a FOLDER to the top of its parent.
+//
+// Controller.moveToFirst above does the same for a single control, but a folder
+// is a GUI rather than a Controller, so it needs its own. Without this a folder
+// added late lands beneath every folder already there — the Live Feeds folder
+// ended up below four expanded track folders, several screens down, which for a
+// new feature is indistinguishable from not being there at all.
+GUI.prototype.moveToFirst = function () {
+    const parentElement = this.domElement.parentElement;
+    if (parentElement) {
+        parentElement.insertBefore(this.domElement, parentElement.firstChild);
+        if (this.parent && this.parent._triggerMirrorRefresh) {
+            this.parent._triggerMirrorRefresh();
+        }
+    }
+    return this;
+};
+
 // Move a controller to the end of its parent
 
 

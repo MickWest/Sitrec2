@@ -111,9 +111,13 @@ Each key goes to exactly one destination — the provider that issued it:
 | Key | Sent to | Purpose |
 |---|---|---|
 | Anthropic | `api.anthropic.com` | Runs the AI assistant on your account |
+| OpenAI (voice) | `api.openai.com` | Runs the spoken assistant on your account |
 | OpenRouter | `openrouter.ai` | Runs OpenAI-family models through OpenRouter on your account |
 | Google | `tile.googleapis.com` | Photorealistic 3D tiles |
 | Cesium Ion | Cesium Ion servers | Terrain and building tilesets |
+| Windy | `api.windy.com` | Worldwide live webcams |
+| AISStream | `stream.aisstream.io` | Worldwide live ship positions |
+| TomTom | `api.tomtom.com` | Live road traffic incidents |
 | Mapbox / MapTiler | Their tile servers | Map imagery |
 | Space-Track | `space-track.org` | Satellite element sets |
 
@@ -133,6 +137,31 @@ Two consequences worth knowing:
   figures are a local estimate to help you notice a problem early.
 - Some providers do not permit direct browser access at all, which is why not every service
   can be used this way.
+
+### The OpenAI key and the spoken assistant
+
+The **OpenAI (voice)** key is used for one feature only: the microphone button in the
+Assistant window. It is **not** used for typed chat — OpenAI's text endpoints cannot be
+called from a browser, which is why the OpenRouter route above exists for that.
+
+Three things about it are worth knowing before you supply one:
+
+- **Your microphone audio leaves your browser.** While a voice session is running, what
+  your microphone hears is streamed live to OpenAI, along with the same Sitrec system
+  instructions, tool definitions and tool results a typed session sends. The connection is
+  browser-to-OpenAI; the Sitrec server is not in the path and sees none of it. The session
+  starts only when you press the microphone button, and it ends when you press it again,
+  close the Assistant, or load a different sitch.
+- **Your browser will ask for microphone permission.** If you refuse, nothing is sent and
+  no request is spent.
+- **Spoken tokens cost far more than typed ones.** On the voice model, audio input is
+  billed at about eight times the text rate and audio output at nearly three times. A long
+  conversation is much more expensive than the same conversation typed. Sitrec's usage
+  readout reports audio and text tokens separately for exactly this reason, and the
+  spending limit you set at OpenAI is the protection that actually binds.
+
+While the session is live, the microphone icon in the Assistant header turns red. That icon
+is the reliable indicator — the chat log scrolls, but the icon does not.
 
 ---
 

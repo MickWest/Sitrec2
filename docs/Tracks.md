@@ -30,7 +30,67 @@ KML files can contain **multiple tracks** (e.g., all flights in an area during a
 
 ### ADS-B Trace by Aircraft (adsb.lol)
 
-If you know the aircraft's ICAO 24-bit hex address (shown on most flight trackers, e.g. `a1b2c3`), **Contents → Import ADS-B Track...** fetches roughly the **last 24 hours** of its positions directly from [adsb.lol](https://adsb.lol) — no file export needed. The track is named from the aircraft's callsign or registration. You can also drag in a downloaded readsb/tar1090 `trace_full_*.json` file. Geometric (GPS) altitude is used when the trace carries it, with barometric altitude as the fallback. Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery made with it.
+If you know the aircraft's ICAO 24-bit hex address (shown on most flight trackers, e.g. `a1b2c3`), **Controls → Import ADS-B Track...** fetches roughly the **last 24 hours** of its positions directly from [adsb.lol](https://adsb.lol) — no file export needed. The track is named from the aircraft's callsign or registration. You can also drag in a downloaded readsb/tar1090 `trace_full_*.json` file. Geometric (GPS) altitude is used when the trace carries it, with barometric altitude as the fallback. Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery made with it.
+
+### Live ADS-B Traffic (adsb.lol)
+
+**Controls → Live ADS-B Traffic** shows **every aircraft adsb.lol can currently see** around wherever the camera is, updated every few seconds. Each aircraft is a small dart pointing along its course, colored by altitude, with a short trail showing where it has just been:
+
+| Color | Altitude |
+|---|---|
+| Grey | On the ground, or altitude unknown |
+| Red | Below 1,000 ft |
+| Orange | 1,000 – 5,000 ft |
+| Yellow | 5,000 – 10,000 ft |
+| Green | 10,000 – 20,000 ft |
+| Cyan | 20,000 – 30,000 ft |
+| Violet | Above 30,000 ft |
+
+**Traffic Radius** sets how far to look, in nautical miles, up to 250. The **Traffic** readout below it says how many aircraft are being shown, so an empty sky over open ocean can be told apart from a feed that is not working.
+
+Some things worth knowing:
+
+- **It follows the camera, not the sitch origin.** The search is centered on wherever you are currently looking, so flying somewhere else brings up that area's traffic on the next update.
+- **It sets the clock to now and pauses playback.** The feed is the live present, so the scene has to be the present too — otherwise the sun, the sky and the traffic would all disagree. Scrubbing the playhead has no meaning while it is on.
+- **It is not saved with the sitch.** This is a view of the live present, not part of a recreation, so switching it on never changes what a saved sitch contains.
+- **It needs the Sitrec server**, so it is unavailable in the desktop app and other serverless builds.
+
+**Click an aircraft to promote it to a real track.** A single click on any of the darts fetches that aircraft's full ~24-hour trace and adds it as an ordinary Sitrec track, with all the usual measurement tools — the same thing **Import ADS-B Track...** does, without needing to know the hex address. The Traffic readout says `importing …` while the trace is fetched, which takes a second or two.
+
+Dragging is unaffected: a press that moves before you release is a camera drag, not a click, so you can still orbit and pan starting from anywhere on screen.
+
+The live layer is for situational awareness; promote an aircraft when you want to analyse it.
+
+Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery made with it.
+
+### Other Live Feeds
+
+**Controls → Live Feeds** overlays other live data on the world. Each has its own on/off switch and a count underneath it, so an empty result can be told apart from a feed that is not working — the count reads `loading…` before the first answer, a number once it has one, and says so plainly when the source is unreachable.
+
+| Feed | What | Coverage | Needs a key | Source |
+|---|---|---|---|---|
+| **Military Aircraft** | Aircraft flagged military or government, as magenta darts | Worldwide | no | adsb.lol (ODbL) |
+| **Marine Traffic (AIS)** | Live ship positions, as teal boxes pointing along their course | Worldwide | **yes** — AISStream | aisstream.io |
+| **Webcams** | Live webcams near your view; click one for its current image | Worldwide | **yes** — Windy | Windy.com |
+| **Road Traffic Incidents** | Jams, closures and roadworks near your view | Worldwide | **yes** — TomTom | TomTom |
+| **Weather Balloons** | Radiosondes currently aloft, with altitude and climb rate | Worldwide | no | SondeHub |
+| **Rocket Launches** | The last 40 orbital launches, at their pads | Worldwide | no | Launch Library 2 |
+| **Earthquakes** | Magnitude 2.5+ in the last 24 hours, sized by magnitude | Worldwide | no | USGS |
+
+**Three of these need your own free API key.** Ships, webcams and road traffic have no usable keyless source: every provider with worldwide coverage requires an account. Rather than ship a crippled regional substitute, Sitrec asks for a key — add one under **Settings → API Keys…**, and the feed's count line tells you when one is missing rather than silently showing an empty world. All three have a free tier.
+
+Those three talk to their provider **straight from your browser**, so your key never reaches the Sitrec server — the same rule as every other key Sitrec holds (see [Your API Keys](APIKeys)). A useful side effect: unlike the keyless feeds, they also work in the desktop app and other serverless builds, because no Sitrec server is involved.
+
+Some notes on reading them:
+
+- **Shape as well as colour.** Ships are boxes, webcams octahedra, balloons spheres, launches cones, aircraft darts. With several layers on at once colour alone stops being enough, and it is no help at all to a colour-blind viewer.
+- **Clicking does something different per feed.** A military aircraft imports its full track, exactly like a civil one. A webcam opens its live image. A launch or earthquake opens its source page. A ship or balloon shows its details in the count line for a few seconds.
+- **Weather balloons answer a real question.** "Could it have been a weather balloon?" is one of the standard mundane explanations, and this says whether one was actually up there.
+- **Earthquakes are drawn at the epicentre**, on the surface. Depth is in the details rather than the position — a quake plotted at its true hypocentre is inside the Earth and invisible.
+- **None of it is saved with your sitch.** These are views of the live present, not part of a recreation.
+- **The keyless feeds need the Sitrec server**, so they are unavailable in the desktop app and other serverless builds. The three keyed feeds work everywhere.
+
+Credit the source shown in the table when publishing imagery made with one of these feeds.
 
 ### DJI Drone Data (CSV)
 

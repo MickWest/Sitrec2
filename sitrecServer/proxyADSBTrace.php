@@ -131,7 +131,15 @@ if (!consumeRateToken($rateLimitFile, 30)) {
     exit("Rate limit exceeded. Please wait a minute.");
 }
 
-$result = curlGetRequest($url);
+// A timeout is not optional here either. curlGetRequest waits FOREVER by
+// default, so a stalled upstream holds a PHP-FPM worker for the whole request —
+// and adsb.lol's trace host stalls, observed twice on 2026-08-30. This proxy is
+// now reachable by CLICKING an aircraft in the live traffic layer, so it is easy
+// to trigger repeatedly and fast; before that it took a deliberate dialog entry.
+// 15s rather than the live feed's 10: a full 24-hour trace is a much larger body.
+$result = curlGetRequest($url, [
+    'User-Agent: Sitrec/1.0 (+https://www.metabunk.org/sitrec)',
+], 15);
 $data = $result['data'];
 $httpStatus = $result['http_status'];
 

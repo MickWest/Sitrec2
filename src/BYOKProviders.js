@@ -47,6 +47,28 @@ export const BYOK_PROVIDERS = [
         limits: [],
     },
     {
+        id: 'openai',
+        label: 'OpenAI (voice)',
+        category: 'ai',
+        auth: 'key',
+        keyHint: 'sk-proj-… or sk-…',
+        // Deliberately narrow: this key drives the SPOKEN assistant only. OpenAI's text
+        // completion endpoints send no CORS headers, which is exactly why the OpenRouter
+        // entry below exists for typed chat — but the Realtime API is designed to be
+        // reached from a browser, so voice can use the user's key directly with no
+        // aggregator in between. Saying "voice" in the label stops a user pasting a key
+        // here and wondering why the typed chat still bills Sitrec.
+        unlocks: 'The spoken voice assistant. Your microphone audio and the assistant\'s '
+            + 'spoken replies stream directly between this browser and OpenAI, and are '
+            + 'billed to you. Enables the microphone button in the Assistant window. '
+            + 'This key is NOT used for typed chat — see OpenRouter for that.',
+        signupURL: 'https://platform.openai.com/api-keys',
+        usage: 'spend',
+        usageModelPrefixes: ['gpt-realtime'],
+        unitPrice: null,        // priced per model in BYOKUsage, not per request
+        limits: [],
+    },
+    {
         id: 'openrouter',
         label: 'OpenRouter',
         category: 'ai',
@@ -143,6 +165,48 @@ export const BYOK_PROVIDERS = [
         signupURL: 'https://www.space-track.org/auth/createAccount',
         usage: 'requests',
         rate: {label: 'Your rate per 1000 requests (USD)', per: 1000, placeholder: 'e.g. 0.50'},
+        unitPrice: null,
+        limits: [],
+    },
+    {
+        id: 'windy',
+        label: 'Windy Webcams',
+        category: 'data',
+        auth: 'key',
+        unlocks: 'Worldwide live webcams in the Live Feeds menu. Sitrec asks Windy for '
+            + 'cameras near where you are looking; your key and that location go straight '
+            + 'from this browser to Windy.',
+        signupURL: 'https://api.windy.com/webcams',
+        usage: 'requests',
+        rate: {label: 'Your rate per 1000 requests (USD)', per: 1000, placeholder: 'free tier: 0'},
+        unitPrice: null,
+        limits: [],
+    },
+    {
+        id: 'aisstream',
+        label: 'AISStream (marine AIS)',
+        category: 'data',
+        auth: 'key',
+        unlocks: 'Worldwide live ship positions in the Live Feeds menu. Opens a websocket '
+            + 'from this browser straight to aisstream.io and subscribes to the area you '
+            + 'are looking at.',
+        signupURL: 'https://aisstream.io/authenticate',
+        // A websocket streams continuously rather than making countable requests,
+        // so a request tally would be meaningless here.
+        usage: 'none',
+        unitPrice: null,
+        limits: [],
+    },
+    {
+        id: 'tomtom',
+        label: 'TomTom Traffic',
+        category: 'data',
+        auth: 'key',
+        unlocks: 'Live road traffic incidents — jams, closures, roadworks — in the Live '
+            + 'Feeds menu, worldwide.',
+        signupURL: 'https://developer.tomtom.com/user/register',
+        usage: 'requests',
+        rate: {label: 'Your rate per 1000 requests (USD)', per: 1000, placeholder: 'free tier: 0'},
         unitPrice: null,
         limits: [],
     },

@@ -37,6 +37,19 @@ const MODEL_PRICES = {
     // these are fallbacks for an upstream response that omits the exact charged cost.
     'openai/gpt-5-mini': {input: 0.25, output: 2},
     'openai/gpt-5-nano': {input: 0.05, output: 0.40},
+    // The voice model. Audio tokens are billed at a completely different rate from text
+    // — 8x on input, 2.7x on output — and a voice session is overwhelmingly audio, so
+    // folding them into the text counters would understate the bill by most of an order
+    // of magnitude. They therefore get their own rates and their own counters (see
+    // emptyUsage). `cachedInput` is an ABSOLUTE rate rather than a multiple of the input
+    // rate: OpenAI charges the same $0.40/1M for a cached text token and a cached audio
+    // token, which is 0.1x the text rate but 0.0125x the audio rate, so no single
+    // multiplier can express it.
+    'gpt-realtime-2': {
+        input: 4, output: 24,
+        audio: {input: 32, output: 64},
+        cachedInput: 0.40,
+    },
 };
 
 // The per-million rates in effect at a given moment (defaults to now).
@@ -44,10 +57,15 @@ export function pricesFor(model, atMs = undefined) {
     const entry = MODEL_PRICES[model];
     if (!entry) return null;
     const at = atMs === undefined ? Date.now() : atMs;
+    // A promotion only ever restates the TEXT rates, so the audio and cached-input rates
+    // are carried through from the standard entry rather than being dropped — returning
+    // an object without them would silently price a promoted voice model's audio at zero.
     if (entry.promo && at < entry.promo.untilUTC) {
-        return {input: entry.promo.input, output: entry.promo.output};
+        return {input: entry.promo.input, output: entry.promo.output,
+            audio: entry.audio, cachedInput: entry.cachedInput};
     }
-    return {input: entry.input, output: entry.output};
+    return {input: entry.input, output: entry.output,
+        audio: entry.audio, cachedInput: entry.cachedInput};
 }
 
 // Cached input bills at ~0.1x the input rate; a 5-minute cache write at ~1.25x.
@@ -226,8 +244,15 @@ export function estimateProviderSpendUSD(usage, config, per = 1000) {
     return ((usage?.total || 0) / per) * rate;
 }
 
+// audioInputTokens / audioOutputTokens are counted separately from the text fields
+// because they are priced separately (see MODEL_PRICES). addUsage iterates these keys, so
+// a record stored before the audio fields existed simply reads them as 0 — no migration.
 export function emptyUsage() {
-    return {inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, requests: 0, costUSD: 0};
+    return {
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+        audioInputTokens: 0, audioOutputTokens: 0,
+        requests: 0, costUSD: 0,
+    };
 }
 
 export function addUsage(target, delta) {
@@ -245,10 +270,21 @@ export function estimateCostUSD(model, usage, atMs = undefined) {
     if (!price || !usage) return null;
     const cache = cacheMultipliersFor(model);
     const perToken = 1e-6;
+    // An explicit cachedInput rate wins over the multiplier: see the note in MODEL_PRICES
+    // on why the realtime models' flat cached rate is not expressible as a multiple.
+    const cachedReadRate = (price.cachedInput !== undefined)
+        ? price.cachedInput
+        : price.input * cache.read;
+    // A model with no audio rates prices audio tokens at its text rates rather than at
+    // zero. That case should not arise — only audio models report audio tokens — but a
+    // missing rate must never make a real cost vanish from the running total.
+    const audio = price.audio || {input: price.input, output: price.output};
     return (
         (usage.inputTokens || 0) * price.input * perToken +
         (usage.outputTokens || 0) * price.output * perToken +
-        (usage.cacheReadTokens || 0) * price.input * cache.read * perToken +
+        (usage.audioInputTokens || 0) * audio.input * perToken +
+        (usage.audioOutputTokens || 0) * audio.output * perToken +
+        (usage.cacheReadTokens || 0) * cachedReadRate * perToken +
         (usage.cacheWriteTokens || 0) * price.input * cache.write * perToken
     );
 }
@@ -314,6 +350,12 @@ export function formatTurnUsage(model, usage) {
         `${formatTokens(usage.inputTokens)} in`,
         `${formatTokens(usage.outputTokens)} out`,
     ];
+    // Named as audio rather than merged into the text counts: they cost several times as
+    // much, so a user comparing "why was that turn expensive" needs to see the split.
+    if (usage.audioInputTokens || usage.audioOutputTokens) {
+        parts.push(`${formatTokens(usage.audioInputTokens)} audio in`);
+        parts.push(`${formatTokens(usage.audioOutputTokens)} audio out`);
+    }
     if (usage.cacheReadTokens) parts.push(`${formatTokens(usage.cacheReadTokens)} cached`);
     return `Usage (${model}): ${parts.join(', ')}${cost ? ` — approx ${cost}` : ''}`;
 }
@@ -344,6 +386,9 @@ export async function formatUsageReport(modelPrefixes = null) {
         lines.push(
             `${model}: ${usage.requests || 0} requests, ` +
             `${formatTokens(usage.inputTokens)} in / ${formatTokens(usage.outputTokens)} out` +
+            ((usage.audioInputTokens || usage.audioOutputTokens)
+                ? `, audio ${formatTokens(usage.audioInputTokens)} in / ${formatTokens(usage.audioOutputTokens)} out`
+                : '') +
             (usage.cacheReadTokens ? ` (${formatTokens(usage.cacheReadTokens)} from cache)` : '') +
             (cost === null ? '' : ` — approx ${formatCostUSD(cost)}`)
         );

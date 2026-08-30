@@ -38,6 +38,7 @@ import {isKeyHeld} from "../KeyBoardHandler";
 import {glareSphere, targetSphere} from "../JetStuffVars";
 import {jetPitchFromFrame} from "../JetUtils";
 import {t} from "../i18n";
+import {importADSBTraceByHex} from "../ADSBTraceFetch";
 import {applyAnnualAberration, raDec2Celestial} from "../CelestialMath";
 import {applyRefractionECI, refractionUniforms, refractionOptsFromUniforms} from "../atmosphere/refraction";
 import {findRootTrack} from "../FindRootTrack";
@@ -174,11 +175,219 @@ export const mouseMethods = {
         });
     },
 
-    onMouseUp() {
+    onMouseUp(event, mouseX, mouseY) {
         if (!this.mouseEnabled) return;
+        // A click that started on a live-traffic aircraft and never turned into a
+        // drag promotes that aircraft to a real track. Resolved on mouse UP, not
+        // down, precisely so the press that begins a camera orbit is not stolen.
+        this._completeTrafficClick(mouseX, mouseY);
         this.dragMode = DRAG.NONE;
         this.mouseDown = false;
 //        console.log("Mouse Down = "+this.mouseDown+ " Drag mode = "+this.dragMode)
+    },
+
+    // ── Live ADS-B traffic: click an aircraft to promote it to a track ───────
+    //
+    // The traffic layer is reached through NodeMan rather than an import, and
+    // that is deliberate: it is lazy-loaded as its own webpack chunk, so a static
+    // import here would pull it back into the main bundle for every user whether
+    // or not they ever switch the layer on. Absent layer, absent node, no cost.
+
+    _trafficLayer() {
+        return NodeMan.exists("ADSBLiveTraffic") ? NodeMan.get("ADSBLiveTraffic") : null;
+    },
+
+    /**
+     * Remember an aircraft under the press, if there is one.
+     *
+     * Nothing is consumed here and the click is not claimed — a press on an
+     * aircraft must still be able to become a camera orbit, because the aircraft
+     * are scattered across the whole view and demanding the user find empty sky
+     * to rotate from would make the layer hostile to use.
+     */
+    /**
+     * Whatever live-feed thing is under a screen point, in one normalised shape.
+     *
+     * Shared by hover and click so the two can never disagree about what is
+     * under the cursor — a tooltip describing one aircraft while the click
+     * promotes another would be worse than having no tooltip.
+     *
+     * Everything is reached through NodeMan rather than by importing the layers,
+     * because both are lazy chunks and a static import here would pull them into
+     * the main bundle for every user whether or not they ever switch one on.
+     */
+    _liveFeedHitAt(mouseX, mouseY) {
+        // The ADS-B layer first: an aircraft promotes to a full track, which is a
+        // more useful outcome than an info line, so it wins a tie.
+        const traffic = this._trafficLayer();
+        if (traffic?.polling) {
+            const hit = traffic.findAircraftAtScreen(this, mouseX, mouseY);
+            if (hit) {
+                const a = hit.aircraft;
+                const already = traffic.isPromoted?.(hit.hex);
+                return {
+                    kind: 'aircraft',
+                    hex: hit.hex,
+                    aircraft: a,
+                    layer: traffic,
+                    label: a.callsign || a.registration || hit.hex.toUpperCase(),
+                    detail: [
+                        a.typeCode, a.registration,
+                        a.altitudeM !== null ? `${Math.round(a.altitudeM / 0.3048).toLocaleString()} ft` : null,
+                        a.groundSpeedKt !== null ? `${Math.round(a.groundSpeedKt)} kt` : null,
+                        a.trackDeg !== null ? `hdg ${Math.round(a.trackDeg)}\u00b0` : null,
+                    ].filter(Boolean).join('  \u00b7  '),
+                    hint: already ? 'Track already imported' : 'Click to import its full track',
+                    color: 0xffffff,
+                };
+            }
+        }
+
+        let best = null;
+        NodeMan.iterate((id, node) => {
+            if (!id.startsWith("LiveFeed_")) return;
+            if (typeof node.findMarkerAtScreen !== "function") return;
+            const hit = node.findMarkerAtScreen(this, mouseX, mouseY);
+            if (hit && (!best || hit.distancePx < best.distancePx)) best = hit;
+        });
+        if (!best) return null;
+
+        const m = best.marker;
+        const isMil = best.feed.id === 'mil';
+        const already = isMil && this._trafficLayer()?.isPromoted?.(m.hex);
+        return {
+            kind: 'marker',
+            marker: m,
+            feed: best.feed,
+            layer: null,
+            label: m.label,
+            detail: m.detail,
+            hint: m.imageURL ? 'Click to open the live image'
+                : (isMil ? (already ? 'Track already imported' : 'Click to import its full track')
+                    : (m.url ? 'Click to open the source page' : null)),
+            color: best.feed.color,
+        };
+    },
+
+    _beginTrafficClick(mouseX, mouseY) {
+        this._trafficClick = null;
+        const hit = this._liveFeedHitAt(mouseX, mouseY);
+        if (hit) this._trafficClick = {...hit, x: mouseX, y: mouseY};
+    },
+
+    /**
+     * Show a hover box for whatever is under the cursor.
+     *
+     * Skipped entirely while a button is down: during a camera drag the cursor
+     * sweeps across the whole scene, and a tooltip flickering through a hundred
+     * aircraft is both useless and expensive.
+     */
+    _updateLiveFeedHover(mouseX, mouseY) {
+        if (this.mouseDown) return;
+        // Any live layer will do — they all share the one overlay singleton, and
+        // reaching it through a layer keeps this file free of the lazy chunk.
+        let anyLayer = this._trafficLayer();
+        if (!anyLayer?.polling) {
+            NodeMan.iterate((id, node) => {
+                if (!anyLayer?.polling && id.startsWith("LiveFeed_") && node.polling) anyLayer = node;
+            });
+        }
+        if (!anyLayer?.setHoverTarget) return;
+        if (!mouseInViewOnly(this, mouseX, mouseY)) {
+            anyLayer.setHoverTarget(null);
+            return;
+        }
+        anyLayer.setHoverTarget(this._liveFeedHitAt(mouseX, mouseY), mouseX, mouseY);
+    },
+
+    /**
+     * Promote the armed aircraft, unless the press turned into a drag.
+     *
+     * The drag test lives HERE, comparing the release position against the press
+     * position, rather than in onMouseMove. onMouseMove is not a reliable place
+     * for it: onDocumentMouseMove routes a drag to onMouseDrag when the view
+     * defines one, pointer capture can deliver moves somewhere other than the
+     * document, and a fast drag can produce a release with no intervening move
+     * event at all. One comparison at release depends on none of that — and
+     * onDocumentMouseUp hands us the current pointer position for exactly this.
+     *
+     * The threshold is 4 px rather than exact equality because a mouse almost
+     * always creeps a pixel or two between press and release, and requiring zero
+     * movement would mean the click essentially never fired.
+     */
+    _completeTrafficClick(mouseX, mouseY) {
+        const click = this._trafficClick;
+        this._trafficClick = null;
+        if (!click) return;
+
+        if (mouseX !== undefined && mouseY !== undefined
+            && Math.hypot(mouseX - click.x, mouseY - click.y) > 4) {
+            return;     // that was a camera drag, not a click on an aircraft
+        }
+
+        if (click.kind === 'marker') {
+            this._openFeedMarker(click.marker, click.feed);
+            return;
+        }
+
+        const traffic = click.layer || this._trafficLayer();
+        const label = click.label || click.hex;
+
+        // Already imported: do nothing rather than fetch and parse the same
+        // 24-hour trace again. A second import produces a duplicate track sitting
+        // exactly on top of the first, which is invisible until the user tries to
+        // select one — and clicking an aircraft twice is easy, because the marker
+        // does not change appearance after the first click.
+        if (traffic?.isPromoted?.(click.hex)) {
+            console.log(`Live traffic: ${label} (${click.hex}) is already imported`);
+            traffic.flashAlreadyImported?.(label);
+            return;
+        }
+        // Shown in the Traffic readout while the fetch runs. A click with no
+        // visible effect for a second or two reads as a click that missed, and
+        // the user clicks again — queuing a second identical import.
+        traffic?.setPromoting(label);
+        console.log(`Live traffic: importing full trace for ${label} (${click.hex})`);
+
+        importADSBTraceByHex(click.hex)
+            .finally(() => traffic?.setPromoting(null));
+    },
+
+    /**
+     * What clicking a live-feed marker does, which depends on what it is.
+     *
+     * A military aircraft promotes to a real track, exactly like a civil one —
+     * it is the same data from the same provider, and the only difference is
+     * which endpoint listed it. A webcam opens its current image, because a
+     * webcam you cannot look through is not worth marking. Anything with a
+     * source URL opens it. Everything else reports what it is, since for a
+     * launch or a quake the marker plus its details IS the answer.
+     */
+    _openFeedMarker(marker, feed) {
+        if (feed.id === 'mil' && marker.hex) {
+            const traffic = this._trafficLayer();
+            if (traffic?.isPromoted?.(marker.hex)) {
+                console.log(`Live feed: ${marker.label} (${marker.hex}) is already imported`);
+                traffic.flashAlreadyImported?.(marker.label);
+                return;
+            }
+            console.log(`Live feed: importing full trace for ${marker.label} (${marker.hex})`);
+            importADSBTraceByHex(marker.hex);
+            return;
+        }
+        const href = marker.imageURL || marker.url;
+        if (href) {
+            // noopener: the opened page must not get a handle on Sitrec's window.
+            window.open(href, "_blank", "noopener,noreferrer");
+            return;
+        }
+        // No link to follow — a ship or a radiosonde. The details go into that
+        // feed's own readout rather than a modal: an error dialog is the wrong
+        // shape for "here is what you clicked", and a dialog per click would make
+        // browsing a busy layer unbearable.
+        const layer = NodeMan.exists(`LiveFeed_${feed.id}`) ? NodeMan.get(`LiveFeed_${feed.id}`) : null;
+        layer?.setSelected(marker);
+        console.log(`Live feed ${feed.id}: ${marker.label}${marker.detail ? " — " + marker.detail : ""}`);
     },
 
     // Wrapper: pick with the displayed camera orientation (see _refreshCursorFromMouse).
@@ -204,6 +413,12 @@ export const mouseMethods = {
         // orbit pivot for the drag that's about to start) need a fresh hit here.
         if (this.camera && mouseInViewOnly(this, mouseX, mouseY)) {
             this._refreshCursorFromMouse(mouseRay);
+        }
+
+        // Left button only: middle inserts spline points below, and right opens
+        // the context menu, so neither should arm a promotion.
+        if (event.button === 0 && mouseInViewOnly(this, mouseX, mouseY)) {
+            this._beginTrafficClick(mouseX, mouseY);
         }
 
         if (event.button === 1 && this.camera) {
@@ -244,6 +459,8 @@ export const mouseMethods = {
 
     onMouseMove(event, mouseX, mouseY) {
         if (!this.mouseEnabled) return;
+
+        this._updateLiveFeedHover(mouseX, mouseY);
 
 //        console.log(this.id+" Mouse Move = "+this.mouseDown+ " Drag mode = "+this.dragMode)
 

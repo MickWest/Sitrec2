@@ -27,6 +27,7 @@ import {
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {setupHorizonExtractorMenu} from "./CHorizonExtractor";
 import {importADSBTraceDialog} from "./ADSBTraceFetch";
+import {LIVE_FEEDS} from "./livefeeds/LiveFeedRegistry";
 import {CNodeEffect} from "./nodes/CNodeEffect";
 import {setupCameraMotionMenu} from "./CameraMotionFromVideo";
 import {makeStarTrackCameraController, setupStarTrackerMenu} from "./starTrack/StarTrackerUI";
@@ -1513,6 +1514,176 @@ export const setupMethods = {
             .name(t("custom.showHide.importADSBTrace.label"))
             .moveToFirst()
             .tooltip(t("custom.showHide.importADSBTrace.tooltip"))
+
+        // ── Live ADS-B traffic ──────────────────────────────────────────
+        // Every aircraft adsb.lol currently sees around the sitch origin, as one
+        // lightweight instanced layer (src/traffic/CNodeADSBLiveTraffic.js).
+        //
+        // The implementation is loaded on FIRST ENABLE and never before: the
+        // layer, its geometry and the feed client are their own webpack chunk,
+        // so a user who never switches it on never downloads it. The file lives
+        // outside src/nodes/ precisely so that split is possible — RegisterNodes'
+        // require.context would otherwise pull it into the main bundle.
+        this.liveTraffic = false;
+        this._liveTrafficNode = null;
+        this.liveTrafficRadiusNM = 50;
+        this.liveTrafficStatus = "off";
+
+        this._setLiveTraffic = async (on) => {
+            if (!on) {
+                this._liveTrafficNode?.stop();
+                this.liveTrafficStatus = "off";
+                return;
+            }
+            // No PHP server means no proxy, and api.adsb.lol cannot be read from
+            // a browser directly, so say so rather than polling into a wall.
+            if (isServerless) {
+                showError("Live ADS-B traffic needs the Sitrec server, so it is not available in this build.");
+                this.liveTraffic = false;
+                return;
+            }
+
+            // The feed is the present, so the scene has to be the present too:
+            // with the clock left in 2004 the sun, the sky and the shadows would
+            // all disagree with the traffic drawn under them. liveMode keeps the
+            // clock tracking real time rather than freezing at the moment the
+            // layer was switched on, and pauses playback — scrubbing the
+            // playhead has no meaning for a live overlay.
+            GlobalDateTimeNode.liveMode = true;
+            GlobalDateTimeNode.resetNowTimeToCurrent();
+            par.paused = true;
+
+            try {
+                const {CNodeADSBLiveTraffic} = await import(
+                    /* webpackChunkName: "adsb-live" */ "./traffic/CNodeADSBLiveTraffic");
+                if (!this.liveTraffic) return;   // switched off during the import
+
+                if (!this._liveTrafficNode) {
+                    this._liveTrafficNode = new CNodeADSBLiveTraffic({
+                        id: "ADSBLiveTraffic",
+                        radiusNM: this.liveTrafficRadiusNM,
+                    });
+                }
+                this._liveTrafficNode.radiusNM = this.liveTrafficRadiusNM;
+                this._liveTrafficNode.start();
+            } catch (e) {
+                showError("Could not start live ADS-B traffic: " + (e?.message || e));
+                this.liveTraffic = false;
+            }
+        };
+
+        // Civil ADS-B belongs WITH the other live feeds, not beside them. It is
+        // the same kind of thing — a live overlay with an on/off switch and a
+        // count — and having it outside the folder while military aircraft sat
+        // inside made the grouping look arbitrary.
+        //
+        // moveToFirst: a folder added here otherwise lands below the per-track
+        // folders (cameraDisplayTrack, the satellite tracks, the traverse), each
+        // of which expands to a dozen controls — several screens of scrolling
+        // before the user ever sees any of this exists.
+        const feedsFolder = guiMenus.contents.addFolder(t("custom.showHide.liveFeeds.label"))
+            .tooltip(t("custom.showHide.liveFeeds.tooltip"))
+            .moveToFirst();
+
+        feedsFolder.add(this, "liveTraffic")
+            .name(t("custom.showHide.liveTraffic.label"))
+            .tooltip(t("custom.showHide.liveTraffic.tooltip"))
+            .onChange(v => this._setLiveTraffic(v));
+
+        feedsFolder.add(this, "liveTrafficRadiusNM", 5, 250, 5)
+            .name(t("custom.showHide.liveTrafficRadius.label"))
+            .tooltip(t("custom.showHide.liveTrafficRadius.tooltip"))
+            .onChange(v => {
+                // Takes effect on the next poll rather than forcing one: the
+                // slider fires continuously while dragged, and a fetch per step
+                // would spend the whole rate limit crossing the range once.
+                if (this._liveTrafficNode) this._liveTrafficNode.radiusNM = v;
+            });
+
+        // A readout, not decoration: "on" and "no aircraft in range" and
+        // "error: ..." are three very different states that otherwise look
+        // identical, because all three draw an empty sky.
+        this._liveTrafficStatusControl = feedsFolder
+            .add(this, "liveTrafficStatus")
+            .name(t("custom.showHide.liveTrafficStatus.label"))
+            .listen()
+            .disable();
+        setInterval(() => {
+            this.liveTrafficStatus = this._liveTrafficNode
+                ? this._liveTrafficNode.status() : "off";
+        }, 1000);
+
+        // ── The other live feeds ────────────────────────────────────────
+        // Military aircraft, marine AIS, webcams, weather balloons, rocket
+        // launches, earthquakes. Each is a row in LiveFeedRegistry and shares one
+        // proxy and one marker layer, so the menu below is a loop rather than six
+        // hand-written blocks.
+        //
+        // LIVE_FEEDS is imported statically while the LAYER is lazy: the registry
+        // is a few hundred lines of table and parsers, but the layer pulls in
+        // three.js geometry and instancing. Splitting the table out too would buy
+        // nothing measurable and would risk the menu and the registry drifting
+        // apart, which is the failure this table exists to prevent.
+        this._liveFeedNodes = {};
+
+        for (const feed of LIVE_FEEDS) {
+            const flagKey = `liveFeed_${feed.id}`;
+            const statusKey = `liveFeedStatus_${feed.id}`;
+            this[flagKey] = false;
+            this[statusKey] = "off";
+
+            const setFeed = async (on) => {
+                if (!on) {
+                    this._liveFeedNodes[feed.id]?.stop();
+                    this[statusKey] = "off";
+                    return;
+                }
+                // Only the KEYLESS feeds need the server: those go through the
+                // proxy, which is PHP. A keyed feed talks to its provider
+                // directly from the browser (its key must never reach Sitrec's
+                // server), so it works in serverless and desktop builds too.
+                if (isServerless && !feed.keyProvider) {
+                    showError(`The ${feed.label} feed needs the Sitrec server, so it is not available in this build.`);
+                    this[flagKey] = false;
+                    return;
+                }
+                try {
+                    const {CNodeLiveFeedLayer} = await import(
+                        /* webpackChunkName: "livefeeds" */ "./livefeeds/CNodeLiveFeedLayer");
+                    if (!this[flagKey]) return;   // switched off during the import
+                    if (!this._liveFeedNodes[feed.id]) {
+                        this._liveFeedNodes[feed.id] = new CNodeLiveFeedLayer({
+                            id: `LiveFeed_${feed.id}`,
+                            feed,
+                        });
+                    }
+                    this._liveFeedNodes[feed.id].start();
+                } catch (e) {
+                    showError(`Could not start the ${feed.label} feed: ` + (e?.message || e));
+                    this[flagKey] = false;
+                }
+            };
+
+            feedsFolder.add(this, flagKey)
+                .name(feed.label)
+                // Coverage is in the tooltip because several of these are regional
+                // — a user in California switching on "Marine Traffic" and seeing
+                // an empty sea needs to know it is Baltic-only, not broken.
+                .tooltip(`${feed.tooltip}\nCoverage: ${feed.coverage}`)
+                .onChange(v => setFeed(v));
+
+            feedsFolder.add(this, statusKey)
+                .name(`  ↳ ${feed.label}`)
+                .listen()
+                .disable();
+        }
+
+        setInterval(() => {
+            for (const feed of LIVE_FEEDS) {
+                const node = this._liveFeedNodes[feed.id];
+                this[`liveFeedStatus_${feed.id}`] = node ? node.status() : "off";
+            }
+        }, 1000);
 
         // ── Sensor-look effects: Thermal + NightVision ──────────────────
         // Created HERE, never in SitCustom.js: SitCustom is a serialized
