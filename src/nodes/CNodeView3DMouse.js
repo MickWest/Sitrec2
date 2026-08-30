@@ -49,6 +49,28 @@ import {raycastLocalGround} from "../raycastGround";
 // as an error. If that code path is ever revived, either move ChangedPR /
 // UIChangedAz to a non-cyclic module or use a lazy require at call site.
 
+/**
+ * Offer a right-click to every enabled control-point editor, so it can delete the point
+ * that was clicked.
+ *
+ * Iterates NodeMan rather than reading Globals.editingTrack, for the same reason
+ * updateTrackPositionIndicator does: sitch-defined splines (agua's lantern editor) are
+ * enabled directly and never pass through TrackManager's editingTrack.
+ *
+ * @returns {boolean} true if a point was deleted and no menu should open
+ */
+function deleteControlPointAtEvent(event) {
+    let deleted = false;
+    NodeMan.iterate((id, node) => {
+        if (deleted) return;
+        const editor = node.splineEditor;
+        if (editor?.enable && editor.deletePointAtEvent?.(event)) {
+            deleted = true;
+        }
+    });
+    return deleted;
+}
+
 export const mouseMethods = {
     // Raycast the terrain (with a globe-sphere fallback) and snap
     // cursorSprite.position + controls.target to the hit point. Honours focus
@@ -897,7 +919,15 @@ export const mouseMethods = {
         event.stopPropagation();
         
         if (!this.mouseEnabled) return;
-        
+
+        // A right-click on the control point of a track being edited DELETES that point,
+        // and opens nothing. Checked before every menu below so the two readings of the
+        // same click are settled in one place: whichever the click actually landed on
+        // wins, with no race between separate listeners over one button press.
+        if (deleteControlPointAtEvent(event)) {
+            return;
+        }
+
         // First check for feature markers using screen-space detection (more reliable for screen-invariant markers)
         if (FeatureManager.handleContextMenu(mouseX, mouseY, this)) {
             return; // Feature menu shown, we're done
@@ -1072,6 +1102,16 @@ export const mouseMethods = {
                             
                             // Open the menu by default
                             standaloneMenu.open();
+
+                            // Opened at the cursor, which is on top of the object it
+                            // edits — and with the move widget the object is now
+                            // something you want to SEE while the menu is up. Shift it
+                            // clear of the click horizontally, then drop it to a fixed
+                            // row under the menu bar so it is always in the same
+                            // out-of-the-way place. Done after open() so the width and
+                            // title height read are the populated menu's.
+                            Globals.menuBar.placeMenuBesidePoint(standaloneMenu, event.clientX);
+                            Globals.menuBar.pinMenuBelowBar(standaloneMenu);
                             // console.log(`Created standalone menu for object: ${objectID}`);
                         } else {
                             console.log(`Node ${objectID} not found or has no GUI folder`);

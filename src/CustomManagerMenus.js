@@ -852,34 +852,17 @@ export const menuMethods = {
                 }
 
                 if (closestIndex >= 0) {
-                    // Check if we have enough points to remove one
-                    if (splineEditor.numPoints <= splineEditor.minimumPoints) {
-                        alert(`Cannot remove point: track must have at least ${splineEditor.minimumPoints} points`);
+                    const frameNumber = splineEditor.frameNumbers[closestIndex];
+
+                    // removePointByIndex owns the "never the last one" rule and all the
+                    // array/scene surgery, so this path and the right-click-a-point path
+                    // can never disagree about what removing a point means. (It used to
+                    // be duplicated here, behind a native alert().)
+                    if (!splineEditor.removePointByIndex(closestIndex)) {
+                        showError(`Cannot remove the only control point of "${shortName}"`);
                         menu.destroy();
                         return;
                     }
-
-                    // Remove the point at the found index
-                    const frameNumber = splineEditor.frameNumbers[closestIndex];
-                    const point = splineEditor.splineHelperObjects[closestIndex];
-
-                    // Detach transform control if it's attached to this point
-                    if (splineEditor.transformControl.object === point) {
-                        splineEditor.transformControl.detach();
-                    }
-
-                    // Remove from scene
-                    splineEditor.scene.remove(point);
-
-                    // Remove from arrays
-                    splineEditor.frameNumbers.splice(closestIndex, 1);
-                    splineEditor.positions.splice(closestIndex, 1);
-                    splineEditor.splineHelperObjects.splice(closestIndex, 1);
-                    splineEditor.numPoints--;
-
-                    // Update graphics
-                    splineEditor.updatePointEditorGraphics();
-                    if (splineEditor.onChange) splineEditor.onChange();
 
                     console.log(`Removed point at frame ${frameNumber} from track ${shortName}`);
                     setRenderOne(true);

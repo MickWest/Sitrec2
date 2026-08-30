@@ -63,6 +63,7 @@ import {
     WebGLRenderTarget
 } from "three";
 import {forceFilterChange, scaleArrows, scaleBuildingHandles, updateTrackPositionIndicator} from "../threeExt";
+import {updateObjectMoveWidget} from "../CObjectMoveWidget";
 import {CNodeViewCanvas} from "./CNodeViewCanvas";
 import {CNode} from "./CNode";
 import {getCameraNode} from "./CNodeCamera";
@@ -3900,6 +3901,8 @@ export class CNodeView3D extends CNodeViewCanvas {
         if (globalProfiler) globalProfiler.push('#17becf', 'trackIndicator');
         // Update the position indicator cone for the currently editing track
         updateTrackPositionIndicator(this);
+        // Reveal/scale the move widget on the object currently in edit mode
+        updateObjectMoveWidget(this);
         if (globalProfiler) globalProfiler.pop();
 
         // Profile: Building Handle Scaling (only for mainView)

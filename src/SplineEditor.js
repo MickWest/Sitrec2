@@ -13,8 +13,12 @@ export class   SplineEditor extends PointEditor{
 
         // segments per arc (between control points) for rendering
         this.ARC_SEGMENTS = 200;
-        // CatmullRomCurve3 needs 4+ points; linear mode works with 2
-        this.minimumPoints = (curveType === 'linear') ? 2 : 4;
+        // One. A track can be whittled down to a single control point — that is exactly
+        // what "Create Track with Object" produces — because everything that reads the
+        // curve falls back to linear below four points (see isLinear) and to the lone
+        // position below two. The old value of 4 was there because CatmullRomCurve3
+        // needs four points to be meaningful, which is now handled by not using it.
+        this.minimumPoints = 1;
 
         // Note: positions are already loaded by the parent PointEditor constructor
         // (which handles LLA→ECEF conversion when isLLA=true).
@@ -66,9 +70,28 @@ export class   SplineEditor extends PointEditor{
     // (Guarded because the base constructor calls setEnable before this.spline exists.)
     setEnable(enable) {
         super.setEnable(enable);
-        if (this.spline && this.spline.mesh) {
-            this.spline.mesh.visible = enable;
-        }
+        // updateSplineMesh owns this mesh's visibility — it also has to hide the line
+        // when there are too few points to draw one. (Guarded there, so this is safe
+        // during base construction, before this.spline exists.)
+        this.updateSplineMesh();
+    }
+
+    /**
+     * True when the curve is interpolated as straight segments rather than as a
+     * CatmullRomCurve3.
+     *
+     * Either because the user asked for linear, or because there are fewer than four
+     * control points. Catmull-Rom needs four to be meaningful; below that three.js
+     * synthesises the missing end tangents by reflection, which produces a curve nobody
+     * asked for — and at one point it divides by a zero-length span. A straight line
+     * through what is left is both correct and what the user sees coming.
+     */
+    isLinear() {
+        return this.curveType === 'linear'
+            || this.numPoints < 4
+            || !this.spline
+            || !this.localPositions
+            || this.localPositions.length < 4;
     }
 
     // The rendered track is a Catmull-Rom curve with chordal or centripetal knot
@@ -80,7 +103,8 @@ export class   SplineEditor extends PointEditor{
     // In 'linear' mode this class interpolates the control points directly (see
     // getPoint) and this.spline is not what gets drawn, so the base chord is exact.
     getControlPointDirection(i, out) {
-        if (this.curveType === 'linear' || !this.spline || !this.localPositions || this.localPositions.length < 2) {
+        // The base chord is exact whenever the drawn curve IS the chords.
+        if (this.isLinear()) {
             return super.getControlPointDirection(i, out);
         }
         // CatmullRomCurve3 maps t across the whole curve as p = (n-1)*t, so control
@@ -158,8 +182,9 @@ export class   SplineEditor extends PointEditor{
 
     // get value at t (parametric input, 0..1) into the vector point
     getPoint(t,point) {
-        // Fall back to linear interpolation if not enough points for spline
-        if (this.curveType === 'linear' || this.numPoints < 2 || !this.localPositions || this.localPositions.length < 2) {
+        // Straight segments for linear mode and for short tracks; the base handles the
+        // one- and zero-point cases too.
+        if (this.isLinear()) {
             return super.getPoint(t, point);
         }
         // Get point in local coordinates, then add the offset to get world coordinates
@@ -179,20 +204,25 @@ export class   SplineEditor extends PointEditor{
             return;
         }
 
-        // Guard: need at least 2 points for CatmullRomCurve3 to work
+        const splineMesh = this.spline.mesh;
+
+        // One point (or none) is not a line. Hidden rather than left alone, because
+        // simply returning would leave the LAST shape drawn on screen — delete a track
+        // down to one point and the old curve would still be hanging there.
         if (this.localPositions.length < 2) {
+            splineMesh.visible = false;
             return;
         }
+        splineMesh.visible = this.enable;
 
         const point = new Vector3();
-        const splineMesh = this.spline.mesh;
         const position = splineMesh.geometry.attributes.position;
 
         // Set mesh vertices in local coordinates (relative to splineLocalOrigin)
         // This avoids GPU precision issues with large world coordinates
         for (let i = 0; i < this.ARC_SEGMENTS; i++) {
             const t = i / (this.ARC_SEGMENTS - 1);
-            if (this.curveType === 'linear') {
+            if (this.isLinear()) {
                 // Linear interpolation in local coords (PointEditor-style)
                 const np = this.localPositions.length;
                 let a = Math.floor(t * (np - 1));
@@ -213,7 +243,6 @@ export class   SplineEditor extends PointEditor{
 
     setCurveType(type) {
         this.curveType = type;
-        this.minimumPoints = (type === 'linear') ? 2 : 4;
         if (type !== 'linear') {
             this.spline.curveType = type === 'catmull' ? 'catmullrom' : type;
         }

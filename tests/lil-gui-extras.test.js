@@ -30,7 +30,9 @@ jest.mock('../src/Globals', () => ({
     Globals: {
         stats: null,
         menuBar: null
-    }
+    },
+    // Standalone menus call this on destroy() to re-enable keyboard shortcuts.
+    setMouseOverGUI: jest.fn()
 }));
 
 jest.mock('../src/CViewManager', () => ({
@@ -682,5 +684,125 @@ describe('CGuiMenuBar Z-Index Management', () => {
         expect(b2Container.parentElement).not.toBe(newMenuBar.menuBar);
 
         newMenuBar.destroy();
+    });
+});
+
+// placeMenuBesidePoint moves an object's right-click menu clear of the object it edits.
+// jsdom gives every element a zero-size getBoundingClientRect, so the method falls back
+// to the container's inline width — which is exactly the 240px createStandaloneMenu sets.
+describe('CGuiMenuBar.placeMenuBesidePoint', () => {
+    let menuBar;
+    const originalInnerWidth = window.innerWidth;
+
+    const setViewportWidth = (width) => {
+        Object.defineProperty(window, 'innerWidth', {value: width, configurable: true, writable: true});
+    };
+
+    // Place a fresh 240px menu at a click of `x` in a `viewportWidth` window and return
+    // where it landed.
+    const place = (x, viewportWidth) => {
+        setViewportWidth(viewportWidth);
+        const gui = menuBar.createStandaloneMenu('Object', x, 100, false);
+        menuBar.placeMenuBesidePoint(gui, x);
+        const left = parseFloat(gui._standaloneContainer.style.left);
+        const width = parseFloat(gui._standaloneContainer.style.width);
+        gui.destroy();
+        return {left, right: left + width, width, originalLeft: gui.originalLeft};
+    };
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        menuBar = new CGuiMenuBar();
+        const { Globals } = require('../src/Globals');
+        Globals.menuBar = menuBar;
+    });
+
+    afterEach(() => {
+        if (menuBar) menuBar.destroy();
+        setViewportWidth(originalInnerWidth);
+        document.body.innerHTML = '';
+    });
+
+    test('shifts right by half the menu width when there is room', () => {
+        const {left, width} = place(858, 1900);
+        expect(width).toBe(240);
+        expect(left).toBe(858 + 120);
+    });
+
+    test('flips to 1.5 widths left when the right shift would run off screen', () => {
+        // 1600 + 120 + 240 = 1960 > 1900, so it flips
+        expect(place(1600, 1900).left).toBe(1600 - 360);
+        expect(place(1800, 1900).left).toBe(1800 - 360);
+    });
+
+    test('never lets the menu run off either edge', () => {
+        for (const x of [0, 100, 858, 1539, 1540, 1660, 1899]) {
+            const {left, right} = place(x, 1900);
+            expect(left).toBeGreaterThanOrEqual(0);
+            expect(right).toBeLessThanOrEqual(1900);
+        }
+    });
+
+    test('keeps the menu clear of the click when neither offset fits', () => {
+        // A 240px menu at x=200 in a 500px window: the right shift (320) overflows and
+        // the left flip (-160) is off screen. Clamping to 0 would span the click, so it
+        // must go flush right instead, which still clears it.
+        const {left, right} = place(200, 500);
+        expect(left).toBe(260);
+        expect(right).toBe(500);
+        expect(left).toBeGreaterThanOrEqual(200);
+    });
+
+    test('uses the left side when that is the side with room', () => {
+        // x=380 in a 500px window: right shift 500 overflows, left flip 20 fits.
+        expect(place(380, 500).left).toBe(20);
+    });
+
+    test('stays on screen when the menu is too wide to clear the click at all', () => {
+        // 240px menu, 300px window, click in the middle: no placement can clear it.
+        const {left, right} = place(150, 300);
+        expect(left).toBeGreaterThanOrEqual(0);
+        expect(right).toBeLessThanOrEqual(300);
+    });
+
+    test('keeps originalLeft in step so undocking does not snap it back', () => {
+        const {left, originalLeft} = place(858, 1900);
+        expect(originalLeft).toBe(left);
+    });
+});
+
+describe('CGuiMenuBar.pinMenuBelowBar', () => {
+    let menuBar;
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        menuBar = new CGuiMenuBar();
+        const { Globals } = require('../src/Globals');
+        Globals.menuBar = menuBar;
+    });
+
+    afterEach(() => {
+        if (menuBar) menuBar.destroy();
+        document.body.innerHTML = '';
+    });
+
+    test('drops the menu to one menu line below the bar, whatever y it opened at', () => {
+        // jsdom lays nothing out, so the title measures 0 and the barHeight fallback
+        // stands in for one menu line: 25 + 25.
+        for (const y of [100, 500, 900]) {
+            const gui = menuBar.createStandaloneMenu('Object', 400, y, false);
+            expect(gui._standaloneContainer.style.top).toBe(y + 'px');
+            menuBar.pinMenuBelowBar(gui);
+            expect(gui._standaloneContainer.style.top).toBe((menuBar.barHeight * 2) + 'px');
+            expect(gui.originalTop).toBe(menuBar.barHeight * 2);
+            gui.destroy();
+        }
+    });
+
+    test('clears the bar itself', () => {
+        const gui = menuBar.createStandaloneMenu('Object', 400, 800, false);
+        menuBar.pinMenuBelowBar(gui);
+        expect(parseFloat(gui._standaloneContainer.style.top)).toBeGreaterThan(menuBar.barHeight);
+        gui.destroy();
     });
 });

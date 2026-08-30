@@ -18,12 +18,23 @@ import {ViewMan} from "./CViewManager";
 import {mouseInViewOnly, mouseToViewNormalized} from "./ViewUtils";
 import {adjustHeightAboveGround} from "./threeExt";
 
+// Screen size the handles are drawn at, in pixels (updateHandleScales applies these).
+// createArrowGeometry needs the arrow one to express its hit padding in pixels, so both
+// live out here rather than inside that method.
+const DISC_PIXEL_SIZE = 40;
+const ARROW_PIXEL_SIZE = 30;
+
+// How far past the drawn arrow the invisible pick region reaches, in screen pixels.
+const ARROW_HIT_PADDING_PX = 3;
+
 function createArrowGeometry() {
     const shaftRadius = 0.05;
     const headRadius = 0.12;
     const shaftHeight = 1.4;
     const headHeight = 0.8;
-    
+    const shaftCenterY = -0.2;
+    const headCenterY = 0.9;
+
     const shaftGeometry = new CylinderGeometry(shaftRadius, shaftRadius, shaftHeight, 8);
     const headGeometry = new ConeGeometry(headRadius, headHeight, 8);
     
@@ -31,12 +42,42 @@ function createArrowGeometry() {
     const shaftMesh = new Mesh(shaftGeometry);
     const headMesh = new Mesh(headGeometry);
     
-    shaftMesh.position.y = -0.2;
-    headMesh.position.y = 0.9;
+    shaftMesh.position.y = shaftCenterY;
+    headMesh.position.y = headCenterY;
     
     group.add(shaftMesh);
     group.add(headMesh);
-    
+
+    // An invisible, more forgiving thing to actually click on.
+    //
+    // The drawn arrow is a hairline shaft under a cone, and a cone tapers to nothing:
+    // near the tip — the part of an arrow people aim at — the target is a couple of
+    // pixels wide, and the shaft is barely wider. So picking uses a plain cylinder of
+    // the head's FULL base radius, running the whole length of the arrow: the head's
+    // triangle becomes a rectangle whose top is the arrow's tip, and the shaft inherits
+    // the same width. Then ARROW_HIT_PADDING_PX past that in every direction.
+    //
+    // Padding is stated in pixels and converted here because the handle is scaled to a
+    // fixed SCREEN size: updateHandleScales gives y a factor of `arrowMeters` (=
+    // ARROW_PIXEL_SIZE pixels) and x/z twice that, so a pixel is 1/30 of a local unit
+    // along the arrow and 1/60 across it. Constant local padding is therefore constant
+    // pixel padding at every distance.
+    const padAlong = ARROW_HIT_PADDING_PX / ARROW_PIXEL_SIZE;
+    const padAcross = ARROW_HIT_PADDING_PX / (2 * ARROW_PIXEL_SIZE);
+
+    const hitBottom = shaftCenterY - shaftHeight / 2 - padAlong;
+    const hitTop = headCenterY + headHeight / 2 + padAlong;
+    const hitRadius = headRadius + padAcross;
+
+    const hitMesh = new Mesh(
+        new CylinderGeometry(hitRadius, hitRadius, hitTop - hitBottom, 8)
+    );
+    hitMesh.position.y = (hitTop + hitBottom) / 2;
+    // Never drawn, still picked: Three.js's Raycaster does not test .visible. (The same
+    // property is what lets a control point be deleted while the widget hides its cube.)
+    hitMesh.visible = false;
+    group.add(hitMesh);
+
     return group;
 }
 
@@ -195,11 +236,8 @@ export class PointEditorWidget extends EventDispatcher {
         // the render loop calls this once per view immediately before rendering
         // that view, so the gizmo lands at the correct screen-pixel size in
         // each view despite being a single shared Object3D.
-        const discPixelSize = 40;
-        const arrowPixelSize = 30;
-        
-        const discMeters = view.pixelsToMeters(this.object.position, discPixelSize);
-        const arrowMeters = view.pixelsToMeters(this.object.position, arrowPixelSize);
+        const discMeters = view.pixelsToMeters(this.object.position, DISC_PIXEL_SIZE);
+        const arrowMeters = view.pixelsToMeters(this.object.position, ARROW_PIXEL_SIZE);
         
         this.handles.disc.scale.set(discMeters, discMeters, 1);
         

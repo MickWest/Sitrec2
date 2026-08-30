@@ -337,24 +337,12 @@ export class CNode3DObject extends CNode3DGroup {
             .tooltip(t("nodes3dObject.exportToKML.tooltip"))
             .isCommon = true;
 
-        // Reflection Analysis
+        // Reflection Analysis state. The "Reflection Analysis" GUI folder is
+        // hidden - it was never used. The methods in CNode3DObjectReflection.js
+        // stay callable from the console, and dispose() still needs
+        // reflectionArrowIds to exist.
         this.reflectionGridSize = 50;
         this.reflectionArrowIds = [];
-
-        this.reflectionFolder = this.gui.addFolder("Reflection Analysis").close();
-        this.reflectionFolder.isCommon = true;
-
-        this.reflectionFolder.add(this, "startReflectionAnalysis")
-            .name(t("nodes3dObject.startAnalysis.label")).tooltip(t("nodes3dObject.startAnalysis.tooltip")).isCommon = true;
-
-        this.reflectionFolder.add(this, "reflectionGridSize", 5, 100, 1)
-            .name(t("nodes3dObject.gridSize.label")).tooltip(t("nodes3dObject.gridSize.tooltip"))
-            .onFinishChange(() => {
-                if (this.reflectionArrowIds.length > 0) this.startReflectionAnalysis();
-            }).isCommon = true;
-
-        this.reflectionFolder.add(this, "cleanUpReflectionAnalysis")
-            .name(t("nodes3dObject.cleanUp.label")).tooltip(t("nodes3dObject.cleanUp.tooltip")).isCommon = true;
 
         this.rebuild();
 
@@ -1747,6 +1735,10 @@ export class CNode3DObject extends CNode3DGroup {
                     reverseGradient: { value: this.materialParams.reverse ? 1.0 : 0.0 },
                     baseColor: { value: new Color(this.materialParams.baseColor ?? "black") },
                     baseMix: { value: this.materialParams.baseMix ?? 0.0 },
+                    // Fully opaque unless something fades it (see the move widget).
+                    // A ShaderMaterial gets no built-in opacity uniform, so this is
+                    // what material.opacity has to be mirrored into.
+                    opacity: { value: 1.0 },
                     ...sharedUniforms,
                 },
                 vertexShader: gradientVertexShader,
