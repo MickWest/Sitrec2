@@ -32,6 +32,32 @@ KML files can contain **multiple tracks** (e.g., all flights in an area during a
 
 If you know the aircraft's ICAO 24-bit hex address (shown on most flight trackers, e.g. `a1b2c3`), **Contents → Import ADS-B Track...** fetches roughly the **last 24 hours** of its positions directly from [adsb.lol](https://adsb.lol) — no file export needed. The track is named from the aircraft's callsign or registration. You can also drag in a downloaded readsb/tar1090 `trace_full_*.json` file. Geometric (GPS) altitude is used when the trace carries it, with barometric altitude as the fallback. Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery made with it.
 
+### Live ADS-B Traffic (adsb.lol)
+
+**Contents → Live ADS-B Traffic** shows **every aircraft adsb.lol can currently see** around wherever the camera is, updated every few seconds. Each aircraft is a small dart pointing along its course, colored by altitude, with a short trail showing where it has just been:
+
+| Color | Altitude |
+|---|---|
+| Grey | On the ground, or altitude unknown |
+| Red | Below 1,000 ft |
+| Orange | 1,000 – 5,000 ft |
+| Yellow | 5,000 – 10,000 ft |
+| Green | 10,000 – 20,000 ft |
+| Cyan | 20,000 – 30,000 ft |
+| Violet | Above 30,000 ft |
+
+**Traffic Radius** sets how far to look, in nautical miles, up to 250. The **Traffic** readout below it says how many aircraft are being shown, so an empty sky over open ocean can be told apart from a feed that is not working.
+
+Some things worth knowing:
+
+- **It follows the camera, not the sitch origin.** The search is centered on wherever you are currently looking, so flying somewhere else brings up that area's traffic on the next update.
+- **It sets the clock to now and pauses playback.** The feed is the live present, so the scene has to be the present too — otherwise the sun, the sky and the traffic would all disagree. Scrubbing the playhead has no meaning while it is on.
+- **It is not saved with the sitch.** This is a view of the live present, not part of a recreation, so switching it on never changes what a saved sitch contains.
+- **It needs the Sitrec server**, so it is unavailable in the desktop app and other serverless builds.
+- To **analyse** one of these aircraft, use **Import ADS-B Track...** above with its hex address. That gives you a real track with the full 24-hour history and all of Sitrec's measurement tools; the live layer is for situational awareness rather than analysis.
+
+Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery made with it.
+
 ### DJI Drone Data (CSV)
 
 DJI drone flight logs exported from [Airdata](https://airdata.com) in CSV format. These include full IMU data: position, altitude, heading, pitch, roll, and gimbal orientation.

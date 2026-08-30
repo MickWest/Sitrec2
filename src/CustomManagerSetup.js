@@ -1514,6 +1514,92 @@ export const setupMethods = {
             .moveToFirst()
             .tooltip(t("custom.showHide.importADSBTrace.tooltip"))
 
+        // ── Live ADS-B traffic ──────────────────────────────────────────
+        // Every aircraft adsb.lol currently sees around the sitch origin, as one
+        // lightweight instanced layer (src/traffic/CNodeADSBLiveTraffic.js).
+        //
+        // The implementation is loaded on FIRST ENABLE and never before: the
+        // layer, its geometry and the feed client are their own webpack chunk,
+        // so a user who never switches it on never downloads it. The file lives
+        // outside src/nodes/ precisely so that split is possible — RegisterNodes'
+        // require.context would otherwise pull it into the main bundle.
+        this.liveTraffic = false;
+        this._liveTrafficNode = null;
+        this.liveTrafficRadiusNM = 50;
+        this.liveTrafficStatus = "off";
+
+        this._setLiveTraffic = async (on) => {
+            if (!on) {
+                this._liveTrafficNode?.stop();
+                this.liveTrafficStatus = "off";
+                return;
+            }
+            // No PHP server means no proxy, and api.adsb.lol cannot be read from
+            // a browser directly, so say so rather than polling into a wall.
+            if (isServerless) {
+                showError("Live ADS-B traffic needs the Sitrec server, so it is not available in this build.");
+                this.liveTraffic = false;
+                return;
+            }
+
+            // The feed is the present, so the scene has to be the present too:
+            // with the clock left in 2004 the sun, the sky and the shadows would
+            // all disagree with the traffic drawn under them. liveMode keeps the
+            // clock tracking real time rather than freezing at the moment the
+            // layer was switched on, and pauses playback — scrubbing the
+            // playhead has no meaning for a live overlay.
+            GlobalDateTimeNode.liveMode = true;
+            GlobalDateTimeNode.resetNowTimeToCurrent();
+            par.paused = true;
+
+            try {
+                const {CNodeADSBLiveTraffic} = await import(
+                    /* webpackChunkName: "adsb-live" */ "./traffic/CNodeADSBLiveTraffic");
+                if (!this.liveTraffic) return;   // switched off during the import
+
+                if (!this._liveTrafficNode) {
+                    this._liveTrafficNode = new CNodeADSBLiveTraffic({
+                        id: "ADSBLiveTraffic",
+                        radiusNM: this.liveTrafficRadiusNM,
+                    });
+                }
+                this._liveTrafficNode.radiusNM = this.liveTrafficRadiusNM;
+                this._liveTrafficNode.start();
+            } catch (e) {
+                showError("Could not start live ADS-B traffic: " + (e?.message || e));
+                this.liveTraffic = false;
+            }
+        };
+
+        guiMenus.contents.add(this, "liveTraffic")
+            .name(t("custom.showHide.liveTraffic.label"))
+            .moveToFirst()
+            .tooltip(t("custom.showHide.liveTraffic.tooltip"))
+            .onChange(v => this._setLiveTraffic(v));
+
+        guiMenus.contents.add(this, "liveTrafficRadiusNM", 5, 250, 5)
+            .name(t("custom.showHide.liveTrafficRadius.label"))
+            .tooltip(t("custom.showHide.liveTrafficRadius.tooltip"))
+            .onChange(v => {
+                // Takes effect on the next poll rather than forcing one: the
+                // slider fires continuously while dragged, and a fetch per step
+                // would spend the whole rate limit crossing the range once.
+                if (this._liveTrafficNode) this._liveTrafficNode.radiusNM = v;
+            });
+
+        // A readout, not decoration: "on" and "no aircraft in range" and
+        // "error: ..." are three very different states that otherwise look
+        // identical, because all three draw an empty sky.
+        this._liveTrafficStatusControl = guiMenus.contents
+            .add(this, "liveTrafficStatus")
+            .name(t("custom.showHide.liveTrafficStatus.label"))
+            .listen()
+            .disable();
+        setInterval(() => {
+            this.liveTrafficStatus = this._liveTrafficNode
+                ? this._liveTrafficNode.status() : "off";
+        }, 1000);
+
         // ── Sensor-look effects: Thermal + NightVision ──────────────────
         // Created HERE, never in SitCustom.js: SitCustom is a serialized
         // sitch definition, so nodes added there are frozen out of old saves

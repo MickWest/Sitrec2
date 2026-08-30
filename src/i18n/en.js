@@ -1032,6 +1032,22 @@ const en = {
             removeAllTracks: { label: "Remove All Tracks", tooltip: "Remove all tracks from the scene\nThis will not remove the objects, just the tracks\nYou can add them back later by dragging and dropping the files again" },
             addTrackFromCameraLOS: { label: "Track from Camera LOS", tooltip: "Create a two-point synthetic track along the current camera's line of sight.\nFirst point is at the camera, second point is where the LOS hits the ground,\nor 300 miles along the LOS if it does not hit the ground." },
             importADSBTrace: { label: "Import ADS-B Track...", tooltip: "Fetch an aircraft's last ~24 hours of ADS-B positions from adsb.lol\nby its ICAO 24-bit hex address (e.g. a1b2c3), and add it as a track.\nData: adsb.lol (ODbL)" },
+            liveTraffic: {
+                label: "Live ADS-B Traffic",
+                tooltip: "Show every aircraft adsb.lol currently sees around this location,\n"
+                    + "colored by altitude, with a short trail behind each one.\n"
+                    + "Turning this on sets the clock to the current time and pauses playback,\n"
+                    + "so the sky and the traffic agree.\n"
+                    + "Needs the Sitrec server. Data: adsb.lol (ODbL)",
+            },
+            liveTrafficRadius: {
+                label: "Traffic Radius (nm)",
+                tooltip: "How far around this location to look for aircraft, in nautical miles.\nTakes effect on the next update.",
+            },
+            liveTrafficStatus: {
+                label: "Traffic",
+                tooltip: "How many aircraft the live feed is currently reporting.\n\"stale\" means adsb.lol could not be reached and older positions are being shown.",
+            },
         },
         objects: {
             globalScale: { label: "Global Scale", tooltip: "Scale factor applied to all 3D objects in the scene - useful for finding things. Set back to 1 for real size" },

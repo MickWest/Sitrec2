@@ -1,0 +1,529 @@
+/**
+ * CNodeADSBLiveTraffic — every aircraft adsb.lol can currently see near the
+ * sitch origin, drawn as one lightweight layer.
+ *
+ * ONE node for the whole sky, not one per aircraft. A busy area returns 130+
+ * aircraft and a quiet one a handful, and the count changes every poll; giving
+ * each its own CNodeTrack, CNodeDisplayTrack, CNode3DObject and GUI folder
+ * would mean hundreds of nodes churning several times a minute, with a per-frame
+ * getValue cost and a saved sitch carrying the lot. Instead the whole layer is
+ * two draw calls: one InstancedMesh of aircraft darts and one LineSegments of
+ * trails. Individual aircraft are promoted to real tracks on demand, through the
+ * existing "Import ADS-B Track..." path, which fetches that one aircraft's full
+ * 24-hour trace.
+ *
+ * NOT SERIALIZED, deliberately. CustomManagerSerialize writes "anything with a
+ * modSerialize function", so defining none keeps this layer out of every save —
+ * which is right for a view of the live present, and is also what lets the file
+ * live outside src/nodes/ and load as its own webpack chunk (see the dynamic
+ * import in CustomManagerSetup.js). A node under src/nodes/ would be pulled into
+ * the main bundle by RegisterNodes' require.context whatever the import said.
+ *
+ * Data license: adsb.lol data is ODbL — credit "adsb.lol". Fetched live,
+ * never bundled.
+ */
+
+import {
+    BufferAttribute, BufferGeometry, Color, ConeGeometry, DynamicDrawUsage,
+    InstancedMesh, LineBasicMaterial, LineSegments, MeshBasicMaterial, Matrix4,
+    Quaternion, Vector3,
+} from "three";
+import {CNode3DGroup} from "../nodes/CNode3DGroup";
+import * as LAYER from "../LayerMasks";
+import {NodeMan, setRenderOne, Sit} from "../Globals";
+import {ECEFToLLA_radii, LLAToECEFInto} from "../LLA-ECEF-ENU";
+import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
+import {fetchLiveTraffic} from "../ADSBLiveFetch";
+import {dispose} from "../threeExt";
+
+// The feed updates about once a second, but polling that fast is neither
+// necessary nor polite: the proxy caches for 5 s, so anything quicker just
+// re-reads the same cache entry. Motion between polls is dead-reckoned, so the
+// display stays smooth at this rate.
+const POLL_INTERVAL_MS = 5000;
+
+// A position older than this is dropped rather than drawn. The feed includes
+// aircraft last heard some time ago, and dead-reckoning a minute-old position
+// at 500 knots puts the aircraft eight miles from where it is — better to show
+// nothing than to show a confident lie.
+const MAX_POSITION_AGE_SEC = 60;
+
+// How many past positions each aircraft's trail keeps. At one point per poll
+// this is a little over two minutes of history — enough to read a turn, small
+// enough that 200 aircraft cost 200 x 25 x 2 vertices.
+const TRAIL_POINTS = 25;
+
+// Room to grow without reallocating the InstancedMesh every time a busy area
+// gains an aircraft. Above this the extra aircraft are not drawn, and the count
+// is reported so the cap is visible rather than mysterious.
+const MAX_AIRCRAFT = 512;
+
+const KNOTS_TO_MPS = 0.514444;
+
+// The dart geometry's nose axis. A module constant, not a fresh Vector3 per
+// call: setFromUnitVectors is called once per aircraft per poll.
+const DART_NOSE = new Vector3(0, 1, 0);
+
+// Apparent size of an aircraft marker, as a fraction of its distance from the
+// camera — roughly 0.6 degrees, about the size of a fingernail at arm's length.
+// Big enough to see and to read a heading from, small enough that a hundred of
+// them over a city do not merge into one mass.
+const SCREEN_SIZE_FACTOR = 0.011;
+// Clamps in metres, so a marker never collapses to nothing up close nor becomes
+// a landmark in its own right at the horizon.
+const MIN_DART_METRES = 60;
+const MAX_DART_METRES = 4000;
+
+// Altitude bands for colour, in feet. Reading altitude off a colour is the one
+// thing a flat overhead view cannot otherwise convey, and matching the bands
+// most tar1090 users already know means the layer needs no legend to be useful.
+const ALTITUDE_COLORS = [
+    {maxFt: 1000, color: 0xff2d2d},
+    {maxFt: 5000, color: 0xff8c1a},
+    {maxFt: 10000, color: 0xffe01a},
+    {maxFt: 20000, color: 0x6ee01a},
+    {maxFt: 30000, color: 0x1ad0ff},
+    {maxFt: Infinity, color: 0x9a7dff},
+];
+
+function colorForAltitude(altitudeM, onGround) {
+    if (onGround) return 0x999999;
+    if (altitudeM === null) return 0x999999;
+    const ft = altitudeM / 0.3048;
+    for (const band of ALTITUDE_COLORS) {
+        if (ft < band.maxFt) return band.color;
+    }
+    return 0xffffff;
+}
+
+/**
+ * A dart, nose along +Y, so the instance matrix only has to rotate +Y onto the
+ * aircraft's course. A cone is used rather than a loaded aircraft model on
+ * purpose: this is the "simplified object" — one shared geometry across every
+ * instance, no per-type model loading, and readable at the scale where a whole
+ * terminal area is on screen at once.
+ */
+function makeDartGeometry() {
+    // radius, height, radial segments. Four segments gives a flat-sided dart
+    // that reads as directional from above and from the side.
+    const geometry = new ConeGeometry(0.35, 1.4, 4);
+    // ConeGeometry points along +Y already; shift so the origin is the centre of
+    // mass rather than the base, which keeps the aircraft on its reported
+    // position rather than trailing behind it.
+    geometry.translate(0, -0.2, 0);
+    return geometry;
+}
+
+export class CNodeADSBLiveTraffic extends CNode3DGroup {
+    constructor(v) {
+        // HELPERS keeps the layer in the main (analyst) view and out of the look
+        // camera's recreation, which is where a synthetic overlay would be
+        // mistaken for part of the reconstruction being argued about.
+        v.layers ??= LAYER.MASK_HELPERS;
+        super(v);
+
+        this.radiusNM = v.radiusNM ?? 50;
+        this.showTrails = v.showTrails ?? true;
+
+        // hex -> {aircraft record, ecef Vector3, trail: Vector3[], lastSeenMs}
+        this.aircraft = new Map();
+
+        this.polling = false;
+        this.pollTimer = null;
+        this.inFlight = null;
+        this.lastPollMs = 0;
+        this.lastError = null;
+        this.stale = false;
+
+        this._buildMeshes();
+
+        // Scratch objects, reused every frame. At 130 aircraft x 60 fps a fresh
+        // Vector3 per aircraft per frame is ~8000 allocations a second for
+        // nothing; the render loop is exactly where that matters.
+        this._scratchMatrix = new Matrix4();
+        this._scratchScale = new Vector3();
+        this._scratchColor = new Color();
+    }
+
+    _buildMeshes() {
+        const dart = makeDartGeometry();
+        // NO vertexColors here, deliberately. On an InstancedMesh the per-instance
+        // colour comes from the `instanceColor` attribute that setColorAt creates,
+        // which drives the shader on its own. Setting vertexColors:true as well
+        // makes the shader also expect a per-VERTEX `color` attribute on the
+        // geometry — which this geometry does not have, so every dart rendered
+        // black regardless of the colours being written.
+        const material = new MeshBasicMaterial();
+        this.instances = new InstancedMesh(dart, material, MAX_AIRCRAFT);
+        // The matrices change every frame from dead reckoning, so tell three.js
+        // not to assume they are static.
+        this.instances.instanceMatrix.setUsage(DynamicDrawUsage);
+        this.instances.count = 0;
+        this.instances.frustumCulled = false;   // instances span the whole area
+        this.group.add(this.instances);
+
+        // One LineSegments for every trail. Pre-allocated at the maximum so the
+        // geometry is never rebuilt: only the draw range and the vertex data
+        // change as aircraft come and go.
+        const trailVertices = MAX_AIRCRAFT * TRAIL_POINTS * 2;
+        const trailGeometry = new BufferGeometry();
+        trailGeometry.setAttribute('position',
+            new BufferAttribute(new Float32Array(trailVertices * 3), 3).setUsage(DynamicDrawUsage));
+        trailGeometry.setAttribute('color',
+            new BufferAttribute(new Float32Array(trailVertices * 3), 3).setUsage(DynamicDrawUsage));
+        this.trailGeometry = trailGeometry;
+        this.trails = new LineSegments(trailGeometry,
+            new LineBasicMaterial({vertexColors: true, transparent: true, opacity: 0.65}));
+        this.trails.frustumCulled = false;
+        this.group.add(this.trails);
+    }
+
+    // CNode3DGroup exposes the THREE.Group as _object; named here so the intent
+    // reads at the use sites above.
+    get group() {
+        return this._object;
+    }
+
+    // ── Polling ──────────────────────────────────────────────────────────────
+
+    start() {
+        if (this.polling) return;
+        this.polling = true;
+        this.group.visible = true;
+        this._poll();   // immediately, so the layer is not blank for 5 seconds
+        this.pollTimer = setInterval(() => this._poll(), POLL_INTERVAL_MS);
+    }
+
+    stop() {
+        this.polling = false;
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        }
+        // Abort a request already on the wire. Without this a poll that started
+        // just before the layer was switched off still lands, repopulating the
+        // map and drawing aircraft into a layer the user has turned off.
+        this.inFlight?.abort();
+        this.inFlight = null;
+        this.aircraft.clear();
+        this.instances.count = 0;
+        this.trailGeometry.setDrawRange(0, 0);
+        this.group.visible = false;
+        setRenderOne(true);
+    }
+
+    /**
+     * Where to centre the query: the main camera's position, not the sitch
+     * origin.
+     *
+     * Sit.lat/lon is the origin, and in a fresh custom sitch it stays at its
+     * default (32, -118) — the Pacific off Baja — until the user explicitly
+     * runs Reset Origin. Querying there would show an empty sky to anyone who
+     * had simply flown the camera to a city, which looks exactly like a broken
+     * feature. The camera is where the user is actually looking, so that is what
+     * "local traffic" means to them.
+     *
+     * Re-read every poll rather than cached: the poll is on a 5 s timer anyway,
+     * so following the camera costs nothing, and the proxy's cache key rounds
+     * position to 0.1 degrees so small movements still share an upstream fetch.
+     *
+     * ECEFToLLA_radii, not atan2(z, hypot(x,y)): the latter gives GEOCENTRIC
+     * latitude, which differs from the geodetic latitude the feed uses by up to
+     * 0.19 degrees — about 21 km, a material error at these radii.
+     *
+     * ECEFToLLA_radii returns RADIANS despite every other lat/lon in this file
+     * being degrees — the degrees wrapper next to it, unproject(), goes through
+     * the spherical ECEFToLLA and so gives up the geodetic accuracy that is the
+     * whole reason for choosing _radii. So the conversion is done here.
+     */
+    _queryCenter() {
+        const cameraNode = NodeMan.exists("mainCamera") ? NodeMan.get("mainCamera") : null;
+        const p = cameraNode?.camera?.position;
+        if (p) {
+            const [latRad, lonRad] = ECEFToLLA_radii(p.x, p.y, p.z);
+            const lat = latRad * 180 / Math.PI;
+            const lon = lonRad * 180 / Math.PI;
+            if (Number.isFinite(lat) && Number.isFinite(lon)) return {lat, lon};
+        }
+        return {lat: Sit.lat, lon: Sit.lon};
+    }
+
+    async _poll() {
+        if (!this.polling) return;
+        // A poll still running when the next one is due means the network is
+        // slower than the interval. Skipping is right: queuing them would build
+        // a backlog that never drains and would spend rate-limit tokens on data
+        // that is stale by the time it arrives.
+        if (this.inFlight) return;
+
+        const controller = new AbortController();
+        this.inFlight = controller;
+        const center = this._queryCenter();
+        try {
+            const result = await fetchLiveTraffic({
+                lat: center.lat,
+                lon: center.lon,
+                radiusNM: this.radiusNM,
+                signal: controller.signal,
+            });
+            if (!this.polling) return;   // switched off while in flight
+            this._ingest(result);
+            this.lastError = null;
+            this.stale = !!result.stale;
+        } catch (e) {
+            if (e?.name === 'AbortError') return;
+            // A failed poll leaves the previous aircraft on screen rather than
+            // emptying the sky: one dropped request is far more likely than
+            // every aircraft vanishing at once. They age out of
+            // MAX_POSITION_AGE_SEC on their own if the outage persists.
+            this.lastError = e?.message || String(e);
+            console.warn("ADS-B live traffic poll failed:", this.lastError);
+        } finally {
+            if (this.inFlight === controller) this.inFlight = null;
+        }
+    }
+
+    /** Fold one poll's aircraft into the running map, keeping the trails. */
+    _ingest(result) {
+        const nowMs = performance.now();
+        this.lastPollMs = nowMs;
+        const seen = new Set();
+
+        for (const a of result.aircraft) {
+            if (a.positionAgeSec !== null && a.positionAgeSec > MAX_POSITION_AGE_SEC) continue;
+            seen.add(a.hex);
+
+            let entry = this.aircraft.get(a.hex);
+            if (!entry) {
+                entry = {trail: [], ecef: new Vector3()};
+                this.aircraft.set(a.hex, entry);
+            }
+            entry.data = a;
+            entry.lastSeenMs = nowMs;
+            // The reported position is the anchor that dead reckoning advances
+            // from, so it is stored separately from the drawn position.
+            entry.anchor = this._toECEF(a, entry.anchor);
+            entry.anchorMs = nowMs;
+            entry.ecef.copy(entry.anchor);
+            // The course direction and the dart's orientation depend only on the
+            // reported position and track, so they are derived ONCE here rather
+            // than every frame. getLocalNorthVector allocates five vectors per
+            // call and the quaternion needs a normalize; at 130 aircraft times
+            // 60 fps that was the whole per-frame cost of the layer, all of it
+            // recomputing values that change five times a minute.
+            this._updateOrientation(entry, a);
+
+            // One trail point per poll, from the REPORTED position rather than
+            // the dead-reckoned one — a trail of guesses would smoothly record
+            // the error rather than the path.
+            entry.trail.push(entry.anchor.clone());
+            if (entry.trail.length > TRAIL_POINTS) entry.trail.shift();
+        }
+
+        // Drop aircraft that have left the radius or gone quiet. They are
+        // removed on absence from a SUCCESSFUL poll, never on a failed one —
+        // see the catch above.
+        for (const [hex, entry] of this.aircraft) {
+            if (!seen.has(hex)) this.aircraft.delete(hex);
+        }
+
+        this._rebuild();
+    }
+
+    /**
+     * Aircraft position in ECEF.
+     *
+     * The datum conversion is the part that has to be right: LLAToECEF wants
+     * height above the ellipsoid (HAE). A geometric altitude already is one; a
+     * barometric altitude is conventionally MSL and needs the geoid separation
+     * added, which is tens of metres in most of the world. Mixing the two
+     * silently would put half the traffic at the wrong height.
+     */
+    _toECEF(a, target) {
+        const out = target || new Vector3();
+        let altitudeHAE = a.altitudeM;
+        if (altitudeHAE === null) {
+            // On the ground with no figure reported. Sea level is wrong nearly
+            // everywhere, so use the sitch origin's geoid height as the least
+            // wrong available guess and let the terrain hide the difference.
+            altitudeHAE = meanSeaLevelOffset(a.lat, a.lon);
+        } else if (!a.altitudeIsHAE) {
+            altitudeHAE += meanSeaLevelOffset(a.lat, a.lon);
+        }
+        return LLAToECEFInto(a.lat, a.lon, altitudeHAE, out);
+    }
+
+    // ── Drawing ──────────────────────────────────────────────────────────────
+
+    /** Push the current aircraft set into the instance matrices and the trails. */
+    _rebuild() {
+        this._updateCameraPos();
+        let index = 0;
+        let trailVertex = 0;
+        const positions = this.trailGeometry.getAttribute('position');
+        const trailColors = this.trailGeometry.getAttribute('color');
+
+        for (const entry of this.aircraft.values()) {
+            if (index >= MAX_AIRCRAFT) break;
+            const a = entry.data;
+            const colorHex = colorForAltitude(a.altitudeM, a.onGround);
+            this._scratchColor.setHex(colorHex);
+
+            this._writeInstance(index, entry);
+            this.instances.setColorAt(index, this._scratchColor);
+            index++;
+
+            if (this.showTrails && entry.trail.length > 1) {
+                // Line SEGMENTS, so each pair of points is emitted as its own
+                // two vertices. A single LineStrip would join the last point of
+                // one aircraft's trail to the first of the next, drawing a line
+                // across the sky between unrelated aircraft.
+                for (let i = 1; i < entry.trail.length; i++) {
+                    const from = entry.trail[i - 1];
+                    const to = entry.trail[i];
+                    positions.setXYZ(trailVertex, from.x, from.y, from.z);
+                    trailColors.setXYZ(trailVertex, this._scratchColor.r, this._scratchColor.g, this._scratchColor.b);
+                    trailVertex++;
+                    positions.setXYZ(trailVertex, to.x, to.y, to.z);
+                    trailColors.setXYZ(trailVertex, this._scratchColor.r, this._scratchColor.g, this._scratchColor.b);
+                    trailVertex++;
+                }
+            }
+        }
+
+        this.instances.count = index;
+        this.instances.instanceMatrix.needsUpdate = true;
+        if (this.instances.instanceColor) this.instances.instanceColor.needsUpdate = true;
+
+        this.trailGeometry.setDrawRange(0, trailVertex);
+        positions.needsUpdate = true;
+        trailColors.needsUpdate = true;
+
+        setRenderOne(true);
+    }
+
+    /**
+     * Derive an aircraft's course direction and dart orientation from its
+     * reported position and track. Called once per poll, not per frame.
+     *
+     * The direction is built in the aircraft's OWN local frame — its ellipsoid
+     * up and its local north — not in a global one. In ECEF there is no single
+     * "north": an aircraft over Japan and one over Chile have opposite ideas of
+     * it, so a shared basis would leave half the traffic pointing into the
+     * ground.
+     */
+    _updateOrientation(entry, a) {
+        const up = getLocalUpVector(entry.anchor);
+        const north = getLocalNorthVector(entry.anchor);
+
+        // Course is degrees clockwise from north, so rotate north about up by
+        // the NEGATIVE of it: clockwise seen from above is negative about the up
+        // axis in a right-handed frame.
+        const heading = (a.trackDeg ?? 0) * Math.PI / 180;
+        entry.course = north.applyAxisAngle(up, -heading).normalize();
+
+        // Orient the dart's +Y (its nose) onto that direction.
+        entry.quaternion = entry.quaternion || new Quaternion();
+        entry.quaternion.setFromUnitVectors(DART_NOSE, entry.course);
+    }
+
+    /**
+     * Place one instance, sized so it stays roughly constant ON SCREEN.
+     *
+     * A fixed metric size does not work for this layer. The same view has to
+     * serve an approach at four miles and a whole terminal area from ninety, and
+     * a dart big enough to see at ninety miles swamps the airport at four. Under
+     * a perspective camera an object at distance d subtending a fixed angle has
+     * world size d * angle, so scaling by distance is what holds the marker at a
+     * constant apparent size — the same trick a radar display uses.
+     *
+     * The clamp keeps it sane at the extremes: without a floor, an aircraft the
+     * camera is sitting on shrinks to nothing, and without a ceiling one on the
+     * far horizon becomes kilometres across.
+     */
+    _writeInstance(index, entry) {
+        const distance = this._cameraPos
+            ? this._cameraPos.distanceTo(entry.ecef)
+            : 1 / SCREEN_SIZE_FACTOR;   // no camera yet: fall back to unit scale
+        const size = Math.min(MAX_DART_METRES,
+            Math.max(MIN_DART_METRES, distance * SCREEN_SIZE_FACTOR));
+        this._scratchScale.setScalar(size);
+        this._scratchMatrix.compose(entry.ecef, entry.quaternion, this._scratchScale);
+        this.instances.setMatrixAt(index, this._scratchMatrix);
+    }
+
+    /** Cache the camera position for this pass, so it is read once and not per aircraft. */
+    _updateCameraPos() {
+        const cameraNode = NodeMan.exists("mainCamera") ? NodeMan.get("mainCamera") : null;
+        const p = cameraNode?.camera?.position;
+        if (p) {
+            this._cameraPos = this._cameraPos || new Vector3();
+            this._cameraPos.copy(p);
+        }
+    }
+
+    /**
+     * Dead-reckon between polls.
+     *
+     * Five seconds is a long time at 500 knots — about 1.3 km — so without this
+     * the traffic teleports once per poll. Advancing each aircraft along its
+     * reported course and ground speed turns that into continuous motion, and
+     * every poll re-anchors on the truth, so the estimate never accumulates.
+     */
+    update(f) {
+        super.update(f);
+        if (!this.polling || this.aircraft.size === 0) return;
+
+        const nowMs = performance.now();
+        let moved = false;
+
+        // Marker size depends on distance from the camera, so instances have to
+        // be re-placed when the CAMERA moves as well as when the aircraft do.
+        this._updateCameraPos();
+
+        let index = 0;
+        for (const entry of this.aircraft.values()) {
+            if (index >= MAX_AIRCRAFT) break;
+            const a = entry.data;
+            const speed = a.groundSpeedKt;
+            // entry.course was derived at poll time, so the per-frame work is
+            // one multiply-add: position = anchor + course * (speed * elapsed).
+            if (speed && entry.course && !a.onGround) {
+                const elapsedSec = (nowMs - entry.anchorMs) / 1000;
+                const distance = speed * KNOTS_TO_MPS * elapsedSec;
+                entry.ecef.copy(entry.anchor).addScaledVector(entry.course, distance);
+                moved = true;
+            }
+            this._writeInstance(index, entry);
+            index++;
+        }
+
+        this.instances.instanceMatrix.needsUpdate = true;
+        if (moved) {
+            // Only OUR motion needs a repaint requested. A camera move already
+            // triggers one on its own, so asking again there would hold the
+            // render loop hot for no reason — but under render-on-demand,
+            // omitting it here freezes the traffic until something else moves.
+            setRenderOne(true);
+        }
+    }
+
+    /** What the menu readout shows: enough to tell working from broken. */
+    status() {
+        if (!this.polling) return "off";
+        if (this.lastError) return `error: ${this.lastError}`;
+        const count = this.aircraft.size;
+        if (count === 0) return "no aircraft in range";
+        return `${count} aircraft${this.stale ? " (stale)" : ""}`;
+    }
+
+    dispose() {
+        this.stop();
+        this.group.remove(this.instances);
+        this.group.remove(this.trails);
+        dispose(this.instances);
+        dispose(this.trails);
+        super.dispose();
+    }
+}
