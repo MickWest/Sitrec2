@@ -1612,8 +1612,13 @@ export const setupMethods = {
         // three.js geometry and instancing. Splitting the table out too would buy
         // nothing measurable and would risk the menu and the registry drifting
         // apart, which is the failure this table exists to prevent.
+        // moveToFirst: a folder added here otherwise lands below the per-track
+        // folders (cameraDisplayTrack, the satellite tracks, the traverse), each
+        // of which expands to a dozen controls — several screens of scrolling
+        // before the user ever sees these exist.
         const feedsFolder = guiMenus.contents.addFolder(t("custom.showHide.liveFeeds.label"))
-            .tooltip(t("custom.showHide.liveFeeds.tooltip"));
+            .tooltip(t("custom.showHide.liveFeeds.tooltip"))
+            .moveToFirst();
         this._liveFeedNodes = {};
 
         for (const feed of LIVE_FEEDS) {

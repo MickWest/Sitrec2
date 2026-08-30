@@ -30,11 +30,11 @@ KML files can contain **multiple tracks** (e.g., all flights in an area during a
 
 ### ADS-B Trace by Aircraft (adsb.lol)
 
-If you know the aircraft's ICAO 24-bit hex address (shown on most flight trackers, e.g. `a1b2c3`), **Contents → Import ADS-B Track...** fetches roughly the **last 24 hours** of its positions directly from [adsb.lol](https://adsb.lol) — no file export needed. The track is named from the aircraft's callsign or registration. You can also drag in a downloaded readsb/tar1090 `trace_full_*.json` file. Geometric (GPS) altitude is used when the trace carries it, with barometric altitude as the fallback. Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery made with it.
+If you know the aircraft's ICAO 24-bit hex address (shown on most flight trackers, e.g. `a1b2c3`), **Controls → Import ADS-B Track...** fetches roughly the **last 24 hours** of its positions directly from [adsb.lol](https://adsb.lol) — no file export needed. The track is named from the aircraft's callsign or registration. You can also drag in a downloaded readsb/tar1090 `trace_full_*.json` file. Geometric (GPS) altitude is used when the trace carries it, with barometric altitude as the fallback. Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery made with it.
 
 ### Live ADS-B Traffic (adsb.lol)
 
-**Contents → Live ADS-B Traffic** shows **every aircraft adsb.lol can currently see** around wherever the camera is, updated every few seconds. Each aircraft is a small dart pointing along its course, colored by altitude, with a short trail showing where it has just been:
+**Controls → Live ADS-B Traffic** shows **every aircraft adsb.lol can currently see** around wherever the camera is, updated every few seconds. Each aircraft is a small dart pointing along its course, colored by altitude, with a short trail showing where it has just been:
 
 | Color | Altitude |
 |---|---|
@@ -54,6 +54,7 @@ Some things worth knowing:
 - **It sets the clock to now and pauses playback.** The feed is the live present, so the scene has to be the present too — otherwise the sun, the sky and the traffic would all disagree. Scrubbing the playhead has no meaning while it is on.
 - **It is not saved with the sitch.** This is a view of the live present, not part of a recreation, so switching it on never changes what a saved sitch contains.
 - **It needs the Sitrec server**, so it is unavailable in the desktop app and other serverless builds.
+
 **Click an aircraft to promote it to a real track.** A single click on any of the darts fetches that aircraft's full ~24-hour trace and adds it as an ordinary Sitrec track, with all the usual measurement tools — the same thing **Import ADS-B Track...** does, without needing to know the hex address. The Traffic readout says `importing …` while the trace is fetched, which takes a second or two.
 
 Dragging is unaffected: a press that moves before you release is a camera drag, not a click, so you can still orbit and pan starting from anywhere on screen.
@@ -64,7 +65,7 @@ Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery mad
 
 ### Other Live Feeds
 
-**Contents → Live Feeds** overlays other live data on the world. Each has its own on/off switch and a count underneath it, so an empty result can be told apart from a feed that is not working — the count reads `loading…` before the first answer, a number once it has one, and says so plainly when the source is unreachable.
+**Controls → Live Feeds** overlays other live data on the world. Each has its own on/off switch and a count underneath it, so an empty result can be told apart from a feed that is not working — the count reads `loading…` before the first answer, a number once it has one, and says so plainly when the source is unreachable.
 
 | Feed | What | Coverage | Source |
 |---|---|---|---|
