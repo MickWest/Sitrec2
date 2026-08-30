@@ -158,9 +158,16 @@ if (!consumeRateToken($rateLimitFile, 30)) {
 // none by default — and 200 to the identical request with one. It is also the
 // polite thing: the aggregator is volunteer-run and asks callers to identify
 // themselves so it can see who its traffic is.
+//
+// The 10-second timeout is NOT optional for this endpoint. curlGetRequest waits
+// forever by default, and this proxy is polled every few seconds: when
+// api.adsb.lol stalled instead of answering (observed 2026-08-29) every request
+// held a PHP-FPM worker until the pool was exhausted, at which point the whole
+// PHP backend stopped answering — every other server feature with it. A polled
+// upstream must always be given a deadline.
 $result = curlGetRequest($url, [
     'User-Agent: Sitrec/1.0 (+https://www.metabunk.org/sitrec)',
-]);
+], 10);
 $data = $result['data'];
 $httpStatus = $result['http_status'];
 

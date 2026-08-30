@@ -55,8 +55,24 @@ export async function importADSBTraceDialog() {
         },
     });
     if (entered === null) return false; // cancelled
+    return await importADSBTraceByHex(normalizeIcaoHex(entered));
+}
 
-    const hex = normalizeIcaoHex(entered);
+/**
+ * Fetch one aircraft's trace by hex and hand it to the import pipeline.
+ *
+ * Split out of the dialog above so the live-traffic layer can promote a clicked
+ * aircraft to a real track without putting a dialog in front of the user asking
+ * for a hex address they just clicked on.
+ *
+ * Resolves true when a track file was fetched and queued for parsing, false on
+ * failure (which is reported through showError).
+ */
+export async function importADSBTraceByHex(hex) {
+    if (!isValidIcaoHex(hex)) {
+        showError("ADS-B trace import failed", new Error("Not a valid ICAO hex address: " + hex));
+        return false;
+    }
     const url = isServerless
         ? adsbLolTraceURL(hex)
         : SITREC_SERVER + "proxyADSBTrace.php?hex=" + encodeURIComponent(hex);

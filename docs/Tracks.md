@@ -54,7 +54,11 @@ Some things worth knowing:
 - **It sets the clock to now and pauses playback.** The feed is the live present, so the scene has to be the present too — otherwise the sun, the sky and the traffic would all disagree. Scrubbing the playhead has no meaning while it is on.
 - **It is not saved with the sitch.** This is a view of the live present, not part of a recreation, so switching it on never changes what a saved sitch contains.
 - **It needs the Sitrec server**, so it is unavailable in the desktop app and other serverless builds.
-- To **analyse** one of these aircraft, use **Import ADS-B Track...** above with its hex address. That gives you a real track with the full 24-hour history and all of Sitrec's measurement tools; the live layer is for situational awareness rather than analysis.
+**Click an aircraft to promote it to a real track.** A single click on any of the darts fetches that aircraft's full ~24-hour trace and adds it as an ordinary Sitrec track, with all the usual measurement tools — the same thing **Import ADS-B Track...** does, without needing to know the hex address. The Traffic readout says `importing …` while the trace is fetched, which takes a second or two.
+
+Dragging is unaffected: a press that moves before you release is a camera drag, not a click, so you can still orbit and pan starting from anywhere on screen.
+
+The live layer is for situational awareness; promote an aircraft when you want to analyse it.
 
 Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery made with it.
 

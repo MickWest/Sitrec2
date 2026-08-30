@@ -31,6 +31,7 @@ import {
 import {CNode3DGroup} from "../nodes/CNode3DGroup";
 import * as LAYER from "../LayerMasks";
 import {NodeMan, setRenderOne, Sit} from "../Globals";
+import {ViewMan} from "../CViewManager";
 import {ECEFToLLA_radii, LLAToECEFInto} from "../LLA-ECEF-ENU";
 import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
@@ -42,6 +43,20 @@ import {dispose} from "../threeExt";
 // re-reads the same cache entry. Motion between polls is dead-reckoned, so the
 // display stays smooth at this rate.
 const POLL_INTERVAL_MS = 5000;
+
+// A poll that has not answered in this long is abandoned. Without it a single
+// hung request stalls the layer FOREVER: _poll() skips while one is in flight,
+// so a fetch that never settles means no poll ever runs again — and because
+// nothing threw, the readout goes on saying "no aircraft in range", which is the
+// one thing it exists to distinguish from a working empty sky. Three poll
+// intervals, so a merely slow network still gets its answer.
+const POLL_TIMEOUT_MS = 15000;
+
+// After a failure the next poll is delayed by INTERVAL * 2^failures, capped.
+// adsb.lol is volunteer-run and free, and an outage is exactly the moment it can
+// least afford a browser retrying every five seconds forever. It also stops a
+// tab left open overnight burning the proxy's rate limit against a dead feed.
+const MAX_BACKOFF_STEPS = 4;   // 5s -> 10 -> 20 -> 40 -> 80s
 
 // A position older than this is dropped rather than drawn. The feed includes
 // aircraft last heard some time ago, and dead-reckoning a minute-old position
@@ -135,6 +150,9 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         this.lastPollMs = 0;
         this.lastError = null;
         this.stale = false;
+        this.promoting = null;
+        this.consecutiveFailures = 0;
+        this.nextPollAllowedMs = 0;
 
         this._buildMeshes();
 
@@ -207,6 +225,11 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         this.inFlight?.abort();
         this.inFlight = null;
         this.aircraft.clear();
+        // Switching the layer off and on again is the user asking to try now, so
+        // a backoff from a previous outage must not silently delay the retry.
+        this.consecutiveFailures = 0;
+        this.nextPollAllowedMs = 0;
+        this.lastError = null;
         this.instances.count = 0;
         this.trailGeometry.setDrawRange(0, 0);
         this.group.visible = false;
@@ -256,9 +279,20 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         // a backlog that never drains and would spend rate-limit tokens on data
         // that is stale by the time it arrives.
         if (this.inFlight) return;
+        // Backoff gate. The interval timer keeps firing at its normal rate; this
+        // simply declines the ones that fall inside the backoff window, so
+        // recovery needs no timer juggling — the first poll after the window
+        // succeeds and resets it.
+        if (performance.now() < this.nextPollAllowedMs) return;
 
         const controller = new AbortController();
         this.inFlight = controller;
+        // Flagged on the controller rather than held in a variable, so the catch
+        // below can tell a timeout (report it) from stop()'s abort (silent).
+        const timeout = setTimeout(() => {
+            controller.timedOut = true;
+            controller.abort();
+        }, POLL_TIMEOUT_MS);
         const center = this._queryCenter();
         try {
             const result = await fetchLiveTraffic({
@@ -271,17 +305,38 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
             this._ingest(result);
             this.lastError = null;
             this.stale = !!result.stale;
+            this.consecutiveFailures = 0;
+            this.nextPollAllowedMs = 0;
         } catch (e) {
-            if (e?.name === 'AbortError') return;
+            if (e?.name === 'AbortError') {
+                // stop() aborts too, and that one is not a failure to report.
+                if (controller.timedOut) {
+                    this.lastError = "the feed did not respond in time";
+                    console.warn("ADS-B live traffic poll timed out");
+                    this._backOff();
+                }
+                return;
+            }
             // A failed poll leaves the previous aircraft on screen rather than
             // emptying the sky: one dropped request is far more likely than
             // every aircraft vanishing at once. They age out of
             // MAX_POSITION_AGE_SEC on their own if the outage persists.
             this.lastError = e?.message || String(e);
             console.warn("ADS-B live traffic poll failed:", this.lastError);
+            this._backOff();
         } finally {
+            clearTimeout(timeout);
             if (this.inFlight === controller) this.inFlight = null;
         }
+    }
+
+    /** Push the next allowed poll further out after each consecutive failure. */
+    _backOff() {
+        this.consecutiveFailures = Math.min(this.consecutiveFailures + 1, MAX_BACKOFF_STEPS);
+        const delay = POLL_INTERVAL_MS * Math.pow(2, this.consecutiveFailures);
+        this.nextPollAllowedMs = performance.now() + delay;
+        console.warn(`ADS-B live traffic: backing off ${Math.round(delay / 1000)}s`
+            + ` after ${this.consecutiveFailures} failure(s)`);
     }
 
     /** Fold one poll's aircraft into the running map, keeping the trails. */
@@ -509,13 +564,84 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         }
     }
 
-    /** What the menu readout shows: enough to tell working from broken. */
+    // ── Picking ──────────────────────────────────────────────────────────────
+
+    /**
+     * The aircraft nearest a screen point, or null if none is close enough.
+     *
+     * Screen-space proximity, NOT a raycast against the InstancedMesh. A dart is
+     * about 0.6 degrees across, so an exact mesh hit would demand pixel-accurate
+     * aim at a moving target; a radius in pixels is what makes this clickable at
+     * all. It is also the approach findClosestTrack() already uses in
+     * CNodeView3DMouse, so tracks and aircraft behave the same way under the
+     * cursor.
+     *
+     * The projection matches checkTrackSegments() exactly, including
+     * ViewMan.screenOffsetX and the view's leftPx/topPx: mouseX/mouseY arrive as
+     * absolute page coordinates, while project() gives normalised device
+     * coordinates relative to the view, and getting that conversion wrong puts
+     * the hit test in a different place from the cursor.
+     */
+    findAircraftAtScreen(view, mouseX, mouseY, thresholdPx = 16) {
+        if (!this.polling || !view?.camera || !this.group.visible) return null;
+
+        let best = null;
+        let bestDistance = thresholdPx;
+        const containerOffsetX = ViewMan.screenOffsetX || 0;
+        this._scratchScreen = this._scratchScreen || new Vector3();
+
+        for (const [hex, entry] of this.aircraft) {
+            this._scratchScreen.copy(entry.ecef).project(view.camera);
+            // z > 1 is behind the camera; project() still returns a plausible
+            // x/y there, mirrored, so without this an aircraft behind you is
+            // clickable through the back of your head.
+            if (this._scratchScreen.z > 1) continue;
+
+            const sx = (this._scratchScreen.x * 0.5 + 0.5) * view.widthPx + view.leftPx + containerOffsetX;
+            const sy = (1 - (this._scratchScreen.y * 0.5 + 0.5)) * view.heightPx + view.topPx;
+            const distance = Math.hypot(mouseX - sx, mouseY - sy);
+
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = {hex, aircraft: entry.data, distancePx: distance};
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Note that an aircraft is being fetched, so the status readout can say so.
+     *
+     * The trace fetch takes a second or two, and a click with no visible effect
+     * reads as a click that missed — which would have the user clicking again
+     * and queuing a second identical import.
+     */
+    setPromoting(label) {
+        this.promoting = label;
+    }
+
+    /**
+     * What the menu readout shows: enough to tell working from broken.
+     *
+     * Staleness is reported BEFORE the count, and it changes the wording rather
+     * than adding a suffix. A stale empty result used to read as a confident "no
+     * aircraft in range" — the proxy was serving an old cached copy because
+     * adsb.lol was unreachable, and the layer presented that as a quiet sky. That
+     * is precisely the state this readout exists to distinguish, so it must not
+     * be the one state it hides.
+     */
     status() {
         if (!this.polling) return "off";
+        if (this.promoting) return `importing ${this.promoting}…`;
         if (this.lastError) return `error: ${this.lastError}`;
         const count = this.aircraft.size;
+        if (this.stale) {
+            return count === 0
+                ? "feed unreachable — nothing current to show"
+                : `${count} aircraft (stale — feed unreachable)`;
+        }
         if (count === 0) return "no aircraft in range";
-        return `${count} aircraft${this.stale ? " (stale)" : ""}`;
+        return `${count} aircraft`;
     }
 
     dispose() {
