@@ -295,7 +295,21 @@ export class PointEditorWidget extends EventDispatcher {
         if (!this.object || !this.setupRaycasterForEvent(event)) {
             return;
         }
-        
+
+        // Only the left button starts a drag. onPointerMove already ignored the others,
+        // but the dispatch below fired for ANY button — so a right-click on a handle
+        // announced a drag that would never happen. Listeners act on that: PointEditor
+        // snapshots undo state and every view's camera controls go off. With
+        // right-click-deletes-a-control-point that turned into a real fault — the widget
+        // is attached to whichever point the cursor is over, so deleting a point
+        // dispatched 'drag started' (N points), deleted it, then dispatched 'drag ended'
+        // (N-1 points), and the state comparison logged a spurious "Move track control
+        // point" undo on top of the delete. Undoing it wrote N positions into an N-1
+        // array and shifted every point past the deletion.
+        if (event.button !== 0) {
+            return;
+        }
+
         const objectsToTest = [this.handles.disc];
         if (!this.altitudeLocked) {
             objectsToTest.push(this.handles.arrowUp, this.handles.arrowDown);
