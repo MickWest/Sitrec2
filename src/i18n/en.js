@@ -131,6 +131,7 @@ const en = {
                 scriptedVideo: "Scripted Camera Moves",
                 wind: "Wind",
                 traverseConcepts: "Traverse Analysis: the Ideas First",
+                groundTrack: "Ground Track (Points on the Ground)",
                 traverseMethods: "Traverse Methods",
                 traverseAnalysis: "Traverse Analysis and the Verdict",
                 botBench: "BOTBench — Bearings-Only Traversal Bulk Analysis",

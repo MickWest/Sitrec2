@@ -69,6 +69,8 @@ import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightS
 import {CNodeControllerCelestial, CNodeControllerHorizonFlareRegion} from "./nodes/CNodeControllerVarious";
 import {CNodeControllerTrackingWobble} from "./nodes/CNodeControllerTrackingWobble";
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
+import {CNodeGroundTrack} from "./nodes/CNodeGroundTrack";
+import {CNodeGroundTrackLOS} from "./nodes/CNodeGroundTrackLOS";
 import {CNodeAnnotateOverlay} from "./nodes/CNodeAnnotateOverlay";
 import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
 import {CNodeFitCameraPoints} from "./nodes/CNodeFitCameraPoints";
@@ -290,6 +292,35 @@ export const setupMethods = {
             const autoTrackOptionName = "Camera + Point Track";
             if (jetLOS.inputs[autoTrackOptionName] === undefined) {
                 jetLOS.addOption(autoTrackOptionName, autoTrackLOS);
+                jetLOS.controller?.updateDisplay();
+            }
+        }
+
+        // "Camera + Ground Track": points placed ON THE GROUND behind the object, in the look
+        // or main view, rather than on the video. Created here for the same two reasons the
+        // point-track adapter above is — a sitch saved before this existed still gets one on
+        // reload, and the keyframes ride in the node's own mod, which never reaches a node that
+        // does not exist when the mods are applied. Inert until the user places a point:
+        // CNodeGroundTrackLOS falls back to the plain camera LOS while the track is empty.
+        //
+        // Unlike the point-track adapter it needs no video and no FOV — a ground point is a
+        // place, so the line of sight is just camera-to-place. It is offered wherever there is
+        // a camera LOS to start from, video or not.
+        if (Sit.isCustom && NodeMan.exists("JetLOSCameraCenter") && NodeMan.exists("JetLOS")) {
+            if (!NodeMan.exists("groundTrack")) {
+                new CNodeGroundTrack({id: "groundTrack", cameraLOSNode: "JetLOSCameraCenter"});
+            }
+            if (!NodeMan.exists("groundTrackLOS")) {
+                new CNodeGroundTrackLOS({
+                    id: "groundTrackLOS",
+                    cameraLOSNode: "JetLOSCameraCenter",
+                    groundTrack: "groundTrack",
+                });
+            }
+            const jetLOS = NodeMan.get("JetLOS");
+            const groundTrackOptionName = "Camera + Ground Track";
+            if (jetLOS.inputs[groundTrackOptionName] === undefined) {
+                jetLOS.addOption(groundTrackOptionName, NodeMan.get("groundTrackLOS"));
                 jetLOS.controller?.updateDisplay();
             }
         }

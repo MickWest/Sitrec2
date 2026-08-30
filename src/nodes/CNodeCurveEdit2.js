@@ -1511,6 +1511,11 @@ export class CNodeCurveEditor2 extends CNodeTrack {
             config.maxX = Sit.frames;
         }
         
+        // This node owns a WINDOW the user opens and closes deliberately, which means its
+        // visibility must not be driven by the dependency graph — see CNode.showActiveSources,
+        // where selecting any switch downstream of the camera used to re-open this editor.
+        this.isEditorWindow = true;
+
         const viewId = v.id + "View";
         this.editorView = new CNodeCurveEditorView2({
             ...v,

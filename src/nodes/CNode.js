@@ -388,6 +388,17 @@ class CNode {
         // breadth first search
         for (let key in this.inputs) {
             let input = this.inputs[key];
+            // An editor WINDOW is not a display of the thing being selected, it is a tool the
+            // user opens and closes, so its visibility is theirs and not the graph's. Without
+            // this, changing any switch that transitively depends on one re-opened it: picking
+            // a traverse method walked JetLOS -> JetLOSCameraCenter -> lookCamera ->
+            // fovController -> fovSwitch -> fovEditor, and the FOV curve editor popped up over
+            // a sitch that had been saved with it closed. Every other node on such a chain owns
+            // no window, so showing it is invisible and harmless; these are the exception.
+            //
+            // Only the visibility is skipped, not the recursion below — an editor the user HAS
+            // opened still shows its own sources exactly as before.
+            if (input.isEditorWindow) continue;
             if (input.countVisibleOutputs() > 0) {
                 if (!this.visible) console.log("showActiveSources: Showing "+input.id)
                 input.show();
