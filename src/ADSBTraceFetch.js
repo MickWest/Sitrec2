@@ -78,7 +78,11 @@ export async function importADSBTraceByHex(hex) {
         : SITREC_SERVER + "proxyADSBTrace.php?hex=" + encodeURIComponent(hex);
 
     try {
-        const response = await fetch(url);
+        // Without a deadline a stalled host leaves the caller waiting forever —
+        // and the live-traffic layer shows "importing <callsign>…" for as long as
+        // this is outstanding, so a hung fetch means a status line that never
+        // resolves and a user who cannot tell whether it worked.
+        const response = await fetch(url, {signal: AbortSignal.timeout(20000)});
         if (!response.ok) {
             if (response.status === 404) {
                 throw new Error("No trace found for " + hex
@@ -93,7 +97,10 @@ export async function importADSBTraceByHex(hex) {
         await FileManager.parseResult("trace_full_" + hex + ".json", buffer);
         return true;
     } catch (e) {
-        showError("ADS-B trace import failed", e);
+        const message = (e?.name === "TimeoutError" || e?.name === "AbortError")
+            ? new Error("adsb.lol did not respond in time. It may be down — try again shortly.")
+            : e;
+        showError("ADS-B trace import failed", message);
         return false;
     }
 }

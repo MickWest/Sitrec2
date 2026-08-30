@@ -25,18 +25,19 @@
 
 import {
     BufferAttribute, BufferGeometry, Color, ConeGeometry, DynamicDrawUsage,
-    InstancedMesh, LineBasicMaterial, LineSegments, MeshBasicMaterial, Matrix4,
-    Quaternion, Vector3,
+    DoubleSide, InstancedMesh, LineBasicMaterial, LineSegments, MeshBasicMaterial,
+    Matrix4, Quaternion, Vector3,
 } from "three";
 import {CNode3DGroup} from "../nodes/CNode3DGroup";
 import * as LAYER from "../LayerMasks";
-import {NodeMan, setRenderOne, Sit} from "../Globals";
+import {FileManager, NodeMan, setRenderOne, Sit} from "../Globals";
 import {ViewMan} from "../CViewManager";
 import {ECEFToLLA_radii, LLAToECEFInto} from "../LLA-ECEF-ENU";
 import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {fetchLiveTraffic} from "../ADSBLiveFetch";
 import {dispose} from "../threeExt";
+import {getLiveFeedOverlay} from "../livefeeds/LiveFeedOverlay";
 
 // The feed updates about once a second, but polling that fast is neither
 // necessary nor polite: the proxy caches for 5 s, so anything quicker just
@@ -79,6 +80,9 @@ const KNOTS_TO_MPS = 0.514444;
 // The dart geometry's nose axis. A module constant, not a fresh Vector3 per
 // call: setFromUnitVectors is called once per aircraft per poll.
 const DART_NOSE = new Vector3(0, 1, 0);
+// The silhouette is drawn flat in XY, so its "up" — the axis that must be laid
+// onto the local vertical — is +Z.
+const SHAPE_UP = new Vector3(0, 0, 1);
 
 // Apparent size of an aircraft marker, as a fraction of its distance from the
 // camera — roughly 0.6 degrees, about the size of a fingernail at arm's length.
@@ -126,20 +130,43 @@ function colorForAltitude(altitudeM, onGround) {
 }
 
 /**
- * A dart, nose along +Y, so the instance matrix only has to rotate +Y onto the
- * aircraft's course. A cone is used rather than a loaded aircraft model on
- * purpose: this is the "simplified object" — one shared geometry across every
- * instance, no per-type model loading, and readable at the scale where a whole
- * terminal area is on screen at once.
+ * A flat aircraft silhouette — fuselage, swept wings, tailplane — nose along +Y,
+ * lying in the XY plane so it reads as a plan view from above.
+ *
+ * A shape rather than the cone this started as, because at a glance the shape is
+ * what says "aircraft" and, more usefully, which way it is pointing. A cone read
+ * as a blob at the sizes these are drawn. Still ONE shared geometry across every
+ * instance — no per-type models — so it stays the cheap "simplified object" the
+ * layer is built around.
+ *
+ * Two-sided and unlit: seen from below it must not vanish, and there is no
+ * lighting worth respecting on a marker whose colour encodes altitude.
  */
-function makeDartGeometry() {
-    // radius, height, radial segments. Four segments gives a flat-sided dart
-    // that reads as directional from above and from the side.
-    const geometry = new ConeGeometry(0.35, 1.4, 4);
-    // ConeGeometry points along +Y already; shift so the origin is the centre of
-    // mass rather than the base, which keeps the aircraft on its reported
-    // position rather than trailing behind it.
-    geometry.translate(0, -0.2, 0);
+function makeAircraftGeometry() {
+    // Half-width, so the silhouette spans 1.0 across the wings and ~1.4 nose to
+    // tail; the instance scale then means "size on screen" in one number.
+    const v = [
+        // fuselage
+        [0, 0.7], [-0.075, -0.55], [0.075, -0.55],
+        // port wing (swept back)
+        [-0.03, 0.16], [-0.5, -0.3], [-0.03, -0.12],
+        // starboard wing
+        [0.03, 0.16], [0.03, -0.12], [0.5, -0.3],
+        // tailplane
+        [-0.22, -0.62], [0.22, -0.62], [0, -0.4],
+    ];
+    const positions = new Float32Array(v.length * 3);
+    for (let i = 0; i < v.length; i++) {
+        positions[i * 3] = v[i][0];
+        positions[i * 3 + 1] = v[i][1];
+        positions[i * 3 + 2] = 0;
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(positions, 3));
+    // Wound so all four triangles face +Z; the material is DoubleSide anyway, so
+    // the plan view is correct from above and from below.
+    geometry.setIndex([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    geometry.computeVertexNormals();
     return geometry;
 }
 
@@ -180,14 +207,17 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
     }
 
     _buildMeshes() {
-        const dart = makeDartGeometry();
+        const dart = makeAircraftGeometry();
         // NO vertexColors here, deliberately. On an InstancedMesh the per-instance
         // colour comes from the `instanceColor` attribute that setColorAt creates,
         // which drives the shader on its own. Setting vertexColors:true as well
         // makes the shader also expect a per-VERTEX `color` attribute on the
         // geometry — which this geometry does not have, so every dart rendered
         // black regardless of the colours being written.
-        const material = new MeshBasicMaterial();
+        // DoubleSide: the silhouette is a flat plane, so from underneath — which
+        // is where an observer on the ground looks from — a single-sided material
+        // would make every aircraft disappear.
+        const material = new MeshBasicMaterial({side: DoubleSide});
         this.instances = new InstancedMesh(dart, material, MAX_AIRCRAFT);
         // The matrices change every frame from dead reckoning, so tell three.js
         // not to assume they are static.
@@ -248,6 +278,7 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         this.instances.count = 0;
         this.trailGeometry.setDrawRange(0, 0);
         this.group.visible = false;
+        getLiveFeedOverlay().clear();
         setRenderOne(true);
     }
 
@@ -457,14 +488,23 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
                 // two vertices. A single LineStrip would join the last point of
                 // one aircraft's trail to the first of the next, drawing a line
                 // across the sky between unrelated aircraft.
-                for (let i = 1; i < entry.trail.length; i++) {
+                // Faded from tail to head, so the trail reads as a direction of
+                // travel rather than as an undirected line. The oldest point sits
+                // at 15% brightness and the newest at full, which also stops a
+                // dense area filling with equally-bright history.
+                const n = entry.trail.length;
+                for (let i = 1; i < n; i++) {
                     const from = entry.trail[i - 1];
                     const to = entry.trail[i];
+                    const fadeA = 0.15 + 0.85 * ((i - 1) / (n - 1));
+                    const fadeB = 0.15 + 0.85 * (i / (n - 1));
                     positions.setXYZ(trailVertex, from.x, from.y, from.z);
-                    trailColors.setXYZ(trailVertex, this._scratchColor.r, this._scratchColor.g, this._scratchColor.b);
+                    trailColors.setXYZ(trailVertex, this._scratchColor.r * fadeA,
+                        this._scratchColor.g * fadeA, this._scratchColor.b * fadeA);
                     trailVertex++;
                     positions.setXYZ(trailVertex, to.x, to.y, to.z);
-                    trailColors.setXYZ(trailVertex, this._scratchColor.r, this._scratchColor.g, this._scratchColor.b);
+                    trailColors.setXYZ(trailVertex, this._scratchColor.r * fadeB,
+                        this._scratchColor.g * fadeB, this._scratchColor.b * fadeB);
                     trailVertex++;
                 }
             }
@@ -502,8 +542,16 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         entry.course = north.applyAxisAngle(up, -heading).normalize();
 
         // Orient the dart's +Y (its nose) onto that direction.
+        // TWO rotations, not one. setFromUnitVectors alone would point the nose
+        // correctly but leave the flat silhouette at an arbitrary roll about that
+        // axis — edge-on and invisible from directly above for half the traffic.
+        // So: lay the shape's +Z onto local UP first, then spin about that up
+        // axis to bring its +Y nose onto the course.
         entry.quaternion = entry.quaternion || new Quaternion();
-        entry.quaternion.setFromUnitVectors(DART_NOSE, entry.course);
+        entry.quaternion.setFromUnitVectors(SHAPE_UP, up);
+        const nose = DART_NOSE.clone().applyQuaternion(entry.quaternion);
+        const roll = new Quaternion().setFromUnitVectors(nose, entry.course);
+        entry.quaternion.premultiply(roll);
     }
 
     /**
@@ -529,6 +577,24 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         this._scratchScale.setScalar(size);
         this._scratchMatrix.compose(entry.ecef, entry.quaternion, this._scratchScale);
         this.instances.setMatrixAt(index, this._scratchMatrix);
+    }
+
+    /** Forward a hover hit to the shared overlay. */
+    setHoverTarget(hit, mouseX, mouseY) {
+        getLiveFeedOverlay().setHover(hit, mouseX, mouseY);
+    }
+
+    /**
+     * Has this aircraft already been promoted to a full track?
+     *
+     * Checked against the FILE MANAGER rather than a local set, so it still holds
+     * after a reload and after a track imported by any other route — the manual
+     * "Import ADS-B Track…" dialog fetches the same file under the same name.
+     * A local set would forget on reload and re-import a track the user already
+     * has, which is the duplicate this exists to prevent.
+     */
+    isPromoted(hex) {
+        return FileManager.exists("trace_full_" + hex + ".json");
     }
 
     /** Cache the camera position for this pass, so it is read once and not per aircraft. */
@@ -578,6 +644,9 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         }
 
         this.instances.instanceMatrix.needsUpdate = true;
+        // Throttled inside the overlay, so several layers cannot each pay for a
+        // relayout in the same frame.
+        getLiveFeedOverlay().update();
         if (moved) {
             // Only OUR motion needs a repaint requested. A camera move already
             // triggers one on its own, so asking again there would hold the
@@ -585,6 +654,25 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
             // omitting it here freezes the traffic until something else moves.
             setRenderOne(true);
         }
+    }
+
+    /**
+     * What the overlay may label. Only aircraft that HAVE a name worth showing —
+     * a bare hex tells the user nothing they can act on and would crowd out a
+     * callsign that does.
+     */
+    labelCandidates() {
+        const out = [];
+        for (const entry of this.aircraft.values()) {
+            const name = entry.data.callsign || entry.data.registration;
+            if (!name) continue;
+            out.push({
+                ecef: entry.ecef,
+                label: name,
+                color: colorForAltitude(entry.data.altitudeM, entry.data.onGround),
+            });
+        }
+        return out;
     }
 
     // ── Picking ──────────────────────────────────────────────────────────────
@@ -641,6 +729,22 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
      */
     setPromoting(label) {
         this.promoting = label;
+    }
+
+    /**
+     * Say, briefly, that a second click on an already-imported aircraft did
+     * nothing on purpose.
+     *
+     * Silence would be indistinguishable from a click that missed, which is what
+     * sends the user clicking again. Reuses the promoting slot so it appears in
+     * the same place the import progress does.
+     */
+    flashAlreadyImported(label) {
+        this.promoting = `${label} already imported`;
+        clearTimeout(this._promotingTimer);
+        this._promotingTimer = setTimeout(() => {
+            if (this.promoting && this.promoting.endsWith("already imported")) this.promoting = null;
+        }, 3000);
     }
 
     /**

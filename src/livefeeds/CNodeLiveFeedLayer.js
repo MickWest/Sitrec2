@@ -31,6 +31,7 @@ import {ECEFToLLA_radii} from "../LLA-ECEF-ENU";
 import {getKey as byokGetKey} from "../BYOKKeyStore";
 import {Sit} from "../Globals";
 import {dispose} from "../threeExt";
+import {getLiveFeedOverlay} from "./LiveFeedOverlay";
 
 const MAX_MARKERS = 2048;
 
@@ -200,6 +201,7 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         this.lastError = null;
         this.streamFatal = false;
         this.group.visible = false;
+        getLiveFeedOverlay().clear();
         setRenderOne(true);
     }
 
@@ -475,6 +477,11 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         this.instances.setMatrixAt(index, this._scratchMatrix);
     }
 
+    /** Forward a hover hit to the shared overlay. */
+    setHoverTarget(hit, mouseX, mouseY) {
+        getLiveFeedOverlay().setHover(hit, mouseX, mouseY);
+    }
+
     _updateCameraPos() {
         const cameraNode = NodeMan.exists("mainCamera") ? NodeMan.get("mainCamera") : null;
         const p = cameraNode?.camera?.position;
@@ -505,6 +512,23 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
             index++;
         }
         this.instances.instanceMatrix.needsUpdate = true;
+    }
+
+    /**
+     * What the overlay may label.
+     *
+     * Skipped entirely for feeds whose markers are dense and whose names are not
+     * individually interesting — a thousand MMSI numbers is the clutter the
+     * budget exists to prevent, and the hover box is the right way to read one.
+     */
+    labelCandidates() {
+        if (!this.feed.labels) return [];
+        const out = [];
+        for (const m of this.markers) {
+            if (!m.ecef || !m.label) continue;
+            out.push({ecef: m.ecef, label: m.label, color: this.feed.color});
+        }
+        return out;
     }
 
     // ── Picking ──────────────────────────────────────────────────────────────

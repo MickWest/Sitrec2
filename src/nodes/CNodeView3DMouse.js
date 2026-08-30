@@ -183,25 +183,44 @@ export const mouseMethods = {
      * are scattered across the whole view and demanding the user find empty sky
      * to rotate from would make the layer hostile to use.
      */
-    _beginTrafficClick(mouseX, mouseY) {
-        this._trafficClick = null;
-
+    /**
+     * Whatever live-feed thing is under a screen point, in one normalised shape.
+     *
+     * Shared by hover and click so the two can never disagree about what is
+     * under the cursor — a tooltip describing one aircraft while the click
+     * promotes another would be worse than having no tooltip.
+     *
+     * Everything is reached through NodeMan rather than by importing the layers,
+     * because both are lazy chunks and a static import here would pull them into
+     * the main bundle for every user whether or not they ever switch one on.
+     */
+    _liveFeedHitAt(mouseX, mouseY) {
         // The ADS-B layer first: an aircraft promotes to a full track, which is a
         // more useful outcome than an info line, so it wins a tie.
         const traffic = this._trafficLayer();
         if (traffic?.polling) {
             const hit = traffic.findAircraftAtScreen(this, mouseX, mouseY);
             if (hit) {
-                this._trafficClick = {kind: 'aircraft', hex: hit.hex, aircraft: hit.aircraft,
-                    x: mouseX, y: mouseY};
-                return;
+                const a = hit.aircraft;
+                const already = traffic.isPromoted?.(hit.hex);
+                return {
+                    kind: 'aircraft',
+                    hex: hit.hex,
+                    aircraft: a,
+                    layer: traffic,
+                    label: a.callsign || a.registration || hit.hex.toUpperCase(),
+                    detail: [
+                        a.typeCode, a.registration,
+                        a.altitudeM !== null ? `${Math.round(a.altitudeM / 0.3048).toLocaleString()} ft` : null,
+                        a.groundSpeedKt !== null ? `${Math.round(a.groundSpeedKt)} kt` : null,
+                        a.trackDeg !== null ? `hdg ${Math.round(a.trackDeg)}\u00b0` : null,
+                    ].filter(Boolean).join('  \u00b7  '),
+                    hint: already ? 'Track already imported' : 'Click to import its full track',
+                    color: 0xffffff,
+                };
             }
         }
 
-        // Then the generic live-feed layers. Found through NodeMan by id prefix
-        // rather than by importing the registry, so this file stays free of the
-        // lazy chunk — an import here would pull it into the main bundle for
-        // every user whether or not they ever switch a feed on.
         let best = null;
         NodeMan.iterate((id, node) => {
             if (!id.startsWith("LiveFeed_")) return;
@@ -209,10 +228,54 @@ export const mouseMethods = {
             const hit = node.findMarkerAtScreen(this, mouseX, mouseY);
             if (hit && (!best || hit.distancePx < best.distancePx)) best = hit;
         });
-        if (best) {
-            this._trafficClick = {kind: 'marker', marker: best.marker, feed: best.feed,
-                x: mouseX, y: mouseY};
+        if (!best) return null;
+
+        const m = best.marker;
+        const isMil = best.feed.id === 'mil';
+        const already = isMil && this._trafficLayer()?.isPromoted?.(m.hex);
+        return {
+            kind: 'marker',
+            marker: m,
+            feed: best.feed,
+            layer: null,
+            label: m.label,
+            detail: m.detail,
+            hint: m.imageURL ? 'Click to open the live image'
+                : (isMil ? (already ? 'Track already imported' : 'Click to import its full track')
+                    : (m.url ? 'Click to open the source page' : null)),
+            color: best.feed.color,
+        };
+    },
+
+    _beginTrafficClick(mouseX, mouseY) {
+        this._trafficClick = null;
+        const hit = this._liveFeedHitAt(mouseX, mouseY);
+        if (hit) this._trafficClick = {...hit, x: mouseX, y: mouseY};
+    },
+
+    /**
+     * Show a hover box for whatever is under the cursor.
+     *
+     * Skipped entirely while a button is down: during a camera drag the cursor
+     * sweeps across the whole scene, and a tooltip flickering through a hundred
+     * aircraft is both useless and expensive.
+     */
+    _updateLiveFeedHover(mouseX, mouseY) {
+        if (this.mouseDown) return;
+        // Any live layer will do — they all share the one overlay singleton, and
+        // reaching it through a layer keeps this file free of the lazy chunk.
+        let anyLayer = this._trafficLayer();
+        if (!anyLayer?.polling) {
+            NodeMan.iterate((id, node) => {
+                if (!anyLayer?.polling && id.startsWith("LiveFeed_") && node.polling) anyLayer = node;
+            });
         }
+        if (!anyLayer?.setHoverTarget) return;
+        if (!mouseInViewOnly(this, mouseX, mouseY)) {
+            anyLayer.setHoverTarget(null);
+            return;
+        }
+        anyLayer.setHoverTarget(this._liveFeedHitAt(mouseX, mouseY), mouseX, mouseY);
     },
 
     /**
@@ -245,8 +308,19 @@ export const mouseMethods = {
             return;
         }
 
-        const traffic = this._trafficLayer();
-        const label = click.aircraft?.callsign || click.aircraft?.registration || click.hex;
+        const traffic = click.layer || this._trafficLayer();
+        const label = click.label || click.hex;
+
+        // Already imported: do nothing rather than fetch and parse the same
+        // 24-hour trace again. A second import produces a duplicate track sitting
+        // exactly on top of the first, which is invisible until the user tries to
+        // select one — and clicking an aircraft twice is easy, because the marker
+        // does not change appearance after the first click.
+        if (traffic?.isPromoted?.(click.hex)) {
+            console.log(`Live traffic: ${label} (${click.hex}) is already imported`);
+            traffic.flashAlreadyImported?.(label);
+            return;
+        }
         // Shown in the Traffic readout while the fetch runs. A click with no
         // visible effect for a second or two reads as a click that missed, and
         // the user clicks again — queuing a second identical import.
@@ -269,6 +343,12 @@ export const mouseMethods = {
      */
     _openFeedMarker(marker, feed) {
         if (feed.id === 'mil' && marker.hex) {
+            const traffic = this._trafficLayer();
+            if (traffic?.isPromoted?.(marker.hex)) {
+                console.log(`Live feed: ${marker.label} (${marker.hex}) is already imported`);
+                traffic.flashAlreadyImported?.(marker.label);
+                return;
+            }
             console.log(`Live feed: importing full trace for ${marker.label} (${marker.hex})`);
             importADSBTraceByHex(marker.hex);
             return;
@@ -357,6 +437,8 @@ export const mouseMethods = {
 
     onMouseMove(event, mouseX, mouseY) {
         if (!this.mouseEnabled) return;
+
+        this._updateLiveFeedHover(mouseX, mouseY);
 
 //        console.log(this.id+" Mouse Move = "+this.mouseDown+ " Drag mode = "+this.dragMode)
 
