@@ -89,9 +89,46 @@ export const BYOK_PROVIDERS = [
             + 'are sent to OpenRouter and its selected upstream provider.',
         signupURL: 'https://openrouter.ai/settings/keys',
         usage: 'spend',
-        usageModelMatch: id => id.includes('/'),
+        // Custom-endpoint usage is banked under a "custom/" key (see sendToLLMDirect), so
+        // it has to be excluded here or an OpenRouter row would claim it.
+        usageModelMatch: id => id.includes('/') && !id.startsWith('custom/'),
         // OpenRouter returns the exact charged cost with each completion, so no generic
         // per-request rate is needed here. Token-price fallbacks live in BYOKUsage.
+        unitPrice: null,
+        limits: [],
+    },
+    {
+        id: 'custom',
+        label: 'Custom endpoint',
+        category: 'ai',
+        auth: 'key',
+        // The credential is OPTIONAL here, unlike every other provider: a model runner on
+        // your own machine usually wants no key at all, and requiring one would make the
+        // commonest case impossible to express. The dialog reads this to decide whether a
+        // row with no key counts as configured.
+        optionalKey: true,
+        // Renders the address and wire-format controls. The address IS the configuration
+        // for this provider — a key without one reaches nothing.
+        endpoint: true,
+        // The wire protocols on offer, not the vendors. Nearly every self-hosted server
+        // speaks the OpenAI one — Ollama (at /v1), LM Studio, llama.cpp's server, vLLM,
+        // LocalAI, Jan and text-generation-webui all do, and LiteLLM proxies anything else
+        // into it. The Anthropic one is here because gateways such as LiteLLM can serve
+        // that shape too, and Sitrec already has both transports.
+        endpointFormats: {
+            'OpenAI-compatible (/v1/chat/completions)': 'openai',
+            'Anthropic-compatible (/v1/messages)': 'anthropic',
+        },
+        defaultEndpointFormat: 'openai',
+        unlocks: 'Runs the AI assistant against your own server — a model on this machine, '
+            + 'or an endpoint inside your network. Enter its address, pick the wire format '
+            + 'it speaks, and add a key only if it needs one. Nothing is sent anywhere '
+            + 'else, and Sitrec never sees the address.',
+        signupURL: 'https://docs.ollama.com/openai',
+        usage: 'spend',
+        // Banked under "custom/<model>" so a locally-named model cannot be mistaken for a
+        // hosted one with the same id.
+        usageModelMatch: id => id.startsWith('custom/'),
         unitPrice: null,
         limits: [],
     },

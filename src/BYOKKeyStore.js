@@ -173,6 +173,55 @@ export async function setProviderEnabled(provider, enabled) {
     }
 }
 
+// ─── Custom endpoints ──────────────────────────────────────────────────────────────────
+//
+// Where a provider lives, for the ones that are not at a fixed address: a self-hosted or
+// on-premises server, or a local model runner. Stored next to the credential rather than in
+// BYOKUsage's provider config for two reasons — an internal hostname deserves the same
+// local-only treatment as the key it goes with, and BYOKUsage imports BYOKModelCatalog for
+// prices, so a catalogue that had to read the endpoint from there would close an import
+// cycle.
+//
+// Shape: {url, format}. `format` names the wire protocol the server speaks, not the vendor.
+const ENDPOINTS_KEY = 'sitrecByokEndpoints';   // NOT "byok_" — that prefix means "a credential"
+
+let endpoints = {};
+let endpointsPromise = null;
+
+function loadEndpoints() {
+    if (!endpointsPromise) {
+        endpointsPromise = (async () => {
+            try {
+                const stored = await indexedDBManager.getSetting(ENDPOINTS_KEY);
+                endpoints = (stored && typeof stored === 'object') ? stored : {};
+            } catch (e) {
+                endpoints = {};
+            }
+            return endpoints;
+        })();
+    }
+    return endpointsPromise;
+}
+
+// Synchronous, like getCachedKey and for the same reason: the transport needs the address
+// on a path that cannot await. Accurate once primeKeyCache() has run.
+export function getEndpoint(provider) {
+    const e = endpoints[provider];
+    return (e && typeof e.url === 'string' && e.url) ? e : null;
+}
+
+export async function setEndpoint(provider, endpoint) {
+    if (!provider) return;
+    await loadEndpoints();
+    if (endpoint && endpoint.url) endpoints[provider] = {...endpoint};
+    else delete endpoints[provider];
+    try {
+        await indexedDBManager.setSetting(ENDPOINTS_KEY, endpoints);
+    } catch (e) {
+        console.warn('BYOK: could not persist the endpoint for ' + provider, e);
+    }
+}
+
 // Reads the stored credential IGNORING the enable flag. The key dialog is the only
 // legitimate caller — it has to show "Set" for a key that is deliberately switched off.
 // Everything that actually USES a credential must call getKey().
@@ -211,11 +260,18 @@ export async function deleteKey(provider) {
 export async function getAllProviders() {
     try {
         await loadDisabled();
+        await loadEndpoints();
         const all = await indexedDBManager.getAllSettings();
-        return Object.keys(all)
+        const withKeys = Object.keys(all)
             .filter(k => k.startsWith(KEY_PREFIX) && all[k])
-            .map(k => k.slice(KEY_PREFIX.length))
-            .filter(id => !disabledSet.has(id));
+            .map(k => k.slice(KEY_PREFIX.length));
+        // A custom endpoint is configured by its ADDRESS, and usually has no key at all —
+        // so a key-only sweep would report "no BYOK configured" for a working local model
+        // and take its entries back out of the AI Model list.
+        for (const id of Object.keys(endpoints)) {
+            if (endpoints[id]?.url && !withKeys.includes(id)) withKeys.push(id);
+        }
+        return withKeys.filter(id => !disabledSet.has(id));
     } catch (e) {
         return [];
     }
@@ -242,7 +298,9 @@ export async function primeKeyCache() {
     // Re-read rather than trusting the in-memory set: this also runs as the key dialog's
     // resync, and re-reading is the cheap way to be right after any change.
     disabledPromise = null;
+    endpointsPromise = null;
     await loadDisabled();
+    await loadEndpoints();
     try {
         const all = await indexedDBManager.getAllSettings();
         for (const k of Object.keys(all)) {
@@ -269,4 +327,16 @@ export function getCachedKey(provider) {
 
 export function hasCachedKey(provider) {
     return getCachedKey(provider) !== null;
+}
+
+// "Is this provider usable?" — the question the AI Model dropdown actually wants answered.
+//
+// For everything hosted that means a key. For a custom endpoint it means an ADDRESS: a
+// model runner on your own machine normally has no credential, so gating on a key would
+// make the commonest case unreachable. The enable tick still applies to both.
+export function isProviderConfigured(provider) {
+    if (!provider) return false;
+    if (!isProviderEnabled(provider)) return false;
+    if (hasCachedKey(provider)) return true;
+    return provider === 'custom' && !!getEndpoint(provider);
 }

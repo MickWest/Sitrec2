@@ -1862,6 +1862,18 @@ class OptionController extends Controller {
             this.$select.appendChild( $option );
         } );
 
+        // SITREC PATCH (correctness): invalidate the display cache before repainting.
+        //
+        // updateDisplay() below repaints only when the VALUE changed, but options() has
+        // just changed the NAMES. Replacing the list while the value stays put — a dropdown
+        // created with a placeholder such as {"Loading...": ""} and filled in once its
+        // contents are known, with "" still selected — left the placeholder on screen for
+        // ever: the select and _names were correct, only $display was stale.
+        //
+        // NaN is never equal to anything, including itself, so the guard cannot match and
+        // the repaint always happens. Re-apply this when upgrading lil-gui.
+        this._lastDisplayedValue = NaN;
+
         this.updateDisplay();
 
         return this;

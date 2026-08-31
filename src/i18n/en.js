@@ -105,6 +105,7 @@ const en = {
                 about: "About Sitrec",
                 whatsNewDetails: "What's New (Details)",
                 uiBasics: "User Interface Basics",
+                aiAssistant: "The AI Assistant",
                 keyboardShortcuts: "Keyboard Shortcuts",
                 glossary: "Glossary",
                 defensibleAnalysis: "Doing Defensible Analysis",
@@ -974,6 +975,12 @@ const en = {
             msaaSamples: { label: "Antialiasing (MSAA)", tooltip: "Multisample antialiasing on the 3D viewport. Off = fastest, removes the multisample resolve pass. Higher = smoother edges but slower." },
             performancePreset: { label: "Performance Preset", tooltip: "One-click performance presets. Quality = native res + 4x MSAA. Fast/Potato cut render scale, MSAA, terrain detail and fps cap for low-spec laptops. Switches to Custom when you tweak any sub-setting." },
             aiModel: { label: "AI Model", tooltip: "Select the AI model for the chat assistant" },
+            voiceModel: {
+                label: "Voice Model",
+                tooltip: "Which OpenAI realtime model the spoken assistant uses. Needs your "
+                    + "own OpenAI key. Cost is only estimated for models with a published "
+                    + "price on file; others report tokens used and no dollar figure.",
+            },
             enableOldAIModels: {
                 label: "Enable old AI models",
                 tooltip: "Also list superseded model generations from your own API keys. "
@@ -2280,6 +2287,10 @@ const en = {
             // open and that the assistant is waiting rather than thinking.
             listening: "Listening — just talk. Press the microphone again to stop.",
             stopped: "Voice stopped. The microphone is off.",
+            modelInUse: "The spoken assistant's model. Change it in Settings, Voice Model.",
+        },
+        chat: {
+            modelInUse: "The model answering typed questions. Change it in Settings, AI Model.",
         },
         hide: {
             label: "Hide",

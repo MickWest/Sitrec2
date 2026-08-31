@@ -136,15 +136,26 @@ function sanitizeSettings($settings) {
     
     if (isset($settings['chatModel'])) {
         $chatModel = strval($settings['chatModel']);
-        // Aggregators use namespaced model slugs such as openai/gpt-5-mini. Permit
-        // slash-separated non-empty segments, but not traversal, query strings or colons.
-        if ($chatModel === '' || preg_match('/^[a-zA-Z0-9_-]+:[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)*$/', $chatModel)) {
+        // "provider:model". The model half is namespaced differently by every route -
+        // "claude-opus-5", "openai/gpt-5-mini" (aggregator slug), "llama3.2:3b" (a local
+        // model tag) - so segments may be separated by "/" or ":". Each must be non-empty
+        // and free of traversal syntax, query strings and whitespace.
+        if ($chatModel === '' || preg_match('/^[a-zA-Z0-9_-]+:[a-zA-Z0-9._-]+(?:[\/:][a-zA-Z0-9._-]+)*$/', $chatModel)) {
             $sanitized['chatModel'] = $chatModel;
         }
     }
 
     if (isset($settings['enableOldAIModels'])) {
         $sanitized['enableOldAIModels'] = boolval($settings['enableOldAIModels']);
+    }
+
+    if (isset($settings['voiceModel'])) {
+        $voiceModel = strval($settings['voiceModel']);
+        // A bare model id, or empty for "use the default". No provider prefix: unlike
+        // chatModel this always goes to OpenAI's realtime endpoint.
+        if ($voiceModel === '' || preg_match('/^[a-zA-Z0-9._-]+$/', $voiceModel)) {
+            $sanitized['voiceModel'] = $voiceModel;
+        }
     }
 
     if (isset($settings['centerSidebar'])) {

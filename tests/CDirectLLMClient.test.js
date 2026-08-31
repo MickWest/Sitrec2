@@ -6,6 +6,8 @@ import {
     buildSystemPromptParts,
     chat,
     isBYOKProvider,
+    isUsableEndpointURL,
+    resolveEndpoint,
 } from '../src/CDirectLLMClient';
 
 test('only explicit own-key provider tokens select the browser BYOK route', () => {
@@ -862,5 +864,163 @@ describe('chat (OpenRouter BYOK)', () => {
 
         expect(executeCall).not.toHaveBeenCalled();
         expect(result.text).toMatch(/cut off/);
+    });
+});
+
+// A server the user names themselves: a model runner on their own machine, or an endpoint
+// inside their network. The wire formats are the two Sitrec already speaks; what is new is
+// that the address, the auth shape and the header set are all decided by configuration.
+describe('custom endpoint', () => {
+    describe('resolveEndpoint', () => {
+        // Forgiving about where the user stopped typing, because every server documents its
+        // address differently — Ollama says .../v1, a gateway may be quoted in full.
+        test('accepts a base address, with or without a trailing slash', () => {
+            for (const url of ['http://localhost:11434/v1', 'http://localhost:11434/v1/']) {
+                expect(resolveEndpoint(url, 'openai')).toMatchObject({
+                    chatURL: 'http://localhost:11434/v1/chat/completions',
+                    modelsURL: 'http://localhost:11434/v1/models',
+                });
+            }
+        });
+
+        test('honours a full path as given, rather than re-deriving it', () => {
+            // A gateway that mounts the API somewhere unusual is exactly what a custom
+            // endpoint is for; appending a second /chat/completions would break it.
+            expect(resolveEndpoint('https://gw.corp/openai/deployments/x/chat/completions', 'openai'))
+                .toMatchObject({
+                    chatURL: 'https://gw.corp/openai/deployments/x/chat/completions',
+                    modelsURL: 'https://gw.corp/openai/deployments/x/models',
+                });
+        });
+
+        test('uses the path the chosen format actually serves', () => {
+            expect(resolveEndpoint('https://gw.corp/v1', 'anthropic').chatURL)
+                .toBe('https://gw.corp/v1/messages');
+            expect(resolveEndpoint('https://gw.corp/v1', 'openai').chatURL)
+                .toBe('https://gw.corp/v1/chat/completions');
+        });
+
+        test('an empty address resolves to nothing', () => {
+            expect(resolveEndpoint('', 'openai')).toBeNull();
+            expect(resolveEndpoint('   ', 'openai')).toBeNull();
+        });
+    });
+
+    describe('isUsableEndpointURL', () => {
+        test('accepts plain http, which is the whole point on a local machine', () => {
+            expect(isUsableEndpointURL('http://127.0.0.1:11434/v1')).toBe(true);
+            expect(isUsableEndpointURL('https://llm.internal.example/v1')).toBe(true);
+        });
+
+        test('rejects other schemes and credentials in the authority', () => {
+            expect(isUsableEndpointURL('file:///etc/passwd')).toBe(false);
+            expect(isUsableEndpointURL('javascript:alert(1)')).toBe(false);
+            expect(isUsableEndpointURL('ws://localhost:11434')).toBe(false);
+            // A password in the URL would be written to storage in the clear and echoed
+            // back into the dialog; the key field is the place for a credential.
+            expect(isUsableEndpointURL('http://user:pw@localhost:11434/v1')).toBe(false);
+            expect(isUsableEndpointURL('not a url')).toBe(false);
+        });
+    });
+
+    describe('requests', () => {
+        beforeEach(() => { jest.resetAllMocks(); });
+
+        const run = (endpoint, apiKey = '') => chat({
+            apiKey, provider: 'byok-custom', model: 'llama3.2:3b', endpoint,
+            systemPrompt: 'sp', history: [], userText: 'u', tools: [],
+            executeCall: async () => ({success: true}),
+        });
+
+        test('posts OpenAI-format to the resolved address, with no hosted-service extras', async () => {
+            mockFetchSequence([{body: {choices: [{message: {role: 'assistant', content: 'OK'},
+                finish_reason: 'stop'}]}}]);
+
+            const result = await run({url: 'http://127.0.0.1:11434/v1', format: 'openai'});
+
+            const [url, init] = fetch.mock.calls[0];
+            expect(url).toBe('http://127.0.0.1:11434/v1/chat/completions');
+            // No credential was given, so no header: a model runner on your own machine
+            // usually has none, and some reject an empty bearer outright.
+            expect(init.headers.Authorization).toBeUndefined();
+            // OpenRouter's attribution header and session grouping mean nothing here.
+            expect(init.headers['X-Title']).toBeUndefined();
+            expect(JSON.parse(init.body).session_id).toBeUndefined();
+            expect(result.text).toBe('OK');
+        });
+
+        test('posts Anthropic-format to /messages when that is the declared format', async () => {
+            mockFetchSequence([{body: {content: [{type: 'text', text: 'OK'}],
+                stop_reason: 'end_turn', usage: {}}}]);
+
+            const result = await run({url: 'http://127.0.0.1:11434/v1', format: 'anthropic'});
+
+            const [url, init] = fetch.mock.calls[0];
+            expect(url).toBe('http://127.0.0.1:11434/v1/messages');
+            expect(result.text).toBe('OK');
+        });
+
+        // Regression guard, from a failure measured against a real compatible server. A
+        // non-standard request header forces a CORS preflight and must appear in the
+        // server's Access-Control-Allow-Headers; sending Anthropic's browser-access header
+        // to a gateway that has never heard of it killed the whole call as "Failed to
+        // fetch". Every header sent to a server we do not control is a preflight term it
+        // has to know about.
+        test('does not send the Anthropic browser-access header to a custom endpoint', async () => {
+            mockFetchSequence([{body: {content: [{type: 'text', text: 'OK'}],
+                stop_reason: 'end_turn', usage: {}}}]);
+
+            await run({url: 'https://gw.corp/v1', format: 'anthropic'});
+
+            const init = fetch.mock.calls[0][1];
+            expect(init.headers['anthropic-dangerous-direct-browser-access']).toBeUndefined();
+            expect(init.headers['anthropic-version']).toBeDefined();
+            expect(init.headers['x-api-key']).toBeUndefined();     // no key was given
+        });
+
+        test('sends the credential in the shape the chosen format expects', async () => {
+            mockFetchSequence([{body: {choices: [{message: {role: 'assistant', content: 'OK'},
+                finish_reason: 'stop'}]}}]);
+            await run({url: 'https://gw.corp/v1', format: 'openai'}, 'secret-token');
+            expect(fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer secret-token');
+
+            jest.resetAllMocks();
+            mockFetchSequence([{body: {content: [{type: 'text', text: 'OK'}],
+                stop_reason: 'end_turn', usage: {}}}]);
+            await run({url: 'https://gw.corp/v1', format: 'anthropic'}, 'secret-token');
+            expect(fetch.mock.calls[0][1].headers['x-api-key']).toBe('secret-token');
+        });
+
+        test('a key is optional here, unlike every hosted provider', async () => {
+            mockFetchSequence([{body: {choices: [{message: {role: 'assistant', content: 'OK'},
+                finish_reason: 'stop'}]}}]);
+            await expect(run({url: 'http://127.0.0.1:11434/v1', format: 'openai'}))
+                .resolves.toMatchObject({text: 'OK'});
+
+            // ...but it is still required for the hosted ones.
+            await expect(chat({
+                apiKey: '', provider: 'byok-openai', model: 'gpt-5-mini',
+                systemPrompt: 'sp', history: [], userText: 'u', tools: [],
+                executeCall: async () => ({}),
+            })).rejects.toThrow(/API key missing/);
+        });
+
+        test('refuses to send anywhere without a usable address', async () => {
+            await expect(run(null)).rejects.toThrow(/No endpoint address is set/);
+            await expect(run({url: 'file:///etc/passwd', format: 'openai'}))
+                .rejects.toThrow(/not a usable http\(s\) address/);
+            expect(fetch).not.toHaveBeenCalled();
+        });
+
+        // The browser reports a CORS rejection to JavaScript as a bare "Failed to fetch"
+        // with no cause attached, and a self-hosted address hits that far more often than a
+        // hosted one. Naming both possibilities is the difference between a fixable problem
+        // and a mystery.
+        test('explains what a failure to reach a custom endpoint usually means', async () => {
+            global.fetch = jest.fn(async () => { throw new TypeError('Failed to fetch'); });
+
+            await expect(run({url: 'http://127.0.0.1:11434/v1', format: 'openai'}))
+                .rejects.toThrow(/Could not reach http:\/\/127\.0\.0\.1:11434\/v1\/chat\/completions[\s\S]*CORS/);
+        });
     });
 });

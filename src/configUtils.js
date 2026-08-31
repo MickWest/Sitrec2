@@ -58,6 +58,21 @@ export function isAdmin() {
     return Globals.userID === 1 || (isLocal && Globals.userID === 99999999);
 }
 
+// Whose AI prompts get written to the NLU log.
+//
+// DELIBERATELY the two maintainer accounts by id, and NOT isAdmin(): the log records what
+// people typed to the assistant, and the rule is that nobody else's is kept — including
+// other administrators, who are admins for operational reasons and never agreed to have
+// their prompts retained. Globals.userID, not getEffectiveUserID(), so an admin using the
+// "test as user" override cannot turn logging on for the account they are impersonating.
+//
+// The server enforces the same rule independently (sitrecServer/logNLU.php); this check
+// only saves the round trip. A client-side gate alone would be a request nobody makes
+// rather than a log nobody writes.
+export function isNLULoggingUser() {
+    return Globals.userID === 1 || Globals.userID === 99999999;
+}
+
 export function checkLocal() {
     const exactHosts = [getEnv("LOCALHOST", process.env.LOCALHOST), 'localhost', '127.0.0.1', '::1'].filter(Boolean);
     const hostname = window.location.hostname;

@@ -21,13 +21,17 @@
 import {getKey as byokGetKey} from "../BYOKKeyStore";
 import {buildToolSet, buildSystemPrompt} from "../CDirectLLMClient";
 import {emptyUsage} from "../BYOKUsage";
+import {DEFAULT_VOICE_MODEL} from "../BYOKModelCatalog";
 
-// The model, and the only one this module offers. Realtime models are not
-// interchangeable with the chat models in BYOK_MODELS — they are restricted to the
-// /v1/realtime endpoint and cannot be called through chat completions at all — so this is
-// a constant here rather than an entry in the AI Model dropdown, which would let a user
-// select it for typed chat and get an error they could not act on.
-export const VOICE_MODEL = 'gpt-realtime-2';
+// The default model. Realtime models are not interchangeable with the chat models in the
+// AI Model list — they are restricted to /v1/realtime and cannot be called through chat
+// completions at all — which is why they have their own Voice Model dropdown rather than
+// appearing alongside models a user could pick for typed chat and get an error from.
+//
+// Re-exported rather than declared here: the constant lives in BYOKModelCatalog so the
+// dropdown can name the default without importing this lazily-loaded module. See the note
+// there.
+export const VOICE_MODEL = DEFAULT_VOICE_MODEL;
 
 // The spoken voice. Kept as a named constant because an unrecognised voice name is
 // rejected at session configuration time, and the roster changes as models ship; if a
@@ -93,7 +97,7 @@ export function toRealtimeTools(tools) {
 // looks like from JavaScript) and we fall through. A real HTTP error — a bad key, no
 // credit — is a different thing entirely and is rethrown, because falling back on those
 // would just reproduce the same failure one request later with a worse error message.
-async function mintEphemeralKey(apiKey) {
+async function mintEphemeralKey(apiKey, model) {
     let res;
     try {
         res = await fetch(CLIENT_SECRETS_URL, {
@@ -106,7 +110,7 @@ async function mintEphemeralKey(apiKey) {
             // accepts it. The tool list depends on the loaded sitch and grows during a
             // session (see discoverSpecialistTools), so it has to be settable over the data
             // channel anyway; configuring it in one place means the two paths cannot drift.
-            body: JSON.stringify({session: {type: 'realtime', model: VOICE_MODEL}}),
+            body: JSON.stringify({session: {type: 'realtime', model}}),
         });
     } catch (e) {
         // Network-level rejection: blocked preflight, offline, or a proxy in the way.
@@ -177,6 +181,10 @@ export class CVoiceSession {
      */
     constructor(options) {
         this.options = options;
+        // Pinned for the session's lifetime rather than read per request: the ephemeral
+        // key is minted FOR a model, so a mid-session change would leave the token and the
+        // SDP exchange disagreeing about which model is being connected to.
+        this.model = options.model || DEFAULT_VOICE_MODEL;
         this.pc = null;
         this.dc = null;
         this.micStream = null;
@@ -248,7 +256,7 @@ export class CVoiceSession {
 
         let token;
         try {
-            token = await mintEphemeralKey(apiKey);
+            token = await mintEphemeralKey(apiKey, this.model);
         } catch (e) {
             this._stopMic();
             throw new Error(`OpenAI refused the key: ${e.message}`);
@@ -339,7 +347,7 @@ export class CVoiceSession {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
-        const sdpResponse = await fetch(`${CALLS_URL}?model=${encodeURIComponent(VOICE_MODEL)}`, {
+        const sdpResponse = await fetch(`${CALLS_URL}?model=${encodeURIComponent(this.model)}`, {
             method: 'POST',
             body: offer.sdp,
             headers: {
@@ -388,7 +396,7 @@ export class CVoiceSession {
             type: 'session.update',
             session: {
                 type: 'realtime',
-                model: VOICE_MODEL,
+                model: this.model,
                 instructions,
                 // "low" is OpenAI's own recommendation for voice agents: a spoken reply
                 // that arrives two seconds late reads as a broken assistant, and the work

@@ -1,6 +1,6 @@
 import {CNodeViewText} from "./CNodeViewText";
 import {GlobalDateTimeNode, Globals, guiMenus, markSitchDirty, withTestUser} from "../Globals";
-import {SITREC_APP, SITREC_SERVER} from "../configUtils";
+import {SITREC_APP, SITREC_SERVER, isNLULoggingUser} from "../configUtils";
 import {sitrecAPI} from "../CSitrecAPI";
 import {getEnvBool} from "../envUtils";
 import {ModelFiles} from "./CNode3DObject";
@@ -9,7 +9,9 @@ import {t} from "../i18n";
 import {AI_DOC_CHAR_LIMIT, getChatAvailableDocs} from "../docsRegistry";
 import {linkifyToHTML} from "../linkify";
 import {mirrorMenuItem} from "../MenuMirror";
-import {getKey as byokGetKey} from "../BYOKKeyStore";
+import {getKey as byokGetKey, getEndpoint as byokGetEndpoint} from "../BYOKKeyStore";
+import {probeEndpointResidency} from "../BYOKModelCatalog";
+import {DEFAULT_VOICE_MODEL} from "../BYOKModelCatalog";
 import {formatTurnUsage, recordUsage} from "../BYOKUsage";
 import {
     buildSystemPromptParts,
@@ -205,6 +207,15 @@ class CNodeViewChat extends CNodeViewText {
             // beyond this line.
             this.voiceButton = this.uiBar.addIcon(
                 '\u{1F3A4}', () => this.toggleVoice(), t("misc.voice.start"), 'voice', true);
+            // Which model is answering, in the header. The assistant has two of them — the
+            // typed one and, while the microphone is live, OpenAI's realtime one — and
+            // which is in use changes cost by roughly an order of magnitude, so it should
+            // not be something you have to open Settings to find out.
+            //
+            // In the LEFT group, immediately after the microphone that switches it, rather
+            // than trailing the window controls on the right where it would read as
+            // belonging to them.
+            this.modelLabel = this.uiBar.addLabel('', '', 'model', true);
             // A second microphone in the menu bar, left of the version panel. The header
             // one lives in auto-hiding view chrome that can be scrolled past, collapsed or
             // closed, so it is not a dependable "you are being recorded" indicator on its
@@ -219,6 +230,9 @@ class CNodeViewChat extends CNodeViewText {
                 // Mirror the Settings "AI Model" dropdown here so the model can be switched
                 // straight from the Assistant header; it stays in sync with Settings.
                 mirrorMenuItem('chatModel', m, {name: 'AI Model'});
+                // ...and the spoken one, for the same reason and more so: the microphone
+                // that uses it is two icons away in this very header.
+                mirrorMenuItem('voiceModel', m, {name: 'Voice Model'});
             }
             return;
         }
@@ -309,9 +323,12 @@ class CNodeViewChat extends CNodeViewText {
             const {CVoiceSession, VOICE_MODEL} = await import(
                 /* webpackChunkName: "voice" */ "../voice/CVoiceSession");
             if (cancelled()) return;
-            this.voiceModel = VOICE_MODEL;
+            // Read once, here, so every usage record for this session is attributed to the
+            // model it actually ran on even if the setting is changed while it is live.
+            this.voiceModel = Globals.settings.voiceModel || VOICE_MODEL;
 
             const session = new CVoiceSession({
+                model: this.voiceModel,
                 getContext: () => ({
                     sitrecDoc: sitrecAPI.getLLMDocumentation(),
                     menuSummary: sitrecAPI.getMenuSummary(),
@@ -457,6 +474,38 @@ class CNodeViewChat extends CNodeViewText {
         super.dispose();
     }
 
+    // What the header says is answering right now.
+    //
+    // Recomputed from the settings each time rather than cached at selection: the model can
+    // change through the Settings dropdown, the mirrored copy in this view's own header
+    // menu, a restored session, or the assistant being asked to change it — and a label
+    // that is wrong is worse than no label.
+    _activeModelText() {
+        // A live microphone is a different model on a different API, so it wins over the
+        // typed selection for as long as it lasts.
+        if (this.voiceSession?.active || this.voiceStarting) {
+            return `\u{1F3A4} ${this.voiceModel || Globals.settings.voiceModel
+                || DEFAULT_VOICE_MODEL}`;
+        }
+        const setting = Globals.settings.chatModel || '';
+        if (!setting) return '';
+        // "provider:model" — the model half is the informative part, and the provider is
+        // already implied by whether "(your key)" appears in the AI Model list.
+        const model = setting.split(':').slice(1).join(':') || setting;
+        return model;
+    }
+
+    _updateModelLabel() {
+        if (!this.modelLabel) return;
+        const text = this._activeModelText();
+        if (text === this._modelLabelText) return;      // DOM writes only on a real change
+        this._modelLabelText = text;
+        this.modelLabel.textContent = text;
+        this.modelLabel.title = (this.voiceSession?.active || this.voiceStarting)
+            ? t("misc.voice.modelInUse")
+            : t("misc.chat.modelInUse");
+    }
+
     // Paint both microphone buttons — the view header's and the menu bar's — from one
     // state, so they can never disagree about whether the page is recording.
     _setVoiceButtonState(state) {
@@ -482,6 +531,9 @@ class CNodeViewChat extends CNodeViewText {
             btn.title = title;
             btn.setAttribute('aria-label', title);
         }
+
+        // The microphone changes which model answers, so the header label moves with it.
+        this._updateModelLabel();
 
         // The menu-bar copy has room for a word, and a word is what reads at a glance from
         // across the screen — the header copy sits in a cramped icon row and keeps to the
@@ -668,6 +720,42 @@ class CNodeViewChat extends CNodeViewText {
         if (recordInHistory) this.chatHistory.push({ role: 'bot', text });
     }
 
+    // ── "Still working" ──────────────────────────────────────────────────────────────
+    //
+    // A turn can take three minutes on a local model and there is no way to show real
+    // progress: the prefill that accounts for nearly all of that wait happens inside the
+    // server, which reports it only to its own log, and streaming cannot help because no
+    // token exists until prefill has finished. So the honest thing to show is not a
+    // progress bar but a clock — it distinguishes "working" from "hung", which is the
+    // question the user actually has.
+    //
+    // Written straight to the pane and NEVER to chatHistory: it is a note about the model,
+    // not words the model said, and historyToAnthropicMessages() would replay it as an
+    // assistant turn.
+    startThinkingIndicator(note = null) {
+        this.stopThinkingIndicator();
+        const div = document.createElement('div');
+        div.style.margin = '4px 0';
+        div.style.color = 'var(--cnodeview-debug-color)';
+        this.chatLog.insertBefore(div, this.promptLine);
+        const startedAt = Date.now();
+        const paint = () => {
+            const s = Math.round((Date.now() - startedAt) / 1000);
+            const elapsed = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+            div.textContent = `Thinking… ${elapsed}${note ? ' — ' + note : ''}`;
+        };
+        paint();
+        this._thinking = {div, timer: setInterval(paint, 1000)};
+        this.scrollToBottom();
+    }
+
+    stopThinkingIndicator() {
+        if (!this._thinking) return;
+        clearInterval(this._thinking.timer);
+        this._thinking.div.remove();
+        this._thinking = null;
+    }
+
     // Add debug message to chat log (if enabled)
     addDebugMessage(text) {
         if (!sitrecAPI.debug) return;
@@ -813,13 +901,20 @@ class CNodeViewChat extends CNodeViewText {
     // turns sharing one buffer would erase each other's failures.
     async sendToLLM(text) {
         const turn = newTurn();
+        this.startThinkingIndicator();
         try {
             const timeString = GlobalDateTimeNode.timeWithTimeZone(new Date());
             const simDate = GlobalDateTimeNode.dateNow ? GlobalDateTimeNode.dateNow.toISOString() : null;
 
             const chatModelSetting = Globals.settings.chatModel || "";
-            const [provider, model] = chatModelSetting.includes(':')
-                ? chatModelSetting.split(':')
+            // Split on the FIRST colon only. A model id may contain more of them — Ollama
+            // tags its models "gpt-oss:20b", "llama3.2:latest" — and a plain split() threw
+            // the tag away, sending "gpt-oss" and getting "model not found" back. It went
+            // unnoticed against llama3.2 purely because Ollama resolves a bare name to its
+            // :latest tag, so the truncated id happened to work.
+            const colon = chatModelSetting.indexOf(':');
+            const [provider, model] = colon > 0
+                ? [chatModelSetting.slice(0, colon), chatModelSetting.slice(colon + 1)]
                 : [null, null];
 
             // BYOK: the user picked a "(your key)" model, so call its direct browser route
@@ -887,6 +982,9 @@ class CNodeViewChat extends CNodeViewText {
             this.addSystemMessage("[error contacting server]");
             console.error(e);
         } finally {
+            // Always, on every exit path — a turn that threw must not leave a clock
+            // ticking for ever next to a stopped conversation.
+            this.stopThinkingIndicator();
             this.endTurn(turn);
         }
     }
@@ -906,13 +1004,39 @@ class CNodeViewChat extends CNodeViewText {
     async sendToLLMDirect(text, provider, model, simDate, turn) {
         const keyProvider = keyProviderForBYOK(provider);
         const apiKey = await byokGetKey(keyProvider);
-        if (!apiKey) {
+        // A user-named server is configured by its ADDRESS; the credential is optional,
+        // because a model running on your own machine usually has none.
+        const endpoint = keyProvider === "custom" ? byokGetEndpoint("custom") : null;
+        if (keyProvider === "custom" && !endpoint) {
+            this.addSystemMessage("[No endpoint address is set. Add one under Settings → API Keys → "
+                + "Custom endpoint, or choose a different AI Model.]");
+            return;
+        }
+        if (!apiKey && keyProvider !== "custom") {
             // Name the service that actually failed. This said "Anthropic" for every BYOK
             // provider, so an OpenAI key problem was reported against the wrong account.
             const label = {openrouter: "OpenRouter", openai: "OpenAI", anthropic: "Anthropic"}
                 [keyProvider] ?? "AI provider";
             this.addSystemMessage(`[No ${label} API key stored. Add one under Settings → AI Key, or choose a different AI Model.]`);
             return;
+        }
+
+        // Warn BEFORE sending if the model has to be loaded first. On a user-named server
+        // that is the difference between a three-second reply and a three-minute one, and
+        // nothing about the request itself reveals it. Folded into the ticking line rather
+        // than added as its own message: it is context for the wait, not part of the
+        // conversation, and it disappears with the clock when the answer arrives.
+        //
+        // Only asked of a custom endpoint, and only believed when the server actually
+        // answers — a server that does not implement /api/ps tells us nothing, and a
+        // warning we cannot stand behind is worse than none.
+        if (keyProvider === "custom") {
+            const {supported, resident} = await probeEndpointResidency(model);
+            if (supported && !resident) {
+                this.startThinkingIndicator(
+                    `${model} is not loaded yet, so this first reply may take a few minutes. `
+                    + `Later ones are much faster.`);
+            }
         }
 
         let changesSerializedState = false;
@@ -941,6 +1065,7 @@ class CNodeViewChat extends CNodeViewText {
                 apiKey,
                 provider,
                 model,
+                endpoint,
                 // Split by stability so callAnthropic can put a cache breakpoint at each
                 // boundary — see buildSystemPromptParts(). The concatenated string is not
                 // needed here; callAnthropic assembles the blocks itself.
@@ -992,8 +1117,12 @@ class CNodeViewChat extends CNodeViewText {
             // it to the running total shown in Settings. Failures here must never take
             // down the chat turn itself.
             if (result.usage) {
-                this.addDebugMessage(formatTurnUsage(model, result.usage));
-                recordUsage(model, result.usage)
+                // Banked under "custom/<model>" for a user-named server, so a local model
+                // called "gpt-4o" cannot land in OpenAI's spend row — the ids are chosen
+                // by whoever runs the server and can collide with anything.
+                const usageKey = keyProvider === "custom" ? `custom/${model}` : model;
+                this.addDebugMessage(formatTurnUsage(usageKey, result.usage));
+                recordUsage(usageKey, result.usage)
                     .catch(e => console.warn('BYOK usage not recorded:', e));
             }
 
@@ -1011,7 +1140,12 @@ class CNodeViewChat extends CNodeViewText {
         } catch (e) {
             // Surface the provider's own message — an invalid or expired key is the
             // most likely cause and the user is the only one who can fix it.
-            const label = keyProvider === "openrouter" ? "OpenRouter" : "Anthropic";
+            //
+            // Name the service that actually failed. This was a two-way ternary, so every
+            // provider that is not OpenRouter was reported as "Anthropic" — an OpenAI or
+            // custom-endpoint failure blamed on the wrong account entirely.
+            const label = {openrouter: "OpenRouter", openai: "OpenAI", anthropic: "Anthropic",
+                custom: "Endpoint"}[keyProvider] ?? "AI provider";
             this.addSystemMessage(`[${label} error: ${e && e.message ? e.message : e}]`);
             console.error(e);
         }
@@ -1052,6 +1186,11 @@ class CNodeViewChat extends CNodeViewText {
     }
 
     async logUnhandledLLMCall(prompt, apiCalls, textResponse = null) {
+        // Only the maintainer's own prompts are logged. Everyone else's turn is never sent
+        // at all, so there is nothing for the server to decline. logNLU.php enforces the
+        // same rule for itself — this is the near half of the same gate, not the whole of
+        // it. (The BYOK path never reaches here in the first place; see sendToLLMDirect.)
+        if (!isNLULoggingUser()) return;
         try {
             await fetch(withTestUser(SITREC_SERVER + 'logNLU.php'), {
                 method: 'POST',
@@ -1170,6 +1309,12 @@ class CNodeViewChat extends CNodeViewText {
 
 
     update(f) {
+        // Cheap enough to do every frame — one string build and an early return unless it
+        // actually changed — and doing it here means the label cannot go stale no matter
+        // which of the several paths altered the selection (Settings, the mirrored copy in
+        // this header, a restored session, or the assistant changing it itself).
+        this._updateModelLabel();
+
         // find what document element has focus
         const focusedElement = document.activeElement;
         // log it

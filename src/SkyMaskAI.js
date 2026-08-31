@@ -93,7 +93,10 @@ export async function maskGroundWithAI(margin = 0) {
     if (!chatModel.includes(":")) {
         return {error: "No AI model selected - pick one in Settings > AI Model"};
     }
-    const [provider, model] = chatModel.split(":");
+    // First colon only: a model id may contain more of them (Ollama tags look like
+    // "gpt-oss:20b"), and a plain split() silently truncates the id to its family name.
+    const colon = chatModel.indexOf(":");
+    const [provider, model] = [chatModel.slice(0, colon), chatModel.slice(colon + 1)];
 
     let response;
     try {

@@ -119,6 +119,7 @@ Each key goes to exactly one destination — the provider that issued it:
 | Anthropic | `api.anthropic.com` | Runs the AI assistant on your account |
 | OpenAI | `api.openai.com` | Runs the typed and spoken assistant on your account |
 | OpenRouter | `openrouter.ai` | Runs OpenAI-family models through OpenRouter on your account |
+| Custom endpoint | the address you enter | Runs the assistant on your own server |
 | Google | `tile.googleapis.com` | Photorealistic 3D tiles |
 | Cesium Ion | Cesium Ion servers | Terrain and building tilesets |
 | Windy | `api.windy.com` | Worldwide live webcams |
@@ -159,8 +160,9 @@ no update needed.
 Two things are left out, both because they cannot run the assistant rather than as a
 judgement about them: models for a different job entirely (embeddings, speech, images,
 moderation, video), and the web-search and deep-research variants, which bring their own
-fixed tool set and refuse Sitrec's. The spoken assistant's realtime models are also absent
-from the typed list — they are reached by the microphone button instead.
+fixed tool set and refuse Sitrec's. The spoken assistant's realtime models are absent from
+the typed list too — they serve a different API and get their own **Voice Model** dropdown,
+just below AI Model in Settings.
 
 Anything else your key lists is offered. If one of them turns out not to work, the
 provider's own message says so and names the model. The list is refreshed when you change
@@ -180,6 +182,46 @@ which covers the same upstream models. It is fetched without any key and tells t
 nothing about you. Where a model is not on that list, Sitrec shows the tokens it used and
 no dollar figure, rather than inventing one. As always, the provider's own dashboard is the
 authority.
+
+### Your own server: local models and internal endpoints
+
+**Custom endpoint** points the assistant at a server you run — a model on this machine, or
+an endpoint inside your network — instead of a hosted provider. Enter three things:
+
+- **Address.** Where the API lives, for example `http://localhost:11434/v1` for Ollama,
+  `http://localhost:1234/v1` for LM Studio, or `https://llm.internal.example/v1` for a
+  gateway. A base address is enough; the exact call paths are shown underneath so you can
+  see what Sitrec will request. If your server mounts the API somewhere unusual, paste the
+  full path to the completions endpoint and that is used as given.
+- **Format.** The wire protocol the server speaks, not the vendor. **OpenAI-compatible** is
+  the right answer for almost everything self-hosted — Ollama (at its `/v1` path), LM
+  Studio, llama.cpp's server, vLLM, LocalAI, Jan, text-generation-webui, and LiteLLM, which
+  can put that shape in front of almost anything else. **Anthropic-compatible** is there for
+  gateways that serve `/v1/messages`.
+- **Key** — optional, and usually not needed for a model running on your own machine. Leave
+  it empty and no credential header is sent at all.
+
+Press **Test** to check the address before starting a conversation. It reports which of the
+three things went wrong — nothing listening, the origin not permitted, or a rejected key —
+and lists the models it found.
+
+**The one thing that usually needs configuring is CORS.** A browser will only talk to
+another origin if that origin says it may, and most local servers permit only requests from
+`localhost` by default. Sitrec is not served from localhost, so you have to add its origin.
+For Ollama that means setting `OLLAMA_ORIGINS` to include the address shown in the dialog
+before starting it; other servers have an equivalent setting. This is a property of every
+browser, not something Sitrec can work around.
+
+Plain `http://` addresses work even though Sitrec itself is served over HTTPS, as long as
+they are on this machine (`localhost` or `127.0.0.1`) — browsers treat the local machine as
+trusted for this purpose. An address on your network that is not this machine will need
+`https://`, because browsers refuse plain HTTP to anywhere else from a secure page.
+
+Two consequences of running your own model are worth stating plainly: **the conversation
+still leaves the browser**, to your server, with the same system instructions, tool
+definitions and tool results any other route sends — the difference is that you control
+where it lands. And **cost cannot be estimated**, because Sitrec has no price for a model it
+has never heard of; the usage readout reports tokens used and no dollar figure.
 
 ### The OpenAI key
 
@@ -209,6 +251,13 @@ Three things about the spoken assistant are worth knowing before you supply a ke
   conversation is much more expensive than the same conversation typed. Sitrec's usage
   readout reports audio and text tokens separately for exactly this reason, and the
   spending limit you set at OpenAI is the protection that actually binds.
+
+**Choosing a voice model.** Settings → **Voice Model** lists every realtime model your
+OpenAI key can reach. Leaving it on *Default* uses `gpt-realtime-2`, which is the one with
+a published price on file, so the usage readout can estimate what a conversation cost.
+Another model may work perfectly well and simply report the tokens it used with no dollar
+figure — the usage report says so where that happens. The Assistant window's header shows
+which model is answering, and switches to the voice one while the microphone is open.
 
 While the session is live, **both** microphone buttons — the one in the Assistant header and
 the one in the menu bar, left of the version number — turn into a pulsing red badge, and the

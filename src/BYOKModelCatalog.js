@@ -20,9 +20,18 @@
 // where importing CDirectLLMClient here would close a cycle through BYOKUsage.
 
 import {indexedDBManager} from './IndexedDBManager';
-import {getKey} from './BYOKKeyStore';
+import {getEndpoint, getKey, isProviderEnabled} from './BYOKKeyStore';
 
 const CATALOG_KEY = 'sitrecModelCatalog';   // NOT "byok_" — that prefix means "a credential"
+
+// Bump whenever the SHAPE of a stored entry changes, so an existing cache is refetched
+// instead of being read with the wrong assumptions. Without this the voice models were
+// invisible for up to a day after the update that added them: the cached entries were
+// written by a build that filtered the realtime family out entirely, and the freshness
+// window below had no reason to think anything had changed.
+//   1 — {id, label, created}
+//   2 — adds `kind` ('chat' | 'voice')
+const CATALOG_VERSION = 2;
 // A day is short enough to pick up a new release promptly and long enough that the usual
 // session costs nothing. Any key change refreshes immediately regardless (see the dialog's
 // resync), so this only governs the passive case.
@@ -39,7 +48,8 @@ const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 // not to work, the provider's own error says so, naming the model.
 //
 // 'realtime' is excluded because it is a different API entirely (WebRTC, see
-// src/voice/), not because it is unsuitable; the voice session reaches it separately.
+// src/voice/), not because it is unsuitable; it is collected separately below and offered
+// in the Voice Model dropdown instead.
 const OPENAI_NON_CHAT = [
     'embedding', 'whisper', 'tts', 'transcribe', 'image', 'moderation', 'sora',
     'audio', 'realtime', '-instruct', 'davinci', 'babbage',
@@ -53,10 +63,51 @@ function isOpenAIChatModel(id) {
     return !OPENAI_NON_CHAT.some(bad => lower.includes(bad));
 }
 
+// The spoken assistant's models: the realtime family, which serves /v1/realtime over
+// WebRTC and cannot be called through chat completions at all.
+//
+// Two of them are realtime models that are not conversational assistants — the whisper one
+// only transcribes and the translate one only translates — so neither can drive Sitrec.
+function isOpenAIVoiceModel(id) {
+    const lower = String(id).toLowerCase();
+    if (!lower.includes('realtime')) return false;
+    return !['whisper', 'translate', 'transcribe'].some(bad => lower.includes(bad));
+}
+
+// Chat and voice models come from one /v1/models call and are told apart by this tag.
+// Entries cached before the tag existed have none, and default to 'chat' — which is what
+// they were, since the voice family was filtered out entirely back then.
+export const KIND_CHAT = 'chat';
+export const KIND_VOICE = 'voice';
+
+// What the spoken assistant uses unless the user picks otherwise.
+//
+// It lives here rather than in src/voice/CVoiceSession.js because that module is lazily
+// imported — nothing pulls it in until the microphone is first pressed — and the Voice
+// Model dropdown has to name the default at startup. Importing it from there would drag
+// the whole WebRTC chunk into the main bundle and undo that split.
+//
+// gpt-realtime-2 specifically, and not simply the newest realtime model, because it is the
+// one with a verified price in BYOKUsage's table: a user who never opens the dropdown gets
+// a working cost estimate. Anything else they choose deliberately may report tokens
+// without a dollar figure, which the usage report states plainly.
+export const DEFAULT_VOICE_MODEL = 'gpt-realtime-2';
+
+// The model-list address for a user-named server. Deliberately a small local copy of the
+// rule in CDirectLLMClient.resolveEndpoint rather than an import: this module is read by
+// BYOKUsage for prices, so importing CDirectLLMClient here would close a cycle.
+function resolveEndpointURLs(rawURL, format) {
+    const url = String(rawURL || '').trim().replace(/\/+$/, '');
+    if (!url) return null;
+    const chatPath = format === 'anthropic' ? '/messages' : '/chat/completions';
+    const base = url.endsWith(chatPath) ? url.slice(0, -chatPath.length) : url;
+    return {modelsURL: `${base}/models`, base};
+}
+
 // ─── In-memory state ──────────────────────────────────────────────────────────────────
 // Read synchronously by getCatalogModels() and catalogPricesFor(), both of which sit on
 // paths (dropdown rebuild, per-turn usage pricing) that cannot await.
-let catalog = {fetchedAt: 0, byProvider: {}, prices: {}};
+let catalog = {version: CATALOG_VERSION, fetchedAt: 0, byProvider: {}, prices: {}};
 let primed = null;
 
 export async function primeModelCatalog() {
@@ -64,7 +115,15 @@ export async function primeModelCatalog() {
         primed = (async () => {
             try {
                 const stored = await indexedDBManager.getSetting(CATALOG_KEY);
-                if (stored && typeof stored === 'object' && stored.byProvider) catalog = stored;
+                if (stored && typeof stored === 'object' && stored.byProvider) {
+                    // A catalogue from an older shape keeps its PRICES — those are just a
+                    // lookup table and did not change — but its model lists are discarded
+                    // and refetched, since what was filtered out of them has changed.
+                    catalog = stored.version === CATALOG_VERSION
+                        ? stored
+                        : {version: CATALOG_VERSION, fetchedAt: 0, byProvider: {},
+                           prices: stored.prices || {}};
+                }
             } catch (e) {
                 // An unreadable catalogue just means "fall back to the built-in list".
             }
@@ -108,10 +167,13 @@ async function fetchOpenAIModels(apiKey) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
     return (data.data || [])
-        .filter(m => isOpenAIChatModel(m.id))
+        .filter(m => isOpenAIChatModel(m.id) || isOpenAIVoiceModel(m.id))
         // OpenAI publishes no display name, so the id is the label. It is also what the
         // user will see quoted back in any error, which makes it the more useful string.
-        .map(m => ({id: m.id, label: m.id, created: (m.created || 0) * 1000}));
+        .map(m => ({
+            id: m.id, label: m.id, created: (m.created || 0) * 1000,
+            kind: isOpenAIVoiceModel(m.id) ? KIND_VOICE : KIND_CHAT,
+        }));
 }
 
 async function fetchOpenRouterModels(apiKey) {
@@ -127,10 +189,47 @@ async function fetchOpenRouterModels(apiKey) {
         .map(m => ({id: m.id, label: m.name || m.id, created: (m.created || 0) * 1000}));
 }
 
+// A server the user named. Both wire formats answer GET <base>/models in OpenAI's shape —
+// Ollama, LM Studio, llama.cpp, vLLM and LiteLLM all do — so one fetcher covers both.
+//
+// Nothing is filtered. The chat/voice denylists exist to keep OpenAI's hundred-odd
+// special-purpose models out of the list; a server someone stood up themselves serves what
+// they chose to put on it, and second-guessing that would be the stale-table mistake again.
+async function fetchCustomModels(apiKey) {
+    const endpoint = getEndpoint('custom');
+    if (!endpoint?.url) return [];
+    const resolved = resolveEndpointURLs(endpoint.url, endpoint.format);
+    if (!resolved) return [];
+    const headers = {};
+    if (apiKey) {
+        // Send BOTH shapes. The endpoint's format tells us which chat protocol it speaks,
+        // but its model list is OpenAI-shaped either way and gateways differ over which
+        // header guards it; an unexpected one is ignored.
+        headers['Authorization'] = `Bearer ${apiKey}`;
+        headers['x-api-key'] = apiKey;
+    }
+    const res = await fetch(resolved.modelsURL, {headers});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+    // Ollama's native /api/tags uses {models:[{name}]}; accept it too, since a user may
+    // well paste the address without the /v1.
+    const list = Array.isArray(data.data) ? data.data
+        : (Array.isArray(data.models) ? data.models : []);
+    return list
+        .map(m => ({
+            id: m.id ?? m.name,
+            label: m.id ?? m.name,
+            created: (m.created || 0) * 1000,
+            kind: KIND_CHAT,
+        }))
+        .filter(m => typeof m.id === 'string' && m.id.length > 0);
+}
+
 const FETCHERS = {
     anthropic: fetchAnthropicModels,
     openai: fetchOpenAIModels,
     openrouter: fetchOpenRouterModels,
+    custom: fetchCustomModels,
 };
 
 export const AI_KEY_PROVIDERS = Object.keys(FETCHERS);
@@ -191,6 +290,39 @@ export function catalogPricesFor(model) {
     return null;
 }
 
+// Is this model already loaded on a user-named server, and so able to answer quickly?
+//
+// A local model that is not resident pays twice before it says a word: loading ~20 GB of
+// weights, then processing the WHOLE prompt. Sitrec sends about 18,000 tokens (the system
+// prompt plus ~105 tool definitions), and a 27B model prefills at roughly 100 tokens a
+// second, so a cold "Hello" takes about three minutes and a warm one takes three seconds.
+// Measured on an M-series Mac, 2026-08-31. The difference is entirely invisible from the
+// client — same request, same 200 response — which is why it is worth asking first.
+//
+// Ollama's /api/ps reports what is loaded. It is a native endpoint, not part of the
+// OpenAI-compatible surface, so a server that has never heard of it 404s or refuses; that
+// is reported as `supported: false` and the caller must then say NOTHING rather than
+// invent a warning it cannot stand behind.
+export async function probeEndpointResidency(model) {
+    const endpoint = getEndpoint('custom');
+    if (!endpoint?.url || !model) return {supported: false, resident: false};
+    const resolved = resolveEndpointURLs(endpoint.url, endpoint.format);
+    if (!resolved) return {supported: false, resident: false};
+    // /api/ps is a sibling of /api/tags, one level above the OpenAI-compatible /v1 base.
+    const psURL = resolved.base.replace(/\/(v1|api)$/, '') + '/api/ps';
+    try {
+        const res = await fetch(psURL);
+        if (!res.ok) return {supported: false, resident: false};
+        const data = await res.json();
+        if (!Array.isArray(data?.models)) return {supported: false, resident: false};
+        const loaded = data.models.some(m => m.model === model || m.name === model);
+        return {supported: true, resident: loaded};
+    } catch (e) {
+        // Not reachable, or not an Ollama-shaped server. Either way we know nothing.
+        return {supported: false, resident: false};
+    }
+}
+
 // ─── Refresh ──────────────────────────────────────────────────────────────────────────
 
 // Fetches the catalogue for every AI provider whose key is set AND enabled. A provider
@@ -209,7 +341,12 @@ export async function refreshModelCatalog({force = false} = {}) {
         // getKey() honours the per-provider enable flag, so a key switched off in the
         // dialog stops contributing models — the same rule the rest of the app follows.
         const apiKey = await getKey(keyProvider);
-        if (!apiKey) { delete next[keyProvider]; return; }
+        // A custom endpoint is configured by its ADDRESS; its key is optional, so absence
+        // of one is not absence of a provider.
+        const configured = keyProvider === 'custom'
+            ? (isProviderEnabled('custom') && !!getEndpoint('custom'))
+            : !!apiKey;
+        if (!configured) { delete next[keyProvider]; return; }
         try {
             const models = await FETCHERS[keyProvider](apiKey);
             if (models.length > 0) { next[keyProvider] = models; anySucceeded = true; }
@@ -234,6 +371,7 @@ export async function refreshModelCatalog({force = false} = {}) {
     }
 
     catalog = {
+        version: CATALOG_VERSION,
         // Only stamp a successful sweep, so a failed one is retried rather than cached.
         fetchedAt: anySucceeded ? Date.now() : (catalog.fetchedAt || 0),
         byProvider: next,
@@ -245,10 +383,12 @@ export async function refreshModelCatalog({force = false} = {}) {
 
 // Newest first, so a just-released model is the first thing in the list rather than buried
 // among a decade of dated snapshots.
-export function getCatalogModels(keyProvider) {
+export function getCatalogModels(keyProvider, kind = KIND_CHAT) {
     const models = catalog.byProvider?.[keyProvider];
     if (!Array.isArray(models) || models.length === 0) return null;
-    return [...models].sort((a, b) => (b.created || 0) - (a.created || 0));
+    const wanted = models.filter(m => (m.kind ?? KIND_CHAT) === kind);
+    if (wanted.length === 0) return null;
+    return wanted.sort((a, b) => (b.created || 0) - (a.created || 0));
 }
 
 // ─── Current generation ───────────────────────────────────────────────────────────────

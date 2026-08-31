@@ -17,7 +17,11 @@
 //    the fold. Each row is now a compact header (enable, name, state, spend, buttons) with
 //    a one-line summary, and the detail opens on click.
 
-import {deleteKey, getKeyRaw, isProviderEnabled, setKey, setProviderEnabled} from './BYOKKeyStore';
+import {
+    deleteKey, getEndpoint, getKeyRaw, isProviderEnabled, setEndpoint, setKey,
+    setProviderEnabled,
+} from './BYOKKeyStore';
+import {isUsableEndpointURL, resolveEndpoint} from './CDirectLLMClient';
 import {
     LIMIT_DEFS, PROVIDER_CATEGORIES, providersByCategory, visibleProviders,
 } from './BYOKProviders';
@@ -67,6 +71,72 @@ async function promptForCredential(provider) {
         {title: provider.label, okLabel: 'Save', inputType: 'password'});
     if (entered === null) return undefined;   // cancelled
     return entered.trim();
+}
+
+function textField(value, placeholder, onCommit, width = '100%') {
+    const input = el('input', `width:${width}; padding:3px 6px; font-family:inherit;`
+        + 'font-size:11px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box;');
+    input.type = 'text';
+    input.placeholder = placeholder;
+    input.value = value ?? '';
+    // Commit on blur/Enter rather than per-keystroke: a half-typed URL would otherwise be
+    // stored, and every keystroke would trigger a re-render that steals the caret.
+    input.addEventListener('blur', () => onCommit(input.value.trim()));
+    input.addEventListener('keydown', e => {
+        e.stopPropagation();                       // don't let Sitrec's global keys fire
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    });
+    return input;
+}
+
+function selectField(options, value, onChange) {
+    const sel = el('select', 'padding:2px 4px; font-family:inherit; font-size:11px;'
+        + 'border:1px solid #ccc; border-radius:4px;');
+    for (const [label, val] of Object.entries(options)) {
+        const opt = el('option', '', label);
+        opt.value = val;
+        if (val === value) opt.selected = true;
+        sel.appendChild(opt);
+    }
+    sel.addEventListener('keydown', e => e.stopPropagation());
+    sel.addEventListener('change', () => onChange(sel.value));
+    return sel;
+}
+
+// Ask the endpoint for its model list and report, in one line, which of the three things
+// that can go wrong did.
+//
+// This exists because the failure a self-hosted endpoint actually produces is a browser
+// CORS rejection, which reaches JavaScript as a bare "Failed to fetch" with no cause
+// attached — the explanation is in the devtools console, where nobody thinks to look.
+// Guessing once, out loud, is worth far more here than a generic error.
+async function testEndpoint(url, format, apiKey) {
+    if (!isUsableEndpointURL(url)) return {ok: false, text: 'Not a usable http(s) address.'};
+    const resolved = resolveEndpoint(url, format);
+    const headers = {};
+    if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+        headers['x-api-key'] = apiKey;
+    }
+    let res;
+    try {
+        res = await fetch(resolved.modelsURL, {headers});
+    } catch (e) {
+        return {ok: false, text: `Could not reach ${resolved.modelsURL}. Either nothing is `
+            + `listening there, or the server is not allowing requests from `
+            + `${globalThis.location?.origin ?? 'this page'} (CORS).`};
+    }
+    if (!res.ok) {
+        return {ok: false, text: `Reached it, but it answered HTTP ${res.status} for `
+            + `${resolved.modelsURL}.` + (res.status === 401 || res.status === 403
+                ? ' That usually means the API key is wrong or missing.' : '')};
+    }
+    const data = await res.json().catch(() => ({}));
+    const list = Array.isArray(data.data) ? data.data : (Array.isArray(data.models) ? data.models : []);
+    if (list.length === 0) return {ok: true, text: 'Reached it, but it listed no models.'};
+    const names = list.map(m => m.id ?? m.name).filter(Boolean);
+    return {ok: true, text: `Reached it. ${names.length} model(s): `
+        + names.slice(0, 4).join(', ') + (names.length > 4 ? '…' : '')};
 }
 
 function numberField(value, placeholder, onCommit) {
@@ -159,7 +229,12 @@ export async function showKeyDialog(onKeysChanged = null) {
                 + 'text-transform:uppercase; letter-spacing:0.06em; color:#666;', catLabel));
 
             for (const provider of providers) {
-                const isSet = hasKey[provider.id];
+                const hasCredential = hasKey[provider.id];
+                const savedEndpoint = provider.endpoint ? getEndpoint(provider.id) : null;
+                // What counts as "set" differs for a user-named server: its ADDRESS is the
+                // configuration and the credential is optional, because a model runner on
+                // your own machine normally has none.
+                const isSet = provider.endpoint ? !!savedEndpoint : hasCredential;
                 const enabled = isProviderEnabled(provider.id);
                 const isOpen = expanded.has(provider.id);
                 const usage = usageByProvider[provider.id] || {};
@@ -209,22 +284,24 @@ export async function showKeyDialog(onKeysChanged = null) {
                 const spendText = await summaryUsageText(provider, usage, cfg);
                 if (spendText) head.appendChild(el('span', 'font-size:10px; color:#777;', spendText));
 
-                head.appendChild(BTN(isSet ? 'Change' : 'Set…', async e => {
-                    e.stopPropagation();
-                    const value = await promptForCredential(provider);
-                    if (value === undefined) return;             // cancelled
-                    if (value === '') {
-                        if (isSet) await deleteKey(provider.id);
-                    } else {
-                        await setKey(provider.id, value);
-                    }
-                    await changed();
-                    await render();
-                }, 'primary'));
-                if (isSet) {
+                head.appendChild(BTN(hasCredential ? 'Change' : (provider.optionalKey ? 'Key…' : 'Set…'),
+                    async e => {
+                        e.stopPropagation();
+                        const value = await promptForCredential(provider);
+                        if (value === undefined) return;             // cancelled
+                        if (value === '') {
+                            if (hasCredential) await deleteKey(provider.id);
+                        } else {
+                            await setKey(provider.id, value);
+                        }
+                        await changed();
+                        await render();
+                    }, 'primary'));
+                if (hasCredential || savedEndpoint) {
                     head.appendChild(BTN('Clear', async e => {
                         e.stopPropagation();
                         await deleteKey(provider.id);
+                        if (provider.endpoint) await setEndpoint(provider.id, null);
                         await changed();
                         await render();
                     }, 'danger'));
@@ -257,6 +334,72 @@ export async function showKeyDialog(onKeysChanged = null) {
                     desc.appendChild(a);
                 }
                 body.appendChild(desc);
+
+                // ── Address and wire format ──────────────────────────────────────────
+                if (provider.endpoint) {
+                    const cfg0 = savedEndpoint || {};
+                    const format = cfg0.format || provider.defaultEndpointFormat || 'openai';
+
+                    const urlRow = el('div', 'display:flex; align-items:center; gap:6px;'
+                        + 'margin-top:6px; font-size:11px; color:#555;');
+                    urlRow.appendChild(el('span', 'white-space:nowrap;', 'Address'));
+                    urlRow.appendChild(textField(cfg0.url || '',
+                        'http://localhost:11434/v1', async v => {
+                            if (v && !isUsableEndpointURL(v)) {
+                                status.textContent = 'That is not a usable http(s) address.';
+                                status.style.color = '#b3261e';
+                                return;
+                            }
+                            await setEndpoint(provider.id, v ? {url: v, format} : null);
+                            await changed();
+                            await render();
+                        }));
+                    body.appendChild(urlRow);
+
+                    const fmtRow = el('div', 'display:flex; align-items:center; gap:6px;'
+                        + 'margin-top:4px; font-size:11px; color:#555;');
+                    fmtRow.appendChild(el('span', 'white-space:nowrap;', 'Format'));
+                    fmtRow.appendChild(selectField(provider.endpointFormats || {}, format,
+                        async v => {
+                            await setEndpoint(provider.id,
+                                cfg0.url ? {url: cfg0.url, format: v} : null);
+                            await changed();
+                            await render();
+                        }));
+                    // The one thing worth being able to check without starting a
+                    // conversation: whether the address is reachable AND permits this
+                    // origin. A CORS rejection reaches JavaScript as a bare "Failed to
+                    // fetch", so without this the commonest failure is silent.
+                    const testBtn = BTN('Test', async () => {
+                        status.style.color = '#5f6368';
+                        status.textContent = 'Testing…';
+                        const result = await testEndpoint(cfg0.url, format,
+                            await getKeyRaw(provider.id));
+                        status.style.color = result.ok ? '#137333' : '#b3261e';
+                        status.textContent = result.text;
+                    });
+                    if (!cfg0.url) testBtn.disabled = true;
+                    fmtRow.appendChild(testBtn);
+                    body.appendChild(fmtRow);
+
+                    const status = el('div', 'font-size:11px; color:#5f6368; margin-top:4px;'
+                        + 'line-height:1.4;');
+                    body.appendChild(status);
+
+                    // Where the effective URLs land, so a wrong guess about how much of
+                    // the path to paste is visible rather than mysterious.
+                    if (cfg0.url && isUsableEndpointURL(cfg0.url)) {
+                        const r = resolveEndpoint(cfg0.url, format);
+                        body.appendChild(el('div', 'font-size:10px; color:#999; margin-top:2px;'
+                            + 'word-break:break-all;',
+                            `Chat: ${r.chatURL}    Models: ${r.modelsURL}`));
+                    }
+                    body.appendChild(el('div', 'font-size:10px; color:#999; margin-top:4px;'
+                        + 'line-height:1.4;',
+                        'The server must permit this page\u2019s origin ('
+                        + (globalThis.location?.origin ?? '') + '). For Ollama that means '
+                        + 'setting OLLAMA_ORIGINS; other servers have an equivalent CORS setting.'));
+                }
 
                 // ── Usage, with the rate box on the same line ────────────────────────
                 const usageRow = el('div', 'display:flex; align-items:center; flex-wrap:wrap;'
