@@ -28,6 +28,9 @@ export const SITREC_WEBMCP_TOOL_NAMES = Object.freeze([
     "sitrec_list_tracks",
     "sitrec_get_track_position",
     "sitrec_list_views",
+    "sitrec_set_datetime",
+    "sitrec_list_menu_controls",
+    "sitrec_set_menu_value",
 ]);
 
 const REGISTRATION_KEY = "__sitrecWebMCPRegistration";
@@ -138,6 +141,115 @@ function validateEnum(value, name, choices) {
         );
     }
     return null;
+}
+
+// The simulation instant is meaningless without a zone: "22:00" alone is a different moment
+// in every timezone, and the model is not looking at the user's clock. Require the offset
+// rather than guessing, so a wrong instant fails loudly instead of silently.
+const ISO_DATETIME_WITH_ZONE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+
+function validateISODateTime(value, name) {
+    const invalid = validateString(value, name, {minLength: 1});
+    if (invalid) return invalid;
+    if (!ISO_DATETIME_WITH_ZONE.test(value)) {
+        return compactFailure(
+            "INVALID_ARGUMENT",
+            `${name} must be an ISO 8601 date-time carrying an explicit zone, `
+            + `e.g. 2026-08-31T22:00:00-07:00 or 2026-08-31T22:00:00Z.`,
+        );
+    }
+    if (Number.isNaN(new Date(value).getTime())) {
+        return compactFailure("INVALID_ARGUMENT", `${name} is not a real date-time.`);
+    }
+    return null;
+}
+
+// CHAT_DENIED_URL_PARAMS guards named parameters of specific functions, so it cannot see a
+// URL handed to a generic menu setter. A free-text control that holds a texture or feed URL
+// would otherwise become an unreviewed fetch primitive, persisted on the node and refetched
+// after a save. Refuse anything carrying a scheme or protocol-relative prefix.
+//
+// Test the string the *URL parser* will see, not the one that was typed. WHATWG URL discards
+// tab, CR and LF anywhere in a URL and treats a backslash as a slash in a special scheme, so
+// "h<TAB>ttps://evil" and "/\evil/x" both resolve to a remote origin while reading as neither
+// to a naive regex. Normalizing first closes that gap.
+function looksLikeURL(value) {
+    const normalized = value.replace(/[\t\r\n]/g, "").replace(/\\/g, "/");
+    return /^\s*[a-z][a-z0-9+.-]*:/i.test(normalized) || /^\s*\/\//.test(normalized);
+}
+
+// lil-gui gives buttons and colors their own controller classes, but the class names are
+// mangled in a production build, so they cannot be used for a security decision. The backing
+// value survives minification: a button holds a function, and an array- or object-backed
+// color holds an array or object. Writing a primitive over either destroys it — a button
+// stops working, a color renders wrong — so a control must already hold a primitive.
+function isSettableValue(value) {
+    return value === null || (typeof value !== "function" && typeof value !== "object");
+}
+
+function validateMenuValue(value, name) {
+    if (typeof value === "boolean" || typeof value === "number") {
+        if (typeof value === "number" && !Number.isFinite(value)) {
+            return compactFailure("INVALID_ARGUMENT", `${name} must be a finite number.`);
+        }
+        return null;
+    }
+    if (typeof value !== "string") {
+        return compactFailure(
+            "INVALID_ARGUMENT",
+            `${name} must be a string, number, or boolean.`,
+        );
+    }
+    if (value.length > MAX_IDENTIFIER_LENGTH) {
+        return compactFailure(
+            "INVALID_ARGUMENT",
+            `${name} must be ${MAX_IDENTIFIER_LENGTH} characters or fewer.`,
+        );
+    }
+    if (looksLikeURL(value)) {
+        return compactFailure(
+            "URL_REFUSED",
+            `${name} cannot be a URL. Tell the user to set a URL-valued control via the UI.`,
+        );
+    }
+    return null;
+}
+
+// listMenuControls returns a nested {name, controls[], folders[]} tree. Flatten it to the
+// "Folder/Control" strings that sitrec_set_menu_value expects, so the model never has to
+// reconstruct a path from a shape it only half-understands.
+//
+// Folder titles can be sitch-authored — an object's name becomes its folder — so the label
+// is sanitized rather than passed through. A control whose real name carries a line break
+// therefore becomes unaddressable here instead of smuggling text into the model's context.
+// That is the safe direction, and no genuine control name looks like that.
+function flattenMenuControls(node, prefix = "") {
+    const flattened = [];
+    for (const control of Array.isArray(node?.controls) ? node.controls : []) {
+        if (typeof control?.name !== "string") continue;
+        const label = displayLabel(prefix + control.name);
+        if (!label) continue;
+        const settable = isSettableValue(control.currentValue);
+        const entry = {
+            control: label,
+            type: typeof control.type === "string" ? control.type : null,
+            currentValue: settable ? control.currentValue : null,
+            // Buttons and array-backed colors are listed but refused by the setter, so say so
+            // here rather than letting the model discover it by failing.
+            settable,
+        };
+        if (Array.isArray(control.options)) {
+            entry.options = control.options.slice(0, MAX_LIST_LIMIT).map(displayLabel);
+        }
+        if (Number.isFinite(control.min)) entry.min = control.min;
+        if (Number.isFinite(control.max)) entry.max = control.max;
+        flattened.push(entry);
+    }
+    for (const folder of Array.isArray(node?.folders) ? node.folders : []) {
+        const title = displayLabel(typeof folder?.name === "string" ? folder.name : "");
+        flattened.push(...flattenMenuControls(folder, `${prefix}${title}/`));
+    }
+    return flattened;
 }
 
 function boundedIdentifier(value) {
@@ -504,6 +616,18 @@ export function createSitrecWebMCPTools(dependencyOverrides = {}) {
             if (!simulationTime.success) return simulationTime;
             const camera = await callAPI(deps, "getCameraLLA", {}, signal);
             if (!camera.success) return camera;
+            // Simulation time is reported in UTC, so "set it to 10pm local" is unanswerable
+            // without the user's zone. Any page can read this from the browser clock, so
+            // reporting it grants the model no capability it could not compute itself.
+            const wallClock = await callAPI(deps, "getCurrentDateTime", {}, signal);
+            if (!wallClock.success) return wallClock;
+            // Today's offset does not resolve a future local time across a DST transition:
+            // asking for "10pm tonight" on a changeover day lands an hour out. The IANA zone
+            // name lets the model pick the offset in force at the instant it is targeting.
+            const timezone = safeCall(
+                () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+                null,
+            );
 
             return {
                 success: true,
@@ -512,6 +636,7 @@ export function createSitrecWebMCPTools(dependencyOverrides = {}) {
                 frame: frame.result,
                 simulationTime: simulationTime.result,
                 camera: camera.result,
+                wallClock: {...wallClock.result, timezone},
             };
         }),
 
@@ -1000,6 +1125,225 @@ export function createSitrecWebMCPTools(dependencyOverrides = {}) {
                 }))
                 .filter((view) => view.id);
             return {success: true, count: views.length, views};
+        }),
+
+        tool({
+            name: "sitrec_set_datetime",
+            title: "Set the Sitrec simulation date and time",
+            description:
+                "Set the date and time the situation is simulated at, which moves the sun, moon, "
+                + "stars, and satellites. Requires an explicit timezone offset; read wallClock from "
+                + "sitrec_get_state first to convert a local time the user asked for. Changes live "
+                + "state but does not save or upload the situation.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    dateTime: {
+                        type: "string",
+                        maxLength: MAX_IDENTIFIER_LENGTH,
+                        description:
+                            "ISO 8601 date-time with a zone, e.g. '2026-08-31T22:00:00-07:00' or "
+                            + "'2026-08-31T22:00:00Z'.",
+                    },
+                },
+                required: ["dateTime"],
+                additionalProperties: false,
+            },
+            annotations: {readOnlyHint: false, untrustedContentHint: false},
+        }, async (input, signal) => {
+            const invalid = validateObject(input, {allowed: ["dateTime"], required: ["dateTime"]})
+                ?? validateISODateTime(input.dateTime, "dateTime");
+            if (invalid) return invalid;
+            const notReady = requireReady(deps);
+            if (notReady) return notReady;
+
+            const response = await callAPI(deps, "setDateTime", {dateTime: input.dateTime}, signal);
+            if (!response.success) return response;
+
+            try {
+                await deps.waitForRender(signal);
+            } catch (error) {
+                if (!isAbortError(error)) throw error;
+                return {
+                    success: true,
+                    requestedDateTime: input.dateTime,
+                    committed: true,
+                    verificationCancelled: true,
+                };
+            }
+            const actual = await callAPI(deps, "getCurrentSimTime", {}, signal);
+            if (!actual.success) return actual;
+            return {
+                success: true,
+                requestedDateTime: input.dateTime,
+                simulationTime: actual.result,
+            };
+        }),
+
+        tool({
+            name: "sitrec_list_menu_controls",
+            title: "List Sitrec menu controls",
+            description:
+                "List Sitrec's menus, or the controls inside one menu with their type, current "
+                + "value, and permitted options. Returns the exact control names required by "
+                + "sitrec_set_menu_value. Does not change Sitrec.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    menu: {
+                        type: "string",
+                        maxLength: MAX_IDENTIFIER_LENGTH,
+                        description:
+                            "Optional menu id, e.g. 'view' or 'terrain'. Omit to list the menu ids.",
+                    },
+                    query: {
+                        type: "string",
+                        maxLength: MAX_IDENTIFIER_LENGTH,
+                        description: "Optional case-insensitive text to match against control names.",
+                    },
+                    limit: {
+                        type: "integer", minimum: 1, maximum: MAX_LIST_LIMIT,
+                        description: `Maximum records to return; defaults to ${DEFAULT_LIST_LIMIT}.`,
+                    },
+                },
+                additionalProperties: false,
+            },
+            annotations: {readOnlyHint: true, untrustedContentHint: true},
+        }, async (input, signal) => {
+            const invalid = validateObject(input, {allowed: ["menu", "query", "limit"]})
+                ?? (input.menu === undefined ? null : validateString(input.menu, "menu"))
+                ?? (input.query === undefined ? null : validateString(input.query, "query"))
+                ?? (input.limit === undefined
+                    ? null
+                    : validateInteger(input.limit, "limit", 1, MAX_LIST_LIMIT));
+            if (invalid) return invalid;
+            const notReady = requireReady(deps);
+            if (notReady) return notReady;
+
+            const limit = input.limit ?? DEFAULT_LIST_LIMIT;
+            if (input.menu === undefined) {
+                const menus = await callAPI(deps, "listMenus", {}, signal);
+                if (!menus.success) return menus;
+                const ids = (Array.isArray(menus.result) ? menus.result : [])
+                    .filter((id) => typeof id === "string")
+                    .map(boundedIdentifier);
+                return {success: true, menus: ids.slice(0, MAX_LIST_LIMIT), count: ids.length};
+            }
+
+            const response = await callAPI(deps, "listMenuControls", {menu: input.menu}, signal);
+            if (!response.success) return response;
+            const controls = flattenMenuControls(response.result);
+            const query = input.query?.trim().toLowerCase();
+            const matches = query
+                ? controls.filter((entry) => entry.control.toLowerCase().includes(query))
+                : controls;
+            return {
+                success: true,
+                menu: boundedIdentifier(input.menu),
+                query: input.query ?? null,
+                totalMatches: matches.length,
+                returned: Math.min(limit, matches.length),
+                truncated: matches.length > limit,
+                controls: matches.slice(0, limit),
+            };
+        }),
+
+        tool({
+            name: "sitrec_set_menu_value",
+            title: "Set a Sitrec menu control",
+            description:
+                "Set one Sitrec menu control to a value and read the result back. The menu and "
+                + "control must be exact names returned by sitrec_list_menu_controls. Cannot press "
+                + "buttons, set a URL, load a file, or save or upload the situation.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    menu: {
+                        type: "string",
+                        maxLength: MAX_IDENTIFIER_LENGTH,
+                        description: "Exact menu id from sitrec_list_menu_controls.",
+                    },
+                    control: {
+                        type: "string",
+                        maxLength: MAX_IDENTIFIER_LENGTH,
+                        description:
+                            "Exact control name, using '/' for a control inside a folder, "
+                            + "e.g. 'Views/showVideo'.",
+                    },
+                    value: {
+                        type: ["string", "number", "boolean"],
+                        description:
+                            "New value. For a dropdown it must be one of the listed options. "
+                            + "URLs are refused.",
+                    },
+                },
+                required: ["menu", "control", "value"],
+                additionalProperties: false,
+            },
+            annotations: {readOnlyHint: false, untrustedContentHint: false},
+        }, async (input, signal) => {
+            const invalid = validateObject(input, {
+                allowed: ["menu", "control", "value"],
+                required: ["menu", "control", "value"],
+            })
+                ?? validateString(input.menu, "menu", {minLength: 1})
+                ?? validateString(input.control, "control", {minLength: 1})
+                ?? validateMenuValue(input.value, "value");
+            if (invalid) return invalid;
+            const notReady = requireReady(deps);
+            if (notReady) return notReady;
+
+            // Check what the control currently holds before writing over it. lil-gui's
+            // inherited setValue happily replaces a button's function or a color's array
+            // with a string, which breaks the control rather than setting it.
+            const before = await callAPI(
+                deps,
+                "getMenuValue",
+                {menu: input.menu, path: input.control},
+                signal,
+            );
+            if (!before.success) return before;
+            if (!isSettableValue(before.result?.value)) {
+                return compactFailure(
+                    "CONTROL_NOT_SETTABLE",
+                    `${input.control} is a button or a structured value, not a settable control. `
+                    + `Tell the user to operate it in the Sitrec UI.`,
+                );
+            }
+
+            const response = await callAPI(
+                deps,
+                "setMenuValue",
+                {menu: input.menu, path: input.control, value: input.value},
+                signal,
+            );
+            if (!response.success) return response;
+
+            try {
+                await deps.waitForRender(signal);
+            } catch (error) {
+                if (!isAbortError(error)) throw error;
+                return {
+                    success: true,
+                    menu: boundedIdentifier(input.menu),
+                    control: boundedIdentifier(input.control),
+                    committed: true,
+                    verificationCancelled: true,
+                };
+            }
+            const actual = await callAPI(
+                deps,
+                "getMenuValue",
+                {menu: input.menu, path: input.control},
+                signal,
+            );
+            return {
+                success: true,
+                menu: boundedIdentifier(input.menu),
+                control: boundedIdentifier(input.control),
+                requestedValue: input.value,
+                currentValue: actual.success ? actual.result?.value ?? null : null,
+            };
         }),
     ];
 }

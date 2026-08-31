@@ -228,18 +228,24 @@ echo json_encode($s);`;
     const file = 'src/WebMCP.js';
     const APPROVED_API_FUNCTIONS = [
         'getCameraLLA',
+        'getCurrentDateTime',
         'getCurrentSimTime',
         'getFrame',
+        'getMenuValue',
         'getSitchState',
         'getTrackPosition',
         'gotoLLA',
+        'listMenuControls',
+        'listMenus',
         'listSitches',
         'listTracks',
         'listViews',
         'loadSitch',
         'pause',
         'play',
+        'setDateTime',
         'setFrame',
+        'setMenuValue',
         'togglePlayPause',
     ];
     const EXPECTED_TOOLS = [
@@ -249,9 +255,12 @@ echo json_encode($s);`;
         'sitrec_goto_lla',
         'sitrec_list_sitches',
         'sitrec_list_tracks',
+        'sitrec_list_menu_controls',
         'sitrec_list_views',
         'sitrec_load_sitch',
         'sitrec_seek_frame',
+        'sitrec_set_datetime',
+        'sitrec_set_menu_value',
         'sitrec_set_playback',
     ];
 

@@ -293,7 +293,7 @@ export const helpDocs = [
     {
         file: "docs/WebMCP", labelKey: "menus.help.documentation.webmcp",
         section: "advanced", role: "reference",
-        chatDesc: "Using ChatGPT desktop site tools (WebMCP) to inspect and control the same open Sitrec page without an OpenAI API key, SitrecBridge, Chrome extension, local WebSocket, or separate MCP server. Covers setup, the ten available tools, example prompts, current model/workspace/browser limitations, local-file restrictions, safety boundaries, and when Codex CLI/IDE or Claude users should use SitrecBridge instead.",
+        chatDesc: "Using ChatGPT desktop site tools (WebMCP) to inspect and control the same open Sitrec page without an OpenAI API key, SitrecBridge, Chrome extension, local WebSocket, or separate MCP server. Covers setup, the thirteen available tools, example prompts, current model/workspace/browser limitations, local-file restrictions, safety boundaries, and when Codex CLI/IDE or Claude users should use SitrecBridge instead.",
     },
     {
         file: "docs/LocalCustomSitches", labelKey: "menus.help.documentation.localCustomSitches",

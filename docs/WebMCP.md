@@ -36,9 +36,17 @@ Move the camera to latitude 38.5816, longitude -121.4944, altitude 2000 meters, 
 List the available Sitrec cases containing "Gimbal." Load the matching saved case and report when its core state is ready.
 ```
 
+```text
+Set the simulation time to 10pm tonight in my local timezone, then tell me what it became.
+```
+
+```text
+List the controls in the view menu, then turn the video overlay off.
+```
+
 ## Available Sitrec tools
 
-The initial public surface is deliberately limited:
+The public surface is deliberately limited:
 
 | Tool | What it does |
 |---|---|
@@ -52,8 +60,15 @@ The initial public surface is deliberately limited:
 | `sitrec_list_tracks` | Searches the current track list and returns exact track identifiers. |
 | `sitrec_get_track_position` | Reads a catalogued track's position at the current or specified frame. |
 | `sitrec_list_views` | Lists current views, visibility, and layout bounds. |
+| `sitrec_set_datetime` | Sets the simulation date and time, which moves the sun, moon, stars, and satellites. Requires an explicit timezone offset. |
+| `sitrec_list_menu_controls` | Lists the menus, or the controls in one menu with their type, current value, and permitted options. |
+| `sitrec_set_menu_value` | Sets one menu control to a value and reads the result back. |
 
 These tools do not expose arbitrary JavaScript, arbitrary API calls, URLs, file selection, saving, sharing, credentials, browser storage, or destructive operations.
+
+`sitrec_set_menu_value` changes control *values* only. It refuses a control that holds anything other than a plain value, so it cannot overwrite a button such as Add Object, Save, or Share, and cannot corrupt a structured value such as an array-backed color. `sitrec_list_menu_controls` marks those controls `settable: false`. It also refuses any value that carries a URL, because a free-text control that holds a texture or feed URL would otherwise become an unreviewed way to fetch a remote resource — the check normalizes the value the way a browser would, so a backslash or an embedded tab cannot smuggle one past it. Dropdown controls accept only their listed options.
+
+`sitrec_set_datetime` requires a timezone offset. A bare local time such as `2026-08-31T22:00:00` is refused, because the model cannot see the user's clock and would otherwise set a different instant than the user asked for. Read `wallClock` from `sitrec_get_state` to convert a local time; it reports the IANA zone name as well as the current offset, because on a daylight-saving changeover day tonight's offset is not today's.
 
 ## Current limitations
 
