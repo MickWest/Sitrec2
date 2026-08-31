@@ -100,7 +100,13 @@ dialog are counted locally, in your browser, for your benefit.
 **Never in the interface.** No label, tooltip, menu, or chat message contains any part of a
 key. This is deliberate and was tightened after review: menu labels in Sitrec are collected
 and sent to the AI provider as part of describing the app, so a key fragment in a label
-would have travelled further than expected. The dialog shows only "Set" or "Not set".
+would have travelled further than expected. The dialog shows only "Set", "Off" or "Not set".
+
+**Keeping a key without using it.** Each row in the dialog has a tick box. Clearing it
+leaves the key stored but stops Sitrec reading it, so that service falls back to Sitrec's
+own shared quota — useful for running a session on Sitrec's account without having to paste
+the key again afterwards. The row then reads "Off". Untick every AI key and the "(your key)"
+entries disappear from the AI Model list, exactly as if no key were stored.
 
 ---
 
@@ -111,7 +117,7 @@ Each key goes to exactly one destination — the provider that issued it:
 | Key | Sent to | Purpose |
 |---|---|---|
 | Anthropic | `api.anthropic.com` | Runs the AI assistant on your account |
-| OpenAI (voice) | `api.openai.com` | Runs the spoken assistant on your account |
+| OpenAI | `api.openai.com` | Runs the typed and spoken assistant on your account |
 | OpenRouter | `openrouter.ai` | Runs OpenAI-family models through OpenRouter on your account |
 | Google | `tile.googleapis.com` | Photorealistic 3D tiles |
 | Cesium Ion | Cesium Ion servers | Terrain and building tilesets |
@@ -138,13 +144,20 @@ Two consequences worth knowing:
 - Some providers do not permit direct browser access at all, which is why not every service
   can be used this way.
 
-### The OpenAI key and the spoken assistant
+### The OpenAI key
 
-The **OpenAI (voice)** key is used for one feature only: the microphone button in the
-Assistant window. It is **not** used for typed chat — OpenAI's text endpoints cannot be
-called from a browser, which is why the OpenRouter route above exists for that.
+The **OpenAI** key runs both halves of the assistant on your account: the typed chat, via
+the "(your OpenAI key)" entries in the AI Model list, and the microphone button in the
+Assistant window.
 
-Three things about it are worth knowing before you supply one:
+It was voice-only until recently, and you may still see that written elsewhere. The reason
+was real and has expired: `api.openai.com` used to refuse a browser's cross-origin request
+to its text endpoints, so the only way to reach GPT from the page was through OpenRouter.
+It now allows them, so the extra hop is optional. OpenRouter remains useful for reaching
+models OpenAI does not serve, and it reports the exact charged cost of every request, which
+OpenAI does not — Sitrec estimates that from published prices instead.
+
+Three things about the spoken assistant are worth knowing before you supply a key:
 
 - **Your microphone audio leaves your browser.** While a voice session is running, what
   your microphone hears is streamed live to OpenAI, along with the same Sitrec system
@@ -160,8 +173,11 @@ Three things about it are worth knowing before you supply one:
   readout reports audio and text tokens separately for exactly this reason, and the
   spending limit you set at OpenAI is the protection that actually binds.
 
-While the session is live, the microphone icon in the Assistant header turns red. That icon
-is the reliable indicator — the chat log scrolls, but the icon does not.
+While the session is live, **both** microphone buttons — the one in the Assistant header and
+the one in the menu bar, left of the version number — turn into a pulsing red badge, and the
+menu-bar one reads **REC**. Either one stops the session. The menu-bar button is the
+dependable indicator: the Assistant window can be scrolled, closed or hidden behind
+another, and the menu bar cannot.
 
 ---
 

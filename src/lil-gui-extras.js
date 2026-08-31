@@ -979,6 +979,36 @@ export class CGuiMenuBar {
         }
 
 
+        // ── Right-hand icon strip ─────────────────────────────────────────────────
+        // A home in the menu bar for always-visible status controls, sitting just left of
+        // the version/info panel. It exists so a state the user needs to see and stop from
+        // anywhere — a live microphone, today — is not hidden inside a view whose header
+        // auto-hides, which may be scrolled away, closed, or behind another window.
+        //
+        // Deliberately generic: the bar knows nothing about what an icon does. Owners
+        // register with addBarIcon() and remove on dispose.
+        const strip = document.createElement("div");
+        strip.id = "menuBarIconStrip";
+        Object.assign(strip.style, {
+            position: "fixed",
+            top: "0px",
+            // Anchored to the left edge of the info panel. Its width is lil-gui's fixed
+            // 245px and does not change when the panel is opened (only its height does),
+            // so measuring once here is stable; the fallback covers a pre-layout read.
+            right: (15 + (this.infoGUI.domElement.offsetWidth || 245) + 4) + "px",
+            height: this.barHeight + "px",
+            display: "flex",
+            alignItems: "center",
+            gap: "2px",
+            zIndex: "9001",             // same layer as infoGUI, above the black bar
+            pointerEvents: "auto",
+        });
+        if (getEnvBool("BANNER_ACTIVE", process.env.BANNER_ACTIVE)) {
+            strip.style.top = getEnv("BANNER_HEIGHT", process.env.BANNER_HEIGHT) + "px";
+        }
+        document.body.appendChild(strip);
+        this.iconStrip = strip;
+
         Globals.stats = new Stats();
         // Globals.stats.showPanel( 1 ); // 0: fps, 1: ms, 2: mb, 3+: custom
         // const attach = this.infoGUI.domElement;
@@ -991,6 +1021,38 @@ export class CGuiMenuBar {
     _markMenuSurface(element) {
         if (element) element.style.pointerEvents = "auto";
         return element;
+    }
+
+    // Add a button to the menu bar's right-hand icon strip (left of the version panel).
+    // Returns the button so the owner can restyle it; pass it to removeBarIcon() on dispose.
+    addBarIcon(html, onClick, tooltip, action) {
+        if (!this.iconStrip) return null;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "menu-bar-icon";
+        btn.innerHTML = html;
+        if (tooltip) { btn.title = tooltip; btn.setAttribute("aria-label", tooltip); }
+        if (action) btn.dataset.barAction = action;
+        Object.assign(btn.style, {
+            border: "none", background: "transparent", color: "white",
+            cursor: "pointer", font: "14px sans-serif", padding: "0 5px",
+            lineHeight: (this.barHeight - 6) + "px", borderRadius: "10px",
+            opacity: "0.75", pointerEvents: "auto",
+        });
+        btn.addEventListener("pointerenter", () => { btn.style.opacity = "1"; });
+        btn.addEventListener("pointerleave", () => {
+            btn.style.opacity = btn.dataset.barPinned === "true" ? "1" : "0.75";
+        });
+        // The document-level pointerdown handler above closes every open menu; a click on
+        // our own bar chrome is not "clicked away from the menus".
+        btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+        btn.addEventListener("click", (e) => { e.stopPropagation(); if (onClick) onClick(e); });
+        this.iconStrip.appendChild(btn);
+        return btn;
+    }
+
+    removeBarIcon(btn) {
+        if (btn && btn.parentNode === this.iconStrip) this.iconStrip.removeChild(btn);
     }
 
     // Bring a menu to the front by updating its z-index
@@ -1063,6 +1125,7 @@ export class CGuiMenuBar {
 
         this.infoGUI.show();
         this.bar.style.display = "block";
+        if (this.iconStrip) this.iconStrip.style.display = "flex";
         this._hidden = false;
 
         // Update positioning based on full-screen mode
@@ -1077,6 +1140,7 @@ export class CGuiMenuBar {
 
         this.infoGUI.hide();
         this.bar.style.display = "none";
+        if (this.iconStrip) this.iconStrip.style.display = "none";
 
         this._hidden = true;
 

@@ -11,6 +11,10 @@ import {
 test('only explicit own-key provider tokens select the browser BYOK route', () => {
     expect(isBYOKProvider('byok-anthropic')).toBe(true);
     expect(isBYOKProvider('byok-openrouter')).toBe(true);
+    expect(isBYOKProvider('byok-openai')).toBe(true);
+    // The bare names are the SERVER provider tokens in the saved chatModel setting. chat()
+    // accepts them as a transport shorthand, but they must never reroute a server-proxied
+    // selection around Sitrec's own billing.
     expect(isBYOKProvider('anthropic')).toBe(false);
     expect(isBYOKProvider('openai')).toBe(false);
 });
@@ -619,8 +623,10 @@ describe('chat (tool loop)', () => {
     });
 
     test('rejects unsupported providers', async () => {
+        // 'openai' used to be the example here; it is now a real transport, so this needs a
+        // provider that genuinely has no route.
         await expect(chat({
-            apiKey: 'k', provider: 'openai', model: 'm',
+            apiKey: 'k', provider: 'gemini', model: 'm',
             systemPrompt: 'sp', history: [], userText: 'u', tools: [], executeCall: async () => ({}),
         })).rejects.toThrow(/not supported/);
     });
@@ -634,6 +640,63 @@ describe('chat (tool loop)', () => {
             apiKey: 'bad', provider: 'anthropic', model: 'm',
             systemPrompt: 'sp', history: [], userText: 'u', tools: [], executeCall: async () => ({}),
         })).rejects.toThrow(/invalid api key/);
+    });
+});
+
+describe('chat (direct OpenAI BYOK)', () => {
+    beforeEach(() => {
+        jest.resetAllMocks();
+    });
+
+    // api.openai.com now answers a browser preflight on /v1/chat/completions with
+    // access-control-allow-origin echoing the caller and 'authorization' among the allowed
+    // headers, so the aggregator hop is no longer required to reach GPT from the page.
+    test('calls api.openai.com directly, without OpenRouter-only fields', async () => {
+        mockFetchSequence([{
+            body: {
+                choices: [{message: {role: 'assistant', content: 'Hello from OpenAI.'}, finish_reason: 'stop'}],
+                usage: {
+                    prompt_tokens: 100,
+                    completion_tokens: 12,
+                    prompt_tokens_details: {cached_tokens: 30},
+                },
+            },
+        }]);
+
+        const result = await chat({
+            apiKey: 'sk-proj-secret', provider: 'byok-openai', model: 'gpt-5-mini',
+            systemParts: {staticPart: 'STATIC', menuPart: 'MENUS', volatilePart: 'CLOCK'},
+            history: [{role: 'bot', text: 'earlier'}], userText: 'hello', tools: [],
+            executeCall: async () => ({success: true}), sessionId: 'sitrec-session-1',
+        });
+
+        const [url, init] = fetch.mock.calls[0];
+        const sent = JSON.parse(init.body);
+        expect(url).toBe('https://api.openai.com/v1/chat/completions');
+        expect(init.headers.Authorization).toBe('Bearer sk-proj-secret');
+        // OpenAI rejects unknown top-level body fields outright rather than ignoring them,
+        // and X-Title is OpenRouter's attribution header — neither may be sent here.
+        expect(sent.session_id).toBeUndefined();
+        expect(init.headers['X-Title']).toBeUndefined();
+        expect(sent.model).toBe('gpt-5-mini');
+        expect(sent.messages[0]).toEqual({role: 'system', content: 'STATICMENUSCLOCK'});
+        expect(result.text).toBe('Hello from OpenAI.');
+        // No `cost` comes back from OpenAI, so the tokens are what the caller prices.
+        expect(result.usage).toMatchObject({
+            inputTokens: 70, outputTokens: 12, cacheReadTokens: 30, requests: 1, costUSD: 0,
+        });
+    });
+
+    test('names OpenAI, not OpenRouter, when the key is rejected', async () => {
+        mockFetchSequence([
+            {ok: false, status: 401, body: {error: {message: 'Incorrect API key provided'}}},
+        ]);
+
+        await expect(chat({
+            apiKey: 'bad', provider: 'byok-openai', model: 'gpt-5-mini',
+            systemPrompt: 'sp', history: [], userText: 'u', tools: [],
+            executeCall: async () => ({}),
+        })).rejects.toThrow(/OpenAI API error: Incorrect API key provided/);
     });
 });
 

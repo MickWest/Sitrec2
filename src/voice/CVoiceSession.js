@@ -167,6 +167,12 @@ export class CVoiceSession {
      * @param {function} [options.onAssistantText] (text) => void, a finished spoken reply.
      * @param {function} [options.onToolCall]  ({fn, args}) => void, for the debug log.
      * @param {function} [options.onUsage]     (usage) => void, once per completed response.
+     * @param {function} [options.onRound]     () => void, a further round of tool calls is
+     *                                         about to be requested — the model has seen the
+     *                                         previous round's results.
+     * @param {function} [options.onTurnEnd]   () => void, the model finished a response
+     *                                         without asking for tools, so its tool loop for
+     *                                         this turn is over.
      * @param {function} [options.onError]     (message) => void.
      */
     constructor(options) {
@@ -538,9 +544,18 @@ export class CVoiceSession {
      */
     _maybeContinue() {
         if (!this.responseComplete || this.pendingCalls.size > 0) return;
-        if (!this.answeredThisResponse) return;
+        // A completed response that asked for no tools ends the model's tool loop, and so
+        // ends the turn. This — not the spoken transcript — is the boundary a caller
+        // tracking a turn's tool calls wants: a tool-using exchange speaks in a LATER
+        // response than the one that made the calls, so flushing on the transcript would
+        // cut the turn in half and call a repair-in-progress a failure.
+        if (!this.answeredThisResponse) {
+            this.options.onTurnEnd?.();
+            return;
+        }
         this.answeredThisResponse = false;
         this.responseComplete = false;
+        this.options.onRound?.();
         this._send({type: 'response.create'});
     }
 

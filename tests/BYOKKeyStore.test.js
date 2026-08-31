@@ -19,8 +19,9 @@ jest.mock('../src/IndexedDBManager', () => {
 
 import { indexedDBManager } from '../src/IndexedDBManager';
 import {
-    getKey, setKey, deleteKey, getAllProviders, hasAnyKey,
+    getKey, getKeyRaw, setKey, deleteKey, getAllProviders, hasAnyKey,
     primeKeyCache, getCachedKey, hasCachedKey,
+    isProviderEnabled, setProviderEnabled,
 } from '../src/BYOKKeyStore';
 
 beforeEach(() => {
@@ -136,5 +137,74 @@ describe('BYOKKeyStore', () => {
 
     test('setKey with empty provider throws', async () => {
         await expect(setKey('', 'key')).rejects.toThrow('provider required');
+    });
+});
+
+// The Enable flag: a key can be KEPT but not USED. It is gated in the store rather than in
+// each consumer, so these tests are what guarantees terrain, live feeds, the voice session
+// and the AI Model dropdown all honour it — none of them has code of its own to test.
+describe('BYOKKeyStore enable flag', () => {
+    beforeEach(async () => {
+        // Storage is cleared per test; re-prime so the module's cached disabled set is
+        // re-read from the (now empty) store rather than leaking across tests.
+        await primeKeyCache();
+    });
+
+    test('a provider with no stored flag is enabled', async () => {
+        await setKey('anthropic', 'sk-ant-enabled');
+        expect(isProviderEnabled('anthropic')).toBe(true);
+        expect(await getKey('anthropic')).toBe('sk-ant-enabled');
+    });
+
+    test('disabling hides the key from every consumer path but keeps it stored', async () => {
+        await setKey('anthropic', 'sk-ant-kept');
+        await primeKeyCache();
+        await setProviderEnabled('anthropic', false);
+
+        expect(isProviderEnabled('anthropic')).toBe(false);
+        expect(await getKey('anthropic')).toBeNull();
+        expect(getCachedKey('anthropic')).toBeNull();
+        expect(hasCachedKey('anthropic')).toBe(false);
+        // Globals.hasByokKeys is derived from these, so the "(your key)" model entries go.
+        expect(await getAllProviders()).not.toContain('anthropic');
+        expect(await hasAnyKey()).toBe(false);
+
+        // ...but the credential itself is untouched. getKeyRaw is the dialog's read, which
+        // is why it can still show "Set" for a key that is switched off.
+        expect(await getKeyRaw('anthropic')).toBe('sk-ant-kept');
+        expect(indexedDBManager._internal.has('byok_anthropic')).toBe(true);
+    });
+
+    test('re-enabling restores the key with no re-entry', async () => {
+        await setKey('anthropic', 'sk-ant-toggle');
+        await setProviderEnabled('anthropic', false);
+        await setProviderEnabled('anthropic', true);
+        await primeKeyCache();
+
+        expect(await getKey('anthropic')).toBe('sk-ant-toggle');
+        expect(getCachedKey('anthropic')).toBe('sk-ant-toggle');
+        expect(await hasAnyKey()).toBe(true);
+    });
+
+    test('the flag survives a reload and only affects its own provider', async () => {
+        await setKey('anthropic', 'sk-ant-off');
+        await setKey('openai', 'sk-proj-on');
+        await setProviderEnabled('anthropic', false);
+
+        // primeKeyCache() is what runs at startup; it must re-read the persisted set.
+        await primeKeyCache();
+
+        expect(getCachedKey('anthropic')).toBeNull();
+        expect(getCachedKey('openai')).toBe('sk-proj-on');
+        expect(await getAllProviders()).toEqual(['openai']);
+    });
+
+    test('the flag is not stored under the byok_ credential prefix', async () => {
+        // getAllProviders() enumerates every "byok_" entry as a stored credential, so a
+        // flag stored there would be reported as a key that does not exist.
+        await setProviderEnabled('anthropic', false);
+        const flagKeys = [...indexedDBManager._internal.keys()].filter(k => k.startsWith('byok_'));
+        expect(flagKeys).toEqual([]);
+        expect(await getAllProviders()).toEqual([]);
     });
 });

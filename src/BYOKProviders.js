@@ -48,23 +48,27 @@ export const BYOK_PROVIDERS = [
     },
     {
         id: 'openai',
-        label: 'OpenAI (voice)',
+        label: 'OpenAI',
         category: 'ai',
         auth: 'key',
         keyHint: 'sk-proj-… or sk-…',
-        // Deliberately narrow: this key drives the SPOKEN assistant only. OpenAI's text
-        // completion endpoints send no CORS headers, which is exactly why the OpenRouter
-        // entry below exists for typed chat — but the Realtime API is designed to be
-        // reached from a browser, so voice can use the user's key directly with no
-        // aggregator in between. Saying "voice" in the label stops a user pasting a key
-        // here and wondering why the typed chat still bills Sitrec.
-        unlocks: 'The spoken voice assistant. Your microphone audio and the assistant\'s '
-            + 'spoken replies stream directly between this browser and OpenAI, and are '
-            + 'billed to you. Enables the microphone button in the Assistant window. '
-            + 'This key is NOT used for typed chat — see OpenRouter for that.',
+        // This key now drives BOTH the spoken assistant and typed chat. It was voice-only
+        // for a real reason that has since expired: api.openai.com used to answer a browser
+        // preflight on its completion endpoints with no CORS headers, so only the Realtime
+        // API (designed to be reached from a browser) could be called from the page, and the
+        // OpenRouter entry below existed to get typed chat to GPT. /v1/chat/completions now
+        // allows any origin with an Authorization header, so the aggregator hop is optional.
+        // OpenRouter stays for the models OpenAI does not serve.
+        unlocks: 'Runs the AI assistant on your own OpenAI key — both typed chat and the '
+            + 'spoken voice assistant, billed to you. Adds "(your OpenAI key)" entries to '
+            + 'the AI Model list and enables the microphone button in the Assistant window. '
+            + 'Chat messages, tool definitions and your microphone audio go straight from '
+            + 'this browser to OpenAI.',
         signupURL: 'https://platform.openai.com/api-keys',
         usage: 'spend',
-        usageModelPrefixes: ['gpt-realtime'],
+        // Covers gpt-realtime (voice) and the gpt-5 chat models on the one key, which is
+        // what the user is billed for as a single line on one account.
+        usageModelPrefixes: ['gpt-'],
         unitPrice: null,        // priced per model in BYOKUsage, not per request
         limits: [],
     },
@@ -74,7 +78,9 @@ export const BYOK_PROVIDERS = [
         category: 'ai',
         auth: 'key',
         keyHint: 'sk-or-v1-…',
-        unlocks: 'Runs the AI assistant through OpenRouter on your own key, including OpenAI models that cannot be called directly from a browser. Chat messages, tool definitions, and tool results are sent to OpenRouter and its selected upstream provider.',
+        unlocks: 'Runs the AI assistant through OpenRouter on your own key — one account '
+            + 'across many model vendors. Chat messages, tool definitions, and tool results '
+            + 'are sent to OpenRouter and its selected upstream provider.',
         signupURL: 'https://openrouter.ai/settings/keys',
         usage: 'spend',
         usageModelPrefixes: ['openai/'],

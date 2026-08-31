@@ -4,8 +4,15 @@
 // talk to the LLM API directly — no PHP proxy — when the user has supplied
 // their own key.
 //
-// Supports Anthropic directly and OpenAI-family models through OpenRouter. OpenAI's own
-// API does not support browser CORS, which is why the aggregator path exists.
+// Supports Anthropic and OpenAI directly, and OpenAI-family models through OpenRouter.
+//
+// The OpenRouter path predates the direct OpenAI one: api.openai.com used to answer a
+// browser preflight with no CORS headers, so an aggregator was the only way to reach GPT
+// from the page. It now returns "access-control-allow-origin: <the requesting origin>"
+// with "authorization" among the allowed headers on /v1/chat/completions (and "*" on
+// /v1/responses), so the direct path works and is one hop and one account fewer. Both are
+// kept: OpenRouter still reaches models OpenAI does not serve, and reports the exact
+// charged cost per completion, which OpenAI does not.
 //
 // The module is intentionally pure: no dependencies on sitrec globals,
 // no direct calls to sitrecAPI. The caller injects an executeCall callback
@@ -18,6 +25,7 @@ import {emptyUsage} from './BYOKUsage';
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 
 // Provider token for "call Anthropic directly with the user's own key". It is
 // deliberately NOT plain "anthropic": the chat model setting is a single
@@ -28,12 +36,14 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 // "(your key)" entry.
 export const BYOK_ANTHROPIC_PROVIDER = 'byok-anthropic';
 export const BYOK_OPENROUTER_PROVIDER = 'byok-openrouter';
+export const BYOK_OPENAI_PROVIDER = 'byok-openai';
 // Backward-compatible name used by older imports and saved settings.
 export const BYOK_PROVIDER = BYOK_ANTHROPIC_PROVIDER;
 
 export function keyProviderForBYOK(provider) {
     if (provider === BYOK_ANTHROPIC_PROVIDER || provider === 'anthropic') return 'anthropic';
     if (provider === BYOK_OPENROUTER_PROVIDER || provider === 'openrouter') return 'openrouter';
+    if (provider === BYOK_OPENAI_PROVIDER || provider === 'openai') return 'openai';
     return null;
 }
 
@@ -42,7 +52,8 @@ export function isBYOKProvider(provider) {
     // Plain "anthropic" is also accepted by chat() as a transport shorthand in tests and
     // internal callers, but it is the SERVER provider token in the saved model setting and
     // must never be rerouted around Sitrec's proxy.
-    return provider === BYOK_ANTHROPIC_PROVIDER || provider === BYOK_OPENROUTER_PROVIDER;
+    return provider === BYOK_ANTHROPIC_PROVIDER || provider === BYOK_OPENROUTER_PROVIDER
+        || provider === BYOK_OPENAI_PROVIDER;
 }
 
 // Models offered in the AI Model dropdown once the corresponding provider key is stored.
@@ -52,6 +63,8 @@ export const BYOK_MODELS = [
     {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-opus-5', label: 'Claude Opus 5 (your Anthropic key)'},
     {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-sonnet-5', label: 'Claude Sonnet 5 (your Anthropic key)'},
     {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (your Anthropic key)'},
+    {provider: BYOK_OPENAI_PROVIDER, keyProvider: 'openai', model: 'gpt-5-mini', label: 'OpenAI GPT-5 Mini (your OpenAI key)'},
+    {provider: BYOK_OPENAI_PROVIDER, keyProvider: 'openai', model: 'gpt-5-nano', label: 'OpenAI GPT-5 Nano (your OpenAI key)'},
     {provider: BYOK_OPENROUTER_PROVIDER, keyProvider: 'openrouter', model: 'openai/gpt-5-mini', label: 'OpenAI GPT-5 Mini (your OpenRouter key)'},
     {provider: BYOK_OPENROUTER_PROVIDER, keyProvider: 'openrouter', model: 'openai/gpt-5-nano', label: 'OpenAI GPT-5 Nano (your OpenRouter key)'},
 ];
@@ -567,7 +580,10 @@ function serializeToolResult(payload) {
     });
 }
 
-function addOpenRouterUsage(total, raw) {
+// OpenAI and OpenRouter report usage in the same shape. `cost` is OpenRouter's exact
+// charged amount; OpenAI omits it, and the caller then prices the tokens from the model
+// table in BYOKUsage.
+function addOpenAIFormatUsage(total, raw) {
     const details = raw?.prompt_tokens_details || {};
     const cached = Number(details.cached_tokens || 0);
     const written = Number(details.cache_write_tokens || 0);
@@ -625,7 +641,13 @@ function canSkipConfirmation(calls, results, needsModelResult) {
     );
 }
 
-export async function callOpenRouter({apiKey, systemPrompt, systemParts, messages, tools, model, maxTokens = 2048, sessionId}) {
+// OpenRouter and OpenAI speak the same /chat/completions wire format, so one function
+// serves both; only the URL, two headers and OpenRouter's session_id differ. `keyProvider`
+// picks between them and names the service in the error text, which is the difference the
+// user needs to see when a key is rejected.
+export async function callOpenAIFormat({apiKey, keyProvider = 'openrouter', systemPrompt,
+    systemParts, messages, tools, model, maxTokens = 2048, sessionId}) {
+    const direct = keyProvider === 'openai';
     const body = {
         model,
         messages: [{role: 'system', content: fullSystemPrompt(systemPrompt, systemParts)}, ...messages],
@@ -633,21 +655,25 @@ export async function callOpenRouter({apiKey, systemPrompt, systemParts, message
         max_completion_tokens: maxTokens,
         reasoning_effort: 'low',
     };
-    if (sessionId) body.session_id = sessionId;
+    // OpenRouter-only: it uses session_id for its own request grouping, and OpenAI rejects
+    // unknown top-level body fields outright rather than ignoring them.
+    if (sessionId && !direct) body.session_id = sessionId;
 
-    const res = await fetch(OPENROUTER_API_URL, {
+    const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+    };
+    if (!direct) headers['X-Title'] = 'Sitrec';   // OpenRouter's attribution header
+
+    const res = await fetch(direct ? OPENAI_API_URL : OPENROUTER_API_URL, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-            'X-Title': 'Sitrec',
-        },
+        headers,
         body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) {
         const msg = data?.error?.message || `HTTP ${res.status}`;
-        const err = new Error(`OpenRouter API error: ${msg}`);
+        const err = new Error(`${direct ? 'OpenAI' : 'OpenRouter'} API error: ${msg}`);
         err.status = res.status;
         err.body = data;
         throw err;
@@ -655,8 +681,14 @@ export async function callOpenRouter({apiKey, systemPrompt, systemParts, message
     return data;
 }
 
+// Kept as the pre-existing name; callers and tests that only ever meant OpenRouter are
+// unaffected by the generalisation above.
+export async function callOpenRouter(args) {
+    return callOpenAIFormat({...args, keyProvider: 'openrouter'});
+}
+
 async function chatAnthropic({apiKey, model, systemPrompt, systemParts, history, userText,
-    tools, specialistTools, executeCall, needsModelResult, maxIterations}) {
+    tools, specialistTools, executeCall, needsModelResult, maxIterations, onRound}) {
     const messages = [
         ...historyToAnthropicMessages(boundedHistory(history)),
         {role: 'user', content: String(userText || '').slice(0, MAX_DIRECT_MESSAGE_CHARS)},
@@ -682,6 +714,9 @@ async function chatAnthropic({apiKey, model, systemPrompt, systemParts, history,
         messages.push({role: 'assistant', content});
 
         const calls = toolBlocks.map(block => ({fn: block.name, args: block.input || {}}));
+        // One model response's worth of calls is one round. The caller uses the boundary to
+        // tell a repair (a later round) from independent work (the same round).
+        onRound?.();
         const results = [];
         const resultBlocks = [];
         for (let i = 0; i < calls.length; i++) {
@@ -705,8 +740,8 @@ async function chatAnthropic({apiKey, model, systemPrompt, systemParts, history,
     return final;
 }
 
-async function chatOpenRouter({apiKey, model, systemPrompt, systemParts, history, userText,
-    tools, specialistTools, executeCall, needsModelResult, maxIterations, sessionId}) {
+async function chatOpenAIFormat({apiKey, keyProvider, model, systemPrompt, systemParts, history,
+    userText, tools, specialistTools, executeCall, needsModelResult, maxIterations, sessionId, onRound}) {
     const messages = [
         ...historyToOpenAIMessages(history),
         {role: 'user', content: String(userText || '').slice(0, MAX_DIRECT_MESSAGE_CHARS)},
@@ -715,10 +750,11 @@ async function chatOpenRouter({apiKey, model, systemPrompt, systemParts, history
     const final = {text: '', executedCalls: [], usage: emptyUsage()};
 
     for (let iter = 0; iter < maxIterations; iter++) {
-        const response = await callOpenRouter({
-            apiKey, systemPrompt, systemParts, messages, tools: activeTools, model, sessionId,
+        const response = await callOpenAIFormat({
+            apiKey, keyProvider, systemPrompt, systemParts, messages, tools: activeTools,
+            model, sessionId,
         });
-        addOpenRouterUsage(final.usage, response.usage || {});
+        addOpenAIFormatUsage(final.usage, response.usage || {});
         const choice = response.choices?.[0] || {};
         const message = choice.message || {};
         if (typeof message.content === 'string' && message.content) {
@@ -740,6 +776,7 @@ async function chatOpenRouter({apiKey, model, systemPrompt, systemParts, history
             }
             return {fn: toolCall.function?.name, args};
         });
+        onRound?.();
         const results = [];
         for (let i = 0; i < calls.length; i++) {
             const call = calls[i];
@@ -780,6 +817,7 @@ export async function chat({
     needsModelResult,
     sessionId,
     maxIterations = 5,
+    onRound,
 }) {
     const keyProvider = keyProviderForBYOK(provider);
     if (!keyProvider) throw new Error(`BYOK provider '${provider}' not supported.`);
@@ -787,7 +825,7 @@ export async function chat({
     if (!model) throw new Error('Model missing');
     if (typeof executeCall !== 'function') throw new Error('executeCall callback missing');
 
-    const args = {apiKey, model, systemPrompt, systemParts, history, userText, tools,
-        specialistTools, executeCall, needsModelResult, maxIterations, sessionId};
-    return keyProvider === 'openrouter' ? chatOpenRouter(args) : chatAnthropic(args);
+    const args = {apiKey, keyProvider, model, systemPrompt, systemParts, history, userText, tools,
+        specialistTools, executeCall, needsModelResult, maxIterations, sessionId, onRound};
+    return keyProvider === 'anthropic' ? chatAnthropic(args) : chatOpenAIFormat(args);
 }

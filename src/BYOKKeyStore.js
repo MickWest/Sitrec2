@@ -122,7 +122,61 @@ function storageKey(provider) {
     return KEY_PREFIX + provider;
 }
 
-export async function getKey(provider) {
+// ─── Enable flag ───────────────────────────────────────────────────────────────────────
+//
+// A stored key can be KEPT but not USED — "run this session on Sitrec's quota, without
+// making me paste my key again tomorrow". The gate lives here, in the one module every
+// consumer already goes through, rather than in each consumer: getKey() and
+// getCachedKey() simply report no key for a disabled provider, so the terrain code, the
+// live feeds, the voice session and the model dropdown all honour it with no changes and
+// no way to forget one.
+//
+// Only the DISABLED ids are stored, so absence means enabled and a provider added later
+// is on by default. The storage key deliberately does not start with "byok_": that prefix
+// is what getAllProviders() enumerates as stored credentials, and an entry there would be
+// reported as a key that does not exist.
+const DISABLED_KEY = 'sitrecByokDisabled';
+
+let disabledSet = new Set();
+let disabledPromise = null;
+
+function loadDisabled() {
+    if (!disabledPromise) {
+        disabledPromise = (async () => {
+            try {
+                const stored = await indexedDBManager.getSetting(DISABLED_KEY);
+                disabledSet = new Set(Array.isArray(stored) ? stored : []);
+            } catch (e) {
+                disabledSet = new Set();     // unreadable store means "nothing disabled"
+            }
+            return disabledSet;
+        })();
+    }
+    return disabledPromise;
+}
+
+// Synchronous, for the same reason getCachedKey is: it is read on construction paths.
+// Accurate once primeKeyCache() has run, which SettingsManager does at startup.
+export function isProviderEnabled(provider) {
+    return !disabledSet.has(provider);
+}
+
+export async function setProviderEnabled(provider, enabled) {
+    if (!provider) return;
+    await loadDisabled();
+    if (enabled) disabledSet.delete(provider);
+    else disabledSet.add(provider);
+    try {
+        await indexedDBManager.setSetting(DISABLED_KEY, [...disabledSet]);
+    } catch (e) {
+        console.warn('BYOK: could not persist the enable flag for ' + provider, e);
+    }
+}
+
+// Reads the stored credential IGNORING the enable flag. The key dialog is the only
+// legitimate caller — it has to show "Set" for a key that is deliberately switched off.
+// Everything that actually USES a credential must call getKey().
+export async function getKeyRaw(provider) {
     if (!provider) return null;
     try {
         const stored = await indexedDBManager.getSetting(storageKey(provider));
@@ -131,6 +185,13 @@ export async function getKey(provider) {
     } catch (e) {
         return null;
     }
+}
+
+export async function getKey(provider) {
+    if (!provider) return null;
+    await loadDisabled();
+    if (disabledSet.has(provider)) return null;
+    return getKeyRaw(provider);
 }
 
 export async function setKey(provider, key) {
@@ -143,13 +204,18 @@ export async function deleteKey(provider) {
     await indexedDBManager.deleteSetting(storageKey(provider));
 }
 
-// Returns an array of provider names that currently have a non-empty stored key.
+// Returns an array of provider names that currently have a non-empty stored key AND are
+// enabled — i.e. the ones a caller would actually get a key for. Globals.hasByokKeys is
+// derived from this, so switching every key off correctly takes the "(your key)" entries
+// back out of the AI Model list.
 export async function getAllProviders() {
     try {
+        await loadDisabled();
         const all = await indexedDBManager.getAllSettings();
         return Object.keys(all)
             .filter(k => k.startsWith(KEY_PREFIX) && all[k])
-            .map(k => k.slice(KEY_PREFIX.length));
+            .map(k => k.slice(KEY_PREFIX.length))
+            .filter(id => !disabledSet.has(id));
     } catch (e) {
         return [];
     }
@@ -173,6 +239,10 @@ const keyCache = new Map();
 
 export async function primeKeyCache() {
     keyCache.clear();
+    // Re-read rather than trusting the in-memory set: this also runs as the key dialog's
+    // resync, and re-reading is the cheap way to be right after any change.
+    disabledPromise = null;
+    await loadDisabled();
     try {
         const all = await indexedDBManager.getAllSettings();
         for (const k of Object.keys(all)) {
@@ -193,6 +263,7 @@ export async function primeKeyCache() {
 // callers can fall back to Sitrec's shared credential.
 export function getCachedKey(provider) {
     if (!provider) return null;
+    if (disabledSet.has(provider)) return null;
     return keyCache.get(provider) ?? null;
 }
 

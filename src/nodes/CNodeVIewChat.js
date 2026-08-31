@@ -19,6 +19,33 @@ import {
     keyProviderForBYOK,
 } from "../CDirectLLMClient";
 
+// The "recording" pulse, shared by both microphone buttons.
+//
+// It has to be a BACKGROUND effect, not a text color. The button's glyph is the emoji
+// U+1F3A4, which the platform paints from Apple Color Emoji / Noto Color Emoji — colour
+// bitmaps in the font, immune to CSS `color`. The old indicator set color:#ff5555 and
+// changed nothing visible on macOS or Windows, which is exactly why a live microphone was
+// easy to miss. A filled, pulsing pill behind the glyph is unmistakable and works
+// wherever the emoji does.
+let voicePulseInstalled = false;
+
+function installVoicePulseStyle() {
+    if (voicePulseInstalled || typeof document === "undefined") return;
+    voicePulseInstalled = true;
+    const style = document.createElement("style");
+    style.textContent = `
+        @keyframes sitrec-mic-pulse {
+            0%   { box-shadow: 0 0 0 0 rgba(217,48,37,0.85); }
+            70%  { box-shadow: 0 0 0 7px rgba(217,48,37,0); }
+            100% { box-shadow: 0 0 0 0 rgba(217,48,37,0); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .sitrec-mic-live { animation: none !important; }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
 // Names the server's copy of a user-supplied API key, so it has to be unguessable
 // rather than merely unique - Math.random() is not a source for that. randomUUID()
 // needs a secure context and is absent over plain http://, but getRandomValues() is
@@ -44,12 +71,51 @@ function toolPayloadForModel(callResult) {
     return callResult.result ?? callResult;
 }
 
-// One line of failure text for the chat pane, wherever the detail ended up.
+// One line of failure text, wherever the detail ended up. This is the MODEL's copy:
+// full, with every candidate list intact, because that is what it repairs the call from.
 function errorTextOf(callResult) {
     return callResult.error
         ?? callResult.result?.error
         ?? callResult.errorDialogs?.join("; ")
         ?? "the call failed";
+}
+
+// The same failure, trimmed for a person.
+//
+// A lookup failure carries the whole candidate set for the model to retry from —
+// "Control 'Track Line Width' not found. Available: *Frustum, Toggle ALL [E]xtend To
+// Ground, ... Did you mean: video:Annotate/Line Width, contents:w_gfca/Line Width, ...?"
+// — which is several hundred tokens of scaffolding a user has no use for. Keep the
+// reason, drop the lists. The full text still goes to the debug channel.
+function userFacingErrorText(callResult) {
+    return String(errorTextOf(callResult))
+        .split(/\s+(?:Available|Menus|Did you mean|Available functions):/)[0]
+        .trim();
+}
+
+// One turn's tool-failure state.
+//
+// A plain object owned by the turn, NOT fields on the view, because turns overlap: the
+// input box takes a second message while the first is still waiting on the provider, and
+// the voice session runs beside both. Held on the view, the second turn's start would
+// wipe the first turn's buffer and the first turn's end would then wipe the second's.
+//
+// A turn is counted in ROUNDS — one round per provider round trip, i.e. one batch of tool
+// calls issued together from a single model response. The distinction is what separates a
+// repair from independent work: the model can only repair a call after it has SEEN the
+// error, so a repair always lands in a LATER round. Two setMenuValue calls in the SAME
+// round are two different pieces of the same request, and one succeeding says nothing
+// about the other.
+//
+// `round` is the current round; `failures` remember the round they failed in;
+// `successRounds` maps a function name to the last round it succeeded in.
+function newTurn() {
+    return {round: 0, failures: [], successRounds: new Map()};
+}
+
+// Called at each provider round trip, before that round's calls run.
+function nextRound(turn) {
+    if (turn) turn.round++;
 }
 
 class CNodeViewChat extends CNodeViewText {
@@ -90,6 +156,10 @@ class CNodeViewChat extends CNodeViewText {
         this.voiceGeneration = 0;
         this.voiceSession = null;
         this.voiceStarting = false;
+
+        // The voice session's implicit turn — see noteCallResult(). The typed paths carry
+        // their own turn object down the call chain instead, so they can overlap safely.
+        this.voiceTurn = null;
 
         // Create input box
         this.createInputBox();
@@ -135,6 +205,13 @@ class CNodeViewChat extends CNodeViewText {
             // beyond this line.
             this.voiceButton = this.uiBar.addIcon(
                 '\u{1F3A4}', () => this.toggleVoice(), t("misc.voice.start"), 'voice', true);
+            // A second microphone in the menu bar, left of the version panel. The header
+            // one lives in auto-hiding view chrome that can be scrolled past, collapsed or
+            // closed, so it is not a dependable "you are being recorded" indicator on its
+            // own — and stopping a live microphone must never require finding a window.
+            // Both buttons are the same control, styled together by _setVoiceButtonState.
+            this.voiceBarButton = Globals.menuBar?.addBarIcon(
+                '\u{1F3A4}', () => this.toggleVoiceFromBar(), t("misc.voice.start"), 'voice') ?? null;
             const m = this.uiBar.titleMenu;
             if (m) {
                 m.add({newChat: () => this.newChat()}, 'newChat').name('New Chat');
@@ -202,6 +279,15 @@ class CNodeViewChat extends CNodeViewText {
         }
     }
 
+    // The menu-bar microphone is reachable with the Assistant closed, and a spoken session
+    // whose transcript, errors and "no key set" message all land in a hidden window is a
+    // dead end. So starting from the bar opens the window first. Stopping does not: a user
+    // silencing a live microphone wants it off, not a panel in their way.
+    async toggleVoiceFromBar() {
+        if (!this.voiceSession?.active && !this.visible) this.setVisible(true);
+        await this.toggleVoice();
+    }
+
     async startVoice() {
         // Guard against a second press while the first is still connecting: start() opens
         // the microphone and spends a request, and two sessions would talk over each other.
@@ -241,6 +327,17 @@ class CNodeViewChat extends CNodeViewText {
                 // halves are needed, or the two sides keep separate conversations.
                 onUserText: (text) => this.addUserMessage(text),
                 onAssistantText: (text) => this.addSystemMessage(text),
+                // The session's own tool-loop boundaries, NOT the spoken transcript. A
+                // tool-using exchange speaks in a later response than the one that made the
+                // calls, so flushing on the transcript would split one turn in two and
+                // report a repair still in progress. onTurnEnd fires when the model
+                // completes a response without asking for tools — its work is done.
+                onRound: () => nextRound(this.voiceTurn),
+                onTurnEnd: () => {
+                    const turn = this.voiceTurn;
+                    this.voiceTurn = null;
+                    this.endTurn(turn);
+                },
                 onToolCall: (call) => this.addDebugMessage(`Voice call: ${JSON.stringify(call)}`),
                 onUsage: (usage) => {
                     this.addDebugMessage(formatTurnUsage(this.voiceModel, usage));
@@ -279,7 +376,16 @@ class CNodeViewChat extends CNodeViewText {
         this.voiceSession?.stop();
         this.voiceSession = null;
         this._setVoiceButtonState('stopped');
-        if (announce) this.addSystemMessage(t("misc.voice.stopped"));
+        // A session stopped between a failed call and the reply that would have explained
+        // it leaves a turn open. Close it here so the failure is not simply lost. Gated on
+        // `announce` for the same reason the stopped notice is: dispose() comes through
+        // with announce=false while the log is being torn down.
+        const turn = this.voiceTurn;
+        this.voiceTurn = null;
+        if (announce) {
+            this.endTurn(turn);
+            this.addSystemMessage(t("misc.voice.stopped"));
+        }
     }
 
     // Hiding the Assistant ends the voice session.
@@ -323,9 +429,10 @@ class CNodeViewChat extends CNodeViewText {
         if (sitrecAPI.callChangesSerializedState(call, callResult)) {
             markSitchDirty();
         }
-        if (callResult.success === false) {
-            this.addSystemMessage(`Error: ${errorTextOf(callResult)}`);
-        }
+        // The first tool call opens the turn; onTurnEnd closes it. Read and written on the
+        // main thread with no await between, so a call can never land in a flushed turn.
+        this.voiceTurn ??= newTurn();
+        this.noteCallResult(this.voiceTurn, call, callResult);
         return toolPayloadForModel(callResult);
     }
 
@@ -341,19 +448,53 @@ class CNodeViewChat extends CNodeViewText {
         // cancels a startup still in flight, which owns a microphone this object cannot
         // yet see. `false` suppresses the chat-log line — the log is being torn down.
         this.stopVoice(false);
+        // The menu bar outlives this view (it is rebuilt per sitch, the bar is not), so the
+        // icon we added to it would otherwise accumulate one stale, dead copy per reload.
+        if (this.voiceBarButton) {
+            Globals.menuBar?.removeBarIcon(this.voiceBarButton);
+            this.voiceBarButton = null;
+        }
         super.dispose();
     }
 
+    // Paint both microphone buttons — the view header's and the menu bar's — from one
+    // state, so they can never disagree about whether the page is recording.
     _setVoiceButtonState(state) {
-        if (!this.voiceButton) return;
+        installVoicePulseStyle();
         const listening = state === 'listening';
-        // Red while the microphone is live. The button is the only always-visible signal
-        // that this page is recording, so it must not depend on the chat log, which
-        // scrolls, or on a status line the user may have collapsed.
-        this.voiceButton.style.color = listening ? '#ff5555' : 'inherit';
-        this.voiceButton.style.opacity = (listening || state === 'connecting') ? '1' : '0.7';
-        this.voiceButton.dataset.uibarPinned = listening ? 'true' : 'false';
-        this.voiceButton.title = listening ? t("misc.voice.stop") : t("misc.voice.start");
+        const connecting = state === 'connecting';
+        const title = listening ? t("misc.voice.stop") : t("misc.voice.start");
+
+        for (const btn of [this.voiceButton, this.voiceBarButton]) {
+            if (!btn) continue;
+            // A filled pill, not a text color: see installVoicePulseStyle() for why the
+            // emoji glyph cannot be recolored.
+            btn.style.background = listening ? '#d93025' : (connecting ? '#8a6d00' : 'transparent');
+            btn.style.borderRadius = '10px';
+            btn.style.boxShadow = 'none';       // cleared so the animation owns it
+            btn.style.animation = listening ? 'sitrec-mic-pulse 1.6s ease-out infinite' : 'none';
+            btn.classList.toggle('sitrec-mic-live', listening);
+            btn.style.opacity = (listening || connecting) ? '1' : '0.7';
+            // Both bars re-apply this on pointerleave, and read it to decide the resting
+            // opacity — so a live microphone stays fully lit when the pointer moves away.
+            btn.dataset.uibarPinned = listening ? 'true' : 'false';
+            btn.dataset.barPinned = listening ? 'true' : 'false';
+            btn.title = title;
+            btn.setAttribute('aria-label', title);
+        }
+
+        // The menu-bar copy has room for a word, and a word is what reads at a glance from
+        // across the screen — the header copy sits in a cramped icon row and keeps to the
+        // pill alone.
+        if (this.voiceBarButton) {
+            this.voiceBarButton.textContent = listening
+                ? '\u{1F3A4} REC'
+                : (connecting ? '\u{1F3A4} \u2026' : '\u{1F3A4}');
+            this.voiceBarButton.style.color = 'white';
+            this.voiceBarButton.style.fontWeight = listening ? 'bold' : 'normal';
+            this.voiceBarButton.style.fontSize = listening ? '11px' : '14px';
+            this.voiceBarButton.style.letterSpacing = listening ? '0.06em' : 'normal';
+        }
     }
 
     /**
@@ -506,8 +647,14 @@ class CNodeViewChat extends CNodeViewText {
         this.chatHistory.push({ role: 'user', text });
     }
 
-    // Add bot/system message to chat log
-    addSystemMessage(text) {
+    // Add bot/system message to chat log.
+    //
+    // recordInHistory:false writes to the pane ONLY. chatHistory is not just the scroll-back
+    // — historyToAnthropicMessages() in CDirectLLMClient turns every `bot` entry into an
+    // assistant message on the next request, so anything recorded here is read back by the
+    // model as words it said itself. That is right for its own replies and wrong for
+    // locally generated notices about it, which is what the flag is for.
+    addSystemMessage(text, recordInHistory = true) {
         const div = document.createElement('div');
         // Render clickable links (help-doc links, URLs) the same way the Notes view
         // does. linkifyToHTML HTML-escapes the text before inserting anchors, so
@@ -518,7 +665,7 @@ class CNodeViewChat extends CNodeViewText {
         this.chatLog.insertBefore(div, this.promptLine);
         this.cullMessages();
         this.scrollToBottom();
-        this.chatHistory.push({ role: 'bot', text });
+        if (recordInHistory) this.chatHistory.push({ role: 'bot', text });
     }
 
     // Add debug message to chat log (if enabled)
@@ -531,6 +678,67 @@ class CNodeViewChat extends CNodeViewText {
         this.chatLog.insertBefore(div, this.promptLine);
         this.cullMessages();
         this.scrollToBottom();
+    }
+
+    // ---- Per-turn tool-failure reporting -------------------------------------------
+    //
+    // A failed tool call is not, by itself, news. The whole failure envelope goes back to
+    // the model (toolPayloadForModel), which is exactly what lets it repair the call on the
+    // next iteration of its tool loop — up to maxIterations, and across continueSession()
+    // round trips on the server path. Printing each failure as it happened therefore showed
+    // the user the model's SEARCH, not a failure:
+    //
+    //     Bot: Error: Control 'Track Line Width' not found. Available: *Frustum, ...
+    //     Bot: Error: Folder 'Line Width' not found. Available: Views, Graphs, ...
+    //     Bot: Error: Control 'Track Line Width' not found. Available: *HUD Color, ...
+    //     Bot: Done.
+    //
+    // and, because addSystemMessage recorded each line in chatHistory, fed all three back
+    // on the next request as assistant turns the model never wrote — crowding real turns
+    // out of the 10-message window.
+    //
+    // So the failures are buffered instead, and what the user actually needs to be told is
+    // narrower than "a call failed": it is that SOMETHING THEY ASKED FOR DID NOT HAPPEN.
+    // Two things follow.
+    //
+    // Only failed ACTIONS are buffered. A failed query — listMenuControls, getMenuValue,
+    // everything in CHAT_MODEL_RESULT_CALLS — changed nothing; it IS the model looking
+    // around, and it is the bulk of the noise. Those go to the debug channel only.
+    //
+    // A buffered failure is dropped only when the same function succeeded in a LATER round
+    // — which is what a repair looks like: setMenuValue(menu:"tracks") fails, the model
+    // reads the error, and in the next round setMenuValue(menu:"contents") succeeds.
+    //
+    // Both halves of that test are load-bearing. Not "anything succeeded", or a successful
+    // lookup would license hiding a failed action under a confident "Done." And not "the
+    // same function succeeded", or one failed and one successful setMenuValue in the SAME
+    // batch — two different tracks, one of which did not get set — would cancel out.
+    noteCallResult(turn, call, callResult) {
+        const fn = call?.fn ?? callResult.fn ?? "call";
+        if (callResult.success !== false) {
+            turn?.successRounds.set(fn, turn.round);
+            return;
+        }
+        // The debug channel always gets the untrimmed text, for every failure.
+        this.addDebugMessage(`${fn} failed: ${errorTextOf(callResult)}`);
+        if (sitrecAPI.callNeedsModelResult(fn)) return;
+        turn?.failures.push({fn, text: userFacingErrorText(callResult), round: turn.round});
+    }
+
+    // End of turn: report whatever was never repaired.
+    endTurn(turn) {
+        if (!turn) return;
+        const unrepaired = turn.failures.filter(
+            f => (turn.successRounds.get(f.fn) ?? -1) <= f.round);
+        if (unrepaired.length === 0) return;
+
+        // Deduplicated because a repaired call is retried with near-identical arguments,
+        // and capped because a batch over every track fails once per track with the same
+        // reason. Not recorded in chatHistory: this is Sitrec talking, not the model.
+        const unique = [...new Set(unrepaired.map(f => f.text))];
+        const shown = unique.slice(0, 3).join("\n");
+        const rest = unique.length > 3 ? `\n(and ${unique.length - 3} more)` : "";
+        this.addSystemMessage(`Error: ${shown}${rest}`, false);
     }
 
     clearOutput() {
@@ -594,7 +802,17 @@ class CNodeViewChat extends CNodeViewText {
         await this.sendToLLM(text);
     }
 
+    // The single owner of the tool-failure turn: both the server route below and the BYOK
+    // route it delegates to buffer their failures in `turn`, and the finally reports
+    // whatever was never repaired. That covers the whole turn including the
+    // continueSession() chain, which is awaited inside, so a call repaired three round
+    // trips later still counts as repaired.
+    //
+    // `turn` is a local carried down the call chain, not a field on the view: the input box
+    // accepts a second message while this one is still waiting on the provider, and two
+    // turns sharing one buffer would erase each other's failures.
     async sendToLLM(text) {
+        const turn = newTurn();
         try {
             const timeString = GlobalDateTimeNode.timeWithTimeZone(new Date());
             const simDate = GlobalDateTimeNode.dateNow ? GlobalDateTimeNode.dateNow.toISOString() : null;
@@ -608,7 +826,7 @@ class CNodeViewChat extends CNodeViewText {
             // instead of proxying through chatbot.php. The distinct provider token makes
             // this an explicit user choice, never an inference.
             if (isBYOKProvider(provider)) {
-                await this.sendToLLMDirect(text, provider, model, simDate);
+                await this.sendToLLMDirect(text, provider, model, simDate, turn);
                 return;
             }
 
@@ -646,7 +864,7 @@ class CNodeViewChat extends CNodeViewText {
             if (response.text) this.addSystemMessage(response.text);
             if (response.apiCalls && response.apiCalls.length > 0) {
                 this.addDebugMessage(`API calls: ${JSON.stringify(response.apiCalls)}`);
-                const {toolResults, changesSerializedState, allSucceeded, actionOnly} = await this.handleAPICalls(response.apiCalls);
+                const {toolResults, changesSerializedState, allSucceeded, actionOnly} = await this.handleAPICalls(response.apiCalls, turn);
                 if (changesSerializedState) {
                     markSitchDirty();
                 }
@@ -658,7 +876,7 @@ class CNodeViewChat extends CNodeViewText {
                 // their result or repair the call.
                 if (response.sessionContinue
                     && !(allSucceeded && actionOnly && !response.requiresContinuation)) {
-                    await this.continueSession(toolResults, provider, model);
+                    await this.continueSession(toolResults, provider, model, 0, turn);
                 } else if (allSucceeded && actionOnly && !response.text) {
                     this.addSystemMessage("Done.");
                 }
@@ -668,6 +886,8 @@ class CNodeViewChat extends CNodeViewText {
         } catch (e) {
             this.addSystemMessage("[error contacting server]");
             console.error(e);
+        } finally {
+            this.endTurn(turn);
         }
     }
 
@@ -683,7 +903,7 @@ class CNodeViewChat extends CNodeViewText {
     //    to the Sitrec server would break that expectation.
     //  - The system prompt and tools are built client-side, from the same shared
     //    chatbotSystemPrompt.txt the server uses, so the assistant behaves the same.
-    async sendToLLMDirect(text, provider, model, simDate) {
+    async sendToLLMDirect(text, provider, model, simDate, turn) {
         const keyProvider = keyProviderForBYOK(provider);
         const apiKey = await byokGetKey(keyProvider);
         if (!apiKey) {
@@ -736,6 +956,9 @@ class CNodeViewChat extends CNodeViewText {
                 // CSitrecAPI entry, so name it explicitly alongside the API's result set.
                 needsModelResult: fn => fn === "getHelpDoc" || sitrecAPI.callNeedsModelResult(fn),
                 sessionId: this.byokSessionId,
+                // Marks each provider round trip, so a repaired call can be told from an
+                // independent one. See newTurn().
+                onRound: () => nextRound(turn),
                 executeCall: async (call) => {
                     // getHelpDoc is implemented in chatbot.php, not in CSitrecAPI, so on the
                     // BYOK path it has to be served locally — otherwise the model, which the
@@ -755,9 +978,7 @@ class CNodeViewChat extends CNodeViewText {
                         changesSerializedState = true;
                     }
                     const payload = toolPayloadForModel(callResult);
-                    if (callResult.success === false) {
-                        this.addSystemMessage(`Error: ${errorTextOf(callResult)}`);
-                    }
+                    this.noteCallResult(turn, call, callResult);
                     executedForLog.push({fn: call.fn, args: call.args});
                     // Returning the failure-bearing object lets the client set is_error correctly.
                     return payload;
@@ -851,7 +1072,11 @@ class CNodeViewChat extends CNodeViewText {
     }
 
     // Process any API calls returned by the server - returns results for session continuation
-    async handleAPICalls(calls) {
+    async handleAPICalls(calls, turn) {
+        // One batch from one model response = one round. Everything in it was decided
+        // before the model saw any of these results, so nothing in it can repair anything
+        // else in it.
+        nextRound(turn);
         const toolResults = [];
         let changesSerializedState = false;
         let allSucceeded = true;
@@ -871,20 +1096,17 @@ class CNodeViewChat extends CNodeViewText {
                 changesSerializedState = true;
             }
 
-            // Only show user-facing messages for errors
-            // Success messages will come from the LLM's natural language response.
-            // Keyed off the OUTER success so a thrown error and an unknown function name
-            // surface too, not just a function that returned {success:false} - and since
-            // an agent's failure no longer raises a dialog, this line is the only place
-            // the user learns the model asked for something Sitrec could not do.
-            if (result.success === false) {
-                this.addSystemMessage(`Error: ${errorTextOf(result)}`);
-            }
+            // Buffered, not printed. Keyed off the OUTER success so a thrown error and an
+            // unknown function name are recorded too, not just a function that returned
+            // {success:false} — and since an agent's failure no longer raises a dialog,
+            // endTurn() is the only place the user learns the model asked for something
+            // Sitrec could not do. Success messages come from the model's own reply.
+            this.noteCallResult(turn, call, result);
         }
         return {toolResults, changesSerializedState, allSucceeded, actionOnly};
     }
     
-    async continueSession(toolResults, provider, model, depth = 0) {
+    async continueSession(toolResults, provider, model, depth = 0, turn = null) {
         const maxContinuationDepth = 5;
         if (depth >= maxContinuationDepth) {
             console.warn(`Session continuation stopped: reached max depth (${maxContinuationDepth})`);
@@ -917,14 +1139,14 @@ class CNodeViewChat extends CNodeViewText {
                     changesSerializedState,
                     allSucceeded,
                     actionOnly,
-                } = await this.handleAPICalls(response.apiCalls);
+                } = await this.handleAPICalls(response.apiCalls, turn);
                 if (changesSerializedState) {
                     markSitchDirty();
                 }
 
                 if (response.sessionContinue
                     && !(allSucceeded && actionOnly && !response.requiresContinuation)) {
-                    await this.continueSession(newResults, provider, model, depth + 1);
+                    await this.continueSession(newResults, provider, model, depth + 1, turn);
                 } else if (allSucceeded && actionOnly && !response.text) {
                     this.addSystemMessage("Done.");
                 }

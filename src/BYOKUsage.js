@@ -37,6 +37,11 @@ const MODEL_PRICES = {
     // these are fallbacks for an upstream response that omits the exact charged cost.
     'openai/gpt-5-mini': {input: 0.25, output: 2},
     'openai/gpt-5-nano': {input: 0.05, output: 0.40},
+    // The same two models called directly on the user's OpenAI key. Bare slugs, because
+    // that is the name OpenAI's own API takes and the name banked in the usage record —
+    // OpenAI returns no cost field, so these rates are the only figure available.
+    'gpt-5-mini': {input: 0.25, output: 2},
+    'gpt-5-nano': {input: 0.05, output: 0.40},
     // The voice model. Audio tokens are billed at a completely different rate from text
     // — 8x on input, 2.7x on output — and a voice session is overwhelmingly audio, so
     // folding them into the text counters would understate the bill by most of an order
@@ -79,6 +84,9 @@ function cacheMultipliersFor(model) {
     // normally comes back from OpenRouter; use the conservative 0.5x fallback when it does
     // not. OpenAI cache writes carry no premium.
     if (model.startsWith('openai/')) return {read: 0.5, write: 1};
+    // Called directly, there is no routing in between: OpenAI publishes cached input at
+    // exactly 0.1x the input rate for the GPT-5 family, and charges nothing to write.
+    if (model.startsWith('gpt-')) return {read: 0.1, write: 1};
     return {read: CACHE_READ_MULTIPLIER, write: CACHE_WRITE_MULTIPLIER};
 }
 
