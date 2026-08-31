@@ -127,6 +127,59 @@ export const mirrorMethods = {
     },
 
     /**
+     * Open a node's edit window: its GUI folder mirrored into a draggable standalone menu,
+     * positioned clear of the point it was invoked from.
+     *
+     * THE one way this menu is opened. Right-clicking an object in a 3D view and creating
+     * one from the ground menu both come here, so the two cannot drift in placement,
+     * mirroring, or how edit mode is entered and cleared.
+     *
+     * @param {CNode} node - the node whose GUI folder to mirror
+     * @param {number} clientX - viewport x the menu should keep clear of
+     * @returns {GUI|null} the menu, or null if the node has no GUI or creation was blocked
+     */
+    showNodeEditMenu(node, clientX, clientY) {
+        // guiFolder is the real lil-gui folder; `gui` may be a plain string on some nodes
+        // (CNodeDisplayTrack carries "contents"), so it only counts when it is an object.
+        const guiToMirror = node?.guiFolder
+            || (node?.gui && typeof node.gui === "object" ? node.gui : null);
+        if (!node || !guiToMirror) {
+            console.log(`Node ${node?.id} not found or has no GUI folder`);
+            return null;
+        }
+
+        const menuTitle = node.menuName || guiToMirror._title || node.id;
+
+        // dismissOnOutsideClick=false: interacting with the scene — which is the whole
+        // point while the move widget is up — must not close the menu.
+        const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, clientX, clientY, false);
+        if (!standaloneMenu) return null;    // blocked by an open persistent menu
+
+        this.setupDynamicMirroring(guiToMirror, standaloneMenu);
+        if (node instanceof CNode3DObject) {
+            // Registering the editing object is also what attaches CObjectMoveWidget, so
+            // this is what makes the object draggable without holding Option.
+            this.setEditingObject(node, standaloneMenu);
+        }
+
+        standaloneMenu.refreshMirror = () => {
+            this.updateMirror(standaloneMenu);
+        };
+
+        standaloneMenu.open();
+
+        // Opened at the cursor, which is on top of the object it edits — and with the move
+        // widget the object is now something you want to SEE while the menu is up. Shift it
+        // clear of the click horizontally, then drop it to a fixed row under the menu bar so
+        // it is always in the same out-of-the-way place. Done after open() so the width and
+        // title height read are the populated menu's.
+        Globals.menuBar.placeMenuBesidePoint(standaloneMenu, clientX);
+        Globals.menuBar.pinMenuBelowBar(standaloneMenu);
+
+        return standaloneMenu;
+    },
+
+    /**
      * Set up dynamic mirroring that automatically updates when the source changes
      * @param {GUI} sourceFolder - Source GUI folder to mirror
      * @param {GUI} standaloneMenu - Target standalone menu

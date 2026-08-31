@@ -66,9 +66,12 @@ import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
 import {showError, showConfirm} from "./showError";
-import {hasAnyKey as byokHasAnyKey, hasCachedKey, primeKeyCache} from "./BYOKKeyStore";
+import {
+    hasAnyKey as byokHasAnyKey, hasCachedKey, isProviderConfigured, primeKeyCache,
+} from "./BYOKKeyStore";
 import {showKeyDialog} from "./BYOKKeyDialog";
-import {BYOK_MODELS, isBYOKProvider, keyProviderForBYOK} from "./CDirectLLMClient";
+import {getBYOKModels, getVoiceModels, isBYOKProvider, keyProviderForBYOK} from "./CDirectLLMClient";
+import {DEFAULT_VOICE_MODEL, primeModelCatalog, refreshModelCatalog} from "./BYOKModelCatalog";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
@@ -613,9 +616,40 @@ export class CCustomManager {
                 this.saveGlobalSettings(true);
             });
 
-        // Make this control mirrorable into other menus (e.g. the Assistant view header).
+        // Registered HERE, next to the control it belongs to, and before Voice Model below.
+        // A deferred mirror request is fulfilled the moment its source registers, so the
+        // registration order decides the order the twins appear in the Assistant menu —
+        // registering Voice Model first put it above AI Model there while Settings had them
+        // the other way round.
+        //
         // The mirror stays in sync with this dropdown — value, option list, and onChange.
         registerMirrorSource("chatModel", this.chatModelController);
+
+        // The spoken assistant's model. A separate control from AI Model because it is a
+        // separate API: OpenAI's realtime models serve /v1/realtime over WebRTC and cannot
+        // be called through chat completions, so the two lists have no overlap at all.
+        this.voiceModelController = settingsFolder
+            .add(Globals.settings, "voiceModel", {"Loading…": ""})
+            .name(t("custom.settings.voiceModel.label"))
+            .tooltip(t("custom.settings.voiceModel.tooltip"))
+            .onChange(() => {
+                this.saveGlobalSettings(true);
+            });
+        // Mirrorable into other menus, exactly as AI Model is — the Assistant header is
+        // where the microphone lives, so that is where the model it will use belongs.
+        registerMirrorSource("voiceModel", this.voiceModelController);
+        this.updateVoiceModelSelector();
+
+        // Directly under the dropdown it governs, because that is the only place it makes
+        // sense: it is a control over what that list contains, not a separate preference.
+        settingsFolder.add(Globals.settings, "enableOldAIModels")
+            .name(t("custom.settings.enableOldAIModels.label"))
+            .tooltip(t("custom.settings.enableOldAIModels.tooltip"))
+            .onChange(() => {
+                this.saveGlobalSettings(true);
+                this.updateChatModelSelector();
+            })
+            .listen();
 
         // BYOK (Bring Your Own Key): one dialog for every credential the user supplies —
         // the AI assistant, tile providers, data feeds — plus each one's usage and limits.
@@ -664,6 +698,53 @@ export class CCustomManager {
 
         // Fetch available models from server
         this.fetchAvailableChatModels();
+        // ...and, in parallel, the models the user's OWN keys reach. Fire-and-forget, like
+        // the line above: startup ordering here is timing-sensitive and must not grow an
+        // await. The dropdown renders from the cached catalogue immediately and is rebuilt
+        // when the network answers.
+        this.refreshBYOKModelCatalog();
+    }
+
+    updateVoiceModelSelector() {
+        if (!this.voiceModelController) return;
+        const models = getVoiceModels();
+        // Empty value = "the built-in default", which is what an untouched setting holds.
+        // Naming the model it resolves to keeps the option honest rather than mysterious.
+        const options = {[`Default (${DEFAULT_VOICE_MODEL})`]: ""};
+        for (const m of models) options[m.label] = m.model;
+        this.voiceModelController.options(options);
+
+        // A saved id can outlive the key that listed it. Fall back to the default rather
+        // than leaving the dropdown showing a model the session would then fail to reach.
+        const saved = Globals.settings.voiceModel;
+        if (saved && !models.some(m => m.model === saved)) {
+            Globals.settings.voiceModel = "";
+            this.saveGlobalSettings(true);
+        }
+        this.voiceModelController.updateDisplay();
+
+        // The options() call above reaches the twins through MenuMirror's patch, but the
+        // value assignment on the stale-id path bypasses onChange, so any mirror would keep
+        // showing the model that is no longer on offer. Re-align them all.
+        syncMirroredSource("voiceModel");
+    }
+
+    // Ask each AI provider what its key can reach, then rebuild the dropdown.
+    //
+    // `force` on a key change, because the answer depends on the key that just changed;
+    // the passive startup call honours the catalogue's own 24h freshness window instead of
+    // making a network round trip every load.
+    async refreshBYOKModelCatalog(force = false) {
+        try {
+            await primeModelCatalog();
+            this.updateChatModelSelector();     // paint the cached lists at once
+            this.updateVoiceModelSelector();
+            await refreshModelCatalog({force});
+        } catch (e) {
+            console.warn('Could not refresh the BYOK model catalogue:', e);
+        }
+        this.updateChatModelSelector();
+        this.updateVoiceModelSelector();
     }
 
     /**
@@ -772,7 +853,18 @@ export class CCustomManager {
         // changes who is paying.
         const selectable = [...this.availableChatModels];
         if (Globals.hasByokKeys) {
-            selectable.push(...BYOK_MODELS.filter(model => hasCachedKey(model.keyProvider)));
+            // Whatever each stored, enabled key actually reaches — the provider's own
+            // /v1/models, not a shortlist Sitrec would have to keep up to date. Trimmed to
+            // each vendor's newest generation unless the user asked for the rest; the
+            // model currently selected is kept either way, so turning the option off
+            // cannot silently move them to a different model.
+            const selected = (Globals.settings.chatModel || "").split(":").slice(1).join(":");
+            selectable.push(...getBYOKModels({
+                includeOlder: !!Globals.settings.enableOldAIModels,
+                keep: selected || null,
+            // isProviderConfigured, not hasCachedKey: a custom endpoint is configured by
+            // its address and normally carries no key at all.
+            }).filter(model => isProviderConfigured(model.keyProvider)));
         }
 
         // Build options object: {label: "provider:model", ...}
@@ -829,11 +921,14 @@ export class CCustomManager {
             // credential for; updateChatModelSelector then picks the first available.
             const selectedProvider = (Globals.settings.chatModel || "").split(":", 1)[0];
             if (isBYOKProvider(selectedProvider)
-                && !hasCachedKey(keyProviderForBYOK(selectedProvider))) {
+                && !isProviderConfigured(keyProviderForBYOK(selectedProvider))) {
                     Globals.settings.chatModel = "";
                     this.saveGlobalSettings(true);
                 }
             this.updateChatModelSelector();
+            // The key that just changed decides which models are on offer, so re-ask
+            // rather than trusting the cached catalogue.
+            await this.refreshBYOKModelCatalog(true);
         };
         await showKeyDialog(resync);
         await resync();

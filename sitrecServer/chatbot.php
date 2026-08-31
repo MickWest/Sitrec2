@@ -570,7 +570,10 @@ function buildToolsFromDoc($sitrecDoc, $menuSummary) {
                 "properties" => [
                     "menu" => ["type" => "string", "description" => "Menu ID"],
                     "path" => ["type" => "string", "description" => "Control name or path with '/' for nested folders"],
-                    "value" => ["description" => "New value (number, boolean, or string)"]
+                    // An explicit type UNION, not an omitted type: a stricter consumer
+                    // (Ollama's chat template) fails outright on a property with no type.
+                    // Mirrors src/CDirectLLMClient.js buildToolSet().
+                    "value" => ["type" => ["number", "boolean", "string"], "description" => "New value (number, boolean, or string)"]
                 ],
                 "required" => ["menu", "path", "value"]
             ]

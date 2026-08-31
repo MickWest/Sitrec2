@@ -216,6 +216,25 @@ export class CUIBar {
         return btn;
     }
 
+    // A read-only strip of text in the bar. Not an icon and not a menu: it reports state
+    // rather than offering an action, so it takes no pointer events and no hover styling —
+    // clicking it should do nothing rather than look broken.
+    addLabel(text, tooltip, action, left = false) {
+        const el = document.createElement('span');
+        el.className = 'view-uibar-label';
+        el.textContent = text ?? '';
+        if (tooltip) el.title = tooltip;
+        if (action) el.dataset.uibarAction = action;
+        Object.assign(el.style, {
+            display: 'flex', alignItems: 'center', padding: '0 6px',
+            font: '11px sans-serif', opacity: '0.6', whiteSpace: 'nowrap',
+            overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '45%',
+            pointerEvents: 'none', userSelect: 'none',
+        });
+        (left ? this.left : this.right).appendChild(el);
+        return el;
+    }
+
     addPinIcon(onToggle) {
         this.onPinToggle = onToggle;
         this._pin = this.addIcon('\u{1F4CC}', () => this.onPinToggle && this.onPinToggle(), 'Pin this header (keep it shown)', 'pin');

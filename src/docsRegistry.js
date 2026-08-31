@@ -106,6 +106,11 @@ export const helpDocs = [
         chatDesc: "Using the interface: opening/dragging-off/re-docking menus, folders, sliders, color pickers, moving and resizing views/windows (hold the Q key), navigating the 3D main view with the mouse, the Time/Date controls, and changing the terrain imagery and elevation source. Read for any 'how do I use the menus / close a popped-off menu / move a view / set the time' question.",
     },
     {
+        file: "docs/AIAssistant", labelKey: "menus.help.documentation.aiAssistant",
+        section: "start", role: "reference",
+        chatDesc: "The AI assistant itself (Help → AI Assistant, or Tab): what it is, what it can and cannot do, and how to get good results from it. Covers the range of actions it can take (camera, time, sky and satellites, menus, objects, views, tracks, notes, saving, reading these docs), the simple commands Sitrec matches locally without a model, that its actions are real edits which mark the sitch unsaved and are only partly covered by undo, the confirmation prompt when the sitch came from a link, phrasing advice, choosing a model (Settings → AI Model: Sitrec's own models per account tier, 'Auto (economy)', your own key, your own server) and what changes between those routes, the header bar's model readout, the spoken assistant and its two microphone buttons, and a plain list of what it is bad at. Read for 'what can the assistant do', 'how do I use the chat', 'why did it not do what I asked', 'which AI model should I pick', 'how do I talk to it', or 'can it see the video'. For where API keys are stored and what protects them, read APIKeys instead.",
+    },
+    {
         file: "docs/KeyboardShortcuts", labelKey: "menus.help.documentation.keyboardShortcuts",
         section: "start", role: "reference",
         chatDesc: "The keyboard shortcuts in Sitrec, grouped by what they do: playback and frame stepping, the In/Out range, view layout (Q) and view presets (1-8), moving the camera and target (C and X), measuring (V and B), walking (WASD), nudging the start time, undo/redo, save/open, and tool-specific keys. Also lists the keys that collide. Not exhaustive — legacy sitches bind extra keys of their own. Read for 'what is the shortcut for X', 'what does key K do', or 'why did pressing O not do what I expected'.",

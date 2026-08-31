@@ -41,6 +41,27 @@ if (!$data || empty($data['prompt'])) {
 
 $userInfo = getUserInfo();
 
+// WHOSE PROMPTS ARE KEPT.
+//
+// Only the two maintainer accounts. This log records what people typed to the AI
+// assistant, and nobody else's is retained - including other administrators, who hold that
+// role for operational reasons and never agreed to have their prompts stored.
+//
+// Enforced HERE, not only in the browser. The client also declines to send (see
+// isNLULoggingUser in src/configUtils.js), but that saves a round trip rather than
+// guaranteeing anything: a stale cached build, a replayed request or a hand-made POST
+// would all still arrive. This is the check that makes the guarantee true.
+//
+// Deliberately by user id and not by group: "is an admin" is a different question from
+// "is the person this log is for".
+$NLU_LOG_USER_IDS = [1, 99999999];
+if (!in_array((int)$userInfo['user_id'], $NLU_LOG_USER_IDS, true)) {
+    // 200 with success, not an error: the client is not doing anything wrong, and a
+    // failure here must never surface as a broken chat turn.
+    echo json_encode(['success' => true, 'logged' => false]);
+    exit;
+}
+
 $prompt = substr(trim($data['prompt']), 0, 500);
 $apiCalls = $data['apiCalls'] ?? null;
 $textResponse = isset($data['textResponse']) ? substr($data['textResponse'], 0, 1000) : null;

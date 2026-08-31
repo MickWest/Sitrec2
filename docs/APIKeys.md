@@ -100,7 +100,13 @@ dialog are counted locally, in your browser, for your benefit.
 **Never in the interface.** No label, tooltip, menu, or chat message contains any part of a
 key. This is deliberate and was tightened after review: menu labels in Sitrec are collected
 and sent to the AI provider as part of describing the app, so a key fragment in a label
-would have travelled further than expected. The dialog shows only "Set" or "Not set".
+would have travelled further than expected. The dialog shows only "Set", "Off" or "Not set".
+
+**Keeping a key without using it.** Each row in the dialog has a tick box. Clearing it
+leaves the key stored but stops Sitrec reading it, so that service falls back to Sitrec's
+own shared quota — useful for running a session on Sitrec's account without having to paste
+the key again afterwards. The row then reads "Off". Untick every AI key and the "(your key)"
+entries disappear from the AI Model list, exactly as if no key were stored.
 
 ---
 
@@ -111,8 +117,9 @@ Each key goes to exactly one destination — the provider that issued it:
 | Key | Sent to | Purpose |
 |---|---|---|
 | Anthropic | `api.anthropic.com` | Runs the AI assistant on your account |
-| OpenAI (voice) | `api.openai.com` | Runs the spoken assistant on your account |
+| OpenAI | `api.openai.com` | Runs the typed and spoken assistant on your account |
 | OpenRouter | `openrouter.ai` | Runs OpenAI-family models through OpenRouter on your account |
+| Custom endpoint | the address you enter | Runs the assistant on your own server |
 | Google | `tile.googleapis.com` | Photorealistic 3D tiles |
 | Cesium Ion | Cesium Ion servers | Terrain and building tilesets |
 | Windy | `api.windy.com` | Worldwide live webcams |
@@ -124,6 +131,10 @@ Each key goes to exactly one destination — the provider that issued it:
 These requests go **directly from your browser to the provider**. They do not pass through
 the Sitrec server, which means Sitrec cannot see them — and also means the provider sees
 your browser's IP address rather than Sitrec's.
+
+One request is made without any key: Sitrec fetches OpenRouter's public price list so it
+can estimate what a model costs (see "Which models you get" below). It carries no
+credential and says nothing about you beyond the fact that a browser asked for the list.
 
 For OpenRouter, the key itself goes only to OpenRouter, but the request is routed onward to
 the selected upstream model provider. That means the Sitrec system instructions, your chat
@@ -138,13 +149,94 @@ Two consequences worth knowing:
 - Some providers do not permit direct browser access at all, which is why not every service
   can be used this way.
 
-### The OpenAI key and the spoken assistant
+### Which models you get
 
-The **OpenAI (voice)** key is used for one feature only: the microphone button in the
-Assistant window. It is **not** used for typed chat — OpenAI's text endpoints cannot be
-called from a browser, which is why the OpenRouter route above exists for that.
+**Every model your key can reach**, not a shortlist Sitrec chose. When you save a key,
+Sitrec asks that provider what your account has access to — `/v1/models` at Anthropic,
+OpenAI and OpenRouter — and puts the answer in the **AI Model** list, newest first, marked
+"(your … key)". A model released after your copy of Sitrec was built appears anyway, with
+no update needed.
 
-Three things about it are worth knowing before you supply one:
+Two things are left out, both because they cannot run the assistant rather than as a
+judgement about them: models for a different job entirely (embeddings, speech, images,
+moderation, video), and the web-search and deep-research variants, which bring their own
+fixed tool set and refuse Sitrec's. The spoken assistant's realtime models are absent from
+the typed list too — they serve a different API and get their own **Voice Model** dropdown,
+just below AI Model in Settings.
+
+Anything else your key lists is offered. If one of them turns out not to work, the
+provider's own message says so and names the model. The list is refreshed when you change
+a key, and at most once a day otherwise.
+
+**By default you see only each provider's newest generation** — the Claude 5 models and the
+GPT-5.6 ones, at the time of writing — because an OpenAI key alone lists seventy models
+going back to GPT-3.5, and scrolling past a decade of superseded releases is not a choice
+worth making every time. Tick **Enable old AI models**, directly under the AI Model list in
+Settings, to see the rest. Sitrec works out what "newest" means from the version numbers
+the provider reports, so a family released tomorrow is current the day it appears. A model
+you have already selected stays in the list either way, so turning the option off never
+moves you to a different model.
+
+**Cost for those models** is estimated from a public price list published by OpenRouter,
+which covers the same upstream models. It is fetched without any key and tells the provider
+nothing about you. Where a model is not on that list, Sitrec shows the tokens it used and
+no dollar figure, rather than inventing one. As always, the provider's own dashboard is the
+authority.
+
+### Your own server: local models and internal endpoints
+
+**Custom endpoint** points the assistant at a server you run — a model on this machine, or
+an endpoint inside your network — instead of a hosted provider. Enter three things:
+
+- **Address.** Where the API lives, for example `http://localhost:11434/v1` for Ollama,
+  `http://localhost:1234/v1` for LM Studio, or `https://llm.internal.example/v1` for a
+  gateway. A base address is enough; the exact call paths are shown underneath so you can
+  see what Sitrec will request. If your server mounts the API somewhere unusual, paste the
+  full path to the completions endpoint and that is used as given.
+- **Format.** The wire protocol the server speaks, not the vendor. **OpenAI-compatible** is
+  the right answer for almost everything self-hosted — Ollama (at its `/v1` path), LM
+  Studio, llama.cpp's server, vLLM, LocalAI, Jan, text-generation-webui, and LiteLLM, which
+  can put that shape in front of almost anything else. **Anthropic-compatible** is there for
+  gateways that serve `/v1/messages`.
+- **Key** — optional, and usually not needed for a model running on your own machine. Leave
+  it empty and no credential header is sent at all.
+
+Press **Test** to check the address before starting a conversation. It reports which of the
+three things went wrong — nothing listening, the origin not permitted, or a rejected key —
+and lists the models it found.
+
+**The one thing that usually needs configuring is CORS.** A browser will only talk to
+another origin if that origin says it may, and most local servers permit only requests from
+`localhost` by default. Sitrec is not served from localhost, so you have to add its origin.
+For Ollama that means setting `OLLAMA_ORIGINS` to include the address shown in the dialog
+before starting it; other servers have an equivalent setting. This is a property of every
+browser, not something Sitrec can work around.
+
+Plain `http://` addresses work even though Sitrec itself is served over HTTPS, as long as
+they are on this machine (`localhost` or `127.0.0.1`) — browsers treat the local machine as
+trusted for this purpose. An address on your network that is not this machine will need
+`https://`, because browsers refuse plain HTTP to anywhere else from a secure page.
+
+Two consequences of running your own model are worth stating plainly: **the conversation
+still leaves the browser**, to your server, with the same system instructions, tool
+definitions and tool results any other route sends — the difference is that you control
+where it lands. And **cost cannot be estimated**, because Sitrec has no price for a model it
+has never heard of; the usage readout reports tokens used and no dollar figure.
+
+### The OpenAI key
+
+The **OpenAI** key runs both halves of the assistant on your account: the typed chat, via
+the "(your OpenAI key)" entries in the AI Model list, and the microphone button in the
+Assistant window.
+
+It was voice-only until recently, and you may still see that written elsewhere. The reason
+was real and has expired: `api.openai.com` used to refuse a browser's cross-origin request
+to its text endpoints, so the only way to reach GPT from the page was through OpenRouter.
+It now allows them, so the extra hop is optional. OpenRouter remains useful for reaching
+models OpenAI does not serve, and it reports the exact charged cost of every request, which
+OpenAI does not — Sitrec estimates that from published prices instead.
+
+Three things about the spoken assistant are worth knowing before you supply a key:
 
 - **Your microphone audio leaves your browser.** While a voice session is running, what
   your microphone hears is streamed live to OpenAI, along with the same Sitrec system
@@ -160,8 +252,18 @@ Three things about it are worth knowing before you supply one:
   readout reports audio and text tokens separately for exactly this reason, and the
   spending limit you set at OpenAI is the protection that actually binds.
 
-While the session is live, the microphone icon in the Assistant header turns red. That icon
-is the reliable indicator — the chat log scrolls, but the icon does not.
+**Choosing a voice model.** Settings → **Voice Model** lists every realtime model your
+OpenAI key can reach. Leaving it on *Default* uses `gpt-realtime-2`, which is the one with
+a published price on file, so the usage readout can estimate what a conversation cost.
+Another model may work perfectly well and simply report the tokens it used with no dollar
+figure — the usage report says so where that happens. The Assistant window's header shows
+which model is answering, and switches to the voice one while the microphone is open.
+
+While the session is live, **both** microphone buttons — the one in the Assistant header and
+the one in the menu bar, left of the version number — turn into a pulsing red badge, and the
+menu-bar one reads **REC**. Either one stops the session. The menu-bar button is the
+dependable indicator: the Assistant window can be scrolled, closed or hidden behind
+another, and the menu bar cannot.
 
 ---
 

@@ -42,29 +42,39 @@ export const BYOK_PROVIDERS = [
             + 'Adds "(your key)" entries to the AI Model list.',
         signupURL: 'https://console.anthropic.com/settings/keys',
         usage: 'spend',
-        usageModelPrefixes: ['claude-'],
+        // Which recorded models count as this provider's spend. A prefix list is no
+        // longer enough now the dropdown offers whatever the key exposes, so these are
+        // predicates. They partition the id space between the three AI providers:
+        // OpenRouter ids always carry a "vendor/" prefix, Anthropic's direct ids always
+        // start "claude-", and an OpenAI key reaches everything else it lists (gpt-*, but
+        // also o3, o4-mini, chat-latest, the codex variants).
+        usageModelMatch: id => id.startsWith('claude-'),
         unitPrice: null,        // priced per model in BYOKUsage, not per request
         limits: [],
     },
     {
         id: 'openai',
-        label: 'OpenAI (voice)',
+        label: 'OpenAI',
         category: 'ai',
         auth: 'key',
         keyHint: 'sk-proj-… or sk-…',
-        // Deliberately narrow: this key drives the SPOKEN assistant only. OpenAI's text
-        // completion endpoints send no CORS headers, which is exactly why the OpenRouter
-        // entry below exists for typed chat — but the Realtime API is designed to be
-        // reached from a browser, so voice can use the user's key directly with no
-        // aggregator in between. Saying "voice" in the label stops a user pasting a key
-        // here and wondering why the typed chat still bills Sitrec.
-        unlocks: 'The spoken voice assistant. Your microphone audio and the assistant\'s '
-            + 'spoken replies stream directly between this browser and OpenAI, and are '
-            + 'billed to you. Enables the microphone button in the Assistant window. '
-            + 'This key is NOT used for typed chat — see OpenRouter for that.',
+        // This key now drives BOTH the spoken assistant and typed chat. It was voice-only
+        // for a real reason that has since expired: api.openai.com used to answer a browser
+        // preflight on its completion endpoints with no CORS headers, so only the Realtime
+        // API (designed to be reached from a browser) could be called from the page, and the
+        // OpenRouter entry below existed to get typed chat to GPT. /v1/chat/completions now
+        // allows any origin with an Authorization header, so the aggregator hop is optional.
+        // OpenRouter stays for the models OpenAI does not serve.
+        unlocks: 'Runs the AI assistant on your own OpenAI key — both typed chat and the '
+            + 'spoken voice assistant, billed to you. Adds "(your OpenAI key)" entries to '
+            + 'the AI Model list and enables the microphone button in the Assistant window. '
+            + 'Chat messages, tool definitions and your microphone audio go straight from '
+            + 'this browser to OpenAI.',
         signupURL: 'https://platform.openai.com/api-keys',
         usage: 'spend',
-        usageModelPrefixes: ['gpt-realtime'],
+        // Covers gpt-realtime (voice) and the gpt-5 chat models on the one key, which is
+        // what the user is billed for as a single line on one account.
+        usageModelMatch: id => !id.includes('/') && !id.startsWith('claude-'),
         unitPrice: null,        // priced per model in BYOKUsage, not per request
         limits: [],
     },
@@ -74,12 +84,51 @@ export const BYOK_PROVIDERS = [
         category: 'ai',
         auth: 'key',
         keyHint: 'sk-or-v1-…',
-        unlocks: 'Runs the AI assistant through OpenRouter on your own key, including OpenAI models that cannot be called directly from a browser. Chat messages, tool definitions, and tool results are sent to OpenRouter and its selected upstream provider.',
+        unlocks: 'Runs the AI assistant through OpenRouter on your own key — one account '
+            + 'across many model vendors. Chat messages, tool definitions, and tool results '
+            + 'are sent to OpenRouter and its selected upstream provider.',
         signupURL: 'https://openrouter.ai/settings/keys',
         usage: 'spend',
-        usageModelPrefixes: ['openai/'],
+        // Custom-endpoint usage is banked under a "custom/" key (see sendToLLMDirect), so
+        // it has to be excluded here or an OpenRouter row would claim it.
+        usageModelMatch: id => id.includes('/') && !id.startsWith('custom/'),
         // OpenRouter returns the exact charged cost with each completion, so no generic
         // per-request rate is needed here. Token-price fallbacks live in BYOKUsage.
+        unitPrice: null,
+        limits: [],
+    },
+    {
+        id: 'custom',
+        label: 'Custom endpoint',
+        category: 'ai',
+        auth: 'key',
+        // The credential is OPTIONAL here, unlike every other provider: a model runner on
+        // your own machine usually wants no key at all, and requiring one would make the
+        // commonest case impossible to express. The dialog reads this to decide whether a
+        // row with no key counts as configured.
+        optionalKey: true,
+        // Renders the address and wire-format controls. The address IS the configuration
+        // for this provider — a key without one reaches nothing.
+        endpoint: true,
+        // The wire protocols on offer, not the vendors. Nearly every self-hosted server
+        // speaks the OpenAI one — Ollama (at /v1), LM Studio, llama.cpp's server, vLLM,
+        // LocalAI, Jan and text-generation-webui all do, and LiteLLM proxies anything else
+        // into it. The Anthropic one is here because gateways such as LiteLLM can serve
+        // that shape too, and Sitrec already has both transports.
+        endpointFormats: {
+            'OpenAI-compatible (/v1/chat/completions)': 'openai',
+            'Anthropic-compatible (/v1/messages)': 'anthropic',
+        },
+        defaultEndpointFormat: 'openai',
+        unlocks: 'Runs the AI assistant against your own server — a model on this machine, '
+            + 'or an endpoint inside your network. Enter its address, pick the wire format '
+            + 'it speaks, and add a key only if it needs one. Nothing is sent anywhere '
+            + 'else, and Sitrec never sees the address.',
+        signupURL: 'https://docs.ollama.com/openai',
+        usage: 'spend',
+        // Banked under "custom/<model>" so a locally-named model cannot be mistaken for a
+        // hosted one with the same id.
+        usageModelMatch: id => id.startsWith('custom/'),
         unitPrice: null,
         limits: [],
     },

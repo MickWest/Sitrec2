@@ -104,11 +104,27 @@ export function sanitizeSettings(settings) {
     
     if (settings.chatModel !== undefined) {
         const chatModel = String(settings.chatModel);
-        // Validate "provider:model" or empty. Aggregators use namespaced model slugs such
-        // as openai/gpt-5-mini, so allow slash-separated segments without allowing empty
-        // segments, traversal syntax, query strings, or another colon.
-        if (chatModel === '' || /^[a-zA-Z0-9_-]+:[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)*$/.test(chatModel)) {
+        // "provider:model". The model half is namespaced differently by every route —
+        // "claude-opus-5", "openai/gpt-5-mini" (aggregator slug), "llama3.2:3b" (a local
+        // model tag) — so segments may be separated by "/" or ":". Each segment must be
+        // non-empty and free of traversal syntax, query strings and whitespace; the value
+        // is only ever split on the first colon and sent as a JSON string, never used as a
+        // path.
+        if (chatModel === '' || /^[a-zA-Z0-9_-]+:[a-zA-Z0-9._-]+(?:[/:][a-zA-Z0-9._-]+)*$/.test(chatModel)) {
             sanitized.chatModel = chatModel;
+        }
+    }
+
+    if (settings.enableOldAIModels !== undefined) {
+        sanitized.enableOldAIModels = Boolean(settings.enableOldAIModels);
+    }
+
+    if (settings.voiceModel !== undefined) {
+        const voiceModel = String(settings.voiceModel);
+        // A bare model id, or empty for "use the default". No provider prefix: unlike
+        // chatModel this always goes to OpenAI's realtime endpoint.
+        if (voiceModel === '' || /^[a-zA-Z0-9._-]+$/.test(voiceModel)) {
+            sanitized.voiceModel = voiceModel;
         }
     }
 
@@ -382,6 +398,8 @@ export async function initializeSettings() {
             performancePreset: "Balanced",
             lastBuildingRotation: 0, // Last building rotation in radians (persists across sessions)
             chatModel: "", // AI chat model in "provider:model" format (empty = use first available)
+            enableOldAIModels: false, // Offer superseded model generations in the AI Model list
+            voiceModel: "", // Spoken assistant's realtime model (empty = the built-in default)
             centerSidebar: false, // Enable center sidebar between split views
             showAttribution: true, // Show map/elevation data source attribution overlay
             showFilename: true, // Show the current video filename in the bottom overlay

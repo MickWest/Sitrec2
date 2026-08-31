@@ -1286,53 +1286,12 @@ export const mouseMethods = {
                             }
                         }
 
-                        // Get the node from NodeManager
-                        const node = NodeMan.get(objectID);
-                        // Use guiFolder (the actual lil-gui folder) if available, otherwise gui
-                        // node.gui can be a string like "contents" on CNodeDisplayTrack, so check it's an object
-                        const guiToMirror = node?.guiFolder || (node?.gui && typeof node.gui === 'object' ? node.gui : null);
-                        if (node && guiToMirror) {
-                            // Create a draggable window with the node's GUI controls
-                            const menuTitle = node.menuName || guiToMirror._title || node.id;
-
-
-
-                            // Create a standalone menu and mirror the object's GUI folder
-                            // Use dismissOnOutsideClick=false so interacting with the scene doesn't close the menu
-                            const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, event.clientX, event.clientY, false);
-
-                            // If menu creation was blocked (persistent menu is open), return early
-                            if (!standaloneMenu) {
-                                return;
-                            }
-
-                            // Set up dynamic mirroring for the object's GUI folder
-                            CustomManager.setupDynamicMirroring(guiToMirror, standaloneMenu);
-                            if (node instanceof CNode3DObject) {
-                                CustomManager.setEditingObject(node, standaloneMenu);
-                            }
-                            
-                            // Add a method to manually refresh the mirror
-                            standaloneMenu.refreshMirror = () => {
-                                CustomManager.updateMirror(standaloneMenu);
-                            };
-                            
-                            // Open the menu by default
-                            standaloneMenu.open();
-
-                            // Opened at the cursor, which is on top of the object it
-                            // edits — and with the move widget the object is now
-                            // something you want to SEE while the menu is up. Shift it
-                            // clear of the click horizontally, then drop it to a fixed
-                            // row under the menu bar so it is always in the same
-                            // out-of-the-way place. Done after open() so the width and
-                            // title height read are the populated menu's.
-                            Globals.menuBar.placeMenuBesidePoint(standaloneMenu, event.clientX);
-                            Globals.menuBar.pinMenuBelowBar(standaloneMenu);
-                            // console.log(`Created standalone menu for object: ${objectID}`);
-                        } else {
-                            console.log(`Node ${objectID} not found or has no GUI folder`);
-                        }
+                        // Mirroring, edit-mode registration and placement all live in
+                        // showNodeEditMenu, so a menu opened from here and one opened when
+                        // an object is created from the ground menu are the same window in
+                        // the same place.
+                        CustomManager.showNodeEditMenu(
+                            NodeMan.get(objectID), event.clientX, event.clientY);
                         return; // Found an object, don't check tracks or ground
                     } else {
                         // Debug: log what we're hitting

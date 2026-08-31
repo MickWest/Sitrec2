@@ -559,3 +559,162 @@ describe('CClientNLU edge cases', () => {
         expect(result.slots.result).toBe(20);
     });
 });
+
+// Greetings, thanks and filler carry no request, so answering them locally saves a model
+// call — on a hosted provider a turn's tokens, on a local model up to three minutes of
+// prompt prefill. The tests that matter most are the negative ones: what must NOT be
+// intercepted.
+describe('small talk', () => {
+    const reply = (text) => {
+        const parsed = clientNLU.parse(text);
+        return parsed.intent === 'SMALL_TALK' ? parsed.slots.reply : null;
+    };
+
+    test('answers greetings', () => {
+        for (const t of ['hello', 'Hi', 'HEY', 'hiya', 'yo', 'howdy', 'good morning',
+            'hola', 'bonjour', 'ciao', 'namaste', "what's up"]) {
+            expect(reply(t)).toMatch(/^Hello\./);
+        }
+    });
+
+    test('answers thanks, including the abbreviations people actually type', () => {
+        for (const t of ['thanks', 'Thank you', 'thx', 'thanx', 'ty', 'ta', 'cheers',
+            'much appreciated', 'nice one', 'thanks a lot', 'gracias', 'merci', 'danke',
+            'grazie', 'obrigado', 'spasibo', 'xie xie']) {
+            expect(reply(t)).toBe("You're welcome.");
+        }
+    });
+
+    test('answers farewells and acknowledgements', () => {
+        for (const t of ['bye', 'goodbye', 'see ya', 'cya', 'good night', 'adios']) {
+            expect(reply(t)).toBe('Goodbye.');
+        }
+        for (const t of ['ok', 'okay', 'kk', 'alright', 'got it', 'roger that', 'cool',
+            'nice', 'perfect', 'well done', 'good bot']) {
+            expect(reply(t)).toBe('Okay.');
+        }
+    });
+
+    test('answers impatience with why a reply may be slow', () => {
+        for (const t of ['hurry up', 'come on', 'are you there', 'is this thing on',
+            'why so slow', 'wake up']) {
+            expect(reply(t)).toMatch(/Still here/);
+        }
+    });
+
+    test('ignores case, surrounding space, punctuation and emoji', () => {
+        for (const t of ['  Hello!  ', 'HELLO', 'hello?', 'hello...', 'Thanks!!!',
+            'thanks :)', 'ok.', 'Bye!']) {
+            expect(reply(t)).not.toBeNull();
+        }
+    });
+
+    // ── The negative half — far more important than the positive half ────────────────
+
+    test('never swallows a request that merely BEGINS with small talk', () => {
+        // The whole reason matching is on the full utterance and not a prefix.
+        for (const t of ['thanks, now show the tracks', 'hi, pause the video',
+            'ok set fov to 30', 'hello can you load starlink',
+            'cheers now go to frame 100']) {
+            expect(reply(t)).toBeNull();
+        }
+    });
+
+    test('never intercepts an answer to a yes/no question', () => {
+        // The assistant asks clarifying questions; a bare "yes" is the answer to one and
+        // must reach the model, which is the only side holding that context.
+        for (const t of ['yes', 'no', 'yeah', 'yep', 'nope', 'nah', 'sure', 'correct',
+            'right one', 'the first one']) {
+            expect(reply(t)).toBeNull();
+        }
+    });
+
+    test('leaves real commands and real questions alone', () => {
+        for (const t of ['pause', 'play', 'frame 300', 'set fov to 45',
+            'how do I add a track', 'why is the sky dark', 'what is 2+2',
+            'show the terrain', 'hide the tracks']) {
+            expect(reply(t)).toBeNull();
+        }
+    });
+
+    test('does not mistake a longer sentence containing a keyword', () => {
+        for (const t of ['test the camera against the track',
+            'check the altitude of the object', 'good morning is a phrase I want as a label',
+            'later frames are wrong']) {
+            expect(reply(t)).toBeNull();
+        }
+    });
+
+    // An acknowledgement can be consent ("Say the word and I'll move the camera." / "ok"),
+    // so the chat view has to check the conversation before answering it locally. The NLU
+    // cannot see the conversation, so it flags which categories need that check.
+    test('flags the categories that could be consent, and only those', () => {
+        for (const t of ['ok', 'okay', 'alright', 'got it', 'will do', 'please', 'pls']) {
+            expect(clientNLU.parse(t).slots.couldBeConsent).toBe(true);
+        }
+        // These can never answer an offer, so they stay free of the guard — otherwise
+        // most small talk would reach the model, since assistants offer things constantly.
+        for (const t of ['hello', 'thanks', 'bye', 'hurry up', 'are you there', 'ping']) {
+            expect(clientNLU.parse(t).slots.couldBeConsent).toBe(false);
+        }
+    });
+
+    test('does not treat an instruction as impatience', () => {
+        // "do it" / "just do it" / "go on" were small talk and are not: after "Say the
+        // word and I'll move the camera" they ARE the instruction, and impatience is not
+        // consent-gated, so answering them locally would drop the request outright.
+        for (const t of ['do it', 'just do it', 'go on']) {
+            expect(reply(t)).toBeNull();
+        }
+    });
+
+    test('executes as a no-op that reports the reply', async () => {
+        const parsed = clientNLU.parse('thanks');
+        const result = await clientNLU.execute(parsed);
+        expect(result).toEqual({success: true});
+        expect(clientNLU.generateResponse(parsed, result)).toBe("You're welcome.");
+    });
+});
+
+// "go bingley" should reach the geocoder exactly as "go to bingley" does. Sending the
+// bare form to the model instead spends a whole turn to arrive at the same call.
+describe('bare "go" without "to"', () => {
+    const parse = (t) => clientNLU.parse(t);
+
+    test('a bare go/move reaches the same named-location intent as "go to"', () => {
+        for (const t of ['go bingley', 'go to bingley', 'goto bingley', 'fly to bingley',
+            'move bingley', 'move to bingley', 'Go Bingley']) {
+            const r = parse(t);
+            expect(r.intent).toBe('GOTO_NAMED_LOCATION');
+            expect(r.slots.location.toLowerCase()).toBe('bingley');
+        }
+    });
+
+    test('keeps multi-word place names intact', () => {
+        expect(parse('go new york').slots.location).toBe('new york');
+        expect(parse('go to san francisco').slots.location).toBe('san francisco');
+        expect(parse('go rio de janeiro').slots.location).toBe('rio de janeiro');
+    });
+
+    test('coordinates work bare too, and still parse as LLA', () => {
+        for (const t of ['go 51.8, -1.8', 'go to 51.8, -1.8', 'go 51.8 -1.8 300']) {
+            const r = parse(t);
+            expect(r.intent).toBe('GOTO_LLA');
+            expect(r.slots.lat).toBeCloseTo(51.8, 6);
+            expect(r.slots.lon).toBeCloseTo(-1.8, 6);
+        }
+        expect(parse('go 51.8 -1.8 300').slots.alt).toBe(300);
+        // The "set location" spelling keeps working through the second alternation.
+        expect(parse('set location to 10, 20').slots.lat).toBeCloseTo(10, 6);
+    });
+
+    // The reason "to" was not optional in the first place.
+    test('a bare go followed by a direction or command is not a place', () => {
+        for (const t of ['go back', 'go on', 'go north', 'go up', 'go down', 'go left',
+            'go right', 'go home', 'go ahead', 'go faster', 'go next',
+            'go show the tracks', 'go load starlink', 'go set fov to 30',
+            'move up', 'move back']) {
+            expect(parse(t).intent).not.toBe('GOTO_NAMED_LOCATION');
+        }
+    });
+});

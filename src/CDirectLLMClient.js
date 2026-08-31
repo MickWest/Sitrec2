@@ -4,8 +4,15 @@
 // talk to the LLM API directly — no PHP proxy — when the user has supplied
 // their own key.
 //
-// Supports Anthropic directly and OpenAI-family models through OpenRouter. OpenAI's own
-// API does not support browser CORS, which is why the aggregator path exists.
+// Supports Anthropic and OpenAI directly, and OpenAI-family models through OpenRouter.
+//
+// The OpenRouter path predates the direct OpenAI one: api.openai.com used to answer a
+// browser preflight with no CORS headers, so an aggregator was the only way to reach GPT
+// from the page. It now returns "access-control-allow-origin: <the requesting origin>"
+// with "authorization" among the allowed headers on /v1/chat/completions (and "*" on
+// /v1/responses), so the direct path works and is one hop and one account fewer. Both are
+// kept: OpenRouter still reaches models OpenAI does not serve, and reports the exact
+// charged cost per completion, which OpenAI does not.
 //
 // The module is intentionally pure: no dependencies on sitrec globals,
 // no direct calls to sitrecAPI. The caller injects an executeCall callback
@@ -14,10 +21,14 @@
 
 import promptFileText from '../sitrecServer/chatbotSystemPrompt.txt';
 import {emptyUsage} from './BYOKUsage';
+import {
+    DEFAULT_VOICE_MODEL, KIND_VOICE, filterToCurrentGeneration, getCatalogModels,
+} from './BYOKModelCatalog';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 
 // Provider token for "call Anthropic directly with the user's own key". It is
 // deliberately NOT plain "anthropic": the chat model setting is a single
@@ -28,12 +39,18 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 // "(your key)" entry.
 export const BYOK_ANTHROPIC_PROVIDER = 'byok-anthropic';
 export const BYOK_OPENROUTER_PROVIDER = 'byok-openrouter';
+export const BYOK_OPENAI_PROVIDER = 'byok-openai';
+// A server the user names themselves: on this machine, or inside their network. The
+// address and wire format live in BYOKKeyStore alongside the (optional) credential.
+export const BYOK_CUSTOM_PROVIDER = 'byok-custom';
 // Backward-compatible name used by older imports and saved settings.
 export const BYOK_PROVIDER = BYOK_ANTHROPIC_PROVIDER;
 
 export function keyProviderForBYOK(provider) {
     if (provider === BYOK_ANTHROPIC_PROVIDER || provider === 'anthropic') return 'anthropic';
     if (provider === BYOK_OPENROUTER_PROVIDER || provider === 'openrouter') return 'openrouter';
+    if (provider === BYOK_OPENAI_PROVIDER || provider === 'openai') return 'openai';
+    if (provider === BYOK_CUSTOM_PROVIDER || provider === 'custom') return 'custom';
     return null;
 }
 
@@ -42,19 +59,130 @@ export function isBYOKProvider(provider) {
     // Plain "anthropic" is also accepted by chat() as a transport shorthand in tests and
     // internal callers, but it is the SERVER provider token in the saved model setting and
     // must never be rerouted around Sitrec's proxy.
-    return provider === BYOK_ANTHROPIC_PROVIDER || provider === BYOK_OPENROUTER_PROVIDER;
+    return provider === BYOK_ANTHROPIC_PROVIDER || provider === BYOK_OPENROUTER_PROVIDER
+        || provider === BYOK_OPENAI_PROVIDER || provider === BYOK_CUSTOM_PROVIDER;
 }
 
-// Models offered in the AI Model dropdown once the corresponding provider key is stored.
-// The user is paying for these directly, so the list spans a price/capability range rather
-// than being capped the way the server's per-tier table is.
+// FALLBACK models only. The real list comes from the provider's own /v1/models — see
+// getBYOKModels() below and src/BYOKModelCatalog.js. These are what the dropdown shows
+// before the first catalogue fetch lands (or if it fails), so they are deliberately a few
+// safe, known-good ids rather than an attempt at a complete list.
 export const BYOK_MODELS = [
     {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-opus-5', label: 'Claude Opus 5 (your Anthropic key)'},
     {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-sonnet-5', label: 'Claude Sonnet 5 (your Anthropic key)'},
     {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (your Anthropic key)'},
+    {provider: BYOK_OPENAI_PROVIDER, keyProvider: 'openai', model: 'gpt-5-mini', label: 'OpenAI GPT-5 Mini (your OpenAI key)'},
+    {provider: BYOK_OPENAI_PROVIDER, keyProvider: 'openai', model: 'gpt-5-nano', label: 'OpenAI GPT-5 Nano (your OpenAI key)'},
     {provider: BYOK_OPENROUTER_PROVIDER, keyProvider: 'openrouter', model: 'openai/gpt-5-mini', label: 'OpenAI GPT-5 Mini (your OpenRouter key)'},
     {provider: BYOK_OPENROUTER_PROVIDER, keyProvider: 'openrouter', model: 'openai/gpt-5-nano', label: 'OpenAI GPT-5 Nano (your OpenRouter key)'},
 ];
+
+// Turn what the user typed into the two URLs the transports need.
+//
+// Deliberately forgiving about where they stopped typing, because every server documents
+// its address differently: Ollama says http://localhost:11434/v1, LM Studio shows
+// http://localhost:1234/v1, and a corporate gateway is as likely to be quoted as the full
+// .../v1/chat/completions. All three are accepted, and a trailing slash never matters.
+//
+// The full-path form is honoured as given rather than being re-derived: a gateway that
+// mounts the API somewhere unusual (/openai/deployments/x/chat/completions on Azure, say)
+// is exactly the case a "custom endpoint" exists to serve, and second-guessing it would
+// put this back in the business of knowing every vendor's layout.
+export function resolveEndpoint(rawURL, format = 'openai') {
+    const url = String(rawURL || '').trim().replace(/\/+$/, '');
+    if (!url) return null;
+    const chatPath = format === 'anthropic' ? '/messages' : '/chat/completions';
+    // Already a full path to the completion endpoint: take it, and derive the sibling
+    // model list from the segment above it.
+    if (url.endsWith(chatPath)) {
+        const base = url.slice(0, -chatPath.length);
+        return {chatURL: url, modelsURL: `${base}/models`, base};
+    }
+    return {chatURL: url + chatPath, modelsURL: `${url}/models`, base: url};
+}
+
+// Only http and https, and nothing that smuggles credentials in the authority. Checked at
+// entry (the dialog) and again at use, because the stored value outlives the dialog.
+export function isUsableEndpointURL(rawURL) {
+    let parsed;
+    try {
+        parsed = new URL(String(rawURL || '').trim());
+    } catch (e) {
+        return false;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    return parsed.username === '' && parsed.password === '';
+}
+
+// Key-provider id -> the dropdown's provider token. The catalogue module deals only in the
+// former; this is the one place the two vocabularies meet.
+const PROVIDER_TOKEN_FOR_KEY_PROVIDER = {
+    anthropic: BYOK_ANTHROPIC_PROVIDER,
+    openai: BYOK_OPENAI_PROVIDER,
+    openrouter: BYOK_OPENROUTER_PROVIDER,
+    custom: BYOK_CUSTOM_PROVIDER,
+};
+
+// What a model from this provider is marked with in the dropdown. A custom endpoint says
+// "your endpoint", not "your endpoint key" — it usually has no key at all, and the point of
+// the marker is to say who is being billed, which here is nobody but the machine's owner.
+const PROVIDER_SUFFIX = {
+    anthropic: '(your Anthropic key)',
+    openai: '(your OpenAI key)',
+    openrouter: '(your OpenRouter key)',
+    custom: '(your endpoint)',
+};
+
+// Every model the user's own keys can reach, for the AI Model dropdown.
+//
+// Per key provider this prefers the live catalogue and falls back to the BYOK_MODELS
+// entries above — per provider, not all-or-nothing, so a working Anthropic key still shows
+// its full catalogue when the OpenAI fetch has failed.
+//
+// `includeOlder` and `keep` are passed in rather than read from Globals: this module is
+// deliberately free of sitrec globals so it stays unit-testable (see the header).
+export function getBYOKModels({includeOlder = false, keep = null} = {}) {
+    const out = [];
+    for (const [keyProvider, provider] of Object.entries(PROVIDER_TOKEN_FOR_KEY_PROVIDER)) {
+        const listed = getCatalogModels(keyProvider);
+        const forProvider = listed
+            ? listed.map(m => ({
+                provider, keyProvider, model: m.id,
+                label: `${m.label} ${PROVIDER_SUFFIX[keyProvider]}`,
+            }))
+            : BYOK_MODELS.filter(m => m.keyProvider === keyProvider);
+        // Filtered per provider, so the newest Claude and the newest GPT both survive —
+        // comparing version numbers across vendors would be meaningless.
+        //
+        // A custom endpoint is exempt: it serves whatever its owner put on it, under
+        // whatever names they chose ("llama3.2:3b", "my-finetune"), and a version rule
+        // built for vendor release trains has nothing to say about those.
+        const skipFilter = includeOlder || keyProvider === 'custom';
+        out.push(...(skipFilter ? forProvider : filterToCurrentGeneration(forProvider, keep)));
+    }
+    return out;
+}
+
+// The spoken assistant's models, for the Voice Model dropdown. OpenAI's realtime family,
+// which serves /v1/realtime over WebRTC — a different API from everything above, which is
+// exactly why these are a separate list rather than entries in the AI Model one.
+//
+// Deliberately NOT passed through filterToCurrentGeneration. That rule reads a version off
+// the end of an id, and the realtime names defeat it inconsistently: "gpt-realtime-2.1"
+// parses as 2.1 while "gpt-realtime-2.1-mini" parses as nothing, so filtering would hide
+// the mini variant of the very generation it had just decided was current. There are under
+// a dozen of them, so the whole list is offered and the heuristic is left out of it.
+export function getVoiceModels() {
+    const listed = getCatalogModels('openai', KIND_VOICE);
+    if (!listed) return [{model: DEFAULT_VOICE_MODEL, label: DEFAULT_VOICE_MODEL}];
+    const models = listed.map(m => ({model: m.id, label: m.label}));
+    // The default has to be selectable even if a catalogue fetch has not listed it — it is
+    // what an unset setting resolves to, so an option for it must always exist.
+    if (!models.some(m => m.model === DEFAULT_VOICE_MODEL)) {
+        models.push({model: DEFAULT_VOICE_MODEL, label: DEFAULT_VOICE_MODEL});
+    }
+    return models;
+}
 
 // ── SINGLE SOURCE OF TRUTH FOR THE SYSTEM PROMPT ─────────────────────────────
 // chatbotSystemPrompt.txt holds the one copy of the assistant's prompt prose,
@@ -217,7 +345,18 @@ export function buildToolSet(sitrecDoc, menuSummary) {
                 properties: {
                     menu: { type: 'string', description: 'Menu ID' },
                     path: { type: 'string', description: "Control name or path with '/' for nested folders" },
-                    value: { description: 'New value (number, boolean, or string)' },
+                    // An explicit type UNION, not an omitted type. A control's value may
+                    // genuinely be any of these, and OpenAI and Anthropic both accept a
+                    // schema with no `type` at all — but a stricter consumer does not:
+                    // Ollama's chat template does `index $prop.Type 0` on every property
+                    // and died with "reflect: slice index out of range" on this one,
+                    // failing the whole request before any model saw it. An array of types
+                    // is what JSON Schema actually specifies for "one of these", so this is
+                    // both more correct and portable.
+                    value: {
+                        type: ['number', 'boolean', 'string'],
+                        description: 'New value (number, boolean, or string)',
+                    },
                 },
                 required: ['menu', 'path', 'value'],
             },
@@ -448,7 +587,7 @@ function withCacheBreakpoint(content) {
 // systemParts is the {staticPart, menuPart, volatilePart} split from
 // buildSystemPromptParts(). It is optional — callers that only have the concatenated
 // string still work, they just get one cached block, which is the pre-split behavior.
-export async function callAnthropic({ apiKey, systemPrompt, systemParts, messages, tools, model, maxTokens = 1024 }) {
+export async function callAnthropic({ apiKey, systemPrompt, systemParts, messages, tools, model, maxTokens = 1024, endpoint }) {
     // ── PARITY WITH THE SERVER PROXY ──────────────────────────────────────────────────
     // This is the browser BYOK sibling of sitrecServer/chatbot.php callAnthropic(). The
     // two MUST stay behaviorally in sync — mirror changes to request shaping, the system
@@ -505,23 +644,44 @@ export async function callAnthropic({ apiKey, systemPrompt, systemParts, message
         tools: convertToolsForAnthropic(tools),
     };
 
-    const res = await fetch(ANTHROPIC_API_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': ANTHROPIC_VERSION,
-            // Required for direct browser calls. Anthropic will reject
-            // browser-origin requests without this header.
-            'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify(body),
-    });
+    const url = endpoint?.chatURL || ANTHROPIC_API_URL;
+    const custom = !!endpoint?.chatURL;
+
+    const headers = {
+        'Content-Type': 'application/json',
+        'anthropic-version': ANTHROPIC_VERSION,
+    };
+    // Required for direct browser calls: Anthropic rejects a browser origin without it.
+    //
+    // NOT sent to a custom endpoint, and this is not a nicety. A non-standard request
+    // header forces a CORS preflight and must appear in the server's
+    // Access-Control-Allow-Headers, so sending it to a gateway that has never heard of it
+    // makes every request fail before it is issued. Measured against a compatible server
+    // whose allow-list covered anthropic-version but not this: the whole call died as
+    // "Failed to fetch". Every header sent to a server we do not control is a preflight
+    // term it has to know about, so only the ones it genuinely needs go.
+    if (!custom) headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    // A self-hosted Anthropic-compatible gateway often needs no credential, and some
+    // reject an empty header outright, so it is omitted rather than sent blank.
+    if (apiKey) headers['x-api-key'] = apiKey;
+
+    let res;
+    try {
+        res = await fetch(url, {method: 'POST', headers, body: JSON.stringify(body)});
+    } catch (e) {
+        // A self-hosted address fails here far more often than a hosted one, and the
+        // browser's own message ("Failed to fetch") names neither cause. Say what the two
+        // actually are, since the user is the only one who can fix either.
+        if (!custom) throw e;
+        throw new Error(`Could not reach ${url}. The server may be down, or it may not `
+            + `allow requests from ${globalThis.location?.origin ?? 'this page'} — `
+            + `a self-hosted server has to be told to permit this origin (CORS).`);
+    }
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) {
         const msg = data?.error?.message || `HTTP ${res.status}`;
-        const err = new Error(`Anthropic API error: ${msg}`);
+        const err = new Error(`${custom ? 'Endpoint' : 'Anthropic'} API error: ${msg}`);
         err.status = res.status;
         err.body = data;
         throw err;
@@ -567,7 +727,10 @@ function serializeToolResult(payload) {
     });
 }
 
-function addOpenRouterUsage(total, raw) {
+// OpenAI and OpenRouter report usage in the same shape. `cost` is OpenRouter's exact
+// charged amount; OpenAI omits it, and the caller then prices the tokens from the model
+// table in BYOKUsage.
+function addOpenAIFormatUsage(total, raw) {
     const details = raw?.prompt_tokens_details || {};
     const cached = Number(details.cached_tokens || 0);
     const written = Number(details.cache_write_tokens || 0);
@@ -625,38 +788,161 @@ function canSkipConfirmation(calls, results, needsModelResult) {
     );
 }
 
-export async function callOpenRouter({apiKey, systemPrompt, systemParts, messages, tools, model, maxTokens = 2048, sessionId}) {
-    const body = {
-        model,
-        messages: [{role: 'system', content: fullSystemPrompt(systemPrompt, systemParts)}, ...messages],
-        tools,
-        max_completion_tokens: maxTokens,
-        reasoning_effort: 'low',
-    };
-    if (sessionId) body.session_id = sessionId;
+// OpenRouter and OpenAI speak the same /chat/completions wire format, so one function
+// serves both; only the URL, two headers and OpenRouter's session_id differ. `keyProvider`
+// picks between them and names the service in the error text, which is the difference the
+// user needs to see when a key is rejected.
+// How each model wants its optional request parameters, learned at run time from the
+// provider's own 400 and remembered for the session.
+//
+//   model -> {drop: Set<string>, reasoningEffort: string|undefined}
+//
+// This exists because the model list is no longer a curated shortlist: it is whatever the
+// user's key exposes, and the families disagree about the same parameters. Measured against
+// a real key on 2026-08-31:
+//   gpt-4o / gpt-4.1 / gpt-3.5-turbo  reject `reasoning_effort` outright
+//   gpt-5.6-sol                       rejects it only WITH function tools, and says so:
+//     "Function tools with reasoning_effort are not supported for gpt-5.6-sol in
+//      /v1/chat/completions. To use function tools, use /v1/responses or set
+//      reasoning_effort to 'none'."
+// OpenAI rejects an unknown or wrongly-valued parameter rather than ignoring it, so one
+// fixed body cannot serve the list. Predicting per model would be the same stale-table
+// mistake in a new place; asking, and doing what the error says, cannot go stale. A 400
+// costs only the round trip — nothing was processed, so no tokens were spent.
+const MODEL_PARAM_QUIRKS = new Map();
 
-    const res = await fetch(OPENROUTER_API_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-            'X-Title': 'Sitrec',
-        },
-        body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.error) {
+function quirksFor(model) {
+    if (!MODEL_PARAM_QUIRKS.has(model)) MODEL_PARAM_QUIRKS.set(model, {drop: new Set()});
+    return MODEL_PARAM_QUIRKS.get(model);
+}
+
+// The parameters this may alter. Anything not listed is structural (model, messages, tools)
+// and a rejection of one is a real error the caller must see, not something to retry around.
+const OPTIONAL_PARAMS = new Set(['reasoning_effort', 'max_completion_tokens']);
+
+// Turn a 400 into a change to make, or null to give up and report it. Returns a short tag
+// so the caller can tell whether the last attempt actually changed anything.
+//
+// Three strategies, most specific first. The last one is deliberately a blind guess,
+// because the set of servers this now talks to is open-ended: anyone's gateway, anyone's
+// local runner, each with its own wording for "I do not accept that field".
+function remedyFor(model, message) {
+    const text = String(message || '');
+    const quirks = quirksFor(model);
+
+    // 1. The provider naming a value to use is the strongest signal there is — follow it
+    //    rather than dropping the parameter, which for these models is a different request.
+    //    (gpt-5.6-sol: "...or set reasoning_effort to 'none'.")
+    const wants = /reasoning_effort[^.]*?to '([a-z]+)'/i.exec(text);
+    if (wants && quirks.reasoningEffort !== wants[1]) {
+        quirks.reasoningEffort = wants[1];
+        return `reasoning_effort='${wants[1]}'`;
+    }
+
+    // 2. The provider naming the parameter it will not take. Phrasings seen:
+    //      "Unrecognized request argument supplied: reasoning_effort"        (OpenAI)
+    //      "Unsupported parameter: 'max_completion_tokens' is not supported…" (OpenAI)
+    //      "Unsupported value: 'reasoning_effort' does not support 'low'…"    (OpenAI)
+    const named = /(?:Unrecognized request argument supplied|Unsupported parameter|Unsupported value)\s*:?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?/i
+        .exec(text);
+    const param = named?.[1];
+    if (param && OPTIONAL_PARAMS.has(param) && !quirks.drop.has(param)) {
+        quirks.drop.add(param);
+        return `drop ${param}`;
+    }
+
+    // 3. Last resort: drop reasoning_effort and try once more.
+    //
+    //    Nothing above matches Ollama's wording for the same complaint — it answers
+    //    `"llama3.2" does not support thinking` — and enumerating every server's phrasing
+    //    is a list that can only ever be behind. reasoning_effort is the one genuinely
+    //    optional field in the request, so on a 400 we cannot otherwise explain it is by
+    //    far the likeliest cause; if it was not, the retry costs one round trip (a 400
+    //    processes nothing) and the real error is then reported unchanged.
+    if (!quirks.drop.has('reasoning_effort')) {
+        quirks.drop.add('reasoning_effort');
+        return 'drop reasoning_effort (guessed)';
+    }
+    return null;
+}
+
+export async function callOpenAIFormat({apiKey, keyProvider = 'openrouter', systemPrompt,
+    systemParts, messages, tools, model, maxTokens = 2048, sessionId, endpoint}) {
+    const custom = keyProvider === 'custom';
+    const direct = keyProvider === 'openai';
+    const url = custom ? endpoint?.chatURL : (direct ? OPENAI_API_URL : OPENROUTER_API_URL);
+    if (!url) throw new Error('No endpoint address is set for the custom provider.');
+    const serviceName = custom ? 'Endpoint' : (direct ? 'OpenAI' : 'OpenRouter');
+
+    const headers = {'Content-Type': 'application/json'};
+    // A self-hosted server usually wants no credential at all, and some reject an empty
+    // bearer outright, so the header is omitted rather than sent blank.
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    if (!direct && !custom) headers['X-Title'] = 'Sitrec';   // OpenRouter's attribution header
+
+    const buildBody = () => {
+        const quirks = quirksFor(model);
+        const body = {
+            model,
+            messages: [{role: 'system', content: fullSystemPrompt(systemPrompt, systemParts)}, ...messages],
+            tools,
+        };
+        // A token cap is not optional — if the modern name is refused, use the legacy one
+        // rather than sending an uncapped request.
+        if (quirks.drop.has('max_completion_tokens')) body.max_tokens = maxTokens;
+        else body.max_completion_tokens = maxTokens;
+        if (!quirks.drop.has('reasoning_effort')) {
+            body.reasoning_effort = quirks.reasoningEffort ?? 'low';
+        }
+        // OpenRouter-only: it uses session_id for its own request grouping, and OpenAI
+        // rejects unknown top-level body fields outright rather than ignoring them.
+        if (sessionId && !direct && !custom) body.session_id = sessionId;
+        return body;
+    };
+
+    // Bounded at three, and each pass must make a change remedyFor() has not made before,
+    // so a model that keeps refusing cannot loop: the second identical rejection returns
+    // null and the error is reported.
+    for (let attempt = 0; attempt < 3; attempt++) {
+        let res;
+        try {
+            res = await fetch(url, {
+                method: 'POST', headers, body: JSON.stringify(buildBody()),
+            });
+        } catch (e) {
+            // A self-hosted address fails here far more often than a hosted one, and the
+            // browser's own message ("Failed to fetch") names neither cause. Say what the
+            // two actually are, since the user is the only one who can fix either.
+            if (!custom) throw e;
+            throw new Error(`Could not reach ${url}. The server may be down, or it may not `
+                + `allow requests from ${globalThis.location?.origin ?? 'this page'} — `
+                + `a self-hosted server has to be told to permit this origin (CORS).`);
+        }
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && !data.error) return data;
+
         const msg = data?.error?.message || `HTTP ${res.status}`;
-        const err = new Error(`OpenRouter API error: ${msg}`);
+        const remedy = res.status === 400 ? remedyFor(model, msg) : null;
+        if (remedy) {
+            console.log(`BYOK: ${model} needs ${remedy}; retrying.`);
+            continue;
+        }
+        const err = new Error(`${serviceName} API error: ${msg}`);
         err.status = res.status;
         err.body = data;
         throw err;
     }
-    return data;
+    throw new Error(`${serviceName} API error: ${model} rejected the request repeatedly.`);
+}
+
+// Kept as the pre-existing name; callers and tests that only ever meant OpenRouter are
+// unaffected by the generalisation above.
+export async function callOpenRouter(args) {
+    return callOpenAIFormat({...args, keyProvider: 'openrouter'});
 }
 
 async function chatAnthropic({apiKey, model, systemPrompt, systemParts, history, userText,
-    tools, specialistTools, executeCall, needsModelResult, maxIterations}) {
+    tools, specialistTools, executeCall, needsModelResult, maxIterations, onRound, endpoint}) {
     const messages = [
         ...historyToAnthropicMessages(boundedHistory(history)),
         {role: 'user', content: String(userText || '').slice(0, MAX_DIRECT_MESSAGE_CHARS)},
@@ -665,7 +951,7 @@ async function chatAnthropic({apiKey, model, systemPrompt, systemParts, history,
     const final = {text: '', executedCalls: [], usage: emptyUsage()};
 
     for (let iter = 0; iter < maxIterations; iter++) {
-        const response = await callAnthropic({apiKey, systemPrompt, systemParts, messages, tools: activeTools, model});
+        const response = await callAnthropic({apiKey, systemPrompt, systemParts, messages, tools: activeTools, model, endpoint});
         const u = response.usage || {};
         final.usage.requests += 1;
         final.usage.inputTokens += u.input_tokens || 0;
@@ -682,6 +968,9 @@ async function chatAnthropic({apiKey, model, systemPrompt, systemParts, history,
         messages.push({role: 'assistant', content});
 
         const calls = toolBlocks.map(block => ({fn: block.name, args: block.input || {}}));
+        // One model response's worth of calls is one round. The caller uses the boundary to
+        // tell a repair (a later round) from independent work (the same round).
+        onRound?.();
         const results = [];
         const resultBlocks = [];
         for (let i = 0; i < calls.length; i++) {
@@ -705,8 +994,9 @@ async function chatAnthropic({apiKey, model, systemPrompt, systemParts, history,
     return final;
 }
 
-async function chatOpenRouter({apiKey, model, systemPrompt, systemParts, history, userText,
-    tools, specialistTools, executeCall, needsModelResult, maxIterations, sessionId}) {
+async function chatOpenAIFormat({apiKey, keyProvider, model, systemPrompt, systemParts, history,
+    userText, tools, specialistTools, executeCall, needsModelResult, maxIterations, sessionId,
+    onRound, endpoint}) {
     const messages = [
         ...historyToOpenAIMessages(history),
         {role: 'user', content: String(userText || '').slice(0, MAX_DIRECT_MESSAGE_CHARS)},
@@ -715,10 +1005,11 @@ async function chatOpenRouter({apiKey, model, systemPrompt, systemParts, history
     const final = {text: '', executedCalls: [], usage: emptyUsage()};
 
     for (let iter = 0; iter < maxIterations; iter++) {
-        const response = await callOpenRouter({
-            apiKey, systemPrompt, systemParts, messages, tools: activeTools, model, sessionId,
+        const response = await callOpenAIFormat({
+            apiKey, keyProvider, systemPrompt, systemParts, messages, tools: activeTools,
+            model, sessionId, endpoint,
         });
-        addOpenRouterUsage(final.usage, response.usage || {});
+        addOpenAIFormatUsage(final.usage, response.usage || {});
         const choice = response.choices?.[0] || {};
         const message = choice.message || {};
         if (typeof message.content === 'string' && message.content) {
@@ -740,6 +1031,7 @@ async function chatOpenRouter({apiKey, model, systemPrompt, systemParts, history
             }
             return {fn: toolCall.function?.name, args};
         });
+        onRound?.();
         const results = [];
         for (let i = 0; i < calls.length; i++) {
             const call = calls[i];
@@ -780,14 +1072,35 @@ export async function chat({
     needsModelResult,
     sessionId,
     maxIterations = 5,
+    onRound,
+    // {url, format} for a user-named server. Required for the 'custom' provider and
+    // ignored for the rest, whose addresses are fixed.
+    endpoint: endpointConfig,
 }) {
     const keyProvider = keyProviderForBYOK(provider);
     if (!keyProvider) throw new Error(`BYOK provider '${provider}' not supported.`);
-    if (!apiKey) throw new Error('API key missing');
+    const custom = keyProvider === 'custom';
+    // A key is required everywhere EXCEPT a custom endpoint, where the commonest case — a
+    // model running on your own machine — has no credential at all.
+    if (!apiKey && !custom) throw new Error('API key missing');
     if (!model) throw new Error('Model missing');
     if (typeof executeCall !== 'function') throw new Error('executeCall callback missing');
 
-    const args = {apiKey, model, systemPrompt, systemParts, history, userText, tools,
-        specialistTools, executeCall, needsModelResult, maxIterations, sessionId};
-    return keyProvider === 'openrouter' ? chatOpenRouter(args) : chatAnthropic(args);
+    let endpoint = null;
+    let format = null;
+    if (custom) {
+        if (!endpointConfig?.url) throw new Error('No endpoint address is set. Add one in Settings, API Keys.');
+        if (!isUsableEndpointURL(endpointConfig.url)) {
+            throw new Error(`'${endpointConfig.url}' is not a usable http(s) address.`);
+        }
+        format = endpointConfig.format === 'anthropic' ? 'anthropic' : 'openai';
+        endpoint = resolveEndpoint(endpointConfig.url, format);
+    }
+
+    const args = {apiKey, keyProvider, model, systemPrompt, systemParts, history, userText, tools,
+        specialistTools, executeCall, needsModelResult, maxIterations, sessionId, onRound, endpoint};
+    // For a custom endpoint the TRANSPORT is chosen by the wire format the server speaks,
+    // not by who is being billed — that is the whole point of asking for the format.
+    const useAnthropic = custom ? format === 'anthropic' : keyProvider === 'anthropic';
+    return useAnthropic ? chatAnthropic(args) : chatOpenAIFormat(args);
 }

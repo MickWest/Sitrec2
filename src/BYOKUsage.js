@@ -16,6 +16,7 @@
 // be reported as a stored provider key and make hasAnyKey() true with no key present.
 
 import {indexedDBManager} from './IndexedDBManager';
+import {catalogPricesFor} from './BYOKModelCatalog';
 
 const USAGE_KEY = 'aiUsageTotals';
 
@@ -37,6 +38,11 @@ const MODEL_PRICES = {
     // these are fallbacks for an upstream response that omits the exact charged cost.
     'openai/gpt-5-mini': {input: 0.25, output: 2},
     'openai/gpt-5-nano': {input: 0.05, output: 0.40},
+    // The same two models called directly on the user's OpenAI key. Bare slugs, because
+    // that is the name OpenAI's own API takes and the name banked in the usage record —
+    // OpenAI returns no cost field, so these rates are the only figure available.
+    'gpt-5-mini': {input: 0.25, output: 2},
+    'gpt-5-nano': {input: 0.05, output: 0.40},
     // The voice model. Audio tokens are billed at a completely different rate from text
     // — 8x on input, 2.7x on output — and a voice session is overwhelmingly audio, so
     // folding them into the text counters would understate the bill by most of an order
@@ -53,9 +59,21 @@ const MODEL_PRICES = {
 };
 
 // The per-million rates in effect at a given moment (defaults to now).
+//
+// The table above wins where it has an entry: it carries the promotional-rate logic and is
+// the provider's own published price. Everything else falls through to the live catalogue
+// (OpenRouter's public price list, see BYOKModelCatalog) — without which every model
+// outside the four hardcoded rows would report tokens and no cost at all, which is most of
+// them now that the dropdown lists whatever the key exposes.
 export function pricesFor(model, atMs = undefined) {
     const entry = MODEL_PRICES[model];
-    if (!entry) return null;
+    if (!entry) {
+        const listed = catalogPricesFor(model);
+        if (!listed) return null;
+        // No audio rates: the catalogue quotes text pricing, and the only audio model
+        // Sitrec uses is the pinned voice one, which the table above covers.
+        return {input: listed.input, output: listed.output, cachedInput: listed.cachedInput};
+    }
     const at = atMs === undefined ? Date.now() : atMs;
     // A promotion only ever restates the TEXT rates, so the audio and cached-input rates
     // are carried through from the standard entry rather than being dropped — returning
@@ -75,10 +93,21 @@ const CACHE_READ_MULTIPLIER = 0.1;
 const CACHE_WRITE_MULTIPLIER = 1.25;
 
 function cacheMultipliersFor(model) {
+    // A catalogue-priced model states its own cache-write rate, so express it as the
+    // multiple of the input rate that estimateCostUSD expects rather than guessing.
+    if (!MODEL_PRICES[model]) {
+        const listed = catalogPricesFor(model);
+        if (listed && listed.cacheWriteRate !== undefined && listed.input > 0) {
+            return {read: CACHE_READ_MULTIPLIER, write: listed.cacheWriteRate / listed.input};
+        }
+    }
     // OpenRouter can route OpenAI cached reads at model-dependent discounts. Exact cost
     // normally comes back from OpenRouter; use the conservative 0.5x fallback when it does
     // not. OpenAI cache writes carry no premium.
     if (model.startsWith('openai/')) return {read: 0.5, write: 1};
+    // Called directly, there is no routing in between: OpenAI publishes cached input at
+    // exactly 0.1x the input rate for the GPT-5 family, and charges nothing to write.
+    if (model.startsWith('gpt-')) return {read: 0.1, write: 1};
     return {read: CACHE_READ_MULTIPLIER, write: CACHE_WRITE_MULTIPLIER};
 }
 
@@ -362,11 +391,18 @@ export function formatTurnUsage(model, usage) {
 
 // Multi-line breakdown across all models, plus a grand total. Used by the Settings
 // readout so the user can see which model actually spent the money.
-export async function formatUsageReport(modelPrefixes = null) {
+// `match` selects which recorded models to report on: an array of id prefixes, or a
+// predicate. The predicate form exists because the dropdown now lists whatever the key
+// exposes, and a prefix can no longer identify a provider — an OpenAI key reaches o3 and
+// chat-latest as well as gpt-*, and an OpenRouter key reaches 300-odd models across every
+// vendor. Null reports everything.
+export async function formatUsageReport(match = null) {
     const byModel = await getUsageByModel();
+    const accept = typeof match === 'function'
+        ? match
+        : (Array.isArray(match) ? (model => match.some(prefix => model.startsWith(prefix))) : null);
     const models = Object.keys(byModel)
-        .filter(model => !Array.isArray(modelPrefixes)
-            || modelPrefixes.some(prefix => model.startsWith(prefix)))
+        .filter(model => !accept || accept(model))
         .sort();
     if (models.length === 0) return {lines: ['No usage recorded yet.'], totalCost: 0, totalRequests: 0};
 
