@@ -22,7 +22,11 @@
 import {indexedDBManager} from './IndexedDBManager';
 import {getEndpoint, getKey, isProviderEnabled} from './BYOKKeyStore';
 
-const CATALOG_KEY = 'sitrecModelCatalog';   // NOT "byok_" — that prefix means "a credential"
+// The storage key deliberately does NOT start with "byok_": BYOKKeyStore enumerates that
+// prefix as stored credentials, so a catalog entry under it would read as a key the user
+// never entered. Kept on its own line — the security scan strips whole-line comments only,
+// and a trailing one mentioning the prefix reads to it as a use of it.
+const CATALOG_KEY = 'sitrecModelCatalog';
 
 // Bump whenever the SHAPE of a stored entry changes, so an existing cache is refetched
 // instead of being read with the wrong assumptions. Without this the voice models were

@@ -9,6 +9,47 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.147.0 (2026-08-31)
+
+### New Features
+
+- **Control Sitrec with ChatGPT** (Help → Documentation → *Control Sitrec with ChatGPT*): open Sitrec in the ChatGPT desktop app's built-in browser and ChatGPT can read and drive the page directly — thirteen tools covering the current state, the case list, loading a case, seeking a frame, play and pause, the camera, tracks, views, the simulation date and time, and reading or setting a menu control. No API key, no extension, no separate setup. The tools are deliberately limited, buttons are not exposed, and anything the model does is treated as untrusted in the same way the in-app assistant's actions are. SitrecBridge is unchanged and is still the route for other AI tools.
+
+- **Run the assistant on your own AI server** (Settings → *API Keys…* → *Custom endpoint*): point Sitrec at a model on your own machine or inside your network. Give it an address, pick whether it speaks the OpenAI or the Anthropic format, and add a key only if it needs one. A **Test** button says which of three things is wrong when it does not connect: nothing listening, your server not permitting this page, or the key being refused.
+
+- **Every model your own key reaches** (Settings → *AI Model*): the model list is no longer a fixed handful — it is fetched from your provider, so anything your key can reach is offered, including models released after this version of Sitrec. Only each provider's newest generation is listed by default; switch on **Enable old AI models** underneath to see the rest. An OpenAI key now also runs the assistant directly rather than through OpenRouter, and costs are estimated for far more models than before.
+
+- **Voice Model** (Settings → *Voice Model*): choose which model the spoken assistant uses, separately from the one that answers typed questions. It also appears in the Assistant window's header, next to the microphone that uses it.
+
+- **Add 3D Object** (right-click the ground → *Add 3D Object*): place an object that just stands somewhere, with no track to draw and no keyframes to manage. It appears with its edit menu open, so you can drag it straight away and change its shape, size and colour.
+
+- **Focus While Editing** (object edit menu, under *Visible*): keeps the camera looking at the object and orbiting around it for as long as its edit menu is open, so nudging it a kilometre sideways no longer walks it off the screen. Focus is released while you drag and returns when you let go, and your previous focus is put back when you close the menu.
+
+- **Switch an API key off without deleting it** (Settings → *API Keys…*): each provider has a tick. Turn it off and Sitrec stops using that key everywhere — terrain, live feeds, voice and the model list — while the key itself stays saved.
+
+### Improvements
+
+- The assistant answers greetings, thanks and other small talk itself, instantly and at no cost, instead of spending a turn on the model. Nearly 300 phrases in eight groups, including abbreviations and a couple of dozen languages. Anything that could be an answer to a question the assistant just asked still goes to the model, so replying "ok" to an offer works as before.
+- "go bingley" now works as well as "go to bingley", as do "goto", "fly to" and coordinates typed after a bare "go".
+- **A plumb line while you drag an object**: a thin grey line runs from the object down to the ground, so you can see how high above the terrain it actually is — which a perspective view otherwise will not tell you.
+- Ask the assistant for many objects at once — a ring, grid or scatter is now a single step instead of one call per object, so large arrangements finish instead of running out of budget part way. If some fail it says how many were placed and which did not.
+- **A live microphone is now impossible to miss**: it pulses red, and a second microphone in the menu bar reads *REC* while recording, so you can stop it without hunting for the Assistant window.
+- The Assistant header shows which model is answering, switching to the voice model while the microphone is live.
+- A **Thinking…** line now counts the seconds while the assistant works, and warns you first when a reply from your own server is going to be slow because the model is cold.
+- The **API Keys…** dialog is much shorter — one line per provider showing its state and what you have spent, opening for the details when you click it, so every provider fits without scrolling. Escape closes it.
+- Escape no longer closes the Assistant when it is docked into the layout, since that re-flows every view around it. Tab still toggles it and the X still closes it.
+
+### Bug Fixes
+
+- Fixed the Assistant printing an *Error* line for something it went on to do successfully. Only a request that genuinely never completed is reported now, as a single tidy line.
+- Fixed a problem with your own OpenAI key being reported as an Anthropic error, blaming the wrong account.
+- Fixed the assistant sending a shortened model name for models whose name contains a colon, such as those served by a local runner.
+- Fixed the assistant failing outright against some local and self-hosted servers, which reject requests that hosted providers accept.
+
+### Security
+
+- The Sitrec server's AI prompt log now keeps only the maintainer's own two accounts. It previously recorded any signed-in user's prompt when a request fell through to the model on Sitrec's own server, including other administrators, who hold that role for operational reasons. Enforced on the server as well as in the browser. Prompts sent with your own key, or to your own server, were never logged and still are not.
+
 ## Version 2.146.0 (2026-08-30)
 
 ### New Features
