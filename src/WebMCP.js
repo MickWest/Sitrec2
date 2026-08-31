@@ -169,13 +169,20 @@ function validateISODateTime(value, name) {
 // would otherwise become an unreviewed fetch primitive, persisted on the node and refetched
 // after a save. Refuse anything carrying a scheme or protocol-relative prefix.
 //
-// Test the string the *URL parser* will see, not the one that was typed. WHATWG URL discards
-// tab, CR and LF anywhere in a URL and treats a backslash as a slash in a special scheme, so
-// "h<TAB>ttps://evil" and "/\evil/x" both resolve to a remote origin while reading as neither
-// to a naive regex. Normalizing first closes that gap.
+// Test the string the *URL parser* will see, not the one that was typed. WHATWG URL strips
+// leading and trailing C0 controls and spaces, discards tab, CR and LF from anywhere in the
+// input, and treats a backslash as a slash in a special scheme. A leading NUL, an embedded
+// tab, and "/\evil/x" therefore all resolve to a remote origin while matching none of them
+// as typed. Apply the same three rules before testing. Verified against new URL() rather
+// than reasoned from the spec.
 function looksLikeURL(value) {
-    const normalized = value.replace(/[\t\r\n]/g, "").replace(/\\/g, "/");
-    return /^\s*[a-z][a-z0-9+.-]*:/i.test(normalized) || /^\s*\/\//.test(normalized);
+    const normalized = value
+        // eslint-disable-next-line no-control-regex
+        .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "")
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\u0009\u000A\u000D]/g, "")
+        .replace(/\\/g, "/");
+    return /^[a-z][a-z0-9+.-]*:/i.test(normalized) || normalized.startsWith("//");
 }
 
 // lil-gui gives buttons and colors their own controller classes, but the class names are
@@ -1303,11 +1310,25 @@ export function createSitrecWebMCPTools(dependencyOverrides = {}) {
                 signal,
             );
             if (!before.success) return before;
-            if (!isSettableValue(before.result?.value)) {
+            const currentValue = before.result?.value;
+            if (!isSettableValue(currentValue)) {
                 return compactFailure(
                     "CONTROL_NOT_SETTABLE",
                     `${input.control} is a button or a structured value, not a settable control. `
                     + `Tell the user to operate it in the Sitrec UI.`,
+                );
+            }
+            // CSitrecAPI only reconciles dropdown options; everything else is assigned as
+            // given. A string "false" on a boolean control stays truthy, so the checkbox
+            // would not move while this tool reported success — a wrong answer is worse
+            // than a refusal. Match the type the control already holds.
+            if (currentValue !== null && currentValue !== undefined
+                && typeof currentValue !== typeof input.value) {
+                return compactFailure(
+                    "VALUE_TYPE_MISMATCH",
+                    `${input.control} holds a ${typeof currentValue}, so value must be a `
+                    + `${typeof currentValue} and is not coerced. Send true, not "true".`,
+                    {currentValue},
                 );
             }
 

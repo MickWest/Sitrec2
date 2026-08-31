@@ -597,3 +597,68 @@ describe('WebMCP menu setter refusals', () => {
         expect(result.wallClock.timezone.length).toBeGreaterThan(0);
     });
 });
+
+describe('WebMCP stop-gate regressions', () => {
+    const NUL = String.fromCharCode(0);
+    const SOH = String.fromCharCode(1);
+    const TAB = String.fromCharCode(9);
+
+    test('refuses a URL hidden behind leading control characters', async () => {
+        const setMenuValue = findTool(createTools(), 'sitrec_set_menu_value');
+
+        // Every one of these resolves to https://evil.example/x through new URL().
+        for (const value of [
+            NUL + 'https://evil.example/x',
+            SOH + 'https://evil.example/x',
+            ' https://evil.example/x',
+            'h' + TAB + 'ttps://evil.example/x',
+        ]) {
+            await expect(setMenuValue.execute({menu: 'view', control: 'Sky/overlay', value}))
+                .resolves.toMatchObject({success: false, code: 'URL_REFUSED'});
+        }
+    });
+
+    test('the filter matches what new URL() actually resolves', () => {
+        const base = 'https://sitrec.local/app';
+        const external = (raw) => {
+            try { return new URL(raw, base).origin !== new URL(base).origin; }
+            catch { return false; }
+        };
+        for (const raw of [
+            NUL + 'https://evil.example/x',
+            'h' + TAB + 'ttps://evil.example/x',
+            '/' + String.fromCharCode(92) + 'evil.example/x',
+            '//evil.example/x',
+        ]) {
+            expect(external(raw)).toBe(true);
+        }
+    });
+
+    test('refuses a string for a boolean control instead of silently not applying it',
+        async () => {
+            const result = await findTool(createTools(), 'sitrec_set_menu_value')
+                .execute({menu: 'view', control: 'showVideo', value: 'false'});
+
+            expect(result).toMatchObject({
+                success: false,
+                code: 'VALUE_TYPE_MISMATCH',
+                currentValue: true,
+            });
+            expect(mockHandleAPICall).not.toHaveBeenCalledWith(
+                expect.objectContaining({fn: 'setMenuValue'}),
+                expect.anything(),
+            );
+        });
+
+    test('refuses a string for a number control', async () => {
+        await expect(findTool(createTools(), 'sitrec_set_menu_value')
+            .execute({menu: 'view', control: 'Sky/starMag', value: '6'}))
+            .resolves.toMatchObject({success: false, code: 'VALUE_TYPE_MISMATCH'});
+    });
+
+    test('still accepts a correctly typed value', async () => {
+        await expect(findTool(createTools(), 'sitrec_set_menu_value')
+            .execute({menu: 'view', control: 'showVideo', value: false}))
+            .resolves.toMatchObject({success: true, requestedValue: false, currentValue: false});
+    });
+});
