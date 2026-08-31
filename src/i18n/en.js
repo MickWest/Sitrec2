@@ -140,6 +140,7 @@ const en = {
                 nimitz: "Nimitz / Tic Tac Case Study",
                 football: "Football and Cable Cam",
                 apiKeys: "Your API Keys: Storage & Security",
+                webmcp: "Control Sitrec with ChatGPT",
                 localCustomSitches: "Local Custom Sitches (JSON)",
                 sections: {
                     start: "Start Here",

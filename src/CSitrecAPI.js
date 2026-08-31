@@ -75,7 +75,8 @@ function parseDec(input) {
 }
 
 // Callers that are an AI agent rather than a person: "chat" is the in-app chatbot,
-// "mcp" is an external agent driving the page through the SitrecBridge extension.
+// "webmcp" is a model driving the open page through browser site tools, and "mcp" is
+// an external agent driving the page through the trusted SitrecBridge extension.
 // Everything else ("ui") is a person clicking something, or Sitrec calling itself.
 //
 // The distinction decides where a failure goes. An agent asking for something that
@@ -83,7 +84,12 @@ function parseDec(input) {
 // it in the return value. A modal is the wrong destination twice over: the agent
 // cannot read it, and the user gets stopped by an error about a call they did not
 // make and cannot fix. See handleAPICall.
-const AGENT_SOURCES = new Set(["chat", "mcp"]);
+const AGENT_SOURCES = new Set(["chat", "mcp", "webmcp"]);
+
+// These callers are controlled by a model whose context may contain attacker-authored
+// sitch text. Keep this distinct from AGENT_SOURCES: SitrecBridge also needs agent-friendly
+// error routing, but it retains its installed/developer trust model.
+const UNTRUSTED_MODEL_SOURCES = new Set(["chat", "webmcp"]);
 
 // A control address ("video:Annotate/Edit Mode") reduced to lower-case words, for the
 // near-miss scoring in _suggestControls.
@@ -3797,15 +3803,15 @@ class CSitrecAPI {
     // state or sends data outward asks once.
     //
     // Returns a refusal result to hand back to the model, or null to proceed.
-    async _confirmWriteInExternalSitch(call) {
+    async _confirmWriteInExternalSitch(call, source = "chat") {
         if (!isSitchExternal()) return null;
         if (CHAT_READ_ONLY_CALLS.has(call.fn)) return null;
 
-        const source = getSitchSourceLabel();
+        const sourceLabel = getSitchSourceLabel();
         const choice = await showChoice(
             `The assistant wants to run "${call.fn}", which changes saved state or sends data.\n\n`
             + `This sitch was loaded from somewhere else`
-            + (source ? `:\n${source}\n\n` : `.\n\n`)
+            + (sourceLabel ? `:\n${sourceLabel}\n\n` : `.\n\n`)
             + `Its notes and labels were written by whoever shared it, so the request may have `
             + `come from that text rather than from you. Reading and analysing it is unaffected `
             + `either way.`,
@@ -3829,7 +3835,7 @@ class CSitrecAPI {
         }
         if (choice === "once") return null;
 
-        console.warn(`Declined chat-sourced "${call.fn}" in an externally-sourced sitch.`);
+        console.warn(`Declined ${source}-sourced "${call.fn}" in an externally-sourced sitch.`);
         return {
             success: false,
             fn: call.fn,
@@ -3841,11 +3847,12 @@ class CSitrecAPI {
 
     // source: "ui" (default, trusted — UI buttons and programmatic call())
     //         "chat" (untrusted — issued by the LLM/chatbot, subject to prompt injection)
-    //         "mcp"  (an external agent driving the page through the SitrecBridge extension).
-    // Chat calls are refused for any entry tagged llmCallable:false, so a guessed name can't
-    // reach a JS-executing function even though it was never advertised (B1 defense-in-depth).
+    //         "webmcp" (untrusted — issued by a model through browser site tools)
+    //         "mcp"  (a trusted external agent driving the page through SitrecBridge).
+    // Untrusted model calls are refused for any entry tagged llmCallable:false, so a guessed
+    // name cannot reach a JS-executing function even though it was never advertised.
     //
-    // For the two agent sources this is also the single place that decides where a failure
+    // For all agent sources this is also the single place that decides where a failure
     // is PRESENTED. An agent's mistake — a control that does not exist, a missing argument,
     // a function it invented — is correctable, so every failure exit below carries enough
     // detail for it to fix the call and retry: near-miss suggestions for a bad name, the
@@ -3863,15 +3870,19 @@ class CSitrecAPI {
                 suggestions: this._suggestFunctions(call.fn),
             };
         }
-        if (source === "chat" && apiFn.llmCallable === false) {
-            console.warn(`Refusing chat-sourced call to non-LLM-callable function: ${call.fn}`);
-            return { success: false, fn: call.fn, error: `Function ${call.fn} is not callable from chat` };
+        if (UNTRUSTED_MODEL_SOURCES.has(source) && apiFn.llmCallable === false) {
+            console.warn(`Refusing ${source}-sourced call to non-LLM-callable function: ${call.fn}`);
+            return {
+                success: false,
+                fn: call.fn,
+                error: `Function ${call.fn} is not callable from chat or WebMCP`,
+            };
         }
-        if (source === "chat") {
-            const refusal = refuseExternalURLParams(call);
+        if (UNTRUSTED_MODEL_SOURCES.has(source)) {
+            const refusal = refuseExternalURLParams(call, source);
             if (refusal) return refusal;
 
-            const denied = await this._confirmWriteInExternalSitch(call);
+            const denied = await this._confirmWriteInExternalSitch(call, source);
             if (denied) return denied;
         }
 
@@ -3903,7 +3914,9 @@ class CSitrecAPI {
             const out = {
                 success: !innerFailed,
                 fn: call.fn,
-                result: source === "chat" ? this._fenceUntrustedResultFields(call.fn, result) : result,
+                result: UNTRUSTED_MODEL_SOURCES.has(source)
+                    ? this._fenceUntrustedResultFields(call.fn, result)
+                    : result,
             };
             if (innerFailed) out.error = result.error ?? `${call.fn} failed`;
             if (captured.length) out.errorDialogs = captured;
@@ -3967,8 +3980,8 @@ class CSitrecAPI {
     // sitch Notes above all, which in a shared sitch are whatever the sender typed. Wrap those
     // fields so the model reads them as material, not as instructions.
     //
-    // Applied to chat-sourced calls only: a UI or MCB caller wants the raw value, and fencing
-    // it there would corrupt what the app itself displays.
+    // Applied to untrusted model calls only: a UI or MCP caller wants the raw value, and
+    // fencing it there would corrupt what the app itself displays.
     _fenceUntrustedResultFields(fn, result) {
         const fields = CHAT_FENCED_RESULT_FIELDS[fn];
         if (!fields || !result || typeof result !== "object") return result;

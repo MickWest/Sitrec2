@@ -92,6 +92,7 @@ import {
 } from "./configUtils"
 import {SituationSetup, startLoadingInlineAssets} from "./SituationSetup";
 import {sitrecAPI} from "./CSitrecAPI";
+import {registerSitrecWebMCP} from "./WebMCP";
 import {CUnits} from "./CUnits";
 import {updateLockTrack} from "./updateLockTrack";
 import {updateFrame} from "./updateFrame";
@@ -1002,6 +1003,12 @@ if (isLocal) {
 console.log("............... Done with setup, starting animation")
 Globals.sitchDirty = false; // Reset after setup — initialization may have triggered onChange callbacks
 startAnimating(Sit.fps);
+
+// Progressive enhancement for ChatGPT's built-in browser. Registration is page-global
+// and non-blocking; ordinary browsers have no document.modelContext and continue unchanged.
+registerSitrecWebMCP().catch((error) => {
+    console.warn("Sitrec WebMCP registration failed", error);
+});
 
 // When starting with the empty sitch, restrict the menu bar to essentials
 if (Sit.name === "empty") {

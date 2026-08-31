@@ -219,6 +219,127 @@ echo json_encode($s);`;
     }
 }
 
+// ─── Rule 7: WebMCP stays curated and chat-equivalent ────────────────────────────────
+// Site tools are discovered by a model from the public page, so a future generic API
+// wrapper or a trusted-source regression would silently turn new CSitrecAPI entries into
+// public capabilities. Keep the boundary explicit: one untrusted source and one reviewed
+// allowlist of underlying API operations.
+{
+    const file = 'src/WebMCP.js';
+    const APPROVED_API_FUNCTIONS = [
+        'getCameraLLA',
+        'getCurrentSimTime',
+        'getFrame',
+        'getSitchState',
+        'getTrackPosition',
+        'gotoLLA',
+        'listSitches',
+        'listTracks',
+        'listViews',
+        'loadSitch',
+        'pause',
+        'play',
+        'setFrame',
+        'togglePlayPause',
+    ];
+    const EXPECTED_TOOLS = [
+        'sitrec_get_camera',
+        'sitrec_get_state',
+        'sitrec_get_track_position',
+        'sitrec_goto_lla',
+        'sitrec_list_sitches',
+        'sitrec_list_tracks',
+        'sitrec_list_views',
+        'sitrec_load_sitch',
+        'sitrec_seek_frame',
+        'sitrec_set_playback',
+    ];
+
+    if (!exists(file)) {
+        fail('webmcp-present', `${file} is missing — public site tools must remain in the normal app bundle.`);
+    } else {
+        const src = read(file);
+        const executable = stripComments(src);
+
+        if (!/SITREC_WEBMCP_SOURCE\s*=\s*["']webmcp["']/.test(executable)) {
+            fail('webmcp-source', `${file} must declare the explicit "webmcp" source.`);
+        } else if (/handleAPICall\s*\([\s\S]{0,300}?["'](?:ui|mcp)["']/.test(executable)) {
+            fail('webmcp-trusted-source', `${file} routes a site tool through trusted "ui" or "mcp" handling.`);
+        } else if (!/handleAPICall\s*\([\s\S]{0,300}?SITREC_WEBMCP_SOURCE/.test(executable)) {
+            fail('webmcp-source-routing', `${file} does not visibly route CSitrecAPI calls through SITREC_WEBMCP_SOURCE.`);
+        } else {
+            ok.push('WebMCP routes through the explicit untrusted webmcp source');
+        }
+
+        const literalCalls = [...executable.matchAll(/\bcallAPI\s*\(\s*deps\s*,\s*["']([A-Za-z0-9_]+)["']/g)]
+            .map(match => match[1]);
+        const nonLiteralCalls = [...executable.matchAll(/\bcallAPI\s*\(\s*deps\s*,\s*([^,"'\s][^,\n]*)/g)]
+            .map(match => match[1].trim())
+            // The helper declaration itself is `callAPI(deps, fn, ...)`.
+            .filter(argument => argument !== 'fn');
+        const used = [...new Set(literalCalls)].sort();
+        const approved = [...APPROVED_API_FUNCTIONS].sort();
+        if (nonLiteralCalls.length) {
+            fail('webmcp-dynamic-api-call',
+                `${file} has non-literal CSitrecAPI dispatch: ${nonLiteralCalls.join(', ')}. `
+                + 'Every public operation must be reviewable from source.');
+        } else if (JSON.stringify(used) !== JSON.stringify(approved)) {
+            fail('webmcp-api-allowlist',
+                `${file} API calls differ from the reviewed allowlist.\n`
+                + `    used: ${used.join(', ')}\n`
+                + `    approved: ${approved.join(', ')}`);
+        } else {
+            ok.push(`WebMCP uses only ${approved.length} explicitly approved CSitrecAPI operations`);
+        }
+
+        const tools = [...new Set(
+            [...executable.matchAll(/name:\s*["'](sitrec_[a-z0-9_]+)["']/g)].map(match => match[1])
+        )].sort();
+        const expectedTools = [...EXPECTED_TOOLS].sort();
+        if (JSON.stringify(tools) !== JSON.stringify(expectedTools)) {
+            fail('webmcp-tool-allowlist',
+                `${file} tool names differ from the reviewed MVP set.\n`
+                + `    found: ${tools.join(', ')}\n`
+                + `    expected: ${expectedTools.join(', ')}`);
+        } else {
+            ok.push(`WebMCP exposes exactly ${expectedTools.length} reviewed site tools`);
+        }
+
+        const forbidden = [
+            /\beval\s*\(/,
+            /\b(?:Async)?Function\s*\(/,
+            /\.innerHTML\b/,
+            /\bdocument\.cookie\b/,
+            /\blocalStorage\b/,
+            /\bindexedDB\b/,
+            /\bsitrec_api_call\b/,
+        ].filter(pattern => pattern.test(executable));
+        const urlLikeSchemaParams = [...executable.matchAll(
+            /^\s+(url|uri|href|src|file|filename|path):\s*\{/gmi
+        )].map(match => match[1]);
+        if (forbidden.length || urlLikeSchemaParams.length) {
+            fail('webmcp-dangerous-surface',
+                `${file} contains a forbidden primitive or URL/file/path-like public parameter. `
+                + `Patterns: ${forbidden.join(', ') || 'none'}; params: ${urlLikeSchemaParams.join(', ') || 'none'}.`);
+        } else {
+            ok.push('WebMCP exposes no generic code, credential-store, DOM, URL, file, or path primitive');
+        }
+    }
+
+    const apiFile = 'src/CSitrecAPI.js';
+    if (exists(apiFile)) {
+        const apiSource = stripComments(read(apiFile));
+        const sourceSet = /UNTRUSTED_MODEL_SOURCES\s*=\s*new Set\(\[\s*["']chat["']\s*,\s*["']webmcp["']\s*\]\)/;
+        const guardedBranches = (apiSource.match(/UNTRUSTED_MODEL_SOURCES\.has\(source\)/g) || []).length;
+        if (!sourceSet.test(apiSource) || guardedBranches < 3) {
+            fail('webmcp-chat-equivalence',
+                `${apiFile} must classify chat + webmcp together for callable gating, URL/provenance checks, and result fencing.`);
+        } else {
+            ok.push('CSitrecAPI applies chat-equivalent safety to WebMCP');
+        }
+    }
+}
+
 // ─── Report ───────────────────────────────────────────────────────────────────────────
 // Crude but adequate: these rules only need to avoid matching prose in comments, and the
 // files scanned have no regex/string literals containing comment markers that matter here.

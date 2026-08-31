@@ -64,6 +64,7 @@ assistant — so if you add a doc, add it there.
 
 **Advanced**
 
+- [Control Sitrec with ChatGPT site tools (WebMCP)](docs/WebMCP.md)
 - [Local Custom Sitches - JSON-based sitch definitions for advanced setups](docs/LocalCustomSitches.md)
 - [Scripted Camera Moves](docs/ScriptedVideo.md)
 - [What's New (Details)](docs/WhatsNew-Details.md)

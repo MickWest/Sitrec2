@@ -291,6 +291,11 @@ export const helpDocs = [
         chatDesc: "How Sitrec stores the user's own API keys (Anthropic, Google 3D tiles, Cesium Ion, Mapbox, MapTiler, Space-Track) and what protects them. Read for any question about where a key is kept, whether a key is sent to the Sitrec server, whether keys are encrypted, who can read them, how to remove one, or whether it is safe to enter one. Also covers the recommended practice of scoping a key and setting a spending cap at the provider, and states plainly what is NOT protected.",
     },
     {
+        file: "docs/WebMCP", labelKey: "menus.help.documentation.webmcp",
+        section: "advanced", role: "reference",
+        chatDesc: "Using ChatGPT desktop site tools (WebMCP) to inspect and control the same open Sitrec page without an OpenAI API key, SitrecBridge, Chrome extension, local WebSocket, or separate MCP server. Covers setup, the ten available tools, example prompts, current model/workspace/browser limitations, local-file restrictions, safety boundaries, and when Codex CLI/IDE or Claude users should use SitrecBridge instead.",
+    },
+    {
         file: "docs/LocalCustomSitches", labelKey: "menus.help.documentation.localCustomSitches",
         section: "advanced", role: "reference",
         chatDesc: "Hand-authoring a sitch as JSON, for setups the drag-and-drop tool cannot express. Covers the file structure, where local sitches live, and how they are loaded.",

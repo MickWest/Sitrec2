@@ -145,7 +145,7 @@ function valueAtPath(args, dottedPath) {
 }
 
 // Returns a refusal result to hand straight back to the caller, or null to allow.
-export function refuseExternalURLParams(call) {
+export function refuseExternalURLParams(call, source = 'chat') {
     const denied = CHAT_DENIED_URL_PARAMS[call?.fn];
     if (!denied || !call.args) return null;
     for (const param of denied) {
@@ -157,11 +157,11 @@ export function refuseExternalURLParams(call) {
         // therefore safe" hands an attacker the bypass.
         const allowed = typeof value === 'string' && isSameOriginOrRelative(value);
         if (!allowed) {
-            console.warn(`Refusing chat-sourced external URL for ${call.fn}.${param}:`, value);
+            console.warn(`Refusing ${source}-sourced external URL for ${call.fn}.${param}:`, value);
             return {
                 success: false,
                 fn: call.fn,
-                error: `'${param}' cannot be set to an external URL from chat. `
+                error: `'${param}' cannot be set to an external URL from a model-driven tool. `
                     + `Tell the user to set it via the UI instead.`,
             };
         }
