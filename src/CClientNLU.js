@@ -315,6 +315,23 @@ const COMMAND_KEYWORDS = ["set", "show", "hide", "enable", "disable", "turn", "l
     "zoom", "play", "pause", "stop", "start", "resume", "go", "move", "point", "look", "frame",
     "make", "change", "calculate", "evaluate", "what", "ambient"];
 
+// After a BARE "go"/"move" with no "to", these are directions, motions or commands rather
+// than the name of a place: "go back", "go north", "go on", "go show the tracks". Without
+// this, making "to" optional so that "go bingley" works like "go to bingley" would turn
+// every one of them into a geocoder lookup.
+//
+// It does not have to be exhaustive. A name that slips through is looked up, fails, and the
+// message falls through to the model exactly as it does today — see the needsLLM path in
+// CNodeViewChat.handleMessage. This list is about not wasting the round trip, not about
+// correctness.
+const NOT_A_PLACE_AFTER_BARE_GO = new Set([
+    "on", "off", "ahead", "back", "backward", "backwards", "forward", "forwards",
+    "up", "down", "left", "right", "in", "out", "away", "there", "here", "home",
+    "north", "south", "east", "west", "northeast", "northwest", "southeast", "southwest",
+    "faster", "slower", "slow", "fast", "first", "last", "next", "previous", "prev",
+    "again", "now", "ok", "okay", "away",
+]);
+
 // Question / function words that must NEVER be "corrected" into a command keyword.
 // Without this, fuzzy matching maps "how" -> "show" (kw.slice(1) === "how", one edit),
 // turning every "how do I ..." question into a bogus "show ..." toggle command.
@@ -323,6 +340,162 @@ const NEVER_CORRECT = new Set([
     "is", "are", "am", "was", "were", "be", "do", "does", "did",
     "can", "could", "should", "would", "will", "may", "might",
 ]);
+
+// ─── Small talk ───────────────────────────────────────────────────────────────────────
+//
+// Greetings, thanks and filler carry no request, so answering them with a model call is
+// pure waste: on a hosted provider it spends a turn's tokens to say "You're welcome", and
+// on a local model it can cost three minutes of prompt prefill. These are answered here,
+// instantly and free.
+//
+// MATCHED ON THE WHOLE UTTERANCE, never as a prefix. "thanks" is small talk; "thanks, now
+// show the tracks" is a request and must reach the model untouched. Everything below is an
+// exact match against the normalised text, which makes that guarantee structural rather
+// than a property of some regex being careful enough.
+//
+// DELIBERATELY EXCLUDED: "yes", "no", "yeah", "nope", "sure", "correct" and the like. The
+// assistant asks clarifying questions ("Do you mean the Line Width control?"), and a bare
+// "yes" is the answer to one. Intercepting it would break the clarification it belongs to.
+// CNodeViewChat adds a second guard for the same reason — see the '?' check in
+// handleMessage — which is what makes the softer acknowledgements below safe.
+function normalizeSmallTalk(text) {
+    return String(text || '')
+        .toLowerCase()
+        // Apostrophes close up ("what's" -> "whats") so contractions need no separate
+        // entries; every other mark, including emoji, becomes a separator.
+        .replace(/['\u2019\u02BC]/g, '')
+        .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// One reply per category, kept short: these are said often, and a paragraph would grate by
+// the third time. Non-English entries are here because people type them without expecting
+// a translation feature — the reply stays in English, which is the interface language.
+const SMALL_TALK = [
+    {
+        name: "small_talk_greeting",
+        reply: "Hello. Ask me to change something, or ask how something works.",
+        phrases: [
+            "hello", "hello there", "hi", "hii", "hiii", "hi there", "hiya", "hey",
+            "heya", "hey there", "yo", "sup", "whats up", "wassup", "wazzup", "howdy",
+            "greetings", "good morning", "good afternoon", "good evening", "good day",
+            "morning", "afternoon", "evening", "gday", "g day", "aloha", "hey ai",
+            "hello ai", "hi ai", "hello bot", "hi bot", "hey bot", "hello sitrec",
+            // Commonly typed without any expectation of a non-English reply.
+            "hola", "buenos dias", "buenas tardes", "buenas noches", "bonjour", "bonsoir",
+            "salut", "hallo", "guten tag", "guten morgen", "ciao", "buongiorno", "ola",
+            "oi", "konnichiwa", "ohayo", "annyeong", "ni hao", "nihao", "privet",
+            "shalom", "salam", "salaam", "namaste", "marhaba", "merhaba", "hej", "hei",
+            "moi", "tere", "czesc", "ahoj", "szia", "jambo", "sawubona", "dia dhuit",
+        ],
+    },
+    {
+        name: "small_talk_thanks",
+        reply: "You're welcome.",
+        phrases: [
+            "thanks", "thank you", "thankyou", "thank u", "thanks a lot",
+            "thanks a bunch", "thanks a million", "thanks heaps", "thanks so much",
+            "thanks very much", "thank you very much", "thank you so much",
+            "thank you kindly", "many thanks", "big thanks", "thanks again",
+            "thanks mate", "thanks buddy", "thanks pal", "thx", "thnx", "thanx", "tks",
+            "ty", "tysm", "ta", "ta very much", "cheers", "cheers mate", "cheers thanks",
+            "nice one", "much appreciated", "appreciated", "appreciate it",
+            "i appreciate it", "much obliged", "youre a star", "youre the best",
+            "gracias", "muchas gracias", "merci", "merci beaucoup", "danke",
+            "danke schon", "vielen dank", "grazie", "grazie mille", "obrigado",
+            "obrigada", "arigato", "arigatou", "domo", "spasibo", "dank je", "dankje",
+            "bedankt", "tack", "takk", "kiitos", "dziekuje", "xie xie", "xiexie",
+            "kamsahamnida", "shukran", "toda", "dhanyavaad", "salamat", "diolch",
+            "go raibh maith agat",
+        ],
+    },
+    {
+        name: "small_talk_farewell",
+        reply: "Goodbye.",
+        phrases: [
+            "bye", "bye bye", "byebye", "goodbye", "good bye", "see you", "see ya",
+            "see you later", "catch you later", "cya", "cu", "later", "laters", "ttyl",
+            "good night", "goodnight", "night", "nighty night", "farewell", "im off",
+            "i am off", "gtg", "got to go", "gotta go", "thats all", "thats it for now",
+            "adios", "hasta luego", "au revoir", "auf wiedersehen", "tschuss",
+            "arrivederci", "ciao ciao", "sayonara", "poka", "hej da", "vale",
+        ],
+    },
+    {
+        name: "small_talk_ack",
+        reply: "Okay.",
+        // "ok" after "Done." is filler; "ok" after "Say the word and I'll move the
+        // camera" is consent. Only the conversation can tell them apart, so this flag
+        // asks the caller to check before answering locally. See
+        // CNodeViewChat.lastBotMessageInvitesAReply().
+        couldBeConsent: true,
+        phrases: [
+            // Acknowledgements only — never anything that could answer a yes/no
+            // question. See the note above normalizeSmallTalk.
+            "ok", "okay", "okey", "oki", "k", "kk", "alright", "all right", "righto",
+            "roger", "roger that", "copy", "copy that", "got it", "gotcha",
+            "understood", "i see", "makes sense", "fair enough", "noted", "sounds good",
+            "will do", "very well", "as you were",
+            "cool", "nice", "great", "awesome", "sweet", "perfect", "excellent",
+            "brilliant", "lovely", "super", "wonderful", "fantastic", "good stuff",
+            "nice work", "well done", "good job", "nice job", "good bot", "amazing",
+            "impressive", "clever", "smart", "bravo", "genial", "super cool",
+        ],
+    },
+    {
+        name: "small_talk_waiting",
+        // The one reply that earns more than three words. "are you there" is what people
+        // type during a long turn, and the useful answer is why it is long.
+        reply: "Still here. If I am slow to reply I am probably still working on the "
+            + "previous message — the first answer from a newly loaded model can take a while.",
+        phrases: [
+            // "do it", "just do it" and "go on" were here and have been REMOVED: after
+            // "Say the word and I'll move the camera" they are the instruction, not
+            // impatience, and answering them locally would drop the request entirely.
+            "hurry", "hurry up", "come on", "cmon", "c mon", "get on with it",
+            "faster", "go faster", "speed up", "quicker",
+            "wake up", "are you there", "you there", "are you awake", "anyone there",
+            "anybody there", "still there", "you still there", "are you alive",
+            "are you working", "is this thing on", "still working", "any progress",
+            "whats taking so long", "why so slow", "why is it so slow", "taking forever",
+            "are you stuck", "did you crash", "hello are you there",
+        ],
+    },
+    {
+        name: "small_talk_nevermind",
+        reply: "No problem.",
+        phrases: [
+            "sorry", "im sorry", "my bad", "my mistake", "oops", "oop", "whoops",
+            "never mind", "nevermind", "nvm", "forget it", "forget that", "ignore that",
+            "ignore me", "disregard", "disregard that", "scratch that", "cancel that",
+            "as you were", "no worries", "no problem", "its fine", "doesnt matter",
+        ],
+    },
+    {
+        name: "small_talk_ping",
+        reply: "I am here.",
+        phrases: [
+            "test", "testing", "testing 123", "test test", "ping", "hello world",
+            "check", "mic check", "knock knock", "you up", "are you real",
+        ],
+    },
+    {
+        name: "small_talk_please",
+        // "please" on its own, after an offer, means "yes, do it".
+        couldBeConsent: true,
+        reply: "Happy to help — what would you like me to do?",
+        phrases: ["please", "pls", "plz", "help me", "i need help", "any ideas",
+            "what now", "whats next", "now what"],
+    },
+];
+
+// name -> reply, and phrase -> name. Built once; the lists are long and the lookup is on
+// the path of every message typed.
+const SMALL_TALK_BY_PHRASE = new Map();
+for (const entry of SMALL_TALK) {
+    for (const phrase of entry.phrases) SMALL_TALK_BY_PHRASE.set(phrase, entry);
+}
 
 // Calculator-style math instance: trig functions take DEGREES by default, so
 // "cos(30)" means cos(30°) (like Google's calculator). Explicit angle units still
@@ -404,6 +577,23 @@ class CClientNLU {
 
     _buildPatterns() {
         return [
+            {
+                // First, deliberately. Every entry is an exact whole-utterance match on a
+                // fixed phrase, so no later pattern has a better claim — and matching here
+                // stops "hi" reaching the typo corrector, which would otherwise have a
+                // one-edit path to "hide".
+                name: "small_talk",
+                test: (text) => SMALL_TALK_BY_PHRASE.get(normalizeSmallTalk(text)) ?? null,
+                extract: (_match, entry) => ({
+                    intent: "SMALL_TALK",
+                    slots: {
+                        reply: entry.reply,
+                        category: entry.name,
+                        couldBeConsent: !!entry.couldBeConsent,
+                    },
+                }),
+                confidence: 1,
+            },
             {
                 name: "set_fov_variants",
                 regex: /^(?:set\s+)?(?:v?fov|h?fov|field\s*of\s*view)\s*(?:to\s+)?(\d+(?:\.\d+)?)$/i,
@@ -614,21 +804,42 @@ class CClientNLU {
             },
             {
                 name: "goto_location_simple",
-                regex: /^(?:go\s+to|move\s+to|set\s+location(?:\s+to)?)\s+(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)(?:\s*[,\s]\s*(-?\d+(?:\.\d+)?))?$/i,
-                extract: (match) => ({
-                    intent: "GOTO_LLA",
-                    slots: {
-                        lat: parseFloat(match[1]),
-                        lon: parseFloat(match[2]),
-                        alt: match[3] ? parseFloat(match[3]) : 0
-                    }
-                }),
+                // "to" is optional: people type "go 51.8, -1.8" as readily as "go to ...".
+                regex: /^(?:go|move|goto|fly)(?:\s+to)?\s+(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)(?:\s*[,\s]\s*(-?\d+(?:\.\d+)?))?$|^set\s+location(?:\s+to)?\s+(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)(?:\s*[,\s]\s*(-?\d+(?:\.\d+)?))?$/i,
+                extract: (match) => {
+                    // Two alternations, so the coordinates land in 1-3 or 4-6.
+                    const [lat, lon, alt] = match[1] !== undefined
+                        ? [match[1], match[2], match[3]]
+                        : [match[4], match[5], match[6]];
+                    return {
+                        intent: "GOTO_LLA",
+                        slots: {
+                            lat: parseFloat(lat),
+                            lon: parseFloat(lon),
+                            alt: alt ? parseFloat(alt) : 0
+                        }
+                    };
+                },
                 confidence: 0.95
             },
             {
                 name: "goto_location_named",
-                regex: /^(?:go\s+to|move\s+to|set\s+location(?:\s+to)?)\s+(.+)$/i,
-                extract: (match) => ({intent: "GOTO_NAMED_LOCATION", slots: {location: match[1].trim()}}),
+                // "to" is optional after go/move, so "go bingley" behaves like "go to
+                // bingley". "goto" and "fly to" are accepted for the same reason: they are
+                // what people type, and sending them to the model instead spends a turn to
+                // reach the identical geocoder call.
+                regex: /^(?:go|move|goto|fly)(?:\s+to)?\s+(.+)$|^set\s+location(?:\s+to)?\s+(.+)$/i,
+                extract: (match) => {
+                    const location = (match[1] ?? match[2] ?? '').trim();
+                    if (!location) return null;
+                    // A bare "go" followed by a direction or a command is not a place.
+                    // Returning null lets _tryMatch fall through to the later patterns.
+                    const first = location.split(/\s+/)[0].toLowerCase();
+                    if (NOT_A_PLACE_AFTER_BARE_GO.has(first) || COMMAND_KEYWORDS.includes(first)) {
+                        return null;
+                    }
+                    return {intent: "GOTO_NAMED_LOCATION", slots: {location}};
+                },
                 confidence: 0.6
             },
             {
@@ -866,6 +1077,11 @@ class CClientNLU {
             case "SET_ALL_GEOMETRY":
                 return sitrecAPI.call("setAllObjectsGeometry", {geometry: slots.geometry});
 
+            // Nothing to execute — the whole point is that there is no request. The reply
+            // was chosen at match time and generateResponse hands it back.
+            case "SMALL_TALK":
+                return {success: true};
+
             case "MATH": {
                 return {success: true, result: {answer: slots.result, expression: slots.expression}};
             }
@@ -965,6 +1181,8 @@ class CClientNLU {
         }
 
         switch (intent) {
+            case "SMALL_TALK":
+                return slots.reply;
             case "SET_VALUE":
                 return `Set ${slots.path} to ${slots.value}`;
             case "TOGGLE_ON":

@@ -835,6 +835,42 @@ class CNodeViewChat extends CNodeViewText {
         this.chatLog.appendChild(this.promptLine);
     }
 
+    // Phrases by which the assistant offers to do something without asking a question.
+    //
+    // "Say the word and I'll move the camera." invites a reply as surely as "Shall I move
+    // the camera?" does, and answering it "okay" is consent — but there is no question
+    // mark, so a punctuation test misses it entirely and the request is silently dropped.
+    //
+    // These are model-generated sentences, so no list can be complete. It does not need to
+    // be: the two failure directions are wildly unequal. A false positive sends one "ok" to
+    // the model — a wasted turn. A false negative loses what the user asked for and leaves
+    // them thinking the assistant ignored them. So the list errs long, and anything it
+    // misses still costs only a single dropped acknowledgement rather than a wrong action.
+    static OFFER_PHRASES = [
+        "say the word", "just say", "let me know", "tell me when", "tell me if",
+        "if you want", "if you'd like", "if you would like", "if you like",
+        "would you like", "do you want", "shall i", "should i", "want me to",
+        "i can ", "i could ", "i'll ", "i will ", "happy to", "just ask",
+        "ready when you are", "give me the word", "on your signal", "confirm",
+        "let me", "would you prefer", "or i can", "and i'll",
+    ];
+
+    // Is the assistant's last message one the user might be answering?
+    //
+    // Two ways: it asked outright (trailing "?", tolerating a closing bracket or quote,
+    // because "…the Line Width control?)" still asks), or it offered (above).
+    lastBotMessageInvitesAReply() {
+        for (let i = this.chatHistory.length - 1; i >= 0; i--) {
+            const entry = this.chatHistory[i];
+            if (entry?.role !== 'bot') continue;
+            const text = String(entry.text || '');
+            if (/\?["'\)\]]*\s*$/.test(text)) return true;
+            const lower = text.toLowerCase();
+            return CNodeViewChat.OFFER_PHRASES.some(phrase => lower.includes(phrase));
+        }
+        return false;
+    }
+
     async handleMessage(text) {
         this.historyPosition = 0;
 
@@ -862,6 +898,23 @@ class CNodeViewChat extends CNodeViewText {
         const parseResult = clientNLU.parse(text);
         this.addDebugMessage(`NLU: ${parseResult.patternName || 'none'} (${parseResult.confidence})`);
 
+        // Small talk is answered locally — EXCEPT when it might be a reply to the
+        // assistant rather than filler. "Do you mean the Line Width control?" / "ok", or
+        // "Say the word and I'll move the camera." / "okay", are both consent, and the
+        // model is the only side holding the context to act on it. The NLU cannot see the
+        // conversation, so the check belongs here.
+        //
+        // Only the categories that CAN express consent are gated: a greeting, thanks or a
+        // farewell is never an answer to an offer, and gating those too would send most
+        // small talk to the model — which is the cost this whole feature exists to avoid,
+        // since assistants offer things constantly.
+        if (parseResult.intent === "SMALL_TALK" && parseResult.slots.couldBeConsent
+            && this.lastBotMessageInvitesAReply()) {
+            this.addDebugMessage("Small talk after a question — sending to the model instead.");
+            await this.sendToLLM(text);
+            return;
+        }
+
         if (parseResult.intent && parseResult.confidence > 0) {
             const executeResult = await clientNLU.execute(parseResult);
 
@@ -875,6 +928,9 @@ class CNodeViewChat extends CNodeViewText {
                     "MATH", "SET_FRAME", "SET_DATETIME", "SET_TIME_RELATIVE",
                     "ZOOM_IN", "ZOOM_OUT", "POINT_AT", "LOCK_ON", "UNLOCK",
                     "PLAY", "PAUSE", "GOTO_LLA", "GOTO_NAMED_LOCATION",
+                    // Saying hello changes nothing; marking the sitch dirty for it would
+                    // prompt to save a file that has not been altered.
+                    "SMALL_TALK",
                 ]);
                 if (!navigationalIntents.has(parseResult.intent)) {
                     markSitchDirty();
