@@ -332,6 +332,26 @@ export class CNode3DObject extends CNode3DGroup {
             .moveToFirst();
         visibleController.isCommon = true;
 
+        // Keep the camera on this object while its edit menu is open.
+        //
+        // Editing an object you cannot see is the common frustration: nudging a sphere a
+        // kilometre sideways walks it off the screen, and a 5m object on open terrain is
+        // hard to find again. On, this does what View > Focus Track does — the camera looks
+        // at the object and orbits about it — for as long as the edit menu is up.
+        //
+        // The effect is applied by CObjectMoveWidget, which is the thing that already knows
+        // both which object is being edited and whether a drag is in progress; this flag is
+        // only the switch. It is deliberately NOT serialised: it describes how you are
+        // working on the object right now, not anything about the object.
+        this.focusWhileEditing = false;
+        this.gui.add(this, "focusWhileEditing").name("Focus While Editing").listen()
+            .onChange(() => setRenderOne(true))
+            .tooltip("While this object's edit menu is open, keep the camera looking at it "
+                + "and orbiting around it. Focus is released while you drag the object, and "
+                + "returns when you let go.")
+            .moveAfter("Visible")
+            .isCommon = true;
+
         // Add export to KML button
        this.gui.add(this, "exportToKML").name(t("nodes3dObject.exportToKML.label"))
             .tooltip(t("nodes3dObject.exportToKML.tooltip"))

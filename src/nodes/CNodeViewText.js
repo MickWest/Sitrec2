@@ -211,7 +211,7 @@ export class CNodeViewText extends CNodeView {
 
         // Global capture of the Escape key to hide
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && this.visible) {
+            if (e.key === 'Escape' && this.visible && this.escapeShouldHide()) {
                 this.hide();
             }
         });
@@ -233,6 +233,15 @@ export class CNodeViewText extends CNodeView {
     /**
      * Apply theme using CSS variables
      */
+    // Should Escape close this view? Overridable, because it is not always the right
+    // answer: a view DOCKED into the layout is part of the arrangement rather than
+    // something hovering over it, and closing it re-flows every view sharing its seams.
+    // Escape is a key people press to dismiss a dropdown, not to rearrange a workspace.
+    // See CNodeViewChat.escapeShouldHide().
+    escapeShouldHide() {
+        return true;
+    }
+
     setTheme(name) {
         const themeVars = THEMES[name];
         if (!themeVars) return;

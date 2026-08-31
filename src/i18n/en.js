@@ -1100,6 +1100,7 @@ const en = {
             setTargetAbove: "Set Target Above",
             setTargetOnGround: "Set Target on Ground",
             dropPin: "Drop Pin / Add Feature",
+            addFixedObject: "Add 3D Object",
             createTrackWithObject: "Create Track with Object",
             createTrackNoObject: "Create Track (No Object)",
             addBalloon: "Add Balloon",

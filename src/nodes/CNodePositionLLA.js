@@ -499,7 +499,12 @@ export class CNodePositionLLA extends CNodeTrack {
         this.elevationCache = null; // flush cache for fresh terrain queries
 
         if (this._LLA !== undefined) {
-            const aglHeight = this.guiAlt.getValue();
+            // guiAlt only exists when the node was given a `gui` to build controls in.
+            // A position node created without one — an object placed in the world, whose
+            // position track is deliberately headless — has none, and this threw on
+            // construction. The same expression is already guarded this way at the AGL
+            // refinement below; this one was the oversight.
+            const aglHeight = this.guiAlt ? this.guiAlt.getValue() : this._LLA[2];
             const terrainNode = this.agl ? (NodeMan.get("TerrainModel", false) ?? null) : null;
 
             if (this.agl && terrainNode) {
@@ -561,7 +566,11 @@ export class CNodePositionLLA extends CNodeTrack {
         const time = f * Sit.simSpeed;
 
         if (this._LLA !== undefined) {
-            assert(this.guiAlt !== undefined, "CNodePositionLLA: no guiAlt defined")
+            // The assert that stood here ("no guiAlt defined") guarded the commented-out
+            // return on the next line, which is the only code in this branch that ever read
+            // guiAlt. Everything live below works from this.ecef, so the assert protected
+            // nothing — and it fired once per frame for a position node created without a
+            // `gui`, which is exactly what a headless one is.
        //     return LLAToECEF(this._LLA[0], this._LLA[1], this.guiAlt.getValueFrame(f))
              let pos = this.ecef.clone();
             if (this.in.wind) {

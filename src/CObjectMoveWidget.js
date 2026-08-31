@@ -29,7 +29,7 @@
 // handle scaling, because the handles are one shared Object3D that has to be re-scaled
 // into each view's pixel space just before that view renders.
 
-import {Object3D, Vector3} from "three";
+import {BufferGeometry, Float32BufferAttribute, Line, LineBasicMaterial, Object3D, Vector3} from "three";
 import {PointEditorWidget} from "./PointEditorWidget";
 import {CNode3DObject} from "./nodes/CNode3DObject";
 import {GlobalScene} from "./LocalFrame";
@@ -41,6 +41,7 @@ import {findRootTrack} from "./FindRootTrack";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {getLocalUpVector} from "./SphericalMath";
+import {getPointBelow} from "./threeExt";
 import {undoManager as UndoManager} from "./UndoManager";
 
 // How close the cursor has to get, in screen pixels, before the widget appears. The
@@ -172,10 +173,14 @@ class CObjectMoveWidget {
 
         if (!this.node) {
             this.suppressCamera(false);
+            this.updateDropLine();      // hides it
+            this.updateEditFocus();     // releases focus back to whatever it was
             return;
         }
 
         this.updateHover();
+        this.updateDropLine();
+        this.updateEditFocus();
 
         const fadeChanged = this.advanceFade();
 
@@ -498,6 +503,101 @@ class CObjectMoveWidget {
         if (helper.parent !== GlobalScene) {
             GlobalScene.add(helper);
         }
+    }
+
+    // "Focus While Editing": point every 3D view's camera at the object being edited.
+    //
+    // This reuses the view's existing focus-track machinery rather than moving cameras
+    // directly — CNodeView3D already does `controls.target = node.p(frame)` plus a lookAt
+    // every frame for whatever focusTrackName names, and a CNode3DObject answers p() like
+    // any track. So focusing is one assignment, and it inherits the orbit behaviour and
+    // the frame-by-frame follow for free.
+    //
+    // SUSPENDED WHILE DRAGGING. Focus pins the orbit centre to the object, so dragging
+    // under it means the camera swings to chase the thing your pointer is moving — the
+    // view fights the gesture. Released on drag start and restored on drop, which is also
+    // when you most want to see where it ended up.
+    updateEditFocus() {
+        const node = this.node;
+        const wanted = (node && node.focusWhileEditing && !this.dragging && !this.altMode)
+            ? node.id : null;
+
+        if (wanted === this.focusedNodeId) return;
+        this.focusedNodeId = wanted;
+
+        // Every view that has a focus track — i.e. the 3D ones. Tested by the property
+        // rather than by class so it needs no import and cannot miss a subclass.
+        ViewMan.iterate((id, view) => {
+            if (view?.focusTrackName === undefined) return;
+            if (wanted) {
+                // Remember what the view was focused on, once, so releasing focus puts
+                // back the user's own choice rather than "default".
+                if (view._focusBeforeEdit === undefined) {
+                    view._focusBeforeEdit = view.focusTrackName;
+                }
+                view.focusTrackName = wanted;
+            } else if (view._focusBeforeEdit !== undefined) {
+                view.focusTrackName = view._focusBeforeEdit;
+                view._focusBeforeEdit = undefined;
+            }
+        });
+        setRenderOne(true);
+    }
+
+    // A plumb line from the object straight down to the ground.
+    //
+    // Height above open terrain is the one thing a perspective view will not tell you: a
+    // sphere at 20 m and one at 2000 m look identical against distant ground, and while
+    // dragging that is exactly what you are trying to judge. The line gives the eye
+    // something to read the height against, and shows WHERE on the ground it sits.
+    //
+    // Down means along the local up vector, not world -Y: the render frame is ECEF, so
+    // "down" is toward the Earth's centre and differs by hundreds of kilometres of
+    // direction across a sitch.
+    updateDropLine() {
+        if (!this.node?.group) {
+            if (this.dropLine) this.dropLine.visible = false;
+            return;
+        }
+
+        const top = this.node.group.position;
+        // raycast:false — the smooth elevation map rather than the mesh. Under Google 3D
+        // the terrain keeps its whole LOD pyramid and a raycast returns the topmost tile,
+        // which is not the surface being looked at.
+        const ground = getPointBelow(top, false);
+        if (!ground) {
+            if (this.dropLine) this.dropLine.visible = false;
+            return;
+        }
+
+        if (!this.dropLine) {
+            const geometry = new BufferGeometry();
+            geometry.setAttribute("position", new Float32BufferAttribute(new Float32Array(6), 3));
+            this.dropLine = new Line(geometry, new LineBasicMaterial({
+                color: 0x808080,        // 50% grey
+                // WebGL ignores widths above 1 on almost every platform, so 1 is both the
+                // request and the only value that would have been honoured anyway.
+                linewidth: 1,
+                depthTest: true,
+                toneMapped: false,
+            }));
+            this.dropLine.renderOrder = 998;   // under the widget handles (999)
+        }
+
+        // Re-added rather than added once, for the same reason as the widget helper: a
+        // sitch load rebuilds the scene while this object outlives it.
+        if (this.dropLine.parent !== GlobalScene) GlobalScene.add(this.dropLine);
+
+        // The line is drawn in the object's own local space so the two ends stay in
+        // float32 range — ECEF coordinates are ~6,378 km from the origin, and a geometry
+        // holding them directly would visibly jitter.
+        this.dropLine.position.copy(top);
+        const positions = this.dropLine.geometry.getAttribute("position");
+        positions.setXYZ(0, 0, 0, 0);
+        positions.setXYZ(1, ground.x - top.x, ground.y - top.y, ground.z - top.z);
+        positions.needsUpdate = true;
+        this.dropLine.geometry.computeBoundingSphere();
+        this.dropLine.visible = true;
     }
 
     setWidgetAttached(attached) {

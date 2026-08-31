@@ -34,6 +34,7 @@ import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
 import {assert} from "./assert";
 import {getShortURL} from "./urlUtils";
 import {CNode3DObject, ModelAliases} from "./nodes/CNode3DObject";
+import {CNodePositionLLA} from "./nodes/CNodePositionLLA";
 import {UpdateHUD} from "./JetStuff";
 import {degrees, getDateTimeFilename} from "./utils";
 import {ViewMan} from "./CViewManager";
@@ -443,6 +444,89 @@ export const menuMethods = {
                     });
                 }
             },
+            // Place something in the world that does not move.
+            //
+            // An object still needs a track to say where it is — CNode3DObject has no
+            // position of its own, a TrackPosition controller asks a track every frame —
+            // but a thing sitting on the ground has no journey to describe, and giving it a
+            // synthetic spline track means an entry in Contents, a spline editor and a set
+            // of keyframes that exist only to say "here, always".
+            //
+            // So it gets a CNodePositionLLA instead: a single lat/lon/alt that satisfies
+            // the same interface. It is hidden from the UI by NOT being registered with
+            // TrackManager — TrackManager is what creates the Contents folder and what the
+            // track pickers enumerate — and by being constructed with no `gui`, so it adds
+            // no controls anywhere.
+            //
+            // Dragging keeps working with no extra wiring: CObjectMoveWidget's
+            // resolveMoveTarget() already recognises a fixed position by behaviour
+            // (setLLA + _LLA + ecef) rather than by class, precisely so "the camera's and
+            // target's position nodes, and any future kin, all qualify".
+            addFixedObject: () => {
+                const objectID = NodeMan.UniqueName(`syntheticObject_${Date.now()}`);
+                const positionID = NodeMan.UniqueName(`objectPosition_${Date.now()}`);
+
+                // No `gui`, so no controls are created for it. MSL to match the other
+                // ground-menu placements (setTargetOnGround and friends use altMSL).
+                new CNodePositionLLA({
+                    id: positionID,
+                    LLA: [lat, lon, altMSL],
+                });
+
+                const objectNode = new CNode3DObject({
+                    id: objectID,
+                    geometry: "sphere",
+                    radius: 5,
+                    color: 0x808080,
+                    material: "phong",
+                    position: groundPoint,
+                });
+
+                // Position only. No ObjectTilt: that orients a model along its direction of
+                // travel, and this one has none — it would also drag in a smoothed-track
+                // node that would then need disposing.
+                objectNode.addController("TrackPosition", {
+                    sourceTrack: positionID,
+                });
+
+                console.log(`Created fixed object ${objectID} at ${lat}, ${lon}, ${altMSL}m MSL`);
+                this.groundContextMenu = null;
+                menu.destroy();
+
+                // Go straight into edit mode for the thing just created.
+                //
+                // Two reasons it is worth doing here rather than leaving the user to find
+                // and click the object: a grey 5m sphere on open ground is genuinely hard
+                // to spot, and CObjectMoveWidget attaches to whatever getEditingObjectNode()
+                // returns — so opening the menu IS what makes the object draggable without
+                // holding Option.
+                //
+                // AFTER menu.destroy() above: createStandaloneMenu refuses while another
+                // persistent menu is open, so the ground menu has to be gone first.
+                //
+                // The same call the right-click path makes, so the window is identical
+                // and lands in the identical place.
+                this.showNodeEditMenu(objectNode, mouseX, mouseY);
+
+                if (UndoManager) {
+                    UndoManager.add({
+                        undo: () => {
+                            NodeMan.disposeRemove(objectID);
+                            NodeMan.disposeRemove(positionID);
+                        },
+                        redo: () => {
+                            new CNodePositionLLA({id: positionID, LLA: [lat, lon, altMSL]});
+                            const ob = new CNode3DObject({
+                                id: objectID, geometry: "sphere", radius: 5,
+                                color: 0x808080, material: "phong", position: groundPoint,
+                            });
+                            ob.addController("TrackPosition", {sourceTrack: positionID});
+                        },
+                        description: "Add 3D object",
+                    });
+                }
+            },
+
             createTrackWithObject: () => {
                 // Create a 3D object at the clicked point (see createObjectFromInput
                 // for why the timestamped ids go through UniqueName)
@@ -738,6 +822,7 @@ export const menuMethods = {
         menu.add(menuData, "dropPin").name(t("custom.contextMenu.dropPin"));
 
         // Add synthetic track options
+        menu.add(menuData, "addFixedObject").name(t("custom.contextMenu.addFixedObject"));
         menu.add(menuData, "createTrackWithObject").name(t("custom.contextMenu.createTrackWithObject"));
         menu.add(menuData, "createSyntheticTrack").name(t("custom.contextMenu.createTrackNoObject"));
 

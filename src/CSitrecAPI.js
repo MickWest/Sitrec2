@@ -1001,6 +1001,60 @@ class CSitrecAPI {
                 }
             },
 
+            addObjectsAtLLA: {
+                doc: "Create MANY 3D objects in one call. Use this instead of calling "
+                    + "addObjectAtLLA repeatedly: a ring, grid or scatter of objects is one "
+                    + "call here and dozens otherwise, which exhausts the per-turn call "
+                    + "budget long before the objects are placed.",
+                params: {
+                    objects: "Array of {lat, lon, alt} objects, each accepting the same "
+                        + "parameters as addObjectAtLLA (array)",
+                },
+                fn: (v) => {
+                    if (!Array.isArray(v.objects)) {
+                        return {success: false, error: "objects must be an array"};
+                    }
+                    if (v.objects.length === 0) {
+                        return {success: false, error: "objects array is empty"};
+                    }
+                    const results = v.objects.map((ob, i) => {
+                        try {
+                            // Passed through for parity with addObjectAtLLA. NOTE: neither
+                            // actually names anything — createObjectFromInput generates
+                            // `syntheticObject_<timestamp>` for the id and the track gets an
+                            // auto-name, so `name` reaches addSyntheticTrack and is not used.
+                            // No `namePrefix` is offered here because documenting numbering
+                            // that does not happen would just mislead the model into
+                            // addressing objects by names they do not have.
+                            const name = ob.name || CustomManager.getNextObjectName();
+                            const alt = ob.alt ?? 0;
+                            const {objectNode} = CustomManager.createObjectFromInput(
+                                name, ob.lat, ob.lon, alt, ob.alt !== undefined
+                            );
+                            return objectNode
+                                ? {success: true, name, lat: ob.lat, lon: ob.lon, alt}
+                                : {success: false, error: `Failed to create object ${i + 1}`};
+                        } catch (e) {
+                            return {success: false, error: `Object ${i + 1}: ${e.message}`};
+                        }
+                    });
+                    const failed = results.filter(r => !r.success);
+                    // Partial success is reported as such rather than thrown away: forty of
+                    // fifty objects placed is a useful outcome the model can build on, and
+                    // it needs to know which ten to retry.
+                    return {
+                        success: failed.length === 0,
+                        count: results.length,
+                        created: results.length - failed.length,
+                        failed: failed.length,
+                        // The generated ids, which are what the objects can actually be
+                        // addressed by later.
+                        names: results.filter(r => r.success).map(r => r.name),
+                        errors: failed.slice(0, 5).map(r => r.error),
+                    };
+                }
+            },
+
             createWalker: {
                 doc: "Create a marker object that walks/moves through a list of lat/lon waypoints over a frame range — e.g. a viewer walking around to a vantage point, or a flying object. The object follows a linear track and holds at the last waypoint until the end. Address it later by name with show/hide/setMenuValue (e.g. hide it once the camera reaches it).",
                 params: {

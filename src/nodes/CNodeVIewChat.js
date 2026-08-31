@@ -10,6 +10,7 @@ import {AI_DOC_CHAR_LIMIT, getChatAvailableDocs} from "../docsRegistry";
 import {linkifyToHTML} from "../linkify";
 import {mirrorMenuItem} from "../MenuMirror";
 import {getKey as byokGetKey, getEndpoint as byokGetEndpoint} from "../BYOKKeyStore";
+import {LayoutMan} from "../CLayoutManager";
 import {probeEndpointResidency} from "../BYOKModelCatalog";
 import {DEFAULT_VOICE_MODEL} from "../BYOKModelCatalog";
 import {formatTurnUsage, recordUsage} from "../BYOKUsage";
@@ -596,8 +597,8 @@ class CNodeViewChat extends CNodeViewText {
                 e.stopPropagation(); // stop other handlers
                 this.toggleChatVisibility();
             } else if (e.key === 'Escape') {
-                // If escape, hide the chat view
-                this.hide();
+                // Floating only — see escapeShouldHide().
+                if (this.escapeShouldHide()) this.hide();
             }
         });
 
@@ -635,8 +636,10 @@ class CNodeViewChat extends CNodeViewText {
                 e.preventDefault();  // Stop tab from shifting focus
                 this.toggleChatVisibility();
             } else if (e.key === 'Escape') {
-                // If escape, hide the chat view
-                this.hide();
+                // Floating only — see escapeShouldHide(). Docked, Escape just leaves the
+                // input box, which is the nearest useful thing it can do.
+                if (this.escapeShouldHide()) this.hide();
+                else this.inputBox.blur();
             }
         });
 
@@ -869,6 +872,26 @@ class CNodeViewChat extends CNodeViewText {
             return CNodeViewChat.OFFER_PHRASES.some(phrase => lower.includes(phrase));
         }
         return false;
+    }
+
+    // Escape closes the Assistant only while it FLOATS.
+    //
+    // A docked window is part of the layout, not something hovering over it: closing it
+    // re-flows every view sharing its seams, and Escape is a key people press to dismiss a
+    // dropdown or cancel a selection, not to rearrange their workspace. Tab still toggles
+    // it either way, and the header X and the Show/Views checkbox still close it.
+    //
+    // Docked means either of the two ways a view can be attached: sharing a seam with
+    // another view (the tiled arrangement), or pinned into a sidebar.
+    isDocked() {
+        if (this.dockedSidebar) return true;
+        return !!LayoutMan.viewSharesEdge?.(this.id);
+    }
+
+    // Overrides CNodeViewText's global Escape-to-hide. Both that handler and this view's
+    // own consult it, so there is one answer rather than two that can drift.
+    escapeShouldHide() {
+        return !this.isDocked();
     }
 
     async handleMessage(text) {
