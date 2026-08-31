@@ -687,6 +687,64 @@ describe('chat (direct OpenAI BYOK)', () => {
         });
     });
 
+    // The model list is now whatever the key exposes, so one fixed request body cannot
+    // serve it. These two cases were both measured against a real key on 2026-08-31.
+    test('drops reasoning_effort and retries when a model rejects it outright', async () => {
+        mockFetchSequence([
+            {ok: false, status: 400, body: {error: {message:
+                'Unrecognized request argument supplied: reasoning_effort'}}},
+            {body: {choices: [{message: {role: 'assistant', content: 'OK'}, finish_reason: 'stop'}]}},
+        ]);
+
+        const result = await chat({
+            apiKey: 'k', provider: 'byok-openai', model: 'gpt-4o-quirk-drop',
+            systemPrompt: 'sp', history: [], userText: 'u', tools: [],
+            executeCall: async () => ({success: true}),
+        });
+
+        expect(fetch.mock.calls).toHaveLength(2);
+        expect(JSON.parse(fetch.mock.calls[0][1].body).reasoning_effort).toBe('low');
+        expect(JSON.parse(fetch.mock.calls[1][1].body).reasoning_effort).toBeUndefined();
+        // The cap is not optional — dropping it would send an uncapped request.
+        expect(JSON.parse(fetch.mock.calls[1][1].body).max_completion_tokens).toBeGreaterThan(0);
+        expect(result.text).toBe('OK');
+    });
+
+    test('uses the value the provider names, rather than dropping the parameter', async () => {
+        // gpt-5.6-sol's actual 400: it accepts reasoning_effort, but only as 'none' once
+        // function tools are in play. Dropping it would be the wrong request.
+        mockFetchSequence([
+            {ok: false, status: 400, body: {error: {message:
+                'Function tools with reasoning_effort are not supported for gpt-5.6-sol in '
+                + "/v1/chat/completions. To use function tools, use /v1/responses or set "
+                + "reasoning_effort to 'none'."}}},
+            {body: {choices: [{message: {role: 'assistant', content: 'OK'}, finish_reason: 'stop'}]}},
+        ]);
+
+        const result = await chat({
+            apiKey: 'k', provider: 'byok-openai', model: 'gpt-quirk-none',
+            systemPrompt: 'sp', history: [], userText: 'u', tools: [],
+            executeCall: async () => ({success: true}),
+        });
+
+        expect(JSON.parse(fetch.mock.calls[1][1].body).reasoning_effort).toBe('none');
+        expect(result.text).toBe('OK');
+    });
+
+    test('gives up rather than looping when the same rejection repeats', async () => {
+        const same = {ok: false, status: 400, body: {error: {message:
+            'Unrecognized request argument supplied: reasoning_effort'}}};
+        mockFetchSequence([same, same, same, same]);
+
+        await expect(chat({
+            apiKey: 'k', provider: 'byok-openai', model: 'gpt-quirk-stubborn',
+            systemPrompt: 'sp', history: [], userText: 'u', tools: [],
+            executeCall: async () => ({}),
+        })).rejects.toThrow(/OpenAI API error/);
+        // One remedy is available, so one retry — never an unbounded loop.
+        expect(fetch.mock.calls.length).toBeLessThanOrEqual(3);
+    });
+
     test('names OpenAI, not OpenRouter, when the key is rejected', async () => {
         mockFetchSequence([
             {ok: false, status: 401, body: {error: {message: 'Incorrect API key provided'}}},

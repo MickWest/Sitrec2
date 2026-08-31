@@ -68,7 +68,8 @@ import {configParams} from "./runtimeConfig";
 import {showError, showConfirm} from "./showError";
 import {hasAnyKey as byokHasAnyKey, hasCachedKey, primeKeyCache} from "./BYOKKeyStore";
 import {showKeyDialog} from "./BYOKKeyDialog";
-import {BYOK_MODELS, isBYOKProvider, keyProviderForBYOK} from "./CDirectLLMClient";
+import {getBYOKModels, isBYOKProvider, keyProviderForBYOK} from "./CDirectLLMClient";
+import {primeModelCatalog, refreshModelCatalog} from "./BYOKModelCatalog";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
@@ -613,6 +614,17 @@ export class CCustomManager {
                 this.saveGlobalSettings(true);
             });
 
+        // Directly under the dropdown it governs, because that is the only place it makes
+        // sense: it is a control over what that list contains, not a separate preference.
+        settingsFolder.add(Globals.settings, "enableOldAIModels")
+            .name(t("custom.settings.enableOldAIModels.label"))
+            .tooltip(t("custom.settings.enableOldAIModels.tooltip"))
+            .onChange(() => {
+                this.saveGlobalSettings(true);
+                this.updateChatModelSelector();
+            })
+            .listen();
+
         // Make this control mirrorable into other menus (e.g. the Assistant view header).
         // The mirror stays in sync with this dropdown — value, option list, and onChange.
         registerMirrorSource("chatModel", this.chatModelController);
@@ -664,6 +676,27 @@ export class CCustomManager {
 
         // Fetch available models from server
         this.fetchAvailableChatModels();
+        // ...and, in parallel, the models the user's OWN keys reach. Fire-and-forget, like
+        // the line above: startup ordering here is timing-sensitive and must not grow an
+        // await. The dropdown renders from the cached catalogue immediately and is rebuilt
+        // when the network answers.
+        this.refreshBYOKModelCatalog();
+    }
+
+    // Ask each AI provider what its key can reach, then rebuild the dropdown.
+    //
+    // `force` on a key change, because the answer depends on the key that just changed;
+    // the passive startup call honours the catalogue's own 24h freshness window instead of
+    // making a network round trip every load.
+    async refreshBYOKModelCatalog(force = false) {
+        try {
+            await primeModelCatalog();
+            this.updateChatModelSelector();     // paint the cached list at once
+            await refreshModelCatalog({force});
+        } catch (e) {
+            console.warn('Could not refresh the BYOK model catalogue:', e);
+        }
+        this.updateChatModelSelector();
     }
 
     /**
@@ -772,7 +805,16 @@ export class CCustomManager {
         // changes who is paying.
         const selectable = [...this.availableChatModels];
         if (Globals.hasByokKeys) {
-            selectable.push(...BYOK_MODELS.filter(model => hasCachedKey(model.keyProvider)));
+            // Whatever each stored, enabled key actually reaches — the provider's own
+            // /v1/models, not a shortlist Sitrec would have to keep up to date. Trimmed to
+            // each vendor's newest generation unless the user asked for the rest; the
+            // model currently selected is kept either way, so turning the option off
+            // cannot silently move them to a different model.
+            const selected = (Globals.settings.chatModel || "").split(":").slice(1).join(":");
+            selectable.push(...getBYOKModels({
+                includeOlder: !!Globals.settings.enableOldAIModels,
+                keep: selected || null,
+            }).filter(model => hasCachedKey(model.keyProvider)));
         }
 
         // Build options object: {label: "provider:model", ...}
@@ -834,6 +876,9 @@ export class CCustomManager {
                     this.saveGlobalSettings(true);
                 }
             this.updateChatModelSelector();
+            // The key that just changed decides which models are on offer, so re-ask
+            // rather than trusting the cached catalogue.
+            await this.refreshBYOKModelCatalog(true);
         };
         await showKeyDialog(resync);
         await resync();

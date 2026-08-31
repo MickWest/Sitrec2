@@ -42,7 +42,13 @@ export const BYOK_PROVIDERS = [
             + 'Adds "(your key)" entries to the AI Model list.',
         signupURL: 'https://console.anthropic.com/settings/keys',
         usage: 'spend',
-        usageModelPrefixes: ['claude-'],
+        // Which recorded models count as this provider's spend. A prefix list is no
+        // longer enough now the dropdown offers whatever the key exposes, so these are
+        // predicates. They partition the id space between the three AI providers:
+        // OpenRouter ids always carry a "vendor/" prefix, Anthropic's direct ids always
+        // start "claude-", and an OpenAI key reaches everything else it lists (gpt-*, but
+        // also o3, o4-mini, chat-latest, the codex variants).
+        usageModelMatch: id => id.startsWith('claude-'),
         unitPrice: null,        // priced per model in BYOKUsage, not per request
         limits: [],
     },
@@ -68,7 +74,7 @@ export const BYOK_PROVIDERS = [
         usage: 'spend',
         // Covers gpt-realtime (voice) and the gpt-5 chat models on the one key, which is
         // what the user is billed for as a single line on one account.
-        usageModelPrefixes: ['gpt-'],
+        usageModelMatch: id => !id.includes('/') && !id.startsWith('claude-'),
         unitPrice: null,        // priced per model in BYOKUsage, not per request
         limits: [],
     },
@@ -83,7 +89,7 @@ export const BYOK_PROVIDERS = [
             + 'are sent to OpenRouter and its selected upstream provider.',
         signupURL: 'https://openrouter.ai/settings/keys',
         usage: 'spend',
-        usageModelPrefixes: ['openai/'],
+        usageModelMatch: id => id.includes('/'),
         // OpenRouter returns the exact charged cost with each completion, so no generic
         // per-request rate is needed here. Token-price fallbacks live in BYOKUsage.
         unitPrice: null,

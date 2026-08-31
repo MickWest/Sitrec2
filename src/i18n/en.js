@@ -974,6 +974,12 @@ const en = {
             msaaSamples: { label: "Antialiasing (MSAA)", tooltip: "Multisample antialiasing on the 3D viewport. Off = fastest, removes the multisample resolve pass. Higher = smoother edges but slower." },
             performancePreset: { label: "Performance Preset", tooltip: "One-click performance presets. Quality = native res + 4x MSAA. Fast/Potato cut render scale, MSAA, terrain detail and fps cap for low-spec laptops. Switches to Custom when you tweak any sub-setting." },
             aiModel: { label: "AI Model", tooltip: "Select the AI model for the chat assistant" },
+            enableOldAIModels: {
+                label: "Enable old AI models",
+                tooltip: "Also list superseded model generations from your own API keys. "
+                    + "Off, the AI Model list shows only each provider's newest family, "
+                    + "which is usually the fastest and cheapest for what it can do.",
+            },
             apiKeys: {
                 label: "API Keys…",
                 tooltip: "Use your own accounts instead of Sitrec's shared quota — the AI assistant, "

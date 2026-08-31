@@ -143,6 +143,10 @@ function sanitizeSettings($settings) {
         }
     }
 
+    if (isset($settings['enableOldAIModels'])) {
+        $sanitized['enableOldAIModels'] = boolval($settings['enableOldAIModels']);
+    }
+
     if (isset($settings['centerSidebar'])) {
         $sanitized['centerSidebar'] = boolval($settings['centerSidebar']);
     }

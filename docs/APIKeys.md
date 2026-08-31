@@ -131,6 +131,10 @@ These requests go **directly from your browser to the provider**. They do not pa
 the Sitrec server, which means Sitrec cannot see them — and also means the provider sees
 your browser's IP address rather than Sitrec's.
 
+One request is made without any key: Sitrec fetches OpenRouter's public price list so it
+can estimate what a model costs (see "Which models you get" below). It carries no
+credential and says nothing about you beyond the fact that a browser asked for the list.
+
 For OpenRouter, the key itself goes only to OpenRouter, but the request is routed onward to
 the selected upstream model provider. That means the Sitrec system instructions, your chat
 history and current message, tool definitions, and tool results are visible to OpenRouter
@@ -143,6 +147,39 @@ Two consequences worth knowing:
   figures are a local estimate to help you notice a problem early.
 - Some providers do not permit direct browser access at all, which is why not every service
   can be used this way.
+
+### Which models you get
+
+**Every model your key can reach**, not a shortlist Sitrec chose. When you save a key,
+Sitrec asks that provider what your account has access to — `/v1/models` at Anthropic,
+OpenAI and OpenRouter — and puts the answer in the **AI Model** list, newest first, marked
+"(your … key)". A model released after your copy of Sitrec was built appears anyway, with
+no update needed.
+
+Two things are left out, both because they cannot run the assistant rather than as a
+judgement about them: models for a different job entirely (embeddings, speech, images,
+moderation, video), and the web-search and deep-research variants, which bring their own
+fixed tool set and refuse Sitrec's. The spoken assistant's realtime models are also absent
+from the typed list — they are reached by the microphone button instead.
+
+Anything else your key lists is offered. If one of them turns out not to work, the
+provider's own message says so and names the model. The list is refreshed when you change
+a key, and at most once a day otherwise.
+
+**By default you see only each provider's newest generation** — the Claude 5 models and the
+GPT-5.6 ones, at the time of writing — because an OpenAI key alone lists seventy models
+going back to GPT-3.5, and scrolling past a decade of superseded releases is not a choice
+worth making every time. Tick **Enable old AI models**, directly under the AI Model list in
+Settings, to see the rest. Sitrec works out what "newest" means from the version numbers
+the provider reports, so a family released tomorrow is current the day it appears. A model
+you have already selected stays in the list either way, so turning the option off never
+moves you to a different model.
+
+**Cost for those models** is estimated from a public price list published by OpenRouter,
+which covers the same upstream models. It is fetched without any key and tells the provider
+nothing about you. Where a model is not on that list, Sitrec shows the tokens it used and
+no dollar figure, rather than inventing one. As always, the provider's own dashboard is the
+authority.
 
 ### The OpenAI key
 

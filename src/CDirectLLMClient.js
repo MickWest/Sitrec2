@@ -21,6 +21,7 @@
 
 import promptFileText from '../sitrecServer/chatbotSystemPrompt.txt';
 import {emptyUsage} from './BYOKUsage';
+import {filterToCurrentGeneration, getCatalogModels} from './BYOKModelCatalog';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -56,9 +57,10 @@ export function isBYOKProvider(provider) {
         || provider === BYOK_OPENAI_PROVIDER;
 }
 
-// Models offered in the AI Model dropdown once the corresponding provider key is stored.
-// The user is paying for these directly, so the list spans a price/capability range rather
-// than being capped the way the server's per-tier table is.
+// FALLBACK models only. The real list comes from the provider's own /v1/models — see
+// getBYOKModels() below and src/BYOKModelCatalog.js. These are what the dropdown shows
+// before the first catalogue fetch lands (or if it fails), so they are deliberately a few
+// safe, known-good ids rather than an attempt at a complete list.
 export const BYOK_MODELS = [
     {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-opus-5', label: 'Claude Opus 5 (your Anthropic key)'},
     {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-sonnet-5', label: 'Claude Sonnet 5 (your Anthropic key)'},
@@ -68,6 +70,45 @@ export const BYOK_MODELS = [
     {provider: BYOK_OPENROUTER_PROVIDER, keyProvider: 'openrouter', model: 'openai/gpt-5-mini', label: 'OpenAI GPT-5 Mini (your OpenRouter key)'},
     {provider: BYOK_OPENROUTER_PROVIDER, keyProvider: 'openrouter', model: 'openai/gpt-5-nano', label: 'OpenAI GPT-5 Nano (your OpenRouter key)'},
 ];
+
+// Key-provider id -> the dropdown's provider token. The catalogue module deals only in the
+// former; this is the one place the two vocabularies meet.
+const PROVIDER_TOKEN_FOR_KEY_PROVIDER = {
+    anthropic: BYOK_ANTHROPIC_PROVIDER,
+    openai: BYOK_OPENAI_PROVIDER,
+    openrouter: BYOK_OPENROUTER_PROVIDER,
+};
+
+const PROVIDER_LABEL = {
+    anthropic: 'Anthropic',
+    openai: 'OpenAI',
+    openrouter: 'OpenRouter',
+};
+
+// Every model the user's own keys can reach, for the AI Model dropdown.
+//
+// Per key provider this prefers the live catalogue and falls back to the BYOK_MODELS
+// entries above — per provider, not all-or-nothing, so a working Anthropic key still shows
+// its full catalogue when the OpenAI fetch has failed.
+//
+// `includeOlder` and `keep` are passed in rather than read from Globals: this module is
+// deliberately free of sitrec globals so it stays unit-testable (see the header).
+export function getBYOKModels({includeOlder = false, keep = null} = {}) {
+    const out = [];
+    for (const [keyProvider, provider] of Object.entries(PROVIDER_TOKEN_FOR_KEY_PROVIDER)) {
+        const listed = getCatalogModels(keyProvider);
+        const forProvider = listed
+            ? listed.map(m => ({
+                provider, keyProvider, model: m.id,
+                label: `${m.label} (your ${PROVIDER_LABEL[keyProvider]} key)`,
+            }))
+            : BYOK_MODELS.filter(m => m.keyProvider === keyProvider);
+        // Filtered per provider, so the newest Claude and the newest GPT both survive —
+        // comparing version numbers across vendors would be meaningless.
+        out.push(...(includeOlder ? forProvider : filterToCurrentGeneration(forProvider, keep)));
+    }
+    return out;
+}
 
 // ── SINGLE SOURCE OF TRUTH FOR THE SYSTEM PROMPT ─────────────────────────────
 // chatbotSystemPrompt.txt holds the one copy of the assistant's prompt prose,
@@ -645,40 +686,114 @@ function canSkipConfirmation(calls, results, needsModelResult) {
 // serves both; only the URL, two headers and OpenRouter's session_id differ. `keyProvider`
 // picks between them and names the service in the error text, which is the difference the
 // user needs to see when a key is rejected.
+// How each model wants its optional request parameters, learned at run time from the
+// provider's own 400 and remembered for the session.
+//
+//   model -> {drop: Set<string>, reasoningEffort: string|undefined}
+//
+// This exists because the model list is no longer a curated shortlist: it is whatever the
+// user's key exposes, and the families disagree about the same parameters. Measured against
+// a real key on 2026-08-31:
+//   gpt-4o / gpt-4.1 / gpt-3.5-turbo  reject `reasoning_effort` outright
+//   gpt-5.6-sol                       rejects it only WITH function tools, and says so:
+//     "Function tools with reasoning_effort are not supported for gpt-5.6-sol in
+//      /v1/chat/completions. To use function tools, use /v1/responses or set
+//      reasoning_effort to 'none'."
+// OpenAI rejects an unknown or wrongly-valued parameter rather than ignoring it, so one
+// fixed body cannot serve the list. Predicting per model would be the same stale-table
+// mistake in a new place; asking, and doing what the error says, cannot go stale. A 400
+// costs only the round trip — nothing was processed, so no tokens were spent.
+const MODEL_PARAM_QUIRKS = new Map();
+
+function quirksFor(model) {
+    if (!MODEL_PARAM_QUIRKS.has(model)) MODEL_PARAM_QUIRKS.set(model, {drop: new Set()});
+    return MODEL_PARAM_QUIRKS.get(model);
+}
+
+// The parameters this may alter. Anything not listed is structural (model, messages, tools)
+// and a rejection of one is a real error the caller must see, not something to retry around.
+const OPTIONAL_PARAMS = new Set(['reasoning_effort', 'max_completion_tokens']);
+
+// Turn a 400 into a change to make, or null to give up and report it. Returns a short tag
+// so the caller can tell whether the last attempt actually changed anything.
+function remedyFor(model, message) {
+    const text = String(message || '');
+    const quirks = quirksFor(model);
+
+    // The provider naming a value to use is the strongest signal there is — follow it
+    // rather than dropping the parameter, which for these models is a different request.
+    const wants = /reasoning_effort[^.]*?to '([a-z]+)'/i.exec(text);
+    if (wants && quirks.reasoningEffort !== wants[1]) {
+        quirks.reasoningEffort = wants[1];
+        return `reasoning_effort='${wants[1]}'`;
+    }
+
+    // Otherwise, the parameter is simply not accepted here. Phrasings seen:
+    //   "Unrecognized request argument supplied: reasoning_effort"
+    //   "Unsupported parameter: 'max_completion_tokens' is not supported with this model."
+    //   "Unsupported value: 'reasoning_effort' does not support 'low' with this model."
+    const named = /(?:Unrecognized request argument supplied|Unsupported parameter|Unsupported value)\s*:?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?/i
+        .exec(text);
+    const param = named?.[1];
+    if (param && OPTIONAL_PARAMS.has(param) && !quirks.drop.has(param)) {
+        quirks.drop.add(param);
+        return `drop ${param}`;
+    }
+    return null;
+}
+
 export async function callOpenAIFormat({apiKey, keyProvider = 'openrouter', systemPrompt,
     systemParts, messages, tools, model, maxTokens = 2048, sessionId}) {
     const direct = keyProvider === 'openai';
-    const body = {
-        model,
-        messages: [{role: 'system', content: fullSystemPrompt(systemPrompt, systemParts)}, ...messages],
-        tools,
-        max_completion_tokens: maxTokens,
-        reasoning_effort: 'low',
-    };
-    // OpenRouter-only: it uses session_id for its own request grouping, and OpenAI rejects
-    // unknown top-level body fields outright rather than ignoring them.
-    if (sessionId && !direct) body.session_id = sessionId;
-
     const headers = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
     };
     if (!direct) headers['X-Title'] = 'Sitrec';   // OpenRouter's attribution header
 
-    const res = await fetch(direct ? OPENAI_API_URL : OPENROUTER_API_URL, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.error) {
+    const buildBody = () => {
+        const quirks = quirksFor(model);
+        const body = {
+            model,
+            messages: [{role: 'system', content: fullSystemPrompt(systemPrompt, systemParts)}, ...messages],
+            tools,
+        };
+        // A token cap is not optional — if the modern name is refused, use the legacy one
+        // rather than sending an uncapped request.
+        if (quirks.drop.has('max_completion_tokens')) body.max_tokens = maxTokens;
+        else body.max_completion_tokens = maxTokens;
+        if (!quirks.drop.has('reasoning_effort')) {
+            body.reasoning_effort = quirks.reasoningEffort ?? 'low';
+        }
+        // OpenRouter-only: it uses session_id for its own request grouping, and OpenAI
+        // rejects unknown top-level body fields outright rather than ignoring them.
+        if (sessionId && !direct) body.session_id = sessionId;
+        return body;
+    };
+
+    // Bounded at three, and each pass must make a change remedyFor() has not made before,
+    // so a model that keeps refusing cannot loop: the second identical rejection returns
+    // null and the error is reported.
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const res = await fetch(direct ? OPENAI_API_URL : OPENROUTER_API_URL, {
+            method: 'POST', headers, body: JSON.stringify(buildBody()),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && !data.error) return data;
+
         const msg = data?.error?.message || `HTTP ${res.status}`;
+        const remedy = res.status === 400 ? remedyFor(model, msg) : null;
+        if (remedy) {
+            console.log(`BYOK: ${model} needs ${remedy}; retrying.`);
+            continue;
+        }
         const err = new Error(`${direct ? 'OpenAI' : 'OpenRouter'} API error: ${msg}`);
         err.status = res.status;
         err.body = data;
         throw err;
     }
-    return data;
+    throw new Error(`${direct ? 'OpenAI' : 'OpenRouter'} API error: `
+        + `${model} rejected the request repeatedly.`);
 }
 
 // Kept as the pre-existing name; callers and tests that only ever meant OpenRouter are

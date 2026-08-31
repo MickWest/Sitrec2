@@ -324,7 +324,7 @@ export async function showKeyDialog(onKeysChanged = null) {
     async function summaryUsageText(provider, usage, cfg) {
         if (provider.usage === 'none') return null;
         if (provider.usage === 'spend') {
-            const report = await formatUsageReport(provider.usageModelPrefixes);
+            const report = await formatUsageReport(provider.usageModelMatch);
             if (report.totalRequests === 0) return null;
             return formatCostUSD(report.totalCost) + ' / ' + report.totalRequests + ' req';
         }
@@ -339,7 +339,7 @@ export async function showKeyDialog(onKeysChanged = null) {
         if (provider.usage === 'spend') {
             // Real token accounting, priced per model. Filter per provider so the
             // Anthropic and OpenRouter rows do not each display the combined total.
-            const report = await formatUsageReport(provider.usageModelPrefixes);
+            const report = await formatUsageReport(provider.usageModelMatch);
             return report.totalRequests === 0
                 ? 'Usage: none yet'
                 : 'Usage: approx ' + formatCostUSD(report.totalCost)

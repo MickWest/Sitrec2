@@ -907,7 +907,10 @@ class CNodeViewChat extends CNodeViewText {
         const keyProvider = keyProviderForBYOK(provider);
         const apiKey = await byokGetKey(keyProvider);
         if (!apiKey) {
-            const label = keyProvider === "openrouter" ? "OpenRouter" : "Anthropic";
+            // Name the service that actually failed. This said "Anthropic" for every BYOK
+            // provider, so an OpenAI key problem was reported against the wrong account.
+            const label = {openrouter: "OpenRouter", openai: "OpenAI", anthropic: "Anthropic"}
+                [keyProvider] ?? "AI provider";
             this.addSystemMessage(`[No ${label} API key stored. Add one under Settings → AI Key, or choose a different AI Model.]`);
             return;
         }

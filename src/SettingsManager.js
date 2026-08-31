@@ -112,6 +112,10 @@ export function sanitizeSettings(settings) {
         }
     }
 
+    if (settings.enableOldAIModels !== undefined) {
+        sanitized.enableOldAIModels = Boolean(settings.enableOldAIModels);
+    }
+
     if (settings.centerSidebar !== undefined) {
         sanitized.centerSidebar = Boolean(settings.centerSidebar);
     }
@@ -382,6 +386,7 @@ export async function initializeSettings() {
             performancePreset: "Balanced",
             lastBuildingRotation: 0, // Last building rotation in radians (persists across sessions)
             chatModel: "", // AI chat model in "provider:model" format (empty = use first available)
+            enableOldAIModels: false, // Offer superseded model generations in the AI Model list
             centerSidebar: false, // Enable center sidebar between split views
             showAttribution: true, // Show map/elevation data source attribution overlay
             showFilename: true, // Show the current video filename in the bottom overlay
