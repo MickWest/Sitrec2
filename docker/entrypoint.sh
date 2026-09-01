@@ -71,9 +71,13 @@ CURRENT_ACTIVE
 SITREC_TRACK_STATS
 MAPBOX_TOKEN
 MAPTILER_KEY
-CESIUM_ION_TOKEN
-GOOGLE_MAPS_API_KEY
 "
+# CESIUM_ION_TOKEN and GOOGLE_MAPS_API_KEY are deliberately NOT client vars. They
+# reach the browser only through rehost.php?getuser, which gates them on group
+# membership and remaining daily quota. Injecting them into window.__SITREC_ENV__
+# would publish them in the page source to every visitor and defeat that gate.
+# Mapbox and MapTiler stay: the browser fetches those tiles directly, so their
+# credentials are unavoidably public.
 
 # Dynamically add any SITREC_CUSTOM_MAP_* and SITREC_CUSTOM_ELEVATION_* env vars
 # so custom map/elevation sources with arbitrary names are forwarded to the browser.
@@ -86,7 +90,18 @@ done
 # SERVER_VARS: secrets and server-only config. Written to shared.env.php
 # for PHP but NEVER injected into index.html.
 # ---------------------------------------------------------------------------
+#
+# CESIUM_ION_TOKEN and GOOGLE_MAPS_API_KEY are here, not in CLIENT_VARS: they reach
+# the browser only via rehost.php?getuser, which gates them on group and remaining
+# quota. PHP still needs them, index.html must not have them.
+#
+# NB: no comments inside the list itself - the writer loop does
+# `for var in $CLIENT_VARS $SERVER_VARS`, which word-splits, so a comment would be
+# treated as variable names.
 SERVER_VARS="
+CESIUM_ION_TOKEN
+GOOGLE_MAPS_API_KEY
+GOOGLE_MAPS_SERVER_API_KEY
 XENFORO_PATH
 SITREC_DEFAULT_USERID
 SITREC_DEFAULT_USER_GROUPS

@@ -50,11 +50,20 @@ import {attachLatLonInputs} from "../CoordinateInput";
  * so dynamic access like process.env[variable] always yields undefined.
  * This object gives us a runtime-indexable lookup that webpack can still populate.
  */
+// ONLY the tokens that a source actually declares via `requiredToken`, which today
+// is Mapbox and MapTiler. Those two are unavoidably public: the browser fetches
+// those tiles directly, so the credential has to be in the page.
+//
+// CESIUM_ION_TOKEN and GOOGLE_MAPS_API_KEY are deliberately NOT here. They are read
+// from Globals.userData - the rehost.php?getuser response - which gates them on
+// group membership and remaining daily quota (see providerCredential below). Naming
+// them here would have no reader, but dotenv-webpack substitutes every literal
+// process.env.X reference, so it baked both into the public bundle and silently
+// defeated that gate: anyone could read them out of the JavaScript without an
+// account. Do not add a token to this map unless a source's `requiredToken` needs it.
 const BUILD_TIME_TOKENS = {
     MAPBOX_TOKEN: process.env.MAPBOX_TOKEN,
     MAPTILER_KEY: process.env.MAPTILER_KEY,
-    CESIUM_ION_TOKEN: process.env.CESIUM_ION_TOKEN,
-    GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
 };
 
 /**

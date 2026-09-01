@@ -11,9 +11,13 @@
 //   ?op=meta&pano=<panoId>                       -> JSON metadata for a specific pano
 //   ?op=image&pano=<panoId>[&zoom=<0..5>]        -> image/jpeg stitched equirectangular pano
 //
-// The GOOGLE_MAPS_API_KEY in shared.env is HTTP-referrer-restricted (browser key). Server
-// requests therefore send a Referer header matching the allowed referrer; override with the
-// GOOGLE_MAPS_REFERER env var if the key allows a different referrer (or is IP-restricted).
+// Key selection: GOOGLE_MAPS_SERVER_API_KEY if set, else GOOGLE_MAPS_API_KEY.
+//
+// The latter is the browser key and is HTTP-referrer-restricted, so using it here means
+// forging a matching Referer (GOOGLE_MAPS_REFERER overrides the default). That is a
+// restriction in name only - the header is client-controlled, so anyone holding the key
+// can send it too. Configure a separate server key, restricted BY IP in the Google
+// console, and this file sends no Referer at all.
 //
 // Cost note: only Street View TILE fetches are billed (metadata / panoId / session lookups are
 // free), and one op=image stitch fans out to ~32 tiles at the default zoom, up to ~162 at max zoom
@@ -100,9 +104,29 @@ if (!rateLimit('req_' . $tier . '_' . $rlId, $TIER_LIMITS[$tier]['reqPerMin'], 6
 }
 
 // ---- Config ----
-$API_KEY = getenv('GOOGLE_MAPS_API_KEY');
-$REFERER = getenv('GOOGLE_MAPS_REFERER');
-if (!$REFERER) { $REFERER = 'https://www.metabunk.org/'; }
+// Prefer a dedicated SERVER key when one is configured.
+//
+// GOOGLE_MAPS_API_KEY is the browser key: it is handed to entitled users by
+// rehost.php?getuser for the 3D tiles path, so it has to be HTTP-referrer
+// restricted, and this file has to forge a matching Referer to use it (see
+// $REFERER below). A forged header is no restriction at all - anyone with the key
+// can send the same one - so a server key that is IP-restricted instead is
+// strictly stronger, and it cannot be spoofed by a caller.
+//
+// Falls back to the browser key so existing installs keep working unchanged.
+$API_KEY = getenv('GOOGLE_MAPS_SERVER_API_KEY');
+$USING_SERVER_KEY = ($API_KEY !== false && $API_KEY !== '');
+if (!$USING_SERVER_KEY) {
+    $API_KEY = getenv('GOOGLE_MAPS_API_KEY');
+}
+// Only needed for the browser key, whose referrer restriction we must satisfy. A
+// dedicated server key is IP-restricted, so sending a Referer is pointless there -
+// and not sending one keeps the request honest about where it came from.
+$REFERER = null;
+if (!$USING_SERVER_KEY) {
+    $REFERER = getenv('GOOGLE_MAPS_REFERER');
+    if (!$REFERER) { $REFERER = 'https://www.metabunk.org/'; }
+}
 $TILE_BASE = 'https://tile.googleapis.com/v1';
 $MAX_PIXELS = 40000000;   // ~8960x4480 cap on the stitched canvas (memory guard)
 $GLOBAL_PANOS_PER_HOUR = 120; // global backstop across ALL callers (incl admin), per hour, so total
@@ -132,7 +156,9 @@ function gfetch($url, $postJson = null) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
     curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_REFERER, $REFERER);
+    if ($REFERER !== null) {
+        curl_setopt($ch, CURLOPT_REFERER, $REFERER);
+    }
     if ($postJson !== null) {
         curl_setopt($ch, CURLOPT_POST, 1);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $postJson);
