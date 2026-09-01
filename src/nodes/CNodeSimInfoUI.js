@@ -3,7 +3,7 @@ import {Globals, NodeMan, Sit, Units} from "../Globals";
 import {t} from "../i18n";
 import {altitudeHAE, getLocalUpVector} from "../SphericalMath";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
-import {ECEFToLLA_radii} from "../LLA-ECEF-ENU";
+import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {getTilesPointBelow} from "../threeExt";
 
 // Keep in sync with the same-named constants in CNodeVideoInfoUI so a freshly
@@ -240,8 +240,13 @@ export class CNodeSimInfoUI extends CNodeVideoInfoUI {
         const frames = src.frames ?? Sit.frames;
         let f = Math.max(0, Math.min(frame, frames - 1));
         const pos = src.p(f);
-        const lla = ECEFToLLA_radii(pos.x, pos.y, pos.z);
-        const mslM = lla[2] - meanSeaLevelOffset(lla[0], lla[1]);
+        // ECEFToLLAVD_radii, not ECEFToLLA_radii: the latter returns RADIANS (its name is
+        // about which radii it uses, not its output units) and meanSeaLevelOffset takes
+        // degrees. Radians pass its +-90 latitude clamp untouched, so the old call silently
+        // read the undulation from the wrong place on Earth — at Malibu the Gulf of Guinea,
+        // +18 m instead of -35 m, making this readout about 53 m too low.
+        const lla = ECEFToLLAVD_radii(pos);
+        const mslM = lla.z - meanSeaLevelOffset(lla.x, lla.y);
         return Units.smallWithUnits(mslM, 0);
     }
 
@@ -265,8 +270,10 @@ export class CNodeSimInfoUI extends CNodeVideoInfoUI {
             const tilesGround = getTilesPointBelow(elevGround);
             groundHAE = altitudeHAE(tilesGround !== null ? tilesGround : elevGround);
         } else {
-            const lla = ECEFToLLA_radii(pos.x, pos.y, pos.z);
-            groundHAE = meanSeaLevelOffset(lla[0], lla[1]);
+            // Degrees, as above — this fallback assumes the ground sits at mean sea level,
+            // so a mislocated undulation shifted the reported AGL by the same amount.
+            const lla = ECEFToLLAVD_radii(pos);
+            groundHAE = meanSeaLevelOffset(lla.x, lla.y);
         }
         return Units.smallWithUnits(posHAE - groundHAE, 0);
     }
