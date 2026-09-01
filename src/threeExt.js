@@ -938,6 +938,39 @@ export function getVisiblePointBelow(A) {
 // ~294 ms a frame against a 16.7 ms budget. Those callers sit on the ground by
 // construction and don't need the precision. Pass true where something the user
 // positions or flies is being placed (cameras, tracked objects).
+// Minimum elevation-tile zoom whose sample says anything about THIS place. The elevation
+// map streams coarse-to-fine, and z0 is a SINGLE tile for the whole planet: while only that
+// has arrived, the "ground" under Malibu reads 174 m against a true -24 m. Clamping to it
+// teleported the look camera 126 m straight up, and CNodeDisplayLOS baked that position into
+// its line geometry — which then pointed off screen, permanently, because the clamp released
+// again once real elevation arrived and nothing re-bakes on a controller-side change.
+//
+// So the data was never missing, which is why an "is elevation loaded?" test would have said
+// yes; it was present at planet resolution. The zoom is the only thing that distinguishes
+// that from a real answer, and getPointBelowWithTileInfo already reports it (-1 = none).
+//
+// Not clamping is the failure-safe direction: an object left where its author put it may
+// briefly sit below a surface, and that self-corrects the moment real elevation lands. A
+// clamped one writes a wrong position that other nodes may bake and never revisit.
+// z0 only. Measured across the regression sitches: the 2017 Eclipse test legitimately clamps
+// against z0-z6 (mostly z6) because it is a global-scale view that never loads finer
+// elevation, so a higher bar disables clamping it genuinely relies on — an earlier z8 attempt
+// moved that test's lines by 2450 px. The pathological case uses z0 and nothing else: one
+// tile for the whole planet, which is not a coarse ANSWER about here so much as the sentinel
+// state before anything about here has arrived. Rejecting exactly that fixes the camera lift
+// and leaves every legitimately-coarse sitch alone.
+const MIN_CLAMP_ELEVATION_ZOOM = 1;
+
+// Whether the elevation map's ground under `point` is local enough to clamp to. Consulted
+// ONLY on the paths that would move something, so the common early-out pays nothing for it.
+// The tile surface needs no such guard — groundBelow() already rejects coarse-LOD hits.
+function elevationGroundIsLocal(point) {
+    if (!NodeMan.exists("TerrainModel")) return true;
+    const terrain = NodeMan.get("TerrainModel");
+    if (typeof terrain.getPointBelowWithTileInfo !== "function") return true;
+    return terrain.getPointBelowWithTileInfo(point).tileZ >= MIN_CLAMP_ELEVATION_ZOOM;
+}
+
 export function clampAboveGround(point, height, useVisibleGround = false) {
     // getPointBelow already converts `point` to LLA internally; reuse that
     // altitude instead of a second identical conversion (this runs per frame
@@ -977,6 +1010,11 @@ export function clampAboveGround(point, height, useVisibleGround = false) {
     if (pointAlt - groundAlt > height) {
         return point;
     }
+    // The tile surface is gone (or was rejected as coarse) and all that is left is the
+    // elevation map. Only move the point if that map actually knows this column.
+    if (!elevationGroundIsLocal(point)) {
+        return point;
+    }
     return pointAbove(ground, height);
 }
 
@@ -993,10 +1031,17 @@ function groundClearance(point, useVisibleGround) {
     const ground = getPointBelow(point, false, out);
     const pointAlt = out.altitudeHAE !== undefined ? out.altitudeHAE : calculateAltitude(point);
     let groundAlt = calculateAltitude(ground);
+    let haveLocalGround = true;
     if (useVisibleGround && terrainBasemapHidden()) {
         const tileGround = visibleGroundBelow(point);
         if (tileGround !== null) groundAlt = calculateAltitude(tileGround);
+        else haveLocalGround = elevationGroundIsLocal(point);
+    } else {
+        haveLocalGround = elevationGroundIsLocal(point);
     }
+    // Unknown ground reads as "clear", which is what keeps this in step with
+    // clampAboveGround(): both decline to move anything until the map knows this column.
+    if (!haveLocalGround) return Infinity;
     return pointAlt - groundAlt;
 }
 
