@@ -295,14 +295,21 @@ const keyCache = new Map();
 
 export async function primeKeyCache() {
     keyCache.clear();
-    // Re-read rather than trusting the in-memory set: this also runs as the key dialog's
-    // resync, and re-reading is the cheap way to be right after any change.
-    disabledPromise = null;
-    endpointsPromise = null;
-    await loadDisabled();
-    await loadEndpoints();
     try {
         const all = await indexedDBManager.getAllSettings();
+        // Re-read the disabled list and the endpoints rather than trusting the in-memory
+        // copies — this also runs as the key dialog's resync — but take both from `all`,
+        // which already contains every setting. Fetching them with their own getSetting
+        // calls added two IndexedDB round trips AHEAD of this one, delaying when keys reach
+        // the synchronous tile-fetch path below. Sitrec's startup is order-sensitive enough
+        // that the delay changed the settled scene: it moved the frustum lines and added an
+        // LOS in the Google 3D tiles shadow regression test, with no other visible cause.
+        const storedDisabled = all[DISABLED_KEY];
+        disabledSet = new Set(Array.isArray(storedDisabled) ? storedDisabled : []);
+        disabledPromise = Promise.resolve(disabledSet);
+        const storedEndpoints = all[ENDPOINTS_KEY];
+        endpoints = (storedEndpoints && typeof storedEndpoints === 'object') ? storedEndpoints : {};
+        endpointsPromise = Promise.resolve(endpoints);
         for (const k of Object.keys(all)) {
             if (k.startsWith(KEY_PREFIX) && all[k]) {
                 // Stored values are obfuscated; the cache holds the usable plaintext, since
@@ -312,7 +319,13 @@ export async function primeKeyCache() {
             }
         }
     } catch (e) {
-        // An unreadable store means "no user keys", which falls back to Sitrec's own.
+        // An unreadable store means "no user keys", which falls back to Sitrec's own — and
+        // nothing disabled, no custom endpoints. Resolve both here so that a later call
+        // does not re-read the store one round trip at a time.
+        disabledSet = new Set();
+        disabledPromise = Promise.resolve(disabledSet);
+        endpoints = {};
+        endpointsPromise = Promise.resolve(endpoints);
     }
     return keyCache.size;
 }
