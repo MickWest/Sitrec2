@@ -668,11 +668,14 @@ export class DEBUGGroup extends Group {
 // get intersection of a point/heading ray with the reference surface (ellipsoid or sphere at HAE=0).
 // In ellipsoid mode, delegates to intersectEllipsoid for accuracy.
 // In sphere mode (equatorRadius === polarRadius), uses fast sphere intersection.
-export function intersectSurface(point, headingVector) {
+// altitude offsets the surface, in metres above the ellipsoid, so callers can intersect
+// something other than HAE 0 — mean sea level is the ellipsoid offset by the geoid
+// undulation, which is what "sea level" actually means. Defaults to 0, the old behaviour.
+export function intersectSurface(point, headingVector, altitude = 0) {
     if (Globals.equatorRadius !== Globals.polarRadius) {
-        return intersectEllipsoid(point, headingVector);
+        return intersectEllipsoid(point, headingVector, altitude);
     }
-    const globe = new Sphere(earthCenterECEF(), Globals.equatorRadius);
+    const globe = new Sphere(earthCenterECEF(), Globals.equatorRadius + altitude);
     const ray = new Ray(point, headingVector.clone().normalize());
     const sphereCollision = new Vector3();
     if (intersectSphere2(ray, globe, sphereCollision))
@@ -682,9 +685,12 @@ export function intersectSurface(point, headingVector) {
 
 // get intersection of a point/heading ray with the WGS84 ellipsoid
 // More accurate than sphere intersection for high-latitude locations
-export function intersectEllipsoid(point, headingVector) {
-    const a = Globals.equatorRadius;
-    const b = Globals.polarRadius;
+// altitude raises the surface by that many metres, added to both semi-axes. That is the
+// standard approximation for an offset ellipsoid: exact along the axes, and for the geoid's
+// range (about -105..+85 m) the error away from them is millimetres.
+export function intersectEllipsoid(point, headingVector, altitude = 0) {
+    const a = Globals.equatorRadius + altitude;
+    const b = Globals.polarRadius + altitude;
 
     const dir = headingVector.clone().normalize();
 

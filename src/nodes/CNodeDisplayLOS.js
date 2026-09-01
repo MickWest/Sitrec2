@@ -6,6 +6,9 @@ import {par} from "../par";
 import {metersFromMiles} from "../utils";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {getLocalUpVector} from "../SphericalMath";
+import {ECEFToLLA_radii} from "../LLA-ECEF-ENU";
+import {degrees} from "../mathUtils";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {t} from "../i18n";
 
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
@@ -25,6 +28,35 @@ const matLineWhite = makeMatLine(0xffffff, 1);
 
 // what gets displayed is all the LOS between frame 0 and the last frame
 // unless we use A/B frames to limit the display
+
+// "Sea level" means MEAN sea level — the geoid — not the WGS84 ellipsoid. The two differ by
+// the geoid undulation N, which is about -35 m off Malibu and ranges roughly -105..+85 m
+// worldwide, so intersecting the bare ellipsoid left every downward LOS terminating that far
+// above the water (here it stopped 24 m above the visible ground, hanging in mid-air).
+//
+// N varies slowly with position — metres per hundred kilometres — so this converges fast:
+// intersect the ellipsoid for a first guess, look N up there, then re-intersect a surface
+// raised by N. One refinement is already sub-metre; the second is cheap insurance for a long
+// shallow ray whose first guess lands far from its final point.
+//
+// meanSeaLevelOffset is synchronous and needs the EGM96 grid, which SituationSetupFromData
+// awaits before any node is built, so it is safe to call from here.
+function intersectMeanSeaLevel(A, fwd) {
+    let hit = intersectSurface(A, fwd)
+    if (!hit) return null
+    for (let i = 0; i < 2; i++) {
+        // ECEFToLLA_radii returns RADIANS (the name is about which radii it uses, not its
+        // output units) while meanSeaLevelOffset takes degrees — it clamps latitude to +-90,
+        // so radians sail through and silently look up the wrong side of the planet.
+        const [lat, lon] = ECEFToLLA_radii(hit.x, hit.y, hit.z)
+        const refined = intersectSurface(A, fwd, meanSeaLevelOffset(degrees(lat), degrees(lon)))
+        // A ray that grazes the ellipsoid can miss the slightly raised or lowered surface.
+        // Keep the last good hit rather than dropping the clip entirely.
+        if (!refined) break
+        hit = refined
+    }
+    return hit
+}
 
 export class CNodeDisplayLOS extends CNode3DGroup {
     constructor(v) {
@@ -141,7 +173,7 @@ export class CNodeDisplayLOS extends CNode3DGroup {
             // especially when a sitch is setup with large tiles
             // as the "level" plane diverges significantly from the globe
             // so we get intersection with the globe
-            const seaLevelPoint = intersectSurface(A, fwd)
+            const seaLevelPoint = intersectMeanSeaLevel(A, fwd)
             if (seaLevelPoint) {
                 B = seaLevelPoint
             }
