@@ -45,6 +45,7 @@ lockstep with docs/WhatsNew-Details.md.
 - Fixed a problem with your own OpenAI key being reported as an Anthropic error, blaming the wrong account.
 - Fixed the assistant sending a shortened model name for models whose name contains a colon, such as those served by a local runner.
 - Fixed the assistant failing outright against some local and self-hosted servers, which reject requests that hosted providers accept.
+- Fixed satellite scenes such as *Atremis Starlink* and *Qianfan Over UK and Europe* reporting an internal error to the browser console on every frame they drew — harmless in the published version, but enough to stall the scene while loading in a locally built copy of Sitrec with the developer tools open.
 
 ### Security
 
