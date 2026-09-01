@@ -58,6 +58,16 @@ while IFS= read -r -d '' staged; do
     fi
 done < <(git diff --cached --name-only -z --diff-filter=ACMR)
 
+# A checkout may supply its own extra pre-commit checks. If one is present at
+# private/githooks/pre-commit it is run here and its exit code decides the
+# commit; a plain clone has no such file and this block does nothing.
+#
+# Deliberately BEFORE the src/-only fast path below, so a local check still sees
+# a commit that touches only docs or config.
+if [ -x private/githooks/pre-commit ]; then
+    private/githooks/pre-commit || exit 1
+fi
+
 # Fast path: no files staged under src/ → nothing to lint.
 STAGED_SRC=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^src/.*\.(js|mjs|ts)$' || true)
 if [ -z "$STAGED_SRC" ]; then
