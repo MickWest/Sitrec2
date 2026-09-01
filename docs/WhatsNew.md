@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.147.2 (2026-09-01)
+
+### Bug Fixes
+
+- Fixed the *Traverse Alt (MSL)* and *Traverse Alt (AGL)* readouts (Show → *Sim Info Display*) showing an altitude that was tens of metres wrong — 53 m (174 ft) too low in the case measured off the California coast, and up to about 190 m (620 ft) out in the worst places on Earth.
+- Fixed a downward line of sight ending in mid-air above the sea instead of reaching it. It now stops at true mean sea level, which off the California coast is about 35 m below where the line used to end; elsewhere in the world the difference can be up to roughly 100 m either way.
+- Fixed lines of sight sometimes being drawn from where the camera sat part way through loading rather than where it ended up, which could put them off the screen entirely. It was intermittent, and more likely when the page loaded quickly from cache.
+
 ## Version 2.147.1 (2026-08-31)
 
 ### Bug Fixes
