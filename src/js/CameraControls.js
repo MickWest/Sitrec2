@@ -681,10 +681,16 @@ class CameraMapControls {
 				fovUINode.setValue(ptzControls.fov);
 			}
 
-		} else {
+		} else if (!this.view.cameraNode?.hasFOVController?.()) {
 
-			// No PTZ controller - the main camera. Nothing writes its fov per frame, so it
-			// is set straight on the camera; CNodeCamera.modSerialize saves it from there.
+			// No PTZ controller, and nothing else writes this camera's fov per frame - the
+			// main camera. So it is set straight on the camera; CNodeCamera.modSerialize
+			// saves it from there.
+			//
+			// The guard is the whole point: a camera whose fov IS written every frame, by an
+			// FOV controller reading a track or focal-length data, would overwrite this on the
+			// next update. Such a field of view is a measurement, so the gesture is dropped
+			// rather than fought - see CNodeCamera.hasFOVController.
 			const camera = this.camera;
 			let fov = this.zoomScale(camera.fov, delta, 1.5, 0.95)
 			if (fov < this.minZoom) fov = this.minZoom;

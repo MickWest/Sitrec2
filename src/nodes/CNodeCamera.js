@@ -596,6 +596,25 @@ export class CNodeCamera extends CNode3D {
         }
     }
 
+    // True when some enabled controller writes this camera's fov every frame - the FOV
+    // sources applied just above. CameraControls.zoomFovBy asks before setting camera.fov
+    // directly, because on such a camera the field of view is DATA: a track's recorded
+    // zoom (Porterville, MISB) or focal-length keyframes (Jellyfish). A direct write would
+    // be overwritten on the very next update, so Shift+wheel does nothing there rather
+    // than flickering - a recorded field of view outranks a computed one, the same rule
+    // applyHandoffLookFraming states in index.js.
+    //
+    // A camera driven by a PTZ controller is NOT this case: zoomFovBy writes that
+    // controller's own fov, which sticks, so it never reaches the test.
+    hasFOVController() {
+        for (const inputID in this.inputs) {
+            const input = this.inputs[inputID];
+            if (!input.isController || !input.enabled) continue;
+            if (input.isFOVController) return true;
+        }
+        return false;
+    }
+
     update(f) {
         super.update(f);
 
