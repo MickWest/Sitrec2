@@ -19,7 +19,7 @@ export const _configParams = {
             mapURL: (z, x, y, layer) => {
                 // direct URL to the MapBox tile, not via the cachemaps.php
                 // this is the URL that is used by the MapBox GL JS library
-                return `https://api.mapbox.com/v4/mapbox.${layer}/${z}/${x}/${y}@2x.jpg80?access_token=EXAMPLEKEY`
+                return `https://api.mapbox.com/v4/mapbox.${layer}/${z}/${x}/${y}@2x.jpg80?access_token=${process.env.MAPBOX_TOKEN}`
             },
             layers: {
                 "satellite": {

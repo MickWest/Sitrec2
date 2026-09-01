@@ -10,6 +10,52 @@ const {
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const DEFAULT_TARGETS = [path.join(PROJECT_ROOT, "dist-serverless")];
 
+// Two audits with OPPOSITE expectations, so they are separate modes.
+//
+// "bundle" (the default) audits a SERVERLESS or DESKTOP build. There, every key is
+// stripped to "" by scripts/serverlessClientEnv.js, so nothing sensitive may appear at
+// all and a bundled shared.env or sitrecServer/ is itself a finding.
+//
+// "server" audits a FULL SERVER build - the tree that gets rsynced to production. That
+// tree is SUPPOSED to carry sitrecServer/ and shared.env.php, so those are not findings
+// here. What must never appear is a credential the browser can fetch.
+const MODES = ["bundle", "server"];
+
+// The only two keys a full-server build may publish. The browser fetches Mapbox and
+// MapTiler tiles DIRECTLY, so those tokens are unavoidably public: the map sources
+// declare them as requiredToken, and the build-time map in src/nodes/CNodeTerrainUI.js
+// bakes them in. Every other key - Google and Cesium included - reaches the browser only
+// through rehost.php?getuser, which gates it on group membership and remaining daily
+// quota. One of those appearing anywhere in the served tree silently defeats that gate,
+// which is the regression this mode exists to catch.
+const CLIENT_PUBLIC_ENV_KEYS = new Set(["MAPBOX_TOKEN", "MAPTILER_KEY"]);
+
+// Written by webpackCopyPatterns.js from config/shared.env, and it holds ALL the keys by
+// design. It is not served: the copy prepends "<?php /*;" so a direct request executes it
+// as PHP and returns nothing. Its CONTENT is therefore not scanned - the guard is checked
+// instead, because a shared.env.php that lost its prefix would serve every key as text.
+const SERVER_ENV_FILE = "shared.env.php";
+const SERVER_ENV_GUARD = "<?php";
+
+// A full-server build deliberately publishes the test tree, for browser-based benchmarks
+// and tests (webpackCopyPatterns.js), so production SERVES these files. Its fixtures use
+// realistic-LOOKING credentials as test data, which the shape-based
+// GENERIC_SECRET_PATTERNS cannot tell from the real thing.
+//
+// The tolerance is therefore per-VALUE, not per-directory. Disabling the shape patterns
+// under tests/ wholesale would let a real Google, OpenAI, GitHub or Slack key committed
+// to a test file ship undetected - exactly the leak this audit exists to stop, and worse
+// here because that tree is public. So every fixture is allow-listed by its exact value
+// and every other match still fails.
+//
+// A NEW fixture will fail the audit until it is added here. That is the intended cost:
+// it forces a human to confirm the value is not a real credential.
+const SERVER_FIXTURE_DIRS = [/^tests\//i];
+const SERVER_FIXTURE_ALLOWLIST = new Set([
+    "sk-ant-SUPERSECRET-abcdef123456",  // tests/BYOKKeyStore.test.js
+    "sk-ant-legacy-plaintext",          // tests/BYOKKeyStore.test.js
+]);
+
 const FORBIDDEN_PATH_PATTERNS = [
     /(^|\/)shared\.env(\.php)?$/i,
     /(^|\/)config\.php$/i,
@@ -17,7 +63,9 @@ const FORBIDDEN_PATH_PATTERNS = [
 ];
 
 const GENERIC_SECRET_PATTERNS = [
-    { label: "Mapbox token", regex: /pk\.eyJ[0-9A-Za-z._-]{20,}/g },
+    // clientPublic: a full-server build may legitimately publish this one - see
+    // CLIENT_PUBLIC_ENV_KEYS. Every other pattern here is forbidden in BOTH modes.
+    { label: "Mapbox token", regex: /pk\.eyJ[0-9A-Za-z._-]{20,}/g, clientPublic: true },
     { label: "Google API key", regex: /AIza[0-9A-Za-z_-]{20,}/g },
     { label: "OpenAI-style key", regex: /sk-[A-Za-z0-9_-]{20,}/g },
     { label: "GitHub token", regex: /ghp_[A-Za-z0-9]{20,}/g },
@@ -32,13 +80,18 @@ function maskValue(value) {
     return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
-function collectEnvSecretCandidates() {
+function collectEnvSecretCandidates(mode = "bundle") {
     const liveEnv = loadDotenvFile(SHARED_ENV_PATH);
     const candidates = [];
 
     for (const [key, value] of Object.entries(liveEnv)) {
         const trimmedValue = String(value ?? "").trim();
         if (!trimmedValue || !isSensitiveEnvKey(key)) {
+            continue;
+        }
+
+        // A full-server build is supposed to publish these two.
+        if (mode === "server" && CLIENT_PUBLIC_ENV_KEYS.has(key)) {
             continue;
         }
 
@@ -140,26 +193,69 @@ function walkFiles(rootPath, files = []) {
     return files;
 }
 
-function scanFile(filePath, secretCandidates) {
+function scanFile(filePath, secretCandidates, options = {}) {
+    const { mode = "bundle", scanRoot, allowedPublicValues = new Set() } = options;
     const findings = [];
     const normalizedPath = filePath.split(path.sep).join("/");
 
-    for (const pattern of FORBIDDEN_PATH_PATTERNS) {
-        if (pattern.test(normalizedPath)) {
-            findings.push({
-                file: filePath,
-                issue: "Forbidden server/config file bundled",
-            });
-            return findings;
+    // Relative to the scanned root, so a prod_path that happens to contain "tests"
+    // somewhere in its own path cannot exempt the whole build.
+    const relativePath = scanRoot
+        ? path.relative(scanRoot, filePath).split(path.sep).join("/")
+        : normalizedPath;
+    const inFixtureTree = mode === "server"
+        && SERVER_FIXTURE_DIRS.some((pattern) => pattern.test(relativePath));
+
+    // A full-server tree is MEANT to contain sitrecServer/ and shared.env.php, so their
+    // presence is not a finding there - only their contents leaking would be.
+    if (mode !== "server") {
+        for (const pattern of FORBIDDEN_PATH_PATTERNS) {
+            if (pattern.test(normalizedPath)) {
+                findings.push({
+                    file: filePath,
+                    issue: "Forbidden server/config file bundled",
+                });
+                return findings;
+            }
         }
+    }
+
+    // shared.env.php holds every key by design; checkServerEnvGuard verifies the one
+    // thing that actually protects it instead.
+    if (mode === "server" && normalizedPath.endsWith(`/${SERVER_ENV_FILE}`)) {
+        return findings;
     }
 
     const buffer = fs.readFileSync(filePath);
     const text = buffer.toString("utf8");
 
-    for (const { label, regex } of GENERIC_SECRET_PATTERNS) {
+    for (const { label, regex, clientPublic } of GENERIC_SECRET_PATTERNS) {
         regex.lastIndex = 0;
-        if (regex.test(text)) {
+        let unexplained = text.match(regex) ?? [];
+
+        // In the published test tree, drop only the values known to be fixtures. Anything
+        // else that looks like a credential is still a finding.
+        if (inFixtureTree) {
+            unexplained = unexplained.filter((match) => !SERVER_FIXTURE_ALLOWLIST.has(match));
+        }
+
+        // A full-server build may publish a client-public token - but ONLY the one that is
+        // configured NOW. A token of the same shape with a different value is a stale
+        // credential baked into the build, which is precisely what a rotation that missed
+        // a second copy of the token leaves behind. That must still fail: the stale value
+        // is revoked, so the feature it serves is silently broken in production.
+        if (mode === "server" && clientPublic) {
+            const stale = unexplained.filter((match) => !allowedPublicValues.has(match));
+            if (stale.length > 0) {
+                findings.push({
+                    file: filePath,
+                    issue: `${label} that is NOT the currently configured value (stale credential: ${maskValue(stale[0])})`,
+                });
+            }
+            continue;
+        }
+
+        if (unexplained.length > 0) {
             findings.push({
                 file: filePath,
                 issue: label,
@@ -179,18 +275,63 @@ function scanFile(filePath, secretCandidates) {
     return findings;
 }
 
-function auditTargets(targets) {
-    const secretCandidates = dedupeCandidates([
-        ...collectEnvSecretCandidates(),
+// shared.env.php is excluded from the content scan, so its single protection is checked
+// directly: the "<?php" prefix webpackCopyPatterns.js prepends. With it, a direct web
+// request executes the file and returns nothing. Without it, the web server would serve
+// every key in it as plain text.
+function checkServerEnvGuard(scanRoot) {
+    const envPath = path.join(scanRoot, SERVER_ENV_FILE);
+    if (!fs.existsSync(envPath)) {
+        // A build without one has nothing to protect - the serverless builds omit it.
+        return [];
+    }
+
+    const head = fs.readFileSync(envPath, "utf8").slice(0, SERVER_ENV_GUARD.length);
+    if (head === SERVER_ENV_GUARD) {
+        return [];
+    }
+
+    return [{
+        file: envPath,
+        issue: `Unprotected ${SERVER_ENV_FILE}: missing the "${SERVER_ENV_GUARD}" prefix, so it would be served as plain text`,
+    }];
+}
+
+function auditTargets(targets, options = {}) {
+    const { mode = "bundle" } = options;
+
+    let secretCandidates = dedupeCandidates([
+        ...collectEnvSecretCandidates(mode),
         ...collectConfigLiteralCandidates(),
     ]);
+
+    // The values a full-server build is allowed to publish, read fresh from config.
+    const publicValues = new Set(
+        mode === "server"
+            ? Object.entries(loadDotenvFile(SHARED_ENV_PATH))
+                .filter(([key]) => CLIENT_PUBLIC_ENV_KEYS.has(key))
+                .map(([, value]) => String(value ?? "").trim())
+                .filter(Boolean)
+            : [],
+    );
+
+    if (mode === "server") {
+        // collectConfigLiteralCandidates reads config/config.js, which can name the same
+        // two public tokens as literals. Drop candidates BY VALUE so a client-public key
+        // is allowed no matter which collector found it.
+        secretCandidates = secretCandidates.filter(({ value }) => !publicValues.has(value));
+    }
 
     const findings = [];
 
     for (const target of targets) {
         for (const scanRoot of expandScanRoots(target)) {
+            if (mode === "server") {
+                findings.push(...checkServerEnvGuard(scanRoot));
+            }
+
             for (const filePath of walkFiles(scanRoot)) {
-                findings.push(...scanFile(filePath, secretCandidates));
+                findings.push(...scanFile(filePath, secretCandidates, { mode, scanRoot, allowedPublicValues: publicValues }));
             }
         }
     }
@@ -198,10 +339,50 @@ function auditTargets(targets) {
     return findings;
 }
 
+// The production build path is machine-specific and lives in config/config-install.js,
+// which is gitignored - a fresh clone has only the .example. Resolved lazily so this
+// script still runs everywhere else.
+function resolveConfiguredProdPath() {
+    try {
+        const InstallPaths = require("../config/config-install");
+        return InstallPaths.prod_path ? [InstallPaths.prod_path] : [];
+    } catch {
+        return [];
+    }
+}
+
 function main() {
-    const targets = process.argv.slice(2);
-    const scanTargets = targets.length > 0 ? targets : DEFAULT_TARGETS;
-    const findings = auditTargets(scanTargets);
+    const args = process.argv.slice(2);
+    let mode = "bundle";
+    const targets = [];
+
+    for (const arg of args) {
+        const matched = /^--mode=(.+)$/.exec(arg);
+        if (matched) {
+            mode = matched[1];
+        } else {
+            targets.push(arg);
+        }
+    }
+
+    if (!MODES.includes(mode)) {
+        console.error(`Unknown --mode=${mode}. Expected one of: ${MODES.join(", ")}`);
+        process.exit(1);
+    }
+
+    let scanTargets = targets;
+    if (scanTargets.length === 0) {
+        scanTargets = mode === "server" ? resolveConfiguredProdPath() : DEFAULT_TARGETS;
+    }
+
+    if (scanTargets.length === 0) {
+        // Only reachable in server mode, on a checkout with no configured prod path.
+        // Nothing was built to that path either, so there is nothing to audit.
+        console.log("Secret audit skipped: no prod_path configured in config/config-install.js.");
+        return;
+    }
+
+    const findings = auditTargets(scanTargets, { mode });
 
     if (findings.length > 0) {
         console.error("Secret audit failed.");
@@ -209,6 +390,13 @@ function main() {
             console.error(`- ${finding.issue}: ${finding.file}`);
         }
         process.exit(1);
+    }
+
+    if (mode === "server") {
+        console.log(
+            `Secret audit passed (server mode) for ${scanTargets.length} target(s). Publishable keys: ${[...CLIENT_PUBLIC_ENV_KEYS].join(", ")}.`,
+        );
+        return;
     }
 
     const sanitizedEnv = buildServerlessClientEnv();
@@ -223,7 +411,9 @@ if (require.main === module) {
 
 module.exports = {
     auditTargets,
+    checkServerEnvGuard,
     collectConfigLiteralCandidates,
     collectEnvSecretCandidates,
     scanFile,
+    CLIENT_PUBLIC_ENV_KEYS,
 };
