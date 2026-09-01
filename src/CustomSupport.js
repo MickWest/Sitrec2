@@ -55,7 +55,7 @@ import {assert} from "./assert";
 import {getShortURL} from "./urlUtils";
 import {CNode3DObject, ModelAliases} from "./nodes/CNode3DObject";
 import {UpdateHUD} from "./JetStuff";
-import {degrees, getDateTimeFilename} from "./utils";
+import {degrees, getDateTimeFilename, screenshotFilename} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {EventManager} from "./CEventManager";
 import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
@@ -2025,7 +2025,7 @@ export class CCustomManager {
                         throw new Error("Screenshot capture returned null");
                     }
                     const buffer = await blob.arrayBuffer();
-                    const url = await FileManager.rehoster.rehostFile(sitchName, buffer, "screenshot.jpg", {skipHash: true});
+                    const url = await FileManager.rehoster.rehostFile(sitchName, buffer, screenshotFilename(), {skipHash: true});
                     await FileManager.bumpScreenshotVersion(sitchName);
                     console.log(`  Screenshot saved: ${url}`);
                     results.added.push(sitchName);

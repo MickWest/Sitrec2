@@ -307,6 +307,33 @@ if ($resolvedKey === null) {
 }
 
 if (str_ends_with($resolvedKey, '/')) {
+    // Folder resolution turns <userid>/<name>/ into the newest version inside it.
+    //
+    // For an anonymous caller that is an ENUMERATION ORACLE against the sharing
+    // model. A share URL is <userid>/<name>/<version>.js and the VERSION is the
+    // capability, but the NAME is not secret: it is human-readable and appears in
+    // full in every shared link. Resolving a folder without identity would hand
+    // out the current version for any name that can be guessed or read off a
+    // shared link, exposing versions the owner never shared - including drafts
+    // they replaced.
+    //
+    // Owners browsing their own sitches need this, so it is allowed for the
+    // prefix owner and for admins.
+    //
+    // Identity is resolved HERE rather than at the top of the file on purpose:
+    // the common case is a complete key, which IS the capability and needs no
+    // identity, so it must not pay for a forum session lookup on every asset
+    // load. user.php (not config.php) because it caches - calling the XenForo
+    // resolver twice in one request is known to crash it.
+    require_once __DIR__ . '/user.php';
+    $userInfo = getUserInfo();
+    $callerId = (int)($userInfo['user_id'] ?? 0);
+    $ownerId  = (int)explode('/', $resolvedKey, 2)[0];
+
+    if ($callerId === 0 || ($callerId !== $ownerId && !isAdmin($userInfo))) {
+        jsonError(403, 'Folder references are only resolvable by their owner. Use the full object key.');
+    }
+
     $latestKey = resolveLatestObjectKey($resolvedKey);
     if ($latestKey === null) {
         jsonError(404, 'No versions found for folder');

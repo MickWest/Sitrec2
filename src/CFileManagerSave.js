@@ -7,7 +7,7 @@
  * uploads dynamic assets for either S3 or the local working folder.
  */
 
-import {areArrayBuffersEqual, disableAllInput, enableAllInput, getDateTimeFilename, getFileExtension, isHttpOrHttps, updateDocumentTitle} from "./utils";
+import {areArrayBuffersEqual, disableAllInput, enableAllInput, getDateTimeFilename, getFileExtension, isHttpOrHttps, screenshotFilename, updateDocumentTitle} from "./utils";
 import {showConfirm} from "./showError";
 import {CustomManager, Globals, NodeMan, Sit, withTestUser} from "./Globals";
 import {SITREC_SERVER, SITREC_UPLOAD} from "./configUtils";
@@ -334,7 +334,7 @@ export const saveMethods = {
                     return screenshotPromise.then(blob => {
                         if (blob) {
                             return blob.arrayBuffer().then(buffer => {
-                                return this.rehoster.rehostFile(sitchName, buffer, "screenshot.jpg", {skipHash: true});
+                                return this.rehoster.rehostFile(sitchName, buffer, screenshotFilename(), {skipHash: true});
                             }).then(url => {
                                 console.log("Screenshot saved: " + url);
                                 return this.bumpScreenshotVersion(sitchName);

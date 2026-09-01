@@ -142,87 +142,62 @@ if (count($_GET) == 0) {
     exit();
 }
 
-// Handle latestversion BEFORE authentication - returns just the latest .js filename
-if (isset($_GET['get']) && $_GET['get'] == "latestversion") {
-    if (!isset($_GET['userid']) || !isset($_GET['name'])) {
-        http_response_code(400);
-        echo json_encode(['error' => 'Missing userid or name parameter']);
-        exit();
-    }
-    
-    $publicUserID = $_GET['userid'];
-    $name = $_GET['name'];
-    
-    if (!preg_match('/^\d+$/', $publicUserID)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'Invalid userid parameter']);
-        exit();
-    }
-    
-    if (!preg_match(SITCH_NAME_PATTERN, $name)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'Invalid name parameter']);
-        exit();
-    }
-    $name = basename($name);
-    
-    $publicDir = $publicUserID . "/" . $name;
-    $latestFile = null;
-    
+// The `latestversion` endpoint was REMOVED (2026-09-01).
+//
+// It answered `?get=latestversion&userid=<N>&name=<X>` before authentication,
+// mapping a sitch NAME to its current version string. That is an enumeration
+// oracle against the sharing model: a share URL is <userid>/<name>/<version>.js
+// and the version is the capability, but the name is not secret - it is
+// human-readable and appears in full in every shared link. Anyone who knew or
+// guessed a name could obtain the version, including for sitches never shared.
+//
+// It had no callers: nothing in src/, tools/, tests/ or docs/ referenced it.
+// Deleted rather than gated, because dead code cannot be reviewed into safety.
+
+// Is (userID, name) on the published featured list?
+//
+// The featured list (metadata/featured.json, written by the admin featured-list
+// editor and served by metadata.php?featured=1) is the ONLY reason a cross-user
+// or anonymous version listing is allowed. Featured sitches are deliberately
+// published, so enumerating their versions discloses nothing that was not
+// already public; every other sitch's version list is private to its owner.
+//
+// Deliberately a local copy rather than a require of metadata.php: that file is
+// an endpoint and including it would execute it.
+function isFeaturedSitch($userID, $name) {
+    global $useAWS, $UPLOAD_PATH, $s3creds;
+
+    $entries = null;
     if (!$useAWS) {
-        global $UPLOAD_PATH;
-        $localDir = $UPLOAD_PATH . $publicDir;
-        if (!is_dir($localDir)) {
-            echo json_encode(['latest' => null]);
-            exit();
-        }
-        $files = scandir($localDir);
-        foreach ($files as $file) {
-            if (is_file($localDir . '/' . $file) && preg_match('/\.js$/', $file)) {
-                if ($latestFile === null || $file > $latestFile) {
-                    $latestFile = $file;
-                }
-            }
-        }
-        echo json_encode(['latest' => $latestFile]);
-        exit();
+        $path = $UPLOAD_PATH . 'metadata/featured.json';
+        if (!is_file($path)) return false;
+        $entries = json_decode(@file_get_contents($path), true);
     } else {
-        require 'vendor/autoload.php';
-        global $s3creds;
-        if (!isset($s3creds) || !is_array($s3creds) || empty($s3creds['accessKeyId'])) {
-            http_response_code(503);
-            echo json_encode(['error' => 'Storage not configured']);
-            exit();
-        }
-        $aws = $s3creds;
-        $credentials = new Aws\Credentials\Credentials($aws['accessKeyId'], $aws['secretAccessKey']);
-        $s3 = new Aws\S3\S3Client([
-            'version' => 'latest',
-            'region' => $aws['region'],
-            'credentials' => $credentials
-        ]);
+        if (empty($s3creds['accessKeyId']) || empty($s3creds['bucket'])) return false;
+        require_once __DIR__ . '/vendor/autoload.php';
         try {
-            $objects = $s3->getIterator('ListObjects', array(
-                "Bucket" => $aws['bucket'],
-                "Prefix" => $publicDir . "/"
-            ));
-            foreach ($objects as $object) {
-                $key = $object['Key'];
-                $filename = str_replace($publicDir . "/", "", $key);
-                if ($filename != "" && strpos($filename, '/') === false && preg_match('/\.js$/', $filename)) {
-                    if ($latestFile === null || $filename > $latestFile) {
-                        $latestFile = $filename;
-                    }
-                }
-            }
-            echo json_encode(['latest' => $latestFile]);
-            exit();
+            $credentials = new Aws\Credentials\Credentials($s3creds['accessKeyId'], $s3creds['secretAccessKey']);
+            $s3 = new Aws\S3\S3Client([
+                'version' => 'latest',
+                'region' => $s3creds['region'],
+                'credentials' => $credentials
+            ]);
+            $res = $s3->getObject(['Bucket' => $s3creds['bucket'], 'Key' => 'metadata/featured.json']);
+            $entries = json_decode((string)$res['Body'], true);
         } catch (Exception $e) {
-            http_response_code(503);
-            echo json_encode(['error' => 'Storage error']);
-            exit();
+            return false;   // fail CLOSED: no featured list means no cross-user access
         }
     }
+
+    if (!is_array($entries)) return false;
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) continue;
+        if ((string)($entry['userID'] ?? '') === (string)$userID
+            && (string)($entry['name'] ?? '') === (string)$name) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // if there's a "get" parameter then it depends on the value of the "get" parameter
@@ -234,11 +209,21 @@ if (isset($_GET['get'])) {
     $userID = getUserID();
     $dir = getUserDir($userID);
 
-    if ($dir == "" && !($_GET['get'] == "versions" && isset($_GET['userid']))) {
-        // return an empty array if the user is not logged in
-        // (but allow versions with explicit userid for featured sitch loading)
-        echo json_encode(array());
-        exit();
+    // Not logged in: an empty array, EXCEPT for the version list of a sitch that is
+    // actually on the published featured list. The old condition allowed any
+    // `versions` request carrying any `userid`, which let an anonymous caller
+    // enumerate every version of any sitch whose name they knew - and the name is
+    // not secret, it appears in full in every shared link. The featured check
+    // narrows that to the set that is deliberately public.
+    if ($dir == "") {
+        $featuredOK = ($_GET['get'] ?? '') === 'versions'
+            && isset($_GET['userid']) && preg_match('/^\d+$/', $_GET['userid'])
+            && isset($_GET['name']) && preg_match(SITCH_NAME_PATTERN, $_GET['name'])
+            && isFeaturedSitch($_GET['userid'], basename($_GET['name']));
+        if (!$featuredOK) {
+            echo json_encode(array());
+            exit();
+        }
     }
 
 
@@ -314,7 +299,7 @@ if (isset($_GET['get'])) {
                         $latestVersion = null;
                         if ($versions !== false) {
                             foreach ($versions as $v) {
-                                if ($v !== '.' && $v !== '..' && $v !== 'screenshot.jpg' && $v !== 'metadata.json' && is_file($sitchPath . '/' . $v)) {
+                                if ($v !== '.' && $v !== '..' && !isScreenshotFile($v) && $v !== 'metadata.json' && is_file($sitchPath . '/' . $v)) {
                                     $vTime = @filemtime($sitchPath . '/' . $v);
                                     if ($vTime > $newestTime) {
                                         $newestTime = $vTime;
@@ -326,7 +311,11 @@ if (isset($_GET['get'])) {
                         $lastDate = $newestTime ? date('Y-m-d H:i:s', $newestTime) : '1970-01-01 00:00:00';
                         // Avoid a per-sitch screenshot existence check on this hot path.
                         // The browser already falls back gracefully if an image is missing.
-                        $screenshotUrl = $storagePath . $userID . '/' . $file . '/screenshot.jpg';
+                        // Screenshots carry their own token now, so pick the newest from the
+                        // directory listing we already have; fall back to the legacy fixed
+                        // name for sitches saved before that change.
+                        $shot = ($versions !== false) ? newestScreenshotName($versions) : null;
+                        $screenshotUrl = $storagePath . $userID . '/' . $file . '/' . ($shot ?? 'screenshot.jpg');
                         $folders[] = [$file, $lastDate, $screenshotUrl, $latestVersion];
                     }
                 }
@@ -346,6 +335,7 @@ if (isset($_GET['get'])) {
                 ));
                 $folderDates = array();
                 $folderLatest = array();
+                $folderShots = array();   // newest screenshot filename per sitch folder
                 foreach ($objects as $object) {
                     $key = $object['Key'];
 
@@ -361,8 +351,14 @@ if (isset($_GET['get'])) {
 
                         // Ignore screenshot/metadata for date calculations.
                         $fileName = substr($key, strlen($folderName) + 1);
-                        if ($fileName === 'screenshot.jpg' || $fileName === 'metadata.json') {
-                            // Skip non-version files
+                        if (isScreenshotFile($fileName) || $fileName === 'metadata.json') {
+                            // Not a version. Screenshots carry their own token now, so keep
+                            // the newest one per folder rather than assuming a fixed name.
+                            if (isScreenshotFile($fileName)
+                                && (!isset($folderShots[$folderName])
+                                    || strcmp($fileName, $folderShots[$folderName]) > 0)) {
+                                $folderShots[$folderName] = $fileName;
+                            }
                         } else {
                             if (!isset($folderDates[$folderName]) || $lastDate > $folderDates[$folderName]) {
                                 $folderDates[$folderName] = $lastDate;
@@ -376,7 +372,8 @@ if (isset($_GET['get'])) {
                 foreach ($folderDates as $name => $date) {
                     // Avoid a separate screenshot existence test. Missing screenshots are
                     // handled client-side via img.onerror.
-                    $screenshotUrl = $s3->getObjectUrl($aws['bucket'], $dir . '/' . $name . '/screenshot.jpg');
+                    $shot = isset($folderShots[$name]) ? $folderShots[$name] : 'screenshot.jpg';
+                    $screenshotUrl = $s3->getObjectUrl($aws['bucket'], $dir . '/' . $name . '/' . $shot);
                     $latestVersion = isset($folderLatest[$name]) ? $folderLatest[$name] : null;
                     $folders[] = [$name, $date, $screenshotUrl, $latestVersion];
                 }
@@ -410,10 +407,18 @@ if (isset($_GET['get'])) {
             }
             $name = basename($name); // Extra safety: strip any path components
 
-            // Allow viewing another user's versions (e.g. when loading a shared sitch URL)
+            // A `userid` may name ANOTHER user's directory, so it is restricted to the
+            // three cases that are legitimate: your own id, a sitch on the published
+            // featured list, or an admin. Anything else falls through and lists your
+            // own directory, which is what an unentitled caller is allowed to see.
             if (isset($_GET['userid']) && preg_match('/^\d+$/', $_GET['userid'])) {
-                $userID = $_GET['userid'];
-                $dir = $useAWS ? getShortDir($userID) : getUserDir($userID);
+                $requested = $_GET['userid'];
+                if ((string)$requested === (string)$userID
+                    || isAdmin()
+                    || isFeaturedSitch($requested, $name)) {
+                    $userID = $requested;
+                    $dir = $useAWS ? getShortDir($userID) : getUserDir($userID);
+                }
             }
 
             $dir .= "/" . $name;
@@ -421,7 +426,7 @@ if (isset($_GET['get'])) {
             if (!$useAWS) {
                 $files = scandir($dir);
                 foreach ($files as $file) {
-                    if (is_file($dir . '/' . $file) && $file != '.' && $file != '..' && $file != '.DS_Store' && $file !== 'screenshot.jpg' && $file !== 'metadata.json') {
+                    if (is_file($dir . '/' . $file) && $file != '.' && $file != '..' && $file != '.DS_Store' && !isScreenshotFile($file) && $file !== 'metadata.json') {
                         $url = $storagePath . $userID . '/' . $name. '/' . $file;
                         // add to the array and object that contains the url and the version
                         $versions[] = array(
@@ -447,7 +452,7 @@ if (isset($_GET['get'])) {
                         if (strpos($key, $prefix) === 0) {
                             $key = substr($key, strlen($prefix));
                         }
-                        if ($key != "" && strpos($key, '/') === false && $key !== 'screenshot.jpg' && $key !== 'metadata.json') {
+                        if ($key != "" && strpos($key, '/') === false && !isScreenshotFile($key) && $key !== 'metadata.json') {
                             // get the url to the file in the bucket
                             $url = $s3->getObjectUrl($aws['bucket'], $prefix . $key);
 
