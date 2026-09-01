@@ -1,21 +1,31 @@
 // ScriptRunnerClient.js — main-thread front door to the sandboxed script runner.
 //
-// runScriptJS compiles user script text with `new AsyncFunction` and executes it.
-// To keep that arbitrary code off the main thread (finding "B1"), the real run
-// happens in ScriptRunnerWorker.js, which has no DOM/window/localStorage and has
-// its network/storage globals neutered. This module owns that worker: a single
-// long-lived instance (parses fire on nearly every edit / wheel drag), requestId
-// correlation for latest-wins, and a main-thread watchdog that terminates and
-// respawns the worker if a pathological script (`while(true){}`) wedges it — the
-// in-worker MAX_RUN_MS/MAX_CALLS guards only fire when the script calls the API,
-// so a tight non-API loop can only be killed from outside via terminate().
+// Script text is compiled with `new AsyncFunction` and executed. That is arbitrary
+// code, and it arrives from the sitch, so it runs ONLY inside ScriptRunnerWorker.js,
+// which has no DOM/window/localStorage and has its network/storage globals neutered.
+// This module owns that worker: a single long-lived instance (parses fire on nearly
+// every edit / wheel drag), requestId correlation for latest-wins, and a main-thread
+// watchdog that terminates and respawns the worker if a pathological script
+// (`while(true){}`) wedges it — the in-worker MAX_RUN_MS/MAX_CALLS guards only fire
+// when the script calls the API, so a tight non-API loop can only be killed from
+// outside via terminate().
 //
-// Fallbacks preserve functionality where the worker can't run: no Worker (Jest /
-// non-browser) or a worker that failed to spawn/crashed → run in-process. A
-// hard-timeout does NOT fall back in-process (that would hang the page with the
-// same pathological script) — it returns an error-shaped model.
-
-import {runScriptJS} from "./ScriptJSRunner";
+// THE WORKER RUNS THE SCRIPT, OR NOTHING DOES.
+//
+// There is deliberately no in-process fallback. Every route that used to have one —
+// no Worker constructor, a worker that failed to spawn, a worker that crashed, a
+// postMessage that threw — now resolves an error-shaped model instead. Those are
+// exactly the conditions an attacker would try to induce: a sitch is loaded from a
+// shared link and its script is parsed automatically on deserialization (see
+// deserializeScriptedVideo in CScriptedVideo.js), so any path that reaches
+// runScriptJS on the main thread turns a shared link into same-origin code
+// execution with full DOM, storage and network access. Degrading to "run it in the
+// page" is never the safe default; refusing to run is.
+//
+// The cost is that scripted video does not work where Worker is unavailable,
+// including jsdom. That is intended — see tests/scriptRunnerWorker.test.js, which
+// asserts the refusal rather than a fallback. Tests that need to exercise script
+// semantics call runScriptJS from ScriptJSRunner directly, which is unchanged.
 
 // Above the in-worker MAX_RUN_MS (2000) so a script that merely calls the API a
 // lot finishes via the graceful in-worker guard; this only trips on a true CPU wedge.
@@ -23,13 +33,17 @@ const HARD_TIMEOUT_MS = 3000;
 
 let worker = null;
 let seq = 0;
-const pending = new Map();   // requestId -> {resolve, timer, text, viewPresets, tabs}
+const pending = new Map();   // requestId -> {resolve, timer}
 
 function canUseWorker() {
     return typeof Worker !== "undefined";
 }
 
-function timeoutModel(message) {
+// The shape runScriptJS itself returns, carrying the reason in `errors` so callers
+// render it the way they render a script error. Deliberately not prefixed
+// "syntax error" — CScriptedVideo.parse() treats that prefix as "keep the last good
+// timeline", and a sandbox failure is not a half-typed line.
+function errorModel(message) {
     return {
         events: [], cameraBeats: [], totalDuration: 0,
         errors: [message],
@@ -37,6 +51,8 @@ function timeoutModel(message) {
         numLanes: 1,
     };
 }
+
+const NO_SANDBOX = "script sandbox unavailable — the script was NOT run";
 
 function disposeWorker() {
     if (worker) {
@@ -47,14 +63,16 @@ function disposeWorker() {
     }
 }
 
-// Resolve every in-flight request by running it in-process. Used when the worker
-// crashes (onerror) — the alternative is leaving those promises to time out.
-function drainPendingToFallback() {
+// Resolve every in-flight request with the refusal. Used when the worker crashes
+// (onerror) — the alternative is leaving those promises to time out. This used to
+// re-run them in-process, which meant one induced worker crash executed EVERY
+// pending script in the page.
+function drainPendingToError() {
     const dead = [...pending.values()];
     pending.clear();
     for (const p of dead) {
         clearTimeout(p.timer);
-        Promise.resolve(runScriptJS(p.text, {viewPresets: p.viewPresets, tabs: p.tabs})).then(p.resolve);
+        p.resolve(errorModel(NO_SANDBOX));
     }
 }
 
@@ -72,7 +90,7 @@ function ensureWorker() {
     worker.onerror = (e) => {
         console.warn("[ScriptRunner] worker error:", (e && e.message) || e);
         disposeWorker();                // will respawn lazily on the next call
-        drainPendingToFallback();
+        drainPendingToError();
     };
     return worker;
 }
@@ -86,15 +104,15 @@ export async function runScriptViaWorker(text, opts = {}) {
     const scriptText = String(text ?? "");
 
     if (!canUseWorker()) {
-        return runScriptJS(scriptText, {viewPresets, tabs});     // Jest / non-browser
+        return errorModel(NO_SANDBOX);
     }
 
     let w;
     try {
         w = ensureWorker();
     } catch (err) {
-        console.warn("[ScriptRunner] worker spawn failed; running in-process:", err);
-        return runScriptJS(scriptText, {viewPresets, tabs});
+        console.warn("[ScriptRunner] worker spawn failed; refusing to run:", err);
+        return errorModel(NO_SANDBOX);
     }
 
     const requestId = ++seq;
@@ -103,19 +121,19 @@ export async function runScriptViaWorker(text, opts = {}) {
             pending.delete(requestId);
             console.warn("[ScriptRunner] script timed out — terminating worker");
             disposeWorker();            // kill the wedged worker; next call respawns
-            resolve(timeoutModel("script ran too long — infinite loop?"));
+            resolve(errorModel("script ran too long — infinite loop?"));
         }, HARD_TIMEOUT_MS);
 
-        pending.set(requestId, {resolve, timer, text: scriptText, viewPresets, tabs});
+        pending.set(requestId, {resolve, timer});
 
         try {
             w.postMessage({requestId, text: scriptText, viewPresets, tabs});
         } catch (err) {
-            // e.g. viewPresets not structured-cloneable — degrade gracefully.
+            // e.g. viewPresets not structured-cloneable — refuse rather than degrade.
             clearTimeout(timer);
             pending.delete(requestId);
-            console.warn("[ScriptRunner] postMessage failed; running in-process:", err);
-            Promise.resolve(runScriptJS(scriptText, {viewPresets, tabs})).then(resolve);
+            console.warn("[ScriptRunner] postMessage failed; refusing to run:", err);
+            resolve(errorModel(NO_SANDBOX));
         }
     });
 }

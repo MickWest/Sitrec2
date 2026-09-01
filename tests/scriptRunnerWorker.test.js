@@ -61,16 +61,30 @@ describe("set command cannot smuggle a non-cloneable menu", () => {
     });
 });
 
-describe("ScriptRunnerClient falls back in-process when no Worker exists", () => {
-    // Jest's jsdom has no Worker global, so runScriptViaWorker takes the
-    // in-process path and must return exactly what runScriptJS returns.
-    test("worker client matches direct runScriptJS output", async () => {
-        expect(typeof Worker).toBe("undefined");     // sanity: fallback path active
+describe("ScriptRunnerClient refuses to run when no Worker exists", () => {
+    // The worker runs the script or nothing does. There is deliberately no
+    // in-process fallback: a sitch is parsed automatically when a shared link is
+    // deserialized, so any path reaching runScriptJS on the main thread would turn
+    // that link into same-origin code execution. jsdom has no Worker global, which
+    // makes it the one place the refusal can be asserted directly.
+    test("returns an error model, and does NOT execute the script", async () => {
+        expect(typeof Worker).toBe("undefined");     // sanity: no sandbox available
         const viaClient = await runScriptViaWorker(DEMO);
+
+        expect(viaClient.errors).toEqual(["script sandbox unavailable — the script was NOT run"]);
+        expect(viaClient.events).toEqual([]);
+        expect(viaClient.cameraBeats).toEqual([]);
+        expect(viaClient.totalDuration).toBe(0);
+
+        // The refusal must not masquerade as a syntax error: CScriptedVideo.parse()
+        // treats that prefix as "keep showing the last good timeline", which would
+        // hide the fact that nothing ran.
+        expect(viaClient.errors.some((m) => m.startsWith("syntax error"))).toBe(false);
+
+        // And the script itself is perfectly valid — proving the refusal is about
+        // the missing sandbox, not about the script.
         const direct = await runScriptJS(DEMO);
-        expect(viaClient.errors).toEqual(direct.errors);
-        expect(viaClient.totalDuration).toBe(direct.totalDuration);
-        expect(viaClient.events.map((e) => [e.type, e.start]))
-            .toEqual(direct.events.map((e) => [e.type, e.start]));
+        expect(direct.errors).toEqual([]);
+        expect(direct.events.length).toBeGreaterThan(0);
     });
 });
