@@ -1612,9 +1612,15 @@ export const setupMethods = {
         // folders (cameraDisplayTrack, the satellite tracks, the traverse), each
         // of which expands to a dozen controls — several screens of scrolling
         // before the user ever sees any of this exists.
+        //
+        // close: first, but not unfolded. These are optional overlays that each
+        // open a network connection, so the folder is a heading the user opens
+        // deliberately rather than a wall of switches every Contents visit
+        // starts with. A saved sitch that had it open still restores open.
         const feedsFolder = guiMenus.contents.addFolder(t("custom.showHide.liveFeeds.label"))
             .tooltip(t("custom.showHide.liveFeeds.tooltip"))
-            .moveToFirst();
+            .moveToFirst()
+            .close();
 
         feedsFolder.add(this, "liveTraffic")
             .name(t("custom.showHide.liveTraffic.label"))
