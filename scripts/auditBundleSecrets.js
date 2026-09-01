@@ -34,6 +34,43 @@ const CLIENT_PUBLIC_ENV_KEYS = new Set(["MAPBOX_TOKEN", "MAPTILER_KEY"]);
 // design. It is not served: the copy prepends "<?php /*;" so a direct request executes it
 // as PHP and returns nothing. Its CONTENT is therefore not scanned - the guard is checked
 // instead, because a shared.env.php that lost its prefix would serve every key as text.
+// A credential sitting in a KNOWN provider URL must be the value configured for that
+// provider NOW. This catches what a shape pattern cannot: a MapTiler key is 20 plain
+// alphanumerics, indistinguishable from a hash or a minified identifier, so there is no
+// safe shape to match on - but anchored to api.maptiler.com it is unambiguous.
+//
+// A stale value here is a revoked credential shipped to users, which silently breaks the
+// imagery it serves. Anchoring also keeps this free of false positives: a URL whose
+// credential comes from a runtime variable (`key=${n}`) cannot match, because the capture
+// accepts literal characters only.
+const PROVIDER_URL_CREDENTIALS = [
+    {
+        label: "MapTiler key",
+        envKey: "MAPTILER_KEY",
+        regex: /api\.maptiler\.com[^`"']{0,200}?[?&]key=([A-Za-z0-9_-]{10,})/g,
+    },
+    {
+        label: "Mapbox token",
+        envKey: "MAPBOX_TOKEN",
+        regex: /api\.mapbox\.com[^`"']{0,200}?[?&]access_token=([A-Za-z0-9._-]{10,})/g,
+    },
+];
+
+// Documentation and comments show these URLs with a placeholder where the credential
+// goes - "YOUR_MAPTILER_KEY", "EXAMPLEKEY" - and docs/ is published, so the provider-URL
+// check meets them. A placeholder is not a credential.
+//
+// Deliberately tight, so it cannot excuse a real key: the value must be ENTIRELY upper
+// case, digits, underscore and hyphen AND contain one of these words. Real credentials
+// carry mixed case (a Mapbox token starts "pk.eyJ", a MapTiler key is mixed alphanumeric),
+// so they cannot satisfy the first half however they are spelled.
+const PLACEHOLDER_SHAPE = /^[A-Z0-9_-]+$/;
+const PLACEHOLDER_WORDS = /YOUR|EXAMPLE|PLACEHOLDER|DUMMY|FAKE|SAMPLE|CHANGEME|INSERT|TODO/;
+
+function isPlaceholderValue(value) {
+    return PLACEHOLDER_SHAPE.test(value) && PLACEHOLDER_WORDS.test(value);
+}
+
 const SERVER_ENV_FILE = "shared.env.php";
 const SERVER_ENV_GUARD = "<?php";
 
@@ -67,6 +104,13 @@ const GENERIC_SECRET_PATTERNS = [
     // CLIENT_PUBLIC_ENV_KEYS. Every other pattern here is forbidden in BOTH modes.
     { label: "Mapbox token", regex: /pk\.eyJ[0-9A-Za-z._-]{20,}/g, clientPublic: true },
     { label: "Google API key", regex: /AIza[0-9A-Za-z_-]{20,}/g },
+    // Cesium Ion tokens are JWTs. Without this they are only caught at their EXACT
+    // current value, so an OLD one embedded somewhere would pass - and Cesium is
+    // server-only, meaning ANY JWT reaching the served output is wrong however stale.
+    // Narrow on purpose: all three segments, the first two starting "eyJ" (base64url of
+    // '{"'). Measured against the whole production tree, the only match is inside
+    // shared.env.php, which server mode does not scan.
+    { label: "JWT (Cesium Ion-style token)", regex: /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g },
     { label: "OpenAI-style key", regex: /sk-[A-Za-z0-9_-]{20,}/g },
     { label: "GitHub token", regex: /ghp_[A-Za-z0-9]{20,}/g },
     { label: "Slack token", regex: /xox[baprs]-[A-Za-z0-9-]{10,}/g },
@@ -194,7 +238,12 @@ function walkFiles(rootPath, files = []) {
 }
 
 function scanFile(filePath, secretCandidates, options = {}) {
-    const { mode = "bundle", scanRoot, allowedPublicValues = new Set() } = options;
+    const {
+        mode = "bundle",
+        scanRoot,
+        allowedPublicValues = new Set(),
+        configuredEnv = {},
+    } = options;
     const findings = [];
     const normalizedPath = filePath.split(path.sep).join("/");
 
@@ -263,6 +312,34 @@ function scanFile(filePath, secretCandidates, options = {}) {
         }
     }
 
+    // Anchored to a provider URL, so this can be exact rather than shape-based.
+    for (const { label, envKey, regex } of PROVIDER_URL_CREDENTIALS) {
+        regex.lastIndex = 0;
+        let match;
+        while ((match = regex.exec(text)) !== null) {
+            const found = match[1];
+            if (isPlaceholderValue(found)) {
+                continue;
+            }
+
+            const configured = String(configuredEnv[envKey] ?? "").trim();
+
+            // In a serverless or desktop build the key is stripped, so ANY literal here is
+            // a leak. In a server build the credential belongs there - but only the
+            // current one; anything else is a stale credential being published.
+            const wrong = mode === "server" ? found !== configured : true;
+
+            if (wrong && !(inFixtureTree && SERVER_FIXTURE_ALLOWLIST.has(found))) {
+                findings.push({
+                    file: filePath,
+                    issue: mode === "server"
+                        ? `${label} in a ${envKey.split("_")[0].toLowerCase()} URL is NOT the currently configured value (stale credential: ${maskValue(found)})`
+                        : `${label} literal in a provider URL (${maskValue(found)})`,
+                });
+            }
+        }
+    }
+
     for (const { label, value } of secretCandidates) {
         if (buffer.includes(Buffer.from(value))) {
             findings.push({
@@ -305,10 +382,12 @@ function auditTargets(targets, options = {}) {
         ...collectConfigLiteralCandidates(),
     ]);
 
+    const liveEnv = loadDotenvFile(SHARED_ENV_PATH);
+
     // The values a full-server build is allowed to publish, read fresh from config.
     const publicValues = new Set(
         mode === "server"
-            ? Object.entries(loadDotenvFile(SHARED_ENV_PATH))
+            ? Object.entries(liveEnv)
                 .filter(([key]) => CLIENT_PUBLIC_ENV_KEYS.has(key))
                 .map(([, value]) => String(value ?? "").trim())
                 .filter(Boolean)
@@ -331,7 +410,12 @@ function auditTargets(targets, options = {}) {
             }
 
             for (const filePath of walkFiles(scanRoot)) {
-                findings.push(...scanFile(filePath, secretCandidates, { mode, scanRoot, allowedPublicValues: publicValues }));
+                findings.push(...scanFile(filePath, secretCandidates, {
+                    mode,
+                    scanRoot,
+                    allowedPublicValues: publicValues,
+                    configuredEnv: liveEnv,
+                }));
             }
         }
     }
@@ -413,6 +497,7 @@ module.exports = {
     auditTargets,
     checkServerEnvGuard,
     collectConfigLiteralCandidates,
+    isPlaceholderValue,
     collectEnvSecretCandidates,
     scanFile,
     CLIENT_PUBLIC_ENV_KEYS,
