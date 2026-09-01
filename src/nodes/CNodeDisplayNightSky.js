@@ -1377,7 +1377,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
      */
     nvgSatBoost(view) {
         if (!view.effectsEnabled) return 1;
-        const nvg = NodeMan.get("Custom_NightVision", true);
+        const nvg = NodeMan.get("Custom_NightVision", false);
         if (!nvg || !nvg.enabled) return 1;
         // CCustomManager.setup() attaches this input to an older effect node
         // that predates the slider, so it should always be here; the fallback
