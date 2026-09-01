@@ -620,6 +620,18 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         this.updateLensReadout();
     }
 
+    // Free Look suspends apply() because most of it aims the camera, but the fov it
+    // reads from fovSwitch at the top is not an aim - it is what the Zoom / HFOV /
+    // 35mm sliders display. Called instead of apply() by CNodeCamera.applyFOVControllers
+    // so a track-driven FOV keeps showing its live value while the camera is flown by
+    // hand. Nothing here touches the camera.
+    applyFOVOnly(f, objectNode) {
+        const fovSwitch = NodeMan.get("fovSwitch", false)
+        if (fovSwitch) {
+            this.fov = extractFOV(fovSwitch.getValue(f));
+        }
+    }
+
     // Satellite mode: quaternion-based orientation, no gimbal lock.
     //
     // The camera orientation is stored as a quaternion (satQuat) relative to a

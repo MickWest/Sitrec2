@@ -556,14 +556,44 @@ export class CNodeCamera extends CNode3D {
     }
 
     // Free Look suspends every computed source that would otherwise write this
-    // camera's pose - Location, Heading, FOV, Tracking Wobble, all of them - so the
+    // camera's POSE - Location, Heading, Tracking Wobble, all of them - so the
     // hand-flown pose survives the frame it was set in. Gating here rather than on
     // each controller's own `enabled` flag deliberately: those flags belong to the
     // source switches, which turn them on and off as the choice changes, so a
     // second owner would just fight them.
+    //
+    // The FIELD OF VIEW is not part of the pose, and is deliberately NOT suspended:
+    // flying the camera by hand and choosing what lens it has are separate decisions,
+    // so the Camera > FOV (Zoom) controls (and Shift+wheel, see CameraControls'
+    // zoomFovBy) stay live and let you frame what you have flown to.
     applyControllers(f, depth = 0) {
-        if (this.freeLook) return;
+        if (this.freeLook) {
+            this.applyFOVControllers(f);
+            return;
+        }
         super.applyControllers(f, depth);
+    }
+
+    // The FOV half of what applyControllers would have done, for Free Look. Two kinds
+    // of input contribute to it:
+    //
+    //   - controllers that write ONLY camera.fov (isFOVController), which are simply
+    //     applied as usual - in the custom sitch that is fovController, reading
+    //     whichever source fovSwitch has selected;
+    //   - the PTZ controller, whose apply() is otherwise a pose write, but which also
+    //     refreshes its own fov from that same source. The Zoom / HFOV / 35mm sliders
+    //     read that field (listened), so without applyFOVOnly they would freeze at
+    //     whatever a track-driven FOV happened to be when Free Look went on.
+    applyFOVControllers(f) {
+        for (const inputID in this.inputs) {
+            const input = this.inputs[inputID];
+            if (!input.isController || !input.enabled) continue;
+            if (input.isFOVController) {
+                input.apply(f, this);
+            } else {
+                input.applyFOVOnly?.(f, this);
+            }
+        }
     }
 
     update(f) {

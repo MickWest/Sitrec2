@@ -116,6 +116,7 @@ The Main View is a 3D view on the world, very similar in concept to other 3D vie
 - Right Drag tilts the viewpoint without moving the camera
 - Center Drag rotates the camera around a point in the world
 - The mouse wheel zooms in and out.
+- Shift + the mouse wheel changes the camera's field of view instead of moving it. This is the same zoom the Look view's wheel does, and it works in the Look view too when *Free Look Camera* is on (where the plain wheel is moving the camera). The Look camera's field of view can also be set exactly under Camera ▸ FOV (Zoom).
 
 If you get lost, you can select "Reset Camera" from the View menu. This will put the camera back to the start position. In the custom sitch tool, it will put the camera back to the position calculated when you last imported a track. You can also get this by pressing "." on the numeric keypad. 
 

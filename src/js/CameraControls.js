@@ -269,6 +269,15 @@ class CameraMapControls {
 
 		event.preventDefault();
 
+		// A SHIFT+wheel arrives as a HORIZONTAL scroll: the browser moves the value into
+		// deltaX and leaves deltaY at 0, so Math.sign(event.deltaY) would be 0 and zoomScale
+		// would return the fov unchanged - the gesture would silently do nothing. Fall back
+		// to deltaX ONLY while Shift is held: without Shift a non-zero deltaX is a genuine
+		// horizontal swipe, which must not be taken for a zoom. The dolly paths further down
+		// keep using event.deltaY because Shift never reaches them - the field-of-view branch
+		// below returns first.
+		const wheelDelta = (event.shiftKey && event.deltaY === 0) ? event.deltaX : event.deltaY;
+
 		// Ahead of the PTZ path: while a camera fit is being edited the wheel zooms the VIDEO, and
 		// the look view follows because it is already synced to it. Zooming the camera instead
 		// would change the very thing the fit is solving for.
@@ -281,14 +290,19 @@ class CameraMapControls {
 		// controller drives the camera. The pinhole fov is ignored by that render, and
 		// the dolly/sphere-rotate paths below would move the camera instead of the field.
 		if (isFisheyeCamera(this.camera)) {
-			this.zoomBy(Math.sign(event.deltaY));
+			this.zoomBy(Math.sign(wheelDelta));
 			setRenderOne(true);
 			return;
 		}
 
-		const ptzControls = getInteractivePTZController(this.view.cameraNode);
-		if (ptzControls !== undefined) {
-			this.zoomBy(Math.sign(event.deltaY));
+		// SHIFT+wheel is a FIELD OF VIEW change in every view, and the plain wheel is
+		// that too wherever a PTZ controller is driving the camera. Under a PTZ controller
+		// Shift therefore changes nothing; what it is for is the views whose plain wheel
+		// MOVES the camera - the main view, and the look view while Free Look has
+		// suspended the PTZ controller (getInteractivePTZController) - where it is the
+		// only way to reach the field of view from the mouse.
+		if (event.shiftKey || getInteractivePTZController(this.view.cameraNode) !== undefined) {
+			this.zoomFovBy(Math.sign(wheelDelta));
 			setRenderOne(true);
 			return;
 		}
@@ -638,6 +652,48 @@ class CameraMapControls {
 		return n;
 	}
 
+	// Scale the camera's FIELD OF VIEW by one zoom step, leaving the camera where it is.
+	// This is what the wheel does in the look view whenever a PTZ controller is driving
+	// it, and what SHIFT+wheel does in any view.
+	//
+	// Written through the PTZ controller when the camera has one - INCLUDING one that
+	// Free Look has suspended, which is why this uses getPTZController rather than
+	// getInteractivePTZController. That controller owns fovUI, and the camera's
+	// fovController re-reads fovUI every frame (Free Look suspends the pose sources, not
+	// the FOV one - see CNodeCamera.applyControllers), so a write straight to camera.fov
+	// would be undone on the next update.
+	zoomFovBy(delta) {
+		if (!this.zoomGestures || !this.enableZoom) return;
+
+		const ptzControls = getPTZController(this.view.cameraNode);
+
+		if (ptzControls !== undefined) {
+
+			ptzControls.fov = this.zoomScale(ptzControls.fov, delta, 1.5, 0.95)
+
+			// Apply zoom limits
+			if (ptzControls.fov < this.minZoom) ptzControls.fov = this.minZoom;
+			if (ptzControls.fov > this.maxZoom) ptzControls.fov = this.maxZoom;
+
+			// the FOV UI node is also updated, It's a hidden UI element that remains for backwards compatibility.
+			const fovUINode = NodeMan.get("fovUI", false)
+			if (fovUINode) {
+				fovUINode.setValue(ptzControls.fov);
+			}
+
+		} else {
+
+			// No PTZ controller - the main camera. Nothing writes its fov per frame, so it
+			// is set straight on the camera; CNodeCamera.modSerialize saves it from there.
+			const camera = this.camera;
+			let fov = this.zoomScale(camera.fov, delta, 1.5, 0.95)
+			if (fov < this.minZoom) fov = this.minZoom;
+			if (fov > this.maxZoom) fov = this.maxZoom;
+			camera.fov = fov;
+			camera.updateProjectionMatrix();
+		}
+	}
+
 	zoomBy(delta) {
 		if (!this.zoomGestures || !this.enableZoom) return;
 
@@ -653,19 +709,7 @@ class CameraMapControls {
 
 		if (ptzControls !== undefined) {
 
-			const fov = ptzControls.fov;
-
-			ptzControls.fov = this.zoomScale(fov, delta, 1.5, 0.95)
-
-			// Apply zoom limits
-			if (ptzControls.fov < this.minZoom) ptzControls.fov = this.minZoom;
-			if (ptzControls.fov > this.maxZoom) ptzControls.fov = this.maxZoom;
-
-			// the FOV UI node is also updated, It's a hidden UI element that remains for backwards compatibility.
-			const fovUINode = NodeMan.get("fovUI", false)
-			if (fovUINode) {
-				fovUINode.setValue(ptzControls.fov);
-			}
+			this.zoomFovBy(delta);
 
 		} else {
 

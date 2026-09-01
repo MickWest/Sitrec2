@@ -221,6 +221,7 @@ export class CNodeControllerGUIFOV extends CNodeController {
     constructor(v) {
         super(v);
 
+        this.isFOVController = true;
         this.fov = v.fov ?? 60;
 
         gui.add(this, 'fov', 0.35, 120, 0.01).onChange(value => {
@@ -342,6 +343,7 @@ export class CNodeControllerManualPosition extends CNodeController {
 export class CNodeControllerFocalLength extends CNodeController {
     constructor(v) {
         super(v);
+        this.isFOVController = true;
         this.input("focalLength")
 
         this.referenceFocalLength = v.referenceFocalLength ?? 166;
@@ -409,6 +411,10 @@ export {extractFOV};
 export class CNodeControllerFOV extends CNodeController {
     constructor(v) {
         super(v);
+        // Field of view is not part of the camera's POSE, so this keeps running while
+        // Free Look has the user flying the camera by hand - see
+        // CNodeCamera.applyFOVControllers, which is what this flag is read by.
+        this.isFOVController = true;
         this.input("source")
     }
 
@@ -505,6 +511,7 @@ export class CNodeControllerAbsolutePitchHeading extends CNodeController {
 export class CNodeControllerATFLIRCamera extends CNodeController {
     constructor(v) {
         super(v);
+        this.isFOVController = true;
         this.input("focalMode")
    //     this.input("sensorMode")
         this.input("zoomMode")
