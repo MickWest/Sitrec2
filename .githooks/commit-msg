@@ -1,0 +1,19 @@
+#!/bin/bash
+#
+# commit-msg hook.
+#
+# A checkout may supply its own extra commit-message checks. If one is present at
+# private/githooks/commit-msg it is run with the message file as $1, and its exit
+# code decides the commit. A plain clone has no such file and this hook does
+# nothing.
+#
+# Activated by `npm install` via the "prepare" script in package.json, which sets
+# git's core.hooksPath to .githooks/. No husky, no extra deps.
+#
+# Bypass: git commit --no-verify
+
+set -e
+
+if [ -x private/githooks/commit-msg ]; then
+    private/githooks/commit-msg "$1" || exit 1
+fi

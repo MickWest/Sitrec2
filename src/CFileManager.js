@@ -14,6 +14,7 @@ import {
     enableAllInput,
     ExpandKeyframes,
     getDateTimeFilename,
+    screenshotFilename,
     getFileExtension,
     isHttpOrHttps,
     updateDocumentTitle,
@@ -998,7 +999,7 @@ export class CFileManager extends CManager {
                     const blob = await this.captureViewportScreenshot();
                     if (!blob) throw new Error("Screenshot capture returned null");
                     const buffer = await blob.arrayBuffer();
-                    const url = await this.rehoster.rehostFile(sitchName, buffer, "screenshot.jpg", {skipHash: true});
+                    const url = await this.rehoster.rehostFile(sitchName, buffer, screenshotFilename(), {skipHash: true});
                     await this.bumpScreenshotVersion(sitchName);
                     console.log(`  Screenshot saved: ${url}`);
                     results.done.push(sitchName);

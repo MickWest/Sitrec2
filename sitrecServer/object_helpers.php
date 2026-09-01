@@ -169,3 +169,40 @@ function buildPublicObjectUrl($key) {
     }
     return buildDefaultS3ObjectUrl($key);
 }
+
+/**
+ * Is this filename a sitch preview screenshot?
+ *
+ * Screenshots used to use the single fixed name "screenshot.jpg". Because stored
+ * objects are public-read and the sitch NAME appears in full in every shared
+ * link, that made <userid>/<name>/screenshot.jpg reachable with no version at
+ * all - so sharing one version exposed the screenshot of whatever the owner had
+ * saved most recently. Each screenshot now carries its own unguessable token:
+ * screenshot_<token>.jpg.
+ *
+ * BOTH forms must be recognised: the legacy name still exists for every sitch
+ * saved before the change, and neither form may ever be mistaken for a saved
+ * version by the listing code.
+ */
+function isScreenshotFile($filename) {
+    return (bool)preg_match('/^screenshot(_[A-Za-z0-9_]+)?\.jpg$/', (string)$filename);
+}
+
+/**
+ * Newest screenshot filename from the files in one sitch folder, or null if none.
+ *
+ * "Newest" is lexicographic, matching the token format (timestamp first) and the
+ * same rule used for versions. The legacy "screenshot.jpg" sorts BEFORE every
+ * tokenised name ('.' is 0x2E, '_' is 0x5F), so a tokenised screenshot always
+ * wins when both are present - which is what we want during the transition.
+ */
+function newestScreenshotName($filenames) {
+    $best = null;
+    foreach ($filenames as $f) {
+        $f = (string)$f;
+        if (!isScreenshotFile($f)) continue;
+        if ($best === null || strcmp($f, $best) > 0) $best = $f;
+    }
+    return $best;
+}
+

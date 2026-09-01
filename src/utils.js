@@ -1020,13 +1020,53 @@ export function cleanFloat(x, maxDecimals = 12) {
 // For making filenames unique based on date and time
 // get date and time into a string, so long as you don't save more than one a second
 // then this will be unique
+// Version token for a saved sitch. It doubles as the SHARING CAPABILITY: a share
+// URL is <userid>/<name>/<version>.js, and knowing that complete key is the
+// permission to read it.
+//
+// The name half is not secret — it is human-readable and appears in full in every
+// shared link — so the version has to carry the secrecy on its own. A bare
+// timestamp does not: an attacker who knows roughly when a sitch was saved has
+// only 86,400 possibilities for a known day, which is minutes of work against an
+// unauthenticated endpoint. The 48-bit random suffix makes the token itself the
+// secret.
+//
+// The timestamp still leads, so filenames stay human-readable and sortable, and
+// the "latest version is the lexicographically greatest" rule the server relies
+// on (resolveLatestObjectKey in sitrecServer/object.php) is unaffected. Nothing
+// parses this string back into a date.
+//
+// getRandomValues, not Math.random: this must be unguessable, not merely unique.
+// It is present over plain http:// too, unlike randomUUID().
 export function getDateTimeFilename() {
-    const todayDateStr = new Date().toISOString().split('T')[0];
-    const todayTimeStr = new Date().toISOString().split('T')[1].split('.')[0];
+    const iso = new Date().toISOString();
+    const todayDateStr = iso.split('T')[0];
+    const todayTimeStr = iso.split('T')[1].split('.')[0];
     const todayDateTimeStr = todayDateStr + "_" + todayTimeStr;
     // strip out - and : so it's a valid filename (leave the underscore)
     const todayDateTimeFilename = todayDateTimeStr.replaceAll("-", "").replaceAll(":", "");
-    return todayDateTimeFilename;
+
+    const bytes = new Uint8Array(6);
+    globalThis.crypto.getRandomValues(bytes);
+    const suffix = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+
+    return todayDateTimeFilename + "_" + suffix;
+}
+
+// Filename for a sitch's preview screenshot.
+//
+// It used to be the fixed name "screenshot.jpg", which made it reachable from the
+// sitch NAME alone: objects are public-read, the name appears in full in every
+// shared link, and the path <userid>/<name>/screenshot.jpg needed no version at
+// all. Sharing one version therefore exposed the screenshot of whatever the owner
+// saved MOST RECENTLY - a later state they may never have shared.
+//
+// The screenshot does not need to be tied to the sitch version, only to be
+// unguessable, so it takes its own token from the same generator. Readers find it
+// by listing the folder, which they already do; the legacy fixed name remains as
+// a fallback for sitches saved before this change.
+export function screenshotFilename() {
+    return "screenshot_" + getDateTimeFilename() + ".jpg";
 }
 
 export class ExportProgressWidget {

@@ -47,6 +47,7 @@ $user_id = getUserID();
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
+require_once __DIR__ . '/object_helpers.php';
 
 // Allow unauthenticated GET for featured data only; everything else requires login
 if ($user_id == 0 && !($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['featured']))) {
@@ -220,16 +221,24 @@ function writeFeaturedData($data, $s3Data = null) {
     writeLocalJson($UPLOAD_PATH . 'metadata/featured.json', $data);
 }
 
-function buildScreenshotUrl($userID, $sitchName, $version = null, $s3Data = null) {
+// $screenshotName is the stored filename from featured.json. It is absent for
+// entries written before screenshots were tokenised, and the legacy fixed name is
+// the correct fallback for exactly those sitches. A featured sitch re-saved since
+// the last featured-list edit shows its previous thumbnail until that list is
+// refreshed - the same way its 'date' already behaves.
+function buildScreenshotUrl($userID, $sitchName, $version = null, $s3Data = null, $screenshotName = null) {
     global $useAWS, $UPLOAD_URL;
+
+    $file = (is_string($screenshotName) && isScreenshotFile($screenshotName))
+        ? $screenshotName : 'screenshot.jpg';
 
     if ($useAWS) {
         if ($s3Data === null) {
             $s3Data = startS3();
         }
-        $url = $s3Data['s3']->getObjectUrl($s3Data['aws']['bucket'], $userID . '/' . $sitchName . '/screenshot.jpg');
+        $url = $s3Data['s3']->getObjectUrl($s3Data['aws']['bucket'], $userID . '/' . $sitchName . '/' . $file);
     } else {
-        $url = $UPLOAD_URL . $userID . '/' . $sitchName . '/screenshot.jpg';
+        $url = $UPLOAD_URL . $userID . '/' . $sitchName . '/' . $file;
     }
 
     if ($version !== null && intval($version) > 0) {
@@ -250,7 +259,11 @@ function buildScreenshotUrl($userID, $sitchName, $version = null, $s3Data = null
  * Pass $onlySitch to narrow the storage scan to a single sitch.
  * Callers must not use this on the featured GET path - it hits storage.
  */
-function sitchDatesForUser($userID, $s3Data = null, $onlySitch = null) {
+// $screenshots, when passed, is filled with name => newest screenshot filename.
+// Screenshots carry their own token now, so the fixed 'screenshot.jpg' can no
+// longer be assumed; this scan already walks every file, so collecting it here
+// costs nothing and keeps the featured GET path free of storage calls.
+function sitchDatesForUser($userID, $s3Data = null, $onlySitch = null, &$screenshots = null) {
     global $useAWS, $UPLOAD_PATH;
 
     $dates = [];
@@ -259,7 +272,7 @@ function sitchDatesForUser($userID, $s3Data = null, $onlySitch = null) {
     if ($onlySitch !== null && !isValidSitchName($onlySitch)) return $dates;
 
     $isVersionFile = function ($file) {
-        return $file !== '' && $file !== 'screenshot.jpg' && $file !== 'metadata.json';
+        return $file !== '' && !isScreenshotFile($file) && $file !== 'metadata.json';
     };
 
     if ($useAWS) {
@@ -277,7 +290,12 @@ function sitchDatesForUser($userID, $s3Data = null, $onlySitch = null) {
             $slash = strpos($rest, '/');
             if ($slash === false) continue;
             $name = substr($rest, 0, $slash);
-            if (!$isVersionFile(substr($rest, $slash + 1))) continue;
+            $fileName = substr($rest, $slash + 1);
+            if ($screenshots !== null && isScreenshotFile($fileName)
+                && (!isset($screenshots[$name]) || strcmp($fileName, $screenshots[$name]) > 0)) {
+                $screenshots[$name] = $fileName;
+            }
+            if (!$isVersionFile($fileName)) continue;
             $date = $object['LastModified']->format('Y-m-d H:i:s');
             if (!isset($dates[$name]) || $date > $dates[$name]) $dates[$name] = $date;
         }
@@ -292,6 +310,10 @@ function sitchDatesForUser($userID, $s3Data = null, $onlySitch = null) {
         $sitchPath = $userDir . '/' . $name;
         if (!is_dir($sitchPath)) continue;
         $versions = @scandir($sitchPath) ?: [];
+        if ($screenshots !== null) {
+            $shot = newestScreenshotName($versions);
+            if ($shot !== null) $screenshots[$name] = $shot;
+        }
         $newestTime = 0;
         foreach ($versions as $v) {
             if (!$isVersionFile($v) || $v === '.' || $v === '..') continue;
@@ -310,14 +332,26 @@ function sitchDatesForUser($userID, $s3Data = null, $onlySitch = null) {
  */
 function refreshFeaturedDates(&$sitches, $s3Data = null) {
     $datesByUser = [];
+    $shotsByUser = [];
     foreach ($sitches as &$entry) {
         $uid = intval($entry['userID']);
         if (!isset($datesByUser[$uid])) {
-            $datesByUser[$uid] = sitchDatesForUser($uid, $s3Data);
+            $shots = [];
+            $datesByUser[$uid] = sitchDatesForUser($uid, $s3Data, null, $shots);
+            $shotsByUser[$uid] = $shots;
         }
         $found = $datesByUser[$uid][$entry['name']] ?? null;
         // Keep any previously stored date if the sitch has since been deleted.
         $entry['date'] = $found !== null ? $found : strval($entry['date'] ?? '');
+
+        // Same rule for the screenshot filename: record what is actually in storage,
+        // keeping the previous value if the sitch has gone. Entries written before
+        // screenshots were tokenised have no field at all, and buildScreenshotUrl
+        // falls back to the legacy fixed name for those.
+        $foundShot = $shotsByUser[$uid][$entry['name']] ?? null;
+        if ($foundShot !== null) {
+            $entry['screenshotName'] = $foundShot;
+        }
     }
     unset($entry);
 }
@@ -362,7 +396,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     'userID' => $entry['userID'],
                     // Avoid an S3 HEAD per sitch on the hot path. Missing screenshots are
                     // handled by the browser UI's img.onerror fallback.
-                    'screenshotUrl' => buildScreenshotUrl($entry['userID'], $entry['name'], $version, $s3Data),
+                    'screenshotUrl' => buildScreenshotUrl($entry['userID'], $entry['name'], $version, $s3Data, $entry['screenshotName'] ?? null),
                     // Stored at write time (see refreshFeaturedDates) so this path never
                     // probes storage. Logged-out users have no other source of dates, and
                     // without it the sitch browser cannot sort Featured by date.
