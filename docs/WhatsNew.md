@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.147.1 (2026-08-31)
+
+### Bug Fixes
+
+- Fixed the camera view frustum (Show → *Camera View Frustum*) being drawn the wrong shape in the main view when the camera's own window had never been on screen — for example a saved case that opens with one view double-clicked to fill the screen.
+- Fixed a case sometimes drawing slightly differently from one load to the next, depending on how long the page took to start.
+
 ## Version 2.147.0 (2026-08-31)
 
 ### New Features
