@@ -54,6 +54,34 @@ export function setIsTransitioning(v) {
 }
 export function getIsTransitioning() { return isTransitioning; }
 
+
+// A camera's position and orientation are written by its controllers during the per-frame
+// update — an imperative mutation of a Three.js object, not a node change — so the node graph
+// never learns about it. Anything that BAKES geometry from a camera therefore captures
+// whatever the camera happened to hold when its cascade last ran, and if the controllers move
+// it afterwards nothing re-bakes.
+//
+// That is not hypothetical: CNodeDisplayLOS builds its LOS lines in recalculate() (update()
+// deliberately does not rebuild them, for cost). During load the camera track resolves and
+// cascades, but the controller has not yet copied the new position onto the camera, so the
+// LOS baked the PREVIOUS position — measured at 174 m against a true 48 m, which put the
+// whole line off screen. Whether you saw it came down to whether any later recalculate
+// happened to fire after the controller caught up, so it was intermittent and worse on a warm
+// cache.
+//
+// Once per settle is the right cadence: by the time this runs we are inside the render loop,
+// so every controller has applied at least once, and loading has finished so the camera is
+// where it will stay. Cascading from the cameras rebuilds only what actually derives from
+// them. If more work starts later, wasPending resets and this fires again on the next settle.
+function rebakeCameraDerivedNodes() {
+    for (const entry of Object.values(NodeMan.list)) {
+        const node = entry.data;
+        if (node?.isCamera || node?.camera !== undefined) {
+            node.recalculateCascade?.();
+        }
+    }
+}
+
 export function hasPendingTiles() {
     let hasPending = false;
     
@@ -284,6 +312,7 @@ export function renderMain(elapsed) {
                 console.log("No pending actions")
                 _pendingLogState.start = 0;
                 _pendingLogState.count = -1;
+                rebakeCameraDerivedNodes();
             } else {
                 // If there are pending tiles or video frames, reset the counter to wait for them
                 Globals.wasPending = 5;
