@@ -310,6 +310,31 @@ export class CNodeView3D extends CNodeViewCanvas {
 
         this.setupRenderPipeline(v);
 
+        // Initialise the camera aspect from the layout NOW, rather than leaving it to the
+        // first render. Other code overwrites aspect per-frame (preRenderCameraUpdate, the
+        // matchVideoAspect block, the prepareCameraForLOD/restoreCameraAfterLOD bracket), but
+        // every one of those is on the render path, and the render loop skips any view that is
+        // not _effectivelyVisible. So nothing INITIALISED it: a view suppressed before it ever
+        // draws — a sitch saved with mainView doubled fullscreens on load, which suppresses
+        // lookView — kept PerspectiveCamera's constructor default of 1.
+        //
+        // That is not cosmetic. CNodeDisplayCameraFrustum builds its geometry from
+        // camera.aspect directly (w = h * aspect), so a camera that had never rendered drew a
+        // frustum ~6.5% too WIDE into the main view (1.0 against a true 960/1022 = 0.9393).
+        // It also made the scene depend on startup timing: a single frame slipping through
+        // before suppression would initialise the aspect and change what is drawn.
+        //
+        // Uses the div dimensions, which is what preRenderCameraUpdate would compute. This is
+        // a one-shot: nothing re-derives aspect off the render path, so a view whose rect
+        // changes while it is still suppressed (modDeserialize applying a saved rect that
+        // differs from the sitch definition) can still hold a stale value — deterministically
+        // stale, so the ordering fix holds, but the stale-proof shape would be deriving it on
+        // demand from the view's rect.
+        if (this.camera && this.widthDiv > 0 && this.heightDiv > 0) {
+            this.camera.aspect = this.widthDiv / this.heightDiv;
+            this.camera.updateProjectionMatrix();
+        }
+
         // Setup debug GUI once (shared across all views)
         // Only add debug GUI if this is the first mainView and help menu exists
         if (isLocal && this.id === "mainView" && guiMenus && guiMenus.help && !guiMenus.help._renderDebugFolderAdded) {
@@ -1799,13 +1824,33 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.widthDiv = this.widthPx;
         this.heightDiv = this.heightPx;
 
-        // Determine canvas dimensions
+        // Determine canvas dimensions.
+        //
+        // These are BACKING-STORE pixels and are kept in locals. They used to be written to
+        // this.widthPx/heightPx, which gave those fields two different meanings depending on
+        // what had run last: layout pixels after updateWH(), backing-store pixels after this
+        // function. For a view with a fixed canvasWidth the two diverge wildly (1600x925 vs
+        // 960x1022 for lookView), so anything reading widthPx during construction got whichever
+        // the timing happened to produce — which is how the hidden WescamMXUI view, sized
+        // relativeTo lookView, ended up with a rect of [1600,925] in some runs and [960,1022]
+        // in others. preRenderCameraUpdate() already treats widthPx as layout pixels ("Skip
+        // this for canvasWidth mode where dimensions intentionally differ"), so layout pixels
+        // is the meaning the rest of the code expects.
+        //
+        // This does NOT make the meaning uniform everywhere: for a view that actually renders,
+        // adjustSize() writes canvasWidth back into widthPx on every frame
+        // (CNodeViewCanvas.js:255, reached from renderCanvas). That dual meaning is
+        // pre-existing and untouched here. What this fixes is the CONSTRUCTION window, and the
+        // suppressed case — the render loop skips a view that is not _effectivelyVisible, so
+        // it never reaches adjustSize, and before this change its widthPx stayed at the
+        // backing size for the whole life of the view.
+        let canvasWidthPx, canvasHeightPx;
         if (this.in.canvasWidth !== undefined) {
-            this.widthPx = this.in.canvasWidth.v0;
-            this.heightPx = this.in.canvasHeight.v0;
+            canvasWidthPx = this.in.canvasWidth.v0;
+            canvasHeightPx = this.in.canvasHeight.v0;
         } else {
-            this.widthPx = this.widthDiv * window.devicePixelRatio;
-            this.heightPx = this.heightDiv * window.devicePixelRatio;
+            canvasWidthPx = this.widthDiv * window.devicePixelRatio;
+            canvasHeightPx = this.heightDiv * window.devicePixelRatio;
         }
 
         // Apply resolution scaling for side-by-side rendering on integrated GPU
@@ -1814,12 +1859,12 @@ export class CNodeView3D extends CNodeViewCanvas {
         // while maintaining visual quality (CSS scaling blurs imperceptibly)
         if (ViewMan.isSideBySideMode()) {
             const sideBySideResolutionScale = 0.7; // ~50% pixel reduction (0.7^2 ≈ 0.49)
-            this.widthPx = Math.floor(this.widthPx * sideBySideResolutionScale);
-            this.heightPx = Math.floor(this.heightPx * sideBySideResolutionScale);
+            canvasWidthPx = Math.floor(canvasWidthPx * sideBySideResolutionScale);
+            canvasHeightPx = Math.floor(canvasHeightPx * sideBySideResolutionScale);
         }
 
-        this.canvas.width = this.widthPx;
-        this.canvas.height = this.heightPx;
+        this.canvas.width = canvasWidthPx;
+        this.canvas.height = canvasHeightPx;
 
         // Create the renderer
 
