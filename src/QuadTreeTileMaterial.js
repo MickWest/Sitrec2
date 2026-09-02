@@ -16,6 +16,7 @@ import {
     NearestFilter,
 } from "three";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
+import {tileLoadHint} from "./errorHints";
 import {Globals, NodeMan} from "./Globals";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 import {loadTextureWithRetries} from "./js/map33/material/QuadTextureMaterial";
@@ -428,7 +429,13 @@ export const materialMethods = {
             if (error.message !== "Aborted"
                 && error.message !== "PlaceholderTile"
                 && error.message !== "KnownBadUrl") {
-                console.warn(`Failed to load texture for tile ${this.key()} from URL: ${url}`, error);
+                // The console is the only place a production build reports this (the
+                // dialog is local-only), so the likely cause goes here too.
+                let hint = "";
+                try {
+                    hint = tileLoadHint({ sourceName: sourceDef?.name, url, errorMessage: error?.message });
+                } catch (e) { /* never a second failure */ }
+                console.warn(`Failed to load texture for tile ${this.key()} from URL: ${url}` + (hint ? `\n${hint}` : ""), error);
             }
 
             // Clean up on error

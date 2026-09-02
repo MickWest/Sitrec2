@@ -104,7 +104,9 @@ You need:
 - A machine that can build the image (Node 22, Docker or Podman) and push to ECR, or a
   way to carry a saved image in (section 5.3).
 - Optionally, an internal map tile service and elevation service to point the app at.
-  Without one the map is blank, by design.
+  Without one the map is blank, by design, and the first tile error says so: it names the
+  directory or service it expected, the setting that points at it, and the container mount
+  point for pre-downloaded tiles.
 
 ## 3. Build the secure bundle
 
@@ -663,7 +665,12 @@ target partition, as long as you impose the same constraints on yourself:
   repository's `tests/authCertMode.test.js` shows the `openssl` commands that produce a
   working set, and the same certificates loaded onto a hardware security token (any token
   that implements the standard smart-card authentication slot) rehearse the real user
-  experience: PIN prompt, certificate picker, token removal.
+  experience: PIN prompt, certificate picker, token removal. Three things cost time the
+  first time: macOS ignores a smart card that has no card-holder identifier and container
+  objects, so a fresh token must have both written before any browser offers its
+  certificates; Safari stores a per-site certificate preference after a visit where only
+  one identity matched and then stops asking; Chrome keeps its picker choice for the whole
+  browser session.
 - Run the checks in section 10; they are the same in both places.
 
 The certificate path can even be rehearsed on a development machine with no cloud at all.

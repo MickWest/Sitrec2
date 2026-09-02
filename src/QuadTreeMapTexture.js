@@ -9,6 +9,7 @@ import {disposeMaterialTextures} from "./QuadTreeTileMaterial";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
 import {assert} from "./assert";
 import {isLocal} from "./configUtils";
+import {tileLoadHint} from "./errorHints";
 import "./threeExt";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 
@@ -802,7 +803,16 @@ class QuadTreeMapTexture extends QuadTreeMap {
 
                 const sourceDef = this.terrainNode.UI.getSourceDef();
                 if (!sourceDef.ignoreTileLoadingErrors && isLocal) {
-                   showErrorOnce("TILE_LOADING_ERROR", `Failed to load texture for tile ${key}:`, error);
+                    // Say what the failure most likely means and what to do, in the words
+                    // of the settings involved, so a first-time tester of a self-hosted
+                    // deployment is not left with "HTTP 404" and a stack trace.
+                    let hint = "";
+                    try {
+                        const url = typeof sourceDef.mapURL === "function" ? sourceDef.mapURL(tile.z, tile.x, tile.y) : "";
+                        hint = tileLoadHint({ sourceName: sourceDef.name, url, errorMessage: error?.message });
+                    } catch (e) { /* a hint is a courtesy, never a second failure */ }
+                    showErrorOnce("TILE_LOADING_ERROR",
+                        `Failed to load texture for tile ${key}:` + (hint ? `\n\n${hint}\n\nDetail:` : ""), error);
                 }
 
                 // we leave the tile visible as is,  created from a quarter for the parent texture

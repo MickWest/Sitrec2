@@ -129,6 +129,7 @@ import {EventManager} from "./CEventManager";
 import {CNodeView3D} from "./nodes/CNodeView3D";
 import {shouldSleepAnimationLoop as shouldSleepRenderLoopState} from "./renderLoopControl";
 import {getApproximateLocationFromIP} from "./GeoLocation";
+import {customSitchLoadHint} from "./errorHints";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
 import {
     addMotionAnalysisMenu,
@@ -762,7 +763,11 @@ if (fromAppParams !== null) {
     try {
         const response = await fetch(customSitch, {mode: 'cors'});
         if (!response.ok) {
-            showError("Failed to load custom sitch: HTTP " + response.status + " " + response.statusText + "\nURL: " + customSitch);
+            // Say what the failure most likely means (a stale link into scratch storage,
+            // a refused certificate, no route) so a first-time tester is not left with a status code.
+            const hint = customSitchLoadHint({url: customSitch, status: response.status});
+            showError("Failed to load custom sitch: HTTP " + response.status + " " + response.statusText + "\nURL: " + customSitch
+                + (hint ? "\n\n" + hint : ""));
         } else {
             const data = await response.text();
             console.log("Custom sitch = " + customSitch)
@@ -780,7 +785,8 @@ if (fromAppParams !== null) {
             customSitchLoaded = true;
         }
     } catch (e) {
-        showError("Failed to load custom sitch: " + e.message + "\nURL: " + customSitch, e);
+        const hint = customSitchLoadHint({url: customSitch, errorMessage: e.message});
+        showError("Failed to load custom sitch: " + e.message + "\nURL: " + customSitch + (hint ? "\n\n" + hint : ""), e);
     }
 
     if (!customSitchLoaded) {
