@@ -2253,48 +2253,58 @@ export class QuadTreeTile {
         });
     }
 
+    // pixels.shape is [height, width, 4]: axis 0 steps a WHOLE ROW, because its stride is
+    // 4*width (see get-pixels-mick.js, which builds both). This used to read shape[0] as
+    // the width, which is invisible on the square tiles this actually gets (256/512) and
+    // garbles a non-square one.
+    //
+    // this.shape is normalised to [width, height] rather than passed straight through:
+    // computeElevationFromGeoTIFF below already stores that order, and
+    // QuadTreeTileMaterial destructures it as [width, height]. Passing pixels.shape
+    // through meant the two elevation sources disagreed about their own axis order.
     computeElevationFromRGBA(pixels) {
-        this.shape = pixels.shape;
-        const width = pixels.shape[0];
-        const height = pixels.shape[1];
+        const height = pixels.shape[0];
+        const width = pixels.shape[1];
+        this.shape = [width, height];
         const elevation = new Float32Array(width * height);
         const geoidCorners = geoidCorrectionForTile(this.map.options.mapProjection, this.z, this.x, this.y);
         const xScale = width > 1 ? 1 / (width - 1) : 0;
         const yScale = height > 1 ? 1 / (height - 1) : 0;
-        for (let i = 0; i < width; i++) {
-            for (let j = 0; j < height; j++) {
-                const ij = i + width * j;
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const ij = x + width * y;       // row-major, x fastest
                 const rgba = ij * 4;
                 elevation[ij] =
                     pixels.data[rgba] * 256.0 +
                     pixels.data[rgba + 1] +
                     pixels.data[rgba + 2] / 256.0 -
                     32768.0 +
-                    interpolateGeoidOffset(geoidCorners, i * xScale, j * yScale);
+                    interpolateGeoidOffset(geoidCorners, x * xScale, y * yScale);
             }
         }
         this.elevation = elevation;
     }
 
     // Mapbox is height = -10000 + ((R * 256 * 256 + G * 256 + B) * 0.1)
+    // Same axis-order correction as computeElevationFromRGBA above.
     computeElevationFromRGBA_MB(pixels) {
-        this.shape = pixels.shape;
-        const width = pixels.shape[0];
-        const height = pixels.shape[1];
+        const height = pixels.shape[0];
+        const width = pixels.shape[1];
+        this.shape = [width, height];
         const elevation = new Float32Array(width * height);
         const geoidCorners = geoidCorrectionForTile(this.map.options.mapProjection, this.z, this.x, this.y);
         const xScale = width > 1 ? 1 / (width - 1) : 0;
         const yScale = height > 1 ? 1 / (height - 1) : 0;
-        for (let i = 0; i < width; i++) {
-            for (let j = 0; j < height; j++) {
-                const ij = i + width * j;
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const ij = x + width * y;       // row-major, x fastest
                 const rgba = ij * 4;
                 elevation[ij] =
                     (pixels.data[rgba] * 256.0 * 256.0 +
                         pixels.data[rgba + 1] * 256 +
                         pixels.data[rgba + 2]) * 0.1
                     - 10000 +
-                    interpolateGeoidOffset(geoidCorners, i * xScale, j * yScale);
+                    interpolateGeoidOffset(geoidCorners, x * xScale, y * yScale);
             }
         }
         this.elevation = elevation;
