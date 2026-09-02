@@ -225,15 +225,30 @@ module.exports = (env = {}) => ({
                 //                        cannot be used to POST page data elsewhere.
                 //
                 // The two directives that would actually stop an exfiltration —
-                // script-src and connect-src — are NOT set, because they would break core
-                // features rather than attackers:
+                // script-src and connect-src — are NOT set:
                 //   - connect-src cannot be restricted while `?custom=<any URL>` loads a
                 //     sitch from an arbitrary origin (src/index.js), and while map tiles
                 //     come from a long, growing list of hosts. It would have to be '*'.
-                //   - script-src would need 'unsafe-eval' anyway for Scripted Video's
-                //     AsyncFunction and for OpenCV's WASM, plus 'unsafe-inline'; with both
-                //     present it stops very little.
-                // Tightening either needs the arbitrary-URL sitch loader reworked first.
+                //     Tightening it needs that loader reworked first.
+                //   - script-src is closer than it looks. Scripted Video no longer counts
+                //     against it: its AsyncFunction is compiled only inside
+                //     ScriptRunnerWorker, and the page has no fallback that runs it. Nor is
+                //     'unsafe-inline' needed — the emitted index.html carries no inline
+                //     <script> and no inline style. What still forces 'unsafe-eval' is
+                //     ndarray, which compiles generated code at runtime
+                //     (construct_/TrivialArray/CTOR_LIST); it is one direct dependency,
+                //     reached only from src/js/get-pixels-mick.js. OpenCV's WASM needs
+                //     'wasm-unsafe-eval', a far narrower grant than 'unsafe-eval'.
+                //
+                // Delivered as a meta tag, which cannot carry frame-ancestors (so there is
+                // no clickjacking protection) or a reporting endpoint. Both need this moved
+                // to a response header.
+                //
+                // If default-src is ever added here, add worker-src 'self' EXPLICITLY.
+                // worker-src otherwise inherits through child-src, and Scripted Video now
+                // depends on that worker absolutely — with the fallback gone, blocking it
+                // kills the feature outright instead of degrading it.
+                //
                 // See docs/APIKeys.md, which tells users this gap exists.
                 'Content-Security-Policy': {
                     'http-equiv': 'Content-Security-Policy',

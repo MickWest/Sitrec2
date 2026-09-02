@@ -1324,11 +1324,18 @@ class CSitrecAPI {
             },
 
             setScriptedVideoScript: {
-                // SECURITY: the "script" is not a sandboxed DSL — its body is compiled with
-                // AsyncFunction and run in the page main world (see scriptedVideo/ScriptJSRunner.js).
-                // llmCallable:false withholds it from the chatbot tool surface and blocks it in
-                // handleAPICall when the caller is the LLM, closing the indirect-prompt-injection
-                // ACE path (B1). Trusted UI/MCP callers are unaffected.
+                // SECURITY: the "script" is not a sandboxed DSL — its body is real
+                // JavaScript, compiled with AsyncFunction. That compile happens ONLY inside
+                // ScriptRunnerWorker, which has no DOM and whose network and storage globals
+                // are removed, and there is no in-process fallback (see
+                // scriptedVideo/ScriptRunnerClient.js). So this is no longer an
+                // arbitrary-code-execution path in the page.
+                //
+                // The gate stays regardless: the timeline the script produces drives the
+                // real scene, so setting one is an ACTION, not a query. llmCallable:false
+                // withholds it from the chatbot tool surface and blocks it in handleAPICall
+                // when the caller is the LLM, closing the indirect-prompt-injection path
+                // (B1). Trusted UI/MCP callers are unaffected.
                 llmCallable: false,
                 doc: "Set the active Scripting tab's cinematic camera script and parse it (use previewScriptedVideo to play it). DSL: one command per line; plain/await lines are sequential, '&' lines run concurrently, '#' comments, quote multi-word captions. Camera: from(target,secs,bearing,dist,elev) place absolutely, zoom(target,secs,dist), orbit(target,secs,deg,rise), track, follow(target,secs,dist,height), ride(target,secs,lookAt,height,back) ride ON a moving target looking at another, rise(target,secs,m), fov(deg,secs), flyto(look,secs), wait/linger(secs). Layout/caption: view(name|'photo'|{layout}), text(\"cap\",secs), fade(view,secs,to). Settings/objects: set/show/hide a menu control OR a scene-object id. Targets: object, witness, a node id, or 'lat,lon,alt'.",
                 params: { script: "The full script text (string)" },
@@ -1345,8 +1352,10 @@ class CSitrecAPI {
             },
 
             previewScriptedVideo: {
-                // SECURITY: executes the active script body (AsyncFunction, page main world).
-                // Gated alongside setScriptedVideoScript — see the note there. (B1)
+                // SECURITY: runs the active script body (AsyncFunction, inside the
+                // ScriptRunnerWorker sandbox) and plays the resulting timeline against the
+                // live scene. Gated alongside setScriptedVideoScript — see the note there,
+                // including why the gate outlives the sandbox. (B1)
                 llmCallable: false,
                 doc: "Start previewing the active Scripting script (the cinematic camera move), optionally from a given time in seconds. Use stopScriptedVideo to end.",
                 params: { at: "Start time in seconds (float, optional, defaults to 0)" },
