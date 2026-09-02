@@ -193,7 +193,16 @@ export async function setupConfigPaths() {
     console.log("Serverless mode: using relative paths for UPLOAD, CACHE, and TERRAIN");
     SITREC_UPLOAD = "/user-files/";
     SITREC_CACHE = "/cache/";
-    SITREC_TERRAIN = "../sitrec-terrain/";
+    // The "Local" map and elevation sources read their tiles from here. The default
+    // "../sitrec-terrain/" is a SIBLING of the app directory, which is right for the
+    // desktop server (it routes /sitrec-terrain, see tests/desktopServer.test.js) and
+    // for a local install served next to the tile mirror. It is wrong for a static host
+    // that publishes one directory and nothing above it — on a GitHub Pages project site
+    // at "/<repo>/" it escapes the published site and every tile 404s, with no fallback
+    // because filterSourcesForServerless() has already dropped the internet providers.
+    // SITREC_TERRAIN_URL overrides it, so such a deploy can point at a mirror inside its
+    // own directory ("./sitrec-terrain/") or at any other origin serving the same layout.
+    SITREC_TERRAIN = getEnv("SITREC_TERRAIN_URL", process.env.SITREC_TERRAIN_URL) || "../sitrec-terrain/";
     
     // Populate Globals.env from compile-time process.env values (injected by dotenv-webpack)
     Globals.env = {

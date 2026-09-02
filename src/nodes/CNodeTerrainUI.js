@@ -479,13 +479,18 @@ export class CNodeTerrainUI extends CNode {
         // Docker entrypoint). Runtime values must win over build-time baked ones, so a
         // DEFAULT_MAP_TYPE in a container .env is honoured even if the image happened to bake
         // a legacy DOCKER_MAP_TYPE. DOCKER_* is only an optional Docker-only override.
-        const defaultMapType = isServerless
-            ? "Local"
-            : (getEnv("DOCKER_MAP_TYPE")
-                || getEnv("DEFAULT_MAP_TYPE")
-                || (process.env.DOCKER_BUILD ? process.env.DOCKER_MAP_TYPE : "")
-                || process.env.DEFAULT_MAP_TYPE
-                || "Debug");
+        // Serverless builds used to force "Local" here, which made a static deploy with no
+        // tile mirror unusable: filterSourcesForServerless() has already dropped every
+        // internet provider, so the app opened on a source whose tiles all 404. The env
+        // value is now read in serverless too. It costs nothing when it names a stripped
+        // source — pickAvailableSourceType() only accepts a defaultType that still exists
+        // and otherwise falls back to "Local", exactly as before — and it is what lets a
+        // static deploy make a CustomMap_<NAME> (which does survive the filter) its default.
+        const defaultMapType = getEnv("DOCKER_MAP_TYPE")
+            || getEnv("DEFAULT_MAP_TYPE")
+            || (process.env.DOCKER_BUILD ? process.env.DOCKER_MAP_TYPE : "")
+            || process.env.DEFAULT_MAP_TYPE
+            || (isServerless ? "Local" : "Debug");
 
         // map type from the terrain object in a saved sitch, or default to configured default.
         // quickTerrain mode (testAll=2) always forces Debug terrain for speed.
@@ -609,13 +614,11 @@ export class CNodeTerrainUI extends CNode {
 
         // Same precedence as the map type: runtime DOCKER_ELEVATION_TYPE -> runtime
         // DEFAULT_ELEVATION_TYPE -> build-time values -> "Flat". Runtime wins over build-time.
-        const defaultElevationType = isServerless
-            ? "Local"
-            : (getEnv("DOCKER_ELEVATION_TYPE")
-                || getEnv("DEFAULT_ELEVATION_TYPE")
-                || (process.env.DOCKER_BUILD ? process.env.DOCKER_ELEVATION_TYPE : "")
-                || process.env.DEFAULT_ELEVATION_TYPE
-                || "Flat");
+        const defaultElevationType = getEnv("DOCKER_ELEVATION_TYPE")
+            || getEnv("DEFAULT_ELEVATION_TYPE")
+            || (process.env.DOCKER_BUILD ? process.env.DOCKER_ELEVATION_TYPE : "")
+            || process.env.DEFAULT_ELEVATION_TYPE
+            || (isServerless ? "Local" : "Flat");
 
         // quickTerrain mode (testAll=2) always forces Flat elevation for speed.
         // Regression mode no longer forces Local globally; tests that need Local should pass

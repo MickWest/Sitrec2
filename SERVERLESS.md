@@ -232,6 +232,49 @@ Deploy to:
 - Vercel
 - Any static file hosting
 
+The build is about 141 MB in 478 files, and the largest single file is 12 MB.
+
+### Serving from a subdirectory
+
+The build works from any path, not only from the root of a domain. `SITREC_APP` is derived
+from `window.location.pathname` at run time (`src/configUtils.js`), and webpack's
+`publicPath: 'auto'` makes the script tags relative. Nothing is baked in.
+
+Two things need attention on a host that publishes one directory and nothing above it:
+
+- **Terrain.** `filterSourcesForServerless()` (`src/terrainSourceUtils.js`) removes every map
+  and elevation source that is not marked `allowInServerless`. That removes all the built-in
+  internet providers, and leaves "Local", which reads tiles from `SITREC_TERRAIN` — by default
+  `../sitrec-terrain/`, a **sibling** of the app directory. A subdirectory-only host cannot
+  serve that, so every tile 404s. Fix it in one of two ways:
+  - Define your own sources with `SITREC_CUSTOM_MAP_<NAME>_*` and
+    `SITREC_CUSTOM_ELEVATION_<NAME>_*` in `config/shared.env`. Sources built from those
+    variables **do** carry `allowInServerless`, so they survive the filter. ESRI World Imagery
+    and AWS Terrarium both need no API key and allow cross-origin requests. Then set
+    `DEFAULT_MAP_TYPE=CustomMap_<NAME>` and `DEFAULT_ELEVATION_TYPE=CustomElevation_<NAME>`.
+  - Or copy a tile mirror into the published directory and set
+    `SITREC_TERRAIN_URL=./sitrec-terrain/`. Imagery z0-6 plus elevation z0-5 is about 136 MB.
+- **A `.nojekyll` file**, but only if the host runs Jekyll over what you give it — that is,
+  GitHub Pages in "deploy from a branch" mode, which processes the branch before serving it.
+  A GitHub Actions deployment serves the artifact as-is, with no Jekyll involved, so it needs
+  no marker. Note that `actions/upload-pages-artifact` strips dotfiles from the tarball by
+  default, so adding one there does nothing anyway.
+
+### GitHub Pages
+
+`.github/workflows/pages.yml` does all of the above and publishes the result. It is manual
+(`workflow_dispatch`) by default; uncomment its `push` trigger to deploy from `main`.
+
+**The Pages source must be set to "GitHub Actions"** in the repository settings. A repository
+that still has the older "deploy from a branch" setting will run the build and then fail at
+the deploy step. Switching is also what keeps the build out of git: the artifact goes to
+Actions storage and then to the Pages CDN, and nothing is committed. Publishing to a
+`gh-pages` branch instead writes the whole build into the repository history on every deploy,
+permanently.
+
+Before it publishes, `postbuild-serverless` runs `scripts/auditBundleSecrets.js` over the
+output, so a leaked key fails the job rather than reaching the web.
+
 ## Want Cloud Features?
 
 For user accounts, cloud sync, AI chat, and server-side saves, use the **Standalone** or **Full Server** build instead. See `docs/dev/Installing-and-configuring.md` for setup instructions.

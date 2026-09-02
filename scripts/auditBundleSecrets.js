@@ -71,6 +71,21 @@ function isPlaceholderValue(value) {
     return PLACEHOLDER_SHAPE.test(value) && PLACEHOLDER_WORDS.test(value);
 }
 
+// The one literal shared.env.example and config.js.example ship in place of a credential,
+// and the value src/ compares against to decide a key is not configured yet (see
+// hasRequiredToken in CNodeTerrainUI.js and WaterMaskTiles.js). Because the app carries that
+// comparison in its own source, an unconfigured clone searched its build for "EXAMPLEKEY",
+// found the check, and failed the audit on itself — so `npm run dev-serverless` could not
+// succeed on a fresh checkout.
+//
+// This is an EXACT match, not isPlaceholderValue(). That test is written for the provider-URL
+// scan, where the credential is a Mapbox or MapTiler token and therefore always mixed case, so
+// requiring an all-upper-case value cannot excuse a real one. That reasoning does NOT carry to
+// the scans below: an AWS access key id is all upper case and alphanumeric, so a real
+// S3_ACCESS_KEY_ID that happened to contain "FAKE" or "SAMPLE" would satisfy the heuristic and
+// be waved through. One exact string cannot.
+const UNSET_CREDENTIAL_SENTINEL = "EXAMPLEKEY";
+
 const SERVER_ENV_FILE = "shared.env.php";
 const SERVER_ENV_GUARD = "<?php";
 
@@ -134,6 +149,10 @@ function collectEnvSecretCandidates(mode = "bundle") {
             continue;
         }
 
+        if (trimmedValue === UNSET_CREDENTIAL_SENTINEL) {
+            continue;
+        }
+
         // A full-server build is supposed to publish these two.
         if (mode === "server" && CLIENT_PUBLIC_ENV_KEYS.has(key)) {
             continue;
@@ -167,6 +186,10 @@ function collectConfigLiteralCandidates() {
         while ((match = regex.exec(configText)) !== null) {
             const value = match[1];
             if (!value || value.includes("${")) {
+                continue;
+            }
+
+            if (value === UNSET_CREDENTIAL_SENTINEL) {
                 continue;
             }
 

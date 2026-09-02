@@ -123,6 +123,12 @@ patterns.push(
     { from: "favicon-512.png", to: "./" },
     { from: "favicon-32x32.png", to: "./" },
     { from: "favicon-16x16.png", to: "./" },
+    // site.webmanifest names these two, and nothing else did — so every build published a
+    // manifest pointing at icons it had not shipped. It went unnoticed while the manifest's
+    // own <link href> was root-absolute, because on an install under a path (/sitrec/, or a
+    // static host's subdirectory) the manifest itself 404'd first.
+    { from: "android-chrome-192x192.png", to: "./" },
+    { from: "android-chrome-512x512.png", to: "./" },
     { from: "site.webmanifest", to: "./" }
 );
 

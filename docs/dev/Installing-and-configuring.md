@@ -814,6 +814,14 @@ Open **http://localhost:3000/sitrec**
 
 After building with `npm run build-serverless`, the files in `dist-serverless/` can be opened directly in a browser, hosted on any static server (GitHub Pages, S3, etc.), or run completely offline.
 
+The build is about 141 MB and works from any path, so it can be published in a subdirectory.
+One thing needs configuring when you do: the built-in internet map sources are stripped from
+serverless builds, and the "Local" source that remains reads tiles from a sibling directory a
+subdirectory-only host cannot serve. Define your own keyless sources instead, or set
+`SITREC_TERRAIN_URL`. See [SERVERLESS.md](../../SERVERLESS.md#serving-from-a-subdirectory).
+`.github/workflows/pages.yml` does all of it and publishes the app to GitHub Pages. It writes
+nothing to the repository — the build goes up as a workflow artifact, never as a commit.
+
 **Limitations:** No server-side saves, no cloud sync, no AI chat.
 **Advantages:** Zero backend dependencies, works offline, data never leaves your machine.
 
