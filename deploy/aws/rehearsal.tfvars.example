@@ -1,0 +1,40 @@
+# Rehearsal in an ordinary commercial region, with the same constraints the
+# target partition imposes: FIPS endpoints, no route out for the tasks, every
+# ARN built from the partition. Copy to rehearsal.tfvars (ignored by git) and
+# fill in the values.
+
+region = "us-west-2"
+name   = "sitrec"
+fips   = true
+
+# The derived image (base image plus the trust files), pushed to the
+# repository this module creates. A bare digest resolves against it.
+image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+hostname        = "sitrec-rehearsal.example.org"
+route53_zone_id = "Z0000000000000000000A"
+# certificate_arn = ""   # only when route53_zone_id is empty
+
+# Who may reach the balancer.
+client_cidrs = ["203.0.113.0/24"]
+
+# Your own test authority (root plus intermediate, PEM, no blank lines) and a
+# revocation list with one revoked user.
+trust_store_bundle_path = "../../.certs/rehearsal/ca-bundle.pem"
+crl_path                = "../../.certs/rehearsal/crl.pem"
+
+# Operator shell inside the task for the verification checks; turn off after.
+enable_exec             = true
+enable_bedrock_endpoint = false
+
+# admin_role_arn = "arn:<partition>:iam::<account>:role/<admin-role>"
+
+log_retention_days = 30
+task_cpu           = 512
+task_memory        = 1024
+vpc_cidr           = "10.40.0.0/16"
+
+task_environment = {
+  AUTH_ID_SOURCE  = "san_principal,cn_suffix"
+  AUTH_ID_PATTERN = "^[A-Za-z0-9._-]{3,64}$"
+}

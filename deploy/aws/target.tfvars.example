@@ -1,0 +1,54 @@
+# The target partition. Every value here is specific to that deployment and is
+# kept outside the tree: copy this file to target.tfvars (ignored by git) and
+# fill it in there. No value in this template names the partition; the
+# provider derives it from the region.
+
+region = "<the target partition's region>"
+name   = "sitrec"
+fips   = true
+
+# The derived image (base image plus the trust files), pushed to the
+# repository this module creates in the target account. A bare digest resolves
+# against it.
+image = "sha256:<digest of the derived image>"
+
+hostname = "<hostname users type>"
+
+# One of the two. DNS validation needs the zone in Route 53 in this partition;
+# otherwise import or issue the certificate in ACM and pass its ARN.
+route53_zone_id = "<hosted zone id, or empty>"
+certificate_arn = "<certificate ARN, or empty>"
+
+# The address ranges your users arrive from.
+client_cidrs = ["<cidr>", "<cidr>"]
+
+# Your authority's bundle (root plus intermediates, PEM, no blank lines) and
+# its revocation list. Check the balancer's size limits first.
+trust_store_bundle_path = "<path to ca-bundle.pem>"
+crl_path                = "<path to crl.pem, or empty>"
+
+# Off unless the verification checks are being run.
+enable_exec             = false
+enable_bedrock_endpoint = false
+
+# A role that may reach data bucket objects from outside the VPC endpoint.
+admin_role_arn = "<role ARN, or empty>"
+
+log_retention_days = 90
+task_cpu           = 512
+task_memory        = 1024
+vpc_cidr           = "<vpc cidr>"
+
+# Deployment-specific application settings. Merged over the hardened
+# defaults; never a secret.
+task_environment = {
+  AUTH_POLICY_OIDS                      = "<certificate policy identifiers, or omit the line>"
+  AUTH_ID_SOURCE                        = "san_principal,cn_suffix"
+  AUTH_ID_PATTERN                       = "^[A-Za-z0-9._-]{3,64}$"
+  SITREC_CUSTOM_MAP_INTERNAL_URL        = "https://<tiles>/imagery/{z}/{x}/{y}.jpg"
+  SITREC_CUSTOM_MAP_INTERNAL_NAME       = "Imagery"
+  SITREC_CUSTOM_ELEVATION_INTERNAL_URL  = "https://<tiles>/terrain/{z}/{x}/{y}.png"
+  SITREC_CUSTOM_ELEVATION_INTERNAL_NAME = "Elevation"
+  DEFAULT_MAP_TYPE                      = "INTERNAL"
+  DEFAULT_ELEVATION_TYPE                = "INTERNAL"
+}

@@ -66,6 +66,24 @@ jobs:
     - name: run tests
       run: npm test
 
+  partition_lint:
+    # Static partition-neutrality checks for the hardened AWS deployment
+    # (deploy/aws/lint/README.md): no commercial-partition ARN prefixes, region
+    # or endpoint literals, or resource types an isolated partition lacks.
+    # Plain Node with no dependencies, so there is nothing to install.
+    if: true  # the job can be disabled from here
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: use node.js 22
+      uses: actions/setup-node@v6
+      with:
+        node-version: 22.4
+    - name: partition lint
+      run: npm run lint-partition
+
   # playwright:
   #   # DISABLED: Playwright tests are unreliable in GitHub CI.
   #   # Run locally with: npm run test-ui

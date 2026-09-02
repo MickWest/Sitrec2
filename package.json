@@ -29,6 +29,7 @@
     "lint": "npx biome lint src/ --only=correctness/noUndeclaredVariables",
     "lint-fix": "npx biome lint src/ --only=correctness/noUndeclaredVariables --write",
     "lint-staged": "node scripts/lint-staged.js",
+    "lint-partition": "node deploy/aws/lint/partition-lint.mjs --static-only",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "generate-notices": "npx webpack --config webpack.prod.js --json /tmp/sitrec-webpack-stats.json && node scripts/generateThirdPartyNotices.js --from-stats /tmp/sitrec-webpack-stats.json",
     "generate-notices-quick": "node scripts/generateThirdPartyNotices.js",

@@ -27,8 +27,8 @@ values you supply; nothing in the code assumes a particular one.
 | Same-origin object reads with a private bucket (`s3-proxy.php` signed stream) | **Available** | `sitrecServer/s3-proxy.php` |
 | Reverse-proxy scheme handling (`X-Forwarded-Proto`) | **Available** | `sitrecServer/requestScheme.php` |
 | Egress tripwire on the built artifact | **Available** | `scripts/auditBundleEgress.js`, runs in `postbuild-secure` |
-| Infrastructure as code (one module, partition-neutral) | Planned | `deploy/aws/` |
-| Partition lint (fails a plan that uses a service the target lacks) | Planned | `deploy/aws/lint/` |
+| Infrastructure as code (one Terraform module, partition-neutral: network, endpoints, registry, buckets, balancer with mutual TLS, service, roles, logs, trail) | **Available** | `deploy/aws/`, section 8 |
+| Partition lint (static checks in CI on every push; plan checks against a services snapshot for the target region) | **Available** | `deploy/aws/lint/`, section 12 |
 | Trust store and user map fetched at container start | Planned; use a derived image for now (section 8.3) | `docker/entrypoint.sh` |
 | Server endpoint allow-list in the secure artifact (the proxies, assistant relays, diagnostics and telemetry writers are not packaged; the audit checks the packaged tree and the identity seam) | **Available** | `scripts/secure-server-allowlist.json`, `webpackCopyPatterns.js`, `scripts/auditBundleEgress.js` |
 | Mirror endpoint for staged map, elevation, element-set and wind data | Planned; use the custom-source settings against your own service for now (section 9) | `sitrecServer/mirror.php` |
@@ -390,8 +390,21 @@ that a full logout means closing the browser.
 
 ## 8. The load balancer, the network and the service
 
-Until the infrastructure module lands, these are console or CLI steps. Names in angle
-brackets are yours.
+The Terraform module in `deploy/aws/` builds everything in this section from one variables
+file; its README has the variables and the two-stage first apply (create the registry,
+push the derived image, apply the rest). The steps below are the same resources described
+one by one, for reading the module, for a console build, and for checking what the module
+made. Names in angle brackets are yours.
+
+```
+cd deploy/aws
+cp target.tfvars.example target.tfvars      # fill in; this file is ignored by git
+terraform init
+terraform plan -var-file=target.tfvars -out plan.tfplan
+terraform show -json plan.tfplan > plan.json
+node lint/partition-lint.mjs --region <region> --plan plan.json   # section 12
+terraform apply plan.tfplan
+```
 
 ### 8.1 Load balancer
 
@@ -649,7 +662,16 @@ authority issued; `curl` presents it with `--cert alice.p12:<password> --cert-ty
 ## 12. Rehearsing in a commercial region first
 
 You can prove the whole shape in an ordinary AWS region before you have access to the
-target partition, as long as you impose the same constraints on yourself:
+target partition, as long as you impose the same constraints on yourself. The module makes
+that a variables file: `rehearsal.tfvars.example` names a commercial region with FIPS on
+and the exec shell enabled, `target.tfvars.example` names the target with placeholders, and
+nothing else differs. The partition lint keeps the two from drifting apart: on every push it
+scans the module and the server code for ARN, endpoint and region literals and for the
+resource types an isolated deployment never uses, and before an apply it checks the plan's
+every service against a snapshot of what the target region offers, fetched from AWS's
+public infrastructure parameters with `deploy/aws/lint/refresh-services.mjs` (this needs a
+credential with `ssm:GetParametersByPath` in a commercial region; snapshots are never
+committed). The constraints, then:
 
 - Set `AWS_USE_FIPS_ENDPOINT=true` and `S3_USE_FIPS=true`; commercial US regions have FIPS
   endpoints too.
@@ -709,6 +731,8 @@ same commit:
 | `sitrecServer/s3_client.php` settings | section 6.3 |
 | `docker/entrypoint.sh` `CLIENT_VARS` / `SERVER_VARS` | any table that lists a setting the entrypoint must forward |
 | `Dockerfile.release` build arguments or base image | section 4 |
+| `deploy/aws/*.tf` resources, variables or the task environment defaults | sections 6, 7.2, 8 and the status table |
+| `deploy/aws/lint/partition-lint.mjs` checks or its resource map | section 12 and `deploy/aws/lint/README.md` |
 | a planned row in the status table becoming real | the status table and the section it points to |
 
 An agent asked to "update the hardened AWS guide" should diff the files in the left column

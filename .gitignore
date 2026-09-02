@@ -88,3 +88,19 @@ AGENTS.md
 
 # Working directory of the user-data egress check (scripts/security-scan-egress.mjs)
 .egress/
+
+# Region service snapshots for the partition lint (deploy/aws/lint/README.md).
+# Fetched per target region by refresh-services.mjs and never committed: a
+# snapshot names the region and partition a deployment targets.
+/deploy/aws/lint/snapshots/
+
+# Terraform working files of the AWS deployment module (deploy/aws). The
+# provider lock file and the two .tfvars.example templates stay tracked; a
+# filled-in .tfvars names a real deployment and never enters the tree.
+/deploy/aws/.terraform/
+/deploy/aws/*.tfstate
+/deploy/aws/*.tfstate.*
+/deploy/aws/*.tfvars
+!/deploy/aws/*.tfvars.example
+/deploy/aws/*.tfplan
+/deploy/aws/plan.json
