@@ -199,6 +199,8 @@ describe("docs on disk", () => {
         "dev/Deploying-on-GitHub-Pages.md", // the serverless build on GitHub Pages
         "dev/FileRehosting.md",             // rehosting + server auth
         "dev/Installing-and-configuring.md",// install guide
+        "dev/Secure-Build.md",              // the secure build: outbound features removed at compile time
+        "dev/Installing-Hardened-Sitrec-on-AWS.md", // the secure build on AWS: load balancer, client certificates, private bucket
         "dev/SettingsManager.md",           // settings architecture
         "dev/dynamic-gui-mirroring.md",     // CustomManagerMirror API
         "dev/k8s-example/README.md",        // Kubernetes example manifests

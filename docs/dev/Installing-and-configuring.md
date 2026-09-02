@@ -172,6 +172,27 @@ podman-compose down && podman-compose up           # Podman
 
 Map sources that require an API token (e.g. MapBox, MapTiler) only appear in the terrain menu when the corresponding token is provided. Without any tokens, the app uses ESRI World Imagery and AWS Terrarium elevation, which require no keys.
 
+#### Object storage in another partition or with role credentials
+
+The cloud-storage settings above assume a bucket in a standard region, reached with a
+static access key. Four optional settings cover the other layouts. Each is safe to leave
+out: an install that sets none of them behaves exactly as before, and the object URLs it
+hands out do not change.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `S3_CREDENTIAL_SOURCE` | `static` when both keys are set, otherwise `anonymous` | `static`: sign requests with `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`. `role`: no keys in the configuration; the server signs with whatever the AWS SDK finds on its own (an instance or container role, `AWS_*` variables, a shared profile). `anonymous`: never sign; only public objects are reachable and nothing can be saved. |
+| `S3_USE_FIPS` | `false` in the standard regions; on by default in the partition where FIPS endpoints are the norm | Send requests to the region's `s3-fips.` endpoint. Set it explicitly to override the default either way. |
+| `S3_ENDPOINT` | unset | Full URL of a custom endpoint, e.g. `https://objects.example.internal:9000` — another partition's S3, an S3-compatible store, or a gateway inside an isolated network. Object URLs are then built on that host, and links on that host are accepted back by `object.php`. |
+| `S3_USE_PATH_STYLE` | `true` when `S3_ENDPOINT` is set | Path-style addressing (`https://host/bucket/key`) for the custom endpoint. Set to `false` for virtual-hosted style (`https://bucket.host/key`). Ignored without `S3_ENDPOINT`. |
+| `S3_READS_VIA_SERVER` | `false` | When `true`, every object read the server hands to the browser is a same-origin `sitrecServer/s3-proxy.php` URL, streamed with the server's credentials, instead of a public or presigned storage URL. For deployments whose browsers cannot reach the storage endpoint. Pair it with `USE_S3_PRESIGNED_URLS=false` so uploads go through the server too. |
+
+With `S3_CREDENTIAL_SOURCE=role` there is no storage secret to configure at all: leave
+`S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` unset and give the machine, container or
+pod an identity that can read and write the bucket. Role credentials are an explicit
+opt-in — an install with no keys and no `S3_CREDENTIAL_SOURCE` stays anonymous rather
+than probing for a role, so a plain local checkout never waits on a credential lookup.
+
 ### Videos for Legacy Sitches (Optional)
 
 Sitrec works fully without any video files — you can create and view custom sitches, load tracks, and explore 3D terrain. Video files are only needed to view legacy analysis sitches (Gimbal, GoFast, Aguadilla, etc.). These sitches can also be viewed online at [metabunk.org/sitrec](https://www.metabunk.org/sitrec).
@@ -402,6 +423,10 @@ kubectl create secret generic sitrec-s3 \
 
 > The Secret must live in the **same namespace** as the Deployment that uses it. Add
 > `-n your-namespace` to the command (and to the Deployment) if you're not using `default`.
+
+> **No keys at all:** if the pod's service account is bound to a role that can access the
+> bucket, skip this Secret and set `S3_CREDENTIAL_SOURCE=role` with the other non-secret
+> settings instead (see [Object storage in another partition or with role credentials](#object-storage-in-another-partition-or-with-role-credentials)).
 
 > ⚠️ **Kubernetes Secrets are base64-encoded, not encrypted.** Anyone with `get secret`
 > permission on the namespace — or direct etcd access — can read them in clear text. For
@@ -909,7 +934,7 @@ Edit the files in `config/`:
 
 - **`shared.env`** — API keys, feature flags, storage settings. See `shared.env.example` for all options.
 - **`config.js`** — Custom map sources, help links, local sitch selection. See `config.js.example`.
-- **`config.php`** — Server-side auth integration (XenForo, etc.). See `config.php.example`.
+- **`config.php`** — Server-side auth integration (XenForo, etc.). See `config.php.example`. For mutual TLS, see [Client certificate authentication](#client-certificate-authentication).
 - **`config-install.js`** — Build output paths.
 
 ### Keeping shared.env up to date
@@ -1059,6 +1084,7 @@ After building, verify with these URL tests (adjust the path if not at `/sitrec/
 | Command | Description |
 |---------|-------------|
 | `npm run deploy` | Minified production build to `prod_path` |
+| `npm run build-secure` | Minified production build to `dist-secure/` with every outbound feature removed at compile time, then the secrets and egress audits — see [Secure Build](Secure-Build.md) |
 
 ### Port Configuration
 
@@ -1106,6 +1132,8 @@ Ensure the five server directories exist on the production server with appropria
 
 For a public site on its own domain, the simpler route is the released container image on a small VPS with automatic HTTPS and self-applying updates: see [Deploying on a VPS with Podman and Caddy](Deploying-on-a-VPS.md).
 
+For an isolated deployment with client certificate authentication, a private storage bucket and no route to the internet, see [Installing Hardened Sitrec on AWS](Installing-Hardened-Sitrec-on-AWS.md), which uses the [secure build](Secure-Build.md).
+
 ### Building for another deployment
 
 One checkout can build for more than one site. A second site usually needs its own `shared.env` (its own keys, map defaults and storage settings) and its own output directory, and neither should disturb the main build. Two environment variables override the defaults for a single build:
@@ -1147,6 +1175,44 @@ pip3 install --no-cache-dir --break-system-packages eccodes certifi
 When HTTPS ends at a proxy in front of Sitrec (Caddy, nginx, a load balancer, a Kubernetes ingress) and the proxy speaks plain HTTP to Apache or PHP, the backend must be told the real scheme or every URL it builds — the tile-cache redirects, the upload and terrain paths, the CORS origin — comes out as `http://` on an `https://` page, and the browser refuses to fetch them. Sitrec reads the standard `X-Forwarded-Proto` header for this (`sitrecServer/requestScheme.php`). Caddy's `reverse_proxy` sends it by default; for nginx add `proxy_set_header X-Forwarded-Proto $scheme;`. Only the scheme is taken from the proxy; the client address is not, because the localhost rule in `config.php` grants administrator rights and must never trust a client-supplied header.
 
 A related point for the container image: run the proxy and Sitrec as separate containers on a shared network, not in one pod proxying to `127.0.0.1`, for the same reason — Apache would see every visitor as localhost.
+
+### Client certificate authentication
+
+By default (`AUTH_MODE` unset, or `forum`) identity comes from the forum session when `XENFORO_PATH` is set, otherwise from `SITREC_DEFAULT_USERID`, otherwise from the loopback administrator rule described above. `AUTH_MODE=cert` replaces all three with mutual TLS: the visitor presents a client certificate (typically from a hardware token), the proxy or load balancer in front of Sitrec validates it, and the PHP backend re-verifies the leaf certificate against a local trust store and maps the identifier it carries to a Sitrec user id and group list. `AUTH_MODE=none` makes every request anonymous. In `cert` and `none` modes `SITREC_DEFAULT_USERID` and the loopback rule are ignored, so a deployment that turns certificate authentication on cannot fall back to a default identity by mistake. The code is `sitrecServer/auth_cert.php`, selected from `getUserInfoCustom()` in `config.php`.
+
+All settings are read from `shared.env` (or the container environment):
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `AUTH_MODE` | `forum`, `cert` or `none` | `forum` |
+| `AUTH_CERT_SOURCE` | Where the certificate arrives: `header` (a proxy header) or `apache` (Apache's own `SSL_CLIENT_CERT` export) | `header` |
+| `AUTH_CERT_HEADER` | The header carrying the URL-encoded PEM leaf certificate | `X-Amzn-Mtls-Clientcert-Leaf` |
+| `AUTH_TRUSTED_PROXIES` | Comma-separated IPv4/IPv6 addresses or CIDR ranges allowed to assert that header. **Empty refuses every header.** | empty |
+| `AUTH_TRUST_STORE` | Path to a PEM bundle (root and intermediates) the leaf must chain to. Empty refuses. | empty |
+| `AUTH_POLICY_OIDS` | Comma-separated certificate policy identifiers; when set, the leaf must carry at least one | empty (no policy check) |
+| `AUTH_ID_SOURCE` | Where the identifier comes from, first that yields wins: `san_principal` (a principal-name style `user@domain` in the Subject Alternative Name, taking the part before `@`), `cn_suffix` (the part of the Common Name after its last `.`), `cn` (the whole Common Name) | `san_principal,cn_suffix` |
+| `AUTH_ID_PATTERN` | A regular expression the identifier must fully match | `^[A-Za-z0-9._-]{3,64}$` |
+| `AUTH_USER_MAP` | Path to the identity mapping file (below). Empty refuses every identifier. | empty |
+| `AUTH_REQUIRE_CLIENT_EKU` | Require the `clientAuth` extended key usage on the leaf. `false` accepts a leaf with no extended key usage extension; one that names other usages only is still refused. | `true` |
+
+Values may be quoted in `shared.env` (`AUTH_ID_PATTERN="^[0-9]{10}$"`); the quotes are stripped when the value is read.
+
+**The two sources.** With `header`, TLS ends at a load balancer or reverse proxy that verifies the client certificate and forwards the leaf, URL-encoded, in a request header — AWS's Application Load Balancer in verify mode sends `X-Amzn-Mtls-Clientcert-Leaf`. Because any client could send such a header, Sitrec accepts it only when the connection's `REMOTE_ADDR` is in `AUTH_TRUSTED_PROXIES`; with the list empty, every header is refused. List the proxy's addresses or the subnet it lives in, never `0.0.0.0/0`. With `apache`, Apache terminates TLS itself (`SSLVerifyClient require`, `SSLOptions +ExportCertData`) and exports `SSL_CLIENT_CERT`; Sitrec also requires `SSL_CLIENT_VERIFY` to be `SUCCESS`, and the trusted-proxy list is not consulted.
+
+In both cases the backend re-checks the leaf: it must parse, chain to `AUTH_TRUST_STORE` for the client purpose, be inside its validity window, carry the client authentication extended key usage (unless switched off), and carry one of `AUTH_POLICY_OIDS` when that is set. Then the identifier is extracted, checked against `AUTH_ID_PATTERN`, and looked up in the mapping file. Each refusal writes one JSON line to the PHP error log with the reason (`untrusted_proxy`, `no_certificate`, `multiple_certificates`, `not_verified_by_server`, `certificate_unparseable`, `no_trust_store`, `chain_untrusted`, `not_yet_valid`, `expired`, `eku_missing`, `policy_missing`, `identifier_missing`, `identifier_invalid`, `pattern_invalid`, `no_user_map`, `user_map_invalid`, `identifier_unmapped`, `mapping_invalid`), the remote address and a hash prefix of the identifier; neither the certificate nor the identifier itself is logged.
+
+**The identity mapping file** (`AUTH_USER_MAP`) is JSON keyed by identifier. Each entry gives the Sitrec user id and group list (admin=3, registered=2, verified=9, sitrec=14). Keep it outside the web root and readable by the PHP process only:
+
+```json
+{
+  "1234567890":            { "user_id": 42, "groups": [2, 14] },
+  "jones.carol.2222222222": { "user_id": 43, "groups": [3, 2, 14, 9] }
+}
+```
+
+An identifier that is not in the file is refused, so the file is also the access list: adding a line grants access, removing it revokes it for that user's next request.
+
+**What the proxy still owns.** Sitrec checks the chain, the validity window and the extensions of the leaf it is handed, but it does not check revocation (OCSP or CRL) and it has no session of its own — every request is authenticated afresh from the certificate the proxy forwards. Revocation checking and any session timeout are the job of the load balancer or proxy that terminates TLS, and are not yet handled in Sitrec.
 
 ---
 
