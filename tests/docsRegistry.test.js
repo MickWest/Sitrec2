@@ -183,6 +183,7 @@ describe("docs on disk", () => {
         "FitPointsAPI",          // API reference for agents driving the MCP bridge
         "TransitionToECEF",      // coordinate-frame reference, cited from CLAUDE.md
         "Wind-Internals",        // internals reference linked from Wind.md
+        "UserDataEgressCheck",   // developer reference for the per-push egress check, linked from README
     ]);
 
     // Docs in subdirectories of docs/. These are never in the Help menu, so the registry
@@ -194,6 +195,7 @@ describe("docs on disk", () => {
         "dev/ADDING_NEW_SETTINGS.md",       // how to add a user setting
         "dev/AddSitchInCode.md",            // legacy in-code sitch authoring
         "dev/CustomTerrainSources.md",      // map/elevation source configuration
+        "dev/Deploying-on-a-VPS.md",        // VPS deployment with Podman and Caddy
         "dev/FileRehosting.md",             // rehosting + server auth
         "dev/Installing-and-configuring.md",// install guide
         "dev/SettingsManager.md",           // settings architecture
