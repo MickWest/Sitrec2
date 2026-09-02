@@ -42,6 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/object_helpers.php';
+require_once __DIR__ . '/s3_client.php';
 
 define('SITCH_NAME_PATTERN', '/^[^\/\\\\<>\x00-\x1f]+$/u');
 
@@ -176,15 +177,9 @@ function isFeaturedSitch($userID, $name) {
         if (!is_file($path)) return false;
         $entries = json_decode(@file_get_contents($path), true);
     } else {
-        if (empty($s3creds['accessKeyId']) || empty($s3creds['bucket'])) return false;
-        require_once __DIR__ . '/vendor/autoload.php';
+        if (!s3HasCredentials() || empty($s3creds['bucket'])) return false;
         try {
-            $credentials = new Aws\Credentials\Credentials($s3creds['accessKeyId'], $s3creds['secretAccessKey']);
-            $s3 = new Aws\S3\S3Client([
-                'version' => 'latest',
-                'region' => $s3creds['region'],
-                'credentials' => $credentials
-            ]);
+            $s3 = getS3Client();
             $res = $s3->getObject(['Bucket' => $s3creds['bucket'], 'Key' => 'metadata/featured.json']);
             $entries = json_decode((string)$res['Body'], true);
         } catch (Exception $e) {
@@ -240,31 +235,19 @@ if (isset($_GET['get'])) {
         }
 
         if (!is_array($s3creds) ||
-           !isset($s3creds['accessKeyId']) ||
-           !isset($s3creds['secretAccessKey']) ||
            !isset($s3creds['region']) ||
            !isset($s3creds['bucket']) ||
-            empty($s3creds['accessKeyId']) ||
-            $s3creds['accessKeyId'] === 0
+            !s3HasCredentials()
         ) {
             http_response_code(503);
             echo json_encode(['error' => 'S3 credentials incomplete']);
             exit();
         }
 
-        require 'vendor/autoload.php';
-
         $aws = $s3creds;
 
-        // Get it into the right format
-        $credentials = new Aws\Credentials\Credentials($aws['accessKeyId'], $aws['secretAccessKey']);
-
         // Create an S3 client
-        $s3 = new Aws\S3\S3Client([
-            'version' => 'latest',
-            'region' => $aws['region'],
-            'credentials' => $credentials
-        ]);
+        $s3 = getS3Client();
 
         // convert the dir to an S3 path
         // dir will be like '../../sitrec-upload/99999998/'
@@ -376,7 +359,11 @@ if (isset($_GET['get'])) {
                     // Avoid a separate screenshot existence test. Missing screenshots are
                     // handled client-side via img.onerror.
                     $shot = isset($folderShots[$name]) ? $folderShots[$name] : 'screenshot.jpg';
-                    $screenshotUrl = $s3->getObjectUrl($aws['bucket'], $dir . '/' . $name . '/' . $shot);
+                    $screenshotKey = $dir . '/' . $name . '/' . $shot;
+                    // Same-origin when the deployment's browsers cannot reach storage (S3_READS_VIA_SERVER).
+                    $screenshotUrl = s3ReadsViaServer()
+                        ? buildServerObjectUrl($screenshotKey)
+                        : $s3->getObjectUrl($aws['bucket'], $screenshotKey);
                     $latestVersion = isset($folderLatest[$name]) ? $folderLatest[$name] : null;
                     $folders[] = [$name, $date, $screenshotUrl, $latestVersion];
                 }

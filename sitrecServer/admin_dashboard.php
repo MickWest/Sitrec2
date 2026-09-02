@@ -3,6 +3,7 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/user.php';
+require_once __DIR__ . '/s3_client.php';
 
 $userInfo = getUserInfo();
 $userId = $userInfo['user_id'];
@@ -248,14 +249,8 @@ function getS3Usage($limit = 10) {
     }
     
     try {
-        require_once __DIR__ . '/vendor/autoload.php';
         
-        $credentials = new Aws\Credentials\Credentials($s3creds['accessKeyId'], $s3creds['secretAccessKey']);
-        $s3 = new Aws\S3\S3Client([
-            'version' => 'latest',
-            'region' => $s3creds['region'],
-            'credentials' => $credentials
-        ]);
+        $s3 = getS3Client();
         
         $bucket = $s3creds['bucket'];
         $objects = [];
@@ -985,7 +980,7 @@ $userNames = getUserNames($allUserIds);
                 <?php else: ?>
                 <?php foreach ($s3Usage['recent_files'] as $file): 
                     $key = $file['Key'];
-                    $s3Url = 'https://' . $s3Usage['bucket'] . '.s3.' . $s3Usage['region'] . '.amazonaws.com/' . $key;
+                    $s3Url = s3ObjectUrl($s3Usage['bucket'], $key);
                     $keyParts = explode('/', $key);
                     $isSitch = count($keyParts) >= 3 && is_numeric($keyParts[0]) && str_ends_with($key, '.js');
                     $linkUrl = $isSitch ? '../?custom=' . urlencode($key) : $s3Url;

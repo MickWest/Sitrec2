@@ -152,3 +152,14 @@ S3_ACL="public-read"
 if you don't supply these credentials file then the server will just attempt to use the filesystem rehosting.
 
 See shared.env for additional configuration.
+
+Every server endpoint builds its S3 client in one place, `sitrecServer/s3_client.php`
+(`getS3Client()`), from the `S3_*` settings. Besides the static keys above it supports
+role credentials (`S3_CREDENTIAL_SOURCE=role`, no keys in the configuration), FIPS
+endpoints (`S3_USE_FIPS`) and a custom endpoint (`S3_ENDPOINT`, `S3_USE_PATH_STYLE`);
+they are described in
+[Installing and configuring](Installing-and-configuring.md#object-storage-in-another-partition-or-with-role-credentials).
+The unsigned URL that rehosting returns for a public object comes from `s3ObjectUrl()`
+in the same file: `https://<bucket>.s3.<region>.amazonaws.com/<key>` (each key segment
+URL-encoded) for a standard region, or the SDK's resolved endpoint when a FIPS or custom
+endpoint is configured. `S3_PUBLIC_BASE_URL` still overrides the public base for a CDN.

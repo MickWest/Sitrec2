@@ -11,6 +11,10 @@ if (!defined('SITREC_REF_PREFIX')) {
     define('SITREC_REF_PREFIX', 'sitrec://');
 }
 
+// s3ObjectUrl() and the client factory. s3_client.php includes this file back for
+// encodeObjectKeyForUrl(); both use require_once, so either may be loaded first.
+require_once __DIR__ . '/s3_client.php';
+
 /**
  * Reads an integer seconds value from environment with fallback validation.
  *
@@ -120,6 +124,38 @@ function isObjectKeyPublic($key) {
 }
 
 /**
+ * True when object reads must stay on the application's own origin (S3_READS_VIA_SERVER):
+ * the server streams every object through s3-proxy.php instead of handing the browser a
+ * storage URL, presigned or public. For deployments whose browsers cannot reach the
+ * storage endpoint at all. Off unless set, so existing deployments are unchanged.
+ *
+ * @param array|null $env Optional env map (tests); getenv() otherwise.
+ * @return bool
+ */
+function s3ReadsViaServer($env = null) {
+    $value = ($env === null) ? getenv('S3_READS_VIA_SERVER') : ($env['S3_READS_VIA_SERVER'] ?? false);
+    if ($value === false || $value === null || $value === '') return false;
+    if ($value === true) return true;
+    return in_array(strtolower(trim((string)$value)), ['1', 'true', 'yes', 'on'], true);
+}
+
+/**
+ * The same-origin read URL for an object key: s3-proxy.php on this application, which
+ * streams the object with the server's own credentials.
+ *
+ * @param string $key
+ * @param string|null $appUrl Optional base (tests); the global $APP_URL from config_paths.php otherwise.
+ * @return string
+ */
+function buildServerObjectUrl($key, $appUrl = null) {
+    if ($appUrl === null) {
+        global $APP_URL;
+        $appUrl = $APP_URL;
+    }
+    return rtrim((string)$appUrl, '/') . '/sitrecServer/s3-proxy.php?key=' . rawurlencode($key);
+}
+
+/**
  * URL-encodes each path segment of an object key while preserving `/` separators.
  *
  * @param string $key
@@ -143,14 +179,15 @@ function canonicalObjectRef($key) {
 
 /**
  * Builds the canonical S3 bucket URL for an object key.
- * Uses $s3creds from config.php.
+ * Bucket from $s3creds (config.php); host, endpoint and key encoding from
+ * s3ObjectUrl() in s3_client.php.
  *
  * @param string $key
  * @return string
  */
 function buildDefaultS3ObjectUrl($key) {
     global $s3creds;
-    return 'https://' . $s3creds['bucket'] . '.s3.' . $s3creds['region'] . '.amazonaws.com/' . encodeObjectKeyForUrl($key);
+    return s3ObjectUrl((string)($s3creds['bucket'] ?? ''), $key);
 }
 
 /**

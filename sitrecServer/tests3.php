@@ -19,18 +19,12 @@ $user_id = $userInfo['user_id'];
 
 
 // just test if we can connect to S3
-require 'vendor/autoload.php';
+require_once __DIR__ . '/s3_client.php';
 
 
 $aws = $s3creds;
 
-$credentials = new Aws\Credentials\Credentials($aws['accessKeyId'], $aws['secretAccessKey']);
-
-$s3 = new Aws\S3\S3Client([
-    'version' => 'latest',
-    'region' => $aws['region'],
-    'credentials' => $credentials,
-]);
+$s3 = getS3Client();
 
 // create a 100-byte file
 // and upload it to S3

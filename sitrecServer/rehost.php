@@ -25,25 +25,23 @@ require_once __DIR__ . '/object_helpers.php';
 $aws = null;
 
 function startS3() {
-    require 'vendor/autoload.php';
+    require_once __DIR__ . '/s3_client.php';
     global $aws;
     global $s3creds;
 
     $aws = $s3creds;
 
-    // Get it into the right format
-    $credentials = new Aws\Credentials\Credentials($aws['accessKeyId'], $aws['secretAccessKey']);
-
-    // Create an S3 client
-    $s3 = new Aws\S3\S3Client([
-        'version' => 'latest',
-        'region' => $aws['region'],
-        'credentials' => $credentials
-    ]);
-    return $s3;
+    // Create an S3 client. Static keys, role credentials, FIPS and custom
+    // endpoints are all decided in s3_client.php from the S3_* environment.
+    return getS3Client();
 }
 
 function buildObjectAccessUrl($key) {
+    // Same-origin reads when the deployment's browsers cannot reach the storage endpoint
+    // (S3_READS_VIA_SERVER); see object_helpers.php.
+    if (s3ReadsViaServer()) {
+        return buildServerObjectUrl($key);
+    }
     if (isObjectKeyPublic($key)) {
         return buildPublicObjectUrl($key);
     }
@@ -168,7 +166,12 @@ if (isset($_GET['getuser'])) {
     $response['cesium3DBytesDailyRemaining'] = $cesiumBytesRemaining;
 
     // Include 3D buildings API keys only for allowed groups (or localhost).
-    $isLocalhost = ($_SERVER['REMOTE_ADDR'] === '127.0.0.1' ||
+    // The localhost shortcut belongs to the forum/default identity path (AUTH_MODE unset or
+    // "forum"); under client certificate authentication or AUTH_MODE=none only the groups count.
+    $authMode = getenv('AUTH_MODE');
+    $authMode = ($authMode === false) ? 'forum' : strtolower(trim($authMode));
+    $isLocalhost = ($authMode === 'forum' || $authMode === '') &&
+                   ($_SERVER['REMOTE_ADDR'] === '127.0.0.1' ||
                     $_SERVER['REMOTE_ADDR'] === '::1');
     if ($has3DBuildingGroup || $isLocalhost) {
         $googleKey = getenv('GOOGLE_MAPS_API_KEY');

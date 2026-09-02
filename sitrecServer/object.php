@@ -41,6 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/object_helpers.php';
+require_once __DIR__ . '/s3_client.php';
 
 /**
  * Sends a JSON error response and terminates execution.
@@ -75,8 +76,7 @@ function buildLocalObjectUrl($key) {
  * @return string
  */
 function buildS3ProxyObjectUrl($key) {
-    global $APP_URL;
-    return rtrim($APP_URL, '/') . '/sitrecServer/s3-proxy.php?key=' . rawurlencode($key);
+    return buildServerObjectUrl($key);
 }
 
 /**
@@ -122,7 +122,18 @@ function parseLegacyS3Key($ref) {
 
     $host = strtolower($parts['host']);
     $path = rawurldecode($parts['path'] ?? '');
-    $isS3Host = strpos($host, '.s3.') !== false || $host === 's3.amazonaws.com' || str_starts_with($host, 's3.');
+    // Standard hosts: bucket.s3.<region>..., s3.<region>..., s3.amazonaws.com, plus the
+    // FIPS and dual-stack forms (bucket.s3-fips.<region>..., s3-fips.<region>...,
+    // s3.dualstack.<region>..., s3-fips.dualstack.<region>...).
+    $isS3Host = strpos($host, '.s3.') !== false || $host === 's3.amazonaws.com' || str_starts_with($host, 's3.')
+        || strpos($host, '.s3-fips.') !== false || str_starts_with($host, 's3-fips.')
+        || str_starts_with($host, 's3.dualstack.') || str_starts_with($host, 's3-fips.dualstack.');
+    // A deployment on a custom endpoint (S3_ENDPOINT) hands out links on that host,
+    // path-style (<host>/bucket/key) or virtual-hosted (bucket.<host>/key).
+    if (!$isS3Host) {
+        $endpointHost = s3ConfiguredEndpointHost();
+        $isS3Host = $endpointHost !== '' && ($host === $endpointHost || str_ends_with($host, '.' . $endpointHost));
+    }
     if (!$isS3Host) return null;
 
     // Virtual-hosted style: https://bucket.s3.region.amazonaws.com/key
@@ -212,19 +223,12 @@ function resolveLatestObjectKey($folderKey) {
         // Fall through to S3 listing when nothing is mirrored locally. This
         // lets sandbox installs (SAVE_TO_S3=false) still resolve folders that
         // only exist upstream, paired with the s3-proxy.php fetch path.
-        if (empty($s3creds['accessKeyId']) || empty($s3creds['secretAccessKey'])
-            || empty($s3creds['bucket']) || empty($s3creds['region'])) {
+        if (!s3HasCredentials() || empty($s3creds['bucket']) || empty($s3creds['region'])) {
             return null;
         }
     }
 
-    require_once __DIR__ . '/vendor/autoload.php';
-    $credentials = new Aws\Credentials\Credentials($s3creds['accessKeyId'], $s3creds['secretAccessKey']);
-    $s3 = new Aws\S3\S3Client([
-        'version' => 'latest',
-        'region' => $s3creds['region'],
-        'credentials' => $credentials
-    ]);
+    $s3 = getS3Client();
 
     $objects = $s3->getIterator('ListObjects', [
         'Bucket' => $s3creds['bucket'],
@@ -272,6 +276,15 @@ function buildResolvedObjectUrl($key) {
         ];
     }
 
+    // A deployment whose browsers cannot reach the storage endpoint keeps every read on
+    // its own origin: the server streams the object through s3-proxy.php, public or not.
+    if (s3ReadsViaServer()) {
+        return [
+            'url' => buildServerObjectUrl($key),
+            'expiresAt' => null
+        ];
+    }
+
     if (isObjectKeyPublic($key)) {
         return [
             'url' => buildPublicObjectUrl($key),
@@ -279,13 +292,7 @@ function buildResolvedObjectUrl($key) {
         ];
     }
 
-    require_once __DIR__ . '/vendor/autoload.php';
-    $credentials = new Aws\Credentials\Credentials($s3creds['accessKeyId'], $s3creds['secretAccessKey']);
-    $s3 = new Aws\S3\S3Client([
-        'version' => 'latest',
-        'region' => $s3creds['region'],
-        'credentials' => $credentials
-    ]);
+    $s3 = getS3Client();
 
     $cmd = $s3->getCommand('GetObject', [
         'Bucket' => $s3creds['bucket'],

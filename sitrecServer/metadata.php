@@ -140,20 +140,15 @@ function sanitizeMetadata($data) {
 // --- S3 helpers (same pattern as settings.php) ---
 
 function startS3() {
-    require 'vendor/autoload.php';
+    require_once __DIR__ . '/s3_client.php';
     global $s3creds;
-    if (!isset($s3creds) || !is_array($s3creds) || empty($s3creds['accessKeyId']) || $s3creds['accessKeyId'] === 0) {
+    if (!isset($s3creds) || !is_array($s3creds) || !s3HasCredentials()) {
         http_response_code(503);
         echo json_encode(['error' => 'S3 credentials not configured']);
         exit();
     }
     $aws = $s3creds;
-    $credentials = new Aws\Credentials\Credentials($aws['accessKeyId'], $aws['secretAccessKey']);
-    $s3 = new Aws\S3\S3Client([
-        'version' => 'latest',
-        'region' => $aws['region'],
-        'credentials' => $credentials
-    ]);
+    $s3 = getS3Client();
     return ['s3' => $s3, 'aws' => $aws];
 }
 
@@ -236,10 +231,16 @@ function buildScreenshotUrl($userID, $sitchName, $version = null, $s3Data = null
         ? $screenshotName : 'screenshot.jpg';
 
     if ($useAWS) {
-        if ($s3Data === null) {
-            $s3Data = startS3();
+        $key = $userID . '/' . $sitchName . '/' . $file;
+        if (s3ReadsViaServer()) {
+            // Same-origin when the deployment's browsers cannot reach storage.
+            $url = buildServerObjectUrl($key);
+        } else {
+            if ($s3Data === null) {
+                $s3Data = startS3();
+            }
+            $url = $s3Data['s3']->getObjectUrl($s3Data['aws']['bucket'], $key);
         }
-        $url = $s3Data['s3']->getObjectUrl($s3Data['aws']['bucket'], $userID . '/' . $sitchName . '/' . $file);
     } else {
         $url = $UPLOAD_URL . $userID . '/' . $sitchName . '/' . $file;
     }

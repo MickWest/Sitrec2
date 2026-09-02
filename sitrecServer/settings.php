@@ -15,6 +15,7 @@
  */
 
 require('./user.php');
+require_once __DIR__ . '/s3_client.php';
 
 header('Content-Type: application/json');
 
@@ -24,12 +25,9 @@ global $useAWS, $s3creds, $UPLOAD_PATH;
 
 if ($useAWS) {
     if (!isset($s3creds) || !is_array($s3creds) ||
-       !isset($s3creds['accessKeyId']) ||
-       !isset($s3creds['secretAccessKey']) ||
        !isset($s3creds['region']) ||
        !isset($s3creds['bucket']) ||
-        empty($s3creds['accessKeyId']) ||
-        $s3creds['accessKeyId'] === 0
+        !s3HasCredentials()
     ) {
         http_response_code(503);
         echo json_encode(['error' => 'S3 credentials incomplete']);
@@ -46,18 +44,11 @@ if ($user_id == 0) {
 
 // Initialize S3 client
 function startS3() {
-    require 'vendor/autoload.php';
     global $s3creds;
 
     $aws = $s3creds;
 
-    $credentials = new Aws\Credentials\Credentials($aws['accessKeyId'], $aws['secretAccessKey']);
-
-    $s3 = new Aws\S3\S3Client([
-        'version' => 'latest',
-        'region' => $aws['region'],
-        'credentials' => $credentials
-    ]);
+    $s3 = getS3Client();
     
     return ['s3' => $s3, 'aws' => $aws];
 }

@@ -51,14 +51,9 @@ function getUserSitches($userId) {
     
     if ($useAWS && isset($s3creds) && !empty($s3creds['bucket'])) {
         try {
-            require_once __DIR__ . '/vendor/autoload.php';
+            require_once __DIR__ . '/s3_client.php';
             
-            $credentials = new Aws\Credentials\Credentials($s3creds['accessKeyId'], $s3creds['secretAccessKey']);
-            $s3 = new Aws\S3\S3Client([
-                'version' => 'latest',
-                'region' => $s3creds['region'],
-                'credentials' => $credentials
-            ]);
+            $s3 = getS3Client();
             
             $objects = $s3->getIterator('ListObjects', [
                 'Bucket' => $s3creds['bucket'],

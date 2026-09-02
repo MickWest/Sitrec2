@@ -13,11 +13,16 @@
  *
  * Only the configured sitrec bucket is accessible; callers pass an object
  * key, not an arbitrary URL, so this is not a general-purpose open proxy.
+ *
+ * With credentials configured (static keys or a role) the object is fetched
+ * through the SDK, so private objects, FIPS endpoints and custom endpoints work.
+ * Without credentials the unsigned public URL is fetched with cURL, as before.
  */
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/object_helpers.php';
+require_once __DIR__ . '/s3_client.php';
 
 $requestOrigin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if ($requestOrigin) {
@@ -47,6 +52,66 @@ function proxyError($status, $message) {
     exit();
 }
 
+/**
+ * Streams the object through the SDK with the configured credentials.
+ *
+ * Returns true once the response has been sent (the object, or a 404 for a
+ * missing key). Returns false, before anything has been sent, when the signed
+ * fetch could not be made at all - no resolvable credentials, a key S3 rejects,
+ * a role without permission - so the caller can fall back to the unsigned URL.
+ *
+ * @param string $key
+ * @param string|null $rangeHeader Validated Range header value, or null.
+ * @return bool
+ */
+function proxyObjectWithSdk($key, $rangeHeader) {
+    global $s3creds;
+    try {
+        $s3 = getS3Client();
+        $params = [
+            'Bucket' => $s3creds['bucket'],
+            'Key' => $key,
+            '@http' => ['stream' => true],
+        ];
+        if ($rangeHeader !== null) {
+            $params['Range'] = $rangeHeader;
+        }
+        $result = $s3->getObject($params);
+    } catch (Aws\S3\Exception\S3Exception $e) {
+        if ($e->getAwsErrorCode() === 'NoSuchKey') {
+            proxyError(404, 'Object not found');
+        }
+        error_log('s3-proxy: signed fetch failed (' . ($e->getAwsErrorCode() ?: get_class($e)) . '), using the unsigned URL: ' . $e->getMessage());
+        return false;
+    } catch (Exception $e) {
+        error_log('s3-proxy: signed fetch failed (' . get_class($e) . '), using the unsigned URL: ' . $e->getMessage());
+        return false;
+    }
+
+    $status = (int)($result['@metadata']['statusCode'] ?? 200);
+    http_response_code($status === 206 ? 206 : 200);
+    if (!empty($result['ContentType'])) {
+        header('Content-Type: ' . $result['ContentType']);
+    }
+    if (isset($result['ContentLength'])) {
+        header('Content-Length: ' . $result['ContentLength']);
+    }
+    if (!empty($result['ContentRange'])) {
+        header('Content-Range: ' . $result['ContentRange']);
+    }
+    if (!empty($result['AcceptRanges'])) {
+        header('Accept-Ranges: ' . $result['AcceptRanges']);
+    }
+    // Cache sitch/object responses client-side; they're immutable per version.
+    header('Cache-Control: public, max-age=300');
+
+    $body = $result['Body'];
+    while (!$body->eof()) {
+        echo $body->read(65536);
+    }
+    return true;
+}
+
 $key = $_GET['key'] ?? '';
 $key = ltrim(trim((string)$key), '/');
 
@@ -67,14 +132,23 @@ if (empty($s3creds['bucket']) || empty($s3creds['region'])) {
     proxyError(503, 'S3 proxy not configured');
 }
 
-$remoteUrl = buildDefaultS3ObjectUrl($key);
-
 // Forward Range header so video streaming and quickFetch chunked downloads work.
 // Validate strictly against RFC 7233 byte-range grammar to close a header-
 // injection vector via CRLF in the client-supplied Range header.
-$forwardedHeaders = ['Accept: */*'];
 $rangeHeader = $_SERVER['HTTP_RANGE'] ?? '';
-if ($rangeHeader !== '' && preg_match('/^bytes=\d*-\d*(?:,\s*\d*-\d*)*$/', $rangeHeader)) {
+$validRange = $rangeHeader !== '' && preg_match('/^bytes=\d*-\d*(?:,\s*\d*-\d*)*$/', $rangeHeader) === 1;
+
+// Signed fetch first when the server has credentials. If it cannot be made (see
+// proxyObjectWithSdk) fall through to the unsigned public URL, which is what a
+// credential-less local install uses for the public regression sitches.
+if (s3HasCredentials() && proxyObjectWithSdk($key, $validRange ? $rangeHeader : null)) {
+    exit();
+}
+
+$remoteUrl = buildDefaultS3ObjectUrl($key);
+
+$forwardedHeaders = ['Accept: */*'];
+if ($validRange) {
     $forwardedHeaders[] = 'Range: ' . $rangeHeader;
 }
 
