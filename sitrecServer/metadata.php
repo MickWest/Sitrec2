@@ -14,6 +14,9 @@
  * POST: Saves user metadata. If "updateSitches" array is provided, also writes per-sitch metadata.json for each.
  */
 
+// The CORS origin below is built before config_paths.php is loaded, so settle the scheme first.
+require_once __DIR__ . '/requestScheme.php';
+
 header('Content-Type: application/json');
 
 // CORS support (matches getsitches.php pattern) — needed because the client

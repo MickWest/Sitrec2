@@ -1140,6 +1140,12 @@ pip3 install --no-cache-dir --break-system-packages eccodes certifi
 
 `--break-system-packages` is a no-op on Ubuntu ≤ 22.04 and required on Debian 12+ / Ubuntu 24.04+ (PEP 668).
 
+### Behind a reverse proxy that terminates TLS
+
+When HTTPS ends at a proxy in front of Sitrec (Caddy, nginx, a load balancer, a Kubernetes ingress) and the proxy speaks plain HTTP to Apache or PHP, the backend must be told the real scheme or every URL it builds — the tile-cache redirects, the upload and terrain paths, the CORS origin — comes out as `http://` on an `https://` page, and the browser refuses to fetch them. Sitrec reads the standard `X-Forwarded-Proto` header for this (`sitrecServer/requestScheme.php`). Caddy's `reverse_proxy` sends it by default; for nginx add `proxy_set_header X-Forwarded-Proto $scheme;`. Only the scheme is taken from the proxy; the client address is not, because the localhost rule in `config.php` grants administrator rights and must never trust a client-supplied header.
+
+A related point for the container image: run the proxy and Sitrec as separate containers on a shared network, not in one pod proxying to `127.0.0.1`, for the same reason — Apache would see every visitor as localhost.
+
 ---
 
 ## Code Overview

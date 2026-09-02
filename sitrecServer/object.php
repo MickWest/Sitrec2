@@ -11,6 +11,9 @@
  * - Generate presigned GET URLs in AWS mode (or direct local URLs in filesystem mode).
  */
 
+// The CORS origin below is built before config_paths.php is loaded, so settle the scheme first.
+require_once __DIR__ . '/requestScheme.php';
+
 header('Content-Type: application/json');
 
 $requestOrigin = $_SERVER['HTTP_ORIGIN'] ?? '';

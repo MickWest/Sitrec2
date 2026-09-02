@@ -9,6 +9,9 @@
  * - Include canonical object references for versioned files so clients can resolve via object.php.
  */
 
+// The CORS origin below is built before config_paths.php is loaded, so settle the scheme first.
+require_once __DIR__ . '/requestScheme.php';
+
 header('Content-Type: application/json');
 
 // SECURITY: Restrict CORS to own origin and the configured dev host (LOCALHOST env var).

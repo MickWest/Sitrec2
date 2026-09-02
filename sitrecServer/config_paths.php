@@ -2,10 +2,10 @@
 
 require_once __DIR__ . '/injectEnv.php';
 
+// REQUEST_SCHEME: absent under the PHP built-in server, and "http" behind a proxy that
+// terminates TLS. requestScheme.php settles it before any URL is built from it.
+require_once __DIR__ . '/requestScheme.php';
 // Set fallback values for missing $_SERVER variables when using PHP built-in server
-if (!isset($_SERVER['REQUEST_SCHEME'])) {
-    $_SERVER['REQUEST_SCHEME'] = 'http'; // Default to http for local development
-}
 if (!isset($_SERVER['SERVER_ADDR'])) {
     $_SERVER['SERVER_ADDR'] = '127.0.0.1'; // Default to localhost IP
 }
