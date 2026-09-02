@@ -37,8 +37,35 @@ function getUserIDCustom()
 
 // Returns user ID and user groups
 // Groups example: admin=3, registered=2, verified=9, sitrec=14
+//
+// AUTH_MODE selects how identity is resolved:
+//   forum (or unset) - the forum session when XENFORO_PATH is set, else SITREC_DEFAULT_USERID,
+//                      else the loopback administrator rule at the end of this function
+//   cert             - client certificate authentication (sitrecServer/auth_cert.php); the
+//                      SITREC_DEFAULT_USERID and loopback rules do not apply
+//   none             - every request is anonymous (user 0, no groups)
+// Any other value is treated as anonymous and logged, so a mistyped mode never falls
+// through to a default identity.
 function getUserInfoCustom()
 {
+    $authMode = getenv('AUTH_MODE');
+    $authMode = ($authMode === false) ? 'forum' : strtolower(trim($authMode));
+    if ($authMode === 'none') {
+        return ['user_id' => 0, 'user_groups' => []];
+    }
+    if ($authMode === 'cert') {
+        // This file is copied to sitrecServer/config.php at build time (webpackCopyPatterns.js),
+        // so auth_cert.php is beside it at runtime.
+        require_once __DIR__ . '/auth_cert.php';
+        $certResult = resolveCertIdentity($_SERVER, getenv());
+        error_log(authCertLogLine($certResult));
+        return ['user_id' => $certResult['user_id'], 'user_groups' => $certResult['user_groups']];
+    }
+    if ($authMode !== 'forum' && $authMode !== '') {
+        error_log('AUTH_MODE "' . $authMode . '" is not forum, cert or none; treating every request as anonymous');
+        return ['user_id' => 0, 'user_groups' => []];
+    }
+
     // a default user id for testing
     // and for if there's no xenforo
     $user_id = 0; // default to not logged in
