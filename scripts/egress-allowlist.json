@@ -111,6 +111,18 @@
       "mayReceive": ["coarse-area", "precise-position"]
     },
     {
+      "host": "api.cesium.com",
+      "purpose": "3D buildings (Cesium Ion): tileset endpoint lookup by asset id, reached through the 3d-tiles-renderer library rather than code in this repository",
+      "trigger": "the user enables the 3D buildings layer, where the operator has configured a Cesium Ion token",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "*.cesium.com",
+      "purpose": "3D buildings (Cesium Ion): tile content from the host named by the endpoint lookup, reached through the 3d-tiles-renderer library",
+      "trigger": "automatic while the 3D buildings layer is shown",
+      "mayReceive": ["coarse-area"]
+    },
+    {
       "host": "a.basemaps.cartocdn.com",
       "purpose": "map tiles for the standalone airport-arrivals tool page",
       "trigger": "automatic while that tool page shows its map",
@@ -507,9 +519,9 @@
   ],
   "serverEndpoints": [
     {"endpoint": "getsitches.php", "purpose": "list of available situations, or one situation by name", "trigger": "automatic at startup and when the user opens the browser of situations", "mayReceive": ["identifier"]},
-    {"endpoint": "record_visit.php", "purpose": "visit counter, by situation name", "trigger": "automatic when a situation loads", "mayReceive": ["identifier"]},
-    {"endpoint": "uilog.php", "purpose": "usage statistics: names of controls used, with timestamps", "trigger": "automatic, batched", "mayReceive": ["usage-stats"]},
-    {"endpoint": "tile_usage.php", "purpose": "usage statistics: tile counts per provider", "trigger": "automatic, batched", "mayReceive": ["usage-stats"]},
+    {"endpoint": "record_visit.php", "purpose": "visit counter, by situation name", "trigger": "automatic when a situation loads, only where the operator has enabled SITREC_TRACK_STATS", "mayReceive": ["identifier"]},
+    {"endpoint": "uilog.php", "purpose": "usage statistics: names of controls used, with timestamps; the server records them with the user id and address", "trigger": "batched, only where the operator has enabled LOG_UI_INTERACTIONS", "mayReceive": ["usage-stats"]},
+    {"endpoint": "tile_usage.php", "purpose": "usage statistics: tile counts per provider", "trigger": "batched, only where the operator has enabled SITREC_TRACK_STATS", "mayReceive": ["usage-stats"]},
     {"endpoint": "logNLU.php", "purpose": "log of commands typed into the natural-language command box", "trigger": "the user submits a command", "mayReceive": ["user-text"]},
     {"endpoint": "rehost.php", "purpose": "upload, list, version or delete a file the user shares", "trigger": "the user chooses to upload, share or delete", "mayReceive": ["user-file"]},
     {"endpoint": "object.php", "purpose": "presigned object-storage access for a file the user uploads or opens", "trigger": "the user chooses to upload or opens a shared file", "mayReceive": ["user-file"]},

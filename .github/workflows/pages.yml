@@ -1,5 +1,17 @@
 # Publish the serverless Sitrec build to GitHub Pages, at https://mickwest.github.io/Sitrec2/
 #
+# Runs when a release tag is pushed (the same tag pattern docker.yml publishes images for)
+# and on demand from the Actions tab, where any branch or tag can be chosen. It does NOT
+# run on ordinary pushes to main, so the site always shows a released version, and the
+# version string it reports (from `git describe --tags`) is the tag itself.
+#
+# The github-pages environment that deploy-pages targets is created with a deployment
+# rule that allows the default branch only. A deploy from a tag is rejected with "not
+# allowed to deploy to github-pages due to environment protection rules" until
+# Settings -> Environments -> github-pages -> "Deployment branches and tags" also has a
+# tag rule. This repository's environment allows main and every tag ("*"); the trigger
+# below is what limits deploys to release tags.
+#
 # Nothing here is written to the repository. The build is uploaded as a workflow artifact
 # (Actions storage, retention 1 day) and handed to the Pages CDN; there is no commit, no
 # branch, no push. Repository size is unaffected by deploying, however often it runs. The
@@ -31,7 +43,8 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'    # release tags, e.g. 2.147.2
   workflow_dispatch:
 
 permissions:
