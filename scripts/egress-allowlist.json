@@ -185,21 +185,21 @@
     },
     {
       "host": "api.v2.sondehub.org",
-      "purpose": "radiosonde live feed for an area, via the server proxy",
+      "purpose": "radiosonde live feed, fetched by the server proxy from a fixed world-wide feed address; nothing about the view is sent",
       "trigger": "the user enables that feed",
-      "mayReceive": ["coarse-area", "time"]
+      "mayReceive": ["none"]
     },
     {
       "host": "earthquake.usgs.gov",
-      "purpose": "earthquake live feed for an area, via the server proxy",
+      "purpose": "earthquake live feed, fetched by the server proxy from a fixed world-wide feed address; nothing about the view is sent",
       "trigger": "the user enables that feed",
-      "mayReceive": ["coarse-area", "time"]
+      "mayReceive": ["none"]
     },
     {
       "host": "ll.thespacedevs.com",
-      "purpose": "launch schedule live feed, via the server proxy",
+      "purpose": "launch schedule live feed, fetched by the server proxy from a fixed feed address; nothing about the view is sent",
       "trigger": "the user enables that feed",
-      "mayReceive": ["time"]
+      "mayReceive": ["none"]
     },
     {
       "host": "api.tomtom.com",
@@ -258,39 +258,39 @@
 
     {
       "host": "api.openai.com",
-      "purpose": "AI provider: chat, model list, image masking and the voice feature",
+      "purpose": "AI provider: chat, model list, image masking and the voice feature. In chat the assistant can call the application's API, and the results of those calls (positions, times, identifiers, notes, file names, the serialized situation) go back to the provider",
       "trigger": "only when the user sends a chat message, requests AI masking, or starts a voice session; the provider is chosen by the user or the operator",
-      "mayReceive": ["user-text", "menu-summary", "video-frame", "user-audio"]
+      "mayReceive": ["user-text", "menu-summary", "session-data", "precise-position", "time", "identifier", "video-frame", "user-audio"]
     },
     {
       "host": "api.anthropic.com",
-      "purpose": "AI provider: chat, model list and image masking",
+      "purpose": "AI provider: chat, model list and image masking. In chat the assistant can call the application's API, and the results of those calls go back to the provider",
       "trigger": "only when the user sends a chat message or requests AI masking",
-      "mayReceive": ["user-text", "menu-summary", "video-frame"]
+      "mayReceive": ["user-text", "menu-summary", "session-data", "precise-position", "time", "identifier", "video-frame"]
     },
     {
       "host": "generativelanguage.googleapis.com",
-      "purpose": "AI provider: chat and image masking, via the server",
+      "purpose": "AI provider: chat and image masking, via the server. In chat the assistant can call the application's API, and the results of those calls go back to the provider",
       "trigger": "only when the user sends a chat message or requests AI masking",
-      "mayReceive": ["user-text", "menu-summary", "video-frame"]
+      "mayReceive": ["user-text", "menu-summary", "session-data", "precise-position", "time", "identifier", "video-frame"]
     },
     {
       "host": "openrouter.ai",
-      "purpose": "AI provider: chat and model list, with the user's own key",
+      "purpose": "AI provider: chat and model list, with the user's own key. In chat the assistant can call the application's API, and the results of those calls go back to the provider",
       "trigger": "only when the user sends a chat message",
-      "mayReceive": ["user-text", "menu-summary"]
+      "mayReceive": ["user-text", "menu-summary", "session-data", "precise-position", "time", "identifier"]
     },
     {
       "host": "api.groq.com",
-      "purpose": "AI provider: chat, via the server",
+      "purpose": "AI provider: chat, via the server. In chat the assistant can call the application's API, and the results of those calls go back to the provider",
       "trigger": "only when the user sends a chat message",
-      "mayReceive": ["user-text", "menu-summary"]
+      "mayReceive": ["user-text", "menu-summary", "session-data", "precise-position", "time", "identifier"]
     },
     {
       "host": "api.x.ai",
-      "purpose": "AI provider: chat, via the server",
+      "purpose": "AI provider: chat, via the server. In chat the assistant can call the application's API, and the results of those calls go back to the provider",
       "trigger": "only when the user sends a chat message",
-      "mayReceive": ["user-text", "menu-summary"]
+      "mayReceive": ["user-text", "menu-summary", "session-data", "precise-position", "time", "identifier"]
     },
     {
       "host": "www.chatbase.co",
@@ -523,20 +523,20 @@
     {"endpoint": "uilog.php", "purpose": "usage statistics: names of controls used, with timestamps; the server records them with the user id and address", "trigger": "batched, only where the operator has enabled LOG_UI_INTERACTIONS", "mayReceive": ["usage-stats"]},
     {"endpoint": "tile_usage.php", "purpose": "usage statistics: tile counts per provider", "trigger": "batched, only where the operator has enabled SITREC_TRACK_STATS", "mayReceive": ["usage-stats"]},
     {"endpoint": "logNLU.php", "purpose": "log of commands typed into the natural-language command box", "trigger": "the user submits a command", "mayReceive": ["user-text"]},
-    {"endpoint": "rehost.php", "purpose": "upload, list, version or delete a file the user shares", "trigger": "the user chooses to upload, share or delete", "mayReceive": ["user-file"]},
+    {"endpoint": "rehost.php", "purpose": "the login check at startup (the request's cookies identify the account), and upload, list, version or delete a file the user shares", "trigger": "the login check at every startup; uploads only when the user chooses to upload, share or delete", "mayReceive": ["user-file"]},
     {"endpoint": "object.php", "purpose": "presigned object-storage access for a file the user uploads or opens", "trigger": "the user chooses to upload or opens a shared file", "mayReceive": ["user-file"]},
     {"endpoint": "s3-proxy.php", "purpose": "stream a stored object by key", "trigger": "the user opens a shared file", "mayReceive": ["identifier"]},
     {"endpoint": "shortener.php", "purpose": "short link for a situation the user shares; receives the link to shorten", "trigger": "the user chooses to share", "mayReceive": ["user-file"]},
     {"endpoint": "metadata.php", "purpose": "load and save the user's label definitions", "trigger": "the user edits labels", "mayReceive": ["user-text"]},
-    {"endpoint": "settings.php", "purpose": "load and save the user's settings, when server-side settings are enabled", "trigger": "the user changes a setting", "mayReceive": ["user-text"]},
-    {"endpoint": "chatbot.php", "purpose": "AI chat relay: the user's message and a summary of the menu state", "trigger": "the user sends a chat message", "mayReceive": ["user-text", "menu-summary"]},
+    {"endpoint": "settings.php", "purpose": "load and save the user's settings, when server-side settings are enabled; a save sends the whole settings set, which includes the startup position if the user has set one", "trigger": "loaded automatically at startup; saved when the user changes a setting", "mayReceive": ["user-text", "precise-position"]},
+    {"endpoint": "chatbot.php", "purpose": "AI chat relay: the user's message, a summary of the menu state, and the results of the API calls the assistant makes in reply (positions, times, identifiers, notes, file names, the serialized situation)", "trigger": "the user sends a chat message", "mayReceive": ["user-text", "menu-summary", "session-data", "precise-position", "time", "identifier"]},
     {"endpoint": "aimask.php", "purpose": "AI masking relay: the selected video frame and the user's instruction", "trigger": "the user requests AI masking", "mayReceive": ["video-frame", "user-text"]},
     {"endpoint": "proxy.php", "purpose": "fetch a public data source on the browser's behalf; receives that source's URL", "trigger": "automatic when a layer needs that source", "mayReceive": ["identifier", "time"]},
     {"endpoint": "proxyStarlink.php", "purpose": "satellite element sets by catalog query and date", "trigger": "automatic when a satellite layer is shown", "mayReceive": ["identifier", "time"]},
     {"endpoint": "proxyADSBTrace.php", "purpose": "aircraft trace by aircraft identifier and date", "trigger": "the user loads a trace", "mayReceive": ["identifier", "time"]},
     {"endpoint": "proxyADSBLive.php", "purpose": "live aircraft within a radius of a position", "trigger": "the user enables the live aircraft feed", "mayReceive": ["precise-position", "time"]},
     {"endpoint": "proxyADSBx.php", "purpose": "live aircraft within a distance of a position", "trigger": "the user enables that feed", "mayReceive": ["precise-position", "time"]},
-    {"endpoint": "proxyLiveFeed.php", "purpose": "live feeds (radiosondes, earthquakes, launches, aircraft) by feed name and the feed's own query", "trigger": "the user enables a feed", "mayReceive": ["coarse-area", "precise-position", "time", "identifier"]},
+    {"endpoint": "proxyLiveFeed.php", "purpose": "live feeds (military aircraft, balloons, launches, earthquakes) fetched from fixed feed addresses; receives the feed name only", "trigger": "the user enables a feed", "mayReceive": ["identifier"]},
     {"endpoint": "proxySounding.php", "purpose": "atmospheric sounding by station and time", "trigger": "the user loads a sounding", "mayReceive": ["identifier", "time"]},
     {"endpoint": "proxyFlySFO.php", "purpose": "SFO arrivals feed", "trigger": "the user enables that feed", "mayReceive": ["none"]},
     {"endpoint": "windProxy.php", "purpose": "global wind grid by date, hour and level; no position", "trigger": "the user enables the wind field", "mayReceive": ["time"]},

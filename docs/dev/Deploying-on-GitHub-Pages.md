@@ -38,7 +38,7 @@ Sources defined through the `SITREC_CUSTOM_MAP_*` and `SITREC_CUSTOM_ELEVATION_*
 
 ## How it gets published
 
-`.github/workflows/pages.yml` runs when a release tag such as `2.147.2` is pushed, and on demand from the Actions tab, where any branch or tag can be chosen. It does not run on ordinary pushes to `main`, so the site always shows a released version, and the version string it reports is the tag itself. A deploy takes about two minutes.
+`.github/workflows/pages.yml` runs when a release tag such as `2.147.2` is pushed, and on demand from the Actions tab, where any branch or tag can be chosen. It does not run on ordinary pushes to `main`, so a tag-triggered deploy always shows the release itself, with the tag as its version string. A manual run builds whatever branch or tag is chosen for it, so choosing `main` publishes that branch's tip, which may be past the latest release. A deploy takes about two minutes.
 
 Deploys go through the `github-pages` environment, which GitHub creates with a rule that allows deployments from the default branch only. A deploy from a tag is rejected with "not allowed to deploy to github-pages due to environment protection rules" until **Settings → Environments → github-pages → Deployment branches and tags** also has a tag rule. This repository's environment allows `main` and every tag (`*`); the workflow trigger is what restricts deploys to release tags.
 

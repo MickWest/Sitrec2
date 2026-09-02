@@ -6,7 +6,7 @@ Sitrec (Situation recreation) is a web application that allows for the real-time
 
 Here's a link to [Sitrec on Metabunk](https://www.metabunk.org/sitrec).
 
-There is also a [serverless copy on GitHub Pages](https://mickwest.github.io/Sitrec2/) with very limited data egress: it has no server, the files you load never leave your browser, and the only remote services it contacts are the two map-tile providers. See [Deploying Sitrec on GitHub Pages](docs/dev/Deploying-on-GitHub-Pages.md) and [where Sitrec sends data](docs/UserDataEgressCheck.md).
+There is also a [serverless copy on GitHub Pages](https://mickwest.github.io/Sitrec2/) with very limited data egress: it has no server, the files you load never leave your browser, and the only remote services it contacts on its own are the two map-tile providers; anything else needs your own provider key and your action. See [Deploying Sitrec on GitHub Pages](docs/dev/Deploying-on-GitHub-Pages.md) and [where Sitrec sends data](docs/UserDataEgressCheck.md).
 
 My goal here is to create a tool to effectively analyze UAP/UFO cases, and to share that analysis in a way that people can understand it. Hence, I focused on making Sitrec run in real-time (30 fps or faster), and be interactive both in viewing, and in exploring the various parameters of a sitch.  
 

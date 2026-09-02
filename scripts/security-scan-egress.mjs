@@ -190,6 +190,8 @@ export const DATA_CLASSES = [
     'usage-stats',      // control names and counts, no content
     'video-frame',      // a frame of the user's video
     'menu-summary',     // a summary of the current menu state, sent with a chat message
+    'session-data',     // whatever the AI assistant reads through its tool calls: positions,
+                        // times, identifiers, notes, file names, the serialized situation
 ];
 const POSITION_CLASSES = new Set(['coarse-area', 'precise-position']);
 export const allowsPosition = entry => (entry.mayReceive || []).some(c => POSITION_CLASSES.has(c));

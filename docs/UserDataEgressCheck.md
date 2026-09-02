@@ -29,6 +29,7 @@ Every destination Sitrec is designed to call has an entry. Each entry states the
 | `usage-stats` | control names and counts, no content |
 | `video-frame` | a frame of the user's video |
 | `menu-summary` | a summary of the current menu state, sent with a chat message |
+| `session-data` | whatever the AI assistant reads through its tool calls: positions, times, identifiers, notes, file names, the serialized situation |
 
 The same file lists Sitrec's own server endpoints (`uilog.php`, `rehost.php` and so on) with the same fields. The file is the public statement of where Sitrec sends data and how much. Anyone can read it, and every change to it is in the git history.
 
@@ -44,7 +45,7 @@ Opening Sitrec, loading a sitch, and looking at the map cause these requests and
 |---|---|---|
 | List of built-in sitches | Sitrec's own server (`getsitches.php`) | nothing beyond the request |
 | Login check | Sitrec's own server (`rehost.php?getuser=1`) | the browser's cookies for that server; on a site with accounts this identifies the account |
-| Saved settings | Sitrec's own server (`settings.php`) | the user's preferences, when server-side settings are on (the default) |
+| Saved settings | Sitrec's own server (`settings.php`) | the same cookies; the user's preferences come back in the response (server-side settings are on by default) |
 | Map tiles | the default map provider | the tile coordinates of the viewed area |
 | Elevation tiles | the default elevation provider | the tile coordinates of the viewed area |
 
@@ -91,13 +92,13 @@ None of these happens until the user turns the feature on or takes the action. E
 - **Satellites.** Current element sets come from Celestrak through the server proxy, keyed by catalogue group; historical sets come from Space-Track through the server, with the operator's account, keyed by date. Neither carries a position.
 - **Aircraft.** Loading an ADS-B trace sends the aircraft's identifier and date to the provider through the proxy (directly to the provider in the serverless build). The live aircraft feed sends the position and radius of the viewed area.
 - **Wind.** The default source is a global forecast grid fetched through the server by date, hour and level, with no position. Weather-balloon soundings send a station identifier and time. Choosing the Open-Meteo source sends the positions of the wind sample points to that service.
-- **Live feeds.** Military aircraft, balloons, launches and earthquakes come through the server proxy, by area and time. Ships (a WebSocket stream) and webcams use the user's own provider key and send a box around the viewed area, or its centre and a radius.
+- **Live feeds.** Military aircraft, balloons, launches and earthquakes come through the server proxy from fixed, world-wide feed addresses; the browser sends the feed's name and nothing about the view. Ships (a WebSocket stream) and webcams use the user's own provider key and send a box around the viewed area, or its centre and a radius.
 - **Street-level imagery.** The selected position goes to Google through the server.
 - **The AI assistant.** Each message sends the user's text and a summary of the current menu state (which includes the names of loaded tracks and files) to the configured provider: the site's provider on the public site, or the user's own key sent directly to that provider. The assistant can also call Sitrec's API in reply. Of about a hundred functions, only a handful are withheld from it, so it can read track positions, the camera position, the notes, the list of loaded files, and the entire sitch state; whatever it asks for is returned to the provider as a tool result. It can also save the sitch and create a share link, which uploads it. Every turn is the user's action, but the data reachable in that turn is everything in the session.
 - **Image masking.** The selected video frame and the user's instruction go to a vision model at the configured provider.
 - **The voice feature.** Microphone audio goes to OpenAI, on the user's own key only.
 - **Saving and sharing.** "Save to server" and share links upload the sitch and its referenced files to the operator's server or storage, and the short-link service receives the link. Exports (KML and the rest) are files written for the user; they contain the data by definition.
-- **Settings.** Saving a setting sends its value to the server, when server-side settings are on.
+- **Settings.** Changing a setting sends the whole settings set to the server, when server-side settings are on. That set includes a startup position, if the user has set one.
 - **Location from the connection.** The night-sky sitch, when it has no position given, asks a geolocation service for an approximate position; the request carries nothing, the service infers it from the connection. The "geolocate" button on a position does the same on demand.
 - **Typing a place name** into the command box sends that text to a geocoding service.
 - **Star-field solving** uploads the chosen image to the astrometry service.

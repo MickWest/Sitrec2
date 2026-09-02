@@ -9,6 +9,33 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.147.3 (2026-09-02)
+
+### New Features
+
+- **Shift + mouse wheel changes the field of view** (main view; and the look view when *Free Look Camera* is on): in the views where the plain wheel moves the camera, holding Shift zooms the lens instead — the same zoom the look view's wheel already does. Where a case's look camera takes its field of view from recorded data (MISB metadata, a track's zoom, focal-length keyframes) Shift + wheel does nothing on that view, because that value is a measurement of what the real camera did.
+
+- **Sitrec on GitHub Pages** (https://mickwest.github.io/Sitrec2/): a serverless copy that runs entirely in your browser. No server, no accounts, and the files you load never leave your machine; the only services it contacts on its own are two keyless map providers (ESRI World Imagery and AWS Terrarium elevation). It is published from each release.
+
+### Improvements
+
+- The *Live Feeds* folder (Contents) now starts closed, so its switches and readouts are no longer the first thing every visit to Contents shows; each of those switches opens a network connection, so it is a heading you open on purpose. A saved case that had it open still opens with it open.
+- Turning *Free Look Camera* on no longer freezes the Zoom / HFOV / 35mm field-of-view controls at whatever value the track had at that moment; they keep working while you fly the camera by hand.
+
+### Bug Fixes
+
+- Fixed the look camera (and anything else Sitrec keeps above the ground) being lifted into the air for about a third of a second while a case loaded — 126 m in the case measured — before the real ground height had arrived. This was the actual cause of the intermittent off-screen lines of sight that 2.147.2 worked around; that workaround has been removed.
+- Fixed the browser tab icon, the home-screen icon and the web-app manifest pointing at the wrong place on any install that lives under a path such as /sitrec/; two of the icons the manifest named were also never included in a build.
+- Fixed a self-hosted Sitrec behind a reverse proxy that handles HTTPS building plain-http addresses for its own files, which the browser then refused to load from a secure page.
+- Fixed MapBox imagery on the public site failing to load: a revoked token was still configured in one place a key rotation had missed. The production build is now checked for stale and leaked keys before it ships.
+
+### Security
+
+- A script inside a shared case can no longer run in the page itself. Scripted-video scripts run only inside their isolated worker; if that worker cannot run, the script is refused with a message rather than run in the page.
+- Share links are now unguessable. The version part of a link used to be a plain timestamp, and knowing a case's name was enough to list its versions, reach its latest one, or see its latest preview screenshot. Links now carry a random component, and those routes are limited to the case's owner, an administrator, or cases on the published featured list. Existing links keep working.
+- The Google and Cesium credentials behind 3D buildings and street-level imagery are no longer built into the page for every visitor; they reach the browser only for users entitled to those features, within their daily quota.
+- Where Sitrec sends data is now written down. A new page, *The User Data Egress Check* (linked from the project README on GitHub), lists what every build requests with no action from you, what the public site adds, what each self-hosted build does by default, and what each feature sends when you use it — including what the AI assistant can reach. Every change to the code is checked for new ways data could leave the app, with the result posted publicly on the commit.
+
 ## Version 2.147.2 (2026-09-01)
 
 ### Bug Fixes
