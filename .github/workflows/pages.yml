@@ -1,0 +1,130 @@
+# Publish the serverless Sitrec build to GitHub Pages, at https://mickwest.github.io/Sitrec2/
+#
+# Nothing here is written to the repository. The build is uploaded as a workflow artifact
+# (Actions storage, retention 1 day) and handed to the Pages CDN; there is no commit, no
+# branch, no push. Repository size is unaffected by deploying, however often it runs. The
+# approach that WOULD grow it is publishing to a gh-pages branch, where every deploy commits
+# the whole build and git keeps every version for ever — which is why this does not do that.
+#
+# The serverless build (webpack.serverless.js) is a browser-only Sitrec: no PHP, no accounts,
+# no server-side file hosting, and no provider keys — buildServerlessClientEnv() blanks every
+# sensitive value, and postbuild-serverless audits the output for leaked secrets before this
+# workflow is allowed to publish it.
+#
+# One thing a static host needs that a normal install does not: terrain.
+# filterSourcesForServerless() (src/terrainSourceUtils.js) drops every source not marked
+# allowInServerless, which removes all the built-in internet providers, and the "Local" source
+# it falls back to reads tiles from a directory a Pages site cannot serve. Sources defined by
+# SITREC_CUSTOM_MAP_* / SITREC_CUSTOM_ELEVATION_* env vars DO carry that flag, so the config
+# step below defines two keyless, CORS-open ones. Nothing here needs an API key.
+#
+# Size: ~138 MB in 478 files, against the 1 GB Pages limit. Largest single file 12 MB, against
+# the 100 MB limit.
+#
+# REQUIRES Settings -> Pages -> Source = "GitHub Actions". With the older "deploy from a
+# branch" setting the build runs and the deploy step fails. Note that switching also retires
+# whatever that branch was serving — for this repository, a Jekyll rendering of README.md
+# (plus, incidentally, a verbatim copy of the whole tree). github.com already shows the
+# README, so what is actually lost is small.
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never run two publishes at once, and never cancel one in flight: a half-finished deploy is
+# worse than a slightly stale site.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # webpack.common.js gets the version string from `git describe --tags`, which a
+          # shallow clone has no tags for.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.4
+
+      # The live config files are gitignored, so a clean checkout has only the templates.
+      # config-install.js.example resolves its paths relative to the repo, so unlike the CI
+      # workflow this needs no rewriting. config.php is not copied: a serverless build emits
+      # no PHP at all.
+      - name: config setup
+        run: |
+          cp config/config.js.example config/config.js
+          cp config/config-install.js.example config/config-install.js
+          cp config/shared.env.example config/shared.env
+
+      # shared.env.example ships every provider credential as the literal placeholder
+      # EXAMPLEKEY. It has to go, for two reasons. A public build should carry no provider
+      # credential at all, and an empty value reads as "not configured" everywhere — which is
+      # exactly what the app already tests for. And auditBundleSecrets.js searches the output
+      # for each configured value, so leaving the placeholder set makes the audit match the
+      # app's OWN `"EXAMPLEKEY" !== token` comparisons and fail on its own source code.
+      - name: clear placeholder credentials
+        run: sed -i 's/^\([A-Za-z0-9_]*\)=EXAMPLEKEY$/\1=/' config/shared.env
+
+      # ESRI World Imagery and AWS Terrarium elevation both serve tiles with no key and with
+      # permissive CORS headers, so they work from any origin. Defined through the
+      # SITREC_CUSTOM_* mechanism because that is what marks a source allowInServerless.
+      - name: use keyless terrain sources
+        run: |
+          sed -i '/^DEFAULT_MAP_TYPE=/d;/^DEFAULT_ELEVATION_TYPE=/d' config/shared.env
+          cat >> config/shared.env <<'EOF'
+
+          # --- added by .github/workflows/pages.yml ---
+          SITREC_CUSTOM_MAP_ESRI_URL="https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+          SITREC_CUSTOM_MAP_ESRI_NAME="ESRI World Imagery"
+          SITREC_CUSTOM_MAP_ESRI_MAX_ZOOM=19
+          SITREC_CUSTOM_MAP_ESRI_ATTRIBUTION="Powered by Esri"
+          SITREC_CUSTOM_MAP_ESRI_TERMS_URL="https://www.esri.com/en-us/legal/terms/data-attributions"
+
+          SITREC_CUSTOM_ELEVATION_AWS_URL="https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
+          SITREC_CUSTOM_ELEVATION_AWS_NAME="AWS Terrarium"
+          SITREC_CUSTOM_ELEVATION_AWS_MAX_ZOOM=15
+          SITREC_CUSTOM_ELEVATION_AWS_ATTRIBUTION="Elevation: USGS, NOAA & contributors"
+          SITREC_CUSTOM_ELEVATION_AWS_TERMS_URL="https://github.com/tilezen/joerd/blob/master/docs/attribution.md"
+
+          DEFAULT_MAP_TYPE=CustomMap_ESRI
+          DEFAULT_ELEVATION_TYPE=CustomElevation_AWS
+          EOF
+
+      - name: install deps
+        run: npm install
+
+      # postbuild-serverless runs generateThirdPartyNotices.js and then auditBundleSecrets.js
+      # over dist-serverless. A leaked key fails the job here, before anything is published.
+      - name: build serverless
+        run: npm run build-serverless
+
+      # No .nojekyll. An Actions deployment serves the artifact as-is, without Jekyll — and it
+      # could not work anyway: upload-pages-artifact tars with --exclude=.[^/]* unless
+      # include-hidden-files is set, so a .nojekyll added here would be dropped before it ever
+      # reached the site.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-serverless
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

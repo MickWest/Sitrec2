@@ -257,26 +257,32 @@ module.exports = (env = {}) => ({
                 'Cache-Control': { 'http-equiv': 'Cache-Control', content: 'no-cache, no-store, must-revalidate' },
                 'Pragma': { 'http-equiv': 'Pragma', content: 'no-cache' },
                 'Expires': { 'http-equiv': 'Expires', content: '0' },
+                // Icon hrefs are relative to the page, not to the server root. The
+                // copy patterns emit these four files into the app directory, so a
+                // leading "/" pointed at the *host* root instead — wrong for every
+                // install that is not served from "/", and a guaranteed 404 on a
+                // static host that only publishes a subdirectory (GitHub Pages
+                // project sites, ".../<repo>/"). Relative works for both.
                 'apple-touch-icon': {
                     rel: 'apple-touch-icon',
                     sizes: '180x180',
-                    href: '/apple-touch-icon.png'
+                    href: 'apple-touch-icon.png'
                 },
                 'favicon-32': {
                     rel: 'icon',
                     type: 'image/png',
                     sizes: '32x32',
-                    href: '/favicon-32x32.png'
+                    href: 'favicon-32x32.png'
                 },
                 'favicon-16': {
                     rel: 'icon',
                     type: 'image/png',
                     sizes: '16x16',
-                    href: '/favicon-16x16.png'
+                    href: 'favicon-16x16.png'
                 },
                 'manifest': {
                     rel: 'manifest',
-                    href: '/site.webmanifest'
+                    href: 'site.webmanifest'
                 }
             }
         }),
