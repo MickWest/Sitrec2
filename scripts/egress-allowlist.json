@@ -1,0 +1,556 @@
+{
+  "$comment": [
+    "Where the application is designed to send data, and the most it may send to each place.",
+    "Read by scripts/security-scan-egress.mjs on every push to main. A destination or server",
+    "endpoint with no entry here is reported the moment code first references it, and a position",
+    "sent to a destination whose mayReceive has no position class fails the check outright.",
+    "The LLM review applies the same contracts to what a regex cannot see (request bodies).",
+    "",
+    "mayReceive uses a fixed vocabulary, least to most revealing: none, time, coarse-area,",
+    "precise-position, identifier, user-text, user-file, user-audio, usage-stats, video-frame,",
+    "menu-summary. See scripts/security-scan-egress.mjs for the definitions and",
+    "docs/UserDataEgressCheck.md for how to add an entry. Add one only with an honest statement",
+    "of what the destination receives; the entry is the public contract."
+  ],
+  "hosts": [
+    {
+      "host": "www.metabunk.org",
+      "purpose": "the public Sitrec deployment's own server; what it receives is defined per endpoint under serverEndpoints",
+      "trigger": "as each server endpoint describes",
+      "mayReceive": ["time", "coarse-area", "precise-position", "identifier", "user-text", "user-file", "usage-stats", "video-frame", "menu-summary"]
+    },
+    {
+      "host": "local.metabunk.org",
+      "purpose": "the local development server, same endpoints as above",
+      "trigger": "as each server endpoint describes",
+      "mayReceive": ["time", "coarse-area", "precise-position", "identifier", "user-text", "user-file", "usage-stats", "video-frame", "menu-summary"]
+    },
+    {
+      "host": "sitrec.s3.us-west-2.amazonaws.com",
+      "purpose": "file storage for the public deployment: files the user shares, and built-in assets",
+      "trigger": "the user chooses to upload or share a file, or opens a shared file or built-in asset",
+      "mayReceive": ["user-file"]
+    },
+    {
+      "host": "s3.amazonaws.com",
+      "purpose": "Terrarium elevation tiles (elevation-tiles-prod), and operator-configured object storage",
+      "trigger": "elevation tiles automatically while terrain is shown; storage only when the user uploads or opens a file",
+      "mayReceive": ["coarse-area", "user-file"]
+    },
+    {
+      "host": "*.amazonaws.com",
+      "purpose": "operator-configured object storage; the bucket host is set in configuration, not in code",
+      "trigger": "the user chooses to upload or share a file, or opens a shared file",
+      "mayReceive": ["user-file"]
+    },
+
+    {
+      "host": "api.mapbox.com",
+      "purpose": "map imagery and terrain tiles",
+      "trigger": "automatic while a layer from this provider is shown",
+      "mayReceive": ["coarse-area"]
+    },
+    {
+      "host": "c.tile.openstreetmap.org",
+      "purpose": "map tiles",
+      "trigger": "automatic while a layer from this provider is shown",
+      "mayReceive": ["coarse-area"]
+    },
+    {
+      "host": "tile.openstreetmap.org",
+      "purpose": "map tiles",
+      "trigger": "automatic while a layer from this provider is shown",
+      "mayReceive": ["coarse-area"]
+    },
+    {
+      "host": "api.maptiler.com",
+      "purpose": "map and water-mask tiles",
+      "trigger": "automatic while a layer from this provider is shown",
+      "mayReceive": ["coarse-area"]
+    },
+    {
+      "host": "tiles.maps.eox.at",
+      "purpose": "Sentinel-2 cloudless imagery tiles",
+      "trigger": "automatic while a layer from this provider is shown",
+      "mayReceive": ["coarse-area"]
+    },
+    {
+      "host": "services.arcgisonline.com",
+      "purpose": "map imagery, hillshade, topographic and relief tiles",
+      "trigger": "automatic while a layer from this provider is shown",
+      "mayReceive": ["coarse-area"]
+    },
+    {
+      "host": "basemap.nationalmap.gov",
+      "purpose": "USGS map tiles",
+      "trigger": "automatic while a layer from this provider is shown",
+      "mayReceive": ["coarse-area"]
+    },
+    {
+      "host": "elevation.nationalmap.gov",
+      "purpose": "USGS 3DEP elevation tiles",
+      "trigger": "automatic while this elevation source is selected",
+      "mayReceive": ["coarse-area"]
+    },
+    {
+      "host": "geoint.nrlssc.org",
+      "purpose": "NRL WMS/WMTS imagery tiles",
+      "trigger": "automatic while a layer from this provider is shown",
+      "mayReceive": ["coarse-area"]
+    },
+    {
+      "host": "gibs.earthdata.nasa.gov",
+      "purpose": "NASA GIBS imagery tiles, by date",
+      "trigger": "automatic while a layer from this provider is shown",
+      "mayReceive": ["coarse-area", "time"]
+    },
+    {
+      "host": "tile.googleapis.com",
+      "purpose": "photorealistic 3D tiles, and street-level imagery fetched by the server at a chosen position",
+      "trigger": "3D tiles automatically while that layer is shown; street-level imagery when the user asks for it",
+      "mayReceive": ["coarse-area", "precise-position"]
+    },
+    {
+      "host": "a.basemaps.cartocdn.com",
+      "purpose": "map tiles for the standalone airport-arrivals tool page",
+      "trigger": "automatic while that tool page shows its map",
+      "mayReceive": ["coarse-area"]
+    },
+
+    {
+      "host": "celestrak.org",
+      "purpose": "current satellite element sets, fetched via the server proxy",
+      "trigger": "automatic when a satellite layer is shown",
+      "mayReceive": ["identifier"]
+    },
+    {
+      "host": "www.space-track.org",
+      "purpose": "historical satellite element sets, fetched by the server with the operator's account",
+      "trigger": "automatic when a satellite layer is shown for a past date",
+      "mayReceive": ["identifier", "time"]
+    },
+    {
+      "host": "adsb.lol",
+      "purpose": "historical aircraft traces by aircraft identifier and date, via the server proxy",
+      "trigger": "the user loads a trace for an aircraft",
+      "mayReceive": ["identifier", "time"]
+    },
+    {
+      "host": "api.adsb.lol",
+      "purpose": "live aircraft within a radius of a position, via the server proxy",
+      "trigger": "the user enables the live aircraft feed",
+      "mayReceive": ["precise-position", "time"]
+    },
+    {
+      "host": "adsbexchange-com1.p.rapidapi.com",
+      "purpose": "live aircraft within a distance of a position, via the server proxy and the airport-arrivals tool page",
+      "trigger": "the user enables that feed",
+      "mayReceive": ["precise-position", "time"]
+    },
+    {
+      "host": "api.open-meteo.com",
+      "purpose": "weather and wind at a position and time",
+      "trigger": "the user enables the wind field or a weather lookup",
+      "mayReceive": ["precise-position", "time"]
+    },
+    {
+      "host": "historical-forecast-api.open-meteo.com",
+      "purpose": "historical wind at a position and time",
+      "trigger": "the user enables the wind field for a past date",
+      "mayReceive": ["precise-position", "time"]
+    },
+    {
+      "host": "weather.uwyo.edu",
+      "purpose": "atmospheric soundings by station and time, via the server proxy",
+      "trigger": "the user loads a sounding",
+      "mayReceive": ["identifier", "time"]
+    },
+    {
+      "host": "www.ncei.noaa.gov",
+      "purpose": "the list of sounding stations",
+      "trigger": "the user opens the sounding menu",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "api.v2.sondehub.org",
+      "purpose": "radiosonde live feed for an area, via the server proxy",
+      "trigger": "the user enables that feed",
+      "mayReceive": ["coarse-area", "time"]
+    },
+    {
+      "host": "earthquake.usgs.gov",
+      "purpose": "earthquake live feed for an area, via the server proxy",
+      "trigger": "the user enables that feed",
+      "mayReceive": ["coarse-area", "time"]
+    },
+    {
+      "host": "ll.thespacedevs.com",
+      "purpose": "launch schedule live feed, via the server proxy",
+      "trigger": "the user enables that feed",
+      "mayReceive": ["time"]
+    },
+    {
+      "host": "api.tomtom.com",
+      "purpose": "traffic live feed for an area, with the user's own key",
+      "trigger": "the user enters a key and enables that feed",
+      "mayReceive": ["coarse-area", "time"]
+    },
+    {
+      "host": "api.windy.com",
+      "purpose": "webcam live feed for an area, with the user's own key",
+      "trigger": "the user enters a key and enables that feed",
+      "mayReceive": ["coarse-area", "time"]
+    },
+    {
+      "host": "www.flysfo.com",
+      "purpose": "SFO arrivals feed, via the server proxy",
+      "trigger": "the user enables that feed",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "nominatim.openstreetmap.org",
+      "purpose": "geocoding: a place name the user typed, or (SHF tool page) the name of a position the user chose",
+      "trigger": "the user types a place name, or asks the SHF tool for a location name",
+      "mayReceive": ["user-text", "precise-position"]
+    },
+    {
+      "host": "ipapi.co",
+      "purpose": "an approximate location derived by the provider from the connection itself; the request carries no data",
+      "trigger": "the user asks to start at their approximate location",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "nova.astrometry.net",
+      "purpose": "star-field plate solving of an image the user chooses",
+      "trigger": "the user submits an image for solving",
+      "mayReceive": ["user-file"]
+    },
+    {
+      "host": "www.dvidshub.net",
+      "purpose": "public source videos, fetched by their public URL",
+      "trigger": "the user loads a video from this site",
+      "mayReceive": ["identifier"]
+    },
+    {
+      "host": "www.aaro.mil",
+      "purpose": "public source videos and pages, linked or fetched by their public URL",
+      "trigger": "the user opens or loads one",
+      "mayReceive": ["identifier"]
+    },
+    {
+      "host": "www.war.gov",
+      "purpose": "public source videos and pages, linked or fetched by their public URL",
+      "trigger": "the user opens or loads one",
+      "mayReceive": ["identifier"]
+    },
+
+    {
+      "host": "api.openai.com",
+      "purpose": "AI provider: chat, model list, image masking and the voice feature",
+      "trigger": "only when the user sends a chat message, requests AI masking, or starts a voice session; the provider is chosen by the user or the operator",
+      "mayReceive": ["user-text", "menu-summary", "video-frame", "user-audio"]
+    },
+    {
+      "host": "api.anthropic.com",
+      "purpose": "AI provider: chat, model list and image masking",
+      "trigger": "only when the user sends a chat message or requests AI masking",
+      "mayReceive": ["user-text", "menu-summary", "video-frame"]
+    },
+    {
+      "host": "generativelanguage.googleapis.com",
+      "purpose": "AI provider: chat and image masking, via the server",
+      "trigger": "only when the user sends a chat message or requests AI masking",
+      "mayReceive": ["user-text", "menu-summary", "video-frame"]
+    },
+    {
+      "host": "openrouter.ai",
+      "purpose": "AI provider: chat and model list, with the user's own key",
+      "trigger": "only when the user sends a chat message",
+      "mayReceive": ["user-text", "menu-summary"]
+    },
+    {
+      "host": "api.groq.com",
+      "purpose": "AI provider: chat, via the server",
+      "trigger": "only when the user sends a chat message",
+      "mayReceive": ["user-text", "menu-summary"]
+    },
+    {
+      "host": "api.x.ai",
+      "purpose": "AI provider: chat, via the server",
+      "trigger": "only when the user sends a chat message",
+      "mayReceive": ["user-text", "menu-summary"]
+    },
+    {
+      "host": "www.chatbase.co",
+      "purpose": "embedded help chat, when the operator configures it",
+      "trigger": "only what the user types into that chat",
+      "mayReceive": ["user-text"]
+    },
+
+    {
+      "host": "maps.google.com",
+      "purpose": "link that opens the viewed position in Google Maps",
+      "trigger": "the user chooses the link from a menu",
+      "mayReceive": ["precise-position"]
+    },
+    {
+      "host": "www.google.com",
+      "purpose": "link that opens the viewed position in Google Maps; also the KML extension namespace written into exported files",
+      "trigger": "the user chooses the link from a menu, or exports KML",
+      "mayReceive": ["precise-position"]
+    },
+    {
+      "host": "www.flightradar24.com",
+      "purpose": "link that opens the viewed position and time in Flightradar24; also a pasted link the user drops in",
+      "trigger": "the user chooses the link from a menu",
+      "mayReceive": ["precise-position", "time"]
+    },
+    {
+      "host": "globe.adsbexchange.com",
+      "purpose": "link that opens the viewed position and time in ADS-B Exchange; also a pasted link the user drops in",
+      "trigger": "the user chooses the link from a menu",
+      "mayReceive": ["precise-position", "time"]
+    },
+    {
+      "host": "in-the-sky.org",
+      "purpose": "link that opens a satellite map at the viewed position and time",
+      "trigger": "the user chooses the link from a menu",
+      "mayReceive": ["precise-position", "time"]
+    },
+    {
+      "host": "earth.nullschool.net",
+      "purpose": "link that opens the wind map at the viewed position and time",
+      "trigger": "the user chooses the link from a menu",
+      "mayReceive": ["precise-position", "time"]
+    },
+    {
+      "host": "flightaware.com",
+      "purpose": "link to the provider's site",
+      "trigger": "the user chooses the link from a menu",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "planefinder.net",
+      "purpose": "link to the provider's site",
+      "trigger": "the user chooses the link from a menu",
+      "mayReceive": ["none"]
+    },
+
+    {
+      "host": "github.com",
+      "purpose": "links to the project's documentation, notices and issues",
+      "trigger": "the user opens a link",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "cdn.jsdelivr.net",
+      "purpose": "script libraries loaded by the standalone tool pages",
+      "trigger": "automatic when a tool page loads",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "whatismyipaddress.com",
+      "purpose": "link on the admin page",
+      "trigger": "the operator opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "review.px4.io",
+      "purpose": "link on the tools index page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "platform.openai.com",
+      "purpose": "link to the provider's key page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "console.anthropic.com",
+      "purpose": "link to the provider's key page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "console.cloud.google.com",
+      "purpose": "link to the provider's key page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "account.mapbox.com",
+      "purpose": "link to the provider's key page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "cloud.maptiler.com",
+      "purpose": "link to the provider's key page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "ion.cesium.com",
+      "purpose": "link to the provider's key page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "developer.tomtom.com",
+      "purpose": "link to the provider's key page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "docs.ollama.com",
+      "purpose": "link to the provider's documentation",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.adsbexchange.com",
+      "purpose": "link to the provider's key page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "aisstream.io",
+      "purpose": "link to the provider's key page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "docs.mapbox.com",
+      "purpose": "attribution and terms link shown with the map",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.openstreetmap.org",
+      "purpose": "attribution and terms link shown with the map",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.maptiler.com",
+      "purpose": "attribution and terms link shown with the map",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "s2maps.eu",
+      "purpose": "attribution and terms link shown with the map",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.esri.com",
+      "purpose": "attribution and terms link shown with the map",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.usgs.gov",
+      "purpose": "attribution and terms link shown with the map",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.earthdata.nasa.gov",
+      "purpose": "attribution and terms link shown with the map",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.nasa.gov",
+      "purpose": "attribution link shown with the map",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "developers.google.com",
+      "purpose": "attribution link shown with the 3D tiles layer",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "en.wikipedia.org",
+      "purpose": "reference link on a tool page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.digitalcombatsimulator.com",
+      "purpose": "link to a reference document",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.opengis.net",
+      "purpose": "XML namespace identifier written into exported KML; not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.w3.org",
+      "purpose": "XML namespace identifier written into exported files; not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.collada.org",
+      "purpose": "XML namespace identifier in 3D model files; not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    }
+  ],
+  "serverEndpoints": [
+    {"endpoint": "getsitches.php", "purpose": "list of available situations, or one situation by name", "trigger": "automatic at startup and when the user opens the browser of situations", "mayReceive": ["identifier"]},
+    {"endpoint": "record_visit.php", "purpose": "visit counter, by situation name", "trigger": "automatic when a situation loads", "mayReceive": ["identifier"]},
+    {"endpoint": "uilog.php", "purpose": "usage statistics: names of controls used, with timestamps", "trigger": "automatic, batched", "mayReceive": ["usage-stats"]},
+    {"endpoint": "tile_usage.php", "purpose": "usage statistics: tile counts per provider", "trigger": "automatic, batched", "mayReceive": ["usage-stats"]},
+    {"endpoint": "logNLU.php", "purpose": "log of commands typed into the natural-language command box", "trigger": "the user submits a command", "mayReceive": ["user-text"]},
+    {"endpoint": "rehost.php", "purpose": "upload, list, version or delete a file the user shares", "trigger": "the user chooses to upload, share or delete", "mayReceive": ["user-file"]},
+    {"endpoint": "object.php", "purpose": "presigned object-storage access for a file the user uploads or opens", "trigger": "the user chooses to upload or opens a shared file", "mayReceive": ["user-file"]},
+    {"endpoint": "s3-proxy.php", "purpose": "stream a stored object by key", "trigger": "the user opens a shared file", "mayReceive": ["identifier"]},
+    {"endpoint": "shortener.php", "purpose": "short link for a situation the user shares; receives the link to shorten", "trigger": "the user chooses to share", "mayReceive": ["user-file"]},
+    {"endpoint": "metadata.php", "purpose": "load and save the user's label definitions", "trigger": "the user edits labels", "mayReceive": ["user-text"]},
+    {"endpoint": "settings.php", "purpose": "load and save the user's settings, when server-side settings are enabled", "trigger": "the user changes a setting", "mayReceive": ["user-text"]},
+    {"endpoint": "chatbot.php", "purpose": "AI chat relay: the user's message and a summary of the menu state", "trigger": "the user sends a chat message", "mayReceive": ["user-text", "menu-summary"]},
+    {"endpoint": "aimask.php", "purpose": "AI masking relay: the selected video frame and the user's instruction", "trigger": "the user requests AI masking", "mayReceive": ["video-frame", "user-text"]},
+    {"endpoint": "proxy.php", "purpose": "fetch a public data source on the browser's behalf; receives that source's URL", "trigger": "automatic when a layer needs that source", "mayReceive": ["identifier", "time"]},
+    {"endpoint": "proxyStarlink.php", "purpose": "satellite element sets by catalog query and date", "trigger": "automatic when a satellite layer is shown", "mayReceive": ["identifier", "time"]},
+    {"endpoint": "proxyADSBTrace.php", "purpose": "aircraft trace by aircraft identifier and date", "trigger": "the user loads a trace", "mayReceive": ["identifier", "time"]},
+    {"endpoint": "proxyADSBLive.php", "purpose": "live aircraft within a radius of a position", "trigger": "the user enables the live aircraft feed", "mayReceive": ["precise-position", "time"]},
+    {"endpoint": "proxyADSBx.php", "purpose": "live aircraft within a distance of a position", "trigger": "the user enables that feed", "mayReceive": ["precise-position", "time"]},
+    {"endpoint": "proxyLiveFeed.php", "purpose": "live feeds (radiosondes, earthquakes, launches, aircraft) by feed name and the feed's own query", "trigger": "the user enables a feed", "mayReceive": ["coarse-area", "precise-position", "time", "identifier"]},
+    {"endpoint": "proxySounding.php", "purpose": "atmospheric sounding by station and time", "trigger": "the user loads a sounding", "mayReceive": ["identifier", "time"]},
+    {"endpoint": "proxyFlySFO.php", "purpose": "SFO arrivals feed", "trigger": "the user enables that feed", "mayReceive": ["none"]},
+    {"endpoint": "windProxy.php", "purpose": "global wind grid by date, hour and level; no position", "trigger": "the user enables the wind field", "mayReceive": ["time"]},
+    {"endpoint": "customWindProxy.php", "purpose": "operator-configured wind grid by date, hour and level; no position", "trigger": "the user enables the wind field", "mayReceive": ["time"]},
+    {"endpoint": "streetview.php", "purpose": "street-level imagery at a position", "trigger": "the user asks for street-level imagery", "mayReceive": ["precise-position"]},
+    {"endpoint": "dvidsVideo.php", "purpose": "fetch a public source video by its public URL", "trigger": "the user loads a video from that site", "mayReceive": ["identifier"]},
+    {"endpoint": "cachemaps.php", "purpose": "retired server-side tile cache; kept only as a name in comments", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "admin_dashboard.php", "purpose": "admin page", "trigger": "the operator opens it", "mayReceive": ["none"]},
+    {"endpoint": "admin_info.php", "purpose": "admin page", "trigger": "the operator opens it", "mayReceive": ["none"]},
+    {"endpoint": "tile_usage_admin.php", "purpose": "admin page", "trigger": "the operator opens it", "mayReceive": ["none"]},
+    {"endpoint": "stats_history.php", "purpose": "admin statistics history", "trigger": "the operator opens it", "mayReceive": ["none"]},
+    {"endpoint": "ai_usage.php", "purpose": "the user's own AI usage totals", "trigger": "the user opens the usage display", "mayReceive": ["none"]},
+    {"endpoint": "info.php", "purpose": "admin diagnostics page", "trigger": "the operator opens it", "mayReceive": ["none"]},
+    {"endpoint": "cookietest.php", "purpose": "admin diagnostics page", "trigger": "the operator opens it", "mayReceive": ["none"]},
+    {"endpoint": "test.php", "purpose": "admin diagnostics page", "trigger": "the operator opens it", "mayReceive": ["none"]},
+    {"endpoint": "tests3.php", "purpose": "admin diagnostics page", "trigger": "the operator opens it", "mayReceive": ["none"]},
+    {"endpoint": "config.php", "purpose": "server configuration, included by other endpoints; not called by the browser", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "config_paths.php", "purpose": "server configuration, included by other endpoints; not called by the browser", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "injectEnv.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "requestScheme.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "user.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "object_helpers.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "gpData.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "ai_models.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "ai_log.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "curlGetRequest.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "shared.env.php", "purpose": "generated at build time from the configuration; read by the server, never requested by the browser", "trigger": "never requested", "mayReceive": ["none"]}
+  ]
+}

@@ -1,0 +1,206 @@
+# User data egress check.
+#
+# Runs on every push to main and answers one question, in public: did this push create a
+# new way for data a user loads into the application to leave it? Two layers:
+#
+#   1. scan    scripts/security-scan-egress.mjs — deterministic and free. Lists every
+#              network call, destination, server endpoint and position-carrying URL on
+#              the added lines, and checks destinations against the reviewed contracts in
+#              scripts/egress-allowlist.json. A new destination, or a position sent to a
+#              destination whose contract has no position class, fails the check outright.
+#   2. review  GitHub Copilot CLI reads the scan and the diff and judges what the new code
+#              can actually send, against the same contracts (scripts/egress-review-prompt.md).
+#
+# The verdict and both reports are posted as a comment on the commit, which is permanent
+# and public. Workflow logs and artifacts expire after 90 days; the comment does not. The
+# workflow is red when the verdict is ATTENTION or the review could not complete.
+#
+# Cost: Actions minutes are free on a public repository. The review spends the repository
+# owner's Copilot AI credits, capped per run by MAX_AI_CREDITS (1 credit = $0.01). A push
+# that changes no code in scope skips the review and spends nothing.
+#
+# Permissions are split on purpose: the job that runs the model has no write access to the
+# repository, and the job that writes the comment runs no model.
+
+name: User Data Egress Check
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 'Base commit to compare against (default: the parent of the checked-out commit)'
+        required: false
+        default: ''
+
+env:
+  # GPT-5.6 Sol needs Copilot Pro+ or above; Terra and Luna are available on Copilot Pro.
+  COPILOT_MODEL_NAME: gpt-5.6-terra
+  MAX_AI_CREDITS: '30'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  review:
+    name: Scan and review
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      copilot-requests: write
+    outputs:
+      verdict: ${{ steps.record.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: resolve the commit range
+        id: range
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+          INPUT_BASE: ${{ github.event.inputs.base }}
+        run: |
+          set -euo pipefail
+          HEAD="$GITHUB_SHA"
+          BASE="${INPUT_BASE:-$EVENT_BEFORE}"
+          # The history is shallow (the repository is large). Fetch only the base commit;
+          # if it is unreachable (a new branch has an all-zero "before", a force-push may
+          # have discarded it) fall back to the parent of the head commit.
+          if [ -n "$BASE" ] && [ "$BASE" != "0000000000000000000000000000000000000000" ] \
+             && git fetch --no-tags --depth=1 origin "$BASE" 2>/dev/null; then
+            :
+          else
+            git fetch --no-tags --deepen=1 origin
+            BASE="$(git rev-parse "$HEAD~1")"
+          fi
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "head=$HEAD" >> "$GITHUB_OUTPUT"
+          echo "Checking $BASE..$HEAD"
+
+      - name: use node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: deterministic scan
+        id: scan
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+          HEAD: ${{ steps.range.outputs.head }}
+        run: |
+          set -euo pipefail
+          mkdir -p .egress
+          node scripts/security-scan-egress.mjs --range "$BASE..$HEAD" --out-dir .egress > /dev/null
+          IN_SCOPE="$(node -e "console.log(require('./.egress/scan.json').filesInScope.length)")"
+          echo "in_scope=$IN_SCOPE" >> "$GITHUB_OUTPUT"
+          # The diff the reviewer reads: normal context, in-scope files only, bounded in size.
+          : > .egress/push.diff
+          if [ "$IN_SCOPE" != "0" ]; then
+            tr '\n' '\0' < .egress/files.txt \
+              | xargs -0 git diff --no-color --no-ext-diff --unified=3 "$BASE" "$HEAD" -- \
+              | head -c 400000 > .egress/push.diff
+            if [ "$(wc -c < .egress/push.diff)" -ge 400000 ]; then
+              printf '\n\n[diff truncated at 400,000 bytes]\n' >> .egress/push.diff
+            fi
+          fi
+          echo "Files in scope: $IN_SCOPE"
+          cat .egress/scan.md
+
+      - name: install Copilot CLI
+        if: steps.scan.outputs.in_scope != '0'
+        run: npm install -g @github/copilot
+
+      - name: LLM review
+        if: steps.scan.outputs.in_scope != '0'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BASE: ${{ steps.range.outputs.base }}
+          HEAD: ${{ steps.range.outputs.head }}
+        run: |
+          set -uo pipefail
+          PROMPT="$(cat scripts/egress-review-prompt.md)"
+          PROMPT+=$'\n\n'"Push range: $BASE..$HEAD"
+          copilot -s -p "$PROMPT" \
+            --model="$COPILOT_MODEL_NAME" \
+            --max-ai-credits="$MAX_AI_CREDITS" \
+            --no-ask-user \
+            --deny-tool=write \
+            --deny-tool='shell(git push)' \
+            --deny-tool='shell(curl:*)' \
+            --deny-tool='shell(wget:*)' \
+            --share=.egress/transcript.md \
+            > .egress/review.md 2> .egress/review.stderr
+          EXIT=$?
+          echo "$EXIT" > .egress/review.exit
+          echo "copilot exit code: $EXIT"
+          echo "--- review ---"
+          cat .egress/review.md
+          if [ -s .egress/review.stderr ]; then
+            echo "--- stderr (first 2000 bytes) ---"
+            head -c 2000 .egress/review.stderr
+          fi
+          exit 0
+
+      - name: compose the record
+        id: record
+        if: always()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          BASE: ${{ steps.range.outputs.base }}
+          HEAD: ${{ steps.range.outputs.head }}
+        run: |
+          set -euo pipefail
+          node scripts/egress-check-record.mjs --dir .egress \
+            --model "$COPILOT_MODEL_NAME" --max-credits "$MAX_AI_CREDITS" \
+            --run-url "$RUN_URL" --repo-url "$REPO_URL" --range "$BASE..$HEAD"
+          echo "verdict=$(cat .egress/verdict.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: keep the working files for 90 days
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: egress-check-${{ github.sha }}
+          path: .egress/
+          include-hidden-files: true
+          retention-days: 90
+          if-no-files-found: warn
+
+  publish:
+    name: Record the result on the commit
+    needs: review
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: egress-check-${{ github.sha }}
+          path: .egress
+
+      - name: post the record as a commit comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ ! -s .egress/comment.md ]; then
+            mkdir -p .egress
+            printf '### User data egress check\n**Verdict: INCOMPLETE** · the check produced no record · [workflow run](%s)\n' "$RUN_URL" > .egress/comment.md
+            echo INCOMPLETE > .egress/verdict.txt
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" -F body=@.egress/comment.md --silent
+          cat .egress/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: verdict
+        run: |
+          VERDICT="$(cat .egress/verdict.txt)"
+          echo "Verdict: $VERDICT"
+          [ "$VERDICT" = "CLEAR" ]

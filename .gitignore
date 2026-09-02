@@ -84,3 +84,6 @@ AGENTS.md
 
 # Local AI-agent skills and configuration
 /.agents
+
+# Working directory of the user-data egress check (scripts/security-scan-egress.mjs)
+.egress/

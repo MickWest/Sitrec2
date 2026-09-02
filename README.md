@@ -80,6 +80,7 @@ assistant — so if you add a doc, add it there.
 - [Dynamic GUI Mirroring - API for mirrored GUI controls](docs/dev/dynamic-gui-mirroring.md)
 - [MISB Timing & Sync - Per-frame KLV/video alignment in TS-sourced files](docs/dev/misb-timing.md)
 - [Wind Internals - Data flow, file formats, and atmospheric data sources](docs/Wind-Internals.md)
+- [The User Data Egress Check - Every push is checked for new ways user data could leave the app; where Sitrec sends data and how much](docs/UserDataEgressCheck.md)
 
 
 ### Legacy documentation
