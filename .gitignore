@@ -29,6 +29,7 @@ tests/__image_snapshots__/
 /dist-standalone/
 /dist/
 /dist-serverless/
+/dist-secure/
 /.certs/
 /app_build/
 /app_dist/

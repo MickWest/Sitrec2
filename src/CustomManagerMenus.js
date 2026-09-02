@@ -39,7 +39,7 @@ import {UpdateHUD} from "./JetStuff";
 import {degrees, getDateTimeFilename} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {EventManager} from "./CEventManager";
-import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
+import {isAdmin, isSecureBuild, SITREC_APP, SITREC_SERVER} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
@@ -699,7 +699,12 @@ export const menuMethods = {
                 this.groundContextMenu = null;
                 menu.destroy();
 
-                // Open Google Maps at the clicked location
+                // Open Google Maps at the clicked location. Not in the secure build: the
+                // address would carry the clicked position to an external site.
+                if (isSecureBuild) {
+                    console.log("External map links are not available in the secure build");
+                    return;
+                }
                 const googleMapsUrl = `https://www.google.com/maps?q=${lat},${lon}`;
                 window.open(googleMapsUrl, '_blank');
                 console.log(`Opening Google Maps at: ${lat}, ${lon}`);
@@ -858,9 +863,12 @@ export const menuMethods = {
 
         }
 
-        // Add Google Maps link if extraHelpLinks is enabled
+        // Add Google Maps link if extraHelpLinks is enabled. The secure build never offers
+        // the external map link; the Google Earth entry only writes a local KML file.
         if (configParams?.extraHelpLinks) {
-            menu.add(menuData, "googleMapsHere").name(t("custom.contextMenu.googleMapsHere"));
+            if (!isSecureBuild) {
+                menu.add(menuData, "googleMapsHere").name(t("custom.contextMenu.googleMapsHere"));
+            }
             menu.add(menuData, "googleEarthHere").name(t("custom.contextMenu.googleEarthHere"));
         }
     },

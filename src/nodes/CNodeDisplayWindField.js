@@ -28,6 +28,7 @@ import {
     windDirFromBearing,
 } from "./WindHelpers";
 import {isTrackSourceKey, trackDataIdFromSourceKey} from "./WindSources";
+import {isSecureBuild} from "../configUtils";
 import {MISB} from "../MISBUtils";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
@@ -2530,6 +2531,11 @@ const _openMeteoApproxAlt = {
     100: 16200, 70: 18500, 50: 20600, 30: 23800,
 };
 export async function fetchOpenMeteoUV(lat, lon, altM) {
+    // The secure build makes no request to this source. WindSources.js drops the option from
+    // the dropdown, so this is only reachable from a sitch saved with the source selected; the
+    // callers already treat a thrown fetch as "no usable samples" (see docs/dev/Secure-Build.md).
+    if (isSecureBuild) throw new Error("open-meteo is not available in this build");
+
     // Select a small subset of pressure levels bracketing altM.
     // Pressure levels are sorted by ascending altitude; pick the first whose
     // approx altitude meets/exceeds altM, else the last.

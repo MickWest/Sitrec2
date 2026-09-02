@@ -26,7 +26,11 @@ RUN apt-get update && apt-get install -y libzip-dev libonig-dev \
     && pip3 install --no-cache-dir --break-system-packages eccodes certifi \
     && rm -rf /var/lib/apt/lists/*
 
-COPY dist/ /var/www/html/
+# DIST_DIR selects which pre-built output directory is packaged. The default is the
+# standard production bundle; pass --build-arg DIST_DIR=dist-secure to package the
+# secure build (see docs/dev/Secure-Build.md and Installing-Hardened-Sitrec-on-AWS.md).
+ARG DIST_DIR=dist
+COPY ${DIST_DIR}/ /var/www/html/
 
 # vendor/ (AWS SDK etc.) is gitignored, so dist/ carries composer.json/lock but no
 # vendor — add the PHP dependencies built in the phpdeps stage above.

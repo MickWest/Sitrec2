@@ -1,0 +1,37 @@
+{
+  "$comment": [
+    "The server files the secure build (webpack.secure.js) packages under sitrecServer/.",
+    "webpackCopyPatterns.js turns every other file in sitrecServer/ into an ignore pattern,",
+    "and scripts/auditBundleEgress.js fails the build if the packaged tree holds a file that",
+    "is not listed here, lacks a file marked required, or ships a config.php without the",
+    "client certificate authentication seam. Left out on purpose: every endpoint that fetches",
+    "from a public data provider on the browser's behalf, the assistant relays, the",
+    "diagnostics pages, and the telemetry writers. See docs/dev/Secure-Build.md."
+  ],
+  "files": [
+    {"file": "config.php", "required": true, "mustContain": ["AUTH_MODE", "resolveCertIdentity"],
+     "purpose": "the identity seam and storage settings; always the tracked config/config.php.example in the secure build"},
+    {"file": "config_paths.php", "required": true, "purpose": "path and URL resolution; the configuration endpoint"},
+    {"file": "injectEnv.php", "required": true, "purpose": "loads shared.env.php into the environment"},
+    {"file": "requestScheme.php", "required": true, "purpose": "the request scheme behind a proxy that terminates TLS"},
+    {"file": "user.php", "required": true, "purpose": "the cached identity wrapper"},
+    {"file": "auth_cert.php", "required": true, "purpose": "client certificate authentication"},
+    {"file": "object_helpers.php", "required": true, "purpose": "object key, visibility and URL helpers"},
+    {"file": "s3_client.php", "required": true, "purpose": "the object storage client factory"},
+    {"file": "getsitches.php", "purpose": "the list of situations and the user's saved files"},
+    {"file": "rehost.php", "purpose": "login check, uploads, versions and deletes, through the server"},
+    {"file": "object.php", "purpose": "resolves a saved object reference to a same-origin read"},
+    {"file": "s3-proxy.php", "purpose": "streams an object from the private bucket on the application's own origin"},
+    {"file": "settings.php", "purpose": "server-side user settings"},
+    {"file": "metadata.php", "purpose": "label definitions"},
+    {"file": "shortener.php", "purpose": "short links for shared situations; same origin, no outbound request"},
+    {"file": "proxy.php", "purpose": "fixed-key fetch of the satellite element-set catalogues named by CURRENT_STARLINK and CURRENT_ACTIVE, which the deployment points at its own mirror"},
+    {"file": "gpData.php", "purpose": "element-set parsing used by proxy.php"},
+    {"file": "curlGetRequest.php", "purpose": "the shared fetch helper used by proxy.php and customWindProxy.php"},
+    {"file": "customWindProxy.php", "purpose": "operator-configured wind grids (CUSTOM_WIND_URL), which the deployment points at its own mirror"},
+    {"file": "admin_info.php", "purpose": "administrator information page; no outbound request"},
+    {"file": "composer.json", "purpose": "the PHP dependency manifest the image build reads"},
+    {"file": "composer.lock", "purpose": "the pinned PHP dependencies the image build reads"},
+    {"file": "vendor/", "purpose": "the PHP dependencies (object storage SDK); library code, covered by the secret audit"}
+  ]
+}

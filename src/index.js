@@ -85,6 +85,7 @@ import {
     checkServerlessMode,
     isConsole,
     isLocal,
+    isSecureBuild,
     isServerless,
     setupConfigPaths,
     SITREC_APP,
@@ -1644,7 +1645,7 @@ async function initializeOnce() {
     // Record visit for admin stats (non-blocking)
     if (!isServerless && getEnvBool("SITREC_TRACK_STATS", process.env.SITREC_TRACK_STATS)) {
         const sitchParam = new URLSearchParams(window.location.search).get('sitch') || '';
-        fetch(SITREC_SERVER + 'record_visit.php' + (sitchParam ? '?sitch=' + encodeURIComponent(sitchParam) : ''), {
+        if (!isSecureBuild) fetch(SITREC_SERVER + 'record_visit.php' + (sitchParam ? '?sitch=' + encodeURIComponent(sitchParam) : ''), {
             credentials: 'include',
         }).catch(() => {});
     }
@@ -2090,7 +2091,8 @@ async function initializeOnce() {
     docs.addExternalLink(t("menus.help.documentation.downloadBridge"), "./tools/SitrecBridge/dist/SitrecBridge.zip").perm()
         .tooltip(t("menus.help.documentation.downloadBridgeTooltip"));
 
-    if (configParams?.extraHelpLinks !== undefined) {
+    // The secure build offers no external links (see docs/dev/Secure-Build.md).
+    if (configParams?.extraHelpLinks !== undefined && !isSecureBuild) {
 
         const external = addTranslatedGUIFolder("external", "menus.help.externalLinks.title", "help")
             .tooltip(t("menus.help.externalLinks.tooltip")
@@ -2403,7 +2405,9 @@ async function setupFunctions() {
     // - Not testing
     // - Sit.localLatLon is true
     // - no URL "data" parameter
-    if (!testing  && Sit.localLatLon && urlData === undefined) {
+    // - not the secure build, which makes no startup request and keeps the sitch's own origin
+    //   (see docs/dev/Secure-Build.md)
+    if (!testing  && Sit.localLatLon && urlData === undefined && !isSecureBuild) {
         await getApproximateLocationFromIP().then((result) => {
             if (result) {
                 Sit.lat = result.lat;

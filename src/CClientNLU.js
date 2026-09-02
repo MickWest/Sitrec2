@@ -3,6 +3,7 @@ import {FileManager, guiMenus} from "./Globals";
 import {ensureNightSkyFiles} from "./ExtraFiles";
 import GUI from "./js/lil-gui.esm";
 import {ModelFiles} from "./nodes/CNode3DObject";
+import {isSecureBuild} from "./configUtils";
 // number-only mathjs entry (see CNodeMath.js). create(math.all) below would re-pull
 // the full ~2.4MB mathjs (BigNumber/Complex/Fraction/units) if this used 'mathjs'.
 // The degrees-trig calculator only needs scalar number functions.
@@ -1157,6 +1158,12 @@ class CClientNLU {
     }
 
     async _geocodeAndGoto(locationName) {
+        // The secure build makes no geocoding request. Said outright, through the same
+        // {success, error} shape generateResponse() already shows the user, rather than
+        // failing on the network (see docs/dev/Secure-Build.md).
+        if (isSecureBuild) {
+            return {success: false, error: `Looking up a place by name is not available in this build (${locationName})`};
+        }
         try {
             const response = await fetch(
                 `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(locationName)}&limit=1`,

@@ -8,6 +8,11 @@ export const isConsole = (typeof window === 'undefined');
 // true = static serverless build (no PHP backend), false = server-backed deployment
 export const isServerless = process.env.IS_SERVERLESS_BUILD === 'true';
 
+// Secure build is determined at build time via webpack DefinePlugin (webpack.secure.js)
+// true = production server build with every outbound feature removed at compile time,
+// false = every other build. See docs/dev/Secure-Build.md.
+export const isSecureBuild = process.env.IS_SECURE_BUILD === 'true';
+
 // For compatibility, provide a no-op function (kept for backwards compatibility)
 export async function checkServerlessMode() {
     // This is now a no-op since serverless mode is determined at build time

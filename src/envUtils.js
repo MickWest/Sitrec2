@@ -9,6 +9,35 @@
  * then falls back to the build-time value baked in by dotenv-webpack.
  */
 
+import {SECURE_SECURITY_FLAGS, isSensitiveEnvKey} from "./secureFlags";
+
+// Secure build (webpack.secure.js), decided at compile time exactly as configUtils.js
+// decides isServerless: process.env.IS_SECURE_BUILD is a DefinePlugin literal there, so in
+// every other build this is a constant false and the ratchet below is dead code. Read
+// directly rather than imported from configUtils, which imports this module.
+const isSecureBuild = process.env.IS_SECURE_BUILD === 'true';
+
+function stripTrailingLineEnding(value) {
+    return typeof value === 'string' ? value.replace(/[\r\n]+$/, '') : value;
+}
+
+function isFalseString(value) {
+    return typeof value === 'string' && stripTrailingLineEnding(value).trim().toLowerCase() === 'false';
+}
+
+// The secure build's ratchet: a runtime override may only make the build more
+// restrictive. Returns true when the runtime value for `name` must be ignored.
+//   - a sensitive key (token, secret, password, access key, API key) is ignored
+//     outright; the build blanked it and nothing may put a credential back;
+//   - a security flag the build forced to "false" stays "false"; a runtime value of
+//     anything else (including "" or "true") is ignored.
+// Everything else - a map source name, a URL, a label - is overridable as usual.
+function secureBuildRejectsRuntimeValue(name, runtimeValue, buildTimeValue) {
+    if (isSensitiveEnvKey(name)) return true;
+    if (SECURE_SECURITY_FLAGS.includes(name) && isFalseString(buildTimeValue) && !isFalseString(runtimeValue)) return true;
+    return false;
+}
+
 /**
  * Get an environment variable, checking runtime overrides first.
  * @param {string} name - Variable name (e.g. "MAPBOX_TOKEN")
@@ -20,9 +49,14 @@ export function getEnv(name, fallback) {
     // else the build-time value from dotenv-webpack. process.env.X is replaced at
     // compile time, so this can't do a dynamic lookup — the caller passes the
     // build-time value as the fallback:  getEnv("MAPBOX_TOKEN", process.env.MAPBOX_TOKEN)
-    let value = (typeof window !== 'undefined' && window.__SITREC_ENV__ && window.__SITREC_ENV__[name] !== undefined)
-        ? window.__SITREC_ENV__[name]
-        : fallback;
+    const hasRuntimeValue = typeof window !== 'undefined' && window.__SITREC_ENV__ && window.__SITREC_ENV__[name] !== undefined;
+    let value = hasRuntimeValue ? window.__SITREC_ENV__[name] : fallback;
+
+    // Secure build only: a runtime override can tighten but never loosen (see above).
+    // In every other build isSecureBuild is a compile-time false and this is skipped.
+    if (isSecureBuild && hasRuntimeValue && secureBuildRejectsRuntimeValue(name, value, fallback)) {
+        value = fallback;
+    }
 
     // Strip a trailing CR/newline. A Windows (CRLF) env file — passed via
     // docker-compose `env_file:`, or read at build time by dotenv-webpack — can

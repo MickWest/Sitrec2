@@ -1,0 +1,394 @@
+{
+  "$comment": [
+    "Host literals the secure build's output (dist-secure) may contain. Read by",
+    "scripts/auditBundleEgress.js after every secure build; a host literal not listed here",
+    "fails the build. Same shape as scripts/egress-allowlist.json (the contract for the public",
+    "deployment) plus a class:",
+    "",
+    "  inert  (default) never a request: an XML namespace or marker identifier, a link inside",
+    "         library code, a citation in shader text, a display string, a pattern used to",
+    "         recognise a pasted address. mayReceive must be [\"none\"].",
+    "  link   a navigation the USER starts by clicking; the page never fetches it. mayReceive",
+    "         states what such a click carries, so the disclosure is written down.",
+    "  gated  fetch or link code is present but sits on a path closed at compile time; gate",
+    "         names the control: isSecureBuild (src/configUtils.js), or a setting the secure",
+    "         build forces to false (scripts/secureClientEnv.js), which the runtime ratchet in",
+    "         src/envUtils.js refuses to loosen. mayReceive must be [\"none\"].",
+    "",
+    "A host the application would contact at run time is never an entry of any class: it is a",
+    "finding, and the fix is to remove the code that names it (scripts/secureStubs.js). Exact",
+    "hosts only; no wildcards. Seeded from a real dist-secure build on 2026-09-02; every entry",
+    "was read in the source before it was classified. See docs/dev/Secure-Build.md."
+  ],
+  "hosts": [
+    {
+      "host": "www.w3.org",
+      "purpose": "XML namespace identifier written into exported SVG and XML files; not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.opengis.net",
+      "purpose": "XML namespace identifier written into exported KML; not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.collada.org",
+      "purpose": "XML namespace identifier written into exported COLLADA model files; not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "ns.adobe.com",
+      "purpose": "XMP metadata marker identifier compared against bytes in an image header when reading EXIF; not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "github.com",
+      "purpose": "the project's own documentation and notices links in the Help menu, and issue links inside library code (geotiff.js error messages)",
+      "trigger": "never requested by the application; the user may open a Help link",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.apache.org",
+      "purpose": "license URL in a preserved license comment inside library code",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "stuk.github.io",
+      "purpose": "documentation link inside a library error message (JSZip)",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "aomediacodec.github.io",
+      "purpose": "specification link inside a library error message (mediabunny, AV1 codec string)",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.webmproject.org",
+      "purpose": "specification link inside a library error message (mediabunny, VP9 codec string)",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "immersiveweb.dev",
+      "purpose": "link inside library code (three.js XR button, shown when WebXR is unavailable)",
+      "trigger": "never requested by the application",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "jcgt.org",
+      "purpose": "citation in a comment inside shader source text; not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "nullprogram.com",
+      "purpose": "citation in a comment inside shader source text; not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.shadertoy.com",
+      "purpose": "citation in a comment inside shader source text; not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "local.invalid",
+      "purpose": "reserved, unresolvable name used as the base for parsing relative URLs (src/GooglePhotorealisticTilesAuth.js); not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "local.metabunk.org",
+      "purpose": "the project's own local development host, in a list of prefixes used only to recognize and rewrite URLs that point at it (src/CFileManager.js); not a request",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "127.0.0.1",
+      "purpose": "loopback: a probe for the optional local compute helper on the user's own machine; a request to this address cannot leave the host",
+      "trigger": "when the local compute helper is looked for",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "maps.google.com",
+      "purpose": "icon addresses written into exported KML files (pushpin, camera and airport icons); fetched, if at all, by whatever opens the exported file, never by the application",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+
+    {
+      "host": "api.open-meteo.com",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "weather and wind lookup at a position and time; the fetch throws before any request in the secure build and the source is removed from the wind-source list (src/nodes/CNodeDisplayWindField.js, src/nodes/WindSources.js)",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "historical-forecast-api.open-meteo.com",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "historical wind lookup; same gate as api.open-meteo.com",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "nominatim.openstreetmap.org",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "geocoding of a typed place name; the command returns an error before any request in the secure build (src/CClientNLU.js)",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.google.com",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "the KML extension namespace written into exported files (inert), and the 'open in Google Maps' actions from the ground context menu and the configuration file's help functions, neither offered in the secure build (src/CustomManagerMenus.js, src/CustomManagerSetup.js)",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.flightradar24.com",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "a help-menu function from the configuration file that opens a flight replay at the viewed position and time, not added in the secure build (src/CustomManagerSetup.js); also a pattern that recognises a pasted link (src/DragDropHandler.js), inert",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "globe.adsbexchange.com",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "a help-menu function and a help link from the configuration file, not added in the secure build (src/CustomManagerSetup.js); also a pasted-link pattern (src/DragDropHandler.js), inert",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "in-the-sky.org",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "a help-menu function from the configuration file that opens a satellite map at the viewed position and time, not added in the secure build",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "earth.nullschool.net",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "a help-menu function from the configuration file that opens a wind map at the viewed position and time, not added in the secure build; also named in a comment in the wind field code",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "flightaware.com",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "a help link from the configuration file, not added in the secure build",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "planefinder.net",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "a help link from the configuration file, not added in the secure build",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "nova.astrometry.net",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "a help link from the configuration file to a star-field solving site, not added in the secure build",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.chatbase.co",
+      "class": "gated",
+      "gate": "isSecureBuild",
+      "purpose": "an embedded help chat frame from the configuration file, not added in the secure build",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+
+    {
+      "host": "api.mapbox.com",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "a built-in map provider in the configuration file; the built-in providers are not offered when the flag is off, and the flag is forced off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "api.maptiler.com",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "a built-in map and water-mask provider in the configuration file; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "basemap.nationalmap.gov",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "a built-in map provider in the configuration file; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "c.tile.openstreetmap.org",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "a built-in map provider in the configuration file; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "geoint.nrlssc.org",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "a built-in map provider in the configuration file; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "gibs.earthdata.nasa.gov",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "a built-in map provider in the configuration file; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "services.arcgisonline.com",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "a built-in map provider in the configuration file; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "tiles.maps.eox.at",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "a built-in map provider in the configuration file; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "docs.mapbox.com",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "terms link shown with a built-in map provider's attribution; the provider is not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.openstreetmap.org",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "attribution link shown with a built-in map provider; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.maptiler.com",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "attribution link shown with a built-in map provider; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "s2maps.eu",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "attribution link shown with a built-in map provider; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.esri.com",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "attribution link shown with a built-in map provider; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.usgs.gov",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "attribution link shown with a built-in map provider; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.earthdata.nasa.gov",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "attribution link shown with a built-in map provider; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "www.nasa.gov",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "attribution link shown with a built-in map provider; not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "developers.google.com",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false",
+      "purpose": "attribution link shown with the built-in photorealistic 3D tiles layer; not offered when the flag is off, and its authentication module is a stub",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "elevation.nationalmap.gov",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_ELEVATION_SOURCES=false",
+      "purpose": "a built-in elevation provider in the configuration file; the built-in providers are not offered when the flag is off, and the flag is forced off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "s3.amazonaws.com",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_ELEVATION_SOURCES=false",
+      "purpose": "the built-in public elevation tile bucket (src/nodes/CNodeTerrainUI.js and the configuration file); not offered when the flag is off. Object storage for saves is reached through the server, never from the page",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "celestrak.org",
+      "class": "gated",
+      "gate": "SITREC_ENABLE_DEFAULT_TLE_SOURCES=false",
+      "purpose": "the default satellite element-set catalogue addresses, carried as the CURRENT_STARLINK and CURRENT_ACTIVE settings; the page asks its own server by a fixed key, never this host, and the default sources are not offered when the flag is off",
+      "trigger": "never requested",
+      "mayReceive": ["none"]
+    },
+
+    {
+      "host": "www.war.gov",
+      "class": "link",
+      "purpose": "a link from the sitch browser to the public source record of a built-in situation (src/CSitchBrowser.js); the page never fetches it",
+      "trigger": "the user opens the link",
+      "mayReceive": ["identifier"]
+    }
+  ],
+  "serverEndpoints": []
+}

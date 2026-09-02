@@ -46,7 +46,7 @@ import {UpdateHUD} from "./JetStuff";
 import {degrees, getDateTimeFilename} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {EventManager} from "./CEventManager";
-import {isAdmin, isServerless, SITREC_APP, SITREC_SERVER} from "./configUtils";
+import {isAdmin, isSecureBuild, isServerless, SITREC_APP, SITREC_SERVER} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
@@ -1844,7 +1844,9 @@ export const setupMethods = {
             });
 
         // configParmas.extraHelpFunctions has and object keyed on function name
-        if (configParams?.extraHelpFunctions) {
+        // The secure build offers none of them: they open external sites with the viewed
+        // position and time in the address (see docs/dev/Secure-Build.md).
+        if (configParams?.extraHelpFunctions && !isSecureBuild) {
             // iterate over k, value of configParmas.extraHelpFunctions
             for (const funcName in configParams.extraHelpFunctions) {
                 const funcVars = configParams.extraHelpFunctions[funcName];

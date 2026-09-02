@@ -17,8 +17,9 @@
 //              of that kind are already loaded
 
 import {Globals} from "../Globals";
+import {isSecureBuild} from "../configUtils";
 
-export const WIND_SOURCES = [
+const BUILT_IN_WIND_SOURCES = [
     { key: "gfs",              label: "GFS (NOAA)",       short: "GFS",              autoLoad: null },
     { key: "uwyo",             label: "UWYO Soundings",   short: "UWYO",             autoLoad: "uwyo" },
     { key: "igra2",            label: "IGRA2 Soundings",  short: "IGRA2",            autoLoad: "igra2" },
@@ -26,6 +27,13 @@ export const WIND_SOURCES = [
     { key: "openmeteo",        label: "open-meteo",       short: "open-meteo",       autoLoad: null },
     { key: "manual",           label: "Manual",           short: "Manual",           autoLoad: null },
 ];
+
+// open-meteo is fetched by the browser straight from a public service, so the secure build
+// does not offer it (CNodeDisplayWindField.fetchOpenMeteoUV is gated the same way). Filtered
+// here, at the one definition, so every lookup and dropdown agrees. See docs/dev/Secure-Build.md.
+export const WIND_SOURCES = isSecureBuild
+    ? BUILT_IN_WIND_SOURCES.filter(s => s.key !== "openmeteo")
+    : BUILT_IN_WIND_SOURCES;
 
 // Reserved key for the env-var-defined custom source (CUSTOM_WIND_URL,
 // served via customWindProxy.php). Resolved at call time because Globals.env

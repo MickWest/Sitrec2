@@ -9,6 +9,7 @@ const {
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const DEFAULT_TARGETS = [path.join(PROJECT_ROOT, "dist-serverless")];
+const SECURE_TARGETS = [path.join(PROJECT_ROOT, "dist-secure")];
 
 // Two audits with OPPOSITE expectations, so they are separate modes.
 //
@@ -19,7 +20,16 @@ const DEFAULT_TARGETS = [path.join(PROJECT_ROOT, "dist-serverless")];
 // "server" audits a FULL SERVER build - the tree that gets rsynced to production. That
 // tree is SUPPOSED to carry sitrecServer/ and shared.env.php, so those are not findings
 // here. What must never appear is a credential the browser can fetch.
-const MODES = ["bundle", "server"];
+//
+// "secure" audits the SECURE build (webpack.secure.js, dist-secure): a full server tree,
+// so sitrecServer/ and the guarded shared.env.php belong there as in server mode - but the
+// client environment is stripped like a serverless bundle (scripts/secureClientEnv.js), so
+// NO credential may appear anywhere else, the two client-public keys included.
+const MODES = ["bundle", "server", "secure"];
+
+// The modes whose target is a server tree: sitrecServer/ and shared.env.php are expected,
+// the published tests/ tree carries known fixtures, and the shared.env.php guard is checked.
+const SERVER_SHAPED_MODES = new Set(["server", "secure"]);
 
 // The only two keys a full-server build may publish. The browser fetches Mapbox and
 // MapTiler tiles DIRECTLY, so those tokens are unavoidably public: the map sources
@@ -275,12 +285,12 @@ function scanFile(filePath, secretCandidates, options = {}) {
     const relativePath = scanRoot
         ? path.relative(scanRoot, filePath).split(path.sep).join("/")
         : normalizedPath;
-    const inFixtureTree = mode === "server"
+    const inFixtureTree = SERVER_SHAPED_MODES.has(mode)
         && SERVER_FIXTURE_DIRS.some((pattern) => pattern.test(relativePath));
 
     // A full-server tree is MEANT to contain sitrecServer/ and shared.env.php, so their
     // presence is not a finding there - only their contents leaking would be.
-    if (mode !== "server") {
+    if (!SERVER_SHAPED_MODES.has(mode)) {
         for (const pattern of FORBIDDEN_PATH_PATTERNS) {
             if (pattern.test(normalizedPath)) {
                 findings.push({
@@ -294,7 +304,7 @@ function scanFile(filePath, secretCandidates, options = {}) {
 
     // shared.env.php holds every key by design; checkServerEnvGuard verifies the one
     // thing that actually protects it instead.
-    if (mode === "server" && normalizedPath.endsWith(`/${SERVER_ENV_FILE}`)) {
+    if (SERVER_SHAPED_MODES.has(mode) && normalizedPath.endsWith(`/${SERVER_ENV_FILE}`)) {
         return findings;
     }
 
@@ -428,7 +438,7 @@ function auditTargets(targets, options = {}) {
 
     for (const target of targets) {
         for (const scanRoot of expandScanRoots(target)) {
-            if (mode === "server") {
+            if (SERVER_SHAPED_MODES.has(mode)) {
                 findings.push(...checkServerEnvGuard(scanRoot));
             }
 
@@ -475,7 +485,9 @@ function main() {
 
     let scanTargets = targets;
     if (scanTargets.length === 0) {
-        scanTargets = mode === "server" ? resolveConfiguredProdPath() : DEFAULT_TARGETS;
+        scanTargets = mode === "server" ? resolveConfiguredProdPath()
+            : mode === "secure" ? SECURE_TARGETS
+            : DEFAULT_TARGETS;
     }
 
     if (scanTargets.length === 0) {
@@ -502,6 +514,13 @@ function main() {
         return;
     }
 
+    if (mode === "secure") {
+        console.log(
+            `Secret audit passed (secure mode) for ${scanTargets.length} target(s): server tree accepted, no credential anywhere else.`,
+        );
+        return;
+    }
+
     const sanitizedEnv = buildServerlessClientEnv();
     console.log(
         `Secret audit passed for ${scanTargets.length} target(s). Sanitized ${Object.keys(sanitizedEnv).length} client env values.`,
@@ -520,4 +539,5 @@ module.exports = {
     collectEnvSecretCandidates,
     scanFile,
     CLIENT_PUBLIC_ENV_KEYS,
+    SERVER_SHAPED_MODES,
 };

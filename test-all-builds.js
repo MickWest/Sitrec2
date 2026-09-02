@@ -14,7 +14,7 @@
  * 
  * Options:
  *   --quick         Skip builds, only test existing builds
- *   --config=<name> Only test specific config (dev, prod, standalone, serverless)
+ *   --config=<name> Only test specific config (dev, prod, standalone, serverless, secure)
  */
 
 import {exec, spawn} from 'child_process';
@@ -61,6 +61,20 @@ const BUILD_CONFIGS = [
         serverPort: 3000,
         url: 'http://localhost:3000/sitrec/',
         description: 'Serverless build (no PHP required)'
+    },
+    {
+        name: 'secure',
+        buildCmd: 'npm run build-secure',
+        distDir: 'dist-secure',
+        // standalone-server.js serves dist-standalone only (its DIST_DIR is fixed), so the
+        // secure build is served by PHP's built-in server straight from its own directory:
+        // sitrecServer/*.php run in place and everything else is served as static files.
+        // "localhost:" in its startup line is what startServer() waits for.
+        server: 'php -S localhost:3000 -t dist-secure',
+        serverPort: 3000,
+        url: 'http://localhost:3000/',
+        description: 'Secure build (production server build, outbound features removed)',
+        requiresPhp: true
     }
 ];
 

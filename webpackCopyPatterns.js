@@ -8,6 +8,10 @@ const isDockerDev = process.env.NODE_ENV === 'development' && InstallPaths.dev_p
 
 const isServerlessBuild = process.env.IS_SERVERLESS_BUILD === 'true';
 
+// The secure build (webpack.secure.js) reuses the server patterns unchanged; the allow-list
+// of server endpoints it ships is a later step, so nothing is conditioned on this yet.
+const isSecureBuild = process.env.IS_SECURE_BUILD === 'true';
+
 const patterns = [];
 
 // Global ignore list applied to all copy patterns that use globs
@@ -63,7 +67,7 @@ patterns.push({ from: "assets/install", to: "./install" });
 
 // Copy tests directory (for browser-based benchmarks/tests) - dev only
 // DOCKER_BUILD is set in Dockerfile for production builds
-if (!process.env.DOCKER_BUILD && !isServerlessBuild) {
+if (!process.env.DOCKER_BUILD && !isServerlessBuild && !isSecureBuild) {
     patterns.push({ from: "tests", to: "./tests", globOptions: { ignore: globalIgnore } });
 }
 
@@ -79,21 +83,50 @@ if (!isDockerDev && !isServerlessBuild) {
             from: "sitrecServer", 
             to: "./sitrecServer",
             globOptions: {
-                ignore: [...globalIgnore, '**/config.php']
+                ignore: [...globalIgnore, '**/config.php', ...secureServerIgnores()]
             }
         }
     );
-    
+
     // Copy config.php from the config directory to ensure we get the real file
     // (not the empty placeholder that Docker creates due to overlapping volume mounts)
     // Falls back to the .example template for fresh worktrees / clones where
     // the gitignored config.php hasn't been created yet.
-    const configPhpPath = fs.existsSync(path.resolve(__dirname, 'config/config.php'))
-        ? './config/config.php'
-        : './config/config.php.example';
+    //
+    // The secure build always packages the tracked example: it carries the identity seam
+    // (the AUTH_MODE dispatch) the secure deployment relies on, and a checkout's own
+    // config/config.php is that checkout's public-site configuration, not the artifact's.
+    const liveConfigPhp = path.resolve(__dirname, 'config/config.php');
+    let configPhpPath;
+    if (isSecureBuild) {
+        configPhpPath = './config/config.php.example';
+        if (fs.existsSync(liveConfigPhp)) {
+            console.warn('[secure build] config/config.php exists in this checkout but is not packaged; the secure artifact ships config/config.php.example');
+        }
+    } else {
+        configPhpPath = fs.existsSync(liveConfigPhp) ? './config/config.php' : './config/config.php.example';
+    }
     patterns.push(
         { from: configPhpPath, to: "./sitrecServer/config.php"}
     );
+}
+
+// The secure build ships only the server files named in scripts/secure-server-allowlist.json
+// (the endpoints that fetch from public data providers, the assistant relays, the
+// diagnostics pages and the telemetry writers are left out). Everything else under
+// sitrecServer/ becomes an ignore pattern. Other builds ignore nothing here.
+// scripts/auditBundleEgress.js checks the packaged tree against the same list.
+function secureServerIgnores() {
+    if (!isSecureBuild) return [];
+    const allowlist = require('./scripts/secure-server-allowlist.json');
+    const allowed = new Set(allowlist.files.map(entry => entry.file.replace(/\/$/, '')));
+    const ignores = [];
+    for (const name of fs.readdirSync(path.resolve(__dirname, 'sitrecServer'))) {
+        if (name === 'config.php' || allowed.has(name)) continue;
+        const isDir = fs.statSync(path.resolve(__dirname, 'sitrecServer', name)).isDirectory();
+        ignores.push(isDir ? `**/sitrecServer/${name}/**` : `**/sitrecServer/${name}`);
+    }
+    return ignores;
 }
 
 // copy the shared.env file, renaming it to shared.env.php to prevent direct access
