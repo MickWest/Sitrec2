@@ -1104,6 +1104,8 @@ rsync -avz --delete -e ssh "$LOCAL_DIR/" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR"
 
 Ensure the five server directories exist on the production server with appropriate write permissions for `sitrec-cache` and `sitrec-upload`.
 
+For a public site on its own domain, the simpler route is the released container image on a small VPS with automatic HTTPS and self-applying updates: see [Deploying on a VPS with Podman and Caddy](Deploying-on-a-VPS.md).
+
 ### Building for another deployment
 
 One checkout can build for more than one site. A second site usually needs its own `shared.env` (its own keys, map defaults and storage settings) and its own output directory, and neither should disturb the main build. Two environment variables override the defaults for a single build:
