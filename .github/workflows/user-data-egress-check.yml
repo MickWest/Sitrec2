@@ -98,14 +98,18 @@ jobs:
           IN_SCOPE="$(node -e "console.log(require('./.egress/scan.json').filesInScope.length)")"
           echo "in_scope=$IN_SCOPE" >> "$GITHUB_OUTPUT"
           # The diff the reviewer reads: normal context, in-scope files only, bounded in size.
+          # Written to a file first and truncated from there: piping git into head would
+          # give git SIGPIPE on a large diff, and under pipefail that aborts the step.
           : > .egress/push.diff
           if [ "$IN_SCOPE" != "0" ]; then
             tr '\n' '\0' < .egress/files.txt \
-              | xargs -0 git diff --no-color --no-ext-diff --unified=3 "$BASE" "$HEAD" -- \
-              | head -c 400000 > .egress/push.diff
-            if [ "$(wc -c < .egress/push.diff)" -ge 400000 ]; then
-              printf '\n\n[diff truncated at 400,000 bytes]\n' >> .egress/push.diff
+              | xargs -0 git diff --no-color --no-ext-diff --unified=3 "$BASE" "$HEAD" -- > .egress/push.full.diff
+            FULL="$(wc -c < .egress/push.full.diff)"
+            head -c 400000 .egress/push.full.diff > .egress/push.diff
+            if [ "$FULL" -gt 400000 ]; then
+              printf '\n\n[diff truncated at 400,000 of %s bytes]\n' "$FULL" >> .egress/push.diff
             fi
+            rm -f .egress/push.full.diff
           fi
           echo "Files in scope: $IN_SCOPE"
           cat .egress/scan.md

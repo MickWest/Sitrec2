@@ -262,6 +262,13 @@ describe('egress-check-record', () => {
         expect(r.comment).toMatch(/model unavailable/);
     });
 
+    test('INCOMPLETE when the review exited non-zero, even if a verdict line was printed', () => {
+        const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': 'Verdict: CLEAR\nExamined 2 files.', 'review.exit': '1'});
+        expect(r.verdict).toBe('INCOMPLETE');
+        expect(r.comment).toMatch(/exit code 1 after partial output/);
+        expect(r.comment).toMatch(/Partial output, not a verdict/);
+    });
+
     test('INCOMPLETE when the review does not start with a verdict line', () => {
         const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': 'I looked at the files and everything is fine.'});
         expect(r.verdict).toBe('INCOMPLETE');
