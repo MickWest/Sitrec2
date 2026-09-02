@@ -1104,6 +1104,21 @@ rsync -avz --delete -e ssh "$LOCAL_DIR/" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR"
 
 Ensure the five server directories exist on the production server with appropriate write permissions for `sitrec-cache` and `sitrec-upload`.
 
+### Building for another deployment
+
+One checkout can build for more than one site. A second site usually needs its own `shared.env` (its own keys, map defaults and storage settings) and its own output directory, and neither should disturb the main build. Two environment variables override the defaults for a single build:
+
+```bash
+SITREC_SHARED_ENV=config/shared.env.othersite \
+SITREC_PROD_PATH=/path/to/othersite-build \
+npm run deploy
+```
+
+- `SITREC_SHARED_ENV` names the settings file to build with, relative to the repository root. It is read into the JS bundle, copied to `shared.env.php`, and checked by the freshness gate exactly as `config/shared.env` would be. A path that does not exist stops the build rather than falling back to the default, so a deployment can never be built with another site's keys by accident. Files named `config/shared.env.<anything>` are gitignored.
+- `SITREC_PROD_PATH` is the directory the production build is written to. The third-party notices and the secret audit that run after the build use the same directory.
+
+Both are resolved in `scripts/buildTarget.js`. Everything else in the checkout, including `config/config-install.js` and the main `config/shared.env`, is left untouched.
+
 ### Production Server Requirements
 
 The Docker images (`Dockerfile`, `Dockerfile.dev`, `Dockerfile.release`) already include everything below. Bare-metal / non-Docker deploys must install it manually on the server.

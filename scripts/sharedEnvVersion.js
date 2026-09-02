@@ -189,6 +189,9 @@ function check({ envPath, examplePath, cwd } = {}) {
     envPath = envPath || path.join(ROOT, ENV_REL);
     examplePath = examplePath || path.join(ROOT, EXAMPLE_REL);
     cwd = cwd || ROOT;
+    // Name the file being checked, so a build for another deployment reports its own file.
+    const envRel = path.relative(ROOT, path.resolve(envPath));
+    const envLabel = envRel === ENV_REL ? ENV_REL : envRel.startsWith("..") ? path.resolve(envPath) : envRel;
 
     // Missing files are someone else's problem (webpack already throws if
     // shared.env is absent; an example-less tree predates this mechanism).
@@ -223,13 +226,13 @@ function check({ envPath, examplePath, cwd } = {}) {
 
     const message = `
 ============================================================================
- BUILD STOPPED: your ${ENV_REL} is out of date
+ BUILD STOPPED: your ${envLabel} is out of date
 ============================================================================
 
- ${EXAMPLE_REL} has changed since your ${ENV_REL} was last brought
+ ${EXAMPLE_REL} has changed since your ${envLabel} was last brought
  up to date. New or changed settings may affect this install.
 
-     your    ${ENV_REL}          ${yours}
+     your    ${envLabel}          ${yours}
      current ${EXAMPLE_REL}  SHARED_ENV_VERSION=${exampleVersion}
 
 ${indent(describeChangesSince(envVersion, cwd), " ")}
@@ -237,7 +240,7 @@ ${indent(describeChangesSince(envVersion, cwd), " ")}
  What to do:
 
    1. Review the changes above and merge anything relevant into your
-      ${ENV_REL} (new settings usually have safe defaults, but check
+      ${envLabel} (new settings usually have safe defaults, but check
       anything that affects your deployment).
 
    2. Mark your file current by setting its version line to:
@@ -257,8 +260,9 @@ function indent(text, pad) {
 }
 
 // Called from webpack.common.js — prints instructions and stops the build.
-function checkOrExit() {
-    const result = check();
+// opts.envPath: the shared.env to check, when a build reads one other than config/shared.env.
+function checkOrExit(opts) {
+    const result = check(opts);
     if (!result.ok) {
         console.error(result.message);
         process.exit(1);
@@ -387,8 +391,9 @@ if (require.main === module) {
     if (mode === "--bump-staged") {
         process.exit(bumpStaged(todayStamp()));
     } else if (mode === "--check") {
-        checkOrExit();
-        console.log("[shared-env] config/shared.env is up to date");
+        const target = require("./buildTarget");
+        checkOrExit({ envPath: target.sharedEnvPath() });
+        console.log(`[shared-env] ${target.sharedEnvLabel()} is up to date`);
     } else {
         console.error("usage: sharedEnvVersion.js --check | --bump-staged");
         process.exit(1);

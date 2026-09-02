@@ -446,16 +446,12 @@ function auditTargets(targets, options = {}) {
     return findings;
 }
 
-// The production build path is machine-specific and lives in config/config-install.js,
-// which is gitignored - a fresh clone has only the .example. Resolved lazily so this
-// script still runs everywhere else.
+// The production build path is machine-specific: prod_path in config/config-install.js
+// (gitignored - a fresh clone has only the .example), or SITREC_PROD_PATH when building
+// for another deployment. Resolved lazily so this script still runs everywhere else.
 function resolveConfiguredProdPath() {
-    try {
-        const InstallPaths = require("../config/config-install");
-        return InstallPaths.prod_path ? [InstallPaths.prod_path] : [];
-    } catch {
-        return [];
-    }
+    const prodPath = require("./buildTarget").prodPath();
+    return prodPath ? [prodPath] : [];
 }
 
 function main() {
@@ -485,7 +481,7 @@ function main() {
     if (scanTargets.length === 0) {
         // Only reachable in server mode, on a checkout with no configured prod path.
         // Nothing was built to that path either, so there is nothing to audit.
-        console.log("Secret audit skipped: no prod_path configured in config/config-install.js.");
+        console.log("Secret audit skipped: no prod_path in config/config-install.js and no SITREC_PROD_PATH.");
         return;
     }
 

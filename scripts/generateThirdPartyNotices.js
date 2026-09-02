@@ -741,12 +741,12 @@ function generate() {
     const copyIdx = args.indexOf("--copy-to");
     let copyTo = copyIdx !== -1 ? args[copyIdx + 1] : null;
 
-    // --copy-to-prod resolves the path from config/config-install.js
+    // --copy-to-prod resolves the path from config/config-install.js, or from
+    // SITREC_PROD_PATH when building for another deployment (see buildTarget.js)
     if (args.includes("--copy-to-prod")) {
-        try {
-            copyTo = require(path.join(ROOT, "config/config-install")).prod_path;
-        } catch {
-            console.warn("  WARNING: Could not read prod_path from config/config-install.js");
+        copyTo = require("./buildTarget").prodPath();
+        if (!copyTo) {
+            console.warn("  WARNING: No prod_path in config/config-install.js and no SITREC_PROD_PATH");
         }
     }
 

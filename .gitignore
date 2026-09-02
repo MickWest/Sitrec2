@@ -6,6 +6,9 @@ config/config-install.js
 .vscode/
 config/shared.env
 config/shared.env.mick
+# Settings for other deployments, built with SITREC_SHARED_ENV=config/shared.env.<target>
+config/shared.env.*
+!config/shared.env.example
 sitrec-videos
 sitrec-cache
 sitrec-upload

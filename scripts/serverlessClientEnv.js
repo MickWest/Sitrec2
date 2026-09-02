@@ -3,7 +3,10 @@ const path = require("path");
 const dotenv = require("dotenv");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
-const SHARED_ENV_PATH = path.join(PROJECT_ROOT, "config", "shared.env");
+// config/shared.env, or the file SITREC_SHARED_ENV names when building for another
+// deployment - the same file webpack.common.js reads, so a serverless bundle never mixes
+// one site's settings with another's (see buildTarget.js).
+const SHARED_ENV_PATH = require("./buildTarget").sharedEnvPath();
 const SHARED_ENV_EXAMPLE_PATH = path.join(PROJECT_ROOT, "config", "shared.env.example");
 
 const EXPLICIT_SENSITIVE_KEYS = new Set([

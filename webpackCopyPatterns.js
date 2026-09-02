@@ -100,8 +100,11 @@ if (!isDockerDev && !isServerlessBuild) {
 // combined with the initial <?php tag, this will prevent the file from being served
 // Falls back to .example template for fresh worktrees / clones.
 if (!isServerlessBuild) {
-    const sharedEnvPath = fs.existsSync(path.resolve(__dirname, 'config/shared.env'))
-        ? './config/shared.env'
+    // config/shared.env, or the file SITREC_SHARED_ENV names when building for another
+    // deployment (see scripts/buildTarget.js).
+    const targetEnvPath = require('./scripts/buildTarget').sharedEnvPath();
+    const sharedEnvPath = fs.existsSync(targetEnvPath)
+        ? targetEnvPath
         : './config/shared.env.example';
     patterns.push({
         from: sharedEnvPath,

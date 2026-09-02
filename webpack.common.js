@@ -14,17 +14,20 @@ const md = new MarkdownIt();
 const CircularDependencyPlugin = require('circular-dependency-plugin')
 const WasmPackPlugin = require('@wasm-tool/wasm-pack-plugin');
 
+// The shared.env this build reads: config/shared.env, or the file SITREC_SHARED_ENV names
+// when building for another deployment (see scripts/buildTarget.js).
+const sharedEnvFile = require('./scripts/buildTarget').sharedEnvPath();
 const dotenv = require('dotenv');
-const result = dotenv.config({ path: './config/shared.env' });
+const result = dotenv.config({ path: sharedEnvFile });
 if (result.error) {
     throw result.error;
 }
 
-// Stop the build when config/shared.env predates config/shared.env.example
+// Stop the build when the shared.env predates config/shared.env.example
 // (compares SHARED_ENV_VERSION stamps; prints what changed and how to update).
 // Covers every bundling build, which all require this file; webpack.copy-files.js
 // does not, so it carries its own copy of this call.
-require('./scripts/sharedEnvVersion').checkOrExit();
+require('./scripts/sharedEnvVersion').checkOrExit({ envPath: sharedEnvFile });
 
 // Rewrite inter-document links from .md to .html for the generated doc pages.
 // Handles a trailing anchor: [x](Foo.md#bar) -> [x](Foo.html#bar). The previous pattern
@@ -206,7 +209,7 @@ module.exports = (env = {}) => ({
         // },
 
         new Dotenv({
-            path: './config/shared.env',
+            path: sharedEnvFile,
         }),
         new MiniCssExtractPlugin(),
         new HtmlWebpackPlugin({
