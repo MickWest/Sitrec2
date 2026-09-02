@@ -196,6 +196,7 @@ describe("docs on disk", () => {
         "dev/AddSitchInCode.md",            // legacy in-code sitch authoring
         "dev/CustomTerrainSources.md",      // map/elevation source configuration
         "dev/Deploying-on-a-VPS.md",        // VPS deployment with Podman and Caddy
+        "dev/Deploying-on-GitHub-Pages.md", // the serverless build on GitHub Pages
         "dev/FileRehosting.md",             // rehosting + server auth
         "dev/Installing-and-configuring.md",// install guide
         "dev/SettingsManager.md",           // settings architecture

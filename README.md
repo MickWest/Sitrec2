@@ -73,6 +73,8 @@ assistant — so if you add a doc, add it there.
 ### Technical Documentation (for coders and webmasters)
 
 - [Installing and Configuring a Sitrec Server](docs/dev/Installing-and-configuring.md)
+- [Deploying Sitrec on a VPS with Podman and Caddy - A public site on its own domain from the released container image, with HTTPS and self-applying updates](docs/dev/Deploying-on-a-VPS.md)
+- [Deploying Sitrec on GitHub Pages - How the serverless build at mickwest.github.io/Sitrec2 is made and published, what it can and cannot do, and how to fork it](docs/dev/Deploying-on-GitHub-Pages.md)
 - [File Rehosting and Related Server Configuration](docs/dev/FileRehosting.md)
 - [Custom Terrain and Elevation Sources, WMS, etc.](docs/dev/CustomTerrainSources.md)
 - [Adding New Settings - Developer checklist for new user settings](docs/dev/ADDING_NEW_SETTINGS.md)
