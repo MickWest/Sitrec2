@@ -17,7 +17,7 @@ export const _configParams = {
             name: "MapBox",
             requiredToken: "MAPBOX_TOKEN",
             mapURL: (z, x, y, layer) => {
-                // direct URL to the MapBox tile, not via the cachemaps.php
+                // direct URL to the MapBox tile
                 // this is the URL that is used by the MapBox GL JS library
                 return `https://api.mapbox.com/v4/mapbox.${layer}/${z}/${x}/${y}@2x.jpg80?access_token=${process.env.MAPBOX_TOKEN}`
             },
@@ -88,33 +88,6 @@ export const _configParams = {
             attribution: "\u00a9 OpenStreetMap contributors",
             termsURL: "https://www.openstreetmap.org/copyright",
         },
-        osmHighlight: {
-            name: "Open Streetmap (Highlight)",
-            excludeFromMenu: true,
-            mapURL: (z,x,y) => {
-                return SITREC_SERVER+"cachemaps.php?url=" + encodeURIComponent(`https://c.tile.openstreetmap.org/${z}/${x}/${y}.png`)
-            },
-            maxZoom: 17,
-            supportsOceanSurface: true,
-            // Color processing options
-            processColors: true,
-            colorProcessingOptions: {
-                colorDistance: 10,           // Maximum color-space distance for highlighting
-                minBlendDistance: 5,        // Minimum distance where blending starts
-               //targetColors: [[222, 222, 222], [218, 218, 218]], // Colors to highlight
-                targetColors: [[232, 147, 163], [252, 214, 164], [246,248, 190], // down to zoom 12
-                    [231,111,138], [244,200,136],
-                    [237,164,179], [242,198,206], // interstates zoomed way out
-                    [255,255,255], // white roads when zoomed in
-
-                ], // roads: pink (freeways), orange (highways), yellow (roads)
-
-                dimIntensity: 0.1,          // 10% intensity for non-highlighted pixels
-                highlightColor: [255, 255, 0] // Bright yellow for highlighted pixels
-            },
-            attribution: "\u00a9 OpenStreetMap contributors",
-            termsURL: "https://www.openstreetmap.org/copyright",
-        },
         maptiler: {
             name: "MapTiler",
             requiredToken: "MAPTILER_KEY",
@@ -149,8 +122,9 @@ export const _configParams = {
         },
         eox: {
             name: "EOX",
+            // Fetched directly by the browser, like every other source (EOX allows cross-origin tile requests).
             mapURL: (z,x,y) => {
-                return SITREC_SERVER+"cachemaps.php?url=" + encodeURIComponent(`https://tiles.maps.eox.at/wmts?layer=s2cloudless_3857&style=default&tilematrixset=g&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image%2Fjpeg&TileMatrix=${z}&TileCol=${x}&TileRow=${y}`)
+                return `https://tiles.maps.eox.at/wmts?layer=s2cloudless_3857&style=default&tilematrixset=g&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image%2Fjpeg&TileMatrix=${z}&TileCol=${x}&TileRow=${y}`
             },
             maxZoom: 12,
             supportsOceanSurface: true, // EOX satellite imagery can have ocean surface overlay

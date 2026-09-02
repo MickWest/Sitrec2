@@ -1022,7 +1022,7 @@ Place them in `sitrec-videos/public/`.
 After building, verify with these URL tests (adjust the path if not at `/sitrec/`):
 
 - PHP: `http://localhost/sitrec/sitrecServer/info.php` — should show PHP info page
-- Terrain proxy: `http://localhost/sitrec/sitrecServer/cachemaps.php?url=https%3A%2F%2Fs3.amazonaws.com%2Felevation-tiles-prod%2Fterrarium%2F14%2F3188%2F6188.png` — should return a terrain tile image
+- Server-side fetch and cache: `http://localhost/sitrec/sitrecServer/proxy.php?request=CURRENT_STARLINK` — should return satellite element sets as CSV text (the server fetches them from CelesTrak and caches the copy)
 - Default sitch: `http://localhost/sitrec/` — loads the default sitch
 - Smoke test: `http://localhost/sitrec/?testAll=1` — loads all sitches sequentially
 

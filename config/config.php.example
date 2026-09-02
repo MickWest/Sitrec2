@@ -1,26 +1,11 @@
 <?php
 /*
- * This is a simpler configuration file that replaces cachemaps-config.php, other config files, and some in-line settings
+ * This is a simpler configuration file that replaces the older per-feature config files and some in-line settings
  * It also replaces the need for paths to be configured in config.js, as the client can fetch the configuration from here
  */
 
 require_once __DIR__ . '/injectEnv.php';
 
-// Array of acceptable domains for caching (in cachemaps.php)
-    $acceptable_domains = [
-        'mickwest.com',  // for testing with the example above
-        'c.tile.openstreetmap.org',
-        'api.mapbox.com',
-        'tiles.maps.eox.at',
-        //     's3.amazonaws.com', // We use this directly, no cache
-        'geoint.nrlssc.org',
-        // Add more domains as needed
-    ];
-
-    // Array of acceptable image extensions for caching (in cachemaps.php)
-    // remove this if you want to allow all extensions
-    $acceptable_extensions = [ "png", "jpg", "tiff", "jpeg", "gif", "webp", "svg", "bmp", "ico", "tif"];
-//
 // import S3 credentials from shared.env
     $s3creds = [
         "accessKeyId"     => getenv("S3_ACCESS_KEY_ID"),
