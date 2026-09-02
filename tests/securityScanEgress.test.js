@@ -237,7 +237,7 @@ describe('egress-check-record', () => {
     });
 
     test('CLEAR when both layers are clear', () => {
-        const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '## Automated scan', 'review.md': 'Verdict: CLEAR\nExamined 2 files.'});
+        const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '## Automated scan', 'review.md': 'Verdict: CLEAR\nExamined 2 files.', 'review.exit': '0'});
         expect(r.verdict).toBe('CLEAR');
         expect(r.comment).toMatch(/\*\*Verdict: CLEAR\*\*/);
         expect(r.comment).toMatch(/range `aaaaaaa\.\.bbbbbbb`/);
@@ -245,12 +245,12 @@ describe('egress-check-record', () => {
     });
 
     test('ATTENTION when the review says so', () => {
-        const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': 'Verdict: ATTENTION\n- src/F0.js:3 sends the track to x.'});
+        const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': 'Verdict: ATTENTION\n- src/F0.js:3 sends the track to x.', 'review.exit': '0'});
         expect(r.verdict).toBe('ATTENTION');
     });
 
     test('ATTENTION when the scan says so, even with a clear review', () => {
-        const r = record({'scan.json': scanJson('ATTENTION', 2), 'scan.md': '', 'review.md': 'Verdict: CLEAR'});
+        const r = record({'scan.json': scanJson('ATTENTION', 2), 'scan.md': '', 'review.md': 'Verdict: CLEAR', 'review.exit': '0'});
         expect(r.verdict).toBe('ATTENTION');
         expect(r.comment).toMatch(/Scan: 1 destination\(s\) not in the allow-list/);
     });
@@ -262,6 +262,19 @@ describe('egress-check-record', () => {
         expect(r.comment).toMatch(/model unavailable/);
     });
 
+    test('INCOMPLETE when no exit status was recorded, even with a verdict line (a cancelled step)', () => {
+        const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': 'Verdict: CLEAR\nExamined 2 files.'});
+        expect(r.verdict).toBe('INCOMPLETE');
+        expect(r.comment).toMatch(/did not record an exit status; its output is partial/);
+        expect(r.comment).toMatch(/Partial output, not a verdict/);
+    });
+
+    test('INCOMPLETE when the review exited 0 with no output', () => {
+        const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': '', 'review.exit': '0'});
+        expect(r.verdict).toBe('INCOMPLETE');
+        expect(r.comment).toMatch(/exited 0 but produced no output/);
+    });
+
     test('INCOMPLETE when the review exited non-zero, even if a verdict line was printed', () => {
         const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': 'Verdict: CLEAR\nExamined 2 files.', 'review.exit': '1'});
         expect(r.verdict).toBe('INCOMPLETE');
@@ -270,7 +283,7 @@ describe('egress-check-record', () => {
     });
 
     test('INCOMPLETE when the review does not start with a verdict line', () => {
-        const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': 'I looked at the files and everything is fine.'});
+        const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': 'I looked at the files and everything is fine.', 'review.exit': '0'});
         expect(r.verdict).toBe('INCOMPLETE');
     });
 

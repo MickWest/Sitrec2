@@ -41,16 +41,20 @@ if (!scan) {
 } else if (scan.filesInScope.length === 0) {
     review = {status: 'skipped', verdict: 'CLEAR', note: 'no code changed in this push, so no review was needed'};
 } else {
-    // A verdict counts only from a run that finished. A run that ended early (the
-    // credit cap, a crash, a kill) may still have printed a verdict line before it died.
-    const exitCode = reviewExit === '' ? null : Number(reviewExit);
+    // A verdict counts only from a run that finished, which means an exit file that reads
+    // 0. A run that ended early (the credit cap, a crash, a job timeout that cancelled the
+    // step before it wrote the exit file) may still have printed a verdict line first.
+    const exitCode = /^\d+$/.test(reviewExit) ? Number(reviewExit) : null;
     const m = reviewMd.match(/^\s*Verdict:\s*(CLEAR|ATTENTION)\b/i);
-    if (exitCode !== null && exitCode !== 0) {
+    if (exitCode === null) {
+        review = {status: 'incomplete', verdict: null,
+            note: `the review did not record an exit status${reviewMd ? '; its output is partial' : ' and produced no output'}`};
+    } else if (exitCode !== 0) {
         review = {status: 'incomplete', verdict: null,
             note: `the review ended with exit code ${exitCode}${reviewMd ? ' after partial output' : ' and no output'}`};
     } else if (m) review = {status: 'done', verdict: m[1].toUpperCase(), note: ''};
     else if (reviewMd) review = {status: 'incomplete', verdict: null, note: 'the review did not begin with a verdict line'};
-    else review = {status: 'incomplete', verdict: null, note: `the review produced no output (exit code ${reviewExit || 'unknown'})`};
+    else review = {status: 'incomplete', verdict: null, note: 'the review exited 0 but produced no output'};
 }
 
 // ─── Overall ──────────────────────────────────────────────────────────────────────────
