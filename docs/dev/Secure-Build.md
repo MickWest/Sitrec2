@@ -10,6 +10,11 @@ Three things make it different from `npm run deploy`:
 
 The output is audited after every build. A build that fails an audit is not an artifact.
 
+Those audits judge the **bundle** — a directory a web server will serve. Once the bundle is
+packaged into a container image the exposure changes, because anyone who can pull the image
+reads every layer directly and no web server stands in the way. That is a separate review:
+see [Container Security Review](Container-Security-Review.md).
+
 ## Building and auditing
 
 ```bash

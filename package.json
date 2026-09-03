@@ -77,6 +77,8 @@
     "audit-desktop-bundle": "node scripts/auditBundleSecrets.js apps_dist/mac-arm64/Sitrec.app",
     "audit-desktop-bundle-win": "node scripts/auditBundleSecrets.js apps_dist/win-unpacked/resources",
     "audit-desktop-bundle-local": "node scripts/auditBundleSecrets.js ${SITREC_DESKTOP_OUTPUT_DIR:-/tmp/sitrec-desktop-builds}/mac-arm64/Sitrec.app",
+    "audit-container": "node scripts/auditContainerImage.mjs",
+    "audit-release-image": "node scripts/auditReleaseImage.mjs",
     "check-windows-signing": "node scripts/checkWindowsSigningConfig.js",
     "stage-install-downloads": "node scripts/stageDesktopInstallers.js",
     "verify-windows-installer-signature": "node scripts/verifyWindowsAuthenticode.js",

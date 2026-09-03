@@ -30,6 +30,11 @@ tests/__image_snapshots__/
 /dist/
 /dist-serverless/
 /dist-secure/
+
+# Container security review: the scratch release-shaped bundle and the generated
+# reports, SBOMs and evidence (scripts/auditReleaseImage.mjs, auditContainerImage.mjs).
+/dist-release-audit/
+/dist-audit/
 /.certs/
 /app_build/
 /app_dist/

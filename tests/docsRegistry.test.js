@@ -194,6 +194,7 @@ describe("docs on disk", () => {
     const NESTED_DOCS = new Set([
         "dev/ADDING_NEW_SETTINGS.md",       // how to add a user setting
         "dev/AddSitchInCode.md",            // legacy in-code sitch authoring
+        "dev/Container-Security-Review.md", // the automated container image review
         "dev/CustomTerrainSources.md",      // map/elevation source configuration
         "dev/Deploying-on-a-VPS.md",        // VPS deployment with Podman and Caddy
         "dev/Deploying-on-GitHub-Pages.md", // the serverless build on GitHub Pages

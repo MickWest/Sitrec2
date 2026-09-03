@@ -1,0 +1,65 @@
+{
+  "$comment": [
+    "Accepted risks for the container security review (scripts/auditContainerImage.mjs).",
+    "",
+    "Same philosophy as scripts/secure-egress-allowlist.json: an entry does not hide a",
+    "finding, it explains one. An accepted risk still appears in the report, marked",
+    "ACCEPTED RISK and printed with its reason and its compensating control, so a reviewer",
+    "reads the decision rather than a silence.",
+    "",
+    "Every entry must state a reason and a compensatingControl. An entry MAY narrow itself",
+    "with a covers[] list naming the exact paths it excuses; anything the list does not name",
+    "stays an open finding. Keep covers[] as narrow as the evidence — that is what makes a",
+    "NEW world-writable path or a NEW setuid binary visible even though its neighbours are",
+    "expected. Never accept a check wholesale to quiet it.",
+    "",
+    "Deliberately NOT accepted, though both are known and intentional:",
+    "",
+    "  /var/www/html being world-writable and non-sticky (FS-01). The reason is sound — the",
+    "  entrypoint must delete and recreate root-owned files as an arbitrary UID, which an",
+    "  overlay filesystem only permits in a writable, non-sticky directory — and APP-02",
+    "  states that mechanism in full. But a world-writable directory holding the PHP that",
+    "  Apache executes is exactly the decision a reviewer must make for themselves, so the",
+    "  report puts it in front of them as an open finding with the rationale attached rather",
+    "  than resolving it on their behalf.",
+    "",
+    "  The compiler and package managers inherited from the base image (CFG-04). Real",
+    "  remediation exists (a slimmer final stage, or a read-only root filesystem), so it",
+    "  stays open as an improvement rather than being written off."
+  ],
+  "acceptedRisks": {
+    "FS-01": {
+      "reason": "These are the base image's own scratch directories and the application's three data directories. Apache needs its lock, socket and log paths writable before it drops privilege; the application needs the cache, upload and wind directories writable under whatever UID the runtime assigns, which is not known at build time.",
+      "compensatingControl": "Run with a read-only root filesystem and mount each of these as tmpfs or as a volume, so what is writable is decided by the deployment rather than by the image, and nothing written survives a restart.",
+      "covers": [
+        "/tmp",
+        "/var/tmp",
+        "/run/lock",
+        "/run/lock/apache2",
+        "/run/apache2",
+        "/run/apache2/socks",
+        "/var/log/apache2",
+        "/var/www/html/data/wind",
+        "/var/www/html/sitrec-upload",
+        "/var/www/html/sitrec-cache"
+      ]
+    },
+    "FS-03": {
+      "reason": "The Debian base image's account and mount utilities. None is invoked by Sitrec, by Apache or by the entrypoint; they are present because the base image ships a general-purpose userland.",
+      "compensatingControl": "Start the container with no-new-privileges (--security-opt no-new-privileges, or allowPrivilegeEscalation: false). The setuid bit is then inert whatever is on disk, so the binaries cannot raise privilege even if a process reaches them.",
+      "covers": [
+        "/usr/bin/gpasswd",
+        "/usr/bin/su",
+        "/usr/bin/chfn",
+        "/usr/bin/umount",
+        "/usr/bin/mount",
+        "/usr/bin/chsh",
+        "/usr/bin/passwd",
+        "/usr/bin/newgrp",
+        "/usr/bin/chage",
+        "/usr/bin/expiry",
+        "/usr/sbin/unix_chkpwd"
+      ]
+    }
+  }
+}

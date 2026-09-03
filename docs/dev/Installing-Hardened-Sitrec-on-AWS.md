@@ -175,6 +175,28 @@ image has its own digest, and **that** is the one the task definition must pin. 
 base image's digest deploys a container without the trust files, and every login is refused
 with `no_trust_store`.
 
+### 4.1 Review the image
+
+Before the image goes anywhere, review it:
+
+```
+npm run audit-container -- --image=sitrec-hardened:local --profile=site
+```
+
+This writes a report, a bill of materials and the supporting evidence to `dist-audit/`. It
+is the document to give whoever must accept the image, and it is worth reading yourself
+first: it states what the image runs as, what the base image brings with it, which package
+advisories a rebuild would close, and the runtime restrictions the image will tolerate —
+which is the raw material for the task definition in section 8.4.
+
+Use `--profile=site` for an image you build with your own configuration compiled in: the
+credentials it carries are expected, and the report treats them as a handling requirement —
+the image becomes as sensitive as its contents, and belongs only in a registry whose read
+access matches. An image built from `config/shared.env.example`, which carries no
+credential and takes its settings from the environment at container start, is reviewed with
+the default `--profile=published` instead. See
+[Container Security Review](Container-Security-Review.md).
+
 ## 5. Put the image in your registry
 
 ### 5.1 Create the repository

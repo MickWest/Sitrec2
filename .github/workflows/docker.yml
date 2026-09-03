@@ -269,6 +269,53 @@ jobs:
           node-version: 22
           cache: npm
 
+      # ── Container security review ────────────────────────────────────
+      # The published image is the artifact other people pull, and it is built from
+      # config/shared.env.example, so every credential in it must be the shipped
+      # placeholder. Nothing else in the pipeline checks that. The bundle secret audit
+      # judges a directory a web server will serve, and correctly permits shared.env.php
+      # there because PHP never hands that file out — but in an IMAGE the same file is a
+      # layer that anyone with pull access can read with `docker save`, and the "<?php"
+      # guard protects nothing against that. Same bytes, different threat model, and until
+      # now nothing re-asked the question at the layer where it changes.
+      #
+      # --fail-on=critical means only a credential in the image stops the release. The
+      # posture findings (root by default, the world-writable webroot, the base image's
+      # advisory backlog) are reported for the operator rather than treated as release
+      # blockers: they are the deployment's to close, and the report says how.
+      #
+      # Runs before `npm ci` and Playwright so a credential is caught in seconds. The
+      # smoke-test job gates the manifest job, so a failure here means the version and
+      # latest tags are never created.
+      - name: Install trivy
+        uses: aquasecurity/setup-trivy@v0.2.3
+        with:
+          cache: true
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Container security review
+        run: |
+          IMAGE="${REGISTRY}/${IMAGE_NAME_LC}:build-amd64-${GITHUB_SHA}"
+          node scripts/auditContainerImage.mjs \
+            --image="${IMAGE}" \
+            --profile=published \
+            --out=dist-audit \
+            --fail-on=critical
+
+      - name: Upload container security review
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: container-security-review
+          path: |
+            dist-audit/container-security-review.md
+            dist-audit/container-security-review.json
+            dist-audit/sbom.cdx.json
+            dist-audit/evidence/
+          retention-days: 90
+
       - name: Install dependencies
         run: npm ci || npm install
         env:
