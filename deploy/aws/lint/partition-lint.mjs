@@ -67,9 +67,9 @@ export const FORBIDDEN_RESOURCE_TYPES = [
 // First match wins, so more specific prefixes come first. `null` means the type
 // is provider metadata and makes no service call.
 export const RESOURCE_SERVICE_MAP = [
-    [/^aws_lb(_|$)/, 'elasticloadbalancing'],        // aws_lb, _listener, _target_group, _trust_store*
-    [/^aws_alb(_|$)/, 'elasticloadbalancing'],
-    [/^aws_elb(_|$)/, 'elasticloadbalancing'],
+    [/^aws_lb(_|$)/, 'elb'],        // aws_lb, _listener, _target_group, _trust_store*
+    [/^aws_alb(_|$)/, 'elb'],
+    [/^aws_elb(_|$)/, 'elb'],
     [/^aws_ecs_/, 'ecs'],
     [/^aws_ecr_/, 'ecr'],
     [/^aws_s3_/, 's3'],
@@ -320,6 +320,18 @@ export function scanFileText(rel, text) {
 
 // Scans every text file under the given roots (relative to `cwd`).
 // Returns { findings, roots, missingRoots, files }.
+// Files the static scan must not read: a plan, a state file or a real values file
+// legitimately holds the ARNs and region of the account it was made for. They are
+// gitignored, and the plan checks read a plan on purpose. The `.example` values files
+// are scanned, because they are committed.
+export function isGeneratedOrLocal(file) {
+    const base = path.basename(file).toLowerCase();
+    if (base === 'plan.json' || base.endsWith('.tfplan')) return true;
+    if (base.includes('.tfstate')) return true;
+    if (base.endsWith('.tfvars') && !base.endsWith('.tfvars.example')) return true;
+    return false;
+}
+
 export function scanSources(roots = DEFAULT_SOURCES, { cwd = REPO_ROOT } = {}) {
     const findings = [];
     const scannedRoots = [];
@@ -342,6 +354,7 @@ export function scanSources(roots = DEFAULT_SOURCES, { cwd = REPO_ROOT } = {}) {
         else files.push(abs);
 
         for (const file of files) {
+            if (isGeneratedOrLocal(file)) continue;
             let buffer;
             try {
                 buffer = fs.readFileSync(file);
@@ -407,9 +420,44 @@ export function loadSnapshot(file) {
     return snapshot;
 }
 
-// Checks a `terraform show -json` plan against the target region and its services
-// snapshot. Returns { findings, services, resources }.
+// The partition and region a plan was made in, read from its aws_partition and
+// aws_region data sources (prior state, or the change record a test fixture uses).
+// A plan made in the commercial partition legitimately carries "arn:aws:" values and
+// commercial hostnames, so the plan checks compare against these, never against the
+// target: a hard-coded partition or region shows up as a value that differs from the
+// plan's own.
+export function planContext(plan) {
+    let partition = null;
+    let region = null;
+    const visit = (values) => {
+        if (!values || typeof values !== 'object') return;
+        if (values.partition && !partition) partition = values.partition;
+        if ((values.region || values.name) && !region && !values.partition) region = values.region ?? values.name;
+    };
+    const walkModule = (mod) => {
+        if (!mod) return;
+        for (const r of mod.resources ?? []) {
+            if (r.type === 'aws_partition') visit(r.values);
+            if (r.type === 'aws_region') visit(r.values);
+        }
+        for (const child of mod.child_modules ?? []) walkModule(child);
+    };
+    walkModule(plan.prior_state?.values?.root_module);
+    walkModule(plan.planned_values?.root_module);
+    for (const rc of plan.resource_changes ?? []) {
+        if (rc.type === 'aws_partition') visit(rc.change?.after);
+        if (rc.type === 'aws_region') visit(rc.change?.after);
+    }
+    return { partition, region };
+}
+
+const ARN_PARTITION = /\barn:([a-z0-9-]+):/g;
+
+// Checks a `terraform show -json` plan against the target region's services snapshot,
+// and its planned values against the plan's own partition and region.
+// Returns { findings, services, resources }.
 export function checkPlan(plan, { region, snapshot }) {
+    const context = planContext(plan);
     const findings = [];
     const byService = new Map();          // service → [addresses]
     const resources = [];
@@ -457,28 +505,40 @@ export function checkPlan(plan, { region, snapshot }) {
         }
     }
 
+    if (!context.partition) {
+        findings.push({
+            check: 'plan-arn-partition', severity: 'warn', file: 'plan',
+            match: 'data.aws_partition', message: 'plan carries no aws_partition data source; the ARN partition check is skipped',
+        });
+    }
+    const planRegion = context.region ?? region;
     for (const [where, value] of planValues(plan)) {
-        ARN_LITERAL.lastIndex = 0;
-        if (ARN_LITERAL.test(value)) {
-            findings.push({
-                check: 'plan-arn-literal', severity: 'fail', file: where, match: 'arn:aws:',
-                message: 'commercial-partition ARN in planned values',
-            });
+        if (context.partition) {
+            ARN_PARTITION.lastIndex = 0;
+            let a;
+            while ((a = ARN_PARTITION.exec(value)) !== null) {
+                if (a[1] !== context.partition) {
+                    findings.push({
+                        check: 'plan-arn-partition', severity: 'fail', file: where, match: `arn:${a[1]}:`,
+                        message: `ARN partition "${a[1]}" differs from the plan's own partition "${context.partition}"; a hard-coded partition`,
+                    });
+                }
+            }
         }
         HOSTNAME.lastIndex = 0;
         let m;
         while ((m = HOSTNAME.exec(value)) !== null) {
             const hostRegion = hostnameRegion(m[1]);
-            if (hostRegion && hostRegion !== region) {
+            if (hostRegion && hostRegion !== planRegion) {
                 findings.push({
                     check: 'plan-endpoint-region', severity: 'fail', file: where, match: m[1],
-                    message: `endpoint is in ${hostRegion}, not the target region ${region}`,
+                    message: `endpoint is in ${hostRegion}, not the plan's region ${planRegion}; a hard-coded region`,
                 });
             }
         }
     }
 
-    return { findings, services: [...byService.keys()].sort(), resources };
+    return { findings, services: [...byService.keys()].sort(), resources, context };
 }
 
 // ---------------------------------------------------------------------------
@@ -531,7 +591,10 @@ function printReport(result) {
     const missing = sources.missingRoots.length ? `; not found: ${sources.missingRoots.join(', ')}` : '';
     console.log(`partition-lint: static checks over ${rootsText} (${sources.files} files${missing})`);
     if (plan) {
-        console.log(`partition-lint: plan ${plan.file} for ${result.region}: ${plan.resources} resources, `
+        const madeIn = plan.madeIn
+            ? `made in partition ${plan.madeIn.partition ?? 'unknown'}, region ${plan.madeIn.region ?? 'unknown'}; `
+            : '';
+        console.log(`partition-lint: plan ${plan.file} for ${result.region}: ${madeIn}${plan.resources} resources, `
             + `services ${plan.services.join(', ') || 'none'} (snapshot ${plan.snapshot}, `
             + `${plan.snapshotServices} services, fetched ${plan.fetchedAt})`);
     }
@@ -608,6 +671,7 @@ export function main(argv = process.argv.slice(2)) {
         findings.push(...checked.findings);
         planInfo = {
             file: opts.plan, resources: checked.resources.length, services: checked.services,
+            madeIn: checked.context,
             snapshot: snapshotFile, snapshotServices: snapshot.services.length, fetchedAt: snapshot.fetchedAt,
         };
     }

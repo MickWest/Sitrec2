@@ -219,7 +219,7 @@ const MAPPED = [
     ['aws_secretsmanager_secret.db', 'aws_secretsmanager_secret'],
 ];
 
-const EXPECTED_SERVICES = ['acm', 'cloudtrail', 'ec2', 'ecr', 'ecs', 'elasticloadbalancing', 'iam',
+const EXPECTED_SERVICES = ['acm', 'cloudtrail', 'ec2', 'ecr', 'ecs', 'elb', 'iam',
     'kms', 'logs', 'route53', 's3', 'secretsmanager'];
 
 function cleanPlan() {
@@ -292,7 +292,7 @@ describe('partition-lint: plan checks', () => {
         expect(unknown).toHaveLength(1);
         expect(unknown[0]).toMatchObject({severity: 'warn', match: 'aws_frobnicator_widget', file: 'aws_frobnicator_widget.x'});
 
-        const arn = byCheck(r.findings, 'plan-arn-literal');
+        const arn = byCheck(r.findings, 'plan-arn-partition');
         expect(arn).toHaveLength(1);
         expect(arn[0].file).toBe('aws_iam_role.bad.managed_policy_arns[0]');
 
@@ -363,7 +363,7 @@ describe('partition-lint: exports', () => {
         `);
         expect(out.mapSize).toBeGreaterThan(20);
         expect(out.services).toEqual({
-            aws_lb_trust_store_revocation: 'elasticloadbalancing',
+            aws_lb_trust_store_revocation: 'elb',
             aws_ecs_service: 'ecs',
             aws_ecr_lifecycle_policy: 'ecr',
             aws_s3_bucket_policy: 's3',

@@ -21,7 +21,10 @@ summary line; add `--json` for machine-readable output.
 Run over a set of source roots — by default `deploy/aws`, `sitrecServer`, `src` and
 `docker`; override with `--sources <dir>...`. Every text file is read (binary files and
 `node_modules`, `vendor`, `.git`, `.terraform` and build output are skipped; symlinked
-directories are not followed; the lint's own directory is never scanned). Comments
+directories are not followed; the lint's own directory is never scanned). Generated and
+local files are skipped too: `plan.json`, `*.tfplan`, `*.tfstate*` and a real `*.tfvars`
+(not the committed `*.tfvars.example`), because those legitimately hold the ARNs and the
+region of the account they were made for. Comments
 (`#`, `//`, `/* */`, `<!-- -->`, chosen by file type) are stripped before matching, so a
 comment may name any of these. Markdown files are exempt from all of them.
 
@@ -62,19 +65,24 @@ from other providers (`random_*`, `tls_*`, ...) are ignored; `aws_partition`,
 | `service-availability` — the snapshot is for a different region than `--region` | fail |
 | `unknown-resource-type` — an `aws_*` type not in the map (named, so the map can grow) | warning |
 | `forbidden-resource` — a forbidden type in the plan (same list as above) | fail |
-| `plan-arn-literal` — `arn:aws:` in any planned value, output or variable | fail |
-| `plan-endpoint-region` — a hostname ending in `amazonaws.com` whose region segment is not the target region | fail |
+| `plan-arn-partition` — an ARN in any planned value, output or variable whose partition segment differs from the plan's own partition | fail |
+| `plan-arn-partition` — the plan carries no `aws_partition` data source, so the ARN check is skipped | warning |
+| `plan-endpoint-region` — a hostname ending in `amazonaws.com` whose region segment is not the plan's own region | fail |
 
-A hostname with no region segment (a service principal such as
-`ecs-tasks.amazonaws.com`) is partition-independent and passes. Run the plan against the
-target region: most ARNs are then "known after apply", so what the value scan catches is
-exactly the literals that came from configuration.
+The plan's own partition and region come from the `aws_partition` and `aws_region` data
+sources in the plan (the module declares both). A plan made in a commercial rehearsal
+account legitimately carries `arn:aws:` values and commercial hostnames; what the two
+checks catch is a value that does not match the account the plan was made in, which is
+exactly a hard-coded partition or region. So a plan from any account is a valid input:
+`--region` selects the services snapshot, and the value checks compare the plan against
+itself. A hostname with no region segment (a service principal such as
+`ecs-tasks.amazonaws.com`) is partition-independent and passes.
 
 The map (resource type prefix → service code, as named in the snapshot):
 
 | Resource types | Service |
 |---|---|
-| `aws_lb*`, `aws_alb*`, `aws_elb*` (listeners, target groups, trust stores) | `elasticloadbalancing` |
+| `aws_lb*`, `aws_alb*`, `aws_elb*` (listeners, target groups, trust stores) | `elb` (the code the infrastructure parameters use) |
 | `aws_ecs_*` | `ecs` |
 | `aws_ecr_*` | `ecr` |
 | `aws_s3_*` | `s3` |
