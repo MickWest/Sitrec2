@@ -164,3 +164,49 @@ export function rankTakeoverCandidates(statuses, parentPid) {
             return (a.startedAt ?? 0) - (b.startedAt ?? 0);
         });
 }
+
+// ── Host policy ─────────────────────────────────────────────────────────────
+
+/** Idle exit for a bridge hosted by a batch Codex thread — see isBatchHost. */
+export const DEFAULT_BATCH_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Is this bridge hosted by a BATCH Codex thread?
+ *
+ * `ancestorCommands` is the command line of our parent, then its parent, and so on up.
+ *
+ * The Codex plugin for Claude Code runs Codex through a detached broker (`app-server-broker.mjs`)
+ * that keeps ONE `codex app-server` alive per workspace, starts a fresh thread in it for every
+ * stop-time review and rescue task, and never unloads a thread. Codex starts every configured MCP
+ * server afresh for each thread, so each of those threads left a bridge behind for the life of the
+ * app-server, which is days. Measured 2026-09-02: 99 bridges under two such app-servers, 4.6 GB
+ * resident, the oldest 29 hours; and one bridge call in 2,421 of those threads since July. A bridge
+ * that finds itself under one is idle for good the moment its thread's turn ends, and its parent
+ * being alive says nothing about it — exactly the case the parent-liveness rule in shouldIdleExit
+ * gets wrong.
+ *
+ * An interactive Codex (the desktop app, or `codex` in a terminal) has no broker above it and is NOT
+ * a batch host: its threads are long conversations that do come back to the browser after long
+ * silences (measured gaps of 25–37 minutes), and for them the parent-liveness rule stays right.
+ */
+export function isBatchHost(ancestorCommands) {
+    if (!Array.isArray(ancestorCommands) || ancestorCommands.length < 2) return false;
+    const [parent, ...above] = ancestorCommands;
+    if (!/app-server/.test(parent ?? "")) return false;
+    return above.some((command) => /app-server-broker/.test(command ?? ""));
+}
+
+/**
+ * The idle timeout a bridge should run with, and whether it is to be obeyed literally.
+ *
+ * Precedence: a paired sandbox bridge never idles out (its container owns it); a timeout the caller
+ * ASKED for is obeyed literally; a batch host gets DEFAULT_BATCH_IDLE_TIMEOUT_MS, also literal, since
+ * its parent outlives the thread by days; everything else gets the default, which only reaps once the
+ * parent has actually gone (see shouldIdleExit).
+ */
+export function resolveIdleTimeout({envValue, paired = false, batchHost = false}) {
+    if (paired) return {idleTimeoutMs: 0, explicit: false};
+    if (idleTimeoutIsExplicit(envValue)) return {idleTimeoutMs: parseIdleTimeout(envValue), explicit: true};
+    if (batchHost) return {idleTimeoutMs: DEFAULT_BATCH_IDLE_TIMEOUT_MS, explicit: true};
+    return {idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS, explicit: false};
+}
