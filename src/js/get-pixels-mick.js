@@ -1,5 +1,15 @@
 "use strict"
-const ndarray = require("ndarray")
+
+// The decoded image, in the shape the ndarray library used to return: `shape` is
+// [height, width, 4] and `stride` [4 * width, 4, 1], so `data[row * stride[0] +
+// col * stride[1] + channel]` is one channel of one pixel. Consumers (QuadTreeTile's
+// elevation decoders) read only `shape` and `data`. A plain object rather than
+// ndarray itself: ndarray compiles a constructor per shape with `new Function`, which
+// a Content-Security-Policy without 'unsafe-eval' refuses, and a hardened deployment
+// sets exactly that policy. Nothing else needed the library.
+function pixelBuffer(data, shape, stride) {
+    return { data, shape, stride, offset: 0 };
+}
 
 function logNetwork(url, status) {
     // if (Globals.regression) {
@@ -146,7 +156,7 @@ class ImageQueueManager {
             const shape = [height, width, 4];
             const stride = [4 * width, 4, 1];
             logNetwork(url, 200);
-            request.cb(null, ndarray(pixelArray, shape, stride, 0));
+            request.cb(null, pixelBuffer(pixelArray, shape, stride));
         } else {
             this.errorOccurred = true;
             if (request.retries < this.maxRetries) {
@@ -286,7 +296,7 @@ class ImageQueueManager {
             const pixelArray = new Uint8Array(pixels.data);
             const shape = [img.height, img.width, 4];
             const stride = [4 * img.width, 4, 1];
-            cb(null, ndarray(pixelArray, shape, stride, 0));
+            cb(null, pixelBuffer(pixelArray, shape, stride));
         };
 
         img.onerror = (err) => {
