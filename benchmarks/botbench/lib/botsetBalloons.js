@@ -1,5 +1,5 @@
 // botsetBalloons.js — buoyant targets swept over platform geometry, target
-// behaviour, range and OPERATOR DRIFT.
+// behaviour, range and OPERATOR POINTING ERROR.
 //
 // PUBLISHED AS THREE SETS, ONE PER PLATFORM PATH:
 //
@@ -18,24 +18,24 @@
 //
 // Structure of each set:
 //   duration  20 s (pinned)              -> results/botset_balloons_<path>/batch_20s/
-//   drift     0 / 5 / 20 pct of FOV      ->   <E>pct/
+//   error     0.0 to 2.0 deg, nine rungs  ->   <E>deg/
 //   variant   the 20 rows below          ->     Input/ Truth/ All/ meta/
 //
-// WHY THE ERROR LADDER IS DRIFT, NOT WOBBLE. The maneuver ladder is the
-// Aguadilla wobble: a seeded random walk that recentres, i.e. zero-mean.
-// Zero-mean error is the kind a fit absorbs best. A slow one-way slide off the
-// target is the kind it cannot, because over a short clip it is
-// indistinguishable from the target genuinely drifting — which is precisely the
-// question a balloon set exists to ask. The two families therefore probe
-// different failure modes.
+// The error ladder is the shared operator wobble of botsetErrors.js, the same
+// nine rungs the maneuver sets use, so a balloon result and a maneuver result
+// at one rung mean the same pointing accuracy. An earlier version of this
+// family used a one-way DRIFT ramp instead — a slow slide off the target that a
+// short clip cannot tell from the target genuinely drifting. observation.js
+// still offers that model (kind "drift") for a set that wants to ask that
+// question; the published ladder no longer does.
 //
-// Truth is shared down the drift ladder by construction, exactly as in the
+// Truth is shared down the error ladder by construction, exactly as in the
 // maneuver sets: the observation section is excluded from the truth key, so the
-// three drift levels of one variant are the SAME balloon observed three ways.
+// nine rungs of one variant are the SAME balloon observed nine ways.
 
 import {DEFAULT_SITE} from "./generateScenario";
 import {BALLOON_DIAMETER_M} from "./angularSize";
-import {BOTSET_DRIFT_LEVELS} from "./botsetErrors";
+import {BOTSET_ERROR_LEVELS} from "./botsetErrors";
 
 const MILE_M = 1609.344;
 
@@ -45,15 +45,16 @@ const PLATFORM_ALT_AGL_M = 6400.8;
 const PLATFORM_SPEED_MS = 130;
 
 // One camera for the whole family. 3 degrees is a realistic narrow tracking FOV
-// and is wide enough that the 20pct rung (0.6 deg) stays well inside the frame
-// — the sets are about what the FIT does with the error, so a target masked out
-// by the field of view would be measuring something else.
+// and holds every rung up to 0.5 deg; the 1.0 and 2.0 deg rungs widen it to 4
+// and 8 deg (botsetErrors.js, WOBBLE_FRAME_FACTOR) — the sets are about what
+// the FIT does with the error, so a target masked out by the field of view
+// would be measuring something else.
 export const BOTSET_BALLOON_FOV_FULL_DEG = 3.0;
 
 // Duration is pinned: geometry, not time, is this family's axis.
 export const BOTSET_BALLOON_DURATION_SECONDS = 20;
 
-export const BOTSET_BALLOON_ERROR_LEVELS = BOTSET_DRIFT_LEVELS;
+export const BOTSET_BALLOON_ERROR_LEVELS = BOTSET_ERROR_LEVELS;
 
 export const BOTSET_BALLOON_SETS = [
     {key: "straight", dirName: "botset_balloons_straight", spec: {kind: "straight"},
@@ -92,7 +93,7 @@ export const BOTSET_BALLOON_BEHAVIOURS = [
     {label: "fast",    kind: "party-neutral", wind: "hab-steady", parameters: {startAGL: 920}},
 ];
 
-// behaviour x range: 5 x 4 = 20 rows per set per drift level.
+// behaviour x range: 5 x 4 = 20 rows per set per error rung.
 export const BOTSET_BALLOON_VARIANTS = [];
 for (const b of BOTSET_BALLOON_BEHAVIOURS) {
     for (const miles of BOTSET_BALLOON_RANGES_MILES) {
@@ -114,8 +115,8 @@ export function botsetBalloonSpec(v, platform, errorLevel) {
         initialHorizontalRangeM: v.rangeM,
         siteId: DEFAULT_SITE,
         platform: {...platform.spec},
-        // This family keeps its FIXED 3 deg FOV because the drift ladder needs
-        // the target to survive the 20pct rung, so framing here is whatever the
+        // This family keeps a FIXED 3 deg FOV (widened only where a rung needs
+        // it) rather than framing the balloon, so framing here is whatever the
         // physics gives: a 0.35 m balloon subtends 0.21% of frame at 2 miles and
         // 0.008% at 50. That is the honest picture — at long range the
         // apparent-size channel supplies only a weak range floor, which is

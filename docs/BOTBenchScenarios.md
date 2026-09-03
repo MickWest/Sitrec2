@@ -43,30 +43,34 @@ degenerate (a short straight pass), and declared noise ranges from white jitter
 to correlated wobble, so the table exercises every grade the Src column can
 produce.
 
-## The botsets — five swept grids
+## The botsets — seven swept grids
 
-Two commands write five [**botsets**](BOTBench.md#botset), 456 scenarios in all, at 10 Hz:
+Three commands write seven [**botsets**](BOTBench.md#botset), 3672 scenario
+files in all, at 10 Hz:
 
 ```bash
 npm run bench-bot-maneuvers        # the two maneuver sets, sequentially
 npm run bench-bot-maneuvers-par    # the same tree, one worker thread per batch
 npm run bench-bot-balloons         # the three balloon sets
+npm run bench-bot-mq9              # the two depth-along-a-sightline sets
 ```
 
 | Set | Scenarios | Swept over |
 |---|---|---|
-| `botset_anomalies` | 180 | 15 anomalous variants × 4 durations × 3 error rungs |
-| `botset_mundane` | 96 | 8 mundane variants × 4 durations × 3 error rungs |
-| `botset_balloons_straight` | 60 | 20 balloon variants × 20 s × 3 drift rungs |
-| `botset_balloons_curve` | 60 | the same, sensor in a gentle constant bank |
-| `botset_balloons_orbit` | 60 | the same, sensor orbiting the target's ground point |
+| `botset_anomalies` | 540 | 15 anomalous variants × 4 durations × 9 error rungs |
+| `botset_mundane` | 288 | 8 mundane variants × 4 durations × 9 error rungs |
+| `botset_balloons_straight` | 180 | 20 balloon variants × 20 s × 9 error rungs |
+| `botset_balloons_curve` | 180 | the same, sensor in a gentle constant bank |
+| `botset_balloons_orbit` | 180 | the same, sensor orbiting the target's ground point |
+| `botset_mq9_orbit` | 1152 | 16 geometry cells × 8 objects × 90 s × 9 error rungs |
+| `botset_mq9_straight` | 1152 | the same, sensor flying straight past instead of orbiting |
 
 Each set is laid out the same way:
 
 ```
 results/botset_<set>/
-    batch_<20|60|120|300>s/     clip length  (the balloon sets: batch_20s only)
-        <0|5|20>pct/            error rung, as a percentage of the frame
+    batch_<20|60|90|120|300>s/  clip length  (balloons: batch_20s only; mq9: batch_90s only)
+        <0.0|0.01|…|2.0>deg/    error rung: operator pointing error, in degrees
             Input/              the challenge CSVs
             Truth/              the answer keys
             All/                both, joined row for row
@@ -82,7 +86,7 @@ scenario can never pick up another batch's frame origin — a wrong answer that
 would have looked exactly like a right one. The `meta/` layout is supported
 alongside the sibling layout that sealed releases use.
 
-Four design decisions are worth knowing before reading any numbers off these
+Five design decisions are worth knowing before reading any numbers off these
 sets:
 
 - **The maneuver taxonomy is partitioned by anomaly, not by shape.** One
@@ -100,24 +104,31 @@ sets:
   parameters — the same 200 m vertical loop is aerobatic at 80 m/s and
   impossible at 350 m/s — so the sets differ in what the object *did*, not in
   what path it drew.
-- **The error ladder is a percentage of the field of view, not an absolute
-  angle.** The field of view is sized per scenario from the target and its
-  range, so the maneuver sets span 0.46° (a 12 m vehicle at 100 km) to 3.82° (a
-  5 m shape at 5 km) — a factor of eight. A fixed 0.15° error would be 33% of
-  the frame in one scenario and 3.9% in another, sweeping difficulty and
-  geometry together with no way to separate them again downstream. Percent of
-  frame is also the more honest model: an operator holds a target near the
-  centre of a *display*, and a tracker's residual scales with the *pixel*. The
-  resolved angle is not hidden — it is in `scenario.json`'s `losError` and in
-  every manifest row.
-- **The two families use different error models, on purpose.** The maneuver
-  ladder is operator [wobble](BOTBench.md#correlated-wobble): a seeded random walk that
-  recentres, so it is zero-mean — the kind of error a fit absorbs best. The
-  balloon ladder is one-way [**drift**](BOTBench.md#drift-error): a slow slide off the
-  target. Over a 20-second clip that is *indistinguishable from the target
-  genuinely drifting*, which is precisely the question a buoyant set exists to
-  ask. Rung 0 in both is a clean observation — a perfect operator — so the
-  ladder starts from no error at all rather than from a small one.
+- **The error ladder is operator pointing error in degrees**, nine rungs: 0.0,
+  0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0 and 2.0°. Every rung above zero is the
+  same operator [wobble](BOTBench.md#correlated-wobble) model — the aim drifts off
+  the target, the operator notices once the error exceeds the rung's amplitude
+  and, after a reaction delay, recentres — with its drift and recentring rates
+  scaled to the amplitude, so the realized error is proportional to the rung
+  (RMS about 0.64× the rung, peaks about 1.6×). Rung 0 is a clean observation
+  — a perfect operator — so the ladder starts from no error at all rather than
+  from a small one. The same nine angles are used by other groups' sets, so
+  results compare directly.
+- **A rung is a different fraction of the frame in different scenarios.** The
+  field of view is sized per scenario from the target and its range — 0.46° (a
+  12 m vehicle at 100 km) to 3.82° (a 5 m shape at 5 km) across the maneuver
+  sets, a fixed 3° for the balloons — so 0.2° is 43% of one frame and 5% of
+  another. A rung the field cannot hold widens it to four times the amplitude,
+  so the target is never masked out; the balloon field first widens at the 1.0°
+  rung (to 4°), the narrowest maneuver field at the 0.2° rung (to 0.8°). Each
+  manifest row records the field the rung was observed through, the family's
+  framing field and the realized error, so the fraction can be recovered.
+- **Both families use the same error model.** An earlier version gave the
+  balloon sets a one-way [drift](BOTBench.md#drift-error) ramp — a slow slide off
+  the target that a 20-second clip cannot tell from the target genuinely
+  drifting. The generator still offers that model, but the published sets now
+  share one ladder, so a balloon result and a maneuver result at the same rung
+  mean the same pointing accuracy.
 - **The balloon sets split on the sensor's path, with duration pinned at 20 s.**
   A maneuver's detectability is a question about *time*; a balloon's is a
   question about *geometry*. So the platform path is the axis that separates
@@ -126,9 +137,51 @@ sets:
   buoyant behaviours (rising, level, sinking, slow drift, fast drift) at four
   ranges (2, 8, 20 and 50 statute miles).
 
+### The mq9 sets — one sightline, four depths
+
+The other sets vary a target's range by **moving the target**, which moves the
+bearing and the depression angle with it. Footage from a high sensor looking
+down past an object at the ground does not work that way: the sightline is
+fixed, and the only question is how far along it the object sits. The `mq9`
+sets ask that question and nothing else.
+
+The sensor is at 20000 ft above terrain (6096 m) doing 87 m/s over the flat
+Central Valley site. Its sightline meets the ground at a **ground range** of 5,
+10, 20 or 40 km, and the object sits at 25%, 50%, 75% or 98% of the slant range
+to that intercept — 16 geometry cells. Object height follows from the depth
+alone: 4572, 3048, 1524 and 122 m above ground, whatever the ground range. So
+**the four depths at one ground range share the same initial bearing and the
+same depression angle**, and differ only in how far away the object is. Nothing
+else in the benchmark isolates that.
+
+Eight objects fly every cell: two balloons (level and rising), a hovering
+point, a cruising aircraft, a turning aircraft, a bird, and a matched
+anomaly/control pair. One 1.5° field of view for the whole family, never sized
+per scenario — a field sized from the object's own range would be published in
+the sidecar and hand the reader the answer.
+
+The two sets differ only in the sensor's path, and the difference is not a
+matter of degree. The orbit circles the ground intercept, so it accelerates
+continuously. The straight pass flies by at constant velocity, and for a target
+that is *also* moving at constant velocity, bearings alone can never recover
+range — the observer has to accelerate. So `aircraft-cruise` is unrecoverable
+on the straight pass however wide its baseline looks, while the rising balloon,
+the turning aircraft and the impulse pair stay recoverable on both. Reading the
+two side by side separates "the geometry was too weak" from "the geometry was
+structurally incapable".
+
+These sets exist because the rest of the benchmark was short of
+[parallax](BOTBench.md#parallax). Across the 16 cells the sensor sweeps between
+11° and 114° as seen from the object, and no cell falls below 10°; the older
+synthetic matrix has a median of 12° with 42% of it at 5° or less. Each
+manifest row records the ground range, the depth, all three distances (object
+horizontal, object slant, and slant to the ground), the measured sweep, and
+whether the object is big enough at that distance for its apparent size to
+carry any range information at all — a 0.3 m bird at 40 km is not.
+
 Down each error ladder the **truth is shared by construction**: the rung changes
 only the observation model, which sits outside the key truth is generated from,
-so the three rungs of one variant are the *same flight observed three ways*.
+so the nine rungs of one variant are the *same flight observed nine ways*.
 Generation is deterministic, so the sequential and parallel maneuver runners
 produce byte-identical trees (only `timing.json`, which records wall time,
 differs).

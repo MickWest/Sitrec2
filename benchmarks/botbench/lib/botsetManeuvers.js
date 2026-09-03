@@ -17,12 +17,12 @@
 // Structure of the sweep (botset-maneuvers.bench.test.js iterates it):
 //   set       anomalies / mundane        -> results/botset_<set>/
 //   duration  20 / 60 / 120 / 300 s      ->   batch_<D>s/
-//   error     0 / 5 / 20 pct of FOV      ->     <E>pct/
+//   error     0.0 to 2.0 deg, nine rungs  ->     <E>deg/
 //   variant   the rows below             ->       Input/ Truth/ All/ meta/
 //
 // Truth is shared down the error ladder by construction: the error spec lives
 // in spec.observation, which generateScenario excludes from the truth key, so
-// the three error levels of one variant are the SAME flight observed three ways.
+// the nine error rungs of one variant are the SAME flight observed nine ways.
 //
 // Variant table notes (per the agreed thirteen-type table + variant brief):
 //   accel-instant     both directions of the step: 20->200 and 200->20 m/s.
@@ -47,16 +47,16 @@
 
 import {DEFAULT_SITE} from "./generateScenario";
 import {MANEUVER_DIAMETER_M, fovForFraction} from "./angularSize";
-import {BOTSET_WOBBLE_LEVELS} from "./botsetErrors";
+import {BOTSET_ERROR_LEVELS} from "./botsetErrors";
 
 const ORBIT = {kind: "orbit-point", speedMS: 70, altitudeAGL: 3000};
 
 export const BOTSET_MANEUVER_DURATIONS_SECONDS = [20, 60, 120, 300];
 
-// The maneuver sets take the wobble flavour of the shared ladder: a zero-mean
+// The shared operator-wobble ladder, in degrees (botsetErrors.js): a zero-mean
 // random walk that recentres, which is what an operator tracking a moving
 // target produces.
-export const BOTSET_MANEUVER_ERROR_LEVELS = BOTSET_WOBBLE_LEVELS;
+export const BOTSET_MANEUVER_ERROR_LEVELS = BOTSET_ERROR_LEVELS;
 
 export const BOTSET_MANEUVER_VARIANTS = [
     {kind: "static-point",     variant: null,           anomalous: false, rangeM: 5000,   parameters: {}},
@@ -134,7 +134,9 @@ export function botsetManeuverSpec(v, durationSeconds, errorLevel) {
         // this range (see angularSize.js). A fixed 0.9 deg made a 12 m glider at
         // 100 km a sub-pixel speck and a 2 m balloon at 5 km a smear, so the
         // apparent-size channel carried nothing on either. The error ladder is
-        // then a percentage OF that field of view — see botsetErrors.js.
+        // absolute degrees (botsetErrors.js); a rung this field cannot hold
+        // widens it, so the observation's fovFullDeg can exceed the framing
+        // field returned by botsetManeuverFov.
         observation: errorLevel.observation(fovFullDeg),
     };
 }

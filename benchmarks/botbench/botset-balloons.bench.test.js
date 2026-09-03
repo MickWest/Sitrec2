@@ -1,15 +1,15 @@
 /**
  * botset-balloons.bench.test.js — generate the three balloon botsets: buoyant
- * targets seen from three platform paths, over four ranges and three drift
- * levels:
+ * targets seen from three platform paths, over four ranges and nine operator
+ * pointing-error rungs:
  *
- *   results/botset_balloons_<straight|curve|orbit>/batch_20s/<0|5|20>pct/{Input,Truth,All,meta}/
- *   results/botset_balloons_<path>/batch_20s/<E>pct/manifest.json  per-folder inventory
+ *   results/botset_balloons_<straight|curve|orbit>/batch_20s/<E>deg/{Input,Truth,All,meta}/
+ *   results/botset_balloons_<path>/batch_20s/<E>deg/manifest.json  per-folder inventory
  *   results/botset_balloons_<path>/timing.json                     per-batch generation times
  *
  *     npm run bench-bot-balloons
  *
- * 20 variants x 3 platform sets x 3 drift levels = 180 scenarios. Duration is
+ * 20 variants x 3 platform sets x 9 error rungs = 540 scenarios. Duration is
  * pinned at 20 s: geometry, not time, is this family's axis, which is why the
  * platform path separates the SETS rather than sitting inside one. Where this
  * differs from the maneuver family, and why, is documented in
@@ -35,7 +35,7 @@ describe("botset balloon generation", () => {
             simSpeed: 1, lat: 40, lon: -105});
     });
 
-    test("generates every platform set x drift x variant, timed", () => {
+    test("generates every platform set x error rung x variant, timed", () => {
         for (const s of BOTSET_BALLOON_SETS) resetOutDir(path.join(RESULTS, s.dirName));
 
         const timing = [];
@@ -80,7 +80,7 @@ describe("botset balloon generation", () => {
 
         const totalMs = Date.now() - t0All;
 
-        const header = ["set", "drift", "scenarios", "time"];
+        const header = ["set", "error", "scenarios", "time"];
         const w = header.map((h, i) => Math.max(h.length,
             ...rows.map((r) => r[i].length)));
         const line = (r) => r.map((c, i) => c.padStart(w[i])).join("  ");

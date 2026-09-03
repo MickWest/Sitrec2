@@ -297,10 +297,22 @@ function loadSet(setDir) {
             if (rec) scenarios.push(rec);
         }
     }
-    // Numeric-aware ordering (batch_20s before batch_120s) for every list
-    // the page derives from the scenario order.
+    // Numeric-aware ordering (batch_20s before batch_120s, 0.05deg before
+    // 0.2deg) for every list the page derives from the scenario order. The
+    // collator alone gets the error rungs wrong: with numeric collation
+    // "0.05deg" sorts after "0.2deg" because 05 > 2 as whole numbers, so the
+    // duration and the rung are parsed and compared as the numbers they are.
     const natural = new Intl.Collator(undefined, {numeric: true}).compare;
-    scenarios.sort((a, b) => natural(a.group, b.group) || natural(a.label, b.label));
+    const groupKey = (g) => {
+        const dur = g.match(/batch_(\d+)s/);
+        const rung = g.match(/(\d+(?:\.\d+)?)(?:deg|pct)(?:\/|$)/);
+        return [dur ? Number(dur[1]) : -1, rung ? Number(rung[1]) : -1];
+    };
+    const byGroup = (a, b) => {
+        const ka = groupKey(a.group), kb = groupKey(b.group);
+        return (ka[0] - kb[0]) || (ka[1] - kb[1]) || natural(a.group, b.group);
+    };
+    scenarios.sort((a, b) => byGroup(a, b) || natural(a.label, b.label));
     const timing = readJson(path.join(setDir, "timing.json"), null);
     return {scenarios, timing, groups: groups.map((g) => path.relative(setDir, g) || ".")};
 }

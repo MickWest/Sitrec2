@@ -186,13 +186,6 @@ function targetPart(t) {
 
 function observationPart(o) {
     if (o.kind === "clean") return "clean";
-    // PERCENT-OF-FOV LADDERS NAME THEMSELVES BY THE RUNG, not by the angle it
-    // resolved to. The field of view varies per scenario, so one rung produces
-    // a different absolute amplitude in every variant, and naming by degrees
-    // would give the same rung a different suffix in every file — destroying
-    // the property that a variant's error levels differ ONLY by their folder.
-    // The degrees are still published, in scenario.json's losError.
-    if (o.pctOfFov != null) return `${o.kind}${num(o.pctOfFov)}pct`;
     if (o.kind === "white") {
         // A matched-white member's sigma is set from its partner's realized
         // RMS, so name it by that instead of the (absent) requested sigma.

@@ -788,8 +788,9 @@ Pointing error that slides steadily **one way** off the target instead of
 wobbling about it. Not zero-mean, and therefore the error a short clip cannot
 absorb: over twenty seconds a slow slide is indistinguishable from the target
 genuinely drifting — which is exactly the question a balloon scenario exists to
-ask. The balloon botsets use this ladder; the maneuver botsets use
-[wobble](#correlated-wobble).
+ask. The generator offers it as an observation model; the published botsets
+use [wobble](#correlated-wobble) at every rung (an earlier balloon ladder used
+drift).
 
 #### Gaussian
 
@@ -878,11 +879,11 @@ percentage of the parameter bounds, so "spans 0.00%" means fully collapsed.
 
 #### Botset
 
-One of the five large **swept grids** of generated scenarios — a full taxonomy
+One of the seven large **swept grids** of generated scenarios — a full taxonomy
 crossed with a duration or geometry axis and an error ladder, published as its
 own folder tree. The point of a swept set rather than a curated one is that a
 result reads as a *curve* across the ladder: not "the analysis scored 0.2", but
-"the analysis holds to the 5% rung and collapses at 20%".
+"the analysis holds to the 0.1° rung and collapses at 0.5°".
 
 #### Angular-diameter bound
 
