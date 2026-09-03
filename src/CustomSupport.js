@@ -607,49 +607,58 @@ export class CCustomManager {
             })
             .listen();
 
-        // Add AI Model selector dropdown (bound directly to Globals.settings.chatModel)
+        // The assistant's three settings exist only when there is an assistant. With
+        // CHATBOT_ENABLED off (a hardened deployment, or any site without the relay) the
+        // chat view is never built, there are no models to list, and a model dropdown
+        // reading "Loading..." forever is a false promise. The controllers stay null; every
+        // later user of them already checks for that.
         this.availableChatModels = [];
-        this.chatModelController = settingsFolder.add(Globals.settings, "chatModel", { "Loading...": "" })
-            .name(t("custom.settings.aiModel.label"))
-            .tooltip(t("custom.settings.aiModel.tooltip"))
-            .onChange(() => {
-                this.saveGlobalSettings(true);
-            });
+        this.chatModelController = null;
+        this.voiceModelController = null;
+        if (getEnvBool("CHATBOT_ENABLED", process.env.CHATBOT_ENABLED)) {
+            // Add AI Model selector dropdown (bound directly to Globals.settings.chatModel)
+            this.chatModelController = settingsFolder.add(Globals.settings, "chatModel", { "Loading...": "" })
+                .name(t("custom.settings.aiModel.label"))
+                .tooltip(t("custom.settings.aiModel.tooltip"))
+                .onChange(() => {
+                    this.saveGlobalSettings(true);
+                });
 
-        // Registered HERE, next to the control it belongs to, and before Voice Model below.
-        // A deferred mirror request is fulfilled the moment its source registers, so the
-        // registration order decides the order the twins appear in the Assistant menu —
-        // registering Voice Model first put it above AI Model there while Settings had them
-        // the other way round.
-        //
-        // The mirror stays in sync with this dropdown — value, option list, and onChange.
-        registerMirrorSource("chatModel", this.chatModelController);
+            // Registered HERE, next to the control it belongs to, and before Voice Model below.
+            // A deferred mirror request is fulfilled the moment its source registers, so the
+            // registration order decides the order the twins appear in the Assistant menu —
+            // registering Voice Model first put it above AI Model there while Settings had them
+            // the other way round.
+            //
+            // The mirror stays in sync with this dropdown — value, option list, and onChange.
+            registerMirrorSource("chatModel", this.chatModelController);
 
-        // The spoken assistant's model. A separate control from AI Model because it is a
-        // separate API: OpenAI's realtime models serve /v1/realtime over WebRTC and cannot
-        // be called through chat completions, so the two lists have no overlap at all.
-        this.voiceModelController = settingsFolder
-            .add(Globals.settings, "voiceModel", {"Loading…": ""})
-            .name(t("custom.settings.voiceModel.label"))
-            .tooltip(t("custom.settings.voiceModel.tooltip"))
-            .onChange(() => {
-                this.saveGlobalSettings(true);
-            });
-        // Mirrorable into other menus, exactly as AI Model is — the Assistant header is
-        // where the microphone lives, so that is where the model it will use belongs.
-        registerMirrorSource("voiceModel", this.voiceModelController);
-        this.updateVoiceModelSelector();
+            // The spoken assistant's model. A separate control from AI Model because it is a
+            // separate API: OpenAI's realtime models serve /v1/realtime over WebRTC and cannot
+            // be called through chat completions, so the two lists have no overlap at all.
+            this.voiceModelController = settingsFolder
+                .add(Globals.settings, "voiceModel", {"Loading…": ""})
+                .name(t("custom.settings.voiceModel.label"))
+                .tooltip(t("custom.settings.voiceModel.tooltip"))
+                .onChange(() => {
+                    this.saveGlobalSettings(true);
+                });
+            // Mirrorable into other menus, exactly as AI Model is — the Assistant header is
+            // where the microphone lives, so that is where the model it will use belongs.
+            registerMirrorSource("voiceModel", this.voiceModelController);
+            this.updateVoiceModelSelector();
 
-        // Directly under the dropdown it governs, because that is the only place it makes
-        // sense: it is a control over what that list contains, not a separate preference.
-        settingsFolder.add(Globals.settings, "enableOldAIModels")
-            .name(t("custom.settings.enableOldAIModels.label"))
-            .tooltip(t("custom.settings.enableOldAIModels.tooltip"))
-            .onChange(() => {
-                this.saveGlobalSettings(true);
-                this.updateChatModelSelector();
-            })
-            .listen();
+            // Directly under the dropdown it governs, because that is the only place it makes
+            // sense: it is a control over what that list contains, not a separate preference.
+            settingsFolder.add(Globals.settings, "enableOldAIModels")
+                .name(t("custom.settings.enableOldAIModels.label"))
+                .tooltip(t("custom.settings.enableOldAIModels.tooltip"))
+                .onChange(() => {
+                    this.saveGlobalSettings(true);
+                    this.updateChatModelSelector();
+                })
+                .listen();
+        }
 
         // BYOK (Bring Your Own Key): one dialog for every credential the user supplies —
         // the AI assistant, tile providers, data feeds — plus each one's usage and limits.
@@ -832,6 +841,14 @@ export class CCustomManager {
     }
 
     async fetchAvailableChatModels() {
+        // With the assistant off, the server has no chat endpoint to ask (a hardened
+        // deployment omits the file altogether), so the request would only produce a
+        // 404 and a parse error in the console. Same empty result, no request.
+        if (!getEnvBool("CHATBOT_ENABLED", process.env.CHATBOT_ENABLED)) {
+            this.availableChatModels = [];
+            this.updateChatModelSelector();
+            return;
+        }
         try {
             const res = await fetch(withTestUser(SITREC_SERVER + 'chatbot.php?fetchModels=1'));
             const data = await res.json();

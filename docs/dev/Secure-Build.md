@@ -36,7 +36,7 @@ The build reads `config/shared.env` (or the file `SITREC_SHARED_ENV` names) exac
 | Setting | Value | Effect |
 |---|---|---|
 | `IS_SECURE_BUILD` | `true` | identifies the build to the code (`isSecureBuild` in `src/configUtils.js`) |
-| `CHATBOT_ENABLED` | `false` | the AI assistant relay is off |
+| `CHATBOT_ENABLED` | `false` | the AI assistant relay is off; with it off, the page also creates none of the assistant's Settings entries (AI Model, Voice Model, old models) and never asks the server for a model list |
 | `SITREC_TRACK_STATS` | `false` | no visit counter, no tile-usage statistics |
 | `LOG_UI_INTERACTIONS` | `false` | no menu-click logging |
 | `SITREC_ENABLE_DEFAULT_MAP_SOURCES` | `false` | the built-in internet map providers are removed from the source list |
