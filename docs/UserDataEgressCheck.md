@@ -116,7 +116,7 @@ None of these happens until the user turns the feature on or takes the action. E
 
 The scan cannot see inside a request body, so it also hands its listing to the second layer.
 
-**2. The review** is an LLM that reads the scan, the allow-list and the diff, and judges what the new code can actually send, against the same contracts. It reports a finding when a change sends to an unlisted destination, sends a listed destination a class outside its contract or a more revealing form of one, sends without the trigger the entry names, writes user data to a new persistent place, or puts user data into a URL, an export or a shared link where the user would not expect it. Its reply begins with `Verdict: CLEAR` or `Verdict: ATTENTION`.
+**2. The review** is an LLM that reads the scan, the allow-list and the diff, and judges what the new code can actually send, against the same contracts. It reports a finding when a change sends to an unlisted destination, sends a listed destination a class outside its contract or a more revealing form of one, sends without the trigger the entry names, writes user data to a new persistent place, or puts user data into a URL, an export or a shared link where the user would not expect it. Its reply carries a line of its own that reads `Verdict: CLEAR` or `Verdict: ATTENTION`; where it states both, the record takes `ATTENTION`, and where it states neither the record is `INCOMPLETE`.
 
 ### How the review is run, and how deep it goes
 

@@ -45,15 +45,43 @@ if (!scan) {
     // 0. A run that ended early (the credit cap, a crash, a job timeout that cancelled the
     // step before it wrote the exit file) may still have printed a verdict line first.
     const exitCode = /^\d+$/.test(reviewExit) ? Number(reviewExit) : null;
-    const m = reviewMd.match(/^\s*Verdict:\s*(CLEAR|ATTENTION)\b/i);
+    // The verdict is not always on the first line, whatever the prompt asks for: the model
+    // sometimes prints a sentence that announces its plan ahead of it. So the line counts
+    // from anywhere in the output — but only where it stands alone, and never from inside
+    // a fenced block, because a review that quotes this prompt's own example lines back
+    // must not be read as a verdict. A blockquote, a heading and a line that continues
+    // past the word are all rejected for the same reason. Where the output states both,
+    // the more serious wins, so that a stray line can never turn an ATTENTION into a CLEAR.
+    const verdictLine = /^ {0,3}(?:\*\*|__)?Verdict:[ \t]*(CLEAR|ATTENTION)(?:\*\*|__)?[ \t]*\.?[ \t]*$/i;
+    // A fence closes only on the same character, at least as long as the one that opened
+    // the block, and with nothing else on its line — the CommonMark rule. A plain toggle
+    // would let a three-backtick example nested inside a four-backtick block close the
+    // outer block and re-expose the very lines it quotes.
+    const fenceAt = line => line.match(/^ {0,3}((?:`{3,})|(?:~{3,}))(.*)$/);
+    const stated = [];
+    let fence = null;
+    for (const line of reviewMd.split('\n')) {
+        const at = fenceAt(line);
+        if (fence) {
+            if (at && at[1][0] === fence[0] && at[1].length >= fence.length && !at[2].trim()) fence = null;
+            continue;
+        }
+        // An unterminated fence stays open to the end of the output. That drops every later
+        // line, which is the safe direction: a missing verdict is INCOMPLETE, never CLEAR.
+        if (at) { fence = at[1]; continue; }
+        const hit = line.match(verdictLine);
+        if (hit) stated.push(hit[1].toUpperCase());
+    }
+    const verdict = stated.includes('ATTENTION') ? 'ATTENTION'
+        : stated.includes('CLEAR') ? 'CLEAR' : null;
     if (exitCode === null) {
         review = {status: 'incomplete', verdict: null,
             note: `the review did not record an exit status${reviewMd ? '; its output is partial' : ' and produced no output'}`};
     } else if (exitCode !== 0) {
         review = {status: 'incomplete', verdict: null,
             note: `the review ended with exit code ${exitCode}${reviewMd ? ' after partial output' : ' and no output'}`};
-    } else if (m) review = {status: 'done', verdict: m[1].toUpperCase(), note: ''};
-    else if (reviewMd) review = {status: 'incomplete', verdict: null, note: 'the review did not begin with a verdict line'};
+    } else if (verdict) review = {status: 'done', verdict, note: ''};
+    else if (reviewMd) review = {status: 'incomplete', verdict: null, note: 'the review printed no verdict line'};
     else review = {status: 'incomplete', verdict: null, note: 'the review exited 0 but produced no output'};
 }
 

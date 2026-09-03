@@ -282,9 +282,71 @@ describe('egress-check-record', () => {
         expect(r.comment).toMatch(/Partial output, not a verdict/);
     });
 
-    test('INCOMPLETE when the review does not start with a verdict line', () => {
+    test('INCOMPLETE when the review states no verdict', () => {
         const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': 'I looked at the files and everything is fine.', 'review.exit': '0'});
         expect(r.verdict).toBe('INCOMPLETE');
+        expect(r.comment).toMatch(/printed no verdict line/);
+    });
+
+    // The verdict need not be the first line. The model sometimes announces its plan ahead
+    // of it, which is what runs 33725452177 and 33791481215 did. But a verdict quoted back
+    // — in a fence, a blockquote, a heading, or a sentence — is not a verdict, because the
+    // review prompt itself carries both example lines verbatim.
+    describe('finding the verdict line', () => {
+        const withReview = md => record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': md, 'review.exit': '0'}).verdict;
+        const lines = (...rows) => rows.join('\n');
+
+        test('a plan sentence may precede a CLEAR verdict', () => {
+            expect(withReview(lines('I\u2019ll inspect the scan, contract and scoped diff.', '', 'Verdict: CLEAR', '', 'Examined 2 files.'))).toBe('CLEAR');
+        });
+
+        test('a plan sentence may precede an ATTENTION verdict', () => {
+            expect(withReview(lines('I will inspect the diff.', '', 'Verdict: ATTENTION', '', '- src/F0.js:3 sends the track to x.'))).toBe('ATTENTION');
+        });
+
+        test('a bold verdict counts', () => {
+            expect(withReview('**Verdict: ATTENTION**\n\n- src/F0.js:3')).toBe('ATTENTION');
+        });
+
+        test('the more serious wins when the review states both', () => {
+            expect(withReview(lines('Verdict: CLEAR', '', 'On reflection:', 'Verdict: ATTENTION'))).toBe('ATTENTION');
+        });
+
+        test('a verdict after a closed fence counts', () => {
+            expect(withReview(lines('The offending code:', '', '```js', 'fetch(url)', '```', '', 'Verdict: ATTENTION'))).toBe('ATTENTION');
+        });
+
+        test('a CLEAR quoted in a fence does not count', () => {
+            expect(withReview(lines('The format asks for:', '', '```', 'Verdict: CLEAR', '```', '', 'I ran out of credits.'))).toBe('INCOMPLETE');
+        });
+
+        test('a shorter fence nested in a longer one cannot re-expose a quoted CLEAR', () => {
+            expect(withReview(lines('The prompt shows:', '', '````', 'Example:', '```', 'Verdict: CLEAR', '```', '````', '', 'I ran out of credits.'))).toBe('INCOMPLETE');
+        });
+
+        test('a tilde fence nested in a backtick fence cannot re-expose a quoted CLEAR', () => {
+            expect(withReview(lines('Quote:', '', '```', '~~~', 'Verdict: CLEAR', '~~~', '```', '', 'unfinished'))).toBe('INCOMPLETE');
+        });
+
+        test('a fence marker carrying other content does not close the block', () => {
+            expect(withReview(lines('Quote:', '', '```md', 'Verdict: CLEAR', '``` and so on', '', 'unfinished'))).toBe('INCOMPLETE');
+        });
+
+        test('an unterminated fence swallows everything after it', () => {
+            expect(withReview(lines('Analysis.', '```', 'Verdict: CLEAR'))).toBe('INCOMPLETE');
+        });
+
+        test('a CLEAR in a blockquote does not count', () => {
+            expect(withReview(lines('The prompt says:', '', '> Verdict: CLEAR', '', 'but I did not finish.'))).toBe('INCOMPLETE');
+        });
+
+        test('a CLEAR in a heading does not count', () => {
+            expect(withReview('# Verdict: CLEAR')).toBe('INCOMPLETE');
+        });
+
+        test('a line that continues past the word is not a verdict', () => {
+            expect(withReview('Verdict: CLEAR or ATTENTION, one of the two.')).toBe('INCOMPLETE');
+        });
     });
 
     test('CLEAR with the review skipped when no code changed', () => {
