@@ -280,6 +280,57 @@ export const menuMethods = {
     },
 
     /**
+     * Build a fixed 3D object: a CNode3DObject that gets its position from a headless
+     * CNodePositionLLA instead of a track. See addFixedObject() below for why it is
+     * built that way.
+     *
+     * Every route that makes one comes through here — the ground menu, its undo/redo,
+     * and the sitch deserializer — so a reloaded object is constructed exactly like a
+     * freshly-placed one.
+     *
+     * The object node is tagged with `fixedObjectPositionID`, and that tag is the only
+     * way the pair can be found again: a fixed object is deliberately NOT registered
+     * with TrackManager, so nothing else enumerates it. serializeFixedObjects() scans
+     * NodeMan for the tag.
+     *
+     * @param {string} objectID - id for the CNode3DObject
+     * @param {string} positionID - id for its CNodePositionLLA
+     * @param {number[]} LLA - [lat, lon, alt]; the altitude is MSL, or AGL when agl is set
+     * @param {boolean} [agl] - the altitude is above ground level
+     * @returns {CNode3DObject} the created object node
+     */
+    createFixedObject(objectID, positionID, LLA, agl = false) {
+        // No `gui`, so no controls are created for it.
+        const positionNode = new CNodePositionLLA({
+            id: positionID,
+            LLA: LLA,
+            agl: agl,
+        });
+
+        const objectNode = new CNode3DObject({
+            id: objectID,
+            geometry: "sphere",
+            radius: 5,
+            color: 0x808080,
+            material: "phong",
+            // Only the placement until the controller's first update, but ask the
+            // position node for it rather than converting the LLA a second time here —
+            // it is the one that knows whether that altitude means MSL or AGL.
+            position: positionNode.p(0),
+        });
+
+        // Position only. No ObjectTilt: that orients a model along its direction of
+        // travel, and this one has none — it would also drag in a smoothed-track
+        // node that would then need disposing.
+        objectNode.addController("TrackPosition", {
+            sourceTrack: positionID,
+        });
+
+        objectNode.fixedObjectPositionID = positionID;
+        return objectNode;
+    },
+
+    /**
      * Show a context menu for ground clicks with camera/target positioning options
      * @param {number} mouseX - Screen X coordinate
      * @param {number} mouseY - Screen Y coordinate
@@ -466,28 +517,9 @@ export const menuMethods = {
                 const objectID = NodeMan.UniqueName(`syntheticObject_${Date.now()}`);
                 const positionID = NodeMan.UniqueName(`objectPosition_${Date.now()}`);
 
-                // No `gui`, so no controls are created for it. MSL to match the other
-                // ground-menu placements (setTargetOnGround and friends use altMSL).
-                new CNodePositionLLA({
-                    id: positionID,
-                    LLA: [lat, lon, altMSL],
-                });
-
-                const objectNode = new CNode3DObject({
-                    id: objectID,
-                    geometry: "sphere",
-                    radius: 5,
-                    color: 0x808080,
-                    material: "phong",
-                    position: groundPoint,
-                });
-
-                // Position only. No ObjectTilt: that orients a model along its direction of
-                // travel, and this one has none — it would also drag in a smoothed-track
-                // node that would then need disposing.
-                objectNode.addController("TrackPosition", {
-                    sourceTrack: positionID,
-                });
+                // MSL to match the other ground-menu placements (setTargetOnGround and
+                // friends use altMSL).
+                const objectNode = this.createFixedObject(objectID, positionID, [lat, lon, altMSL]);
 
                 console.log(`Created fixed object ${objectID} at ${lat}, ${lon}, ${altMSL}m MSL`);
                 this.groundContextMenu = null;
@@ -515,12 +547,7 @@ export const menuMethods = {
                             NodeMan.disposeRemove(positionID);
                         },
                         redo: () => {
-                            new CNodePositionLLA({id: positionID, LLA: [lat, lon, altMSL]});
-                            const ob = new CNode3DObject({
-                                id: objectID, geometry: "sphere", radius: 5,
-                                color: 0x808080, material: "phong", position: groundPoint,
-                            });
-                            ob.addController("TrackPosition", {sourceTrack: positionID});
+                            this.createFixedObject(objectID, positionID, [lat, lon, altMSL]);
                         },
                         description: "Add 3D object",
                     });

@@ -593,6 +593,19 @@ export const serializeMethods = {
         // before mods are applied to their nodes
         out.syntheticTracks = TrackManager.serialize()
 
+        // Fixed 3D objects ("Add 3D Object"): the object + headless position-node pair
+        // built by createFixedObject.
+        //
+        // They need an entry of their own because nothing else records them. An object on
+        // a synthetic track is written out by TrackManager.serialize() above, but a fixed
+        // object is deliberately NOT a TrackManager track, so before this it survived a
+        // save only as an entry in `mods` — a patch addressed to a node that no longer
+        // existed on load, which the mods pass then dropped, and the object was gone.
+        // Its appearance (geometry, radius, color, material) still rides in that mod; what
+        // is stored here is only enough to rebuild the pair under the same ids, plus the
+        // position, which CNodePositionLLA.modSerialize() does not save.
+        out.fixedObjects = this.serializeFixedObjects()
+
         // Walker marker objects (createWalker): specs only — their synthetic
         // tracks serialize above, and the deserialize pass recreates the
         // objects and rebinds them to those tracks via reuseTrackID. Only
@@ -672,6 +685,53 @@ export const serializeMethods = {
         // convert to a string
         const str = JSON.stringify(out, null, 2)
         return str;
+    },
+
+    /**
+     * Collect the fixed 3D objects ("Add 3D Object") for saving.
+     *
+     * They are found by the `fixedObjectPositionID` tag createFixedObject() puts on the
+     * object node, because a fixed object is in no manager's list — that is the whole
+     * point of it (no Contents entry, no track picker entry, no spline editor).
+     *
+     * Both halves must still be alive: deleting either the object or its position node
+     * is deleting the object, and a save must not resurrect it.
+     */
+    serializeFixedObjects() {
+        const fixedObjects = [];
+        NodeMan.iterate((id, node) => {
+            const positionID = node.fixedObjectPositionID;
+            if (positionID === undefined) return;
+            const positionNode = NodeMan.get(positionID, false);
+            if (!positionNode || positionNode._LLA === undefined) return;
+            fixedObjects.push({
+                id: id,
+                positionID: positionID,
+                LLA: positionNode._LLA.slice(),
+                agl: !!positionNode.agl,
+            });
+        });
+        return fixedObjects;
+    },
+
+    /**
+     * Recreate the fixed 3D objects saved by serializeFixedObjects(). Must run before the
+     * mods pass, which is what restores each object's appearance.
+     *
+     * @param {Array} [fixedObjects] - saved entries; absent in sitches saved before this
+     */
+    deserializeFixedObjects(fixedObjects) {
+        if (!fixedObjects) return;
+        for (const ob of fixedObjects) {
+            // tolerate a corrupt or hand-edited entry: skip junk, and never let one bad
+            // object abort the whole sitch deserialization
+            if (!ob || !ob.id || !ob.positionID || !Array.isArray(ob.LLA)) continue;
+            try {
+                this.createFixedObject(ob.id, ob.positionID, ob.LLA, !!ob.agl);
+            } catch (e) {
+                console.warn(`deserialize: fixed object "${ob.id}" failed to recreate: ${e?.message ?? e}`);
+            }
+        }
     },
 
     // Site ignores is a list of id strings to ignore next time a file is loaded
@@ -1223,6 +1283,10 @@ export const serializeMethods = {
             if (sitchData.syntheticBuildings) {
                 Synth3DManager.deserialize(sitchData.syntheticBuildings)
             }
+
+            // Rebuild fixed 3D objects BEFORE applying mods, under their saved ids, so
+            // the mod carrying each one's geometry, size, color and material re-attaches.
+            this.deserializeFixedObjects(sitchData.fixedObjects)
 
             // now we've either got
             // console.log("Promised files loaded in Custom Manager deserialize")
