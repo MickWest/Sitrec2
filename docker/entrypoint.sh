@@ -212,8 +212,17 @@ if [ -f "$HTML_FILE" ]; then
     done
     JSON+="}"
 
-    # Inject a <script> tag right after the opening <head> in index.html.
-    SCRIPT_TAG="<script>window.__SITREC_ENV__=${JSON};</script>"
+    # Write the settings to a small script file beside index.html and reference
+    # it, rather than injecting an inline <script>. An inline script needs a
+    # Content-Security-Policy that allows 'unsafe-inline' for scripts; a file
+    # from the same origin is allowed by the plain script-src 'self' that a
+    # hardened deployment sets at its proxy or balancer. The query string
+    # changes every start so a cached copy from a previous container's settings
+    # is never used. Same delete-and-recreate approach as index.html below.
+    ENV_JS_FILE="$(dirname "$HTML_FILE")/sitrec-runtime-env.js"
+    rm -f "$ENV_JS_FILE"
+    printf 'window.__SITREC_ENV__=%s;\n' "$JSON" > "$ENV_JS_FILE"
+    SCRIPT_TAG="<script src=\"sitrec-runtime-env.js?v=$(date +%s)\"></script>"
 
     # Split on the FIRST <head> and re-assemble with the script tag inserted,
     # using pure shell parameter expansion rather than sed. A value can legally

@@ -112,9 +112,16 @@ describeEntrypoint("docker/entrypoint.sh strips CRLF + quotes (compose env_file:
         expect(php).toContain("SITREC_ENABLE_DEFAULT_MAP_SOURCES=false\n");
         expect(php).toContain("SITREC_CUSTOM_MAP_OSM_NAME=OpenStreetMap\n");
 
-        // window.__SITREC_ENV__: must be valid JSON (raw CR or bad escaping would break it)
+        // The page references the settings as an external script (an inline script would
+        // need a Content-Security-Policy allowing 'unsafe-inline'), placed right after <head>
+        // and cache-busted per start.
         const html = fs.readFileSync(htmlFile, "utf8");
-        const m = html.match(/window\.__SITREC_ENV__=(\{.*?\});<\/script>/s);
+        expect(html).toMatch(/<head><script src="sitrec-runtime-env\.js\?v=\d+"><\/script>/);
+        expect(html).not.toContain("window.__SITREC_ENV__");
+
+        // window.__SITREC_ENV__: must be valid JSON (raw CR or bad escaping would break it)
+        const js = fs.readFileSync(path.join(dir, "sitrec-runtime-env.js"), "utf8");
+        const m = js.match(/^window\.__SITREC_ENV__=(\{.*?\});\n$/s);
         expect(m).not.toBeNull();
         const env = JSON.parse(m[1]);
 
