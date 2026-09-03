@@ -31,7 +31,7 @@ Version 2.148.0 was tagged but never reached the public site or the published co
 
 ### Improvements
 
-- When a map or elevation tile fails to load, the browser console (and, on a development host, the error dialog) now says the likely cause and what to do — a missing tile directory or mount, a wrong URL template or maximum zoom, a missing or expired key, no route from an isolated network — instead of only "HTTP 404". A shared case link that fails gets the same treatment, including the case where the file was saved to a container's scratch storage that a restart emptied.
+- When a map or elevation tile fails to load, the browser console (and, on a development host, the error dialog) now says the likely cause and what to do — a missing tile directory or mount, a wrong URL template or maximum zoom, a missing or expired key, no route from an isolated network — instead of only "HTTP 404". A shared sitch link that fails gets the same treatment, including when the file was saved to a container's scratch storage that a restart emptied.
 - The container image no longer writes its runtime settings into the page as an inline script, so a site can run under a security policy that forbids inline scripts.
 - SitrecBridge (1.0.62) now attaches to Sitrec on sitrec.work as well as the local and metabunk hosts.
 
@@ -44,26 +44,26 @@ Version 2.148.0 was tagged but never reached the public site or the published co
 
 ### New Features
 
-- **Shift + mouse wheel changes the field of view** (main view; and the look view when *Free Look Camera* is on): in the views where the plain wheel moves the camera, holding Shift zooms the lens instead — the same zoom the look view's wheel already does. Where a case's look camera takes its field of view from recorded data (MISB metadata, a track's zoom, focal-length keyframes) Shift + wheel does nothing on that view, because that value is a measurement of what the real camera did.
+- **Shift + mouse wheel changes the field of view** (main view; and the look view when *Free Look Camera* is on): in the views where the plain wheel moves the camera, holding Shift zooms the lens instead — the same zoom the look view's wheel already does. Where a sitch's look camera takes its field of view from recorded data (MISB metadata, a track's zoom, focal-length keyframes) Shift + wheel does nothing on that view, because that value is a measurement of what the real camera did.
 
 - **Sitrec on GitHub Pages** (https://mickwest.github.io/Sitrec2/): a serverless copy that runs entirely in your browser. No server, no accounts, and the files you load never leave your machine; the only services it contacts on its own are two keyless map providers (ESRI World Imagery and AWS Terrarium elevation). It is published from each release.
 
 ### Improvements
 
-- The *Live Feeds* folder (Contents) now starts closed, so its switches and readouts are no longer the first thing every visit to Contents shows; each of those switches opens a network connection, so it is a heading you open on purpose. A saved case that had it open still opens with it open.
+- The *Live Feeds* folder (Contents) now starts closed, so its switches and readouts are no longer the first thing every visit to Contents shows; each of those switches opens a network connection, so it is a heading you open on purpose. A saved sitch that had it open still opens with it open.
 - Turning *Free Look Camera* on no longer freezes the Zoom / HFOV / 35mm field-of-view controls at whatever value the track had at that moment; they keep working while you fly the camera by hand.
 
 ### Bug Fixes
 
-- Fixed the look camera (and anything else Sitrec keeps above the ground) being lifted into the air for about a third of a second while a case loaded — 126 m in the case measured — before the real ground height had arrived. This was the actual cause of the intermittent off-screen lines of sight that 2.147.2 worked around; that workaround has been removed.
+- Fixed the look camera (and anything else Sitrec keeps above the ground) being lifted into the air for about a third of a second while a sitch loaded — 126 m in the one measured — before the real ground height had arrived. This was the actual cause of the intermittent off-screen lines of sight that 2.147.2 worked around; that workaround has been removed.
 - Fixed the browser tab icon, the home-screen icon and the web-app manifest pointing at the wrong place on any install that lives under a path such as /sitrec/; two of the icons the manifest named were also never included in a build.
 - Fixed a self-hosted Sitrec behind a reverse proxy that handles HTTPS building plain-http addresses for its own files, which the browser then refused to load from a secure page.
 - Fixed MapBox imagery on the public site failing to load: a revoked token was still configured in one place a key rotation had missed. The production build is now checked for stale and leaked keys before it ships.
 
 ### Security
 
-- A script inside a shared case can no longer run in the page itself. Scripted-video scripts run only inside their isolated worker; if that worker cannot run, the script is refused with a message rather than run in the page.
-- Share links are now unguessable. The version part of a link used to be a plain timestamp, and knowing a case's name was enough to list its versions, reach its latest one, or see its latest preview screenshot. Links now carry a random component, and those routes are limited to the case's owner, an administrator, or cases on the published featured list. Existing links keep working.
+- A script inside a shared sitch can no longer run in the page itself. Scripted-video scripts run only inside their isolated worker; if that worker cannot run, the script is refused with a message rather than run in the page.
+- Share links are now unguessable. The version part of a link used to be a plain timestamp, and knowing a sitch's name was enough to list its versions, reach its latest one, or see its latest preview screenshot. Links now carry a random component, and those routes are limited to the sitch's owner, an administrator, or sitches on the published featured list. Existing links keep working.
 - The Google and Cesium credentials behind 3D buildings and street-level imagery are no longer built into the page for every visitor; they reach the browser only for users entitled to those features, within their daily quota.
 - Where Sitrec sends data is now written down. A new page, *The User Data Egress Check* (linked from the project README on GitHub), lists what every build requests with no action from you, what the public site adds, what each self-hosted build does by default, and what each feature sends when you use it — including what the AI assistant can reach. Every change to the code is checked for new ways data could leave the app, with the result posted publicly on the commit.
 
@@ -71,7 +71,7 @@ Version 2.148.0 was tagged but never reached the public site or the published co
 
 ### Bug Fixes
 
-- Fixed the *Traverse Alt (MSL)* and *Traverse Alt (AGL)* readouts (Show → *Sim Info Display*) showing an altitude that was tens of metres wrong — 53 m (174 ft) too low in the case measured off the California coast, and up to about 190 m (620 ft) out in the worst places on Earth.
+- Fixed the *Traverse Alt (MSL)* and *Traverse Alt (AGL)* readouts (Show → *Sim Info Display*) showing an altitude that was tens of metres wrong — 53 m (174 ft) too low at the spot measured off the California coast, and up to about 190 m (620 ft) out in the worst places on Earth.
 - Fixed a downward line of sight ending in mid-air above the sea instead of reaching it. It now stops at true mean sea level, which off the California coast is about 35 m below where the line used to end; elsewhere in the world the difference can be up to roughly 100 m either way.
 - Fixed lines of sight sometimes being drawn from where the camera sat part way through loading rather than where it ended up, which could put them off the screen entirely. It was intermittent, and more likely when the page loaded quickly from cache.
 
@@ -79,14 +79,14 @@ Version 2.148.0 was tagged but never reached the public site or the published co
 
 ### Bug Fixes
 
-- Fixed the camera view frustum (Show → *Camera View Frustum*) being drawn the wrong shape in the main view when the camera's own window had never been on screen — for example a saved case that opens with one view double-clicked to fill the screen.
-- Fixed a case sometimes drawing slightly differently from one load to the next, depending on how long the page took to start.
+- Fixed the camera view frustum (Show → *Camera View Frustum*) being drawn the wrong shape in the main view when the camera's own window had never been on screen — for example a saved sitch that opens with one view double-clicked to fill the screen.
+- Fixed a sitch sometimes drawing slightly differently from one load to the next, depending on how long the page took to start.
 
 ## Version 2.147.0 (2026-08-31)
 
 ### New Features
 
-- **Control Sitrec with ChatGPT** (Help → Documentation → *Control Sitrec with ChatGPT*): open Sitrec in the ChatGPT desktop app's built-in browser and ChatGPT can read and drive the page directly — thirteen tools covering the current state, the case list, loading a case, seeking a frame, play and pause, the camera, tracks, views, the simulation date and time, and reading or setting a menu control. No API key, no extension, no separate setup. The tools are deliberately limited, buttons are not exposed, and anything the model does is treated as untrusted in the same way the in-app assistant's actions are. SitrecBridge is unchanged and is still the route for other AI tools.
+- **Control Sitrec with ChatGPT** (Help → Documentation → *Control Sitrec with ChatGPT*): open Sitrec in the ChatGPT desktop app's built-in browser and ChatGPT can read and drive the page directly — thirteen tools covering the current state, the sitch list, loading a sitch, seeking a frame, play and pause, the camera, tracks, views, the simulation date and time, and reading or setting a menu control. No API key, no extension, no separate setup. The tools are deliberately limited, buttons are not exposed, and anything the model does is treated as untrusted in the same way the in-app assistant's actions are. SitrecBridge is unchanged and is still the route for other AI tools.
 
 - **Run the assistant on your own AI server** (Settings → *API Keys…* → *Custom endpoint*): point Sitrec at a model on your own machine or inside your network. Give it an address, pick whether it speaks the OpenAI or the Anthropic format, and add a key only if it needs one. A **Test** button says which of three things is wrong when it does not connect: nothing listening, your server not permitting this page, or the key being refused.
 
