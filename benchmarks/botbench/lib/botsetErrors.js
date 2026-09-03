@@ -26,8 +26,11 @@ export function botsetErrorLabel(pct) {
     return `${pct}pct`;
 }
 
-// Aguadilla operator wobble. Only the amplitude moves with the rung; the drift
-// speed, reaction delay and correction behaviour stay at the measured values.
+// Aguadilla-style operator wobble. Only the amplitude moves with the rung; the
+// drift speed, reaction delay and correction behaviour stay at the fixed values
+// below, chosen to resemble the operator behaviour seen in that clip. They are
+// not a measured calibration, and they differ from the live wobble controller's
+// defaults (src/nodes/CNodeControllerTrackingWobble.js).
 const WOBBLE_BASE = {driftSpeed: 0.10, reactionTime: 0.4,
     correctionSpeed: 1.0, accuracy: 0.8};
 

@@ -23,7 +23,7 @@ A **traverse** finds a 3D position for each frame by combining a Line of Sight (
 Sitrec offers two families of traverse:
 
 - **Sequential traversals** process frames one at a time, propagating state forward. Each frame's result depends on the previous frame.
-- **Global fits** (new) consider all LOS rays at once, finding the trajectory that best explains the entire dataset. No per-frame state propagation.
+- **Global fits** use every LOS ray in the fitted window to determine the whole trajectory, so no start distance is needed. Most solve all frames in one step; the Kalman Smoother still propagates state frame to frame, but its CV seed and backward pass make every output point depend on all frames.
 
 ---
 
@@ -57,9 +57,9 @@ Check Fit Diagnostics before quoting any range from one — see "Fit conditionin
 
 | Method | Min Frames | Key Parameters | What It Does | You must assume | It does NOT establish |
 |--------|-----------|---------------|--------------|-----------------|-----------------------|
-| **Constant Velocity** ⚠ | 2 | (none) | Fits a straight-line trajectory P(t) = P0 + V*t that minimizes perpendicular distance to all LOS rays. | Straight-line motion at constant velocity, and enough parallax to pin range | **The range.** With exactly 2 frames it fits exactly regardless of the truth |
-| **Constant Acceleration** ⚠ | 3 | (none) | Fits a parabolic trajectory P(t) = P0 + V*t + 0.5*A*t^2. Captures turns, climbs, decelerations. | Constant acceleration | The range (same collapse family). With exactly 3 frames it fits exactly regardless of the truth |
-| **Kalman Smoother** ⚠ | 2 | Process Noise, Measurement Noise | Runs a Kalman filter forward then backward (RTS smoother). Every point benefits from all measurements past and future. Tunable noise balance. | A constant-velocity process between frames; the noise settings are *tuning knobs*, not calibrated variances | The range (it is seeded from the CV fit). **Its covariance is not a real uncertainty and must never be published as an error bar** |
+| **Constant Velocity** ⚠ | 2 (3 for a determined fit) | (none) | Fits a straight-line trajectory P(t) = P0 + V*t that minimizes perpendicular distance to all LOS rays. | Straight-line motion at constant velocity, and enough parallax to pin range | **The range.** Below 3 frames the system is underdetermined and fits exactly regardless of the truth |
+| **Constant Acceleration** ⚠ | 3 (5 for a determined fit) | (none) | Fits a parabolic trajectory P(t) = P0 + V*t + 0.5*A*t^2: one constant acceleration vector, so a parabolic path: a straight-line speed change, a ballistic arc, or a curve whose heading changes the way a parabola's does. A constant-rate turn at constant speed (a circular arc) rotates its acceleration vector and is not constant acceleration; it fits CA only over a short arc. | Constant acceleration | The range (same collapse family). Below 5 frames the system is underdetermined and fits exactly regardless of the truth |
+| **Kalman Smoother** ⚠ | 2 (via the CV seed) | Process Noise, Measurement Noise | Runs a Kalman filter forward then backward (RTS smoother). Every point benefits from all measurements past and future. Tunable noise balance. | A constant-velocity process between frames; the noise settings are *tuning knobs*, not calibrated variances | The range (it is seeded from the CV fit). **Its covariance is not a real uncertainty and must never be published as an error bar** |
 | **Monte Carlo 1** ⚠ | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Randomly samples points along perturbed LOS rays (using a CV fit for focused per-frame range estimates), fits polynomials, and keeps the best trial. Robust to outliers. | Polynomial motion of the order you chose, and that your LOS Uncertainty matches the real pointing error | The range (CV-seeded). **This is not a posterior** — it keeps the single best trial, so the spread of trials is a function of your guessed uncertainty, not of the data |
 | **Monte Carlo 2** ⚠ | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Least-squares variant: perturbs all frames each trial and fits an overdetermined polynomial, giving more stable results at higher polynomial orders. | As above | As above |
 | **Physics** | 2 | Physics Model, Make/Model, Max Iterations, Wind, Initial Range | RK4 integration of a physical dynamics model — Sky Lantern (wind-drift kinematics with a rise/decay/sink life cycle), Fixed Wing Aircraft, or Quadcopter (hover-capable multirotor), chosen with the Physics Model selector — fit with differential evolution plus Nelder-Mead polish. Fixed-wing and quadcopter offer a make/model sub-selector (AUTO reports the closest match). | That the chosen model's dynamics apply, within the search bounds | **That the object was that thing.** A good residual means the sightlines are *compatible* with that model, not that the object is one. A fit that hits a bound is incomplete, not an exclusion |
@@ -200,7 +200,7 @@ Intersects each LOS ray with loaded terrain mesh geometry using Three.js raycast
 
 All global fits operate in a local East-North-Up (ENU) coordinate system centered on the mean sensor position. The conversion from ECEF to ENU keeps numbers small and the flat-earth approximation valid for typical analysis scenes (< 100 km extent). Results are converted back to ECEF for display.
 
-Unlike sequential traversals, global fits have no start distance parameter and no frame-to-frame state propagation. They see all the data at once and find the trajectory that best explains it.
+Unlike sequential traversals, global fits have no start distance parameter: every sightline in the window takes part in determining the whole trajectory. CV, CA and the polynomial fits solve all frames in one step; the Kalman Smoother propagates state frame to frame but is seeded from the all-frame CV fit and smoothed backward, so its output also depends on every frame.
 
 #### Range observability and collapse (CV-family conditioning)
 
@@ -263,11 +263,11 @@ Substituting the linear model and stacking all frames builds a 6x6 normal equati
 
 **Soft range constraints**: After solving, the algorithm checks whether any predicted position falls behind its sensor (negative range) or beyond a maximum range. Violated frames add quadratic penalty terms to the normal equations, and the system is re-solved. This *discourages* impossible solutions without hard-clipping — it does not prevent them: on weak geometry the penalized re-solve still lands on or just behind the sensor (see "Range observability and collapse" above), which is why the live method surfaces the conditioning diagnostic instead of silently publishing the track.
 
-**Minimum data**: 2 frames (the system is exactly determined with 2 rays in general position, overdetermined with more).
+**Minimum data**: the code attempts a solve with 2 frames, but each ray contributes at most two independent constraints, so 3 frames are needed before the six unknowns can be determined. Three is necessary, not sufficient: weak geometry stays rank-deficient with any number of frames (see "Fit conditioning").
 
 **When to use**: First thing to try — *after checking the Fit Diagnostics folder*. If the conditioning reads poor, the geometry gives CV-family fits little to work with: the measured collapse risk is high and the fitted range should be treated as unreliable no matter how clean the residuals look. Otherwise, if the target is moving in a roughly straight line at roughly constant speed, CV will find it with no user input. The residuals tell you how well a straight-line model fits — they do not tell you the range is right.
 
-**Limits**: Cannot capture turns, climbs, or speed changes. With only 2 frames the fit is exact (zero residuals) regardless of the true trajectory. Prone to collapsing onto the sensor when the sensor's own path is (approximately) CV-representable — check the conditioning diagnostic.
+**Limits**: Cannot capture turns, climbs, or speed changes. With fewer than 3 frames the system is underdetermined, so the fit is exact (zero residuals) regardless of the true trajectory. Prone to collapsing onto the sensor when the sensor's own path is (approximately) CV-representable — check the conditioning diagnostic.
 
 #### Constant Acceleration (CA)
 
@@ -277,11 +277,11 @@ Substituting the linear model and stacking all frames builds a 6x6 normal equati
 
 **Time normalization**: Raw timestamps can span thousands of seconds. Without normalization, the t^2 columns grow to O(T^4) in the normal equations, making the 9x9 system numerically singular. The algorithm normalizes time to tau = (t - t0) / T_span, keeping all columns O(1). After solving, it un-scales: V_physical = V_scaled / T_span, A_physical = A_scaled / T_span^2.
 
-**Minimum data**: 3 frames (underdetermined below that).
+**Minimum data**: the code attempts a solve with 3 frames, but nine unknowns need at least 5 frames (two constraints per ray) before the system can be determined. As with CV, that count is necessary, not sufficient.
 
-**When to use**: When CV residuals are large, suggesting the target is maneuvering. CA captures constant turns, climbs, or decelerations. Compare CV and CA residuals to judge whether the added complexity is justified.
+**When to use**: When CV residuals are large, suggesting the target is maneuvering. CA captures one constant acceleration vector, which is any parabolic path: a steady speed change along a fixed heading, a ballistic arc, or a curve whose heading changes the way a parabola's does. It does not capture a constant-rate turn at constant speed (a circular arc, in the horizontal or the vertical plane), because that rotates the acceleration vector with the flight path; such a turn fits CA only over a short arc. Compare CV and CA residuals to judge whether the added complexity is justified.
 
-**Limits**: Only captures constant acceleration. Targets that change their acceleration profile (e.g., turn then straighten) will show residuals at the transition. With exactly 3 frames, the fit is exact.
+**Limits**: Only captures constant acceleration. Targets that change their acceleration profile (e.g., turn then straighten) will show residuals at the transition. With fewer than 5 frames the system is underdetermined and the fit is exact regardless of the truth.
 
 #### Kalman Smoother (RTS)
 
@@ -297,17 +297,17 @@ Substituting the linear model and stacking all frames builds a 6x6 normal equati
 
 3. **Backward (RTS) smoother pass**: Starting from the last filtered state, runs backward. At each step computes the smoother gain G = P_filtered * F^T * P_predicted^{-1}, then combines the filtered estimate with future information: x_smooth = x_filtered + G * (x_smooth[next] - x_predicted[next]).
 
-The backward pass is what distinguishes this from a plain Kalman filter. Every smoothed point incorporates information from all measurements, both past and future. This is especially valuable near the ends of the track where a forward-only filter has the least data.
+The backward pass is what distinguishes this from a plain Kalman filter. Every smoothed point incorporates information from all measurements, both past and future. How much the backward pass changes any given point depends on the covariances, the process and measurement noise settings, the timestep and the geometry; a plain filter with an uninformed start is corrected most near the start, but this filter is seeded from the all-frame CV fit, so no such rule applies here. One thing is exact: at the last frame the smoothed state is identical to the forward-filtered state, so smoothing never improves the end of the track. The forward pass is not a causal estimate either: its CV seed already used every frame in the window.
 
 For excluded frames (gaps in the data), positions are linearly interpolated between the nearest smoothed states.
 
 **Tuning parameters**:
-- *Process Noise* (slider **KF Process**, a log10 exponent; default −4, i.e. 1e-4): Velocity random walk variance per unit time. Higher values let the filter track rapid maneuvers but produce noisier output. Lower values enforce smoother trajectories but may lag behind true motion. Note this is an implementation tuning quantity, not a calibrated physical variance.
+- *Process Noise* (slider **KF Process**, a log10 exponent; default −4, i.e. 1e-4): A tuning scale for how far the state may depart from constant velocity between frames. Higher values let the filter track rapid maneuvers but produce noisier output. Lower values enforce smoother trajectories but may lag behind true motion. The code builds the process-noise block as q·dt² in every sub-block (position, velocity and their coupling), so this is not a physical velocity random-walk variance, it does not rescale consistently with frame rate, and it is not a calibrated variance.
 - *Measurement Noise* (slider **KF Noise**, a log10 exponent; default 0, i.e. 1.0): variance on the projected positional pseudo-measurement (not an angular noise in degrees). Higher values tell the filter the LOS data is noisy, producing smoother output. Lower values trust the LOS data more closely.
 
 **Minimum data**: 2 frames.
 
-**When to use**: Strong on noisy data *when the geometry supports range recovery at all*. The bidirectional smoothing gives more stable estimates than any of the sequential traversals, especially near the start and end of the track. Start with defaults, then adjust if the trajectory looks too smooth (increase process noise) or too noisy (increase measurement noise).
+**When to use**: Strong on noisy data *when the geometry supports range recovery at all*. The bidirectional smoothing gives more stable estimates than any of the sequential traversals, except at the final frame, where the smoothed point equals the forward-filtered point. Start with defaults, then adjust if the trajectory looks too smooth (increase process noise) or too noisy (increase measurement noise).
 
 **Noise color matters** (measured, BOT Bench): real operator tracking error is
 *autocorrelated* — the operator drifts, notices, corrects — and at matched
@@ -402,8 +402,8 @@ So the nuisance basis is deliberately **high-pass** — Fourier modes from nMin 
 | User input needed | Start distance, speed, heading, etc. | None (or noise parameters for KF/MC) |
 | Handles noisy data | Poorly; errors compound forward | Well; all data considered at once |
 | Physical assumption | Explicit (constant speed, altitude, heading) | Kinematic (constant velocity, acceleration, or smooth polynomial) |
-| Start/end effects | First frame anchored by start distance; last frames accumulate error | Symmetric; all frames treated equally (KF smoother) |
-| Computational cost | O(N) per frame | O(N) for CV/CA, O(N^2) for KF, O(N * trials) for MC |
+| Start/end effects | First frame anchored by start distance; last frames accumulate error | Every point uses all frames; the KF smoother's last point equals the forward filter's, and where it changes the rest depends on the noise settings and geometry |
+| Computational cost | O(N) per frame | O(N) for CV/CA and for KF (fixed-size 6x6 recursions per frame), O(N * trials) for MC |
 | Maneuvering targets | Some methods handle (constant altitude, perspective) | CA, KF, MC all handle maneuvering |
 
 In practice, start with **Global Fit: Constant Velocity** to get a baseline. If residuals are large, try **Constant Acceleration**. For noisy data, use the **Kalman Smoother**. Use **Monte Carlo** when you suspect outlier frames. Then compare against sequential traversals with specific physical assumptions to test hypotheses about the target's behavior.

@@ -157,8 +157,10 @@ means the answer is unconstrained regardless of how small the residual is.
 **Collapse** — the failure mode where a constant-velocity fit puts the "object" a few metres
 from the camera with a near-zero residual, because the geometry cannot tell it otherwise.
 
-**Global fit** — a method that considers all frames at once, as opposed to a *sequential
-traverse* that walks forward frame by frame.
+**Global fit** — a method in which every frame in the window helps determine every point of
+the trajectory, as opposed to a *sequential traverse* that walks forward frame by frame from a
+start distance. (The Kalman Smoother propagates state frame to frame internally, but its
+all-frame seed and backward pass make it a global fit in this sense.)
 
 **Executive verdict** — the one-line summary at the top of the traverse analysis. There are
 five verdict codes (six wordings — *Insufficient* has two) and each licenses something
