@@ -1,6 +1,7 @@
 import {findColumn, featureColumns, isFeaturesCSV} from "./ParseUtils";
 import {FeatureManager} from "./CFeatureManager";
 import {showError} from "./showError";
+import {parseCoordinateCell} from "./CoordinateParser";
 
 // The header sniff (isFeaturesCSV) lives in ParseUtils so light consumers —
 // the shared CSV type detector in TrackCSV.js, headless tests — can use it
@@ -28,8 +29,8 @@ export function extractFeaturesFromFile(csv) {
     for (let i = 1; i < csv.length; i++) {
         const row = csv[i];
 
-        const lat = parseFloat(row[latCol]);
-        const lon = parseFloat(row[lonCol]);
+        const lat = parseCoordinateCell(row[latCol]);
+        const lon = parseCoordinateCell(row[lonCol]);
         let alt = 0
         if (altCol !== -1) alt = parseFloat(row[altCol]);
         if (isNaN(alt)) alt = 0;

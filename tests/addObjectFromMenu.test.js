@@ -4,6 +4,66 @@ import {CNodeManager} from '../src/nodes/CNodeManager';
 import {setNodeMan} from '../src/Globals';
 
 describe('parseObjectInput', () => {
+    test('coordinates in D M S with hemisphere letters', () => {
+        const result = parseObjectInput("Home N40 26.767 W074 00.36 50m");
+        expect(result).not.toBeNull();
+        expect(result.name).toBe("Home");
+        expect(result.lat).toBeCloseTo(40.446117, 5);
+        expect(result.lon).toBeCloseTo(-74.006, 5);
+        expect(result.alt).toBeCloseTo(50);
+        expect(result.hasExplicitAlt).toBe(true);
+    });
+
+    test('a bare D M S pair with a unitless altitude', () => {
+        const result = parseObjectInput("Tower 40 26 46 -79 58 56 100");
+        expect(result).not.toBeNull();
+        expect(result.name).toBe("Tower");
+        expect(result.lat).toBeCloseTo(40.446111, 5);
+        expect(result.lon).toBeCloseTo(-79.982222, 5);
+        expect(result.alt).toBeCloseTo(100);
+        expect(result.hasExplicitAlt).toBe(true);
+    });
+
+    test('a pasted Google-style pair with symbols', () => {
+        const result = parseObjectInput(`Pier 40°26'46"N, 79°58'56"W`);
+        expect(result).not.toBeNull();
+        expect(result.name).toBe("Pier");
+        expect(result.lat).toBeCloseTo(40.446111, 5);
+        expect(result.lon).toBeCloseTo(-79.982222, 5);
+        expect(result.hasExplicitAlt).toBe(false);
+    });
+
+    test('MGRS', () => {
+        const result = parseObjectInput("Grid 37SCR1192692923 10ft");
+        expect(result).not.toBeNull();
+        expect(result.name).toBe("Grid");
+        expect(result.lat).toBeCloseTo(32.4576, 3);
+        expect(result.alt).toBeCloseTo(3.048, 3);
+    });
+
+    test('a southern latitude just below the equator keeps its sign', () => {
+        const result = parseObjectInput("Quito -0 13 0, -78 30 0");
+        expect(result.lat).toBeCloseTo(-0.216667, 5);
+        expect(result.lon).toBeCloseTo(-78.5, 5);
+    });
+
+    test('a name with a digit in it is still a name', () => {
+        const result = parseObjectInput("Object1 37.7749 -122.4194");
+        expect(result.name).toBe("Object1");
+        expect(result.lat).toBeCloseTo(37.7749);
+    });
+
+    test('altitudes without a leading digit', () => {
+        expect(parseObjectInput("37.7749 -122.4194 .5m").alt).toBeCloseTo(0.5);
+        expect(parseObjectInput("37.7749 -122.4194 -.5ft").alt).toBeCloseTo(-0.1524);
+        expect(parseObjectInput("37.7749 -122.4194 5.m").alt).toBeCloseTo(5);
+        expect(parseObjectInput("37.7749 -122.4194 .5").alt).toBeCloseTo(0.5);
+    });
+
+    test('garbage after the coordinates is not an altitude', () => {
+        expect(parseObjectInput("Spot 37.7749 -122.4194 high")).toBeNull();
+    });
+
 
     test('parses full input with name and altitude in meters', () => {
         const result = parseObjectInput("MyObject 37.7749 -122.4194 100m");

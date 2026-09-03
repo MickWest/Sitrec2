@@ -4,6 +4,7 @@ import {ensureNightSkyFiles} from "./ExtraFiles";
 import GUI from "./js/lil-gui.esm";
 import {ModelFiles} from "./nodes/CNode3DObject";
 import {isSecureBuild} from "./configUtils";
+import {parseLatLonAlt} from "./CoordinateParser";
 // number-only mathjs entry (see CNodeMath.js). create(math.all) below would re-pull
 // the full ~2.4MB mathjs (BigNumber/Complex/Fraction/units) if this used 'mathjs'.
 // The degrees-trig calculator only needs scalar number functions.
@@ -806,18 +807,21 @@ class CClientNLU {
             {
                 name: "goto_location_simple",
                 // "to" is optional: people type "go 51.8, -1.8" as readily as "go to ...".
-                regex: /^(?:go|move|goto|fly)(?:\s+to)?\s+(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)(?:\s*[,\s]\s*(-?\d+(?:\.\d+)?))?$|^set\s+location(?:\s+to)?\s+(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)(?:\s*[,\s]\s*(-?\d+(?:\.\d+)?))?$/i,
+                // Whatever follows goes to the shared coordinate parser - decimal,
+                // D M S, hemisphere letters, MGRS, "lat, lon, alt" - and if it is
+                // not a coordinate, returning null lets goto_location_named below
+                // treat it as a place.
+                regex: /^(?:go|move|goto|fly)(?:\s+to)?\s+(.+)$|^set\s+location(?:\s+to)?\s+(.+)$/i,
                 extract: (match) => {
-                    // Two alternations, so the coordinates land in 1-3 or 4-6.
-                    const [lat, lon, alt] = match[1] !== undefined
-                        ? [match[1], match[2], match[3]]
-                        : [match[4], match[5], match[6]];
+                    const text = (match[1] ?? match[2] ?? "").trim();
+                    const located = parseLatLonAlt(text, {loose: true});
+                    if (!located) return null;
                     return {
                         intent: "GOTO_LLA",
                         slots: {
-                            lat: parseFloat(lat),
-                            lon: parseFloat(lon),
-                            alt: alt ? parseFloat(alt) : 0
+                            lat: located.lat,
+                            lon: located.lon,
+                            alt: located.alt ?? 0
                         }
                     };
                 },

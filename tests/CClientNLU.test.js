@@ -708,6 +708,24 @@ describe('bare "go" without "to"', () => {
         expect(parse('set location to 10, 20').slots.lat).toBeCloseTo(10, 6);
     });
 
+    test('coordinates in any format route to GOTO_LLA, place names do not', () => {
+        const dms = parse('go to 40°26\'46"N 79°58\'56"W');
+        expect(dms.intent).toBe('GOTO_LLA');
+        expect(dms.slots.lat).toBeCloseTo(40.446111, 5);
+        expect(dms.slots.lon).toBeCloseTo(-79.982222, 5);
+        expect(dms.slots.alt).toBe(0);
+
+        const mgrs = parse('fly to 37SCR1192692923');
+        expect(mgrs.intent).toBe('GOTO_LLA');
+        expect(mgrs.slots.lat).toBeCloseTo(32.4576, 3);
+
+        const quito = parse('go -0 13 0, -78 30 0');
+        expect(quito.slots.lat).toBeCloseTo(-0.216667, 5);
+
+        expect(parse('go to Area 51').intent).toBe('GOTO_NAMED_LOCATION');
+        expect(parse('go to 1600 Pennsylvania Avenue').intent).toBe('GOTO_NAMED_LOCATION');
+    });
+
     // The reason "to" was not optional in the first place.
     test('a bare go followed by a direction or command is not a place', () => {
         for (const t of ['go back', 'go on', 'go north', 'go up', 'go down', 'go left',

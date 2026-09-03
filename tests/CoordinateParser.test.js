@@ -1,8 +1,11 @@
 import {
+    dmsToDegrees,
     parseCoordinate,
+    parseCoordinateCell,
     parseECEF,
     parseLatLonAlt,
     parseLatLonPair,
+    parseMapURL,
     parseMGRS,
     parseSingleCoordinate
 } from "../src/CoordinateParser";
@@ -651,5 +654,268 @@ describe("ECEF through the shared pair parser", () => {
         expect(result).not.toBeNull();
         expect(result.lat).toBeCloseTo(45, 6);
         expect(result.alt).toBeCloseTo(1000, 3);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The sign of a D M S coordinate, and the forms pasted text arrives in.
+// ---------------------------------------------------------------------------
+
+describe("the sign applies to the whole coordinate", () => {
+    // -40° 26' 46" is 40°26'46" SOUTH: -(40 + 26/60 + 46/3600). The minus,
+    // like a hemisphere letter, names the side of the equator or meridian the
+    // whole angle is on. It is never -40 + 26/60 + 46/3600.
+    test("minus on the degrees carries to the minutes and seconds", () => {
+        expect(parseSingleCoordinate("-40 26 46")).toBeCloseTo(-40.446111, 5);
+        expect(parseSingleCoordinate("-40° 26' 46\"")).toBeCloseTo(-40.446111, 5);
+        expect(parseSingleCoordinate("-40 26.767")).toBeCloseTo(-40.446117, 5);
+    });
+
+    test("a minus on zero degrees is still a minus (Quito is at 0°13'S)", () => {
+        // Number("-0") is -0, and -0 < 0 is false: reading the sign off the
+        // number put these north of the equator.
+        expect(parseSingleCoordinate("-0 13 0")).toBeCloseTo(-0.216667, 5);
+        expect(parseSingleCoordinate("-0° 13' 0\"")).toBeCloseTo(-0.216667, 5);
+        expect(parseSingleCoordinate("-00 13")).toBeCloseTo(-0.216667, 5);
+        expect(parseSingleCoordinate("-0.0 13")).toBeCloseTo(-0.216667, 5);
+        const pair = parseLatLonPair("-0 13 0, -78 30 0");
+        expect(pair.lat).toBeCloseTo(-0.216667, 5);
+        expect(pair.lon).toBeCloseTo(-78.5, 5);
+    });
+
+    test("hemisphere letter with zero degrees", () => {
+        expect(parseSingleCoordinate("0 13 S")).toBeCloseTo(-0.216667, 5);
+        expect(parseSingleCoordinate("S 0° 13'")).toBeCloseTo(-0.216667, 5);
+        expect(parseSingleCoordinate("0° 13' W")).toBeCloseTo(-0.216667, 5);
+    });
+
+    test("the all-negative form some tools emit restates the sign", () => {
+        expect(parseSingleCoordinate("-45 -30 -30")).toBeCloseTo(-45.508333, 5);
+        expect(parseSingleCoordinate("-45 -30")).toBeCloseTo(-45.5, 5);
+    });
+
+    test("a minus on the minutes or seconds alone is meaningless", () => {
+        expect(parseSingleCoordinate("45 -30")).toBeNull();
+        expect(parseSingleCoordinate("45 30 -30")).toBeNull();
+    });
+
+    test("a hemisphere letter wins over a minus sign", () => {
+        expect(parseSingleCoordinate("S -45.5")).toBeCloseTo(-45.5, 5);
+        expect(parseSingleCoordinate("-45.5 N")).toBeCloseTo(45.5, 5);
+    });
+
+    test("zero is zero, not negative zero", () => {
+        expect(Object.is(parseSingleCoordinate("-0"), 0)).toBe(true);
+        expect(Object.is(parseSingleCoordinate("-0 0 0"), 0)).toBe(true);
+        expect(Object.is(parseSingleCoordinate("0 0 S"), 0)).toBe(true);
+    });
+});
+
+describe("pasted-text glyphs", () => {
+    test("Unicode minus sign and dashes", () => {
+        expect(parseSingleCoordinate("−40.5")).toBeCloseTo(-40.5, 5);
+        expect(parseSingleCoordinate("−40 26 46")).toBeCloseTo(-40.446111, 5);
+        const pair = parseLatLonPair("−40.5, −120.5");
+        expect(pair.lat).toBeCloseTo(-40.5, 5);
+        expect(pair.lon).toBeCloseTo(-120.5, 5);
+        expect(parseSingleCoordinate("–40.5")).toBeCloseTo(-40.5, 5);   // en dash
+    });
+
+    test("Word's curly quotes, with and without spaces", () => {
+        expect(parseSingleCoordinate("45°30’30”")).toBeCloseTo(45.508333, 5);
+        expect(parseSingleCoordinate("45° 30’ 30”")).toBeCloseTo(45.508333, 5);
+        expect(parseSingleCoordinate("45°30‘30“")).toBeCloseTo(45.508333, 5);
+    });
+
+    test("acute accent, modifier letters and doubled apostrophes as marks", () => {
+        expect(parseSingleCoordinate("45°30´30\"")).toBeCloseTo(45.508333, 5);
+        expect(parseSingleCoordinate("45°30ʹ30ʺ")).toBeCloseTo(45.508333, 5);
+        expect(parseSingleCoordinate("45°30'30''")).toBeCloseTo(45.508333, 5);
+    });
+
+    test("non-breaking and other odd spaces", () => {
+        expect(parseSingleCoordinate("45 30 30")).toBeCloseTo(45.508333, 5);
+        const pair = parseLatLonPair("45.5, -122.5");
+        expect(pair.lat).toBeCloseTo(45.5, 5);
+        expect(pair.lon).toBeCloseTo(-122.5, 5);
+    });
+
+    test("a trailing separator does not swallow the hemisphere letter", () => {
+        // Was: lon = +122.5, because the "W," left the letter buried in the text.
+        const pair = parseLatLonPair("45.5N,122.5W,");
+        expect(pair.lat).toBeCloseTo(45.5, 5);
+        expect(pair.lon).toBeCloseTo(-122.5, 5);
+        expect(parseSingleCoordinate("122.5W;")).toBeCloseTo(-122.5, 5);
+    });
+
+    test("colons between the parts (the Wescam readout)", () => {
+        expect(parseSingleCoordinate("33:53:05N")).toBeCloseTo(33.884722, 5);
+        expect(parseSingleCoordinate("40:26:46")).toBeCloseTo(40.446111, 5);
+        expect(parseSingleCoordinate("-118:24:05")).toBeCloseTo(-118.401389, 5);
+        const pair = parseLatLonPair("33:53:05N 118:24:05W");
+        expect(pair.lat).toBeCloseTo(33.884722, 5);
+        expect(pair.lon).toBeCloseTo(-118.401389, 5);
+        const loose = parseLatLonPair("33:53:05 -118:24:05", {loose: true});
+        expect(loose.lat).toBeCloseTo(33.884722, 5);
+        expect(loose.lon).toBeCloseTo(-118.401389, 5);
+    });
+
+    test("dashes between the parts (the FAA form)", () => {
+        expect(parseSingleCoordinate("40-26-46N")).toBeCloseTo(40.446111, 5);
+        expect(parseSingleCoordinate("079-58-56.5W")).toBeCloseTo(-79.982361, 5);
+        expect(parseSingleCoordinate("-40-26-46")).toBeCloseTo(-40.446111, 5);
+        const pair = parseLatLonPair("40-26-46N 079-58-56W");
+        expect(pair.lat).toBeCloseTo(40.446111, 5);
+        expect(pair.lon).toBeCloseTo(-79.982222, 5);
+    });
+});
+
+describe("malformed coordinates are rejected, not guessed at", () => {
+    test("a stray letter in a number", () => {
+        expect(parseSingleCoordinate("45 30 3o")).toBeNull();
+        expect(parseSingleCoordinate("45x")).toBeNull();
+        expect(parseSingleCoordinate("45 30abc")).toBeNull();
+        expect(parseSingleCoordinate("45.5 deg")).toBeNull();
+    });
+
+    test("two decimal points", () => {
+        expect(parseSingleCoordinate("45.5.5")).toBeNull();
+    });
+
+    test("a fraction on anything but the last part", () => {
+        expect(parseSingleCoordinate("45.5 30")).toBeNull();
+        expect(parseSingleCoordinate("45 30.5 30")).toBeNull();
+        expect(parseSingleCoordinate("45.0 30")).toBeCloseTo(45.5, 5);   // .0 is whole
+    });
+
+    test("minutes or seconds of 60 or more", () => {
+        expect(parseSingleCoordinate("45 60")).toBeNull();
+        expect(parseSingleCoordinate("45 75")).toBeNull();
+        expect(parseSingleCoordinate("45 30 60")).toBeNull();
+        expect(parseSingleCoordinate("45 59.999")).toBeCloseTo(45.999983, 5);
+        expect(parseSingleCoordinate("45 59 59.9")).toBeCloseTo(45.999972, 5);
+    });
+
+    test("more than three parts", () => {
+        expect(parseSingleCoordinate("45 30 30 15")).toBeNull();
+    });
+
+    test("leading zeros and a plus sign are fine", () => {
+        expect(parseSingleCoordinate("045 30")).toBeCloseTo(45.5, 5);
+        expect(parseSingleCoordinate("+45 30")).toBeCloseTo(45.5, 5);
+        expect(parseSingleCoordinate("N040 26.767")).toBeCloseTo(40.446117, 5);
+    });
+});
+
+describe("dmsToDegrees", () => {
+    test("combines the parts", () => {
+        expect(dmsToDegrees(40, 26, 46)).toBeCloseTo(40.446111, 5);
+        expect(dmsToDegrees(40, 26.767)).toBeCloseTo(40.446117, 5);
+        expect(dmsToDegrees(40)).toBe(40);
+    });
+
+    test("the sign is the whole coordinate's", () => {
+        expect(dmsToDegrees(40, 26, 46, true)).toBeCloseTo(-40.446111, 5);
+        expect(dmsToDegrees(-40, 26, 46)).toBeCloseTo(-40.446111, 5);
+        expect(dmsToDegrees(-0, 13, 0)).toBeCloseTo(-0.216667, 5);
+        expect(dmsToDegrees(0, 13, 0, true)).toBeCloseTo(-0.216667, 5);
+    });
+
+    test("zero has no sign", () => {
+        expect(Object.is(dmsToDegrees(-0, 0, 0), 0)).toBe(true);
+        expect(Object.is(dmsToDegrees(0, 0, 0, true), 0)).toBe(true);
+    });
+});
+
+describe("parseCoordinateCell", () => {
+    test("numbers pass through", () => {
+        expect(parseCoordinateCell(45.5)).toBe(45.5);
+        expect(parseCoordinateCell(-0.5)).toBe(-0.5);
+    });
+
+    test("plain decimal strings", () => {
+        expect(parseCoordinateCell("45.5")).toBe(45.5);
+        expect(parseCoordinateCell(" -122.5 ")).toBe(-122.5);
+        expect(parseCoordinateCell("+7")).toBe(7);
+    });
+
+    test("any coordinate form", () => {
+        expect(parseCoordinateCell("40°26'46\"N")).toBeCloseTo(40.446111, 5);
+        expect(parseCoordinateCell("118 24 05 W")).toBeCloseTo(-118.401389, 5);
+        expect(parseCoordinateCell("33:53:05N")).toBeCloseTo(33.884722, 5);
+    });
+
+    test("blank and unreadable cells are NaN", () => {
+        expect(parseCoordinateCell("")).toBeNaN();
+        expect(parseCoordinateCell("   ")).toBeNaN();
+        expect(parseCoordinateCell(null)).toBeNaN();
+        expect(parseCoordinateCell(undefined)).toBeNaN();
+        expect(parseCoordinateCell("n/a")).toBeNaN();
+        expect(parseCoordinateCell("45 30 3o")).toBeNaN();
+    });
+});
+
+describe("parseMapURL", () => {
+    test("Google Maps place URL with a span", () => {
+        const loc = parseMapURL("https://www.google.com/maps/place/Santa+Monica,+CA/@33.9948301,-118.4615695,67a,35y,116.89h,8.32t/data=!3m1!1e3");
+        expect(loc.lat).toBeCloseTo(33.9948301, 6);
+        expect(loc.lon).toBeCloseTo(-118.4615695, 6);
+        expect(loc.verticalSpanM).toBe(67);
+    });
+
+    test("Google Maps URL with a zoom level has no span", () => {
+        const loc = parseMapURL("https://www.google.com/maps/@33.9948301,-118.4615695,15z");
+        expect(loc.lat).toBeCloseTo(33.9948301, 6);
+        expect(loc.verticalSpanM).toBeUndefined();
+    });
+
+    test("Google Maps on another country domain", () => {
+        expect(parseMapURL("https://www.google.co.uk/maps/@51.5,-0.12,1000m/data=x").lat).toBeCloseTo(51.5, 5);
+        expect(parseMapURL("https://maps.google.com/maps/@51.5,-0.12,1000m").verticalSpanM).toBe(1000);
+    });
+
+    test("ADS-B Exchange", () => {
+        const loc = parseMapURL("https://globe.adsbexchange.com/?replay=2024-12-30-23:54&lat=39.948&lon=-73.938&zoom=11.8");
+        expect(loc.lat).toBeCloseTo(39.948, 5);
+        expect(loc.lon).toBeCloseTo(-73.938, 5);
+        // one tile column at that latitude: circumference * cos(lat) / 2^(zoom-1)
+        expect(loc.verticalSpanM).toBeCloseTo(40075000 * Math.cos(39.948 * Math.PI / 180) / Math.pow(2, 10.8), 3);
+    });
+
+    test("ADS-B Exchange without a zoom leaves the span undefined, not NaN", () => {
+        const loc = parseMapURL("https://globe.adsbexchange.com/?lat=39.948&lon=-73.938");
+        expect(loc.lat).toBeCloseTo(39.948, 5);
+        expect(loc.verticalSpanM).toBeUndefined();
+    });
+
+    test("ADS-B Exchange with a bad latitude is declined", () => {
+        expect(parseMapURL("https://globe.adsbexchange.com/?lat=abc&lon=-73.938")).toBeNull();
+        expect(parseMapURL("https://globe.adsbexchange.com/?icao=abc123")).toBeNull();
+    });
+
+    test("Flightradar24", () => {
+        const loc = parseMapURL("https://www.flightradar24.com/38.73,-120.56/9");
+        expect(loc.lat).toBeCloseTo(38.73, 5);
+        expect(loc.lon).toBeCloseTo(-120.56, 5);
+        expect(loc.verticalSpanM).toBeCloseTo(40075000 * Math.cos(38.73 * Math.PI / 180) / 256, 3);
+    });
+
+    test("Flightradar24 flight page has no location", () => {
+        expect(parseMapURL("https://www.flightradar24.com/data/flights/ba123")).toBeNull();
+    });
+
+    test("other hosts and non-URLs", () => {
+        expect(parseMapURL("https://www.metabunk.org/sitrec/?sitch=gimbal")).toBeNull();
+        expect(parseMapURL("not a url")).toBeNull();
+    });
+});
+
+describe("parseLatLonAlt reports which reading won", () => {
+    test("formats", () => {
+        expect(parseLatLonAlt("38.73, -120.56, 500").format).toBe("lla");
+        expect(parseLatLonAlt(wgs84ECEF(45, -122, 1000)).format).toBe("ecef");
+        expect(parseLatLonAlt("37SCR1192692923").format).toBe("mgrs");
+        expect(parseLatLonAlt("45.5, -122.5").format).toBe("pair");
+        expect(parseLatLonAlt("40°26'46\"N 79°58'56\"W").format).toBe("pair");
     });
 });

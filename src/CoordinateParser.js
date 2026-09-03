@@ -7,6 +7,30 @@ import {degrees} from "./mathUtils";
 // the latter two).
 const DEGREE_CHARS = "°˚º";
 
+// What pasted text does to a coordinate before it reaches us. Wikipedia writes
+// its minus as U+2212 MINUS SIGN, Word turns ' and " into curly quotes, some
+// sources use ´ or ʹ for minutes, and a line copied out of a table may end in a
+// stray comma. None of these change the meaning, so they are folded to their
+// ASCII form before any parsing, and every public entry point below does this
+// first. Two apostrophes as a seconds mark ('') are folded too.
+const DASHES = /[\u2010-\u2015\u2212]/g;                 // hyphens, dashes, MINUS SIGN
+const MINUTE_MARKS = /[\u2032\u2018\u2019\u02B9\u00B4`]/g; // ′ ‘ ’ ʹ ´ `
+const SECOND_MARKS = /[\u2033\u201C\u201D\u02BA]/g;       // ″ “ ” ʺ
+const DEGREE_MARKS = /[˚º]/g;
+const ODD_WHITESPACE = /[\u00A0\u2000-\u200B\u202F\u205F\u3000\t\r\n]/g;
+
+export function normalizeCoordinateText(text) {
+    if (typeof text !== "string") return "";
+    return text
+        .replace(ODD_WHITESPACE, " ")
+        .replace(DASHES, "-")
+        .replace(MINUTE_MARKS, "'")
+        .replace(SECOND_MARKS, '"')
+        .replace(/''/g, '"')
+        .replace(DEGREE_MARKS, "°")
+        .replace(/^[\s,;]+|[\s,;]+$/g, "");
+}
+
 // A plain decimal number, exponent notation included — ECEF metres are often
 // written as 4.51e6.
 // \d+(?:\.\d*)? rather than \d+\.?\d* : the two accept the same strings, but the
@@ -33,8 +57,8 @@ const ECEF_MAX_ALT = 1000000;    // metres above it (past the bottom of LEO)
  */
 
 export function parseCoordinate(input, options = {}) {
-    if (typeof input !== "string" || !input.trim()) return null;
-    const trimmed = input.trim();
+    const trimmed = normalizeCoordinateText(input);
+    if (!trimmed) return null;
 
     const mgrs = parseMGRS(trimmed);
     if (mgrs) return mgrs;
@@ -55,13 +79,16 @@ export function parseCoordinate(input, options = {}) {
  *
  * @param {string} input
  * @param {ParseOptions} [options]
- * @returns {{lat:number, lon:number, alt:number|undefined}|null} alt is
- *   undefined when the text carried no altitude — which is not the same as an
- *   altitude of zero, and callers that fall back to ground level rely on it.
+ * @returns {{lat:number, lon:number, alt:number|undefined, format:string}|null}
+ *   alt is undefined when the text carried no altitude — which is not the same
+ *   as an altitude of zero, and callers that fall back to ground level rely on
+ *   it. format says which reading won: "lla" (a lat, lon, alt triple), "ecef",
+ *   "mgrs" or "pair" — a caller that treats a bare third value as feet needs to
+ *   know it was not an ECEF altitude in metres.
  */
 export function parseLatLonAlt(input, options = {}) {
-    if (typeof input !== "string" || !input.trim()) return null;
-    const trimmed = input.trim();
+    const trimmed = normalizeCoordinateText(input);
+    if (!trimmed) return null;
 
     // The same altitude window that decides whether a triple is ECEF also
     // separates the two readings, so nothing has to be preferred over anything.
@@ -73,24 +100,24 @@ export function parseLatLonAlt(input, options = {}) {
     // position on Earth. The overlap the two would otherwise fight over is real:
     // "0, 0, 6356752" is the north pole and also a lat/lon 6356 km up.
     const lla = parseLLATriple(trimmed, options.loose === true);
-    if (lla && plausibleAltitude(lla.alt)) return lla;
+    if (lla && plausibleAltitude(lla.alt)) return {...lla, format: "lla"};
 
     const ecef = parseECEF(trimmed, options);
-    if (ecef) return ecef;
+    if (ecef) return {...ecef, format: "ecef"};
 
     // Not a position on Earth either, so an out-of-window altitude is simply a
     // lat/lon with an unusual altitude — a geostationary subsatellite point at
     // 35,786 km, say. Returned rather than dropped, because the alternative is
     // parseLatLonPair below splitting it at the first comma and reading the rest
     // as degrees and minutes, which silently invents a longitude.
-    if (lla) return lla;
+    if (lla) return {...lla, format: "lla"};
 
     // parseLatLonPair covers MGRS and every lat/lon form. It has to come after
     // the triple: it splits "45, 30, 20" at the first comma and reads the rest
     // as degrees and minutes, which would swallow a lat/lon/alt.
     const pair = parseLatLonPair(trimmed, options);
     if (!pair) return null;
-    return {lat: pair.lat, lon: pair.lon, alt: pair.alt};
+    return {lat: pair.lat, lon: pair.lon, alt: pair.alt, format: parseMGRS(trimmed) ? "mgrs" : "pair"};
 }
 
 /**
@@ -118,7 +145,7 @@ export function parseLatLonAlt(input, options = {}) {
  * @returns {{lat:number, lon:number, alt:number}|null}
  */
 export function parseECEF(input, options = {}) {
-    const xyz = splitNumericTriple(input, options.loose === true);
+    const xyz = splitNumericTriple(normalizeCoordinateText(input), options.loose === true);
     if (!xyz) return null;
     const [x, y, z] = xyz;
 
@@ -166,6 +193,7 @@ function splitNumericTriple(input, loose = false) {
 }
 
 export function parseMGRS(input) {
+    if (typeof input !== "string") return null;
     const normalized = input.replace(/\s+/g, "").toUpperCase();
     const mgrsPattern = /^\d{1,2}[A-Z]{3}(\d{2}|\d{4}|\d{6}|\d{8}|\d{10})$/;
     if (!mgrsPattern.test(normalized)) return null;
@@ -177,13 +205,57 @@ export function parseMGRS(input) {
     }
 }
 
+/**
+ * Combine degrees, minutes and seconds into decimal degrees.
+ *
+ * The sign belongs to the WHOLE coordinate, not to the degrees alone: -40° 26'
+ * 46" is 40°26'46" South, i.e. -(40 + 26/60 + 46/3600), never -40 + 26/60 +
+ * 46/3600. That is the convention every DMS notation shares — the minus sign,
+ * like a hemisphere letter, says which side of the equator or meridian the
+ * whole angle lies on. So `min` and `sec` are magnitudes, and the sign comes
+ * from `negative`, or from `deg` when `deg` is signed (a -0 counts: "-0° 13'"
+ * is 0°13' South, and Number("-0") keeps that sign).
+ *
+ * @param {number} deg
+ * @param {number} [min]
+ * @param {number} [sec]
+ * @param {boolean} [negative] - the whole coordinate is south/west
+ * @returns {number} decimal degrees
+ */
+export function dmsToDegrees(deg, min = 0, sec = 0, negative = false) {
+    const isNegative = negative || deg < 0 || Object.is(deg, -0);
+    const magnitude = Math.abs(deg) + Math.abs(min) / 60 + Math.abs(sec) / 3600;
+    if (magnitude === 0) return 0;
+    return isNegative ? -magnitude : magnitude;
+}
+
+/**
+ * One coordinate — a latitude or a longitude on its own — in any written form:
+ * decimal degrees, degrees and decimal minutes, degrees minutes seconds, with
+ * or without ° ' " marks, colons ("33:53:05N") or dashes ("40-26-46N") between
+ * the parts, and an optional hemisphere letter at either end.
+ *
+ * The result is null for anything that is not a well-formed coordinate — a
+ * stray letter in a number, minutes or seconds of 60 or more, a fraction on
+ * anything but the last part ("45.5 30"), a minus sign on the minutes alone.
+ * Silently reading "45 30 3o" as 45°30'03" was worse than reading nothing.
+ *
+ * @param {string} input
+ * @returns {number|null} decimal degrees
+ */
 export function parseSingleCoordinate(input) {
-    const trimmed = input.trim();
-    const {value, direction} = extractDirection(trimmed);
-    const degrees = parseDMSorDM(value);
-    if (degrees === null) return null;
-    const sign = getDirectionSign(direction, degrees);
-    return sign * Math.abs(degrees);
+    const text = normalizeCoordinateText(input);
+    if (!text) return null;
+    const {value, direction} = extractDirection(text);
+    const parsed = parseDMSText(value);
+    if (parsed === null) return null;
+    // A hemisphere letter is the most explicit statement of the sign there is,
+    // so it wins over a minus sign when both are present ("S -45.5" is south).
+    const negative = direction !== null
+        ? (direction === "S" || direction === "W")
+        : parsed.negative;
+    if (parsed.magnitude === 0) return 0;
+    return negative ? -parsed.magnitude : parsed.magnitude;
 }
 
 function extractDirection(input) {
@@ -209,46 +281,145 @@ function extractDirection(input) {
     return {value: input, direction: null};
 }
 
-function getDirectionSign(direction, originalValue) {
-    if (direction === "S" || direction === "W") return -1;
-    if (direction === "N" || direction === "E") return 1;
-    return originalValue < 0 ? -1 : 1;
-}
+// A degrees, minutes or seconds part: digits with an optional fraction and sign,
+// nothing else. No exponent — 4.5e1 is not a way anyone writes minutes.
+const DMS_PART = /^[-+]?(\d+(?:\.\d*)?|\.\d+)$/;
 
-function parseDMSorDM(input) {
-    let str = input.replace(/[°˚º]/g, " ")
-        .replace(/[′']/g, " ")
-        .replace(/[″"]/g, " ")
-        .replace(/,/g, " ")
+/**
+ * The magnitude and sign of a coordinate written as D, D M or D M S, after any
+ * hemisphere letter has been taken off.
+ *
+ * The sign is read from the TEXT of the degrees part, not from its numeric
+ * value: Number("-0") is -0, and -0 < 0 is false, which is how "-0° 13'" once
+ * came out north of the equator. Quito is at 0°13'S.
+ *
+ * @returns {{magnitude:number, negative:boolean}|null}
+ */
+function parseDMSText(text) {
+    const str = text
+        .replace(/[°'"]/g, " ")          // the marks say which part is which, whitespace does too
+        .replace(/[:,]/g, " ")           // 33:53:05 and 40, 26, 46
+        .replace(/(\d)-(?=\d)/g, "$1 ")  // 40-26-46: a dash between digits is a separator, not a sign
         .trim();
-
-    const parts = str.split(/\s+/).filter(p => p !== "");
-
-    if (parts.length === 0) return null;
+    const parts = str.split(/\s+/).filter(part => part !== "");
+    if (parts.length === 0 || parts.length > 3) return null;
 
     if (parts.length === 1) {
-        const val = parseFloat(parts[0]);
-        return isNaN(val) ? null : val;
+        // Plain decimal degrees. Exponent notation is allowed here because it is
+        // a valid way to write a number, if not a likely one.
+        if (!NUMBER_TOKEN.test(parts[0])) return null;
+        const value = Number(parts[0]);
+        if (!Number.isFinite(value)) return null;
+        return {magnitude: Math.abs(value), negative: parts[0].startsWith("-")};
     }
 
-    if (parts.length === 2) {
-        const deg = parseFloat(parts[0]);
-        const min = parseFloat(parts[1]);
-        if (isNaN(deg) || isNaN(min)) return null;
-        const sign = deg < 0 ? -1 : 1;
-        return sign * (Math.abs(deg) + min / 60);
+    if (!parts.every(part => DMS_PART.test(part))) return null;
+
+    // The sign is carried by the degrees. A minus on the minutes or seconds is
+    // accepted only in the all-negative form some tools emit ("-45 -30 -30"),
+    // where it restates the sign of the whole; "45 -30" has no meaning.
+    const negative = parts[0].startsWith("-");
+    if (!negative && parts.slice(1).some(part => part.startsWith("-"))) return null;
+
+    const values = parts.map(part => Math.abs(Number(part)));
+    // Only the last part may carry a fraction: 45.5° 30' does not exist.
+    for (let i = 0; i < values.length - 1; i++) {
+        if (!Number.isInteger(values[i])) return null;
+    }
+    // Minutes and seconds run from 0 up to (not including) 60.
+    if (values.slice(1).some(value => value >= 60)) return null;
+
+    return {magnitude: dmsToDegrees(values[0], values[1], values[2] ?? 0), negative};
+}
+
+// A plain decimal number, no exponent, no sign: the fast path of a CSV cell.
+const PLAIN_DECIMAL = /^[-+]?(\d+(?:\.\d*)?|\.\d+)$/;
+
+/**
+ * A latitude or longitude read from a spreadsheet cell or a CSV field. Numbers
+ * pass straight through; a plain decimal string is converted directly (the
+ * common case, kept cheap because track files have thousands of rows); anything
+ * else goes through the full coordinate parser, so a column of 40°26'46"N
+ * imports as readily as one of 40.446111. Blank or unreadable cells are NaN, the
+ * value every importer already treats as "no position on this row".
+ *
+ * @param {number|string|null|undefined} value
+ * @returns {number} decimal degrees, or NaN
+ */
+export function parseCoordinateCell(value) {
+    if (typeof value === "number") return value;
+    if (value === null || value === undefined) return NaN;
+    const text = String(value).trim();
+    if (text === "") return NaN;
+    if (PLAIN_DECIMAL.test(text)) return Number(text);
+    return parseSingleCoordinate(text) ?? NaN;
+}
+
+/**
+ * The location a map site's URL points at, for a link dropped onto Sitrec.
+ *
+ * Google Maps carries it in the path ("/maps/place/…/@33.9948,-118.4616,67a,…"),
+ * ADS-B Exchange in ?lat=&lon=&zoom=, Flightradar24 in the path
+ * ("/38.73,-120.56/9"). Where the URL also says how much ground the view
+ * covers, that comes back as verticalSpanM — the height of the visible map in
+ * metres — so the caller can pick a camera altitude that shows the same area.
+ * A Google "67m"/"67a" segment is that span directly; a zoom level is turned
+ * into the span of one tile column at that latitude, which is what the map
+ * sites themselves show at that zoom. A zoom that is missing or unreadable
+ * leaves verticalSpanM undefined rather than NaN.
+ *
+ * @param {string} urlString
+ * @returns {{lat:number, lon:number, verticalSpanM:number|undefined}|null}
+ */
+export function parseMapURL(urlString) {
+    let url;
+    try {
+        url = new URL(urlString);
+    } catch {
+        return null;
+    }
+    const host = url.hostname.toLowerCase();
+
+    if (/^(www|maps)\.google\./.test(host) && url.pathname.startsWith("/maps")) {
+        const at = url.pathname.match(/@([^/]+)/);
+        if (!at) return null;
+        const parts = at[1].split(",");
+        if (parts.length < 2) return null;
+        const pair = parseLatLonPair(`${parts[0]}, ${parts[1]}`);
+        if (!pair) return null;
+        let verticalSpanM;
+        if (parts[2] && /^[\d.]+[ma]$/.test(parts[2])) {
+            const span = Number(parts[2].slice(0, -1));
+            if (Number.isFinite(span) && span > 0) verticalSpanM = span;
+        }
+        return {lat: pair.lat, lon: pair.lon, verticalSpanM};
     }
 
-    if (parts.length >= 3) {
-        const deg = parseFloat(parts[0]);
-        const min = parseFloat(parts[1]);
-        const sec = parseFloat(parts[2]);
-        if (isNaN(deg) || isNaN(min) || isNaN(sec)) return null;
-        const sign = deg < 0 ? -1 : 1;
-        return sign * (Math.abs(deg) + min / 60 + sec / 3600);
+    if (host === "globe.adsbexchange.com") {
+        const lat = parseSingleCoordinate(url.searchParams.get("lat") ?? "");
+        const lon = parseSingleCoordinate(url.searchParams.get("lon") ?? "");
+        if (lat === null || lon === null || Math.abs(lat) > 90 || Math.abs(lon) > 360) return null;
+        return {lat, lon, verticalSpanM: spanForZoom(lat, url.searchParams.get("zoom"))};
+    }
+
+    if (host === "www.flightradar24.com") {
+        const [, latlon, zoom] = url.pathname.split("/");
+        const pair = parseLatLonPair(latlon ?? "");
+        if (!pair) return null;
+        return {lat: pair.lat, lon: pair.lon, verticalSpanM: spanForZoom(pair.lat, zoom)};
     }
 
     return null;
+}
+
+// Web-Mercator zoom level -> ground height of the view in metres. At zoom z the
+// world is 2^z tiles across; one tile at this latitude spans the Earth's
+// circumference there divided by 2^z, and the view is taken as two tiles high.
+function spanForZoom(lat, zoomText) {
+    const zoom = Number(zoomText);
+    if (zoomText === null || zoomText === undefined || zoomText === "" || !Number.isFinite(zoom)) return undefined;
+    const circumference = 40075000 * Math.cos(lat * Math.PI / 180);
+    return circumference / Math.pow(2, zoom - 1);
 }
 
 /**
@@ -258,15 +429,17 @@ function parseDMSorDM(input) {
  *   for the forms that carry one (currently ECEF).
  */
 export function parseLatLonPair(input, options = {}) {
-    const mgrs = parseMGRS(input);
+    const trimmed = normalizeCoordinateText(input);
+    if (!trimmed) return null;
+
+    const mgrs = parseMGRS(trimmed);
     if (mgrs) return mgrs;
 
     // Before the pair splitters: an ECEF paste splits at its first comma into
     // lat="4510000", which is then thrown out for being past the poles.
-    const ecef = parseECEF(input, options);
+    const ecef = parseECEF(trimmed, options);
     if (ecef) return ecef;
 
-    const trimmed = input.trim();
     const parts = splitLatLon(trimmed, options.loose === true);
     if (!parts) return null;
 
@@ -382,9 +555,14 @@ function splitWhitespaceHalves(input) {
     };
 }
 
+// A token that could be (part of) a coordinate: a number, with any of the marks
+// and separators parseDMSText accepts stripped out. A shape test only — the
+// real parse follows, and rejects what this lets through.
 function isNumericToken(token) {
-    const bare = token.replace(/[°˚º′'″"]/g, "");
-    return /^[-+]?(\d+\.?\d*|\.\d+)$/.test(bare);
+    const bare = token
+        .replace(/[°'"]/g, "")
+        .replace(/(\d)[-:](?=\d)/g, "$1");
+    return DMS_PART.test(bare);
 }
 
 function findSplitPoint(input, delimiter) {

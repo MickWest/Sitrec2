@@ -179,6 +179,7 @@ import {
 } from "./indexRender";
 import {setupHUDColor} from "./HUDColor";
 import {applyStartupDefaults, setSitchStartLocation} from "./StartupDefaults";
+import {parseLatLonAlt} from "./CoordinateParser";
 
 // Initialize debug log capture BEFORE any console output
 debugLog.init();
@@ -839,38 +840,26 @@ const latlon = urlParams.get("latlon");
 if (latlon) {
 
 
-    // expecting something like: latlon=34.2334,-118.4354
-    const latlonArray = latlon.split(",");
-    if (latlonArray.length === 2 || latlonArray.length === 3) {
-        const lat = parseFloat(latlonArray[0]);
-        const lon = parseFloat(latlonArray[1]);
-        if (!isNaN(lat) && !isNaN(lon)) {
-            console.log("Setting GlobalDateTimeNode start lat/lon to " + lat + ", " + lon);
+    // latlon=34.2334,-118.4354 or latlon=34.2334,-118.4354,500 - the same
+    // parser as the Go To prompt, so DMS, hemisphere letters and MGRS work too.
+    // A third value is the altitude in FEET (an ECEF triple is metres, and
+    // says so through its format).
+    const located = parseLatLonAlt(latlon, {loose: true});
+    if (located) {
+        const {lat, lon} = located;
+        console.log("Setting GlobalDateTimeNode start lat/lon to " + lat + ", " + lon);
 
-            let alt = 1.5; // 5ft, typical camera altitude in meters for hanheld-held cameras (common in UFO videos)
-
-            // if there is a third value, it's the altitude in feet
-            if (latlonArray.length === 3) {
-                alt = parseFloat(latlonArray[2]);
-                if (!isNaN(alt)) {
-                    alt = f2m(alt);
-                    console.log("Setting GlobalDateTimeNode start altitude to " + alt);
-                } else {
-                    showError("Invalid altitude format: " + latlonArray[2]);
-                }
-            }
-
-            // the sitch has not been set up
-            // so we jsut override the value in Sit
-            setSitchStartLocation(lat, lon, alt);
-
-            setSitchEstablished(true); // so loading tracks won't set the Lat/Lon time again
-
-
-
-        } else {
-            showError("Invalid lat/lon format: " + latlon);
+        let alt = 1.5; // 5ft, typical camera altitude in meters for hanheld-held cameras (common in UFO videos)
+        if (located.alt !== undefined) {
+            alt = located.format === "ecef" ? located.alt : f2m(located.alt);
+            console.log("Setting GlobalDateTimeNode start altitude to " + alt);
         }
+
+        // the sitch has not been set up
+        // so we jsut override the value in Sit
+        setSitchStartLocation(lat, lon, alt);
+
+        setSitchEstablished(true); // so loading tracks won't set the Lat/Lon time again
     } else {
         showError("Invalid lat/lon format: " + latlon);
 

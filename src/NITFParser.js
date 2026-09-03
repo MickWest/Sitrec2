@@ -13,6 +13,7 @@ import {decodeJPEG2000ToBlobURL, decodeJ2KTiledToCanvas} from "./JPEG2000Utils";
 import {initProgress, updateProgress, hideProgress} from "./CProgressIndicator";
 import {MISB} from "./MISBFields";
 import {Globals} from "./Globals";
+import {dmsToDegrees, parseSingleCoordinate} from "./CoordinateParser";
 
 export class NITFParser {
 
@@ -722,8 +723,8 @@ export class NITFParser {
             const corners = [];
             for (let i = 0; i < 4; i++) {
                 const part = igeolo.substring(i * 15, (i + 1) * 15);
-                const lat = parseFloat(part.substring(0, 7));
-                const lon = parseFloat(part.substring(7, 15));
+                const lat = parseSingleCoordinate(part.substring(0, 7)) ?? NaN;
+                const lon = parseSingleCoordinate(part.substring(7, 15)) ?? NaN;
                 corners.push({lat, lon});
             }
             return corners;
@@ -746,10 +747,7 @@ export class NITFParser {
         const d = parseInt(str.substring(0, 2), 10);
         const m = parseInt(str.substring(2, 4), 10);
         const s = parseInt(str.substring(4, 6), 10);
-        const hem = str.charAt(6);
-        let val = d + m / 60 + s / 3600;
-        if (hem === 'S') val = -val;
-        return val;
+        return dmsToDegrees(d, m, s, str.charAt(6) === 'S');
     }
 
     /** Parse DMS longitude: dddmmssX where X is E/W */
@@ -757,10 +755,7 @@ export class NITFParser {
         const d = parseInt(str.substring(0, 3), 10);
         const m = parseInt(str.substring(3, 5), 10);
         const s = parseInt(str.substring(5, 7), 10);
-        const hem = str.charAt(7);
-        let val = d + m / 60 + s / 3600;
-        if (hem === 'W') val = -val;
-        return val;
+        return dmsToDegrees(d, m, s, str.charAt(7) === 'W');
     }
 
     /**

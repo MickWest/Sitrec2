@@ -152,6 +152,28 @@ Sitrec uses several coordinate systems internally:
 
 The conversion chain is: **LLA <-> ECEF <-> ENU**, implemented in `LLA-ECEF-ENU.ts`. The LLA-to-ECEF conversion depends on the Earth model (sphere or WGS84 ellipsoid) because geodetic latitude and altitude are defined relative to that surface. ECEF itself is just Cartesian — no ellipsoid needed to interpret the coordinates.
 
+### Coordinate formats
+
+Anywhere Sitrec takes a coordinate — the `G` (Go To) prompt, the **Lookup** box, the Lat/Lon boxes in the Camera, Target and Terrain menus, the **Add Object** prompt, the AI assistant's "go to", a paste onto the app, a dropped Google Maps / ADS-B Exchange / Flightradar24 link, the `?latlon=` URL parameter, and the latitude and longitude columns of an imported CSV — the text goes through one parser (`src/CoordinateParser.js`), so any form that works in one place works in all of them:
+
+| Form | Examples |
+|---|---|
+| Decimal degrees | `40.446`, `-79.982`, `40.446°N`, `N 40.446` |
+| Degrees and decimal minutes | `40 26.767`, `40°26.767'N`, `N40 26.767 W074 00.36` |
+| Degrees, minutes, seconds | `40 26 46`, `40°26'46"N`, `40°26′46″N`, `33:53:05N`, `40-26-46N` |
+| A pair | `40.446, -79.982`, `40.446; -79.982`, `40°26'46"N 79°58'56"W`, `40.446° -79.982°`, and for a submitted string (not while typing in a Lat box) a bare `40.446 -79.982` or `40 26 46 79 58 56` |
+| With altitude | `40.446, -79.982, 300` (metres, feet for `?latlon=` and the Add Object prompt's `300ft`) |
+| MGRS | `18T WL 80 60`, `37SCR1192692923` |
+| ECEF | `x, y, z` in metres — see below |
+
+Pasted text is tidied first: the Unicode minus sign (`−`) and dashes read as a minus, Word's curly quotes as minute and second marks, `''` as a second mark, and a stray trailing comma is dropped.
+
+**The sign belongs to the whole coordinate.** `-40° 26' 46"` is 40°26'46" *South*, that is −(40 + 26/60 + 46/3600) = −40.446, never −40 + 26/60 + 46/3600. A minus sign, like a hemisphere letter, says which side of the equator or meridian the whole angle lies on, and that includes a minus on zero degrees: `-0° 13'` is 0°13'S (Quito), not 0°13'N. When both a letter and a sign are given the letter wins (`S -45.5` is south). The all-negative form some tools write, `-45 -30 -30`, is read the same way; a minus on the minutes or seconds alone is rejected.
+
+A coordinate that is not well formed is rejected rather than guessed at: a letter inside a number (`45 30 3o`), minutes or seconds of 60 or more (`45 75`), or a fraction on anything but the last part (`45.5 30`). Rejected text leaves a Lat/Lon box unchanged and makes the Go To prompt fall back to a place-name lookup.
+
+The reverse direction — a coordinate written out for a display — goes through `src/CoordinateFormat.js`, which rounds the whole angle to the finest unit shown before splitting it into degrees, minutes and seconds, so a readout never shows `60.0"` or `60.000'`, and what it prints parses back to the same value.
+
 ### Pasting an ECEF position
 
 Anywhere Sitrec takes a coordinate — the `G` (Go To) prompt, the **Lookup** box, the Lat/Lon boxes, or a paste onto the app — an `x, y, z` triple in **metres** is recognised as ECEF and converted to a location.

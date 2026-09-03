@@ -38,6 +38,7 @@ import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {fetchLiveTraffic} from "../ADSBLiveFetch";
 import {dispose} from "../threeExt";
 import {getLiveFeedOverlay} from "../livefeeds/LiveFeedOverlay";
+import {formatLatLon} from "../CoordinateFormat";
 
 // The feed updates about once a second, but polling that fast is neither
 // necessary nor polite: the proxy caches for 5 s, so anything quicker just
@@ -105,19 +106,6 @@ const ALTITUDE_COLORS = [
     {maxFt: 30000, color: 0x1ad0ff},
     {maxFt: Infinity, color: 0x9a7dff},
 ];
-
-/**
- * A short, readable position for a status line: "31.7\u00b0N 118.0\u00b0W".
- *
- * Hemisphere letters rather than signs, and one decimal — this is for a human
- * glancing at a menu row to see roughly where the search happened, not for
- * anything that needs precision.
- */
-function formatLatLon({lat, lon}) {
-    const ns = lat >= 0 ? 'N' : 'S';
-    const ew = lon >= 0 ? 'E' : 'W';
-    return `${Math.abs(lat).toFixed(1)}\u00b0${ns} ${Math.abs(lon).toFixed(1)}\u00b0${ew}`;
-}
 
 function colorForAltitude(altitudeM, onGround) {
     if (onGround) return 0x999999;
@@ -779,7 +767,9 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         // broken feature. Naming the position makes "I am over empty ocean"
         // obvious at a glance, which is the actual answer.
         if (count === 0 && !this.stale && this.lastCenter) {
-            return `none within ${Math.round(this.lastRadiusNM)}nm of ${formatLatLon(this.lastCenter)}`;
+            // "31.7°N 118.0°W": hemisphere letters and one decimal, for a human
+            // glancing at a menu row to see roughly where the search happened.
+            return `none within ${Math.round(this.lastRadiusNM)}nm of ${formatLatLon(this.lastCenter.lat, this.lastCenter.lon, {decimals: 1})}`;
         }
         if (this.stale) {
             return count === 0

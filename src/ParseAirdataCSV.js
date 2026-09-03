@@ -5,6 +5,7 @@ import {MISB, MISBFields} from "./MISBUtils";
 import {Sit} from "./Globals";
 import {f2m} from "./utils";
 import {showError} from "./showError";
+import {parseCoordinateCell} from "./CoordinateParser";
 
 export function parseAirdataCSV(csv) {
     const rows = csv.length;
@@ -33,8 +34,8 @@ export function parseAirdataCSV(csv) {
 
             MISBArray[i - 1][MISB.UnixTimeStamp] = addMillisecondsToDate(startTime, Number(csv[i][timeCol]));
 
-            MISBArray[i - 1][MISB.SensorLatitude] = Number(csv[i][latCol])
-            MISBArray[i - 1][MISB.SensorLongitude] = Number(csv[i][lonCol])
+            MISBArray[i - 1][MISB.SensorLatitude] = parseCoordinateCell(csv[i][latCol])
+            MISBArray[i - 1][MISB.SensorLongitude] = parseCoordinateCell(csv[i][lonCol])
             MISBArray[i - 1][MISB.SensorTrueAltitude] = (Sit.adjustAltitude ?? 0) + f2m(Number(csv[i][altCol]));
 
             // NOT HANDLING focal_len / FOV
