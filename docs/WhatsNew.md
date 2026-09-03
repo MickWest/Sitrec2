@@ -9,6 +9,26 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.149.0 (2026-09-03)
+
+### Improvements
+
+- **Every coordinate format now works everywhere Sitrec takes a coordinate**: decimal degrees, degrees and decimal minutes, degrees minutes seconds, hemisphere letters, grid references and an Earth-centred triple are all read the same way by the **G** (Go To) prompt, the *Lookup* box, the Lat/Lon boxes in the Camera, Target and Terrain menus, the *Add Object* prompt (Objects → *Add Object*), the assistant's "go to", a paste onto the app, a starting location put in Sitrec's own web address, and the latitude and longitude columns of an imported track or feature spreadsheet. Pasted text is tidied first, so a Unicode minus sign, Word's curly quotes, and colons or dashes between the parts all work. Text that is not a well-formed coordinate — a stray letter in a number, minutes or seconds of 60 or more, a fraction anywhere but the last part — is now refused rather than guessed at, which is why a Lat/Lon box keeps its value and the Go To prompt falls back to looking up a place name.
+
+- **More map links work when you drop or paste them**: a Google Maps link from a country domain such as google.co.uk, or from maps.google.com, is now recognised alongside google.com, and a link with no location in it declines cleanly instead of failing.
+
+### Bug Fixes
+
+- Fixed a coordinate written with a minus sign on zero degrees landing in the wrong hemisphere. Quito, at 0°13'S, was placed 48 km north of the equator.
+- Fixed a coordinate carrying both a minus sign and an *N* or *E* losing its minus, so "-45.5 N" came out as +45.5. A minus sign or an *S*/*W* letter now makes a coordinate negative, and *N* and *E* never override a minus.
+- Fixed a Lat/Lon box dropping to a stray part-number when what you typed was not a coordinate — typing a lone minus sign no longer zeroes the field.
+- Fixed the MQ-9 HUD position readouts (Show → Views → *MQ9UI*) printing 60 seconds, or 60 minutes, instead of carrying up to the next minute or degree.
+- Fixed the WESCAM MX overlay (Show → Views → *WescamMXUI*) showing a second one lower than the true one — 33:53:05 read as 33:53:04.
+- Fixed objects placed with *Add 3D Object* (right-click the ground) disappearing whenever the sitch was saved and reloaded. Their geometry, size, color and material come back with them. Sitches saved before this release cannot be recovered, because the object's position was never written to the file at all.
+- Fixed the camera's pointing direction running up to a frame behind its position in tracks built from video metadata that records where the camera was aimed — MISB-column spreadsheets, drone logs and the like — so every line of sight pointed at where the sensor had been a frame earlier.
+- Fixed the last keyframe of a keyframed value, and everything after it, being applied one frame late. This affected camera azimuth, elevation and heading read from a file, field-of-view keyframes, and the Gimbal, Go Fast and Aguadilla scenes.
+- Fixed an imported bearings-only benchmark scenario's known-answer track sitting slightly off its own lines of sight — about 3 m on a 3 km baseline, growing to a third of a degree at 80 km — which biased every traverse fit made against it.
+
 ## Version 2.148.1 (2026-09-03)
 
 Version 2.148.0 was tagged but never reached the public site or the published container image: an automated check of the finished container was still looking for a piece of the page that 2.148.0 had deliberately moved into a separate file, so the release was stopped before deployment. The container itself was sound, and the GitHub Pages copy did publish 2.148.0. Everything listed under 2.148.0 below arrives with this release.
