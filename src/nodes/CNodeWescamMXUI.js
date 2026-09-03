@@ -25,6 +25,13 @@ import {GlobalDateTimeNode, NodeMan} from "../Globals";
 import {airframeHeadingFromVelocity} from "../AirframeHeading";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getHUDColor} from "../HUDColor";
+import {formatDMS} from "../CoordinateFormat";
+
+// "33:53:05N" — degrees:minutes:seconds to the whole second, truncated rather
+// than rounded as the real display does.
+const WESCAM_DMS = {style: "colons", secondsDecimals: 0, padDegrees: 2, truncate: true};
+const WESCAM_LAT = {...WESCAM_DMS, axis: "lat"};
+const WESCAM_LON = {...WESCAM_DMS, axis: "lon"};
 
 const METERS_TO_FEET = 3.28084;
 const METERS_PER_NM = 1852;
@@ -156,18 +163,6 @@ export class CNodeWescamMXUI extends CNodeViewUI {
         return entry;
     }
 
-    // "33:53:05N" - degrees:minutes:seconds, seconds truncated so they can
-    // never carry up to 60.
-    formatLatLon(value, positive, negative) {
-        const dir = value >= 0 ? positive : negative;
-        value = Math.abs(value);
-        const deg = Math.floor(value);
-        const minFloat = (value - deg) * 60;
-        const min = Math.floor(minFloat);
-        const sec = Math.floor((minFloat - min) * 60);
-        return `${pad2(deg)}:${pad2(min)}:${pad2(sec)}${dir}`;
-    }
-
     // Airframe heading in degrees true, from the camera track's air velocity
     // (ground velocity corrected for wind), as in CNodeMQ9UI.
     //
@@ -262,8 +257,8 @@ export class CNodeWescamMXUI extends CNodeViewUI {
 
         // ACFT block
         const lla = ECEFToLLAVD_radii(camera.position);
-        this.acftLat.text = this.formatLatLon(lla.x, 'N', 'S');
-        this.acftLon.text = this.formatLatLon(lla.y, 'E', 'W');
+        this.acftLat.text = formatDMS(lla.x, WESCAM_LAT);
+        this.acftLon.text = formatDMS(lla.y, WESCAM_LON);
         this.acftHdg.text = airframeHeadingDeg === null
             ? "---°"
             : `${pad3(Math.round(airframeHeadingDeg) % 360)}°`;
@@ -273,8 +268,8 @@ export class CNodeWescamMXUI extends CNodeViewUI {
         const targetPos = this.getTargetPosition(frame, camera, forward);
         if (targetPos) {
             const targetLLA = ECEFToLLAVD_radii(targetPos);
-            this.tgtLat.text = this.formatLatLon(targetLLA.x, 'N', 'S');
-            this.tgtLon.text = this.formatLatLon(targetLLA.y, 'E', 'W');
+            this.tgtLat.text = formatDMS(targetLLA.x, WESCAM_LAT);
+            this.tgtLon.text = formatDMS(targetLLA.y, WESCAM_LON);
             this.tgtAlt.text = `${Math.round(altitudeMSLFeet(targetLLA))}FT`;
 
             const toTarget = targetPos.clone().sub(camera.position);

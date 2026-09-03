@@ -5,7 +5,7 @@ import {MISB, MISBFields} from "./MISBUtils";
 import {GlobalDateTimeNode, Sit} from "./Globals";
 import {showError} from "./showError";
 import {f2m} from "./utils";
-import {parseMGRS} from "./CoordinateParser";
+import {parseCoordinateCell, parseLatLonPair, parseMGRS} from "./CoordinateParser";
 import {ecefToLLA, extendECEFTelemetryWithOrbit} from "./ParseFlightClubJSON";
 
 const WGS84_A = 6378137.0;
@@ -154,14 +154,6 @@ function parseNumericWithCommas(value) {
     if (value === null || value === undefined || value === '') return NaN;
     if (typeof value === 'number') return value;
     return Number(value.replace(/,/g, ''));
-}
-
-function parseNullableNumber(value) {
-    if (value === null || value === undefined) return NaN;
-    if (typeof value === "number") return value;
-    const trimmed = String(value).trim();
-    if (trimmed === "") return NaN;
-    return Number(trimmed);
 }
 
 function normalizeGridValue(value) {
@@ -432,8 +424,8 @@ export function parseCustom1CSV(csv) {
                 MISBArray[i - 1][MISB.SensorLongitude] = NaN;
             }
         } else {
-            MISBArray[i - 1][MISB.SensorLatitude] = parseNullableNumber(csv[i][latCol]);
-            MISBArray[i - 1][MISB.SensorLongitude] = parseNullableNumber(csv[i][lonCol]);
+            MISBArray[i - 1][MISB.SensorLatitude] = parseCoordinateCell(csv[i][latCol]);
+            MISBArray[i - 1][MISB.SensorLongitude] = parseCoordinateCell(csv[i][lonCol]);
         }
 
         if (trackIDCol !== -1) {
@@ -549,8 +541,8 @@ export function parseCustomFLLCSV(csv) {
 
         MISBArray[i - 1][MISB.UnixTimeStamp] = date;
 
-        MISBArray[i - 1][MISB.SensorLatitude] = Number(csv[i][1])
-        MISBArray[i - 1][MISB.SensorLongitude] = Number(csv[i][2])
+        MISBArray[i - 1][MISB.SensorLatitude] = parseCoordinateCell(csv[i][1])
+        MISBArray[i - 1][MISB.SensorLongitude] = parseCoordinateCell(csv[i][2])
 
         if (altCol !== -1) {
             const altitude = f2m(Number(csv[i][altCol]));
@@ -588,13 +580,14 @@ export function parseFR24CSV(csv) {
 
         MISBArray[i - 1][MISB.UnixTimeStamp] = Number(csv[i][0])*1000;
 
-        const postiion = csv[i][3].split(",");
-        if (postiion.length !== 2) {
+        // "38.73,-120.56"
+        const position = parseLatLonPair(csv[i][3] ?? "");
+        if (!position) {
             showError("Invalid position format in FR24 CSV at row " + i);
             continue;
         }
-        MISBArray[i - 1][MISB.SensorLatitude] = Number(postiion[0]);
-        MISBArray[i - 1][MISB.SensorLongitude] = Number(postiion[1]);
+        MISBArray[i - 1][MISB.SensorLatitude] = position.lat;
+        MISBArray[i - 1][MISB.SensorLongitude] = position.lon;
 
         const altitude = f2m(Number(csv[i][4]));
         MISBArray[i - 1][MISB.SensorTrueAltitude] = isNaN(altitude) ? null : altitude;

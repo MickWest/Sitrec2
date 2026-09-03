@@ -169,7 +169,7 @@ Note since the PTZ controls are disabled (greyed out), you can now adjust the FO
 
 You don't have to know coordinates. The **Camera** menu's **Location** folder (and, for the target, the **Target** menu) has three handy controls for positioning a fixed camera or target:
 
-- **Lookup** — type a **place name** (e.g. "Phoenix, AZ"), `lat,lon` coordinates, an MGRS grid reference, a `lat,lon,altitude` triple, or an ECEF `x,y,z` triple in metres, and Sitrec jumps there. The last two also set the altitude; everything else drops to ground level.
+- **Lookup** — type a **place name** (e.g. "Phoenix, AZ"), `lat,lon` coordinates in any form (decimal degrees, degrees minutes seconds, hemisphere letters — see [Coordinate formats](GIS.md#coordinate-formats)), an MGRS grid reference, a `lat,lon,altitude` triple, or an ECEF `x,y,z` triple in metres, and Sitrec jumps there. The last two also set the altitude; everything else drops to ground level.
 - **Geolocate from browser** — uses your device's location to set the current position.
 - **Go To the above position** — moves the view to it.
 

@@ -25,6 +25,9 @@ function makeController(initial = 0, focused = true) {
         value: initial,
         focused,
         setValueCalls: 0,
+        getValue() {
+            return this.value;
+        },
         setValue(v) {
             this.value = v;
             this.setValueCalls++;
@@ -140,6 +143,29 @@ describe("attachCoordinateInput", () => {
         attachCoordinateInput(c);
         type(c, "somewhere");
         expect(c.value).toBe(7);
+    });
+
+    test("text that is not a coordinate leaves the value where it was", () => {
+        // lil-gui's own handler reads "45 30 3o" as parseFloat -> 45 and stores
+        // it before we see the event. The entry is invalid, so the value must
+        // stay at the last thing that parsed, not drop to 45.
+        const c = makeController(0);
+        attachCoordinateInput(c);
+        type(c, "45 30 3");
+        expect(c.value).toBeCloseTo(45.500833, 5);
+        type(c, "45 30 3o");
+        expect(c.value).toBeCloseTo(45.500833, 5);
+        commit(c, "45 30 3o");
+        expect(c.value).toBeCloseTo(45.500833, 5);
+    });
+
+    test("a minus sign typed on its own does not zero the field", () => {
+        const c = makeController(34);
+        attachCoordinateInput(c);
+        type(c, "-");
+        expect(c.value).toBe(34);
+        type(c, "-0 13");
+        expect(c.value).toBeCloseTo(-0.216667, 5);
     });
 });
 

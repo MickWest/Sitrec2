@@ -56,8 +56,15 @@ export function attachCoordinateInput(controller, {setPair, setSingle} = {}) {
     // silently dropping the longitude. A capture-phase listener runs before any
     // target-phase listener regardless of registration order, so this sees the
     // text first, every time.
+    // And the value before the keystroke: lil-gui applies parseFloat's reading of
+    // the leading digits to anything it is given ("45 30 3o" -> 45), so when the
+    // text turns out not to be a coordinate at all, this is what goes back.
     let entered = "";
-    $input.addEventListener("input", () => { entered = $input.value; }, true);
+    let previous;
+    $input.addEventListener("input", () => {
+        entered = $input.value;
+        previous = controller.getValue?.();
+    }, true);
 
     const apply = (committed) => {
         const raw = entered;
@@ -81,7 +88,14 @@ export function attachCoordinateInput(controller, {setPair, setSingle} = {}) {
         const single = parseSingleCoordinate(raw);
         // No rewrite here: "45 30" must stay editable so the user can go on to
         // type the seconds. lil-gui normalises the text on blur.
-        if (single !== null) applySingle(single);
+        if (single !== null) {
+            applySingle(single);
+            return;
+        }
+        // Not a coordinate ("45 30 3o", a half-typed "-"). lil-gui has already
+        // stored its parseFloat prefix, which is not what was typed: put the
+        // value back, so an entry that does not parse changes nothing.
+        if (previous !== undefined && controller.getValue?.() !== previous) applySingle(previous);
     };
 
     // Deliberately the bubble phase, so lil-gui's handler has already run: it

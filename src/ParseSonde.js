@@ -1,3 +1,4 @@
+import {parseSingleCoordinate} from "./CoordinateParser";
 // ParseSonde.js — Parsers for radiosonde sounding data
 // Supports: IGRA2 fixed-width text, UWYO TEXT:LIST HTML, UWYO TEXT:CSV HTML
 
@@ -384,8 +385,8 @@ export function parseUWYOList(html) {
         || fullText.match(/Observations for Station\s+(\d+)/i);
     const nameMatch = fullText.match(/<H3>\s*([^<]+?)\s*<\/H3>/i);
 
-    if (latMatch) stationLat = parseFloat(latMatch[1]);
-    if (lonMatch) stationLon = parseFloat(lonMatch[1]);
+    if (latMatch) stationLat = parseSingleCoordinate(latMatch[1]) ?? 0;
+    if (lonMatch) stationLon = parseSingleCoordinate(lonMatch[1]) ?? 0;
     if (elevMatch) stationElev = parseFloat(elevMatch[1]);
     if (numMatch) stationId = numMatch[1];
     if (nameMatch) stationName = nameMatch[1].replace(/\s+/g, ' ').trim();

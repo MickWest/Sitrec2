@@ -19,6 +19,7 @@
 
 import {CTrackFileSTANAGBase} from "./CTrackFileSTANAGBase";
 import {findColumn} from "../ParseUtils";
+import {parseCoordinateCell} from "../CoordinateParser";
 
 // Accepted header spellings per field. Matching is exact-but-case-insensitive and trims
 // surrounding whitespace (see findColumn), and extra/unknown columns are ignored, so a
@@ -105,8 +106,8 @@ export class CTrackFileSTANAGCSV extends CTrackFileSTANAGBase {
         // [lat, lon, alt] from three columns of a row, or null if any is missing/non-numeric.
         const triple = (row, [latCol, lonCol, altCol]) => {
             if (latCol === -1 || lonCol === -1 || altCol === -1) return null;
-            const lat = cellNumber(row[latCol]);
-            const lon = cellNumber(row[lonCol]);
+            const lat = parseCoordinateCell(row[latCol]);
+            const lon = parseCoordinateCell(row[lonCol]);
             const alt = cellNumber(row[altCol]);
             if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(alt)) return null;
             return [lat, lon, alt];

@@ -13,6 +13,16 @@ import {degrees} from "../utils";
 import {NodeMan} from "../Globals";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getHUDColor} from "../HUDColor";
+import {formatDM, formatDMS} from "../CoordinateFormat";
+
+// Position readouts. Latitude degrees are zero-padded to two digits so the
+// column lines up; longitude degrees are not. DM shows minutes to 3 places
+// (≈ 0.1 m, matching 0.1" in DMS) — the marine GPS / ICAO flight-plan form,
+// and about the same width as DMS so it fits the same grid columns.
+const LAT_DMS = {axis: "lat", padDegrees: 2};   // 40°26'46.0"N
+const LON_DMS = {axis: "lon"};                  // 118°24'05.0"W
+const LAT_DM = {axis: "lat", padDegrees: 2};    // 40°26.767'N
+const LON_DM = {axis: "lon"};                   // 118°24.083'W
 
 export class   CNodeMQ9UI extends CNodeViewUI {
 
@@ -230,49 +240,6 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         }
     }
 
-    // Format latitude in DMS: DD°MM'SS.S"N/S
-    formatLatDMS(lat) {
-        const dir = lat >= 0 ? 'N' : 'S';
-        lat = Math.abs(lat);
-        const deg = Math.floor(lat);
-        const minFloat = (lat - deg) * 60;
-        const min = Math.floor(minFloat);
-        const sec = (minFloat - min) * 60;
-        return `${deg.toString().padStart(2, '0')}°${min.toString().padStart(2, '0')}'${sec.toFixed(1).padStart(4, '0')}"${dir}`;
-    }
-
-    // Format longitude in DMS: DD°MM'SS.S"E/W (no leading zero on degrees)
-    formatLonDMS(lon) {
-        const dir = lon >= 0 ? 'E' : 'W';
-        lon = Math.abs(lon);
-        const deg = Math.floor(lon);
-        const minFloat = (lon - deg) * 60;
-        const min = Math.floor(minFloat);
-        const sec = (minFloat - min) * 60;
-        return `${deg}°${min.toString().padStart(2, '0')}'${sec.toFixed(1).padStart(4, '0')}"${dir}`;
-    }
-
-    // Format latitude in DM (degrees + decimal minutes): DD°MM.MMM'N/S
-    // 3 decimal places of minutes ≈ 0.1 m precision — matches DMS
-    // (0.1″ ≈ 0.001′). Common in nav (NMEA, marine GPS, ICAO flight
-    // plans). Width ≈ same as DMS so it fits the same grid columns.
-    formatLatDM(lat) {
-        const dir = lat >= 0 ? 'N' : 'S';
-        lat = Math.abs(lat);
-        const deg = Math.floor(lat);
-        const minFloat = (lat - deg) * 60;
-        return `${deg.toString().padStart(2, '0')}°${minFloat.toFixed(3).padStart(6, '0')}'${dir}`;
-    }
-
-    // Format longitude in DM: DD°MM.MMM'E/W (no leading zero on degrees)
-    formatLonDM(lon) {
-        const dir = lon >= 0 ? 'E' : 'W';
-        lon = Math.abs(lon);
-        const deg = Math.floor(lon);
-        const minFloat = (lon - deg) * 60;
-        return `${deg}°${minFloat.toFixed(3).padStart(6, '0')}'${dir}`;
-    }
-
     // Format distance based on mode (0=M, 1=KM, 2=NM)
     // Meters: 0 decimal places, KM/NM: 2 decimal places
     formatDistance(meters, mode) {
@@ -364,12 +331,12 @@ export class   CNodeMQ9UI extends CNodeViewUI {
             this.acftEasting.text = `${lla.y.toFixed(5)}`;
         } else if (this.acftPosMode === 2) {
             // DMS format: DD°MM'SS.S"N/S for lat, DDD°MM'SS.S"E/W for lon
-            this.acftZone.text = this.formatLatDMS(lla.x);
-            this.acftEasting.text = this.formatLonDMS(lla.y);
+            this.acftZone.text = formatDMS(lla.x, LAT_DMS);
+            this.acftEasting.text = formatDMS(lla.y, LON_DMS);
         } else {
             // DM format: DD°MM.MMM'N/S for lat, DDD°MM.MMM'E/W for lon
-            this.acftZone.text = this.formatLatDM(lla.x);
-            this.acftEasting.text = this.formatLonDM(lla.y);
+            this.acftZone.text = formatDM(lla.x, LAT_DM);
+            this.acftEasting.text = formatDM(lla.y, LON_DM);
         }
 
         // Format ACFT altitude based on display mode (MSL/HAT datum, feet/meters units)
@@ -425,12 +392,12 @@ export class   CNodeMQ9UI extends CNodeViewUI {
                 this.targetEasting.text = `${targetLLA.y.toFixed(5)}`;
             } else if (this.targetPosMode === 2) {
                 // DMS format
-                this.targetZone.text = this.formatLatDMS(targetLLA.x);
-                this.targetEasting.text = this.formatLonDMS(targetLLA.y);
+                this.targetZone.text = formatDMS(targetLLA.x, LAT_DMS);
+                this.targetEasting.text = formatDMS(targetLLA.y, LON_DMS);
             } else {
                 // DM format (degrees + decimal minutes)
-                this.targetZone.text = this.formatLatDM(targetLLA.x);
-                this.targetEasting.text = this.formatLonDM(targetLLA.y);
+                this.targetZone.text = formatDM(targetLLA.x, LAT_DM);
+                this.targetEasting.text = formatDM(targetLLA.y, LON_DM);
             }
 
             // Bearing from camera to target
