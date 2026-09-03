@@ -434,13 +434,23 @@ AngularDiameterMaxDeg,TruePositionX,TruePositionY,TruePositionZ</pre>
 
   <div class="caution">
     <span class="tag">surfaceModel</span>
-    <p><code>flat-plane</code> means truth sits on a flat plane, so geodetic
-    altitude is <code>Z + groundElevationMSL</code> — equal to Z only at a
-    zero-elevation site such as this release's <code>ocean</code>. A
-    <code>wgs84-tangent</code> set would additionally need
-    <code>alt −= (X²+Y²)/2R</code> — about 2 m at 5 km, 240 m at 55 km, and the
-    50 km high-altitude-balloon cell is where you will notice. Pure sightline
-    fits do not care; anything altitude-coupled does.</p>
+    <p><code>flat-plane</code> means truth sits on a flat plane, so the file's
+    own altitude rule is <code>Z + groundElevationMSL</code> — equal to Z only at
+    a zero-elevation site. On a round Earth that rule and
+    <code>directionBasis: originLLA</code> cannot both hold: a flat straight
+    sightline stays straight, and keeps passing through the flat truth, only if
+    the whole frame is placed as <em>one</em> rigid tangent plane at the origin
+    (<code>wgs84-tangent</code>). That plane sits above the curving surface, so a
+    rigid embedding gives geodetic altitude
+    <code>Z + groundElevationMSL + (X²+Y²)/2R</code> — about 2 m at 5 km, 196 m at
+    50 km, 508 m at 80 km; the 50 km high-altitude-balloon cell is where you will
+    notice. Sitrec imports every BOT file this way, positions and sightlines
+    through the same map. A consumer that instead wraps positions onto the
+    ellipsoid (keeping Z as altitude) while rotating directions rigidly will find
+    its sightlines missing the truth by between half and all of the
+    origin-to-sensor central angle — 0.03° at 3 km, 0.36° at 80 km. Pure
+    sightline fits in the file's own ENU frame do not care; anything that puts
+    the data on the globe does.</p>
   </div>
 
   <div class="caution">
@@ -546,7 +556,9 @@ BOTBENCH_OPAQUE=1 BOTBENCH_SEAL_SALT=$(openssl rand -hex 32) \
     <h4>Flat Earth <span class="sev known">known</span></h4>
     <p>Every scenario is <code>flat-plane</code>. The curved-surface variant is
     specified but not generated, so altitude-coupled results at long range are
-    idealised.</p>
+    idealised. Sitrec embeds the flat frame rigidly on import (see
+    <code>surfaceModel</code> above), so in-app altitudes carry the tangent-plane
+    term the file's own rule leaves out.</p>
   </div>
 
   <div class="issue">

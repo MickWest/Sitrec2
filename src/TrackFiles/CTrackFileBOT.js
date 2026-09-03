@@ -32,22 +32,37 @@
 
     FLAT PLANE vs ROUND EARTH
     -------------------------
-    BOT scenarios are generated on a FLAT plane: the spec's rule is
-    "altitude = Z + groundElevationMSL" at any horizontal distance. Sitrec's world is
-    the WGS84 ellipsoid. We honour the spec's rule — Z is read as altitude directly,
-    and only the horizontal offset is used to derive lat/lon — so altitudes match the
-    generator exactly. The cost is that a straight line in the source data bends
-    slightly here: the two interpretations differ by the curvature term (X²+Y²)/2R,
-    about 2 m at 5 km, 31 m at 20 km and 196 m at 50 km. Sightline directions are
-    unaffected, because they come from the LOS column rather than from differencing
-    the positions.
+    BOT scenarios are generated on a FLAT plane, and every direction in the file is
+    expressed in the ENU basis at the scenario ORIGIN (scenario.json's
+    directionBasis: "originLLA"). Sitrec's world is the WGS84 ellipsoid, so the flat
+    frame has to be embedded on it, and there is exactly one embedding under which
+    the file's straight sightlines stay straight and pass through the file's truth
+    positions: the whole frame is placed as ONE RIGID TANGENT FRAME at the origin
+    (the spec's "wgs84-tangent"), positions and directions through the same map.
+    Both conversions below do that.
+
+    The cost is in the altitude: a rigid tangent plane sits ABOVE the curving
+    surface, so the geodetic altitude of a point comes out as Z + groundElevationMSL
+    PLUS (X²+Y²)/2R — 0.8 m at 3.2 km, 2 m at 5 km, 31 m at 20 km, 196 m at 50 km,
+    508 m at 80 km. The spec's "altitude = Z + groundElevationMSL" rule for a
+    flat-plane file is honoured only at the origin.
+
+    THE ALTERNATIVE WAS TRIED AND IS WRONG. Until 2026-09-03 positions used a
+    height-preserving wrap (horizontal offset → lat/lon, Z kept as altitude) while
+    the sightline was still rotated rigidly. Those are two different maps of the
+    same plane, and a straight flat ray becomes a CURVE under the wrap, so no
+    range-independent rotation can make the rotated sightline pass through the
+    wrapped truth. Measured: the imported truth sat 0.03° (3.2 m) off the imported
+    sightline on a 3.2 km baseline and 0.36° on an 80 km one, every traverse fit
+    inherited that bias, and it only became visible once the traverse handoff
+    framed a 0.27° look view. See private/notes/BOTHandoffTruthOffsetDiagnosis.md.
  */
 
 import {CTrackFile} from "./CTrackFile";
 import {MISB, MISBFields} from "../MISBFields";
 import {findColumn} from "../ParseUtils";
 import {Vector3} from "three";
-import {ECEF2ENU_radii, ECEFToLLA_radii, ENU2ECEF_radii} from "../LLA-ECEF-ENU";
+import {ECEF2ENU_radii, ECEFToLLA_radii, ENU2ECEF_radii, RLLAToECEF_radii} from "../LLA-ECEF-ENU";
 
 const DEG = Math.PI / 180;
 
@@ -133,19 +148,23 @@ function cellNumber(value) {
 }
 
 /**
- * Local ENU metres -> [latDeg, lonDeg, altitude], under the flat-plane rule.
+ * Local ENU metres -> [latDeg, lonDeg, altitude], through the rigid tangent frame.
  *
- * Only the horizontal offset feeds the lat/lon; Z is returned as altitude directly
- * (plus the origin's ground elevation), which is what the format specifies. Using
- * the full 3-D ENU->ECEF conversion instead would silently subtract the curvature
- * term from every altitude — 196 m at the 50 km cell.
+ * The frame is anchored at the origin's GROUND point: (originLLA, groundElevationMSL),
+ * with that elevation taken as the frame's zero, so Z = 0 is the ground at the
+ * origin. The full 3-D ENU->ECEF conversion is used — the same rotation
+ * botLOSToAzEl applies to the sightlines, which is what keeps a sightline pointing
+ * at the truth it was generated against. The altitude is returned in the file's
+ * datum (MSL) and gets the pipeline's geoid step like any other MSL source; it
+ * carries the +(X²+Y²)/2R tangent-plane term described in the header.
  */
 export function botENUToLLA(x, y, z, origin = BOT_DEFAULT_ORIGIN) {
     const latRad = origin.latDeg * DEG;
     const lonRad = origin.lonDeg * DEG;
-    const ecef = ENU2ECEF_radii(new Vector3(x, y, 0), latRad, lonRad);
-    const [lat, lon] = ECEFToLLA_radii(ecef.x, ecef.y, ecef.z);
-    return [lat / DEG, lon / DEG, z + origin.groundElevationMSL];
+    const originECEF = RLLAToECEF_radii(latRad, lonRad, origin.groundElevationMSL);
+    const ecef = ENU2ECEF_radii(new Vector3(x, y, z), latRad, lonRad, true).add(originECEF);
+    const [lat, lon, alt] = ECEFToLLA_radii(ecef.x, ecef.y, ecef.z);
+    return [lat / DEG, lon / DEG, alt];
 }
 
 /**

@@ -331,7 +331,17 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         var slot = 0;
         var msNeeded = Sit.frames*Sit.fps*1000;
         var msEnd = msStart+msNeeded
-        var frameTime = 0 // keep count for time for this frame in seconds
+        // Each frame's sitch time is computed DIRECTLY from its index, and not
+        // truncated. It used to be an accumulated `frameTime += simSpeed/fps`
+        // passed through Math.floor(frameTime*1000): three hundred additions of
+        // 1/30 give 9.999999999999975 s, the floor made that 9999 ms, and the row
+        // stamped 10.000 s was not reached until the NEXT frame. The position was
+        // only a millisecond out, but the angle columns are keyframed at the frame
+        // where the row changes (ExpandMISBKeyframes), so every sightline direction
+        // ran a frame behind its position — 0.037° on a sightline sweeping 0.07°
+        // per frame. (f * 1000 * simSpeed) / fps is exact whenever the true time
+        // is representable, which it is for every row that sits on a frame.
+        const msPerFrameNumerator = 1000 * Sit.simSpeed;
 
 
         // patch the fov values in the misb column, overwriting any ilegal or missing values
@@ -487,10 +497,10 @@ export class CNodeTrackFromMISB extends CNodeTrack {
                 if (typeof us === "number") {
                     msNow = (us - videoFirstPTSus) / 1000;
                 } else {
-                    msNow = msStart + Math.floor(frameTime * 1000);
+                    msNow = msStart + (f * msPerFrameNumerator) / Sit.fps;
                 }
             } else {
-                msNow = msStart + Math.floor(frameTime*1000);
+                msNow = msStart + (f * msPerFrameNumerator) / Sit.fps;
             }
             // advance the slot if needed
             while (slot < points-1) {
@@ -647,11 +657,15 @@ export class CNodeTrackFromMISB extends CNodeTrack {
             // we store a reference to the misb row for later use
             // so we can extract other data from it as needed
             product["misbRow"] = misb.misb[slot];
+            // The other bracketing row and where this frame sits between the two,
+            // so a per-column consumer (ExpandMISBKeyframes) can interpolate a
+            // column on the SAME time rule the position above used, instead of
+            // quantising the row to the first frame that reached it.
+            product["misbNextRow"] = misb.misb[slot + 1];
+            product["misbFraction"] = fraction;
 
 
             this.array.push(product)
-
-            frameTime += Sit.simSpeed/Sit.fps
         }
 
 

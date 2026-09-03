@@ -130,3 +130,53 @@ describe("CNodeTrackFromMISB timing source selection", () => {
         expect(track.array[2].lla[1]).toBeCloseTo(20, 6);
     });
 });
+
+describe("CNodeTrackFromMISB frame clock", () => {
+    // Regression for the accumulated, truncated frame clock. Rows every 100 ms
+    // resampled at 30 fps put every row exactly on a frame (row i = frame 3i),
+    // but `frameTime += 1/30` summed 300 times is 9.999999999999975 s and
+    // Math.floor(frameTime*1000) made that 9999 ms, so the row stamped 10.000 s
+    // was not selected until frame 301. The angle columns are keyframed at the
+    // frame where the row changes, so every sightline direction ran a frame
+    // behind its position. The time is now computed directly from the frame
+    // index and not truncated.
+    beforeEach(() => {
+        const nodeMan = new CNodeManager();
+        setNodeMan(nodeMan);
+        setSit({
+            frames: 331,
+            fps: 30,
+            simSpeed: 1,
+            lat: 0,
+            lon: 0,
+            isCustom: true,
+            name: "custom",
+        });
+        setGlobalDateTimeNode(new TestDateTimeNode(1_000_000));
+    });
+
+    test("a row stamped exactly on a frame is that frame's row, with fraction 0", () => {
+        const start = 1_000_000;
+        const misb = [];
+        for (let i = 0; i <= 111; i++) misb.push(makeMISBRow(start + i * 100, 0, i * 0.001));
+        new TestMISBDataNode(misb);
+
+        const track = new CNodeTrackFromMISB({
+            id: "track",
+            misb: "trackData",
+            columns: ["SensorLatitude", "SensorLongitude", "SensorTrueAltitude", "AltitudeAGL"],
+        });
+
+        // Frames 3, 300 and 330 are rows 1, 100 and 110 exactly.
+        for (const [frame, row] of [[3, 1], [300, 100], [330, 110]]) {
+            expect(track.array[frame].misbRow).toBe(misb[row]);
+            expect(track.array[frame].misbNextRow).toBe(misb[row + 1]);
+            expect(track.array[frame].misbFraction).toBeCloseTo(0, 9);
+            expect(track.array[frame].lla[1]).toBeCloseTo(row * 0.001, 9);
+        }
+        // A frame between rows carries the bracketing pair and its true fraction.
+        expect(track.array[301].misbRow).toBe(misb[100]);
+        expect(track.array[301].misbNextRow).toBe(misb[101]);
+        expect(track.array[301].misbFraction).toBeCloseTo(1 / 3, 9);
+    });
+});

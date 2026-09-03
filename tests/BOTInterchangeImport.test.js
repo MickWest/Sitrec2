@@ -85,19 +85,26 @@ describe("BOT interchange detection", () => {
 });
 
 describe("BOT coordinate conversion", () => {
-    test("Z is altitude directly, at any range (flat-plane rule)", () => {
-        // The whole point of the flat-plane reading: no curvature term is
-        // subtracted, so a 20 km balloon 50 km away is still 20 km above the
-        // site's ground rather than 196 m lower.
+    test("Z is altitude at the origin; away from it the rigid tangent plane rises", () => {
+        // The frame is embedded as ONE rigid tangent plane at the origin's ground
+        // point, the only map under which the file's straight sightlines keep
+        // passing through its truth (see the importer's header). A tangent plane
+        // sits above the curving surface, so geodetic altitude is
+        // Z + ground + (X²+Y²)/2R: exact at the origin, +196 m at 50 km.
         //
         // Written against the ORIGIN'S ground rather than a literal 0, because
         // the default site is not at sea level and hardcoding its elevation
         // here would turn a later move of the site into a puzzling failure
         // instead of a passing test.
         const g = BOT_DEFAULT_ORIGIN.groundElevationMSL;
+        const R = 6371000;
         expect(botENUToLLA(0, 0, 500)[2]).toBeCloseTo(500 + g, 9);
-        expect(botENUToLLA(0, 50000, 20000)[2]).toBeCloseTo(20000 + g, 9);
-        expect(botENUToLLA(30000, 40000, 3000)[2]).toBeCloseTo(3000 + g, 9);
+        const rise50 = botENUToLLA(0, 50000, 20000)[2] - (20000 + g);
+        expect(rise50).toBeGreaterThan(0.95 * 50000 ** 2 / (2 * R));   // ~196 m
+        expect(rise50).toBeLessThan(1.05 * 50000 ** 2 / (2 * R));
+        const rise50b = botENUToLLA(30000, 40000, 3000)[2] - (3000 + g);
+        expect(rise50b).toBeGreaterThan(0.95 * 50000 ** 2 / (2 * R));
+        expect(rise50b).toBeLessThan(1.05 * 50000 ** 2 / (2 * R));
     });
 
     test("horizontal offsets map to the expected lat/lon", () => {
@@ -136,9 +143,10 @@ describe("BOT sightline conversion", () => {
     test("the sightline points at the truth track in Sitrec's round-earth world", () => {
         // End-to-end: convert both endpoints to LLA the way the importer does, take
         // the true ECEF direction between them, and compare with the az/el the
-        // importer derives from the LOS column. They cannot agree exactly — the
-        // source geometry is flat and Sitrec's is an ellipsoid — so this pins the
-        // size of that disagreement rather than pretending it is zero.
+        // importer derives from the LOS column. Positions and directions go
+        // through the same rigid tangent frame, so they agree to floating point.
+        // (Until 2026-09-03 positions were wrapped onto the ellipsoid instead,
+        // and this test pinned a 0.02° disagreement at 5 km that grew with range.)
         const [sLat, sLon, sAlt] = botENUToLLA(...SENSOR);
         const [tLat, tLon, tAlt] = botENUToLLA(...TRUTH);
         const sECEF = LLAToECEF(sLat, sLon, sAlt);
@@ -151,9 +159,8 @@ describe("BOT sightline conversion", () => {
 
         const {az, el} = botLOSToAzEl(LOS, sLat, sLon);
         expect(Math.min(Math.abs(az - trueAz), 360 - Math.abs(az - trueAz)))
-            .toBeLessThan(0.01);
-        // ~0.02 deg at 5.6 km slant range; it grows with range as (d/R).
-        expect(Math.abs(el - trueEl)).toBeLessThan(0.05);
+            .toBeLessThan(1e-4);
+        expect(Math.abs(el - trueEl)).toBeLessThan(1e-4);
     });
 });
 
@@ -247,11 +254,12 @@ describe("BOT MISB output", () => {
         const [sLat, sLon] = botENUToLLA(...SENSOR);
         expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(sLat, 9);
         expect(misb[0][MISB.SensorLongitude]).toBeCloseTo(sLon, 9);
-        // SENSOR[2] above the site's GROUND, not above sea level — the flat-plane
-        // rule adds the origin's elevation. Written relative to the origin so
-        // moving the site does not need this file edited.
+        // SENSOR[2] above the site's GROUND, not above sea level, plus the rigid
+        // tangent plane's rise of d²/2R at 5 km (about 2 m). Written relative to
+        // the origin so moving the site does not need this file edited.
         expect(misb[0][MISB.SensorTrueAltitude])
-            .toBeCloseTo(3000 + BOT_DEFAULT_ORIGIN.groundElevationMSL, 9);
+            .toBeCloseTo(3000 + BOT_DEFAULT_ORIGIN.groundElevationMSL
+                + 5000 ** 2 / (2 * 6371000), 0);
 
         // TrackManager gates the ENTIRE angles pipeline on PlatformPitchAngle being
         // a finite number. If this stops being 0, no "<name> angles" LOS is built
@@ -332,6 +340,74 @@ describe("sparse angle keyframes across the 0/360 seam", () => {
         const a = ExpandMISBKeyframes(
             track([0.03, 359.3, 358.6], 30), MISB.SensorRelativeAzimuthAngle, false);
         expect(Math.max(...a)).toBeGreaterThan(180);
+    });
+
+    test("the last keyframe lands on its own frame, and the tail continues its slope", () => {
+        // Regression for the terminal fencepost in ExpandKeyframes: the
+        // extrapolation past the final keyframe used to start from the value one
+        // frame BEFORE it, so the last keyframe and everything after it came out
+        // one frame late. Samples 10, 20, 30 at frames 0, 30, 60 in a 90-frame
+        // track: frame 60 must read 30, and the tail must keep the 1/3 per frame
+        // slope of the last segment.
+        const a = ExpandMISBKeyframes(
+            track([10, 20, 30], 30), MISB.SensorRelativeAzimuthAngle, true);
+        expect(a.length).toBe(90);
+        expect(a[30]).toBeCloseTo(20, 9);
+        expect(a[60]).toBeCloseTo(30, 9);
+        expect(a[61]).toBeCloseTo(30 + 1 / 3, 9);
+        expect(a[89]).toBeCloseTo(30 + 29 / 3, 9);
+    });
+});
+
+describe("MISB columns follow the frame's exact time", () => {
+    // CNodeTrackFromMISB stamps each frame with the two rows that bracket its time
+    // and the fraction between them — the rule its position uses. A column
+    // interpolated on that rule cannot lag the position, where the keyframe path
+    // (row value placed at the first whole frame that reached the row) put the
+    // angles up to a frame late and pointed every sightline behind its sensor.
+    const {ExpandMISBKeyframes} = require("../src/utils");
+
+    function rowWithAz(az) {
+        const row = [];
+        row[MISB.SensorRelativeAzimuthAngle] = az;
+        return row;
+    }
+
+    test("a frame between two rows gets the value at its own time", () => {
+        // Rows at 10 Hz (az 0, 3, 6), frames at 30 fps: frame 1 sits a third of the
+        // way from row 0 to row 1, frame 4 a third of the way from row 1 to row 2.
+        const rows = [rowWithAz(0), rowWithAz(3), rowWithAz(6)];
+        const array = [];
+        for (let f = 0; f < 6; f++) {
+            const slot = Math.floor(f / 3);
+            array.push({misbRow: rows[slot], misbNextRow: rows[slot + 1], misbFraction: (f % 3) / 3});
+        }
+        const a = ExpandMISBKeyframes(array, MISB.SensorRelativeAzimuthAngle, true);
+        expect(a).toHaveLength(6);
+        expect(a[0]).toBeCloseTo(0, 9);
+        expect(a[1]).toBeCloseTo(1, 9);
+        expect(a[3]).toBeCloseTo(3, 9);
+        expect(a[4]).toBeCloseTo(4, 9);
+    });
+
+    test("angles take the short way round the seam on this path too", () => {
+        const rows = [rowWithAz(359.5), rowWithAz(0.5)];
+        const array = [0, 1 / 3, 2 / 3].map((t) =>
+            ({misbRow: rows[0], misbNextRow: rows[1], misbFraction: t}));
+        const a = ExpandMISBKeyframes(array, MISB.SensorRelativeAzimuthAngle, true);
+        // 359.5 -> 0.5 is a 1 degree step, so the midpoints are 359.83 and 360.17
+        // (unnormalised, as the keyframe path also leaves them), never ~240.
+        expect(a[1]).toBeCloseTo(359.5 + 1 / 3, 9);
+        expect(a[2]).toBeCloseTo(359.5 + 2 / 3, 9);
+    });
+
+    test("a frame without bracketing rows falls back to the keyframe path", () => {
+        const array = [{misbRow: rowWithAz(0)}, {misbRow: rowWithAz(0)},
+            {misbRow: rowWithAz(6)}, {misbRow: rowWithAz(6)}];
+        const a = ExpandMISBKeyframes(array, MISB.SensorRelativeAzimuthAngle, true);
+        expect(a).toHaveLength(4);
+        expect(a[0]).toBeCloseTo(0, 9);
+        expect(a[2]).toBeCloseTo(6, 9);
     });
 });
 

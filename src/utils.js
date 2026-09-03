@@ -152,16 +152,19 @@ export function ExpandKeyframes(input, outLen, indexCol = 0, dataCol = 1, steppe
     //     out.push(aValue)
     // }
 
-    // extraploate the last two values to the end
+    // Emit the last keyframe on its own frame, then carry the last segment's
+    // per-frame slope to the end. At this point `out` holds frames 0..aFrame-1:
+    // every segment above pushes its START value and the frames up to, but not
+    // including, its end, so the final keyframe (aFrame, aValue) is still
+    // unemitted. The previous version started the extrapolation from
+    // out[out.length-1] — the value at aFrame-1 — which put the last keyframe,
+    // and every frame after it, one frame late (a 30 fps MISB angle column
+    // resampled from 10 Hz rows showed a full-frame lag over its last three
+    // frames). Stepped columns repeat the last value, as before.
     if (out.length < outLen) {
-        const lastValue = out[out.length - 1]
-        const secondLastValue = out[out.length - 2]
-        const lastFrame = aFrame
-        for (var i = lastFrame; i < outLen; i++) {
-            if (stepped)
-                out.push(aValue); // note, stepped means don't interpolate, so we repeat the last value
-            else
-                out.push(lastValue + (i - lastFrame) * (lastValue - secondLastValue) / (lastFrame - (lastFrame - 1)))
+        const perFrame = (stepped || out.length < 2) ? 0 : out[out.length - 1] - out[out.length - 2];
+        for (var i = aFrame; i < outLen; i++) {
+            out.push(stepped ? aValue : aValue + (i - aFrame) * perFrame);
         }
     }
 
@@ -189,6 +192,19 @@ export function SteppedKeyframes(input, outLen, indexCol = 0, dataCol = 1) {
 // frames with nothing to interpolate; a 1 Hz source resampled to 30 fps puts ~30
 // frames inside each step and the sweep is glaring.
 export function ExpandMISBKeyframes(array, columnIndex, degrees = false) {
+    // EXACT-TIME PATH. A CNodeTrackFromMISB array carries, per frame, the two
+    // rows that bracket the frame's time and the fraction between them — the
+    // same slot and fraction its position was interpolated with. Interpolating
+    // the column on that rule puts every value at the frame's TRUE time. The
+    // keyframe path below cannot: it places a row's value at the first whole
+    // frame that reached the row, so a row falling between two frames lands up
+    // to a frame late while the position does not, and a sightline built from
+    // a lagging angle column and an exact position points a frame behind where
+    // the sensor really was. Falls through to the keyframe path when a frame
+    // lacks its bracketing rows or the column is not numeric in one of them.
+    const exact = expandMISBColumnByTime(array, columnIndex, degrees);
+    if (exact) return exact;
+
     const keyframes = []
     let lastMISBRow = null;
     for (let i=0;i<array.length;i++) {
@@ -219,6 +235,29 @@ export function ExpandMISBKeyframes(array, columnIndex, degrees = false) {
     return ExpandKeyframes(keyframes, array.length, 0, 1, false, false, degrees)
 
 
+}
+
+// One column of a MISB track, interpolated per frame between the rows that
+// bracket each frame's time (see ExpandMISBKeyframes). Returns null when the
+// array does not carry that information for every frame, or the column is not
+// a finite number in every bracketing row, so the caller can fall back.
+function expandMISBColumnByTime(array, columnIndex, degrees) {
+    const n = array.length;
+    if (n === 0) return null;
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+        const entry = array[i];
+        const rowA = entry.misbRow, rowB = entry.misbNextRow, t = entry.misbFraction;
+        if (!rowA || !rowB || !Number.isFinite(t)) return null;
+        const a = rowA[columnIndex], b = rowB[columnIndex];
+        if (typeof a !== "number" || typeof b !== "number"
+            || !Number.isFinite(a) || !Number.isFinite(b)) return null;
+        let delta = b - a;
+        // Angles take the short way round the 0/360 seam, as the keyframe path does.
+        if (degrees && Math.abs(delta) > 180) delta -= Math.sign(delta) * 360;
+        out[i] = a + delta * t;
+    }
+    return out;
 }
 
 /**

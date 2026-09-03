@@ -11,13 +11,13 @@
  *   the frame        A live analysis works in the loaded sitch's true local
  *                    tangent frame, so ENU->ECEF->LLA is right and its
  *                    altitudes are height above the ELLIPSOID. A BOT scenario
- *                    defines Z as the altitude directly on a flat plane, so
- *                    the full 3-D conversion would subtract a curvature term
- *                    the format never put in, and its altitudes are MSL. Each
- *                    caller passes its own converter and says which datum it
- *                    produced. Getting this wrong is not subtle: measured on a
- *                    BOT scenario, the wrong conversion put candidates 40 m
- *                    from a truth track the analysis scored at 2.8 m.
+ *                    lives in a rigid tangent frame at ITS OWN origin
+ *                    (botENUToLLA, the importer's conversion), and its
+ *                    altitudes are MSL. Each caller passes its own converter
+ *                    and says which datum it produced. Getting this wrong is
+ *                    not subtle: measured on a BOT scenario, a converter with
+ *                    the wrong datum put candidates 40 m from a truth track
+ *                    the analysis scored at 2.8 m.
  *   the destination  The bench opens a NEW custom sitch, because a BOT file
  *                    carries its own geography and the current window's scene
  *                    is irrelevant to it. The gallery opens the SAME sitch, so
