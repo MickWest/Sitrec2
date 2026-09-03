@@ -60,10 +60,20 @@ credentials' own, and must never be pushed to a public or shared registry.
 
 **In the release workflow** — the authoritative gate. `.github/workflows/docker.yml` runs
 the review over the image it just built, as `--profile=published --fail-on=critical`, in the
-`smoke-test` job. That job gates `manifest`, so an image carrying a credential never becomes
-a version tag or `latest`. The report, the SBOM and the evidence are uploaded as a
-`container-security-review` artifact with 90-day retention, which is what you send to
-someone who asks for one.
+**`package`** job. That job is a two-way matrix, so **both published architectures are
+reviewed**, each on a runner of its own architecture with no emulation. `smoke-test` needs
+`package` and `manifest` needs both, so an image carrying a credential never becomes a
+version tag or `latest`.
+
+The report is written to the run summary, so it renders as formatted Markdown on the run
+page in the browser — no download. The report, the bill of materials and the evidence are
+also uploaded as a `container-security-review-amd64` / `-arm64` artifact with 90-day
+retention, which is what you send to someone who asks for one.
+
+The two architectures are packaged from the same `dist/` by the same Dockerfile, so their
+credentials are necessarily identical and `IMG-01` cannot differ between them. Their base
+layers are separate builds of Debian, so their advisory load, setuid inventory and installed
+tooling can differ, which is why both are reviewed rather than one taken as representative.
 
 Only a credential stops a release. The posture findings — root by default, the
 world-writable webroot, the base image's advisory backlog — are reported for the operator

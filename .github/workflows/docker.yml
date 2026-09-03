@@ -6,8 +6,10 @@ name: Docker Image
 # Architecture: four-stage pipeline
 #   1. "build-js" runs once on x86 — webpack produces identical output
 #      regardless of CPU architecture, so no need to build twice.
-#   2. "package" runs natively on both amd64 and arm64 runners,
-#      copying the JS artifacts into the PHP+Apache runtime image.
+#   2. "package" runs natively on both amd64 and arm64 runners, copying the
+#      JS artifacts into the PHP+Apache runtime image, then runs the container
+#      security review over the image it just built — once per architecture,
+#      each on a runner of its own architecture.
 #   3. "smoke-test" pulls the amd64 image, starts the container, and runs
 #      HTTP checks + a Playwright visual regression test to verify it works.
 #   4. "manifest" creates the multi-arch manifest list so a single
@@ -144,6 +146,87 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.suffix }}
           cache-to: type=gha,scope=${{ matrix.suffix }},mode=max
 
+      # ── Container security review ────────────────────────────────────
+      # Runs here, in the per-architecture matrix, rather than once in smoke-test.
+      # smoke-test only ever had the amd64 image, so the arm64 image was published
+      # unreviewed — and while the two are packaged from the same dist/ by the same
+      # Dockerfile (so their credentials are identical), their base layers are
+      # different builds of Debian and their advisory load and setuid inventory can
+      # genuinely differ. Reviewing here also means each image is examined by a
+      # runner of its own architecture, with no emulation.
+      #
+      # The published image is built from config/shared.env.example, so every
+      # credential in it must be the shipped placeholder. Nothing else in the
+      # pipeline checks that: the bundle secret audit judges a directory a web
+      # server will serve, and correctly permits shared.env.php there because PHP
+      # never hands that file out — but in an IMAGE the same file is a layer anyone
+      # with pull access can read with `docker save`, and the "<?php" guard protects
+      # nothing against that.
+      #
+      # --fail-on=critical gates on the two credential checks only. The posture
+      # findings (root by default, the world-writable webroot, the base image's
+      # advisory backlog) are reported for the operator rather than treated as
+      # release blockers. A failure here stops smoke-test and manifest, so no
+      # version or latest tag is ever created.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install trivy
+        # Pinned to a tag that exists: this action publishes only v0.2.6, v0.3.0 and
+        # v0.3.1, and has no moving v0. An unresolvable action ref fails the job at
+        # "Set up job", before any step runs, which is what happened on 2.149.1.
+        uses: aquasecurity/setup-trivy@v0.3.1
+        with:
+          cache: true
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Container security review
+        run: |
+          IMAGE="${REGISTRY}/${IMAGE_NAME_LC}:build-${{ matrix.suffix }}-${GITHUB_SHA}"
+          # buildx pushed straight to the registry without loading into the local
+          # daemon, so the image has to be pulled before it can be inspected.
+          docker pull "${IMAGE}"
+          node scripts/auditContainerImage.mjs \
+            --image="${IMAGE}" \
+            --profile=published \
+            --out=dist-audit \
+            --fail-on=critical
+
+      - name: Publish the review to the run summary
+        if: always()
+        run: |
+          # A Markdown artifact is an opaque zip in the browser — reading it always
+          # costs a download. The step summary renders it on the run page itself.
+          # Cap at 900K against GitHub's 1 MiB limit; the report is ~25K, so this
+          # only ever trips if a future check starts emitting a huge table.
+          REPORT=dist-audit/container-security-review.md
+          if [ -f "$REPORT" ]; then
+            {
+              echo "## Container security review — ${{ matrix.platform }}"
+              echo
+              head -c 900000 "$REPORT"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Container security review — ${{ matrix.platform }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "The review did not produce a report; see the step log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload container security review
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          # Per-architecture: two matrix jobs uploading one name would collide.
+          name: container-security-review-${{ matrix.suffix }}
+          path: |
+            dist-audit/container-security-review.md
+            dist-audit/container-security-review.json
+            dist-audit/sbom.cdx.json
+            dist-audit/evidence/
+          retention-days: 90
+
   # ── Stage 3: Smoke-test the Docker image ──────────────────────────
   smoke-test:
     needs: package
@@ -269,56 +352,8 @@ jobs:
           node-version: 22
           cache: npm
 
-      # ── Container security review ────────────────────────────────────
-      # The published image is the artifact other people pull, and it is built from
-      # config/shared.env.example, so every credential in it must be the shipped
-      # placeholder. Nothing else in the pipeline checks that. The bundle secret audit
-      # judges a directory a web server will serve, and correctly permits shared.env.php
-      # there because PHP never hands that file out — but in an IMAGE the same file is a
-      # layer that anyone with pull access can read with `docker save`, and the "<?php"
-      # guard protects nothing against that. Same bytes, different threat model, and until
-      # now nothing re-asked the question at the layer where it changes.
-      #
-      # --fail-on=critical means only a credential in the image stops the release. The
-      # posture findings (root by default, the world-writable webroot, the base image's
-      # advisory backlog) are reported for the operator rather than treated as release
-      # blockers: they are the deployment's to close, and the report says how.
-      #
-      # Runs before `npm ci` and Playwright so a credential is caught in seconds. The
-      # smoke-test job gates the manifest job, so a failure here means the version and
-      # latest tags are never created.
-      # Pinned to a tag that exists: this action publishes only v0.2.6, v0.3.0 and
-      # v0.3.1, and has no moving v0. An unresolvable action ref fails the job at
-      # "Set up job", before any step runs, so the whole smoke test is lost — which
-      # is what happened on 2.149.1.
-      - name: Install trivy
-        uses: aquasecurity/setup-trivy@v0.3.1
-        with:
-          cache: true
-
-      - name: Install syft
-        uses: anchore/sbom-action/download-syft@v0
-
-      - name: Container security review
-        run: |
-          IMAGE="${REGISTRY}/${IMAGE_NAME_LC}:build-amd64-${GITHUB_SHA}"
-          node scripts/auditContainerImage.mjs \
-            --image="${IMAGE}" \
-            --profile=published \
-            --out=dist-audit \
-            --fail-on=critical
-
-      - name: Upload container security review
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: container-security-review
-          path: |
-            dist-audit/container-security-review.md
-            dist-audit/container-security-review.json
-            dist-audit/sbom.cdx.json
-            dist-audit/evidence/
-          retention-days: 90
+      # The container security review moved to the per-architecture `package` job, so
+      # both published images are reviewed rather than only amd64. See the block there.
 
       - name: Install dependencies
         run: npm ci || npm install

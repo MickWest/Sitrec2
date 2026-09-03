@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.149.4 (2026-09-03)
+
+### Bug Fixes
+
+- Fixed only one of the two published container images being security-reviewed. Sitrec publishes an Intel/AMD image and an ARM image under one name, and the review added in 2.149.1 examined the Intel/AMD one alone — so that version's note, that every published image is reviewed, held for that image only. Both are now reviewed, each on a machine of its own type, and a failure on either one stops the release earlier than before. The two are built from the same files, so the credential check could never have differed between them; what can differ is what each inherits from its own base system, such as outstanding package advisories and leftover tooling.
+
 ## Version 2.149.3 (2026-09-03)
 
 Version 2.149.2 built and published correctly — anyone who runs Sitrec from the published container image already has it — but the public site did not move: a check that runs just before the site files are copied up found a realistic-looking fake credential in a test file added in 2.149.1, and stopped the copy. Nothing was copied, so the site stayed on 2.149.0. The fake value is now plainly fake. Everything listed under 2.149.1 and 2.149.2 reaches the public site with this release.
