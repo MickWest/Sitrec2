@@ -359,6 +359,12 @@ describe('the evidence bundle carries no secret', () => {
     // can be circulated. That is only true if the redaction actually happens, and the
     // redactors run at collection time, which fixture mode skips - so exercise them
     // directly, in a child process, since Jest cannot import an .mjs here.
+    //
+    // The fake credentials below are deliberately NOT key-shaped. This tree ships in the
+    // production bundle, and scripts/auditBundleSecrets.js --mode=server scans it and
+    // aborts the deploy on a match - /sk-[A-Za-z0-9_-]{20,}/ for an OpenAI-style key, and
+    // similar patterns for JWT, GitHub and Slack tokens. A realistic-looking fixture here
+    // blocks a release, so keep these obviously fake rather than authentic.
     const {pathToFileURL} = require('url');
 
     function evalInScript(code) {
@@ -374,13 +380,13 @@ describe('the evidence bundle carries no secret', () => {
     test('a credential in Config.Env is redacted before the image config is archived', () => {
         const out = evalInScript(`(m) => m.redactInspect({Config: {Env: [
             "PATH=/usr/bin",
-            "OPENAI_API=sk-live-abcdefghijklmnop",
+            "OPENAI_API=not-a-real-credential-xy",
             "PHP_VERSION=8.4.25"
         ]}})`);
         const env = out.Config.Env;
         expect(env).toContain('PATH=/usr/bin');
         expect(env).toContain('PHP_VERSION=8.4.25');
-        expect(env.join(' ')).not.toMatch(/sk-live-abcdefghijklmnop/);
+        expect(env.join(' ')).not.toMatch(/not-a-real-credential-xy/);
         expect(env.join(' ')).toMatch(/OPENAI_API=<redacted, 24 chars, set>/);
     });
 
@@ -397,10 +403,10 @@ describe('the evidence bundle carries no secret', () => {
 
     test('a credential inside a build command is redacted from the layer history', () => {
         const out = evalInScript(`(m) => m.redactHistory([
-            {CreatedBy: "ENV ANTHROPIC_API=sk-ant-secret-value"},
+            {CreatedBy: "ENV ANTHROPIC_API=not-a-real-anthropic-value"},
             {CreatedBy: "RUN apt-get update && apt-get install -y curl"}
         ])`);
-        expect(JSON.stringify(out)).not.toMatch(/sk-ant-secret-value/);
+        expect(JSON.stringify(out)).not.toMatch(/not-a-real-anthropic-value/);
         expect(out[0].CreatedBy).toBe('ENV ANTHROPIC_API=<redacted>');
         expect(out[1].CreatedBy).toMatch(/apt-get install -y curl/);
     });
@@ -413,7 +419,7 @@ describe('the evidence bundle carries no secret', () => {
             m.classifyValue("xxx-real-credential"),
             m.classifyValue("<your-key>"),
             m.classifyValue("  "),
-            m.classifyValue("sk-live-1234")
+            m.classifyValue("live-value-1234")
         ]`);
         expect(verdicts).toEqual([
             'placeholder', 'placeholder', 'set', 'set', 'placeholder', 'empty', 'set',
