@@ -41,6 +41,17 @@ const PROJECT_ROOT = path.resolve(__dirname, "..");
 
 // Fixed, repo-local and never taken from an argument. webpack's production config cleans
 // its output directory, so a mistyped path here would delete whatever it named.
+//
+// It has to live INSIDE the repository, because Dockerfile.release copies DIST_DIR out of
+// the build context and the context is the repository root. That has a consequence worth
+// stating: a normal `npm run build` writes outside the tree (prod_path in
+// config/config-install.js), so nothing else in the repo has a full build sitting under
+// rootDir. This one does, and a build output contains a verbatim copy of tools/, including
+// SitrecBridge's node:test files. Jest would collect those as suites and fail them with
+// "Your test suite must contain at least one test", so this directory and dist-audit/ are
+// in jest's testPathIgnorePatterns (and this one in modulePathIgnorePatterns) in
+// package.json, alongside .gitignore. Removing either entry breaks `npm test` for anyone
+// who has run this script.
 const SCRATCH_DIST_NAME = "dist-release-audit";
 const SCRATCH_DIST = path.join(PROJECT_ROOT, SCRATCH_DIST_NAME);
 const EXAMPLE_ENV = "config/shared.env.example";

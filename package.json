@@ -117,6 +117,8 @@
       "<rootDir>/dist-standalone/",
       "<rootDir>/dist-serverless/",
       "<rootDir>/dist-secure/",
+      "<rootDir>/dist-release-audit/",
+      "<rootDir>/dist-audit/",
       "<rootDir>/benchmarks/",
       "<rootDir>/private/",
       "<rootDir>/tools/SitrecBridge/"
@@ -125,7 +127,8 @@
       "<rootDir>"
     ],
     "modulePathIgnorePatterns": [
-      "<rootDir>/dist-secure/"
+      "<rootDir>/dist-secure/",
+      "<rootDir>/dist-release-audit/"
     ],
     "moduleFileExtensions": [
       "ts",

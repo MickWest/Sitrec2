@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.149.1 (2026-09-03)
+
+### Security
+
+- **Every container image is security-reviewed before it is published** (self-hosted servers; *Container Security Review*, linked from *The Secure Build* and from *Installing Hardened Sitrec on AWS*): the finished image is examined for credentials baked into it, known-vulnerable packages, the user it runs as, world-writable paths, leftover build tooling and stray development material. If a published image would carry a real credential the release is stopped, and the image is never published as a version or as latest. Sitrec's existing checks look at the files a web server will hand out; anyone who can download an image reads every file in it directly, so the same files had to be asked about again at that level. You can run the same review over an image you build for your own install: it writes a report, a list of every software package inside the image, and the runtime restrictions the image will accept — the document to give to whoever must approve it. An image built with your own settings compiled in is expected to hold your own credentials, and is reported as sensitive to handle rather than as faulty.
+- When a saved file could not be fetched from object storage, the server's error log recorded that file's full storage address — which contains the user id, the file's own name, and the means of reaching the file. The log now records only a short hash of the address, with the storage service's error code and its own message.
+
 ## Version 2.149.0 (2026-09-03)
 
 ### Improvements
