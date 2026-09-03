@@ -9,6 +9,29 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.148.0 (2026-09-02)
+
+### New Features
+
+- **Client certificate authentication** (self-hosted servers; *Client certificate authentication* in the Installing and Configuring guide, linked from the project README on GitHub): a Sitrec server can now identify users by the client certificate they present — typically from a hardware token — instead of a forum login. The proxy or load balancer in front of Sitrec checks the certificate first; Sitrec then checks it again against its own trust store, confirms it is current and meant for client login, and maps the identifier it carries to a user through a mapping file that doubles as the access list. The log records only the outcome, the reason and a short hash — never the certificate or the identifier. With this mode on, the test-user and localhost-administrator shortcuts cannot apply.
+
+- **Object storage without stored keys, and on other endpoints** (self-hosted servers; *Object storage in another partition or with role credentials* in the same guide): a server can sign its storage requests with the role its machine or container already holds instead of an access key in its configuration, use FIPS endpoints, or use a non-standard endpoint such as an S3-compatible store inside its own network. A further setting keeps every read of a saved file on the site's own address, for networks whose browsers cannot reach the storage service directly. An install that sets none of this behaves exactly as before, and the links it hands out do not change.
+
+- **A secure build for isolated networks** (*The Secure Build*, linked from the Installing and Configuring guide): a production server build with every feature that would contact an outside service removed at compile time — the AI assistant and its key store, live feeds, the aircraft, sounding and forum importers, street-level imagery, telemetry, the startup location lookup — and the built-in internet map, elevation and satellite sources switched off, so the deployment supplies its own. Settings supplied at run time can only make it stricter, never put a key back. The output is checked after every build: any outside address, any source map, any surviving original, any server file that should not ship fails the build.
+
+- **A ready-made hardened deployment on AWS** (*Installing Hardened Sitrec on AWS*, linked from the project README on GitHub): a Terraform module that builds the whole thing — a private network with no route to the internet, a load balancer that requires client certificates, private encrypted buckets, the container service, its roles and its audit logs — written so the same module applies unchanged in any AWS partition, with a check run on every push that proves it stays that way. It has been applied and exercised in a real account, and the fixes from that first run are included.
+
+### Improvements
+
+- When a map or elevation tile fails to load, the browser console (and, on a development host, the error dialog) now says the likely cause and what to do — a missing tile directory or mount, a wrong URL template or maximum zoom, a missing or expired key, no route from an isolated network — instead of only "HTTP 404". A shared case link that fails gets the same treatment, including the case where the file was saved to a container's scratch storage that a restart emptied.
+- The container image no longer writes its runtime settings into the page as an inline script, so a site can run under a security policy that forbids inline scripts.
+- SitrecBridge (1.0.62) now attaches to Sitrec on sitrec.work as well as the local and metabunk hosts.
+
+### Bug Fixes
+
+- Fixed every elevation tile failing to load on a site whose security policy forbids code generated at run time.
+- Fixed the *AI Model*, *Voice Model* and *Enable old AI models* controls (Settings) reading "Loading..." forever on a site with the assistant turned off, and every page load asking the server for a model list it does not have. The three controls now appear only when the assistant is on.
+
 ## Version 2.147.3 (2026-09-02)
 
 ### New Features
