@@ -53,6 +53,20 @@ function proxyError($status, $message) {
 }
 
 /**
+ * A short sha256 prefix of an object key, for the log. An object key is
+ * `<userId>/<fileName>/<newFileName>`, so the key itself carries the user's file
+ * name and is the capability that grants access to the object; neither belongs in
+ * a log. The hash still lets repeated failures on one object be correlated. Same
+ * approach as authCertLogLine() in auth_cert.php.
+ *
+ * @param string $key
+ * @return string
+ */
+function objectKeyDigest($key) {
+    return substr(hash('sha256', (string)$key), 0, 16);
+}
+
+/**
  * Streams the object through the SDK with the configured credentials.
  *
  * Returns true once the response has been sent (the object, or a 404 for a
@@ -81,10 +95,17 @@ function proxyObjectWithSdk($key, $rangeHeader) {
         if ($e->getAwsErrorCode() === 'NoSuchKey') {
             proxyError(404, 'Object not found');
         }
-        error_log('s3-proxy: signed fetch failed (' . ($e->getAwsErrorCode() ?: get_class($e)) . '), using the unsigned URL: ' . $e->getMessage());
+        // getMessage() embeds the request URI, and so the object key: the SDK formats it
+        // as `Error executing "GetObject" on "<url>"; ...`. getAwsErrorMessage() is the
+        // service's concise text, without the URI.
+        error_log('s3-proxy: signed fetch failed for key ' . objectKeyDigest($key)
+            . ' (' . ($e->getAwsErrorCode() ?: get_class($e)) . '), using the unsigned URL: '
+            . ($e->getAwsErrorMessage() ?: 'no service message'));
         return false;
     } catch (Exception $e) {
-        error_log('s3-proxy: signed fetch failed (' . get_class($e) . '), using the unsigned URL: ' . $e->getMessage());
+        // No message here: a transport exception embeds the request URI in its own text.
+        error_log('s3-proxy: signed fetch failed for key ' . objectKeyDigest($key)
+            . ' (' . get_class($e) . '), using the unsigned URL');
         return false;
     }
 

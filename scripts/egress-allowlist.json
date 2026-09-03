@@ -39,7 +39,7 @@
     },
     {
       "host": "*.amazonaws.com",
-      "purpose": "operator-configured object storage; the bucket host is set in configuration, not in code",
+      "purpose": "operator-configured object storage; the bucket host is set in configuration, not in code. An isolated deployment may instead point storage at its own host with S3_ENDPOINT, which is read from the deployment configuration and never from a request",
       "trigger": "the user chooses to upload or share a file, or opens a shared file",
       "mayReceive": ["user-file"]
     },
