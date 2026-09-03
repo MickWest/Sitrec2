@@ -10,7 +10,7 @@
  * first.
  *
  * The numbers below are the real ones from
- * `botset_balloons_straight/batch_20s/0pct`: a 3 deg field over 640 px, a
+ * `botset_balloons_straight/batch_20s/0.0deg`: a 3 deg field over 640 px, a
  * published bound of 0.009375 deg on every scenario, and a 0.35 m party balloon
  * at 6.4-80.7 km slant.
  */

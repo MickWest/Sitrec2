@@ -5,7 +5,7 @@
  *     npm run bench-bot-maneuvers-par
  *     node benchmarks/botbench/run-botset-maneuvers.mjs [--concurrency N]
  *
- * The 24 batch folders (2 sets x 4 durations x 3 error levels) are independent
+ * The 72 batch folders (2 sets x 4 durations x 9 error rungs) are independent
  * — no two touch the same file — so each runs in its own worker thread. Batch
  * generation lives in lib/botsetManeuverBatch.js, shared verbatim with the
  * sequential bench (botset-maneuvers.bench.test.js), and generation is

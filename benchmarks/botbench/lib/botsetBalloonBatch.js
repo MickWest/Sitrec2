@@ -1,5 +1,5 @@
 // botsetBalloonBatch.js — generate ONE balloon batch folder (a platform set x
-// drift-level cell): all 20 behaviour x range variants, integrity checks,
+// error-rung cell): all 20 behaviour x range variants, integrity checks,
 // interchange files and the folder manifest. Mirrors botsetManeuverBatch.js so
 // the two families stay legible side by side, and for the same reason: the
 // checks live here as throws, generation is deterministic for a given (spec,
@@ -27,12 +27,14 @@ export const FILES_PER_SCENARIO = 5;
 
 export const SIDECAR_DIR = "meta";
 
+const round5 = (x) => Math.round(x * 1e5) / 1e5;
+
 /**
  * Generate one batch folder. Throws on any integrity violation — a runner
  * treats any throw as a failed batch.
  *
  * @param setKey      "straight" | "curve" | "orbit"
- * @param errorLabel  a BOTSET_BALLOON_ERROR_LEVELS label ("0pct" | "5pct" | "20pct")
+ * @param errorLabel  a BOTSET_BALLOON_ERROR_LEVELS label ("0.0deg" | "0.01deg" | ... | "2.0deg")
  * @param outRoot     the results root that holds every botset_* directory
  * @returns {set, batch, dir, scenarios, files, ms}
  */
@@ -65,6 +67,14 @@ export function generateBotsetBalloonBatch({setKey, errorLabel, outRoot}) {
         if (scenario.events.length) {
             throw new Error(`botsetBalloonBatch: ${v.behaviour} r${v.rangeMiles}mi carries `
                 + `${scenario.events.length} event(s); this family injects none`);
+        }
+        // The ladder promises the target stays in frame at every rung (the
+        // field widens with the amplitude, botsetErrors.js); a masked frame
+        // here means that promise broke and the rung would measure lost
+        // targets, not pointing error.
+        if (scenario.observation.outOfFrameCount) {
+            throw new Error(`botsetBalloonBatch: ${v.behaviour} r${v.rangeMiles}mi ${err.label} `
+                + `has ${scenario.observation.outOfFrameCount} out-of-frame frame(s)`);
         }
 
         const out = writeInterchange(scenario, dir, {
@@ -103,9 +113,15 @@ export function generateBotsetBalloonBatch({setKey, errorLabel, outRoot}) {
             scenarioId: scenario.scenarioId,
             profile: scenario.target.profile ?? null,
             durationSeconds: spec.durationSeconds,
-            errorLevel: err.label, errorPctOfFov: err.pct,
-            fovFullDeg: BOTSET_BALLOON_FOV_FULL_DEG,
-            errorDeg: err.degreesFor(BOTSET_BALLOON_FOV_FULL_DEG),
+            errorLevel: err.label, errorDeg: err.deg,
+            // The field the rung was observed through (the family's 3 deg, or
+            // wider where the rung needs it) and what the operator model
+            // actually did, so a rung can be checked against its realization.
+            fovFullDeg: spec.observation.fovFullDeg,
+            familyFovFullDeg: BOTSET_BALLOON_FOV_FULL_DEG,
+            realizedRmsDeg: round5(scenario.observation.realizedRmsDegAllFrames),
+            realizedMaxDeg: round5(scenario.observation.realizedMaxDeg),
+            outOfFrameFraction: scenario.observation.outOfFrameFraction,
         });
     }
     if (names.size !== BOTSET_BALLOON_VARIANTS.length) {

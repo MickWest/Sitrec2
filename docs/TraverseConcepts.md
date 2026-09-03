@@ -207,10 +207,10 @@ implying an object under 8 cm — pays a size cost no class accepts.
 
 Several numbers on a result page come from a test series rather than from one
 fit. A **rung** is one step of such a series, and this work has two ladders
-that never meet: the *pointing-drift ladder* (a pointing error added to the
-sightlines that grows steadily from zero at the first frame to 5% or 20% of
-the 3° field of view at the last, so the rays slide off the object over the
-clip — the observation-error model) and the *held-range ladder* (a model
+that never meet: the *pointing-error ladder* (an operator model added to the
+sightlines, at nine amplitudes from 0.01° to 2°: the aim drifts off the object,
+the operator notices and recentres, so the rays wander about the object over
+the clip — the observation-error model) and the *held-range ladder* (a model
 re-solved with its range held at 1, 2, 4, 8 … km, which maps a solution
 family). Ranges are **slant** (straight-line) unless marked horizontal; the
 benchmark's balloon sets are named by horizontal miles, so the "2 mi" row is
@@ -266,7 +266,7 @@ and *declared anomalies* — deliberately impossible objects (instant turns,
 50 g, Mach 5, Mach 50) — whose job is to check that the analysis does not
 explain them away when the rays could have told them apart. Every run is
 blind. "Clean" means no pointing error was
-added; a *drift rung* adds the one-way slide of section 13. Named cases you will
+added; an *error rung* adds the operator wobble of section 13. Named cases you will
 meet in the other pages — Gimbal, Go Fast, Aguadilla — are the real videos the
 method was built for; Coryat is the Metabunk member who first mapped Gimbal's exact-ray family
 by hand, in 2022.

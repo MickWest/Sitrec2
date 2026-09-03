@@ -1,19 +1,19 @@
 /**
  * botset-maneuvers.bench.test.js — generate the two maneuver botsets: the full
  * thirteen-type taxonomy (23 parameter variants), partitioned by anomaly, at
- * four clip durations and three operator error levels:
+ * four clip durations and nine operator pointing-error rungs:
  *
- *   results/botset_anomalies/batch_<20|60|120|300>s/<0|5|20>pct/{Input,Truth,All,meta}/
- *   results/botset_mundane/  batch_<D>s/<E>pct/manifest.json   per-folder inventory
+ *   results/botset_anomalies/batch_<20|60|120|300>s/<E>deg/{Input,Truth,All,meta}/
+ *   results/botset_mundane/  batch_<D>s/<E>deg/manifest.json   per-folder inventory
  *   results/botset_<set>/timing.json                           per-batch generation times
  *
  *     npm run bench-bot-maneuvers        # sequential (this file)
  *     npm run bench-bot-maneuvers-par    # worker_threads driver, same output tree
  *
- * (15 anomalous + 8 mundane) x 4 durations x 3 error levels = 276 scenarios.
- * The error level changes ONLY spec.observation, which is outside the truth key,
- * so the three error levels of a variant are the same flight observed three
- * ways. Batch generation and its integrity checks live in
+ * (15 anomalous + 8 mundane) x 4 durations x 9 error rungs = 828 scenarios.
+ * The error rung changes ONLY spec.observation, which is outside the truth key,
+ * so the nine rungs of a variant are the same flight observed nine ways.
+ * Batch generation and its integrity checks live in
  * lib/botsetManeuverBatch.js, shared with the parallel driver — generation is
  * deterministic, so the two runners produce byte-identical trees (timing aside).
  */

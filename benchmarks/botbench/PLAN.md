@@ -770,7 +770,7 @@ sweep the full taxonomy as 23 parameter variants — both directions of the spee
 step; 20 g and 50 g high-g turns with and without a lead-in; hypersonic at
 Mach ~6 (dive and pull-up) and Mach 50; plausible and impossible sine, loop
 (aero / too slow / too fast) and figure-eight members — at four clip durations
-(20/60/120/300 s) and three operator-error levels.
+(20/60/120/300 s) and nine operator pointing-error rungs.
 
 The taxonomy is PARTITIONED BY ANOMALY into two published sets:
 `botset_anomalies` (15 variants, no conventional model should fit) and
@@ -780,36 +780,41 @@ comparable; what the split buys is that "did we find the mundane answer" and
 "did we correctly report an anomaly" stop being one mixed number over one mixed
 folder.
 
-The ERROR LADDER IS A PERCENTAGE OF THE FIELD OF VIEW (0 / 5 / 20 pct), not an
-absolute angle — see `lib/botsetErrors.js`. Field of view is sized per scenario
-from the target and its range, spanning 0.46 to 3.82 deg, so a fixed angular
-error would be 33% of the frame in one scenario and 3.9% in another and the
-ladder would sweep difficulty and geometry together. The resolved degrees are
-still published in `scenario.json`'s `losError` and in every manifest row.
+The ERROR LADDER IS OPERATOR POINTING ERROR IN DEGREES (0.0 / 0.01 / 0.02 /
+0.05 / 0.1 / 0.2 / 0.5 / 1.0 / 2.0) — see `lib/botsetErrors.js`. A rung is the
+deadband amplitude of the operator wobble model (drift off the target, notice,
+recentre after a reaction delay); its drift and slew rates scale with the
+amplitude, so the realized error is proportional to the rung (RMS about 0.64x,
+peak 1.6x). The field of view is sized per scenario from the target and its
+range (0.46 to 3.82 deg), so one rung is a different fraction of the frame in
+different scenarios; a rung the field cannot hold widens it to 4x the amplitude
+so no rung masks the target out. Every manifest row records the field the rung
+was observed through and the realized error beside the rung. An earlier ladder
+was 0 / 5 / 20 percent of the field of view.
 
 **The balloon botsets** (`lib/botsetBalloons.js`, `bench-bot-balloons`) are the
 buoyant half: `botset_balloons_straight`, `botset_balloons_curve` and
 `botset_balloons_orbit`, 60 scenarios each — 20 variants (party and
 neutral-buoyancy balloons at 2 / 8 / 20 / 50 statute miles, five drift
-behaviours) at ONE clip duration, 20 s, times the three error rungs. They
+behaviours) at ONE clip duration, 20 s, times the nine error rungs. They
 separate on PLATFORM PATH rather than on duration: a maneuver's detectability is
 a question about time, a balloon's about geometry, and the orbit is the upper
-bound on what parallax can buy. Their ladder is one-way DRIFT rather than
-zero-mean wobble, because a slow slide off the target is the error a short
-clip cannot distinguish from the target genuinely drifting. The field of view
-is pinned at 3 deg so the target survives the 20 pct rung, which makes a
-0.35 m balloon sub-pixel at every range in the set; every scenario therefore
+bound on what parallax can buy. Their ladder is the same operator wobble as
+the maneuver sets' (an earlier version used a one-way drift ramp, which
+`lib/observation.js` still offers as kind `drift`). The field of view is
+pinned at 3 deg, widened to 4 and 8 deg at the 1.0 and 2.0 deg rungs, which
+makes a 0.35 m balloon sub-pixel at every range in the set; every scenario therefore
 publishes the 2 x IFOV angular-diameter bound, an upper bound with no lower
 end.
 
-Output tree: `results/botset_<set>/batch_<D>s/<E>pct/{Input,Truth,All,meta}`
+Output tree: `results/botset_<set>/batch_<D>s/<E>deg/{Input,Truth,All,meta}`
 with a manifest per folder and per-batch generation times in
 `results/botset_<set>/timing.json`. Both sidecars live in `meta/` so the CSV
 folders hold only CSVs; that trades the folder-level blinding a sealed release
 needs, which is why `writeInterchange` keeps the sibling layout as its default
 and refuses to combine `sidecarDir` with `descriptiveName`. Error level lives
-outside the truth key, so one variant's three error members are the same flight
-observed three ways.
+outside the truth key, so one variant's nine error members are the same flight
+observed nine ways.
 
 Batch generation and its integrity checks live in `lib/botsetManeuverBatch.js`,
 shared by the sequential bench and by `run-botset-maneuvers.mjs`

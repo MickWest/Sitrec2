@@ -143,7 +143,7 @@ export function botBenchScenarioBase(name = "") {
  * directory scoping exists to prevent stays impossible.
  *
  * @param relativePath  path as the directory walk reported it, e.g.
- *                      "botset_mundane/batch_20s/5pct/All/x.all.csv"
+ *                      "botset_mundane/batch_20s/0.05deg/All/x.all.csv"
  * @param name          the file's own name (defaults to the path's last segment)
  * @returns {{key, altKey, indexKey, dir, base, inMetaDir}}
  */

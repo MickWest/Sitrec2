@@ -27,6 +27,8 @@ export const FILES_PER_SCENARIO = 5;
 // One shared sidecar folder per batch, so the CSV folders hold only CSVs.
 export const SIDECAR_DIR = "meta";
 
+const round5 = (x) => Math.round(x * 1e5) / 1e5;
+
 /**
  * Generate one batch folder. Throws on any integrity violation (flag mismatch,
  * missing event window, filename collision, wrong-set variant) — a runner
@@ -34,7 +36,7 @@ export const SIDECAR_DIR = "meta";
  *
  * @param setKey           "anomalies" | "mundane"
  * @param durationSeconds  clip length for every scenario in the cell
- * @param errorLabel       a BOTSET_MANEUVER_ERROR_LEVELS label ("0pct" | "5pct" | "20pct")
+ * @param errorLabel       a BOTSET_MANEUVER_ERROR_LEVELS label ("0.0deg" | "0.01deg" | ... | "2.0deg")
  * @param outRoot          the results root that holds every botset_* directory
  * @returns {set, batch, dir, scenarios, files, ms}
  */
@@ -80,6 +82,14 @@ export function generateBotsetManeuverBatch({setKey, durationSeconds, errorLabel
                 throw new Error(`botsetManeuverBatch: ${v.kind}/${v.variant} carries a non-anomalous event`);
             }
         }
+        // The ladder promises the target stays in frame at every rung (the
+        // field widens with the amplitude, botsetErrors.js); a masked frame
+        // here means that promise broke and the rung would measure lost
+        // targets, not pointing error.
+        if (scenario.observation.outOfFrameCount) {
+            throw new Error(`botsetManeuverBatch: ${v.kind}/${v.variant} ${err.label} `
+                + `has ${scenario.observation.outOfFrameCount} out-of-frame frame(s)`);
+        }
 
         const out = writeInterchange(scenario, dir, {
             designIntent: `${set.dirName}-${v.kind}${v.variant ? `-${v.variant}` : ""}`,
@@ -91,16 +101,20 @@ export function generateBotsetManeuverBatch({setKey, durationSeconds, errorLabel
         }
         names.add(out.basename);
 
-        // BOTH the rung and the angle it resolved to. The rung is the axis a
-        // reader sweeps; the angle is what the sensor actually did, and it
-        // differs per variant because the field of view does.
-        const fovFullDeg = botsetManeuverFov(v);
+        // The rung, the field it was observed through (the framing field of
+        // botsetManeuverFov, or wider where the rung needs it) and what the
+        // operator model actually did, so a rung can be checked against its
+        // realization and against the fraction of the frame it occupied.
         manifest.push({set: setKey, kind: v.kind, variant: v.variant,
             anomalous: v.anomalous, basename: out.basename,
             scenarioId: scenario.scenarioId, profile,
             rangeM: v.rangeM, durationSeconds,
-            errorLevel: err.label, errorPctOfFov: err.pct,
-            fovFullDeg, errorDeg: err.degreesFor(fovFullDeg)});
+            errorLevel: err.label, errorDeg: err.deg,
+            fovFullDeg: spec.observation.fovFullDeg,
+            familyFovFullDeg: botsetManeuverFov(v),
+            realizedRmsDeg: round5(scenario.observation.realizedRmsDegAllFrames),
+            realizedMaxDeg: round5(scenario.observation.realizedMaxDeg),
+            outOfFrameFraction: scenario.observation.outOfFrameFraction});
     }
     if (names.size !== variants.length) {
         throw new Error(`botsetManeuverBatch: ${names.size} names for ${variants.length} variants`);

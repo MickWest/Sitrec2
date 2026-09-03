@@ -14,7 +14,7 @@
 
 import {botBenchPairingKeys} from "../../src/analysis/BotBenchIngest";
 
-const AN = "botset_anomalies/batch_20s/5pct";
+const AN = "botset_anomalies/batch_20s/0.05deg";
 
 describe("BOT sidecar pairing keys", () => {
 
@@ -41,18 +41,18 @@ describe("BOT sidecar pairing keys", () => {
     });
 
     test("two batches with identical basenames never share a key", () => {
-        const a = botBenchPairingKeys("botset_anomalies/batch_20s/5pct/meta/x.scenario.json");
-        const b = botBenchPairingKeys("botset_anomalies/batch_20s/20pct/meta/x.scenario.json");
-        const c = botBenchPairingKeys("botset_anomalies/batch_60s/5pct/meta/x.scenario.json");
-        const d = botBenchPairingKeys("botset_mundane/batch_20s/5pct/meta/x.scenario.json");
+        const a = botBenchPairingKeys("botset_anomalies/batch_20s/0.05deg/meta/x.scenario.json");
+        const b = botBenchPairingKeys("botset_anomalies/batch_20s/0.2deg/meta/x.scenario.json");
+        const c = botBenchPairingKeys("botset_anomalies/batch_60s/0.05deg/meta/x.scenario.json");
+        const d = botBenchPairingKeys("botset_mundane/batch_20s/0.05deg/meta/x.scenario.json");
         expect(new Set([a, b, c, d].map((k) => k.indexKey)).size).toBe(4);
     });
 
     test("a CSV never reaches a sibling batch through its altKey", () => {
-        // batch_20s/5pct/All/x -> altKey batch_20s/5pct/x, which is where only
-        // THIS batch's meta/ indexes. The 20pct meta indexes elsewhere.
-        const csv = botBenchPairingKeys("botset_anomalies/batch_20s/5pct/All/x.all.csv");
-        const otherRung = botBenchPairingKeys("botset_anomalies/batch_20s/20pct/meta/x.scenario.json");
+        // batch_20s/0.05deg/All/x -> altKey batch_20s/0.05deg/x, which is where only
+        // THIS batch's meta/ indexes. The 0.2deg meta indexes elsewhere.
+        const csv = botBenchPairingKeys("botset_anomalies/batch_20s/0.05deg/All/x.all.csv");
+        const otherRung = botBenchPairingKeys("botset_anomalies/batch_20s/0.2deg/meta/x.scenario.json");
         expect(csv.key).not.toBe(otherRung.indexKey);
         expect(csv.altKey).not.toBe(otherRung.indexKey);
     });
