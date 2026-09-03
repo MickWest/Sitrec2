@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+    DEFAULT_BATCH_IDLE_TIMEOUT_MS,
     DEFAULT_IDLE_TIMEOUT_MS,
     idleTimeoutIsExplicit,
     isAnchorBridge,
+    isBatchHost,
     parseIdleTimeout,
     rankTakeoverCandidates,
+    resolveIdleTimeout,
     shouldIdleExit,
     shouldReleasePort,
 } from "../lifecycle.js";
@@ -201,4 +204,46 @@ test("pre-v5 bridges, which report no pins, stay eligible for takeover", () => {
         busy: false, controlToken: "t", startedAt: 100, lastMcpActivityAt: 100,
     };
     assert.deepEqual(rankTakeoverCandidates([legacy], 10).map((s) => s.port), [9799]);
+});
+
+// ── Host policy ─────────────────────────────────────────────────────────────
+
+const codexAppServer = "/Users/x/.nvm/versions/node/v22.13.1/lib/node_modules/@openai/codex/node_modules/" +
+    "@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex app-server";
+const codexWrapper = "node /Users/x/.nvm/versions/node/v22.13.1/bin/codex app-server";
+const pluginBroker = "/Users/x/.nvm/versions/node/v22.13.1/bin/node /Users/x/.claude/plugins/cache/openai-codex/" +
+    "codex/1.0.4/scripts/app-server-broker.mjs serve --endpoint unix:/tmp/cxc-abc/broker.sock --cwd /Users/x/repo";
+
+test("a codex app-server with the plugin's broker above it is a batch host", () => {
+    // Real ancestry: bridge -> rust codex binary -> node codex wrapper -> detached broker (ppid 1).
+    assert.equal(isBatchHost([codexAppServer, codexWrapper, pluginBroker]), true);
+});
+
+test("an interactive codex, a claude session, or a broker as the direct parent are not batch hosts", () => {
+    const desktop = "/Applications/Codex.app/Contents/Resources/codex -c features.code_mode_host=true app-server";
+    assert.equal(isBatchHost([desktop, "/Applications/Codex.app/Contents/MacOS/Codex", "/sbin/launchd"]), false);
+    assert.equal(isBatchHost(["claude --remote-control", "-zsh", "/sbin/launchd"]), false);
+    // The broker must sit ABOVE a codex app-server; a lone ancestor, or none, proves nothing.
+    assert.equal(isBatchHost([pluginBroker]), false);
+    assert.equal(isBatchHost([codexAppServer]), false);
+    assert.equal(isBatchHost([]), false);
+    assert.equal(isBatchHost(null), false);
+});
+
+test("resolveIdleTimeout: paired never idles, an explicit value wins, a batch host gets the short literal default", () => {
+    assert.deepEqual(resolveIdleTimeout({envValue: undefined}),
+        {idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS, explicit: false});
+    assert.deepEqual(resolveIdleTimeout({envValue: undefined, paired: true, batchHost: true}),
+        {idleTimeoutMs: 0, explicit: false});
+    assert.deepEqual(resolveIdleTimeout({envValue: "0", batchHost: true}),
+        {idleTimeoutMs: 0, explicit: true});
+    assert.deepEqual(resolveIdleTimeout({envValue: "5000", batchHost: true}),
+        {idleTimeoutMs: 5000, explicit: true});
+    assert.deepEqual(resolveIdleTimeout({envValue: undefined, batchHost: true}),
+        {idleTimeoutMs: DEFAULT_BATCH_IDLE_TIMEOUT_MS, explicit: true});
+    // The batch default really does reap under a LIVE parent — the thing the plain default never does.
+    const quiet = {idleTimeoutMs: DEFAULT_BATCH_IDLE_TIMEOUT_MS, busy: false,
+        msSinceActivity: DEFAULT_BATCH_IDLE_TIMEOUT_MS, parentAlive: true};
+    assert.equal(shouldIdleExit({...quiet, explicit: true}), true);
+    assert.equal(shouldIdleExit({...quiet, explicit: false}), false);
 });

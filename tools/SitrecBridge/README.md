@@ -305,7 +305,7 @@ Most tools accept an optional `tab` parameter to target a specific Sitrec tab (b
 | `SITREC_BRIDGE_PORT` | `9780` (sandbox) / scan 9799→9780 (host fallback) | WebSocket server port |
 | `SITREC_BRIDGE_HOST` | `127.0.0.1` | Bind address (set to `0.0.0.0` inside Docker) |
 | `SITREC_BRIDGE_PAIRED_ORIGIN` | (unset) | If set (e.g. `http://localhost:8081`), this server is paired to that browser origin and the extension routes only matching tabs here. Unset = host fallback (catches any unmatched tab). |
-| `SITREC_BRIDGE_IDLE_TIMEOUT_MS` | `3600000` (one hour) | Exit after this long without an MCP message, unless Local Compute or an extension request is active. MCP hosts restart live bridges when needed. Set to `0` to disable. |
+| `SITREC_BRIDGE_IDLE_TIMEOUT_MS` | `3600000` (one hour) | Idle exit. Left unset, a quiet bridge exits only once its parent process has gone; a value you set is obeyed literally. Under a batch Codex thread the default is ten minutes, literal (see below). Never fires while a request or Local Compute job is in flight. Set to `0` to disable. |
 | `SITREC_LOCAL_COMPUTE_PYTHON` | `python3` | Python executable used for Local Compute installs and jobs |
 | `SITREC_LOCAL_COMPUTE_GRAY_CACHE_MB` | `1024` | Local Compute Motion Analysis grayscale-frame cache memory budget |
 | `SITREC_LOCAL_COMPUTE_GRAY_CACHE_LIMIT` | (unset) | Optional hard frame-count cap for the grayscale cache; overrides the memory-budget cap |
@@ -337,6 +337,23 @@ If every port is occupied when a bridge starts, it asks the least-useful peer (n
 *release* rather than exit, and falls back to asking it to shut down only for pre-v5 bridges that
 have no release endpoint. A bridge that still cannot get a port stays alive without one and retries
 later; it no longer exits, which used to leave the session with a permanently dead MCP server.
+
+### Bridges under batch Codex threads exit on their own
+
+The Codex plugin for Claude Code runs Codex through a detached broker that keeps one
+`codex app-server` per workspace, starts a fresh thread in it for every stop-time review and rescue
+task, and never unloads a thread. Codex starts every configured MCP server afresh for each thread, so
+with the bridge listed in `~/.codex/config.toml` every one of those threads left a bridge behind for
+the life of the app-server, which is days. Measured on a working machine: 99 bridges under two such
+app-servers, 4.6 GB resident, the oldest 29 hours old, and one bridge call in 2,421 of those threads
+over three months.
+
+A bridge whose parent is a `codex app-server` with that broker above it therefore treats itself as
+disposable: it exits after ten minutes without an MCP message even though its parent is alive
+(`SITREC_BRIDGE_IDLE_TIMEOUT_MS` still overrides). An interactive Codex — the desktop app, or
+`codex` in a terminal — has no broker above it and keeps the normal rule, because its threads do
+come back to the browser after long silences. `sitrec_diagnostics` reports the verdict as
+`batchHost`.
 
 ## Troubleshooting
 

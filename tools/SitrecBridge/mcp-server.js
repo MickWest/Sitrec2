@@ -40,10 +40,10 @@ import {createServer} from "http";
 import {
     DEFAULT_IDLE_RELEASE_MS,
     DEFAULT_UNUSED_RELEASE_MS,
-    idleTimeoutIsExplicit,
     isAnchorBridge,
-    parseIdleTimeout,
+    isBatchHost,
     rankTakeoverCandidates,
+    resolveIdleTimeout,
     shouldIdleExit,
     shouldReleasePort,
 } from "./lifecycle.js";
@@ -65,12 +65,14 @@ const CONTROL_TOKEN = randomBytes(24).toString("hex");
 // Origin this server is paired to (e.g., "http://localhost:8081"). Set by
 // `wt sandbox` for sandbox containers; null for host fallback servers.
 const PAIRED_ORIGIN = process.env.SITREC_BRIDGE_PAIRED_ORIGIN || null;
-const IDLE_TIMEOUT_MS = PAIRED_ORIGIN
-    ? 0
-    : parseIdleTimeout(process.env.SITREC_BRIDGE_IDLE_TIMEOUT_MS);
 // A timeout the caller ASKED for is obeyed literally; the default one only reaps a bridge whose
-// parent has actually gone. See shouldIdleExit for why the distinction matters.
-const IDLE_TIMEOUT_EXPLICIT = idleTimeoutIsExplicit(process.env.SITREC_BRIDGE_IDLE_TIMEOUT_MS);
+// parent has actually gone. See shouldIdleExit for why the distinction matters. Both are revisited
+// once our process ancestry is known (captureAncestry): under a batch Codex thread the parent
+// outlives the thread by days, so such a bridge gets a short literal timeout instead.
+let {idleTimeoutMs: IDLE_TIMEOUT_MS, explicit: IDLE_TIMEOUT_EXPLICIT} = resolveIdleTimeout({
+    envValue: process.env.SITREC_BRIDGE_IDLE_TIMEOUT_MS,
+    paired: !!PAIRED_ORIGIN,
+});
 
 // Host-fallback port scan range. When PAIRED_ORIGIN is null, we scan this range
 // descending so that sandbox pairings (which claim low ports 9780+N) are never
@@ -210,21 +212,54 @@ function isParentAlive() {
 // inside the bridge, but they have wildly different lifetimes — and knowing which one is holding a
 // port is the single fact that made the port-leak diagnosis possible. Captured once, best-effort.
 let PARENT_COMMAND = null;
+// Are we under a batch Codex thread (see isBatchHost)? Decides the idle policy.
+let BATCH_HOST = false;
 
-function captureParentCommand() {
+/**
+ * One `ps` over the whole table, then a walk up from our parent. The parent alone cannot tell a
+ * batch Codex thread from an interactive one — both are a `codex app-server` — so the grandparents
+ * are kept as well; the broker that marks a batch host sits two levels up.
+ */
+function captureAncestry() {
     if (process.platform === "win32" || !(process.ppid > 1)) return;
     try {
-        const ps = spawn("ps", ["-o", "command=", "-p", String(process.ppid)], {stdio: ["ignore", "pipe", "ignore"]});
+        const ps = spawn("ps", ["-ww", "-eo", "pid=,ppid=,command="], {stdio: ["ignore", "pipe", "ignore"]});
         let out = "";
         ps.stdout.on("data", (chunk) => { out += chunk.toString(); });
         ps.on("close", () => {
-            PARENT_COMMAND = out.trim().slice(0, 300) || null;
+            const rows = new Map();
+            for (const line of out.split("\n")) {
+                const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+                if (match) rows.set(Number(match[1]), {ppid: Number(match[2]), command: match[3].trim()});
+            }
+            const ancestry = [];
+            for (let pid = process.ppid, depth = 0; pid > 1 && depth < 8; depth++) {
+                const row = rows.get(pid);
+                if (!row) break;
+                ancestry.push(row.command);
+                pid = row.ppid;
+            }
+            PARENT_COMMAND = ancestry[0]?.slice(0, 300) || null;
             diag.setContext({parentCommand: PARENT_COMMAND});
+            applyHostPolicy(ancestry);
         });
         ps.on("error", () => {});
     } catch {
         // Never worth failing startup over.
     }
+}
+
+function applyHostPolicy(ancestry) {
+    if (!isBatchHost(ancestry)) return;
+    BATCH_HOST = true;
+    ({idleTimeoutMs: IDLE_TIMEOUT_MS, explicit: IDLE_TIMEOUT_EXPLICIT} = resolveIdleTimeout({
+        envValue: process.env.SITREC_BRIDGE_IDLE_TIMEOUT_MS,
+        paired: !!PAIRED_ORIGIN,
+        batchHost: true,
+    }));
+    diag.setContext({batchHost: true});
+    diag.record("host-policy", {batchHost: true, idleTimeoutMs: IDLE_TIMEOUT_MS});
+    log(`Hosted by a batch Codex thread; exiting after ${IDLE_TIMEOUT_MS}ms without MCP activity`);
 }
 
 setInterval(() => {
@@ -295,6 +330,7 @@ function startServer(port) {
                     pid: process.pid,
                     parentPid: process.ppid,
                     parentCommand: PARENT_COMMAND,
+                    batchHost: BATCH_HOST,
                     startedAt: STARTED_AT,
                     lastMcpActivityAt,
                     lastRelayAt,
@@ -1674,6 +1710,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         pid: process.pid,
                         parentPid: process.ppid,
                         parentCommand: PARENT_COMMAND,
+                        batchHost: BATCH_HOST,
                         cwd: SITREC_CWD,
                         boundPort,
                         bound: boundPort !== null,
@@ -1886,7 +1923,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 async function main() {
     diag.setContext({pid: process.pid, ppid: process.ppid, cwd: SITREC_CWD, paired: PAIRED_ORIGIN});
     diag.record("start", {protocolVersion: PROTOCOL_VERSION, node: process.version});
-    captureParentCommand();
+    captureAncestry();
 
     await start();
 
