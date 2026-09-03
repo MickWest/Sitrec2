@@ -287,8 +287,12 @@ jobs:
       # Runs before `npm ci` and Playwright so a credential is caught in seconds. The
       # smoke-test job gates the manifest job, so a failure here means the version and
       # latest tags are never created.
+      # Pinned to a tag that exists: this action publishes only v0.2.6, v0.3.0 and
+      # v0.3.1, and has no moving v0. An unresolvable action ref fails the job at
+      # "Set up job", before any step runs, so the whole smoke test is lost — which
+      # is what happened on 2.149.1.
       - name: Install trivy
-        uses: aquasecurity/setup-trivy@v0.2.3
+        uses: aquasecurity/setup-trivy@v0.3.1
         with:
           cache: true
 

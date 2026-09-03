@@ -9,6 +9,10 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.149.2 (2026-09-03)
+
+Version 2.149.1 was tagged, but no container image was ever built for it: a step added to the release pipeline in that same version asked for a version of an outside scanning tool that has never existed, and an unresolvable reference of that kind stops the whole check stage before any of it runs. No 2.149.1 image was published, so the public site stayed on 2.149.0. The reference is corrected here, and everything listed under 2.149.1 below arrives with this release.
+
 ## Version 2.149.1 (2026-09-03)
 
 ### Security

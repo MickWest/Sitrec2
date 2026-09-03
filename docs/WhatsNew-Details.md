@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.149.2 (2026-09-03)
+
+A release-infrastructure fix only — one line of `.github/workflows/docker.yml`, plus a comment. No shipped application code changes. (The 2.149.1 tag exists, on commit `b5b40ca3`, but its image was never built: `build-js` and both matrix `package` jobs succeeded, then `smoke-test` failed at *Set up job* with `Unable to resolve action aquasecurity/setup-trivy@v0.2.3, unable to find version v0.2.3`. The `manifest` job, which `needs: [package, smoke-test]`, was therefore skipped, so no `2.149.1` or `latest` multi-arch image was ever created and production stayed on 2.149.0. The GitHub Pages copy deploys from the tag in a separate workflow, which this failure did not touch. The 2.149.1 entries below describe the code of that tag, and all of it reaches production with this release.)
+
+### Bug Fixes
+
+- **Fixed the Docker Image workflow failing before any step ran, on an action reference added with the container security review** (working tree, `.github/workflows/docker.yml` only — the *Install trivy* step of the `smoke-test` job; no shipped or runtime code). 2.149.1's `919cba1c` pinned `aquasecurity/setup-trivy` to `@v0.2.3`, a tag that has never existed: that action publishes `v0.2.6`, `v0.3.0` and `v0.3.1`, and — unlike `anchore/sbom-action/download-syft@v0`, which was fine — it maintains no moving major-version tag, so there was nothing to resolve to. GitHub Actions resolves every `uses:` in a job before it runs any step, so an unresolvable reference fails the job at *Set up job*. That cost not merely the two new container-review steps but every pre-existing check in the same job: the *HTTP smoke tests*, the *PHP dependency smoke test (AWS SDK vendor bundled)*, the *Legacy port-80 back-compat smoke test* and the Playwright `docker-smoke` test. This is the edge worth remembering: a bad action reference is not a step failure but a job failure, and this job is the one that gates publication — `manifest` `needs: [package, smoke-test]`, so nothing was published at all. The step now uses `@v0.3.1`, which does have the `cache` input the step sets (default `'false'`), and carries a comment recording that this action has no moving `v0` and that an unresolvable reference kills the job at setup.
+
 ## Version 2.149.1 (2026-09-03)
 
 ### Security
