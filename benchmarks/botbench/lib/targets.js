@@ -330,15 +330,23 @@ export function generateTargetTruth(targetSpec, {site, n, fps, seed, windSeed, w
                 startAGL: p.startAGL, ascentRate: 0})), events: []};
         case "tethered-aerostat":
             return {target: mk(aerostatTrack({n, fps, seed, wind})), events: []};
+        // startAGL / altitudeAGL are passed through so a set can place these
+        // targets at a chosen height. Absent, each track function keeps the
+        // height it always had (bird 500 m, aircraft and anomalous 3000 m), so
+        // every existing spec hashes and generates exactly as before.
         case "bird":
-            return {target: mk(birdTrack({n, fps, seed, wind})), events: []};
+            return {target: mk(birdTrack({n, fps, seed, wind,
+                startAGL: p.startAGL})), events: []};
         case "aircraft-cruise":
-            return {target: mk(aircraftTrack({n, fps, wind, kind: "cruise"})), events: []};
+            return {target: mk(aircraftTrack({n, fps, wind, kind: "cruise",
+                altitudeAGL: p.altitudeAGL})), events: []};
         case "aircraft-turn":
-            return {target: mk(aircraftTrack({n, fps, wind, kind: "turn"})), events: []};
+            return {target: mk(aircraftTrack({n, fps, wind, kind: "turn",
+                altitudeAGL: p.altitudeAGL})), events: []};
         case "anomalous": {
             const event = anomalyEventFor(p.tupleId, p.anomalous);
-            const {positionENU, eventUsed} = anomalousTrack({n, fps, event});
+            const {positionENU, eventUsed} = anomalousTrack({n, fps, event,
+                altitudeAGL: p.altitudeAGL});
             const endSeconds = eventUsed.family === "impulse"
                 ? eventUsed.onsetSeconds + 1 / fps
                 : eventUsed.onsetSeconds + eventUsed.durationSeconds;

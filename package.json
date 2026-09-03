@@ -99,6 +99,7 @@
     "bench-bot-maneuvers": "npx jest benchmarks/botbench/botset-maneuvers.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-maneuvers-par": "node benchmarks/botbench/run-botset-maneuvers.mjs",
     "bench-bot-balloons": "npx jest benchmarks/botbench/botset-balloons.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-mq9": "npx jest benchmarks/botbench/botset-mq9.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-viz": "node benchmarks/botbench/vizBotBench.mjs",
     "bench-bot-real": "npx jest benchmarks/botbench/realtracks.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-tract": "npx jest benchmarks/botbench/tractability.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",

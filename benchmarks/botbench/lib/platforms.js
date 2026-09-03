@@ -88,6 +88,28 @@ export function generatePlatformPath(spec, n, times, fps, initialHorizontalRange
             break;
         }
 
+        case "orbit-ground": {
+            // Orbit the point where the initial sightline meets the GROUND, at
+            // a radius equal to the ground range. This is the surveillance
+            // pattern an endurance platform actually flies: it circles a place
+            // on the ground and stares at whatever is above it. The target
+            // sits somewhere ALONG that sightline, not at its far end, so the
+            // orbit centre is groundRangeM - R north of the sensor rather than
+            // at the target's own ground point (which is what orbit-point
+            // assumes). Giving the radius directly, instead of as a multiple of
+            // the target range, keeps the geometry readable: the radius is the
+            // ground range and nothing else.
+            const rg = spec.groundRangeM;
+            if (!(rg > 0)) throw new Error("botbench: orbit-ground needs groundRangeM > 0");
+            if (!(rg >= R)) {
+                throw new Error(`botbench: orbit-ground needs groundRangeM (${rg}) >= `
+                    + `initialHorizontalRangeM (${R}) — the target lies between the `
+                    + `sensor and the ground intercept, never beyond it`);
+            }
+            actualMinRadius = fillOrbit(pos, n, times, 0, -R + rg, rg, 0, -R, z, v);
+            break;
+        }
+
         case "curve": {
             // Initial course perpendicular to LOS (east); constant bank toward
             // the target (left turn, toward north).
