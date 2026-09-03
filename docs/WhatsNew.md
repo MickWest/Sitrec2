@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.148.1 (2026-09-03)
+
+Version 2.148.0 was tagged but never reached the public site or the published container image: an automated check of the finished container was still looking for a piece of the page that 2.148.0 had deliberately moved into a separate file, so the release was stopped before deployment. The container itself was sound, and the GitHub Pages copy did publish 2.148.0. Everything listed under 2.148.0 below arrives with this release.
+
+### Bug Fixes
+
+- Fixed SitrecBridge (1.0.63) leaving a bridge process running for every review or rescue task run through the Codex plugin for Claude Code, until dozens had piled up; such a bridge now exits on its own after ten minutes of inactivity. Interactive Codex and Claude Code sessions keep the previous rule, where a quiet bridge stays as long as its session does.
+
 ## Version 2.148.0 (2026-09-02)
 
 ### New Features

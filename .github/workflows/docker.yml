@@ -201,10 +201,19 @@ jobs:
         run: |
           BODY=$(curl -sf http://localhost:8080/)
 
-          # Verify entrypoint injected runtime env vars into HTML
-          echo "$BODY" | grep -q '__SITREC_ENV__' \
-            && echo "✓ Runtime env injection present" \
-            || { echo "✗ Missing __SITREC_ENV__ in HTML"; exit 1; }
+          # Verify the entrypoint referenced the runtime settings script from the
+          # HTML. The settings are an external file (sitrec-runtime-env.js) rather
+          # than an inline script, so a script-src 'self' policy allows them.
+          echo "$BODY" | grep -q '<script src="sitrec-runtime-env.js?v=' \
+            && echo "✓ Runtime env script referenced" \
+            || { echo "✗ Missing sitrec-runtime-env.js reference in HTML"; exit 1; }
+
+          # Verify that file is served and defines the settings object
+          ENV_JS=$(curl -sf http://localhost:8080/sitrec-runtime-env.js) \
+            || { echo "✗ sitrec-runtime-env.js not served"; exit 1; }
+          echo "$ENV_JS" | grep -q '^window.__SITREC_ENV__={' \
+            && echo "✓ Runtime env file defines window.__SITREC_ENV__" \
+            || { echo "✗ sitrec-runtime-env.js does not define window.__SITREC_ENV__"; exit 1; }
 
           # Verify webpack output (script bundles present)
           echo "$BODY" | grep -q '<script' \
