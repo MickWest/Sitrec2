@@ -31,6 +31,8 @@ resource "aws_kms_alias" "registry" {
 resource "aws_ecr_repository" "sitrec" {
   name                 = var.name
   image_tag_mutability = "IMMUTABLE"
+  # Only a rehearsal may lose its images to destroy (see var.allow_destroy).
+  force_delete = var.allow_destroy
 
   image_scanning_configuration {
     scan_on_push = true
@@ -43,7 +45,16 @@ resource "aws_ecr_repository" "sitrec" {
 }
 
 locals {
+  # The registry hostname the task pulls from. Not repository_url: with FIPS
+  # endpoints on, the provider reports the repository under the registry's
+  # FIPS hostname, and the registry interface endpoint in network.tf resolves
+  # only the standard hostname (the FIPS one is a separate endpoint service,
+  # and not every partition offers it). The task has no route out, so a pull
+  # from any hostname the endpoint does not serve fails. The push from outside
+  # can use either; ecr_repository_url is what the provider reports.
+  registry_host = "${aws_ecr_repository.sitrec.registry_id}.dkr.ecr.${local.region}.${data.aws_partition.current.dns_suffix}"
+
   # A bare digest is resolved against the repository created here; a full
   # reference is used as given.
-  image = startswith(var.image, "sha256:") ? "${aws_ecr_repository.sitrec.repository_url}@${var.image}" : var.image
+  image = startswith(var.image, "sha256:") ? "${local.registry_host}/${aws_ecr_repository.sitrec.name}@${var.image}" : var.image
 }

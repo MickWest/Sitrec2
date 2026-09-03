@@ -94,9 +94,9 @@ variable "ssl_policy" {
 }
 
 variable "csp" {
-  description = "Content-Security-Policy response header the balancer inserts on every response."
+  description = "Content-Security-Policy response header the balancer inserts on every response. The default is the tightest policy the application runs under: scripts only from the site (the entrypoint writes runtime settings to a file, never inline) plus WebAssembly for the video and tracking code; styles from the site plus inline, because the UI library injects its stylesheet as a style element; workers, media and images from the site or blob URLs."
   type        = string
-  default     = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+  default     = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 }
 
 # ---------------------------------------------------------------------------
@@ -108,8 +108,14 @@ variable "trust_store_bundle_path" {
   type        = string
 }
 
+variable "allow_destroy" {
+  description = "Let `terraform destroy` empty the buckets and the image repository first. Off, a bucket holding objects or a repository holding images refuses deletion and the destroy stops there, which is the right behaviour for a real deployment. On, for a rehearsal that is torn down after every session."
+  type        = bool
+  default     = false
+}
+
 variable "crl_path" {
-  description = "Local path to a PEM certificate revocation list to attach to the trust store. Empty for none."
+  description = "Local path to a PEM file of certificate revocation lists (one per issuing authority, concatenated as a proxy would want them). Each CRL in it is attached to the trust store separately. Empty for none."
   type        = string
   default     = ""
 }

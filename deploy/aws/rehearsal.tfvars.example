@@ -27,6 +27,10 @@ crl_path                = "../../.certs/rehearsal/crl.pem"
 enable_exec             = true
 enable_bedrock_endpoint = false
 
+# A rehearsal is torn down after every session: let destroy empty the buckets and the
+# image repository. Never true for a real deployment.
+allow_destroy = true
+
 # admin_role_arn = "arn:<partition>:iam::<account>:role/<admin-role>"
 
 log_retention_days = 30

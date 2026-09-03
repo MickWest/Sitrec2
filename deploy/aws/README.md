@@ -65,6 +65,18 @@ server-side reads, chat and telemetry off, the default data sources off,
 `SITREC_CUSTOM_*_INTERNAL_*` settings there. Never a secret: the environment
 is in the task definition and in state.
 
+`csp` is the `Content-Security-Policy` the balancer inserts. Its default is the
+tightest policy the application runs under (no inline scripts, no `eval`;
+inline styles and WebAssembly allowed, because the control-panel library and
+the image decoders need them). A wrong policy shows up as an unstyled page;
+see the installation guide, section 8.1, for what each allowance is for.
+
+`allow_destroy` (default `false`) lets `terraform destroy` empty the buckets and
+the image repository first. Leave it off for a real deployment, where a bucket
+holding data must refuse deletion; a rehearsal that is torn down after every
+session sets it to `true` (apply it before the destroy, since the flag lives in
+the state the destroy reads).
+
 ## The two variable files
 
 - `rehearsal.tfvars.example`: an ordinary commercial region, `fips = true`,
@@ -91,6 +103,13 @@ terraform apply -var-file=rehearsal.tfvars -target=aws_ecr_repository.sitrec
 # build and push the derived image to the ecr_repository_url output
 terraform apply -var-file=rehearsal.tfvars
 ```
+
+Build the image for the architecture the task definition declares (`X86_64`): on an ARM
+machine pass `--platform linux/amd64`, or the task stops with "exec format error". With
+FIPS endpoints on, `ecr_repository_url` names the registry by its FIPS hostname; push to
+that, but note the task definition pulls by the registry's standard hostname, because that
+is the name the registry interface endpoint resolves inside the network. The digest is the
+same under both names.
 
 `terraform validate` needs no credentials (`terraform init -backend=false`
 first). A plan against the target partition can be checked with

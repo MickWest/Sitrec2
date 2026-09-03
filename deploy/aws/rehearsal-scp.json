@@ -1,0 +1,33 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ServicesAnIsolatedDeploymentNeverUses",
+      "Effect": "Deny",
+      "Action": [
+        "cloudfront:*",
+        "apprunner:*",
+        "amplify:*",
+        "lightsail:*",
+        "elasticbeanstalk:*",
+        "ec2:CreateNatGateway"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "NoAccountOrBillingChangesFromInside",
+      "Effect": "Deny",
+      "Action": [
+        "organizations:*",
+        "account:*",
+        "aws-portal:*",
+        "billing:*",
+        "payments:*",
+        "sso:*",
+        "iam:CreateAccountAlias",
+        "iam:DeleteAccountAlias"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

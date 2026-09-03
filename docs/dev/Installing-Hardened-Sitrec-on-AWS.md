@@ -420,8 +420,12 @@ terraform apply plan.tfplan
    aws elbv2 create-trust-store --name sitrec-clients \
        --ca-certificates-bundle-s3-bucket <trust-bucket> --ca-certificates-bundle-s3-key ca-bundle.pem
    aws elbv2 add-trust-store-revocations --trust-store-arn <trust-store-arn> \
-       --revocation-contents "S3Bucket=<trust-bucket>,S3Key=crl.pem,RevocationType=CRL"
+       --revocation-contents "S3Bucket=<trust-bucket>,S3Key=crl-root.pem,RevocationType=CRL"
+   aws elbv2 add-trust-store-revocations --trust-store-arn <trust-store-arn> \
+       --revocation-contents "S3Bucket=<trust-bucket>,S3Key=crl-intermediate.pem,RevocationType=CRL"
    ```
+
+   One CRL per file, one call per file (section 8.2).
 
 4. Application Load Balancer, target group (HTTP, port 8080, target type `ip`, health check
    path `/`, which returns the page to anyone; never use `sitrecServer/info.php`, it is
@@ -443,6 +447,25 @@ terraform apply plan.tfplan
    Elastic Load Balancing guide for the exact attribute keys. Set the balancer's
    `X-Forwarded-For` processing to `remove` (the application never trusts it, and the
    trusted-proxy check uses the connection address).
+
+   The tightest policy the application runs under, and the module's default (`csp`):
+
+   ```
+   default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline';
+   img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:;
+   worker-src 'self' blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'self';
+   form-action 'self'; frame-ancestors 'none'
+   ```
+
+   Each allowance is there for a reason. `'wasm-unsafe-eval'` is the WebAssembly the image
+   decoders and the tracking code load; without it those features fail silently. Styles
+   need `'unsafe-inline'` because the control-panel library injects its stylesheet as a
+   `<style>` element, and a policy without it renders the whole page unstyled (serif text,
+   stacked buttons, no 3D view), which is the first thing you will see if the policy is
+   wrong. Scripts need no inline allowance: the container entrypoint writes the runtime
+   settings to `sitrec-runtime-env.js` beside the page and references it, rather than
+   injecting an inline script. `'unsafe-eval'` is deliberately absent: the application
+   compiles no code at runtime, so nothing needs it.
 6. Access logs and connection logs to the logs bucket. The connection log records every
    handshake with the certificate serial and the failure reason, which is your
    authentication audit at the edge. Both need the logs bucket set up as in section 6.1
@@ -468,7 +491,11 @@ The balancer is strict: PEM only, each certificate between `-----BEGIN CERTIFICA
 and `-----END CERTIFICATE-----`, comments only on lines starting with `#` and containing no
 `-`, and **no blank lines**. Root plus intermediates, in one file. Revocation lists must be
 PEM. Chain depth is limited to four. Check the limits page for the bundle and list sizes
-before uploading a large authority's material.
+before uploading a large authority's material. A revocation file holds exactly one CRL:
+the balancer rejects a concatenated bundle with "More than one CRL objects in the
+revocation file". An authority with a root and an intermediate therefore needs two
+revocation entries, one file each. The module splits a concatenated `crl_path` bundle into
+one object and one entry per CRL, so the same bundle a proxy would use is accepted.
 
 ### 8.3 Trust store and user map inside the container
 
@@ -483,6 +510,20 @@ COPY trust/users.json    /etc/sitrec/trust/users.json
 
 Push it as a new tag. Changing a user is a rebuild of this thin layer; the base image is
 unchanged.
+
+Build for the architecture the task definition declares (`X86_64` in the module). A
+machine with an ARM processor, such as an Apple-silicon Mac, builds an ARM image by
+default, and a task started from one stops at once with an "exec format error". Pass
+`--platform linux/amd64` to both the base build and the derived build, and check with
+`docker image inspect <image> --format '{{.Architecture}}'` before pushing.
+
+Reference the image in the task definition by the registry's standard hostname,
+`<account>.dkr.ecr.<region>.<dns suffix>`, not its FIPS hostname. The registry interface
+endpoint (section 8.1) resolves only the standard name inside the network, the FIPS name is
+a separate endpoint service that not every partition offers, and a task with no route out
+cannot pull from a name the endpoint does not serve. The failure looks like a pull timeout
+followed by the service's deployment circuit breaker rolling back. Pushing from outside can
+use either hostname; the digest is the same.
 
 ### 8.4 Task definition
 
@@ -625,16 +666,16 @@ authority issued; `curl` presents it with `--cert alice.p12:<password> --cert-ty
 
 | # | Check | Command | Pass when |
 |---|---|---|---|
-| 1 | No certificate, no service | `curl -sS https://<host>/` | the TLS handshake fails; nothing is served |
+| 1 | No certificate, no service | `curl -sS https://<host>/` | the TLS handshake fails (curl exit 35 or 56, HTTP code 000); nothing is served; the connection log shows `Failed:UnmappedConnectionError` |
 | 2 | Valid certificate, identity mapped | `curl -sS --cert alice.p12:PW --cert-type P12 "https://<host>/sitrecServer/rehost.php?getuser=1"` | JSON with the mapped `userID` and groups, never 0, never the administrator group unless mapped |
-| 3 | Revoked certificate | same, with a revoked certificate | handshake refused; the connection log shows the reason |
-| 4 | Wrong certificate type | same, with a signature-only certificate | either the handshake is refused (a proxy that checks the client-authentication purpose, as nginx does) or `userID` 0 with container log reason `eku_missing`; never a login |
+| 3 | Revoked certificate | same, with a revoked certificate | handshake refused (curl reports "connection reset by peer"); the connection log shows `Failed:ClientCertCrlHit` with the certificate's serial |
+| 4 | Wrong certificate type | same, with a signature-only certificate | either the handshake is refused (the balancer and nginx both check the client-authentication purpose; the connection log shows `Failed:ClientCertPurposeInvalid`) or `userID` 0 with container log reason `eku_missing`; never a login |
 | 5 | Header forgery | valid certificate plus `-H 'X-Amzn-Mtls-Clientcert-Leaf: <another valid user's PEM, URL-encoded>'` | **never** the header's identity. Two outcomes pass: the handshake's identity (the balancer replaced the client's header), or `userID` 0 with reason `multiple_certificates` in the container log (the balancer appended its header to the client's, and the application refused to choose). The second outcome is safe but means a client can lock itself out by sending the header; rename the header at the balancer (section 8.1) to close that too |
 | 6 | Inside the network, not the balancer | from a shell in the VPC: `curl -H 'X-Amzn-Mtls-Clientcert-Leaf: …' http://<task-ip>:8080/sitrecServer/rehost.php?getuser=1` | connection refused by the security group; if reachable, `userID` 0 with reason `untrusted_proxy` |
 | 7 | Loopback is not administrator | `aws ecs execute-command --cluster sitrec --task <task-id> --container sitrec --interactive --command "curl -s localhost:8080/sitrecServer/rehost.php?getuser=1"` (needs the exec enablement from section 8.4) | `userID` 0 |
 | 8 | Configuration endpoint | `curl … "https://<host>/sitrecServer/config_paths.php?FETCH_CONFIG"` | `APP` begins `https://<host>/` |
 | 9 | Save and read back | in the browser, save a sitch with a video; then `aws s3api head-object` on the key | object present with `ServerSideEncryption: aws:kms`; anonymous `curl` of the object's URL returns 403; playback in the app works (through `s3-proxy.php`) |
-| 10 | FIPS endpoints in use | the trail's S3 data events for the data bucket (section 8.1, item 7) | `s3-fips.` in the endpoint field of every event from the task role |
+| 10 | FIPS endpoints in use | the trail's S3 data events for the data bucket (section 8.1, item 7), delivered to the logs bucket within about fifteen minutes | in every event whose identity is the task role, `requestParameters.Host` ends in `s3-fips.<region>.<dns suffix>`, `tlsDetails.tlsVersion` is TLS 1.3, and `vpcEndpointId` is the gateway endpoint's id (so the FIPS hostname is reached through the endpoint, not the internet) |
 | 11 | No route out | `aws ecs execute-command … --command "curl -m 5 https://example.com"` | fails; the VPC flow logs (section 8.1, item 7) show only endpoint traffic |
 | 12 | No foreign origin from the page | browser developer tools, network panel, load a sitch, open terrain, save | every request is to `<host>` |
 | 13 | Response headers | `curl -sI --cert … https://<host>/` | `strict-transport-security`, `x-frame-options`, `content-security-policy` present; no `server: awselb` |
@@ -671,7 +712,10 @@ resource types an isolated deployment never uses, and before an apply it checks 
 every service against a snapshot of what the target region offers, fetched from AWS's
 public infrastructure parameters with `deploy/aws/lint/refresh-services.mjs` (this needs a
 credential with `ssm:GetParametersByPath` in a commercial region; snapshots are never
-committed). The constraints, then:
+committed). The plan's values are checked against the plan's own partition and region,
+read from its `aws_partition` and `aws_region` data sources, so a plan made in the
+rehearsal account is a valid input: a hard-coded partition or region shows up as a value
+that does not match the account the plan was made in. The constraints, then:
 
 - Set `AWS_USE_FIPS_ENDPOINT=true` and `S3_USE_FIPS=true`; commercial US regions have FIPS
   endpoints too.

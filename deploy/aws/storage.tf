@@ -84,6 +84,9 @@ resource "aws_s3_bucket" "this" {
 
   bucket = each.value
 
+  # Only a rehearsal may be emptied by destroy (see var.allow_destroy).
+  force_destroy = var.allow_destroy
+
   tags = { Name = each.value }
 }
 
@@ -385,13 +388,21 @@ resource "aws_s3_object" "ca_bundle" {
   depends_on = [aws_s3_bucket_versioning.this]
 }
 
+# The balancer accepts exactly one CRL per revocation file ("More than one CRL
+# objects in the revocation file" otherwise), while a proxy such as nginx wants
+# one concatenated bundle with a CRL per issuing authority. The operator supplies
+# the bundle; each CRL in it becomes its own object and its own revocation entry.
+locals {
+  crls = var.crl_path != "" ? regexall("-----BEGIN X509 CRL-----[\\s\\S]*?-----END X509 CRL-----", file(var.crl_path)) : []
+}
+
 resource "aws_s3_object" "crl" {
-  count = var.crl_path != "" ? 1 : 0
+  count = length(local.crls)
 
   bucket                 = aws_s3_bucket.this["truststore"].id
-  key                    = "crl.pem"
-  source                 = var.crl_path
-  source_hash            = filemd5(var.crl_path)
+  key                    = "crl-${count.index}.pem"
+  content                = "${local.crls[count.index]}\n"
+  source_hash            = md5(local.crls[count.index])
   content_type           = "application/x-pem-file"
   server_side_encryption = "aws:kms"
   kms_key_id             = aws_kms_key.storage.arn

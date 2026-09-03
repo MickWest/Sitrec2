@@ -31,6 +31,9 @@ crl_path                = "<path to crl.pem, or empty>"
 enable_exec             = false
 enable_bedrock_endpoint = false
 
+# Off: a bucket holding data or a repository holding images must refuse destroy.
+allow_destroy = false
+
 # A role that may reach data bucket objects from outside the VPC endpoint.
 admin_role_arn = "<role ARN, or empty>"
 

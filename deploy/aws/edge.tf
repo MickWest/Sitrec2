@@ -77,13 +77,14 @@ resource "aws_lb_trust_store" "clients" {
   depends_on = [aws_s3_bucket_policy.truststore]
 }
 
+# One entry per CRL in the bundle (see the crl objects in storage.tf).
 resource "aws_lb_trust_store_revocation" "crl" {
-  count = var.crl_path != "" ? 1 : 0
+  count = length(local.crls)
 
   trust_store_arn               = aws_lb_trust_store.clients.arn
-  revocations_s3_bucket         = aws_s3_object.crl[0].bucket
-  revocations_s3_key            = aws_s3_object.crl[0].key
-  revocations_s3_object_version = aws_s3_object.crl[0].version_id
+  revocations_s3_bucket         = aws_s3_object.crl[count.index].bucket
+  revocations_s3_key            = aws_s3_object.crl[count.index].key
+  revocations_s3_object_version = aws_s3_object.crl[count.index].version_id
 }
 
 # ---------------------------------------------------------------------------
