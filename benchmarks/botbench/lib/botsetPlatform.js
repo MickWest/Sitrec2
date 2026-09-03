@@ -1,4 +1,4 @@
-// botsetMq9.js — an endurance surveillance platform staring down a fixed
+// botsetPlatform.js — an endurance surveillance platform staring down a fixed
 // sightline, with the object at four DEPTHS along that sightline.
 //
 // WHY THIS FAMILY EXISTS. Every other botset varies the target's range by
@@ -27,8 +27,8 @@
 //
 // TWO SETS, ONE PER SENSOR PATH:
 //
-//   botset_mq9_orbit      orbits the ground intercept at radius G
-//   botset_mq9_straight   flies straight past, perpendicular to the sightline
+//   botset_platform_orbit      orbits the ground intercept at radius G
+//   botset_platform_straight   flies straight past, perpendicular to the sightline
 //
 // The straight pass is NOT merely a weaker-parallax control. For a target in
 // constant-velocity motion, an observer also in constant-velocity motion cannot
@@ -42,7 +42,7 @@
 // structurally incapable", which an aperture number alone cannot do.
 //
 // Structure of each set:
-//   duration  90 s (pinned)               -> results/botset_mq9_<path>/batch_90s/
+//   duration  90 s (pinned)               -> results/botset_platform_<path>/batch_90s/
 //   error     0.0 to 2.0 deg, nine rungs   ->   <E>deg/
 //   cell x object   16 x 8 = 128 rows      ->     Input/ Truth/ All/ meta/
 //
@@ -58,11 +58,11 @@ const FT_M = 0.3048;
 // 20000 ft above terrain. The site is central-valley, whose ground is 27.6 m
 // MSL, so this is 6124 m MSL — the distinction is below the noise of anything
 // the family measures, which is why a flat inland site was chosen for it.
-export const MQ9_PLATFORM_ALT_AGL_M = 20000 * FT_M;    // 6096 m
-export const MQ9_PLATFORM_SPEED_MS = 87;               // ~170 kt, endurance cruise
+export const PLATFORM_ALT_AGL_M = 20000 * FT_M;    // 6096 m
+export const PLATFORM_SPEED_MS = 87;               // ~170 kt, endurance cruise
 
-export const MQ9_DURATION_SECONDS = 90;
-export const MQ9_FPS = 10;
+export const PLATFORM_DURATION_SECONDS = 90;
+export const PLATFORM_FPS = 10;
 
 // ONE field of view for the whole family, and it must NOT be sized per
 // scenario. angularSize.js frames the maneuver sets from the target's true
@@ -71,30 +71,30 @@ export const MQ9_FPS = 10;
 // the consumer the depth f directly and dissolve the one thing this family
 // asks. A fixed field leaks nothing. 1.5 deg is a real narrow tracking field
 // and it keeps a 3 m object resolved out to 73 km, past the farthest cell.
-export const MQ9_FOV_FULL_DEG = 1.5;
+export const PLATFORM_FOV_FULL_DEG = 1.5;
 
-export const MQ9_ERROR_LEVELS = BOTSET_ERROR_LEVELS;
+export const PLATFORM_ERROR_LEVELS = BOTSET_ERROR_LEVELS;
 
 // Deliberately not 801 (maneuvers) or 802 (balloons): a shared seed across
 // families would correlate their wind and target draws, and a cross-family
 // comparison would quietly be comparing one draw with itself.
-export const MQ9_SEED = 803;
+export const PLATFORM_SEED = 803;
 
-export const MQ9_SETS = [
-    {key: "orbit", dirName: "botset_mq9_orbit", tag: "orbitground",
+export const PLATFORM_SETS = [
+    {key: "orbit", dirName: "botset_platform_orbit", tag: "orbitground",
         blurb: "orbits the sightline's ground intercept at radius G"},
-    {key: "straight", dirName: "botset_mq9_straight", tag: "straight",
+    {key: "straight", dirName: "botset_platform_straight", tag: "straight",
         blurb: "flies straight past, perpendicular to the sightline"},
 ];
 
-export function mq9Set(key) {
-    const s = MQ9_SETS.find((x) => x.key === key);
-    if (!s) throw new Error(`botsetMq9: unknown set "${key}"`);
+export function platformSet(key) {
+    const s = PLATFORM_SETS.find((x) => x.key === key);
+    if (!s) throw new Error(`botsetPlatform: unknown set "${key}"`);
     return s;
 }
 
-export const MQ9_GROUND_RANGES_KM = [5, 10, 20, 40];
-export const MQ9_DEPTH_FRACTIONS = [0.25, 0.50, 0.75, 0.98];
+export const PLATFORM_GROUND_RANGES_KM = [5, 10, 20, 40];
+export const PLATFORM_DEPTH_FRACTIONS = [0.25, 0.50, 0.75, 0.98];
 
 /**
  * The 16 geometry cells. Everything here is derived from (G, f) and the
@@ -105,13 +105,13 @@ export const MQ9_DEPTH_FRACTIONS = [0.25, 0.50, 0.75, 0.98];
  *   objectAltAGL     H(1-f) — depends on f ALONE, never on G
  *   objectHorizM     f x G — what the generator takes as the horizontal range
  */
-export const MQ9_CELLS = [];
-for (const gKm of MQ9_GROUND_RANGES_KM) {
+export const PLATFORM_CELLS = [];
+for (const gKm of PLATFORM_GROUND_RANGES_KM) {
     const G = gKm * 1000;
-    const H = MQ9_PLATFORM_ALT_AGL_M;
+    const H = PLATFORM_ALT_AGL_M;
     const slantToGroundM = Math.hypot(G, H);
-    for (const f of MQ9_DEPTH_FRACTIONS) {
-        MQ9_CELLS.push({
+    for (const f of PLATFORM_DEPTH_FRACTIONS) {
+        PLATFORM_CELLS.push({
             gKm, groundRangeM: G, f,
             depthPct: Math.round(f * 100),
             slantToGroundM,
@@ -138,7 +138,7 @@ for (const gKm of MQ9_GROUND_RANGES_KM) {
  * altitude from startAGL — an object placed by altitudeAGL alone would be
  * advected by the wind at 500 m rather than at its own height.
  */
-export const MQ9_OBJECTS = [
+export const PLATFORM_OBJECTS = [
     {tag: "party-neutral", kind: "party-neutral", family: "balloon",
         wind: "fixed", diameterM: 1.0, altKey: "startAGL",
         note: "level buoyant drift — the everyday mundane answer"},
@@ -159,7 +159,7 @@ export const MQ9_OBJECTS = [
         wind: "fixed", diameterM: 0.3, altKey: "startAGL",
         note: "small and erratic; below one pixel in the far cells by design"},
     // MATCHED PAIR. `pairKey` links the two members and is what makes the
-    // comparison controlled — see mq9Spec for how it reaches the generator.
+    // comparison controlled — see platformSpec for how it reaches the generator.
     {tag: "anom-impulse-east", kind: "anomalous", family: "anomalous",
         wind: "zero", diameterM: 5.0, altKey: "altitudeAGL",
         pairKey: "impulse-east",
@@ -173,14 +173,14 @@ export const MQ9_OBJECTS = [
 ];
 
 /** The 128 rows of one rung folder: every object at every geometry cell. */
-export const MQ9_VARIANTS = [];
-for (const cell of MQ9_CELLS) {
-    for (const obj of MQ9_OBJECTS) MQ9_VARIANTS.push({cell, obj});
+export const PLATFORM_VARIANTS = [];
+for (const cell of PLATFORM_CELLS) {
+    for (const obj of PLATFORM_OBJECTS) PLATFORM_VARIANTS.push({cell, obj});
 }
 
 /** The platform section for one set at one cell. */
-export function mq9Platform(set, cell) {
-    const base = {speedMS: MQ9_PLATFORM_SPEED_MS, altitudeAGL: MQ9_PLATFORM_ALT_AGL_M};
+export function platformPathFor(set, cell) {
+    const base = {speedMS: PLATFORM_SPEED_MS, altitudeAGL: PLATFORM_ALT_AGL_M};
     if (set.key === "orbit") {
         return {kind: "orbit-ground", groundRangeM: cell.groundRangeM, ...base};
     }
@@ -209,36 +209,36 @@ export function mq9Platform(set, cell) {
  * the bench does this: blocks.js ANOMALY-CONTROL, the interchange pairs, and
  * realScenarioSet's gofast-pair / hover-pair.
  */
-function mq9PairIds(obj, set, cell, errorLevel) {
+function platformPairIds(obj, set, cell, errorLevel) {
     if (!obj.pairKey) return {pairId: null, sharedSeedKey: null};
-    const pairId = `mq9-${obj.pairKey}-${set.key}-g${cell.gKm}km-f${cell.depthPct}`;
+    const pairId = `platform-${obj.pairKey}-${set.key}-g${cell.gKm}km-f${cell.depthPct}`;
     return {pairId, sharedSeedKey: `${pairId}-${errorLevel.label}`};
 }
 
-export function mq9Spec(variant, set, errorLevel) {
+export function platformSpec(variant, set, errorLevel) {
     const {cell, obj} = variant;
     const alt = Math.round(cell.objectAltAGL);
-    const {pairId, sharedSeedKey} = mq9PairIds(obj, set, cell, errorLevel);
-    const observation = errorLevel.observation(MQ9_FOV_FULL_DEG);
+    const {pairId, sharedSeedKey} = platformPairIds(obj, set, cell, errorLevel);
+    const observation = errorLevel.observation(PLATFORM_FOV_FULL_DEG);
     return {
         // Added only for a paired row: an unconditional `pairId: null` would
         // put a new key in every unpaired object's canonical hash and move
         // truth that has no reason to move.
         ...(pairId ? {pairId} : {}),
         epochISO: "2026-06-15T20:00:00Z",   // daylight at the site
-        durationSeconds: MQ9_DURATION_SECONDS,
-        fps: MQ9_FPS,
+        durationSeconds: PLATFORM_DURATION_SECONDS,
+        fps: PLATFORM_FPS,
         // The generator places the sensor at [0, -R, altitudeAGL] and the
         // object's ground point at the origin, so R is the object's HORIZONTAL
         // range — f x G, never G itself. The ground intercept is a further
         // G(1-f) north, which is what the orbit centres on.
         initialHorizontalRangeM: Math.round(cell.objectHorizM),
         siteId: DEFAULT_SITE,
-        platform: mq9Platform(set, cell),
+        platform: platformPathFor(set, cell),
         target: {
             kind: obj.kind, family: obj.family, diameterM: obj.diameterM,
             // BOTH altitude keys, always: the track functions read one and the
-            // wind reference reads startAGL. See MQ9_OBJECTS.
+            // wind reference reads startAGL. See PLATFORM_OBJECTS.
             parameters: {startAGL: alt, altitudeAGL: alt, ...(obj.parameters ?? {})},
         },
         wind: {kind: obj.wind},

@@ -1,4 +1,4 @@
-// botsetMq9Batch.js — generate ONE mq9 batch folder (a sensor-path set x error
+// botsetPlatformBatch.js — generate ONE platform batch folder (a sensor-path set x
 // rung): all 128 geometry-cell x object rows, integrity checks, interchange
 // files and the folder manifest. Mirrors botsetBalloonBatch.js and
 // botsetManeuverBatch.js so the three families stay legible side by side, and
@@ -13,9 +13,9 @@ import {writeInterchange, scenarioBaseName} from "./exportInterchange";
 import {botsetBatchLabel} from "./botsetErrors";
 import {SENSOR_PIXELS} from "./angularSize";
 import {
-    MQ9_VARIANTS, MQ9_ERROR_LEVELS, MQ9_DURATION_SECONDS, MQ9_FOV_FULL_DEG,
-    MQ9_SEED, mq9Set, mq9Spec,
-} from "./botsetMq9";
+    PLATFORM_VARIANTS, PLATFORM_ERROR_LEVELS, PLATFORM_DURATION_SECONDS, PLATFORM_FOV_FULL_DEG,
+    PLATFORM_SEED, platformSet, platformSpec,
+} from "./botsetPlatform";
 
 export const FILES_PER_SCENARIO = 5;
 export const SIDECAR_DIR = "meta";
@@ -41,8 +41,8 @@ function angleBetween(u, v) {
  * both 5 km out), so the cell tag goes in immediately after the target, where a
  * directory listing sorts on it.
  */
-function mq9Basename(spec, cell) {
-    const parts = scenarioBaseName(spec, MQ9_SEED).split("_");
+function platformBasename(spec, cell) {
+    const parts = scenarioBaseName(spec, PLATFORM_SEED).split("_");
     return [parts[0], `g${cell.gKm}km-f${cell.depthPct}`, ...parts.slice(1)].join("_");
 }
 
@@ -51,26 +51,26 @@ function mq9Basename(spec, cell) {
  * treats any throw as a failed batch.
  *
  * @param setKey      "orbit" | "straight"
- * @param errorLabel  an MQ9_ERROR_LEVELS label ("0.0deg" ... "2.0deg")
+ * @param errorLabel  an PLATFORM_ERROR_LEVELS label ("0.0deg" ... "2.0deg")
  * @param outRoot     the results root that holds every botset_* directory
  * @returns {set, batch, dir, scenarios, files, ms}
  */
-export function generateBotsetMq9Batch({setKey, errorLabel, outRoot}) {
-    const set = mq9Set(setKey);
-    const err = MQ9_ERROR_LEVELS.find((e) => e.label === errorLabel);
-    if (!err) throw new Error(`botsetMq9Batch: unknown error level "${errorLabel}"`);
+export function generateBotsetPlatformBatch({setKey, errorLabel, outRoot}) {
+    const set = platformSet(setKey);
+    const err = PLATFORM_ERROR_LEVELS.find((e) => e.label === errorLabel);
+    if (!err) throw new Error(`botsetPlatformBatch: unknown error level "${errorLabel}"`);
     const dir = path.join(outRoot, set.dirName,
-        botsetBatchLabel(MQ9_DURATION_SECONDS), err.label);
+        botsetBatchLabel(PLATFORM_DURATION_SECONDS), err.label);
 
     const t0 = Date.now();
     const manifest = [];
     const names = new Set();
 
-    for (const variant of MQ9_VARIANTS) {
+    for (const variant of PLATFORM_VARIANTS) {
         const {cell, obj} = variant;
         const where = `${obj.tag} g${cell.gKm}km-f${cell.depthPct} ${set.key} ${err.label}`;
-        const spec = mq9Spec(variant, set, err);
-        const scenario = generateScenario(spec, {scenarioSeed: MQ9_SEED});
+        const spec = platformSpec(variant, set, err);
+        const scenario = generateScenario(spec, {scenarioSeed: PLATFORM_SEED});
 
         const s0 = at(scenario.platform.positionENU, 0);
         const t0p = at(scenario.target.positionENU, 0);
@@ -89,12 +89,12 @@ export function generateBotsetMq9Batch({setKey, errorLabel, outRoot}) {
         const groundIntersectM = k * Math.hypot(los0[0], los0[1]);
         const gErr = Math.abs(groundIntersectM - cell.groundRangeM) / cell.groundRangeM;
         if (!(gErr < 0.01)) {
-            throw new Error(`botsetMq9Batch: ${where} sightline meets the ground at `
+            throw new Error(`botsetPlatformBatch: ${where} sightline meets the ground at `
                 + `${Math.round(groundIntersectM)} m, not the declared `
                 + `${cell.groundRangeM} m (${(gErr * 100).toFixed(2)}% off)`);
         }
         if (Math.abs(slantM - cell.objectSlantM) > 10) {
-            throw new Error(`botsetMq9Batch: ${where} object slant ${Math.round(slantM)} m `
+            throw new Error(`botsetPlatformBatch: ${where} object slant ${Math.round(slantM)} m `
                 + `!= declared ${Math.round(cell.objectSlantM)} m`);
         }
 
@@ -104,19 +104,19 @@ export function generateBotsetMq9Batch({setKey, errorLabel, outRoot}) {
         const wantAnomalous = obj.parameters?.anomalous === true;
         const gotAnomalous = scenario.events.some((e) => e.anomalous);
         if (gotAnomalous !== wantAnomalous) {
-            throw new Error(`botsetMq9Batch: ${where} anomalous=${gotAnomalous}, `
+            throw new Error(`botsetPlatformBatch: ${where} anomalous=${gotAnomalous}, `
                 + `declared ${wantAnomalous}`);
         }
         // The ladder promises the target stays in frame at every rung (the
         // field widens with the amplitude, botsetErrors.js); a masked frame
         // means the rung would measure lost targets, not pointing error.
         if (scenario.observation.outOfFrameCount) {
-            throw new Error(`botsetMq9Batch: ${where} has `
+            throw new Error(`botsetPlatformBatch: ${where} has `
                 + `${scenario.observation.outOfFrameCount} out-of-frame frame(s)`);
         }
 
-        const basename = mq9Basename(spec, cell);
-        if (names.has(basename)) throw new Error(`botsetMq9Batch: duplicate basename ${basename}`);
+        const basename = platformBasename(spec, cell);
+        if (names.has(basename)) throw new Error(`botsetPlatformBatch: duplicate basename ${basename}`);
         names.add(basename);
 
         const out = writeInterchange(scenario, dir, {
@@ -175,7 +175,7 @@ export function generateBotsetMq9Batch({setKey, errorLabel, outRoot}) {
             durationSeconds: spec.durationSeconds,
             errorLevel: err.label, errorDeg: err.deg,
             fovFullDeg: fov,
-            familyFovFullDeg: MQ9_FOV_FULL_DEG,
+            familyFovFullDeg: PLATFORM_FOV_FULL_DEG,
             angularDiameterDeg: round5(thetaDeg),
             sizeChannelLive: thetaDeg >= ifovDeg,
             realizedRmsDeg: round5(scenario.observation.realizedRmsDegAllFrames),
@@ -184,12 +184,12 @@ export function generateBotsetMq9Batch({setKey, errorLabel, outRoot}) {
         });
     }
 
-    if (names.size !== MQ9_VARIANTS.length) {
-        throw new Error(`botsetMq9Batch: ${names.size} names for ${MQ9_VARIANTS.length} variants`);
+    if (names.size !== PLATFORM_VARIANTS.length) {
+        throw new Error(`botsetPlatformBatch: ${names.size} names for ${PLATFORM_VARIANTS.length} variants`);
     }
 
     // A MATCHED PAIR MUST ACTUALLY BE MATCHED. Both members share one
-    // sharedSeedKey (botsetMq9.mq9PairIds), so at any rung they must draw the
+    // sharedSeedKey (botsetPlatform.platformPairIds), so at any rung they must draw the
     // IDENTICAL pointing-error realization — the whole value of the pair is
     // that the anomaly is the only difference between them. Checked rather
     // than trusted: a member that quietly lost its key would still generate,
@@ -202,32 +202,32 @@ export function generateBotsetMq9Batch({setKey, errorLabel, outRoot}) {
     }
     for (const [pairId, members] of pairs) {
         if (members.length !== 2) {
-            throw new Error(`botsetMq9Batch: pair ${pairId} has ${members.length} members, not 2`);
+            throw new Error(`botsetPlatformBatch: pair ${pairId} has ${members.length} members, not 2`);
         }
         const [a, b] = members;
         if (a.anomalous === b.anomalous) {
-            throw new Error(`botsetMq9Batch: pair ${pairId} members are both `
+            throw new Error(`botsetPlatformBatch: pair ${pairId} members are both `
                 + `anomalous=${a.anomalous}; a pair is one of each`);
         }
         if (a.realizedRmsDeg !== b.realizedRmsDeg || a.realizedMaxDeg !== b.realizedMaxDeg) {
-            throw new Error(`botsetMq9Batch: pair ${pairId} members drew DIFFERENT `
+            throw new Error(`botsetPlatformBatch: pair ${pairId} members drew DIFFERENT `
                 + `pointing error (rms ${a.realizedRmsDeg} vs ${b.realizedRmsDeg}, `
                 + `max ${a.realizedMaxDeg} vs ${b.realizedMaxDeg}) — the shared `
                 + `observation seed is not reaching both members`);
         }
     }
     if (pairs.size !== 16) {
-        throw new Error(`botsetMq9Batch: ${pairs.size} matched pairs, expected one per `
+        throw new Error(`botsetPlatformBatch: ${pairs.size} matched pairs, expected one per `
             + `geometry cell (16)`);
     }
     fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(manifest, null, 2));
 
     return {
         set: setKey,
-        batch: `${set.dirName}/${botsetBatchLabel(MQ9_DURATION_SECONDS)}/${err.label}`,
+        batch: `${set.dirName}/${botsetBatchLabel(PLATFORM_DURATION_SECONDS)}/${err.label}`,
         dir,
-        scenarios: MQ9_VARIANTS.length,
-        files: MQ9_VARIANTS.length * FILES_PER_SCENARIO,
+        scenarios: PLATFORM_VARIANTS.length,
+        files: PLATFORM_VARIANTS.length * FILES_PER_SCENARIO,
         ms: Date.now() - t0,
     };
 }

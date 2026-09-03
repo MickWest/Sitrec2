@@ -52,7 +52,7 @@ files in all, at 10 Hz:
 npm run bench-bot-maneuvers        # the two maneuver sets, sequentially
 npm run bench-bot-maneuvers-par    # the same tree, one worker thread per batch
 npm run bench-bot-balloons         # the three balloon sets
-npm run bench-bot-mq9              # the two depth-along-a-sightline sets
+npm run bench-bot-platform         # the two depth-along-a-sightline sets
 ```
 
 | Set | Scenarios | Swept over |
@@ -62,14 +62,14 @@ npm run bench-bot-mq9              # the two depth-along-a-sightline sets
 | `botset_balloons_straight` | 180 | 20 balloon variants × 20 s × 9 error rungs |
 | `botset_balloons_curve` | 180 | the same, sensor in a gentle constant bank |
 | `botset_balloons_orbit` | 180 | the same, sensor orbiting the target's ground point |
-| `botset_mq9_orbit` | 1152 | 16 geometry cells × 8 objects × 90 s × 9 error rungs |
-| `botset_mq9_straight` | 1152 | the same, sensor flying straight past instead of orbiting |
+| `botset_platform_orbit` | 1152 | 16 geometry cells × 8 objects × 90 s × 9 error rungs |
+| `botset_platform_straight` | 1152 | the same, sensor flying straight past instead of orbiting |
 
 Each set is laid out the same way:
 
 ```
 results/botset_<set>/
-    batch_<20|60|90|120|300>s/  clip length  (balloons: batch_20s only; mq9: batch_90s only)
+    batch_<20|60|90|120|300>s/  clip length  (balloons: batch_20s only; platform: batch_90s only)
         <0.0|0.01|…|2.0>deg/    error rung: operator pointing error, in degrees
             Input/              the challenge CSVs
             Truth/              the answer keys
@@ -137,13 +137,13 @@ sets:
   buoyant behaviours (rising, level, sinking, slow drift, fast drift) at four
   ranges (2, 8, 20 and 50 statute miles).
 
-### The mq9 sets — one sightline, four depths
+### The platform sets — one sightline, four depths
 
 The other sets vary a target's range by **moving the target**, which moves the
 bearing and the depression angle with it. Footage from a high sensor looking
 down past an object at the ground does not work that way: the sightline is
-fixed, and the only question is how far along it the object sits. The `mq9`
-sets ask that question and nothing else.
+fixed, and the only question is how far along it the object sits. The
+`platform` sets ask that question and nothing else.
 
 The sensor is at 20000 ft above terrain (6096 m) doing 87 m/s over the flat
 Central Valley site. Its sightline meets the ground at a **ground range** of 5,
