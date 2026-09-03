@@ -235,6 +235,18 @@ export function dmsToDegrees(deg, min = 0, sec = 0, negative = false) {
  * or without ° ' " marks, colons ("33:53:05N") or dashes ("40-26-46N") between
  * the parts, and an optional hemisphere letter at either end.
  *
+ * SIGN RULE: the coordinate is negative (south or west) if it carries a minus
+ * sign OR an S/W letter; N and E never override a minus. So "-45.5 N" is
+ * -45.5, and so is "-45.5 S". An unsigned, unlettered number already means
+ * north/east, so N and E add no information and cannot outvote an explicit
+ * minus, while a minus and S/W each carry the information "southern/western"
+ * and either alone is enough. This is the rule of the parse-dms package;
+ * GeographicLib and geopy instead multiply the two, which turns "-45.5 S" into
+ * +45.5, and PROJ lets the letter replace the sign, which turns "-45.5 N"
+ * into +45.5. Neither of those is what anyone means by a minus sign. The
+ * notations are not meant to be combined at all (ISO 6709 keeps them
+ * separate), so this only decides what a contradictory paste does.
+ *
  * The result is null for anything that is not a well-formed coordinate — a
  * stray letter in a number, minutes or seconds of 60 or more, a fraction on
  * anything but the last part ("45.5 30"), a minus sign on the minutes alone.
@@ -249,11 +261,9 @@ export function parseSingleCoordinate(input) {
     const {value, direction} = extractDirection(text);
     const parsed = parseDMSText(value);
     if (parsed === null) return null;
-    // A hemisphere letter is the most explicit statement of the sign there is,
-    // so it wins over a minus sign when both are present ("S -45.5" is south).
-    const negative = direction !== null
-        ? (direction === "S" || direction === "W")
-        : parsed.negative;
+    // The sign rule above: a minus or an S/W makes it negative, N/E change
+    // nothing. Written as an OR so the two can never cancel.
+    const negative = parsed.negative || direction === "S" || direction === "W";
     if (parsed.magnitude === 0) return 0;
     return negative ? -parsed.magnitude : parsed.magnitude;
 }

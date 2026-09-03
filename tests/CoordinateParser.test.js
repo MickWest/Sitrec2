@@ -699,9 +699,43 @@ describe("the sign applies to the whole coordinate", () => {
         expect(parseSingleCoordinate("45 30 -30")).toBeNull();
     });
 
-    test("a hemisphere letter wins over a minus sign", () => {
-        expect(parseSingleCoordinate("S -45.5")).toBeCloseTo(-45.5, 5);
-        expect(parseSingleCoordinate("-45.5 N")).toBeCloseTo(45.5, 5);
+    describe("a minus sign or an S/W letter makes it negative; N/E never override a minus", () => {
+        // The parse-dms rule. An unsigned, unlettered number is already north/
+        // east, so N and E carry no information and cannot outvote an explicit
+        // minus; a minus and S/W each say "southern/western" and either alone is
+        // enough. GeographicLib and geopy multiply the two instead (so "-45.5 S"
+        // comes out +45.5) and PROJ lets the letter replace the sign (so
+        // "-45.5 N" comes out +45.5); both surprise the person who typed the minus.
+        test("a minus with N or E is still negative", () => {
+            expect(parseSingleCoordinate("-45.5 N")).toBeCloseTo(-45.5, 5);
+            expect(parseSingleCoordinate("N -45.5")).toBeCloseTo(-45.5, 5);
+            expect(parseSingleCoordinate("-45.5N")).toBeCloseTo(-45.5, 5);
+            expect(parseSingleCoordinate("-118 E")).toBeCloseTo(-118, 5);
+            expect(parseSingleCoordinate("E -118")).toBeCloseTo(-118, 5);
+            expect(parseSingleCoordinate("-0 13 N")).toBeCloseTo(-0.216667, 5);
+            expect(parseSingleCoordinate("-40°26'46\"N")).toBeCloseTo(-40.446111, 5);
+        });
+
+        test("a minus with S or W does not cancel out", () => {
+            expect(parseSingleCoordinate("-45.5 S")).toBeCloseTo(-45.5, 5);
+            expect(parseSingleCoordinate("S -45.5")).toBeCloseTo(-45.5, 5);
+            expect(parseSingleCoordinate("-118 W")).toBeCloseTo(-118, 5);
+            expect(parseSingleCoordinate("W -118")).toBeCloseTo(-118, 5);
+        });
+
+        test("an explicit plus adds nothing either", () => {
+            expect(parseSingleCoordinate("+45.5 S")).toBeCloseTo(-45.5, 5);
+            expect(parseSingleCoordinate("+45.5 N")).toBeCloseTo(45.5, 5);
+        });
+
+        test("in a pair", () => {
+            const pair = parseLatLonPair("-45.5N, -122.5W");
+            expect(pair.lat).toBeCloseTo(-45.5, 5);
+            expect(pair.lon).toBeCloseTo(-122.5, 5);
+            const other = parseLatLonPair("N -45.5 E -122.5");
+            expect(other.lat).toBeCloseTo(-45.5, 5);
+            expect(other.lon).toBeCloseTo(-122.5, 5);
+        });
     });
 
     test("zero is zero, not negative zero", () => {
