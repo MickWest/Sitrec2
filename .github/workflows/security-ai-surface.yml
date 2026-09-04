@@ -51,6 +51,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # No job here pushes with the checkout token.
+          persist-credentials: false
       - name: use node.js
         uses: actions/setup-node@v6
         with:
@@ -88,6 +91,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          # No job here pushes with the checkout token.
+          persist-credentials: false
           fetch-depth: 0
       - name: check for API key
         id: haskey

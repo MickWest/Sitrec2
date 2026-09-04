@@ -1,0 +1,57 @@
+# Dependency review on pull requests.
+#
+# Reads the dependency changes a pull request makes and fails if it introduces a package
+# with a known advisory at or above the configured severity, or one under a licence the
+# project does not accept. This is the "before it lands" half of dependency management:
+# Dependabot tells you about a vulnerable dependency you ALREADY have, this refuses to take
+# a new one on.
+#
+# It runs only on pull requests, by design. Most work here is pushed straight to the default
+# branch, so the check will be quiet much of the time — but every Dependabot pull request
+# goes through it, which is exactly the traffic worth reviewing automatically.
+#
+# It does not gate a release. The release pipeline is the tag-triggered Docker Image
+# workflow; nothing here blocks it.
+
+name: Dependency Review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  # Needed by comment-summary-in-pr below. Declaring `contents: read` alone sets every
+  # other scope to none, so without this the action can run but silently cannot post
+  # its summary — a check that reports nothing where it matters most.
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # Pinned to an exact release: this action publishes no moving major ref, so there is
+      # no v5 to follow. v5.0.0 is current. (An action reference that cannot resolve fails
+      # the job at "Set up job", before any step runs — see the 2.149.1 release.)
+      - name: Dependency review
+        uses: actions/dependency-review-action@v5.0.0
+        with:
+          # Fail on a newly introduced advisory of high severity or worse. Moderate and
+          # below are reported in the job summary without failing, because the existing
+          # dependency tree already carries a long tail of unfixable low-severity
+          # advisories and a gate that always fails teaches people to ignore it.
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+          # NO deny-licenses, deliberately. A copyleft deny-list was drafted here and
+          # removed after checking the tree it would judge: `heic-to` is a DIRECT runtime
+          # dependency under LGPL-3.0, and `jszip` declares `(MIT OR GPL-3.0-or-later)`,
+          # which the action evaluates with "satisfies any" matching and would deny on the
+          # GPL half even though the project takes the MIT half. A routine update to either
+          # would have failed this check for a licence the project already ships and has
+          # accepted. Licence policy for this repository is handled by the third-party
+          # notices generation (scripts/generateThirdPartyNotices.js), which records what is
+          # used rather than refusing it; a gate here would have been a new policy invented
+          # by a workflow, contradicting the dependency tree it was added to protect.

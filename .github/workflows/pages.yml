@@ -65,6 +65,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          # No job here pushes with the checkout token.
+          persist-credentials: false
           # webpack.common.js gets the version string from `git describe --tags`, which a
           # shallow clone has no tags for.
           fetch-depth: 0

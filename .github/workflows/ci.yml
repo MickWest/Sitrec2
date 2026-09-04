@@ -31,6 +31,8 @@ jobs:
     steps:
     - uses: actions/checkout@v6
       with:
+        # No job here pushes with the checkout token.
+        persist-credentials: false
         # webpack.common.js uses 'git describe --tags --abbrev=0' to get the latest tag
         # but checkout only does a shallow clone by default and the tags are not available
         # fetch-tags: true is supposed to fetch the tags without a full clone, but doesn't work ?
@@ -63,6 +65,11 @@ jobs:
       if: github.event_name != 'push'
     - name: build prod
       run: npm run deploy
+    # Runs before the tests because it takes about a tenth of a second against 675
+    # files, so a genuine undeclared-variable error is reported in seconds rather
+    # than after the suite. Verified passing on the tree at the time it was added.
+    - name: lint
+      run: npm run lint
     - name: run tests
       run: npm test
 
@@ -77,6 +84,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
+      with:
+        # No job here pushes with the checkout token.
+        persist-credentials: false
     - name: use node.js 22
       uses: actions/setup-node@v6
       with:
@@ -104,6 +114,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v6
+      with:
+        # No job here pushes with the checkout token.
+        persist-credentials: false
     - name: install bun
       uses: oven-sh/setup-bun@v1
     - name: install deps

@@ -34,6 +34,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          # No job here pushes with the checkout token.
+          persist-credentials: false
           fetch-depth: 0    # full clone so git describe works for version string
 
       - name: Copy example configs for clean build
@@ -98,6 +100,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # No job here pushes with the checkout token.
+          persist-credentials: false
 
       - name: Download dist artifact
         uses: actions/download-artifact@v8
@@ -265,6 +270,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # No job here pushes with the checkout token.
+          persist-credentials: false
 
       - name: Lowercase image name
         run: echo "IMAGE_NAME_LC=${IMAGE_NAME,,}" >> "$GITHUB_ENV"

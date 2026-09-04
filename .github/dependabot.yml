@@ -1,0 +1,77 @@
+# Dependabot version updates.
+#
+# Security ALERTS and security UPDATES were already enabled on the repository before this
+# file existed; alerts need no configuration. What this adds is scheduled *version* updates,
+# so a dependency that is merely old — not yet the subject of an advisory — is offered as a
+# pull request rather than drifting until an advisory forces a hurried bump.
+#
+# This repository holds FOUR independent dependency projects, each with its own lockfile and
+# its own installed tree, plus the workflows' own actions. An update to one does not touch
+# the others, so each needs its own entry:
+#
+#   package-lock.json                      the application
+#   tools/SitrecBridge/package-lock.json   the browser bridge extension and its server
+#   apps/video-viewer/package-lock.json    the desktop app
+#   sitrecServer/composer.lock             the PHP server dependencies
+#
+# Weekly rather than daily, and capped, because every pull request here costs a review and
+# the release process is manual. Security updates are not subject to open-pull-request-limit
+# and continue to arrive regardless of this schedule.
+
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # One pull request for the routine patch and minor drift, rather than one per
+      # package. A major bump stays on its own so it gets its own decision.
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /tools/SitrecBridge
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /apps/video-viewer
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: composer
+    directory: /sitrecServer
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # The workflows' own actions. A compromised or abandoned action runs with whatever
+  # permissions its job holds, and this repository's release pipeline publishes images and
+  # signs attestations, so the actions it calls are part of the supply chain rather than
+  # incidental tooling.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        update-types: [minor, patch]

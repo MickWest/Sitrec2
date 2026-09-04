@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.149.7 (2026-09-03)
+
+### Improvements
+
+- **Sitrec now has a published security policy** (the Security tab of the project's page on GitHub): it says how to report a vulnerability privately rather than in a public issue, what to include, and when to expect a reply — acknowledgement within a week, an assessment within two. Only the latest release is supported, because patch releases are frequent enough that updating is the remedy. The policy also lists the automatic checks a release goes through, separating those that can stop a release from those that only report, and gives the command that verifies a published container image came from this project.
+
 ## Version 2.149.6 (2026-09-03)
 
 ### Improvements
