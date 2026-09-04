@@ -199,7 +199,7 @@
     "iwer": "^2.3.0",
     "jest": "^30.5.0",
     "jest-environment-jsdom": "^30.5.0",
-    "jsdom": "^29.0.0",
+    "jsdom": "^30.0.1",
     "markdown-it": "^14.1.0",
     "mini-css-extract-plugin": "^2.10.2",
     "pixelmatch": "^7.2.0",
