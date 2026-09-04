@@ -4,8 +4,20 @@ An automated review of a built Sitrec container image, producing a report an ope
 hand to whoever must accept the image into their environment.
 
 ```bash
+docker pull ghcr.io/mickwest/sitrec2:latest      # or: podman pull ghcr.io/mickwest/sitrec2:latest
 npm run audit-container -- --image=ghcr.io/mickwest/sitrec2:latest
 ```
+
+**The pull is not optional for an image you have not built locally.** The review reads the
+image out of the local image store and never fetches it for you — deliberately, since
+pulling is a network action and an automatic one could review something other than the
+image you meant. Without it the run stops at `No such image` (podman: `image not known`),
+which reads like the image does not exist rather than like it is simply not here yet.
+
+The tool uses whichever engine it finds, preferring `docker`; force one with
+`--engine=podman`. Every engine command it runs — `image inspect`, `history`, `save`, and
+the unprivileged probe container — is spelled the same for both, so nothing below changes
+with the engine unless it says so.
 
 It writes `dist-audit/container-security-review.md` (the report), a matching `.json`, a
 CycloneDX `sbom.cdx.json`, and the raw evidence under `dist-audit/evidence/`.
@@ -27,6 +39,16 @@ the image can read every layer:
 docker save <image> | tar -xO --wildcards '*/layer.tar' | tar -xO 'var/www/html/shared.env.php'
 ```
 
+The same command works under podman — `podman save` writes `docker-archive` by default, so
+the archive has the same shape:
+
+```bash
+podman save <image> | tar -xO --wildcards '*/layer.tar' | tar -xO 'var/www/html/shared.env.php'
+```
+
+On macOS the tar in `PATH` is BSD tar, which has no `--wildcards`; drop that flag, or use
+`gtar`. The point of the command is the exposure it demonstrates, not the invocation.
+
 No web server stands between that reader and the file, so the `<?php` guard protects
 nothing. Same bytes, different exposure — and until this script, nothing re-asked the
 bundle's questions at the layer where the answer changes.
@@ -43,7 +65,7 @@ built from this repository.
 | | Published image | Site image |
 |---|---|---|
 | Built from | `config/shared.env.example` | the deployment's own `config/shared.env` |
-| Made by | the release workflow, pushed to the registry | `npm run build`, `docker build`, an operator's own build |
+| Made by | the release workflow, pushed to the registry | `npm run build`, `docker build` or `podman build`, an operator's own build |
 | Who pulls it | anyone | one deployment |
 | Credentials in it | must be placeholders only | **expected**, by design |
 | A real credential is | a **critical failure** that stops the release | a **handling requirement** |
@@ -282,8 +304,15 @@ trusting the tag, the registry, or us. It is the evidence a supply-chain reviewe
 first.
 
 BuildKit also attaches its own provenance attestation when it pushes — visible as an
-`attestation-manifest` entry in `docker buildx imagetools inspect --raw` — but that one is
-unsigned and unnamed, so it proves less. The signed attestation above is the one to cite.
+`attestation-manifest` entry in `docker buildx imagetools inspect --raw <image>` — but that
+one is unsigned and unnamed, so it proves less. The signed attestation above is the one to
+cite.
+
+`buildx` is a Docker plugin with no podman equivalent, and this is the one command here that
+differs by engine. To read the same manifest list without it, use `podman manifest inspect
+<image>`, or `skopeo inspect --raw docker://<image>`, which needs no engine at all and is
+the closest match to `--raw`. None of this is needed to verify a release: `gh attestation
+verify` above is the check that matters, and it talks to the registry directly.
 
 ### Contents — a bill of materials per architecture
 

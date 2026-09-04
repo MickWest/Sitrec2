@@ -364,7 +364,19 @@ export function collectEvidence({image, engine, outDir, dockerfile, log = () => 
     log("  image configuration");
     const insp = run(engine, ["image", "inspect", image]);
     if (insp.status !== 0) {
-        throw new Error(`${engine} image inspect ${image} failed:\n${insp.stderr.trim()}`);
+        // `image inspect` reads the LOCAL image store and never pulls, so a reference that
+        // exists only in a registry fails here with "No such image" — which reads like the
+        // image does not exist at all. Say the actual remedy. Pulling is deliberately left
+        // to the operator rather than done here: it is a network action, and an automatic
+        // pull could quietly review something other than the image they meant.
+        const missing = /no such image|image not known|manifest unknown/i.test(insp.stderr);
+        throw new Error(
+            `${engine} image inspect ${image} failed:\n${insp.stderr.trim()}`
+            + (missing
+                ? `\n\nThe image is not in the local ${engine} image store. This tool reviews a`
+                  + ` local image and does not pull. Fetch it first, then re-run:\n`
+                  + `  ${engine} pull ${image}`
+                : ""));
     }
     // Classify Env credentials BEFORE redacting, then keep only the redacted config. The
     // raw value is never stored, never written and never returned.
