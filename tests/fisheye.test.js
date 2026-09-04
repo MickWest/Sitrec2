@@ -8,6 +8,10 @@
 import {PerspectiveCamera, Vector3} from "three";
 import {LENS_PRESETS, rayToPixel, lensToRay} from "../src/CameraLens";
 import {
+    patchTerrestrialRefractionVertexShader,
+    TERRESTRIAL_REFRACTION_VERTEX_GLSL,
+} from "../src/atmosphere/terrestrialRefraction";
+import {
     fisheye,
     fisheyeProjectView,
     fisheyeEquivalentFOVDegRaw,
@@ -270,5 +274,68 @@ describe("patchFisheyeVertexShader", () => {
         expect(out.matched).toBe(true);
         expect(out.vertexShader).toContain("fisheyeClip( start )");
         expect(out.vertexShader).toContain("fisheyeClip( end )");
+    });
+});
+
+// The tests above patch bare shader sources. Real materials are patched AFTER the
+// terrestrial-refraction chunk has been prepended ahead of main(), and that chunk
+// is itself GLSL with comments in it. A commented-out example of an anchor used to
+// be the first textual occurrence, so String.replace rewrote the COMMENT — planting
+// a bare statement at global scope, where GLSL allows only declarations:
+//
+//     ERROR: 0:378: 'if' : syntax error
+//
+// It failed only when both effects were on, which is why the bare-source tests
+// above never saw it.
+describe("patchFisheyeVertexShader over refraction-injected source", () => {
+    const STOCK = "uniform mat4 projectionMatrix;\nvoid main() {\n"
+        + "\tvec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );\n"
+        + "\t#include <project_vertex>\n}";
+    const SPRITE = "void main() {\n\tvec4 mvPosition = modelViewMatrix[ 3 ];\n"
+        + "\tgl_Position = projectionMatrix * mvPosition;\n}";
+    const HANDWRITTEN = "void main() {\n"
+        + "\tvec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );\n"
+        + "\tgl_Position = applyTerrestrialRefraction_clip(mvPosition);\n}";
+
+    // Brace depth 0 is declaration space. The injected chunks legitimately use `if`
+    // inside their own function bodies, so "before main()" is not the test — depth is.
+    function fisheyeOverwriteDepths(src) {
+        const code = src.replace(/\/\/[^\n]*/g, "");
+        const depths = [];
+        let depth = 0;
+        for (let i = 0; i < code.length; i++) {
+            if (code.startsWith("if (uFishOn", i)) depths.push(depth);
+            if (code[i] === "{") depth++;
+            else if (code[i] === "}") depth--;
+        }
+        return depths;
+    }
+
+    test("the shipped GLSL chunk carries no commented clip-position example", () => {
+        expect(TERRESTRIAL_REFRACTION_VERTEX_GLSL)
+            .not.toMatch(/^[ \t]*\/\/.*gl_Position\s*=/m);
+    });
+
+    test.each([
+        ["stock <project_vertex>", STOCK],
+        ["sprite", SPRITE],
+        ["hand-written ShaderMaterial", HANDWRITTEN],
+    ])("%s: the fisheye overwrite lands inside a function, not at global scope", (_name, shader) => {
+        const refracted = patchTerrestrialRefractionVertexShader(shader);
+        const source = refracted.matched ? refracted.vertexShader : shader;
+
+        const fish = patchFisheyeVertexShader(source);
+        expect(fish.matched).toBe(true);
+
+        const depths = fisheyeOverwriteDepths(fish.vertexShader);
+        expect(depths.length).toBeGreaterThan(0);
+        expect(depths.filter(d => d === 0)).toEqual([]);
+    });
+
+    test("a commented-out anchor is not a match", () => {
+        const commentedOnly = "void main() {\n"
+            + "\t// gl_Position = projectionMatrix * mvPosition;\n"
+            + "\tvec4 mvPosition = modelViewMatrix[ 3 ];\n}";
+        expect(patchFisheyeVertexShader(commentedOnly).matched).toBe(false);
     });
 });

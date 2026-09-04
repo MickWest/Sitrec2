@@ -165,6 +165,32 @@ export function addFisheyeUniforms(shader) {
 // Same shader families as the refraction/Flat Earth patchers, with anchors
 // chosen so the projection lands AFTER any upstream warp of the positions.
 
+// These patchers rewrite shader SOURCE textually, and shader source contains
+// comments. A commented-out example of an anchor is NOT the statement we mean
+// to rewrite — patching it plants a statement at global scope and fails the
+// whole program to compile. So every lookup below ignores anything following a
+// `//` on its line, and `matched` is driven by what was actually rewritten.
+function indexOfCode(src, literal) {
+    for (let from = 0; ; ) {
+        const at = src.indexOf(literal, from);
+        if (at < 0) return -1;
+        const lineStart = src.lastIndexOf("\n", at) + 1;
+        if (src.slice(lineStart, at).indexOf("//") < 0) return at;
+        from = at + 1;
+    }
+}
+
+function hasCode(src, literal) {
+    return indexOfCode(src, literal) >= 0;
+}
+
+// Replaces the first UNCOMMENTED occurrence only.
+function replaceCode(src, literal, replacement) {
+    const at = indexOfCode(src, literal);
+    if (at < 0) return src;
+    return src.slice(0, at) + replacement + src.slice(at + literal.length);
+}
+
 // Terrestrial refraction's appended overwrite (terrestrialRefraction.js). When
 // present we anchor after it AND project the refraction-bent view position, so
 // both effects compose in a single gl_Position.
@@ -188,22 +214,22 @@ export function patchFisheyeVertexShader(vertexShader) {
     let matched = false;
 
     // (a) stock <project_vertex>: meshes, 3D tiles, LineBasic, points, ocean.
-    if (out.includes("#include <project_vertex>")) {
-        const hasRefraction = out.includes(REFRACTION_APPEND);
+    if (hasCode(out, "#include <project_vertex>")) {
+        const hasRefraction = hasCode(out, REFRACTION_APPEND);
         const overwrite = hasRefraction
             ? "\n\tif (uFishOn > 0.0) { gl_Position = fisheyeClip(vec4(applyTerrestrialRefraction_chunk(mvPosition.xyz), 1.0)); }"
             : "\n\tif (uFishOn > 0.0) { gl_Position = fisheyeClip(mvPosition); }";
         out = hasRefraction
-            ? out.replace(REFRACTION_APPEND, REFRACTION_APPEND + overwrite)
-            : out.replace("#include <project_vertex>", "#include <project_vertex>" + overwrite);
+            ? replaceCode(out, REFRACTION_APPEND, REFRACTION_APPEND + overwrite)
+            : replaceCode(out, "#include <project_vertex>", "#include <project_vertex>" + overwrite);
         matched = true;
     }
 
     // (b) sprites (planets, markers): billboard offsets are applied to
     // mvPosition in view space before the clip, so projecting the final
     // mvPosition fisheye-warps each corner — position exact, size approximate.
-    if (!matched && out.includes(SPRITE_ANCHOR) && out.includes(SPRITE_CLIP)) {
-        out = out.replace(SPRITE_CLIP,
+    if (!matched && hasCode(out, SPRITE_ANCHOR) && hasCode(out, SPRITE_CLIP)) {
+        out = replaceCode(out, SPRITE_CLIP,
             SPRITE_CLIP + "\n\tif (uFishOn > 0.0) { gl_Position = fisheyeClip(mvPosition); }");
         matched = true;
     }
@@ -212,31 +238,31 @@ export function patchFisheyeVertexShader(vertexShader) {
     // replace the two endpoint projections; the quad extrusion downstream then
     // works in fisheye NDC. Refraction/Flat Earth bend start/end BEFORE these
     // lines, so all three compose.
-    if (!matched && out.includes(FATLINE_CLIP_START)) {
-        out = out.replace(FATLINE_CLIP_START,
+    if (!matched && hasCode(out, FATLINE_CLIP_START)) {
+        out = replaceCode(out, FATLINE_CLIP_START,
             "vec4 clipStart = ( uFishOn > 0.0 ) ? fisheyeClip( start ) : ( projectionMatrix * start );");
-        out = out.replace(FATLINE_CLIP_END,
+        out = replaceCode(out, FATLINE_CLIP_END,
             "vec4 clipEnd = ( uFishOn > 0.0 ) ? fisheyeClip( end ) : ( projectionMatrix * end );");
         matched = true;
     }
 
     // (d) terrain tiles (TerrainDayNightMaterial). Keep the original line
     // intact — Flat Earth anchors on it — and overwrite after it.
-    if (!matched && out.includes(TERRAIN_CLIP) && out.includes("vWorldPosition")) {
-        out = out.replace(TERRAIN_CLIP,
+    if (!matched && hasCode(out, TERRAIN_CLIP) && out.includes("vWorldPosition")) {
+        out = replaceCode(out, TERRAIN_CLIP,
             TERRAIN_CLIP + "\n\tif (uFishOn > 0.0) { vPosition = fisheyeClip(mvPosition); }");
         matched = true;
     }
 
     // (e) the globe sphere — in either its stock form or the form Flat Earth's
     // patch leaves behind (feMV holds the possibly-warped view position).
-    if (!matched && out.includes(GLOBE_CLIP)) {
-        out = out.replace(GLOBE_CLIP,
+    if (!matched && hasCode(out, GLOBE_CLIP)) {
+        out = replaceCode(out, GLOBE_CLIP,
             GLOBE_CLIP + "\n\tif (uFishOn > 0.0) { vPosition = fisheyeClip(modelViewMatrix * vec4(position, 1.0)); }");
         matched = true;
     }
-    if (!matched && out.includes(GLOBE_CLIP_FLAT)) {
-        out = out.replace(GLOBE_CLIP_FLAT,
+    if (!matched && hasCode(out, GLOBE_CLIP_FLAT)) {
+        out = replaceCode(out, GLOBE_CLIP_FLAT,
             GLOBE_CLIP_FLAT + "\n\tif (uFishOn > 0.0) { vPosition = fisheyeClip(feMV); }");
         matched = true;
     }
@@ -248,18 +274,22 @@ export function patchFisheyeVertexShader(vertexShader) {
     // original line so the pinhole path is untouched when the gate is off.
     if (!matched) {
         const clipCall = /gl_Position\s*=\s*applyTerrestrialRefraction_clip\((.+)\);/g;
-        if (clipCall.test(out)) {
-            out = out.replace(clipCall, (line, expr) =>
-                line + "\n\tif (uFishOn > 0.0) { gl_Position = "
-                    + `fisheyeClip(vec4(applyTerrestrialRefraction_chunk((${expr}).xyz), 1.0)); }`);
+        const patched = out.replace(clipCall, (line, expr, at, src) => {
+            const lineStart = src.lastIndexOf("\n", at) + 1;
+            if (src.slice(lineStart, at).indexOf("//") >= 0) return line;   // commented example
+            return line + "\n\tif (uFishOn > 0.0) { gl_Position = "
+                + `fisheyeClip(vec4(applyTerrestrialRefraction_chunk((${expr}).xyz), 1.0)); }`;
+        });
+        if (patched !== out) {
+            out = patched;
             matched = true;
         }
     }
 
     // (g) shaders that project a WORLD-space position directly (the Sun/Moon
     // discs in CPlanets): viewMatrix * worldPos is the view-space position.
-    if (!matched && out.includes(WORLDPOS_CLIP)) {
-        out = out.replace(WORLDPOS_CLIP,
+    if (!matched && hasCode(out, WORLDPOS_CLIP)) {
+        out = replaceCode(out, WORLDPOS_CLIP,
             WORLDPOS_CLIP + "\n\tif (uFishOn > 0.0) { gl_Position = fisheyeClip(viewMatrix * worldPos); }");
         matched = true;
     }

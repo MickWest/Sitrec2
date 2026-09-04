@@ -402,6 +402,20 @@ export function liftWorldPoint(ctx, worldECEF, target = new Vector3()) {
 // found" and a mesh that never draws.
 const CHUNK_MARKER = "SITREC_TERRESTRIAL_REFRACTION_CHUNK";
 
+// Every hand-written vertex shader that opts in swaps its clip-position line
+//     gl_Position = projectionMatrix * mvPosition;
+// for
+//     gl_Position = applyTerrestrialRefraction_clip(mvPosition);
+// Anything derived from gl_Position afterwards — manual log depth, a vDepth
+// varying — then picks up the apparent depth for free, which is what keeps
+// colour and fragment depth agreeing.
+//
+// This guidance lives HERE, in JS, and never inside the template below. The
+// chunk is prepended to the shader source ahead of main(), and the fisheye and
+// Flat Earth patchers rewrite the FIRST textual occurrence of these idioms. A
+// commented-out example inside the chunk is that first occurrence, so it got
+// patched instead of the real statement — planting a bare `if` at global
+// scope and failing every affected program to compile.
 export const TERRESTRIAL_REFRACTION_VERTEX_GLSL = /* glsl */`
 // ${CHUNK_MARKER}
 uniform float uTerrK;
@@ -452,13 +466,10 @@ vec3 applyTerrestrialRefraction_chunk(vec3 viewPos) {
     return viewPos + uTerrZenithView * lift;
 }
 
-// The one line every hand-written vertex shader needs: swap
-//     gl_Position = projectionMatrix * mvPosition;
-// for
-//     gl_Position = applyTerrestrialRefraction_clip(mvPosition);
-// Anything derived from gl_Position afterwards — manual log depth, a vDepth
-// varying — then picks up the apparent depth for free, which is what keeps
-// colour and fragment depth agreeing.
+// The one line every hand-written vertex shader needs. See the JS comment on
+// TERRESTRIAL_REFRACTION_VERTEX_GLSL for how to call it — deliberately NOT
+// spelled out here: this text is compiled into every patched shader, and the
+// downstream fisheye/Flat Earth patchers anchor on these exact idioms.
 vec4 applyTerrestrialRefraction_clip(vec4 mvPosition) {
     return projectionMatrix * vec4(applyTerrestrialRefraction_chunk(mvPosition.xyz), mvPosition.w);
 }
