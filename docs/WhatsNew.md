@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.149.5 (2026-09-03)
+
+### Improvements
+
+- **The container image now has a built-in health check** (self-hosted servers): a container listing shows a health column, and an orchestrator can tell a wedged container from a working one and replace it. It requests the site's home page inside the container every 30 seconds, allows 20 seconds at start-up for the first-run setup to finish, and follows the container port if you have overridden it. It tests the port inside the container, so it cannot tell you that a host port mapping is wrong.
+- **Running the container as a non-root user is now documented** (self-hosted servers; *Run it as a non-root user* in *Installing Hardened Sitrec on AWS*): it already worked, it needs no change to the image, and a hardened deployment should do it. The one caveat is spelled out — a non-root container drops the compatibility listener on the old privileged port, so an inherited mapping to that port has to move to the unprivileged one at the same time, or the container starts, reports itself healthy, and serves nothing.
+
 ## Version 2.149.4 (2026-09-03)
 
 ### Bug Fixes

@@ -25,7 +25,14 @@
     "",
     "  The compiler and package managers inherited from the base image (CFG-04). Real",
     "  remediation exists (a slimmer final stage, or a read-only root filesystem), so it",
-    "  stays open as an improvement rather than being written off."
+    "  stays open as an improvement rather than being written off.",
+    "",
+    "  The root default (CFG-01). --user 33:33 works today with no change to the image,",
+    "  and a hardened deployment should set it. The image keeps the root default only",
+    "  because the entrypoint's port-80 back-compat listener is root-only, and removing",
+    "  it would silently break a deployment still mapping to the container's port 80.",
+    "  Closing this is a release decision about a documented compatibility guarantee,",
+    "  not a fix, so the finding stays open with its one-flag remedy attached."
   ],
   "acceptedRisks": {
     "FS-01": {
@@ -42,6 +49,14 @@
         "/var/www/html/data/wind",
         "/var/www/html/sitrec-upload",
         "/var/www/html/sitrec-cache"
+      ]
+    },
+    "PRV-01": {
+      "reason": "The base images are selected by tag on purpose, so that a rebuild picks up the distribution's current security patches without anyone having to act. Pinning them by digest would freeze the base: advisories would then accumulate between deliberate bumps, and IMG-03 — the count a rebuild can close, 13 of 1547 today — would climb steadily instead of staying near zero. The trade is build reproducibility against patch currency, and for a project that rebuilds on every release, patch currency is worth more.",
+      "compensatingControl": "Reproducibility is enforced one level up, where it decides what actually runs: the deployment pins the APPLICATION image by digest rather than by tag, and the hardened-install guide's verification step compares the digest a task is running against the digest recorded at push time. So the bytes in production are pinned and checked even though the base image floats. The residual risk — that two builds of the same source can differ in their base layers — is accepted, and this report records the base image's advisory load on every run, so a base that drifts somewhere harmful is visible rather than silent.",
+      "covers": [
+        "composer:2",
+        "php:8.4-apache"
       ]
     },
     "FS-03": {

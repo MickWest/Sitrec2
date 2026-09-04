@@ -752,7 +752,10 @@ function applyBaseline(check, result, baseline) {
     };
 }
 
-const itemKey = (i) => (typeof i === "string" ? i : i.path || i.key || i.name || JSON.stringify(i));
+// The identity a covers[] entry names. Each check's items carry one natural identifier —
+// a path, a configuration key, a tool name, an image reference — and the fallback keeps a
+// declaration possible for a shape not listed here, at the cost of naming it as JSON.
+const itemKey = (i) => (typeof i === "string" ? i : i.path || i.key || i.name || i.ref || JSON.stringify(i));
 
 // ---------------------------------------------------------------------------
 // Checks
@@ -959,8 +962,12 @@ export const CHECKS = [
                 summary: `declares privileged port(s): ${privileged.join(", ")}`,
                 items: ports.map((p) => ({port: p, privileged: Number.parseInt(p, 10) < 1024 ? "yes" : "no"})),
                 columns: ["port", "privileged"],
-                note: "The application listens on 8080 by default and only binds a privileged port when it is started as root. A declared but unused privileged port is a documentation defect rather than an exposure — but a reviewer reading EXPOSE will assume the image wants root.",
-                remediation: ["Drop the inherited `EXPOSE 80` from the runtime stage so the declared surface matches what the image actually binds."],
+                note: "This image's own EXPOSE is the unprivileged port; the privileged entry is inherited from the base image, and Docker provides no way to remove an exposed port a parent image declared — there is no `UNEXPOSE`.\n\nIt is not only a declaration. When the container runs as root — the default, since no USER is declared — the entrypoint deliberately adds a second listener on port 80, so that port mappings written before this image moved to an unprivileged port keep working. Running under a non-root UID stops that listener being created at all.",
+                remediation: [
+                    "Publish only the unprivileged port in the mapping (`-p 8080:8080`). An exposed port that is not published is not reachable from outside the container's network, whatever the image declares.",
+                    "Run as a non-root user (`--user 33:33`), which prevents the extra privileged listener from being created and closes CFG-01 at the same time. Note that this also stops a legacy mapping to the privileged port working, silently — the container stays healthy and serves nothing.",
+                    "The declaration itself cannot be removed while this base image is used; changing it would mean changing base image.",
+                ],
             };
         },
     },

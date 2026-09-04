@@ -199,6 +199,42 @@ named stays open — so a **new** world-writable directory is a finding even tho
 expected ones are accepted. Keep `covers` as narrow as the evidence; never accept a check
 wholesale to quiet it.
 
+### CFG-01, the root default, is a default and not a limitation
+
+The image declares no `USER`, so `CFG-01` fails. It is worth being clear that this is about
+the *default*, not about what the image can do: `--user 33:33` works today with no change to
+the image, and is verified to — Apache starts, the entrypoint's rewrite still succeeds, and
+the files it creates are owned by that user. A hardened deployment should set it, and
+section 4.2 of [Installing Hardened Sitrec on AWS](Installing-Hardened-Sitrec-on-AWS.md) says
+how.
+
+The default stays root because the entrypoint's port-80 back-compat listener is root-only,
+and removing it would silently break any deployment still mapping to the container's port 80
+— the container would start, report itself healthy and serve nothing. Closing `CFG-01` in the
+image therefore means retracting a documented compatibility guarantee, which is a release
+decision rather than a fix. Until then it is reported honestly, every run, with the
+one-flag remedy attached.
+
+### PRV-01: the base images float on purpose
+
+`Dockerfile.release` selects `php:8.4-apache` and `composer:2` by tag, not by digest, and
+the baseline declares that as an accepted risk rather than pinning them.
+
+The reasoning is that pinning and patching pull in opposite directions. A floating tag means
+a rebuild collects the distribution's current security patches without anyone acting, which
+is why `IMG-03` — the advisories a rebuild can close — sits at 13 out of 1547 rather than
+climbing. Pin the base and that number grows steadily between deliberate bumps.
+
+Reproducibility is enforced one level up, where it decides what actually runs: the
+deployment pins the **application** image by digest, and the hardened-install guide's
+verification step compares the digest a running task reports against the digest recorded at
+push time. So the bytes in production are pinned and checked even though the base floats.
+
+The residual risk is real and is accepted knowingly: two builds of the same source can
+differ in their base layers. This report records the base image's advisory load on every
+run, so a base that drifts somewhere harmful becomes visible rather than silent. A **new**
+floating `FROM` is not covered by the declaration and still surfaces as a finding.
+
 Two things are known, deliberate, and still **not** accepted:
 
 - **`/var/www/html` is world-writable and non-sticky.** The reason is sound — the entrypoint

@@ -144,5 +144,18 @@ VOLUME /var/www/html/sitrec-videos
 # as root, the entrypoint also listens on 80 for back-compat with older mappings.
 EXPOSE 8080
 
+# Let the orchestrator tell a wedged container from a healthy one. Deliberately
+# reads SITREC_DOCKER_INTERNAL_PORT rather than the SITREC_LISTEN_PORT the
+# entrypoint exports: a HEALTHCHECK runs as its own process from the image's
+# environment and never sees a variable the entrypoint exported into Apache.
+# The default matches the entrypoint's own default, so an operator who overrides
+# the container port gets a health check that follows it.
+#
+# start-period covers the entrypoint's rewrite of shared.env.php and index.html
+# before Apache binds; without it the first checks fail and the container can be
+# reported unhealthy while it is still starting normally.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS "http://localhost:${SITREC_DOCKER_INTERNAL_PORT:-8080}/" > /dev/null || exit 1
+
 ENTRYPOINT ["sitrec-entrypoint.sh"]
 CMD ["apache2-foreground"]

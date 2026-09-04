@@ -197,6 +197,32 @@ credential and takes its settings from the environment at container start, is re
 the default `--profile=published` instead. See
 [Container Security Review](Container-Security-Review.md).
 
+### 4.2 Run it as a non-root user
+
+The image declares no `USER`, so by default it runs as root. It does not need to: it
+listens on the unprivileged port 8080 and its writable paths are world-writable precisely so
+that any assigned UID can use them. **Give it a non-root identity and it works unchanged** —
+Apache starts, the entrypoint still rewrites `shared.env.php`, `index.html` and the runtime
+settings script, and the files it creates are owned by that user:
+
+```
+docker run --user 33:33 -p 8080:8080 <image>@<digest>     # 33 is www-data
+```
+
+In a task definition, set `"user": "33:33"` on the container; in Kubernetes, use
+`securityContext.runAsUser: 33` with `runAsNonRoot: true`. The review's derived runtime
+policy prints the full set of restrictions the image accepts, and `CFG-01` is the finding
+this closes. A hardened deployment should do this.
+
+Why it is not the image's default: when the container runs as root the entrypoint adds a
+second listener on port 80, so that port mappings written before this image moved to 8080
+keep working. Running non-root removes that listener. If you have inherited a mapping of the
+form `-p 8080:80`, it must become `-p 8080:8080` at the same time — otherwise the container
+starts, reports itself healthy, and serves nothing, because Docker is forwarding to a port
+inside the container that nothing is listening on. The container log says so in a banner at
+start-up. New installs are unaffected; the shipped `docker-compose.yml` already maps
+`8080:8080`.
+
 ## 5. Put the image in your registry
 
 ### 5.1 Create the repository

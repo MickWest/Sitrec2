@@ -585,11 +585,27 @@ describe('image configuration and provenance', () => {
         expect(byId(report, 'CFG-01').status).toBe('pass');
     });
 
-    test('a floating base image tag is reported', () => {
+    test('the two declared floating base tags are an accepted risk, not an open finding', () => {
+        // Floating deliberately: a rebuild then collects the distribution's current
+        // patches. Reproducibility is enforced at the deployment digest instead.
         const {report} = audit(evidenceFixture());
         const prv = byId(report, 'PRV-01');
+        expect(prv.status).toBe('accepted');
+        expect(prv.accepted.reason).toMatch(/patch/i);
+        expect(prv.accepted.compensatingControl).toMatch(/digest/i);
+    });
+
+    test('a NEW floating base tag still surfaces alongside the declared ones', () => {
+        const ev = evidenceFixture();
+        ev.dockerfile.from = [
+            {ref: 'composer:2', stage: 'phpdeps'},
+            {ref: 'php:8.4-apache', stage: null},
+            {ref: 'some-new-base:latest', stage: 'extra'},
+        ];
+        const {report} = audit(ev);
+        const prv = byId(report, 'PRV-01');
         expect(prv.status).toBe('warn');
-        expect(prv.items.map((i) => i.ref)).toEqual(['composer:2', 'php:8.4-apache']);
+        expect(prv.items.map((i) => i.ref)).toEqual(['some-new-base:latest']);
     });
 
     test('base images pinned by digest pass', () => {
