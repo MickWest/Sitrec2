@@ -348,7 +348,16 @@ export function scanFiles(files, allow) {
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────────────
-const cell = s => String(s).replace(/\|/g, '\\|').replace(/`/g, '\u02cb');
+// One Markdown table cell. Backslash FIRST, then pipe: escaping only the pipe is
+// incomplete, because a value containing `\|` becomes `\\|` — an escaped backslash
+// followed by a live pipe — and the row gains a column. A newline ends the row outright.
+// Every value here is a file path or a host literal taken from the diff under review, so
+// a crafted path could otherwise reshape the verdict table this posts to the commit.
+const cell = s => String(s)
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r\n|\r|\n/g, ' ')
+    .replace(/`/g, 'ˋ');
 const loc = it => `${it.file}:${it.line}`;
 
 export function renderMarkdown(r, {range, inventory = false} = {}) {

@@ -700,6 +700,26 @@ describe('the report itself', () => {
         expect(markdown).toMatch(/host operating system/);
     });
 
+    test('a crafted value cannot break out of its table cell', () => {
+        // Every value in these tables comes out of the image under review — a file path,
+        // a configuration key, a package name. On Linux any of those may contain a pipe,
+        // a backslash or a newline, so a crafted filename must not be able to reshape the
+        // report that describes it. Escaping the pipe alone is not enough: `\|` would
+        // become `\\|`, an escaped backslash followed by a LIVE pipe.
+        const {pathToFileURL} = require('url');
+        const r = spawnSync(process.execPath, [
+            '--input-type=module', '-e',
+            `const m = await import(${JSON.stringify(pathToFileURL(SCRIPT).href)});\n` +
+            `console.log(JSON.stringify(m.mdCell('x\\\\|hidden|\\nrow')));`,
+        ], {encoding: 'utf8'});
+        expect(r.status).toBe(0);
+        const cell = JSON.parse(r.stdout);
+        // No newline survives, and no pipe survives that is not preceded by an escape.
+        expect(cell).not.toMatch(/[\r\n]/);
+        const live = cell.replace(/\\\\/g, '').replace(/\\\|/g, '');
+        expect(live).not.toMatch(/\|/);
+    });
+
     test('a table renders every row, not just its header', () => {
         const {markdown} = audit(evidenceFixture());
         // The severity breakdown has one row per severity present in the evidence.

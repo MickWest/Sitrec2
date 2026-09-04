@@ -1435,16 +1435,37 @@ export function evaluate(ev, baseline = {acceptedRisks: {}}, profile = "publishe
 
 const bytesHuman = (n) => (n == null ? "unknown" : `${(n / 1e9).toFixed(2)} GB`);
 
+/**
+ * One Markdown table cell, from a value that came out of the image under review.
+ *
+ * The order here is the whole point. Escaping only the pipe — `replace(/\|/g, "\\|")` —
+ * is incomplete, because the escape character can arrive in the input: a value containing
+ * `\|` becomes `\\|`, which Markdown reads as an escaped backslash followed by a LIVE
+ * pipe, and the row gains a column. A newline is worse; it ends the row outright.
+ *
+ * That matters more here than it would in an ordinary report. Every value passing through
+ * this is attacker-influenceable — a file path, a configuration key, a package name, a tool
+ * path, all read out of an image someone else may have built. A crafted filename could
+ * otherwise reshape the table that reports on it, and a finding that renders wrongly in a
+ * security review is a finding that can be hidden.
+ *
+ * So: backslash first, then pipe, then flatten the line breaks.
+ */
+export function mdCell(value) {
+    if (value === undefined || value === null) return "";
+    return String(value)
+        .replace(/\\/g, "\\\\")     // must come first — it escapes the escape character
+        .replace(/\|/g, "\\|")
+        .replace(/\r\n|\r|\n/g, " ");
+}
+
 function mdTable(columns, items) {
     if (!items || items.length === 0) return [];
     const out = [];
     out.push(`| ${columns.join(" | ")} |`);
     out.push(`|${columns.map(() => "---").join("|")}|`);
     for (const item of items) {
-        const cells = columns.map((c) => {
-            const v = typeof item === "string" ? item : item[c];
-            return v === undefined || v === null ? "" : String(v).replace(/\|/g, "\\|");
-        });
+        const cells = columns.map((c) => mdCell(typeof item === "string" ? item : item[c]));
         out.push(`| ${cells.join(" | ")} |`);
     }
     return out;
@@ -1489,7 +1510,7 @@ export function renderMarkdown(report) {
     p("|----|-------|--------|----------|---------|");
     for (const r of report.results) {
         const sev = OPEN_STATUSES.has(r.status) ? r.severity : "—";
-        p(`| ${r.id} | ${r.title} | ${STATUS_LABEL[r.status]} | ${sev} | ${String(r.summary).replace(/\|/g, "\\|")} |`);
+        p(`| ${r.id} | ${r.title} | ${STATUS_LABEL[r.status]} | ${sev} | ${mdCell(r.summary)} |`);
     }
     p();
 
