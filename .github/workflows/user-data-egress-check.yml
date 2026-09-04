@@ -84,7 +84,7 @@ jobs:
           echo "Checking $BASE..$HEAD"
 
       - name: use node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 

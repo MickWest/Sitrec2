@@ -55,7 +55,7 @@ jobs:
           };
           JSEOF
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -196,7 +196,7 @@ jobs:
       # advisory backlog) are reported for the operator rather than treated as
       # release blockers. A failure here stops smoke-test and manifest, so no
       # version or latest tag is ever created.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -378,7 +378,7 @@ jobs:
           docker rm -f sitrec-smoke-legacy
           exit 1
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
