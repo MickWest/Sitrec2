@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.150.1 (2026-09-03)
+
+### Bug Fixes
+
+- **Fixed both report writers escaping a Markdown table cell incompletely** (`18736ee7`; `scripts/auditContainerImage.mjs`, with a new exported `mdCell()`; the `cell` helper in `scripts/security-scan-egress.mjs`; a new test in `tests/auditContainerImage.test.js`. No shipped or runtime code, nothing under `src/`). Both writers escaped the pipe and nothing else — `String(v).replace(/\|/g, "\\|")`. That is incomplete, because the escape character can itself arrive in the input: a value containing a backslash before a pipe became an escaped backslash followed by a **live** pipe, so the row gained a column, and a value containing a newline ended the row outright. Every value passing through these writers is a file path, a configuration key, a package name or a tool path read out of the image or the diff **under review**, and on Linux any of those may contain a pipe, a backslash or a newline. So someone able to influence a filename could reshape the table that reports on it. The severity argument is not code execution — it is report integrity in two tools whose only product is a report, where a finding that renders wrongly is a finding that can be hidden. Both now escape the backslash **first**, then the pipe, then flatten carriage returns and line feeds to a space; the order is the entire point, since escaping the escape character has to come before escaping what it escapes. The container review's two table sites — the per-finding item tables in `mdTable()` and the summary row in `renderMarkdown()` — now both route through the shared `mdCell()`. The new test asserts the property rather than a fixed string: a crafted value must yield no newline, and no pipe that survives stripping the escaped pairs, so it still holds if the escaping strategy is ever changed.
+
+  Worth recording, because it explains why one defect appeared in three places: the pattern shipped first in `scripts/security-scan-egress.mjs` with 2.147.3's `1d1beae8`, and was copied into `scripts/auditContainerImage.mjs` with 2.149.1's `919cba1c`, at both of its table sites. One example, read once and reproduced twice.
+
+  This also closes the code-scanning triage that 2.149.7 left open. Five high-severity alerts were assessed one at a time, which is what showed them to be two things rather than five: alerts #78, #79 and #80 are this single defect in two files (`js/incomplete-sanitization`), fixed here; #76 and #77, both in `tests/BYOKModelCatalog.test.js`, were false positives — a `url.includes(...)` inside a `global.fetch = jest.fn(...)` mock, choosing which canned response to return, with no security boundary and no untrusted input — and were dismissed with that reasoning recorded against them. None remains open.
+
 ## Version 2.150.0 (2026-09-03)
 
 ### New Features
