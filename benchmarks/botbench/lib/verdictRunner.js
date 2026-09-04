@@ -41,7 +41,9 @@ import {SkyLanternModel} from "../../../src/SkyLanternModel";
 import {QuadcopterModel} from "../../../src/QuadcopterModel";
 import {buildHypotheses, flatTerrainProbes} from "../../../src/TraverseHypotheses";
 import {rankAllHypotheses, assessExecutiveVerdict, plausibilityRating,
-    aggregateInterpretationClasses, balloonConsistency} from "../../../src/TraverseRanking";
+    aggregateInterpretationClasses, balloonConsistency,
+    hypothesisFitKind} from "../../../src/TraverseRanking";
+import {gradeHypotheses} from "../../../src/TraversePlatformMirror";
 import {buildRangeLadder, rangeConditionedFamily, losRangeAt, losRangeEnvelope,
     envelopeCoverage} from "../../../src/TraverseFamily";
 import {toTraverseDataset} from "./adapters";
@@ -362,6 +364,13 @@ export async function runVerdict(scenario, {
         const fam = families.get(`${h.key}|${h.windEvidenceRole ?? ""}`);
         if (fam) h.family = fam;
     }
+
+    // Grade before ranking or assessing — this runner builds hypotheses
+    // directly rather than through runTraverseBattery, so it must apply the
+    // same scene residual scale and platform-mirror test the gallery does. A
+    // blind ranking that graded differently from the analysis it measures would
+    // be measuring the wrong thing.
+    gradeHypotheses(hypotheses, dataset, hypothesisFitKind);
 
     const ranked = rankAllHypotheses(hypotheses);
     const executive = assessExecutiveVerdict(hypotheses, {provenance});

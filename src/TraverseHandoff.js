@@ -56,6 +56,17 @@ const DIAGNOSTIC_FAMILY_KEYS = new Set(SWEEP_VARIANTS.map((v) => v.key));
 // is why the handoff also sends a framing request — see lookCameraFraming.
 export const HANDOFF_TRACK_RADIUS_M = 1;
 
+// Track lines at twice the import default (so 1 px becomes 2 for the A-B window
+// and 0.5 becomes 1 for the full imported data).
+//
+// Same reasoning as the sphere size above, one step further out: these are
+// several reconstructions of ONE object, so what the reader has to follow is
+// which hairline goes where, over terrain, among neighbours a few metres away.
+// The import default is tuned for tracks that are far apart and rarely
+// confusable. Doubling is enough to separate them without turning a track into
+// a ribbon that hides the very offsets it was sent to show.
+export const HANDOFF_TRACK_LINE_WIDTH_SCALE = 2;
+
 /**
  * READABLE TRACK NAMES, SEPARATE FROM THE HYPOTHESIS KEYS.
  *
@@ -544,7 +555,8 @@ export function openHandoffWindow({buildFiles, urlFor, onDone}) {
             const {files, meta = {}} = await buildFiles();
             if (!files?.length) throw new Error("there is nothing to send");
             const key = await putFileHandoff(files, {
-                trackObjectRadiusM: HANDOFF_TRACK_RADIUS_M, ...meta,
+                trackObjectRadiusM: HANDOFF_TRACK_RADIUS_M,
+                trackLineWidthScale: HANDOFF_TRACK_LINE_WIDTH_SCALE, ...meta,
             });
             w.location.href = urlFor(key);
         } catch (e) {

@@ -65,7 +65,8 @@ import {
 import {DroneControlModel, knotsForDuration} from "./DroneControlFit";
 import {SkyLanternModel} from "./SkyLanternModel";
 import {QuadcopterModel} from "./QuadcopterModel";
-import {assessExecutiveVerdict} from "./TraverseRanking";
+import {assessExecutiveVerdict, hypothesisFitKind} from "./TraverseRanking";
+import {gradeHypotheses} from "./TraversePlatformMirror";
 import {buildRangeLadder, rangeConditionedFamily} from "./TraverseFamily";
 
 // Slow-object range-profile settings. Exported because the hypothesis builder
@@ -855,6 +856,14 @@ export async function runTraverseBattery({
             if (fam) h.family = fam;
         }
     }
+
+    // Grade every hypothesis BEFORE anything reads them: the scene residual
+    // scale and the platform-mirror record. The executive assessment below
+    // consumes both (a candidate whose solved path is the camera's own must not
+    // make its class viable), and BOT Bench drives this same battery, so
+    // grading in a caller would have the blind ranking measuring a different
+    // gallery from the one it renders. See gradeHypotheses.
+    gradeHypotheses(hypotheses, dataset, hypothesisFitKind);
 
     // Anything that must be frozen onto the hypotheses BEFORE the verdict reads
     // them — in the app, the independent balloon wind evidence. It runs here and

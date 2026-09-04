@@ -21,9 +21,73 @@
  */
 
 import {KNOTS_TO_MS, METERS_PER_NM, straightFlightScore} from "./TraverseAnalysis";
+import {
+    platformMirrorRank,
+    platformMirrorSignificant,
+    platformMirrorSummary,
+} from "./TraversePlatformMirror";
 
 export const RAY_SOLVER_ALLOWANCE_DEG = 0.05;
 export const DISPLAY_TIE_THRESHOLD = 0.05;
+
+// --- Scene-relative fit tiers ----------------------------------------------
+//
+// The fit thresholds used to be absolute degrees (0.05 / 0.15 / 0.5). That
+// silently assumed every scene resolves equally well, and it does not. On the
+// Aguadilla ground-track sitch EVERY fitted candidate lands between 0.07 deg
+// and 0.19 deg while a free constant-acceleration trajectory — no object
+// assumption, nine parameters, not tied to the rays — leaves 0.14 deg. Fit
+// quality is therefore not discriminating anything there: the absolute ladder
+// was sorting noise, and it dropped the balloon a whole tier below a candidate
+// it cannot actually be distinguished from.
+//
+// So the ladder is expressed in multiples of a per-scene scale: how much of the
+// sightline data ordinary smooth motion cannot explain (pointing error, real
+// target manoeuvre, and model mismatch together). A model that leaves less than
+// that has explained everything a generic trajectory could, and differences
+// below it are not evidence about the object.
+//
+// THE SCALE IS CLAMPED AT BOTH ENDS and that is load-bearing, not tidiness. Too
+// small and a noiseless synthetic file (truth threads its own rays to 1e-7 deg)
+// would fail every real model; too large and a scene whose generic reference is
+// poor would excuse a fit that misses by half a degree — the scale must never
+// become an alibi. At the cap the broad-screen boundary sits at 0.24 deg, still
+// well inside the old 0.5 deg "Low" boundary. Measured effect on GoFast, whose
+// reference is 0.49 deg: the balloon at 0.297 deg moves from "Low" to "Fair
+// fit" — it is genuinely better than a generic trajectory manages there — and
+// does NOT reach the broad screen.
+//
+// DELIBERATELY NOT THE TRUTH TRACK'S RESIDUAL, even though that is the real
+// measured floor where one is loaded. Blind evaluation (useTruth false, and the
+// whole BOT Bench blind ranking) has to see exactly the tiers a real analyst
+// sees, and a scale that moved when a truth track was selected would not be
+// blind.
+export const FIT_SCALE_MIN_DEG = 0.02;
+export const FIT_SCALE_MAX_DEG = 0.20;
+// Multiples of the scale at which a fit stops being tier 3 / 2 / 1.
+export const FIT_SCALE_TIERS = [1.2, 2, 5];
+
+/**
+ * The clamped per-scene residual scale for one hypothesis, or null when the
+ * analysis did not attach one — in which case the ORIGINAL absolute ladder is
+ * used unchanged, so every caller that has not opted in keeps its behaviour.
+ */
+export function fitScaleDeg(h) {
+    const s = h?.fitScaleDeg;
+    if (!Number.isFinite(s) || !(s > 0)) return null;
+    return Math.min(FIT_SCALE_MAX_DEG, Math.max(FIT_SCALE_MIN_DEG, s));
+}
+
+// The fit tier for a scored residual: relative to the scene scale when there is
+// one, else the historical absolute boundaries.
+function fitRankFor(errDeg, scaleDeg) {
+    if (scaleDeg === null) {
+        return errDeg > 0.5 ? 0 : errDeg > 0.15 ? 1 : errDeg > 0.05 ? 2 : 3;
+    }
+    const ratio = errDeg / scaleDeg;
+    const [t3, t2, t1] = FIT_SCALE_TIERS;
+    return ratio >= t1 ? 0 : ratio >= t2 ? 1 : ratio >= t3 ? 2 : 3;
+}
 
 const COLORS = {
     pass: "#3fae72",
@@ -306,6 +370,30 @@ function tierForFitRank(rank) {
     return {label: "Invalid", rank: -1, color: COLORS.invalid};
 }
 
+// Tier when PLATFORM MIRRORING is the binding judgement. A third dimension
+// beside fit quality and kinematic ordinariness, and it needed its own words
+// for the same reason pins did: a candidate whose manoeuvre is the camera's
+// manoeuvre is not fitting badly (it follows the sightlines perfectly) and is
+// not kinematically extreme (0.48 g and 51 kt are unremarkable numbers). Called
+// "Moderate" it says nothing; called this, it names the finding.
+//
+// It never reaches rank 0. An object CAN pace the observing platform — a chase
+// aircraft, a drone flown to follow the camera — so the reading stays available
+// and stays in the gallery. It is only extraordinary, which is what the tier
+// now says and what costing nothing at all did not.
+function tierForMirrorRank(rank) {
+    if (rank >= 3) return {label: "Passes broad screen", rank: 3, color: COLORS.pass};
+    if (rank === 2) return {label: "Partly mirrors the platform", rank: 2, color: COLORS.moderate};
+    return {label: "Mirrors the platform", rank: 1, color: COLORS.low};
+}
+
+// How far platform mirroring may move a candidate in secondaryScore, in the
+// same residual-equivalent units as BALLOON_CONSISTENCY_NUDGE (~0.3 deg at the
+// full value). ASYMMETRIC BY DESIGN: it only ever demotes. Not mirroring the
+// platform is the ordinary expectation, not an achievement to be rewarded, and
+// a promotion here would be a thumb on the scale for far solutions.
+const PLATFORM_MIRROR_NUDGE = 6;
+
 function activePins(h) {
     return Array.isArray(h?.boundPinned) ? Array.from(new Set(h.boundPinned)) : [];
 }
@@ -367,6 +455,11 @@ export function plausibilityRating(h) {
     // binding rather than inferring it from a single collapsed tier.
     let fitRank = null;
     let kinematicRank = null;
+    // Never null once the kinematic branch runs: 3 means "measured, and this
+    // candidate's motion is its own", which is a different statement from the
+    // null that means "not evaluated for this kind of hypothesis".
+    let mirrorRank = null;
+    const scaleDeg = fitScaleDeg(h);
 
     if (kind === "directional-geometry") {
         if (rawErr > 0.5) result = tierForRank(0);
@@ -421,16 +514,40 @@ export function plausibilityRating(h) {
         // So the tier is still the worse of the two (ordering and eligibility
         // are unchanged), but the LABEL now names whichever dimension is
         // actually binding.
-        fitRank = err > 0.5 ? 0 : err > 0.15 ? 1 : err > 0.05 ? 2 : 3;
+        fitRank = fitRankFor(err, scaleDeg);
         kinematicRank = (gMax > 9 || speedMaxKt > 900) ? 0
             : (gMax > 4 || speedMaxKt > 650) ? 1
             : (gMax > 1.5) ? 2 : 3;
-        result = fitRank < kinematicRank
-            ? tierForFitRank(fitRank)
-            : tierForRank(kinematicRank);
+        // THE THIRD BINDING DIMENSION. Fit quality asks whether the model
+        // reproduces the sightlines; kinematic ordinariness asks whether the
+        // motion is extreme; this asks whether the motion is the OBSERVER's.
+        // A wrong range injects the platform's own manoeuvre into the solved
+        // path (see TraversePlatformMirror.js), and neither of the other two
+        // can see it: such a candidate follows the rays perfectly and its
+        // speeds and g-loads are unremarkable. Measured on Aguadilla, the
+        // gallery leader required an object flying a 0.23x copy of the camera
+        // aircraft's path — 270 m of mirroring against 56 m of motion of its
+        // own — and was rated exactly as ordinary as a drifting balloon.
+        mirrorRank = platformMirrorRank(h?.platformMirror);
+        // The MIRROR ONLY GETS TO NAME THE TIER WHEN IT IS STRICTLY THE WORST.
+        // On a tie the measured failure keeps the stronger word: a model that
+        // reproduces the sightlines poorly AND mirrors should be reported as
+        // fitting poorly. The mirroring still appears in the reasons either
+        // way, so the fact is never hidden by the label it did not win.
+        result = (mirrorRank < fitRank && mirrorRank < kinematicRank)
+            ? tierForMirrorRank(mirrorRank)
+            : fitRank < kinematicRank
+                ? tierForFitRank(fitRank)
+                : tierForRank(kinematicRank);
 
         if (gMax > 1.5) reasons.push(`maximum kinematic acceleration ${gMax.toFixed(2)} g`);
         if (speedMaxKt > 650) reasons.push(`peak air speed ${speedMaxKt.toFixed(0)} kt`);
+        const mirrorWhy = platformMirrorSummary(h?.platformMirror);
+        if (mirrorWhy) {
+            reasons.push(`the platform's own manoeuvre explains this path — ${mirrorWhy}`
+                + "; an object can pace the camera, but that is an extraordinary thing "
+                + "for one to do, and a wrong range produces the same signature");
+        }
         if (err > 0.05) {
             const label = kind === "ray-constrained" ? "solver-fidelity residual" : "raw LOS residual";
             reasons.push(`${label} ${rawErr.toFixed(2)}° (scored ${err.toFixed(2)}°)`);
@@ -500,6 +617,13 @@ export function plausibilityRating(h) {
         }
     }
 
+    // Within-tier demotion for a mirroring candidate, on the same
+    // residual-equivalent scale as the balloon nudge. Consulted only once the
+    // tier ties, so it reorders candidates the screen could not separate and
+    // never lifts one over a better-rated fit.
+    const mirrorAdj = platformMirrorSignificant(h?.platformMirror)
+        ? PLATFORM_MIRROR_NUDGE * h.platformMirror.share : 0;
+
     if (!reasons.length) {
         if (kind === "identity") reasons.push("angular match and visibility/illumination checks remain inside their displayed thresholds");
         else if (kind === "directional-geometry") reasons.push("fixed-direction residual remains inside its displayed threshold");
@@ -520,8 +644,11 @@ export function plausibilityRating(h) {
         scoredErrDeg: effectiveErrDeg(h),
         fitRank,
         kinematicRank,
+        mirrorRank,
+        fitScaleDeg: scaleDeg,
+        platformMirror: h?.platformMirror ?? null,
         balloonConsistency: balloonC,
-        secondaryScore: rankTieScore(h) + balloonAdj,
+        secondaryScore: rankTieScore(h) + balloonAdj + mirrorAdj,
         reasons,
         kind,
     };
@@ -626,12 +753,23 @@ function judgeRepresentative(h) {
         && !(r.activePins && r.activePins.length)
         && !(r.modelClamps && r.modelClamps.length);
     const close = r.fitRank === 3;
-    const ordinary = r.kinematicRank === 3;
+    // ORDINARY covers both ways the motion can be extraordinary. A fit that
+    // requires the object to fly the observing platform's own path must not
+    // make its class "viable" and so must not reach an executive conclusion:
+    // the wording there ("consistent with a conventional fixed-wing aircraft")
+    // would be asserting the ordinary reading of a candidate whose whole
+    // manoeuvre is the camera's.
+    const mirrored = (r.mirrorRank ?? 3) < 3;
+    const ordinary = r.kinematicRank === 3 && !mirrored;
     let blocker = null;
     if (!complete) blocker = "search incomplete (bound pins, clamps, or an unconverged optimizer)";
     else if (!close) blocker = `LOS fit not close (${Number.isFinite(r.scoredErrDeg)
         ? r.scoredErrDeg.toFixed(2) : "?"}° scored residual)`;
-    else if (!ordinary) blocker = "requires non-ordinary kinematics";
+    else if (mirrored && r.kinematicRank === 3) {
+        blocker = "the platform's own manoeuvre explains the solved path "
+            + `(${Math.round((r.platformMirror?.share ?? 0) * 100)}% of it), so the fit `
+            + "requires an object pacing the camera or a wrong range";
+    } else if (!ordinary) blocker = "requires non-ordinary kinematics";
     return {r, complete, close, ordinary, viable: complete && close && ordinary, blocker};
 }
 

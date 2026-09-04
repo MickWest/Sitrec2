@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="556" viewBox="0 0 760 556" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="556" fill="#FFFFFF"/>
+<defs></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">Measured: candidates at different ranges nearly agree on where the mirroring stops</text>
+<line x1="118.0" y1="430.0" x2="660.0" y2="430.0" stroke="#7E8893" stroke-width="1.4"/>
+<line x1="118.0" y1="430.0" x2="118.0" y2="92.0" stroke="#7E8893" stroke-width="1.4"/>
+<line x1="118.0" y1="430.0" x2="118.0" y2="435.0" stroke="#7E8893" stroke-width="1.2"/>
+<text x="118.0" y="450.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="middle" style="">0</text>
+<line x1="113.0" y1="430.0" x2="118.0" y2="430.0" stroke="#7E8893" stroke-width="1.2"/>
+<line x1="292.8" y1="430.0" x2="292.8" y2="435.0" stroke="#7E8893" stroke-width="1.2"/>
+<text x="292.8" y="450.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="middle" style="">1 km</text>
+<line x1="113.0" y1="321.0" x2="118.0" y2="321.0" stroke="#7E8893" stroke-width="1.2"/>
+<text x="108.0" y="325.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="end" style="">1 km</text>
+<line x1="467.7" y1="430.0" x2="467.7" y2="435.0" stroke="#7E8893" stroke-width="1.2"/>
+<text x="467.7" y="450.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="middle" style="">2 km</text>
+<line x1="113.0" y1="211.9" x2="118.0" y2="211.9" stroke="#7E8893" stroke-width="1.2"/>
+<text x="108.0" y="215.9" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="end" style="">2 km</text>
+<line x1="642.5" y1="430.0" x2="642.5" y2="435.0" stroke="#7E8893" stroke-width="1.2"/>
+<text x="642.5" y="450.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="middle" style="">3 km</text>
+<line x1="113.0" y1="102.9" x2="118.0" y2="102.9" stroke="#7E8893" stroke-width="1.2"/>
+<text x="108.0" y="106.9" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="end" style="">3 km</text>
+<text x="389.0" y="476.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the candidate&#x27;s own range</text>
+<text x="30.0" y="321.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;" transform="rotate(-90 30.0 321.0)">the range it predicts</text>
+<rect x="118.0" y="112.6" width="542.0" height="34.1" rx="0" fill="#DDEFEC"/>
+<text x="126.0" y="100.6" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">all eleven predictions land in this 313 m band</text>
+<line x1="118.0" y1="430.0" x2="651.3" y2="97.5" stroke="#7E8893" stroke-width="1.3" stroke-dasharray="6 4"/>
+<text x="434.0" y="263.2" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">y = x: no mirroring,</text>
+<text x="434.0" y="278.2" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">so it predicts its own range</text>
+<line x1="395.5" y1="257.0" x2="395.5" y2="146.7" stroke="#C9690F" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+<circle cx="395.5" cy="146.7" r="5" fill="#C9690F"/>
+<text x="383.5" y="150.7" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#C9690F" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Const Air Speed</text>
+<line x1="510.5" y1="185.2" x2="510.5" y2="112.6" stroke="#C9690F" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+<circle cx="510.5" cy="112.6" r="5" fill="#C9690F"/>
+<text x="510.5" y="100.6" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#C9690F" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Constant Altitude</text>
+<line x1="550.4" y1="160.4" x2="550.4" y2="123.8" stroke="#C9690F" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+<circle cx="550.4" cy="123.8" r="5" fill="#C9690F"/>
+<line x1="571.0" y1="147.5" x2="571.0" y2="125.9" stroke="#C9690F" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+<circle cx="571.0" cy="125.9" r="5" fill="#C9690F"/>
+<line x1="593.6" y1="133.4" x2="593.6" y2="125.1" stroke="#7E8893" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+<circle cx="593.6" cy="125.1" r="5" fill="#7E8893"/>
+<line x1="606.5" y1="125.4" x2="606.5" y2="123.3" stroke="#7E8893" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+<circle cx="606.5" cy="123.3" r="5" fill="#7E8893"/>
+<line x1="607.9" y1="124.5" x2="607.9" y2="121.5" stroke="#7E8893" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+<circle cx="607.9" cy="121.5" r="5" fill="#7E8893"/>
+<line x1="610.0" y1="123.2" x2="610.0" y2="121.8" stroke="#7E8893" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+<circle cx="610.0" cy="121.8" r="5" fill="#7E8893"/>
+<line x1="610.3" y1="123.0" x2="610.3" y2="122.4" stroke="#7E8893" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+<circle cx="610.3" cy="122.4" r="5" fill="#7E8893"/>
+<line x1="612.4" y1="121.7" x2="612.4" y2="121.4" stroke="#7E8893" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+<circle cx="612.4" cy="121.4" r="5" fill="#7E8893"/>
+<line x1="612.4" y1="121.7" x2="612.4" y2="121.8" stroke="#7E8893" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+<circle cx="612.4" cy="121.8" r="5" fill="#7E8893"/>
+<line x1="607.5" y1="131.3" x2="600.6" y2="166.3" stroke="#7E8893" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>
+<text x="597.1" y="180.3" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">nine more here</text>
+<text x="597.1" y="194.3" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">(two amber, seven grey)</text>
+<circle cx="139.2" cy="430.0" r="5" fill="#FFFFFF" stroke="#B5372E" stroke-width="2"/>
+<line x1="148.2" y1="426.0" x2="300.0" y2="396.0" stroke="#B5372E" stroke-width="1" stroke-dasharray="3 3" opacity="0.8"/>
+<text x="306.0" y="350.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#B5372E" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Minimum Acceleration, own range 121 m — not plotted</text>
+<text x="306.0" y="365.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#B5372E" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">on the vertical axis, because it has no prediction:</text>
+<text x="306.0" y="380.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#B5372E" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">β = 0.952, so its range is wrong by about 1/0.048 ≈ 21×,</text>
+<text x="306.0" y="395.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#B5372E" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">and dividing by a number that small is not a measurement.</text>
+<text x="380.0" y="504.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">The dotted line under each dot is how far the test moved it. Own ranges differing by a factor of 1.78</text>
+<text x="380.0" y="520.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">— 1587 m to 2828 m — predict ranges differing by a factor of only 1.12. That agreement is the parallax</text>
+<text x="380.0" y="536.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the sightlines hold, recovered by asking which range stops requiring the object to copy the camera.</text>
+</svg>

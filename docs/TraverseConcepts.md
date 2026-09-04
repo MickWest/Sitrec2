@@ -65,6 +65,16 @@ on every wrong-range member as a bend, and a bend costs sideways acceleration
 (g) that a real object may not be able to produce. That is what **parallax
 buys**: not a range directly, but a price on every wrong range.
 
+The g cost alone is often too small to notice. On the Aguadilla ground track the
+stamped bend cost a wrong-range member only 0.48 g at 51 kt — unremarkable
+numbers that no screen on speed or acceleration will stop. But the *shape* of
+that bend is not unremarkable at all: it is the platform's own turn, scaled. So
+the analysis measures the stamp directly, asking what share of a candidate's
+manoeuvring is a scaled copy of the camera's path, and reads back the range at
+which that copying stops. Doing so recovers the parallax the g cost was too
+blunt to spend. See
+[Does it fly the camera's path?](TraverseAnalysis.md#does-it-fly-the-cameras-path).
+
 ## 5. Conditioning: can the rays pin a range at all?
 
 ![Conditioning: can the rays pin a range at all?](docimages/traverse-concepts-05-conditioning.svg)

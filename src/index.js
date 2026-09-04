@@ -119,7 +119,7 @@ import {initUILogging} from "./UILogging";
 import {assert} from "./assert";
 import {CNodeFactory} from "./nodes/CNodeFactory";
 import {extraCSS} from "./extra.css";
-import {_TrackManager, resizeAllObjectSpheres, syncGlobalSphereResize} from "./TrackManager";
+import {_TrackManager, resizeAllObjectSpheres, scaleTrackLineWidths, syncGlobalSphereResize} from "./TrackManager";
 import {ViewMan} from "./CViewManager";
 import {LayoutMan} from "./CLayoutManager";
 import {clearMenuMirrors} from "./MenuMirror";
@@ -2867,7 +2867,9 @@ function loadStartupDropURLAfterSitchSetup() {
  */
 function applyHandoffTrackObjectSize(handoff, before) {
     const radius = handoff.meta?.trackObjectRadiusM;
-    if (!Number.isFinite(radius) || radius <= 0) return;
+    const widthScale = handoff.meta?.trackLineWidthScale;
+    if ((!Number.isFinite(radius) || radius <= 0)
+        && (!Number.isFinite(widthScale) || widthScale <= 0)) return;
 
     const resized = new Set();
     const resizeNew = () => {
@@ -2878,6 +2880,11 @@ function applyHandoffTrackObjectSize(handoff, before) {
             resized.add(id);
             return true;
         });
+        // Same scoping, its own visited set: the two walk different node kinds
+        // (marker objects vs track display nodes), so sharing one set would let
+        // whichever ran first veto the other. scaleTrackLineWidths is itself
+        // idempotent per node, so a repeat visit cannot compound the multiplier.
+        scaleTrackLineWidths(widthScale, (id) => !before.has(id));
         // AFTER the resize, not before. TrackManager syncs the reading as part
         // of notifyTracksChanged, which runs before this listener — so at that
         // moment the spheres are still at their import size and the control

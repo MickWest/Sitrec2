@@ -14,6 +14,10 @@ import {
     tierBadge,
     markCoLeaders,
     coLeaderBadge,
+    fitScaleDeg,
+    FIT_SCALE_MIN_DEG,
+    FIT_SCALE_MAX_DEG,
+    assessExecutiveVerdict,
 } from "../src/TraverseRanking";
 import {KNOTS_TO_MS} from "../src/TraverseAnalysis";
 
@@ -680,4 +684,163 @@ test("truth separation breaks co-leadership when truth is in play", () => {
     const blind = [mk(23.6), mk(273.1)];
     markCoLeaders(blind, {useTruth: false});
     expect(blind.map((x) => x.r.coLeader)).toEqual([true, true]);
+});
+
+
+// A platform-mirror record in the shape platformMirrorStat returns. Built by
+// hand so the ranking consequences can be tested without a dataset — the
+// statistic itself is covered in TraversePlatformMirror.test.js.
+function mirror({share, snr = 100, beta = 0.25, rmsPlatform = 1200} = {}) {
+    return {
+        beta, share, rmsPlatform, rmsTrack: 280,
+        mirroredM: Math.abs(beta) * rmsPlatform, independentM: 56, snr,
+        referenceRangeM: 2900,
+    };
+}
+
+describe("scene-relative fit tiers", () => {
+    // Measured on the Aguadilla ground-track sitch: every fitted candidate
+    // lands between 0.07° and 0.19° while a free constant-acceleration
+    // trajectory leaves 0.14°. On the absolute ladder the balloon at 0.137°
+    // dropped a tier below a candidate it cannot be distinguished from.
+    test("without a scene scale the original absolute ladder is used, unchanged", () => {
+        expect(fitScaleDeg(hypothesis("lantern", {errDeg: 0.1}))).toBeNull();
+        expect(plausibilityRating(hypothesis("lantern", {errDeg: 0.04})).fitRank).toBe(3);
+        expect(plausibilityRating(hypothesis("lantern", {errDeg: 0.1})).fitRank).toBe(2);
+        expect(plausibilityRating(hypothesis("lantern", {errDeg: 0.3})).fitRank).toBe(1);
+        expect(plausibilityRating(hypothesis("lantern", {errDeg: 0.9})).fitRank).toBe(0);
+    });
+
+    test("a candidate inside the scene's own reference reaches the broad screen", () => {
+        const h = hypothesis("lantern", {errDeg: 0.1375});
+        h.fitScaleDeg = 0.1403;
+        const r = plausibilityRating(h);
+        expect(r.fitRank).toBe(3);            // 0.98x the scene reference
+        expect(r.rank).toBe(3);
+        expect(r.eligible).toBe(true);
+        expect(r.fitScaleDeg).toBeCloseTo(0.1403, 6);
+    });
+
+    test("the scale is a scale, not an alibi: a fit far outside it still fails", () => {
+        const h = hypothesis("lantern", {errDeg: 0.75});
+        h.fitScaleDeg = 0.1403;
+        expect(plausibilityRating(h).fitRank).toBe(0);      // 5.3x the reference
+    });
+
+    test("the clamp stops a noiseless file from failing every real model", () => {
+        // A synthetic scene where truth threads its own rays: the reference
+        // collapses toward zero and, unclamped, a 0.03° fit would read as
+        // hundreds of times too poor.
+        const h = hypothesis("lantern", {errDeg: 0.02});
+        h.fitScaleDeg = 1e-7;
+        expect(fitScaleDeg(h)).toBe(FIT_SCALE_MIN_DEG);
+        expect(plausibilityRating(h).fitRank).toBe(3);
+    });
+
+    test("the clamp stops a poor reference from excusing a poor fit", () => {
+        // GoFast: the generic reference is 0.49°. UNCLAMPED the broad screen
+        // would sit at 1.2 x 0.49 = 0.59°, and a fit missing by more than half
+        // a degree would be stamped "Passes broad screen". Clamped, the screen
+        // sits at 1.2 x 0.20 = 0.24° and the same fit is graded weak.
+        const h = hypothesis("lantern", {errDeg: 0.55});
+        h.fitScaleDeg = 0.4882653377;
+        expect(fitScaleDeg(h)).toBe(FIT_SCALE_MAX_DEG);
+        expect(0.55 / 0.4882653377).toBeLessThan(1.2);      // would have passed
+        expect(plausibilityRating(h).fitRank).toBe(1);      // does not
+        // And GoFast's own balloon, at 0.297°, moves up from "Low" to a fair
+        // fit — better than a generic trajectory manages there — without
+        // reaching the broad screen.
+        const balloon = hypothesis("lantern", {errDeg: 0.2973009753});
+        balloon.fitScaleDeg = 0.4882653377;
+        expect(plausibilityRating(balloon).fitRank).toBe(2);
+    });
+});
+
+describe("platform mirroring is a third binding dimension", () => {
+    test("a perfect fit with unremarkable kinematics is still demoted when it flies the camera's path", () => {
+        // The measured Aguadilla gallery leader: 0.073° residual, 51 kt,
+        // 0.48 g — nothing in fit or kinematics can see the problem.
+        const h = hypothesis("constAlt", {name: "Constant Altitude", errDeg: 0.073,
+            metrics: metrics({gMax: 0.48, speedMeanKt: 51, speedMaxKt: 69})});
+        h.platformMirror = mirror({share: 0.959});
+        const r = plausibilityRating(h);
+        expect(r.fitRank).toBe(3);
+        expect(r.kinematicRank).toBe(3);
+        expect(r.mirrorRank).toBe(1);
+        expect(r.rank).toBe(1);
+        expect(r.eligible).toBe(false);
+        expect(r.label).toBe("Mirrors the platform");
+        expect(r.reasons.join(" ")).toContain("the platform's own manoeuvre explains this path");
+    });
+
+    test("a half-share is reported as partial", () => {
+        const h = hypothesis("constAir", {errDeg: 0.02});
+        h.platformMirror = mirror({share: 0.62});
+        const r = plausibilityRating(h);
+        expect(r.mirrorRank).toBe(2);
+        expect(r.label).toBe("Partly mirrors the platform");
+    });
+
+    test("an object moving under its own steam is untouched", () => {
+        const h = hypothesis("lantern", {errDeg: 0.02});
+        h.platformMirror = mirror({share: 0.007, beta: 0.001});
+        const r = plausibilityRating(h);
+        expect(r.mirrorRank).toBe(3);
+        expect(r.rank).toBe(3);
+        expect(r.reasons.join(" ")).not.toContain("manoeuvre explains this path");
+    });
+
+    test("mirroring never overwrites a measured fit failure", () => {
+        // A model that reproduces the sightlines poorly AND mirrors must be
+        // reported as fitting poorly — the stronger, measured statement. The
+        // mirroring still appears in the reasons.
+        const h = hypothesis("aircraft", {errDeg: 0.9});
+        h.platformMirror = mirror({share: 0.95});
+        const r = plausibilityRating(h);
+        expect(r.fitRank).toBe(0);
+        expect(r.mirrorRank).toBe(1);
+        expect(r.rank).toBe(0);
+        expect(r.label).toBe("Poor fit");
+        expect(r.reasons.join(" ")).toContain("the platform's own manoeuvre explains this path");
+    });
+
+    test("mirroring demotes within a tier as well, and only ever downward", () => {
+        const clean = hypothesis("constAlt", {errDeg: 0.02});
+        const mirrored = hypothesis("constAlt", {errDeg: 0.02});
+        mirrored.platformMirror = mirror({share: 0.6});
+        expect(plausibilityRating(mirrored).secondaryScore)
+            .toBeGreaterThan(plausibilityRating(clean).secondaryScore);
+        // Not mirroring is the ordinary expectation, never a promotion.
+        const pristine = hypothesis("constAlt", {errDeg: 0.02});
+        pristine.platformMirror = mirror({share: 0.0, beta: 0});
+        expect(plausibilityRating(pristine).secondaryScore)
+            .toBeCloseTo(plausibilityRating(clean).secondaryScore, 12);
+    });
+
+    test("the balloon leads once the mirroring candidate is demoted", () => {
+        // The Aguadilla case end to end, with the measured numbers.
+        const constAlt = hypothesis("constAlt", {name: "Constant Altitude", errDeg: 0.073,
+            metrics: metrics({gMax: 0.48, speedMeanKt: 51, speedMaxKt: 69})});
+        constAlt.fitScaleDeg = 0.1403;
+        constAlt.platformMirror = mirror({share: 0.959});
+        const balloon = hypothesis("lantern", {name: "Sky Lantern / Balloon", errDeg: 0.1375,
+            metrics: metrics({gMax: 0.008, speedMeanKt: 1.2, speedMaxKt: 1.6})});
+        balloon.fitScaleDeg = 0.1403;
+        balloon.platformMirror = mirror({share: 0.007, beta: 0.001});
+        const order = rankAllHypotheses([constAlt, balloon]);
+        expect(order[0].h.name).toBe("Sky Lantern / Balloon");
+        expect(order[0].r.eligible).toBe(true);
+        expect(order[1].h.name).toBe("Constant Altitude");
+        expect(order[1].r.label).toBe("Mirrors the platform");
+    });
+
+    test("a mirroring fit cannot carry an executive conclusion about its class", () => {
+        const aircraft = hypothesis("aircraft", {name: "Fixed-Wing", errDeg: 0.02});
+        aircraft.platformMirror = mirror({share: 0.95});
+        const verdict = assessExecutiveVerdict([aircraft]);
+        const cls = verdict.classes.find((c) => c.key === "fixedWing");
+        expect(cls.viable).toBe(false);
+        expect(cls.blocker).toContain("pacing the camera or a wrong range");
+        expect(verdict.code).toBe("unresolved");
+    });
 });
