@@ -82,6 +82,45 @@ export function resizeAllObjectSpheres(radiusM, filter = null) {
 }
 
 /**
+ * Thicken the drawn lines of imported tracks.
+ *
+ * WHY IT IS NEEDED. The import defaults (0.5 px for the full imported data,
+ * 1 px for the A-B window) are right for the widely-spaced tracks a user
+ * normally drops. A traverse handoff is the opposite case: several candidate
+ * reconstructions of the SAME object, differing by metres, where a hairline is
+ * hard to follow against terrain and harder to tell from its neighbour.
+ *
+ * SELF-GUARDING rather than caller-guarded. This runs from a `tracksChanged`
+ * listener that fires once per handed-off file, plus a timeout sweep, so the
+ * same track is offered several times; a multiplier applied twice would keep
+ * compounding. The mark lives on the node, so a track is thickened once
+ * however often it is visited.
+ *
+ * Multiplier rather than an absolute width, so the relationship to the import
+ * default is what is stated and a later change to that default carries through.
+ */
+export function scaleTrackLineWidths(multiplier, filter = null) {
+    if (!Number.isFinite(multiplier) || multiplier <= 0) return 0;
+    let changed = 0;
+    TrackManager.iterate((key, trackOb) => {
+        for (const node of [trackOb.trackDisplayNode, trackOb.trackDisplayDataNode]) {
+            const width = node?.in?.width;
+            if (!node || !width || !Number.isFinite(width.value)) continue;
+            if (node.handoffWidthScaled) continue;
+            // Filtered by NODE id, which is what the caller holds: the handoff
+            // scopes itself with a snapshot of NodeMan taken before the import.
+            if (filter && !filter(node.id, node)) continue;
+            node.handoffWidthScaled = true;
+            width.value = width.value * multiplier;
+            node.recalculate();
+            changed++;
+        }
+    });
+    if (changed) setRenderOne(true);
+    return changed;
+}
+
+/**
  * Visit every object in the Objects menu whose ONLY dimension is a radius.
  *
  * Not just spheres: an icosahedron, an octahedron, a circle and an ellipsoid
