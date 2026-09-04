@@ -9,7 +9,7 @@ import {getDisplayFilename} from "./FilenameUtils";
 
 let overlayDiv = null;
 let filenameDiv = null;
-let currentParts = {map: "", elevation: "", tiles: ""};
+let currentParts = {map: "", elevation: "", water: "", tiles: ""};
 let currentFilename = "";
 
 function htmlToText(html) {
@@ -97,7 +97,7 @@ function renderFilename() {
 function render() {
     const el = createOverlay();
     if (!el) return;
-    const parts = [currentParts.map, currentParts.elevation, currentParts.tiles]
+    const parts = [currentParts.map, currentParts.elevation, currentParts.water, currentParts.tiles]
         .filter(Boolean);
     if (parts.length === 0) {
         el.style.display = "none";
@@ -141,6 +141,20 @@ export function setElevationAttribution(sourceDef) {
     render();
 }
 
+/**
+ * The vector water source (CNodeWaterReflection / WaterMaskTiles).
+ *
+ * A slot of its own rather than folding into the map slot, because the water
+ * polygons are a SEPARATE source from the imagery and are most needed exactly
+ * when there is no map attribution to fold into: Google Photorealistic 3D tiles
+ * replace the basemap, setMapAttribution(null) is called, and the ODbL water
+ * data becomes the only thing on screen that has to be credited.
+ */
+export function setWaterAttribution(sourceDef) {
+    currentParts.water = formatAttribution(sourceDef);
+    render();
+}
+
 export function setTilesAttribution(text) {
     currentParts.tiles = text || "";
     render();
@@ -150,7 +164,7 @@ export function setTilesAttribution(text) {
  * Return the current attribution as plain text (for canvas/video rendering).
  */
 export function getAttributionText() {
-    const parts = [currentParts.map, currentParts.elevation, currentParts.tiles]
+    const parts = [currentParts.map, currentParts.elevation, currentParts.water, currentParts.tiles]
         .filter(Boolean)
         .map(html => htmlToText(html));
     return parts.join(" | ");

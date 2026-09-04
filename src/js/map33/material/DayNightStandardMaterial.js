@@ -1,12 +1,33 @@
 import {MeshStandardMaterial, ShaderChunk, Vector3} from "three";
 import {sharedUniforms} from "./SharedUniforms";
+import {waterShadeGLSL, waterUniformsGLSL} from "../../../water/WaterShading.glsl.js";
 import {Globals} from "../../../Globals";
 import {
     addTerrestrialRefractionUniforms,
     patchTerrestrialRefractionVertexShader,
 } from "../../../atmosphere/terrestrialRefraction";
 
-const CACHE_KEY = "DayNightStandardMaterial.v8terrestrialrefraction";
+const CACHE_KEY = "DayNightStandardMaterial.v9tilewater";
+
+// Whether a NEWLY CREATED tile material should carry the water branch.
+//
+// The branch is a compile-time #define rather than a uniform test, because it
+// drags the whole ocean BRDF and the mirror lookup into the fragment shader and
+// a dead branch of that size still costs every tile registers. Tiles stream in
+// constantly, so a new material has to know the current answer at construction;
+// materials that already exist are switched by TilesDayNightPlugin walking them,
+// which is safe (it edits a define, it does not swap the material out).
+let tileWaterEnabled = false;
+
+/**
+ * Set the default for materials created from now on.
+ *
+ * Does NOT touch existing materials — TilesDayNightPlugin.setTileWater() does
+ * that, because only it knows which ones are loaded.
+ */
+export function setTileWaterDefault(on) {
+    tileWaterEnabled = !!on;
+}
 
 // MeshStandardMaterial subclass that uses the PBR pipeline for textures,
 // vertex colors, and normal-based shading from the scene's sun directional
@@ -27,6 +48,8 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
         this.flatShading = true;
         this.tileOutputGamma = tileOutputGamma;
         this.useSitrecShadowCoords = useSitrecShadowCoords;
+        this.defines = {};
+        if (tileWaterEnabled) this.defines.SITREC_TILE_WATER = "";
 
         this._dayNightUniforms = {
             sunDirection: {value: Globals.sunLight.position},
@@ -39,6 +62,17 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
             showBuildingEdges: sharedUniforms.showBuildingEdges,
             showTileEdges: sharedUniforms.showTileEdges,
         };
+
+        // Every water uniform, shared BY REFERENCE exactly as the terrain
+        // material shares them — that reference is what makes
+        // CNodeWaterReflection.push()/pop() scope the effect to one view's
+        // render without touching any material. Taken by prefix rather than
+        // listed, so a uniform added to the water shader cannot be forgotten
+        // here. Ones the shader does not use are ignored by three, and when
+        // SITREC_TILE_WATER is off the shader uses none of them.
+        for (const k of Object.keys(sharedUniforms)) {
+            if (k.startsWith("water")) this._dayNightUniforms[k] = sharedUniforms[k];
+        }
 
         this.onBeforeCompile = this._onBeforeCompile.bind(this);
     }
@@ -144,6 +178,115 @@ varying vec3 vWorldPositionDN;
 varying vec3 vLocalPositionDN;
 varying vec3 vBarycentric;
 varying vec2 vDNUv;
+#ifdef SITREC_TILE_WATER
+${waterUniformsGLSL}
+
+// Where the water is, for a mesh that carries neither map imagery nor a tile
+// UV — the two things the terrain uses to answer this. See WaterMaskGeo.js.
+uniform float waterGeoActive;
+uniform sampler2D waterGeoMask;
+uniform vec4 waterGeoRect;
+uniform vec3 waterPlaneOrigin;
+uniform vec3 waterPlaneNormal;
+uniform float waterPlaneBand;
+uniform float waterPlaneRadius;
+
+// How much further the height band reaches below the sea than above it — see
+// sitrecTileWaterMask for why the two directions are different problems.
+#define BELOW_BAND_FACTOR 4.0
+
+${waterShadeGLSL}
+
+// How much of this fragment is water, 0..1, and where the sea surface under it
+// is. Three independent tests, all of which have to pass:
+//
+//  (a) THE MAP SAYS SO. A coverage mask rasterised from real water polygons,
+//      looked up by this fragment's own latitude and longitude.
+//  (b) IT IS AT SEA LEVEL. The mask is a plan view, so the pier deck, the
+//      hillside behind the beach and the boats moored off it are all "water" to
+//      it. Height above the sea is what separates them, and it is the only
+//      thing that can.
+//  (c) IT FACES THE SKY. A piling at the waterline passes both tests above and
+//      is still not a water surface.
+//
+// seaPos comes back as the point on the sea surface under the fragment. The
+// photogrammetry's own sea is bumpy by a few metres, and every water quantity
+// downstream — the wave phase, the mirror lookup — is a function of position on
+// a FLAT surface, so shading is done at the surface the water actually has
+// rather than at the mesh's guess about it. The mesh keeps its own depth, so
+// occlusion by the pier is unaffected.
+float sitrecTileWaterMask(vec3 worldPos, vec3 worldNormal, out vec3 seaPos) {
+    seaPos = worldPos;
+    if (waterGeoActive < 0.5) return 0.0;
+
+    // Geodetic latitude and longitude. The elevation angle of the ELLIPSOID
+    // NORMAL is the geodetic latitude by definition, so squashing the radial by
+    // waterUpSquash — which the wave code needs anyway — gets it for nothing,
+    // where the geocentric radial would be out by up to 0.19 degrees, or 21 km.
+    vec3 fromCenter = worldPos - earthCenter;
+    vec3 up = normalize(vec3(fromCenter.xy, fromCenter.z * waterUpSquash));
+    float lat = atan(up.z, length(up.xy));
+    float lon = atan(fromCenter.y, fromCenter.x);
+
+    // Normalised Web Mercator, then this fragment's place in the mask square.
+    // 0.15915494 is 1/(2*pi).
+    float mx = lon * 0.15915494 + 0.5;
+    float my = 0.5 - log(tan(0.78539816 + lat * 0.5)) * 0.15915494;
+    // fract, not a plain subtraction, because mercator x is periodic: a mask
+    // centred on the antimeridian has a left edge below 0 or above 1, and the
+    // fragments on its far side have wrapped round to the other end of the
+    // range. fract gives the distance EAST of the left edge either way, which
+    // is the coordinate wanted, and lands outside 0..1 for anything not in the
+    // square exactly as the plain difference did.
+    vec2 uv = vec2(fract(mx - waterGeoRect.x), my - waterGeoRect.y) * waterGeoRect.z;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+
+    float mask = texture2D(waterGeoMask, uv).r;
+    if (mask <= 0.0) return 0.0;
+
+    // Fade out ACROSS the mask's edge rather than stopping at it. The mask
+    // covers a finite square of ground and the sea does not, so somewhere out
+    // there the shading has to end; a hard stop puts a straight line across
+    // open water, which is the one thing the eye is guaranteed to find.
+    vec2 edge = smoothstep(vec2(0.0), vec2(0.04), uv)
+              * (1.0 - smoothstep(vec2(0.96), vec2(1.0), uv));
+    mask *= edge.x * edge.y;
+    if (mask <= 0.0) return 0.0;
+
+    // Height above the SEA, not above the water PLANE. The plane is flat and
+    // the sea is not: by 12 km out the sea has already dropped 11 m below its
+    // own tangent plane, which is more than the band, so without the sagitta
+    // term the far half of the bay would fail the height test. The correction
+    // is d^2/2R, wrong by d^4/8R^3 — two centimetres at 12 km.
+    vec3 rel = worldPos - waterPlaneOrigin;
+    float h = dot(rel, waterPlaneNormal);
+    float horizontal2 = max(dot(rel, rel) - h * h, 0.0);
+    float alt = h + horizontal2 / (2.0 * waterPlaneRadius);
+
+    // ASYMMETRIC, and that is the whole trick. One tolerance cannot do this job:
+    // measured against the pier at Santa Monica, 4 m leaves patches of open sea
+    // unshaded and 20 m starts shading the pier deck.
+    //
+    // The two directions are not the same problem. Nothing is ABOVE the sea
+    // except structures — a deck, a boat, the beach — so up there the tolerance
+    // only has to cover the photogrammetry's noise, and tight is right. BELOW
+    // the sea there is nothing to be confused with, only the mesh dipping under
+    // where the surface should be, and that dip was measured at 10 m over open
+    // water. So the band reaches down four times as far as it reaches up, and
+    // both jobs are done by the one control.
+    float band = alt > 0.0 ? waterPlaneBand : waterPlaneBand * BELOW_BAND_FACTOR;
+    mask *= 1.0 - smoothstep(band * 0.5, band, abs(alt));
+    if (mask <= 0.0) return 0.0;
+
+    // Deliberately generous. Google's sea is photogrammetry and its triangles
+    // wander by tens of degrees, so a tight test speckles the water; a piling
+    // or a hull side is near enough vertical to fail this anyway.
+    mask *= smoothstep(0.15, 0.5, dot(worldNormal, up));
+
+    seaPos = worldPos - up * alt;
+    return mask;
+}
+#endif
 ${this.useSitrecShadowCoords ? `#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
 uniform mat4 sitrecDirectionalShadowMatrix[ NUM_DIR_LIGHT_SHADOWS ];
 uniform mat4 sitrecDirectionalShadowWorldMatrix[ NUM_DIR_LIGHT_SHADOWS ];
@@ -224,8 +367,42 @@ if (useDayNight) {
 }
 if (abs(tileOutputGamma - 1.0) > 0.0001) {
     gl_FragColor.rgb = pow(max(gl_FragColor.rgb, vec3(0.0)), vec3(tileOutputGamma));
-}`
+}
+#ifdef SITREC_TILE_WATER
+// Water, added LAST — after the day/night attenuation, exactly as the terrain
+// material adds it after its own day/night mix. The reflection carries its own
+// night factor and must not be attenuated twice.
+//
+// gl_FragColor is linear radiance here, not sRGB: Sitrec renders into
+// half-float srgb-linear targets and the copy-to-screen shader does the
+// encoding, so <colorspace_fragment> above was a no-op. That is the same space
+// the terrain adds its reflection in, which is why one chunk serves both.
+if (waterReflection > 0.0) {
+    vec3 seaPos;
+    vec3 waterWorldNormal = inverseTransformDirection(normal, viewMatrix);
+    float tileWaterMask = sitrecTileWaterMask(vWorldPositionDN, waterWorldNormal, seaPos);
+    if (tileWaterMask > 0.0) {
+        gl_FragColor.rgb = sitrecWaterShade(gl_FragColor.rgb, tileWaterMask, seaPos);
+    }
+}
+#endif`
         );
+    }
+
+    /**
+     * Switch the water branch on or off for THIS material.
+     *
+     * Recompiles, because the branch is a #define — hence the guard: called on
+     * every loaded tile whenever the user toggles the feature, and a redundant
+     * needsUpdate would rebuild every tile program for nothing.
+     */
+    setTileWater(on) {
+        const want = !!on;
+        this.defines = this.defines ?? {};
+        if (!!this.defines.SITREC_TILE_WATER === want) return;
+        if (want) this.defines.SITREC_TILE_WATER = "";
+        else delete this.defines.SITREC_TILE_WATER;
+        this.needsUpdate = true;
     }
 
     setTileOutputGamma(value) {
@@ -236,7 +413,12 @@ if (abs(tileOutputGamma - 1.0) > 0.0001) {
     }
 
     copy(source) {
+        // Material.copy() would bring the SOURCE's defines across, and the
+        // source here is a streamed glTF material that has none — which would
+        // silently clear the water define this material was constructed with.
+        const defines = this.defines;
         super.copy(source);
+        this.defines = defines;
         this.flatShading = true;
         this.setTileOutputGamma(source.tileOutputGamma ?? 1.0);
         this.useSitrecShadowCoords = source.useSitrecShadowCoords ?? this.useSitrecShadowCoords ?? false;
@@ -245,7 +427,11 @@ if (abs(tileOutputGamma - 1.0) > 0.0001) {
     }
 
     customProgramCacheKey() {
-        return `${CACHE_KEY}.${this.useSitrecShadowCoords ? "sitrec" : "stock"}`;
+        // three already folds material.defines into the program cache key, so
+        // the water variant is separated either way; naming it here as well
+        // keeps the key readable in a shader dump.
+        return `${CACHE_KEY}.${this.useSitrecShadowCoords ? "sitrec" : "stock"}`
+            + `.${this.defines?.SITREC_TILE_WATER !== undefined ? "water" : "dry"}`;
     }
 
     static fromMaterial(source, options = {}) {

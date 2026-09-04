@@ -30,6 +30,28 @@ A source that sets `waterColor` itself always wins over both. For env-defined so
 
 Satellite sources have no flat water colour and should not be given one. Water Reflection covers them by other means: *Vector Water Mask*, which rasterises real water polygons and ignores the imagery entirely (needs a MapTiler key), or *Combine Terrain with OSM*, which stamps OSM's water fill into the loaded imagery. The combine needs some OSM-like source present to stamp *from*; it prefers the `config.js` `osm` key and otherwise uses any other source that declares a water colour and is not `mapping: 4326`, so an install that defines OSM only through `SITREC_CUSTOM_MAP_OSM_*`, or one running with `SITREC_ENABLE_DEFAULT_MAP_SOURCES=false`, still gets the option.
 
+### With Google Photorealistic 3D Tiles
+
+Google Photorealistic 3D Tiles do not sit on the terrain, they replace it: the terrain quadtree is hidden outright while they are on. Everything above therefore stops applying — there is no map texture in the frame to match a colour against, and no terrain tile to carry a mask. *Water on 3D Tiles* (on by default) shades the tiles' own surface instead, and needs no `waterColor` from any source, because it never looks at imagery.
+
+It finds water three ways at once, all of which have to agree: a water mask rasterised from the same vector polygons *Vector Water Mask* uses, covering a square of ground around whatever water is being looked at; a height band around the sea surface, which is what keeps the pier decks, the boats and the seafront out of a mask that is only a plan view; and a test that the surface faces the sky, which removes the pilings. *3D Tile Water Band* and *3D Tile Mask Span* control the second and the first.
+
+This needs a vector water source. There is no colour fallback and cannot be one: a photogrammetric tile carries a photograph of the sea, not a flat fill, so there is nothing for a colour test to match.
+
+### The vector water source
+
+Both *Vector Water Mask* and *Water on 3D Tiles* read water polygons from a server speaking the **OpenMapTiles schema** — a `water` layer of polygons in Mapbox Vector Tile (`.pbf`) format. Sitrec takes that layer's polygons only, keeping every feature class except `swimming_pool`, and rasterises them with the canvas's antialiasing so the shoreline is fractional coverage rather than a threshold.
+
+The default is MapTiler (`MAPTILER_KEY`), chosen because that key was already one Sitrec asks for. It is not a requirement. `SITREC_VECTOR_WATER_URL` is a `{z}/{x}/{y}` template pointing anywhere else — a self-hosted OpenMapTiles, or any other server with the same schema — and when it is set `MAPTILER_KEY` is not consulted at all, so a deployment with no route to the internet needs no account with anyone. This is the water counterpart of `SITREC_ENABLE_DEFAULT_MAP_SOURCES=false`, which does the same job for the basemaps; before it existed, that flag left the basemaps correctly restricted while the water mask carried on calling out.
+
+`SITREC_VECTOR_WATER_MAX_ZOOM` (default 14, what OpenMapTiles publishes) is the deepest zoom your server actually serves. Getting it too high fails quietly rather than loudly: the missing tiles 404, a 404 correctly means "no water polygons here", and the water disappears with nothing logged. Past this zoom the polygons are magnified rather than resampled — that is the whole reason for using vector data — so setting it low costs very little.
+
+Like a custom map source's URL, this one is fetched by the browser and is visible to anyone using the site. A credential embedded in it is as public as `MAPTILER_KEY` is, and should be scoped the same way.
+
+**Attribution.** The water source carries its own credit in the on-screen attribution overlay, shown whenever its data is in use and hidden when it is not. It needs a slot of its own because the overlay is otherwise driven per map source, and the water polygons are not a map source — which matters most under Google Photorealistic 3D Tiles, where the basemap credit is suppressed entirely and the water becomes the only thing on screen that has to be credited.
+
+MapTiler credits MapTiler and OpenStreetMap. A source set through `SITREC_VECTOR_WATER_URL` is credited to OpenStreetMap by default, because the OpenMapTiles schema is normally built from ODbL OpenStreetMap data and defaulting to a credit is the safe way round. Override it with `SITREC_VECTOR_WATER_ATTRIBUTION` and `SITREC_VECTOR_WATER_TERMS_URL`. Setting the attribution to an **empty** value is honoured as "credit nothing" rather than treated as unset, so an operator whose water data genuinely carries no attribution requirement can switch the line off.
+
 Example: Open Streetmap:
 
 ```javascript

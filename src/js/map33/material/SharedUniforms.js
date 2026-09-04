@@ -73,6 +73,42 @@ export const sharedUniforms = {
     // reflection stops rather than degrading. 0 disables the fade.
     waterMaxTileSize: {value: 0.0},
 
+    // Water on the 3D TILES (Google Photorealistic), which replace the terrain
+    // rather than sit on it — so with them on there is no terrain fragment left
+    // for the block above to shade, and the sea reverts to Google's baked
+    // photograph. These four say where the water is for a fragment that has no
+    // map texture and no tile UV to look one up by. See WaterMaskGeo.js and the
+    // water branch in DayNightStandardMaterial.
+    //
+    // waterGeoActive is the gate, raised by CNodeWaterReflection.push() only
+    // while the look view renders and only while the tiles are what is drawing
+    // the ground. Like every other water uniform it is shared BY REFERENCE with
+    // every material, so pop() lowering it is what keeps mainView clean.
+    waterGeoActive: {value: 0.0},
+    // Coverage mask over a square of ground, indexed by the fragment's own
+    // latitude and longitude rather than by any UV.
+    waterGeoMask: {value: null},
+    // The square that mask covers, in normalised Web Mercator:
+    // (u0, v0, 1/side, unused). Reciprocal because the shader divides by it.
+    waterGeoRect: {value: new Vector4(0, 0, 1, 0)},
+
+    // The water plane, as a plane — a point on it and its normal, in ECEF.
+    // The terrain path never needed this (a terrain fragment is water because
+    // the map says so, wherever it happens to sit), but a photogrammetric mesh
+    // has the pier deck, the boats and the hillside behind the beach all inside
+    // the same patch of "water" on the map, and height above the sea is what
+    // separates them. Also written in cube mode, where there is no mirror.
+    waterPlaneOrigin: {value: new Vector3()},
+    waterPlaneNormal: {value: new Vector3(0, 0, 1)},
+    // Metres either side of the sea surface a tile fragment may sit and still
+    // shade as water — it has to absorb the photogrammetry's own noise, which
+    // measures a few metres over open water at Santa Monica.
+    waterPlaneBand: {value: 4.0},
+    // Earth radius for the sagitta term that bends the flat plane above back
+    // onto the curved sea: at 12 km the sea has already dropped 11 m below its
+    // own tangent plane, which a metres-wide height band would otherwise reject.
+    waterPlaneRadius: {value: 6378137.0},
+
     // Ocean (spectral) mode (CNodeWaterReflection + src/ocean). A third method,
     // which differs from the two above in kind rather than in degree: instead of
     // perturbing a normal and looking up a mirror image, it treats the surface as

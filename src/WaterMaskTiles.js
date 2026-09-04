@@ -24,7 +24,12 @@ import {maskTransform, osmTileForTile} from "./OSMWaterTileMapping";
 // OpenMapTiles serves its vector schema to z14. Past that we magnify the
 // ancestor's polygons instead of resampling pixels — the entire reason for
 // using vector data, since the shoreline stays sharp at any terrain zoom.
-const VECTOR_MAX_ZOOM = 14;
+//
+// Only the DEFAULT. A different server may stop somewhere else, and asking it
+// for a zoom it does not serve returns 404s, which this module reads as "no
+// polygons here" — so the water would vanish rather than fail, which is the
+// worst way for it to be wrong. SITREC_VECTOR_WATER_MAX_ZOOM sets it.
+const DEFAULT_VECTOR_MAX_ZOOM = 14;
 
 // Mask resolution in pixels. 256 is enough because the edge is antialiased
 // COVERAGE, not a hard threshold: the shader reads a smooth 0..1 ramp about a
@@ -72,14 +77,87 @@ function loadMvtDecoder() {
 }
 
 /**
+ * The vector water source: a {z}/{x}/{y} URL template and the deepest zoom it
+ * serves, or null when none is configured.
+ *
+ * MapTiler is the default rather than the requirement. What this module
+ * actually depends on is the OPENMAPTILES SCHEMA — a `water` layer of polygons
+ * in Mapbox Vector Tile format — and several servers speak it: a self-hosted
+ * OpenMapTiles, or Protomaps behind a small range-request shim. MapTiler was
+ * chosen because its key was already one of the keys Sitrec asks for, which is
+ * a fact about this install rather than about the problem.
+ *
+ * Every RASTER source has been operator-definable for a long time
+ * (SITREC_CUSTOM_MAP_<NAME>_*), and SITREC_ENABLE_DEFAULT_MAP_SOURCES=false
+ * exists so a deployment with no route to the internet can offer only its own.
+ * The vector water source escaped all of that and reached for api.maptiler.com
+ * regardless — so on such a deployment the basemaps fell back correctly and the
+ * water quietly stopped working, with nothing to say why. Hence the override.
+ *
+ * When SITREC_VECTOR_WATER_URL is set, MAPTILER_KEY is not consulted at all: an
+ * isolated deployment should not need an account with anyone.
+ */
+export function vectorWaterSource() {
+    const template = getEnv("SITREC_VECTOR_WATER_URL", process.env.SITREC_VECTOR_WATER_URL);
+    if (template) {
+        const maxZoom = parseInt(getEnv("SITREC_VECTOR_WATER_MAX_ZOOM",
+            process.env.SITREC_VECTOR_WATER_MAX_ZOOM), 10);
+        // Defined-but-empty is a deliberate "credit nothing", so the test is on
+        // the TYPE, not on truthiness — an operator serving their own
+        // non-OSM-derived water must be able to switch the line off, and
+        // `SITREC_VECTOR_WATER_ATTRIBUTION=` is the obvious way to try.
+        const attribution = getEnv("SITREC_VECTOR_WATER_ATTRIBUTION",
+            process.env.SITREC_VECTOR_WATER_ATTRIBUTION);
+        const termsURL = getEnv("SITREC_VECTOR_WATER_TERMS_URL",
+            process.env.SITREC_VECTOR_WATER_TERMS_URL);
+        return {
+            template,
+            maxZoom: Number.isFinite(maxZoom) ? maxZoom : DEFAULT_VECTOR_MAX_ZOOM,
+            // Defaulted rather than blank: this module decodes the OpenMapTiles
+            // schema, and a server speaking that schema is overwhelmingly
+            // serving OpenStreetMap data, which is ODbL and must be credited.
+            // Crediting by default and letting an operator correct it is the
+            // right way round; the reverse silently drops a licence obligation
+            // for anyone who never reads this far.
+            attribution: typeof attribution === "string"
+                ? attribution : "Water: © OpenStreetMap contributors",
+            termsURL: typeof termsURL === "string"
+                ? termsURL : "https://www.openstreetmap.org/copyright",
+        };
+    }
+
+    const key = getEnv("MAPTILER_KEY", process.env.MAPTILER_KEY);
+    if (!key || key === "EXAMPLEKEY") return null;
+    return {
+        template: `https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf?key=${key}`,
+        maxZoom: DEFAULT_VECTOR_MAX_ZOOM,
+        // MapTiler's terms want both them and OSM named; their own copyright
+        // page covers both, so it is the one link to give.
+        attribution: "Water: © MapTiler © OpenStreetMap contributors",
+        termsURL: "https://www.maptiler.com/copyright/",
+    };
+}
+
+/**
+ * Fill a {z}/{x}/{y} template.
+ *
+ * Exported for the tests; the two callers below are the real ones.
+ */
+export function fillTileTemplate(template, z, x, y) {
+    return template
+        .replace(/\{z\}/g, z)
+        .replace(/\{x\}/g, x)
+        .replace(/\{y\}/g, y);
+}
+
+/**
  * Is a vector water source configured?
  *
  * Exported so the UI can hide the option rather than offer a switch wired to
  * nothing, and so the material path can skip the work entirely.
  */
 export function waterMaskAvailable() {
-    const key = getEnv("MAPTILER_KEY", process.env.MAPTILER_KEY);
-    return !!key && key !== "EXAMPLEKEY";
+    return vectorWaterSource() !== null;
 }
 
 /**
@@ -96,11 +174,11 @@ export function waterMaskAvailable() {
  * @returns {?{url: string, srcRect: ?{fx: number, fy: number, fw: number, fh: number}}}
  */
 export function waterMaskSourceForTile(z, x, y) {
-    const key = getEnv("MAPTILER_KEY", process.env.MAPTILER_KEY);
-    if (!key || key === "EXAMPLEKEY") return null;
+    const source = vectorWaterSource();
+    if (source === null) return null;
 
-    const tile = osmTileForTile(z, x, y, VECTOR_MAX_ZOOM);
-    const url = `https://api.maptiler.com/tiles/v3/${tile.z}/${tile.x}/${tile.y}.pbf?key=${key}`;
+    const tile = osmTileForTile(z, x, y, source.maxZoom);
+    const url = fillTileTemplate(source.template, tile.z, tile.x, tile.y);
     return {url, srcRect: tile.srcRect};
 }
 
@@ -132,11 +210,42 @@ function rememberVectorTile(url, decoded) {
 }
 
 /**
+ * The vector tile URL for a tile of the vector source's own grid.
+ *
+ * waterMaskSourceForTile() above answers "which vector tile covers this TERRAIN
+ * tile", which is the only question the terrain has. WaterMaskGeo.js asks the
+ * other one — it picks its own zoom and its own block of tiles to cover a
+ * region of ground — so it needs the URL without the ancestor arithmetic.
+ *
+ * @returns {?string} null when no vector source is configured.
+ */
+export function vectorWaterTileUrl(z, x, y) {
+    const source = vectorWaterSource();
+    if (source === null) return null;
+    return fillTileTemplate(source.template, z, x, y);
+}
+
+/**
+ * The deepest zoom the vector source serves.
+ *
+ * A function, not a constant: the source is read from the environment, which a
+ * Docker deployment can change at runtime through window.__SITREC_ENV__.
+ */
+export function vectorWaterMaxZoom() {
+    return vectorWaterSource()?.maxZoom ?? DEFAULT_VECTOR_MAX_ZOOM;
+}
+
+/**
  * Fetch and decode one vector tile down to the water rings we care about.
+ *
+ * Exported for WaterMaskGeo.js, which rasterises the same decoded rings into a
+ * region-wide mask rather than a per-terrain-tile one — sharing this function
+ * means it also shares the in-flight dedup and the decoded-tile cache, so a
+ * terrain tile and the geographic mask asking for the same tile fetch once.
  *
  * @returns {Promise<{extent: number, polygons: Array<Array<Array<{x: number, y: number}>>>}>}
  */
-function loadVectorWaterTile(url) {
+export function loadVectorWaterTile(url) {
     const cached = vectorTileCache.get(url);
     if (cached) return Promise.resolve(cached);
 

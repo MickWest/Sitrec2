@@ -56,7 +56,11 @@ import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame
 import {guiMenus, NodeMan, Sit, setRenderOne, Globals, GlobalDateTimeNode} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {CWaterPlanarMirror} from "../WaterPlanarMirror";
-import {waterMaskAvailable} from "../WaterMaskTiles";
+import {vectorWaterSource, waterMaskAvailable} from "../WaterMaskTiles";
+import {setWaterAttribution} from "../AttributionOverlay";
+import {CGeoWaterMask} from "../WaterMaskGeo";
+import {setTileWaterDefault} from "../js/map33/material/DayNightStandardMaterial";
+import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {findOSMWaterSource} from "../terrainSourceUtils";
 import {OCEAN_MAX_WAVES} from "../ocean/OceanBRDF.glsl.js";
 import {altitudeHAE} from "../SphericalMath";
@@ -183,6 +187,23 @@ export class CNodeWaterReflection extends CNode {
         this.mirrorMaxTile = v.mirrorMaxTile ?? 4000;
         this.mirrorHideSkirts = v.mirrorHideSkirts ?? true;
 
+        // Water on the 3D TILES. Google Photorealistic tiles replace the
+        // basemap — CNodeTerrainUI hides the terrain quadtree outright while
+        // they are on — so everything above has no surface left to shade and
+        // the sea reverts to Google's baked daylight photograph of it. These
+        // three put the same water on the tiles' own material instead.
+        this.tileWater = v.tileWater ?? true;
+        // Metres ABOVE the sea a tile fragment may sit and still shade as water.
+        // It has to cover the photogrammetry's own noise without reaching up to
+        // a pier deck (8 m at Santa Monica) or a moored boat. The band reaches
+        // four times as far DOWNWARDS, where there is nothing to confuse water
+        // with — see sitrecTileWaterMask in DayNightStandardMaterial.
+        this.tileWaterBand = v.tileWaterBand ?? 4;
+        // Ground width of the geographic water mask. Wider reaches further out
+        // to sea; the mask is a fixed 2048 texels either way, so it also trades
+        // away shoreline resolution — 12 km is 5.9 m per texel.
+        this.tileWaterSpan = v.tileWaterSpan ?? 12000;
+
         // Ocean (spectral) mode. These are PHYSICAL inputs, not look knobs: the
         // wind speed drives a published wave spectrum whose integrated slope
         // variance reproduces Cox & Munk's sun-glitter measurements, and every
@@ -252,6 +273,9 @@ export class CNodeWaterReflection extends CNode {
             "occlusion",
             "combineWithOSM",
             "vectorWaterMask",
+            "tileWater",
+            "tileWaterBand",
+            "tileWaterSpan",
         ]);
 
         // Per-renderer cube targets. Each CNodeView3D owns its own
@@ -318,6 +342,45 @@ export class CNodeWaterReflection extends CNode {
                 this.vectorWaterMask = false;
                 this.vectorMaskController.disable();
                 this.vectorMaskController.tooltip("Needs a MapTiler key (MAPTILER_KEY) — none is configured.");
+            }
+
+            // Applies to every method, so it sits outside the mirror-only and
+            // cube-only groups that applyMode() shows and hides.
+            this.tileWaterController = this.gui.add(this, "tileWater")
+                .name("Water on 3D Tiles").listen()
+                .tooltip("Shade water on the Google Photorealistic 3D tiles. They REPLACE the terrain, so "
+                    + "with them on there is no map-textured ground left for the water shader to run on and "
+                    + "the sea reverts to Google's own daylight photograph of it. Water is found from the "
+                    + "same vector water polygons the mask above uses, plus a height band around the sea "
+                    + "surface, which is what keeps the pier deck and the beach out of it.")
+                .onChange(() => {
+                    this.syncTileWater();
+                    setRenderOne(true);
+                });
+            // Not mode-gated: all three methods shade through the same chunk.
+            [
+                this.gui.add(this, "tileWaterBand", 0.5, 30, 0.5).name("3D Tile Water Band (m)").listen()
+                    .onChange(changed)
+                    .tooltip("How far ABOVE the sea surface a 3D tile fragment may sit and still count as "
+                        + "water. Google's sea is photogrammetry and wanders by metres, so this cannot be "
+                        + "zero; lower it if a pier deck or a moored boat starts reflecting, raise it if "
+                        + "patches of sea stay unshaded. The band reaches four times as far downwards, "
+                        + "where a dipping mesh is the only thing it can meet."),
+                this.gui.add(this, "tileWaterSpan", 2000, 40000, 500).name("3D Tile Mask Span (m)").listen()
+                    .onChange(changed)
+                    .tooltip("Width of ground the water mask covers, centred on the water being looked at. "
+                        + "Wider reaches further out to sea; the mask is a fixed 2048 texels either way, so "
+                        + "it also coarsens the shoreline — 12 km gives 5.9 m per texel."),
+            ];
+            if (!waterMaskAvailable()) {
+                // Same reason as the vector mask above: the geographic mask is
+                // rasterised from the same vector source.
+                this.tileWater = false;
+                this.tileWaterController.disable();
+                this.tileWaterController.tooltip(
+                    "Needs a MapTiler key (MAPTILER_KEY) — none is configured. Water on the 3D tiles is "
+                    + "found from vector water polygons; there is no map imagery on a photogrammetric tile "
+                    + "for the color test to look at.");
             }
 
             this.combineController = this.gui.add(this, "combineWithOSM")
@@ -532,6 +595,14 @@ export class CNodeWaterReflection extends CNode {
         this._occluderMaterial = undefined;
         this.planarMirror?.dispose();
         this.planarMirror = undefined;
+        this.geoMask?.dispose();
+        this.geoMask = undefined;
+        // Tiles outlive this node on a sitch reload, and the module default is
+        // what a tile streaming in during the gap reads.
+        setTileWaterDefault(false);
+        // The overlay outlives this node too, so a credit left standing would
+        // follow the user into a sitch that fetches no water polygons at all.
+        setWaterAttribution(null);
         this.clearUniforms();
         if (this.gui) {
             this.gui.destroy();
@@ -562,9 +633,35 @@ export class CNodeWaterReflection extends CNode {
         }
     }
 
+    // Credit the vector water source while its data is on screen.
+    //
+    // The overlay is otherwise driven per MAP SOURCE, and the water polygons are
+    // not a map source — so before this they went uncredited, which is a licence
+    // problem rather than a cosmetic one: the data is ODbL. It matters most in
+    // exactly the case this branch added, because Google Photorealistic tiles
+    // replace the basemap, CNodeTerrainUI then calls setMapAttribution(null),
+    // and the water becomes the ONLY thing on screen needing a credit.
+    //
+    // Tracks USE, not availability. The terrain's per-tile mask is fetched
+    // whenever vectorWaterMask is on, whether or not the effect is drawing
+    // (vectorWaterMaskWanted does not consult `enabled`), while the tiles' mask
+    // is only fetched when the effect is actually running — _tileWaterApplied
+    // already folds `enabled` in. Edge-triggered, like updateCombineAvailability
+    // above, because this runs every frame and render() touches the DOM.
+    updateWaterAttribution() {
+        const inUse = this.vectorWaterMask || this._tileWaterApplied === true;
+        const source = inUse ? vectorWaterSource() : null;
+        const key = source ? `${source.attribution}|${source.termsURL}` : "";
+        if (key === this._waterAttributionKey) return;
+        this._waterAttributionKey = key;
+        setWaterAttribution(source);
+    }
+
     update(frame) {
         super.update(frame);
         this.updateCombineAvailability();
+        this.syncTileWater();
+        this.updateWaterAttribution();
 
         const animating = this.enabled && this.waveSpeed > 0;
         // Only keep the render loop awake while there is actually something
@@ -1107,6 +1204,11 @@ export class CNodeWaterReflection extends CNode {
         sharedUniforms.waterMirror.value = 0.0;
         sharedUniforms.waterMirrorMap.value = null;
         sharedUniforms.waterMaxTileSize.value = 0.0;
+        // The 3D tiles' gate. Their materials share these uniform objects by
+        // reference exactly as the terrain's do, so this is what stops mainView
+        // — which renders the same tiles — from shading water too.
+        sharedUniforms.waterGeoActive.value = 0.0;
+        sharedUniforms.waterGeoMask.value = null;
         // Every gate and every SAMPLER the ocean path installs has to come back
         // off here, not just the scalars. Terrain materials are cloned per view and
         // share these uniform objects BY REFERENCE, so a sampler left bound is a
@@ -1122,6 +1224,68 @@ export class CNodeWaterReflection extends CNode {
         sharedUniforms.waterWhitecap.value = 0.0;
     }
 
+    // Is the ground currently being drawn by the 3D tiles rather than by the
+    // terrain quadtree? That — not "are buildings on" — is what decides whether
+    // the tiles need to shade water: Cesium OSM Buildings sit ON the terrain,
+    // which goes on drawing its own water underneath them, while Google
+    // Photorealistic tiles REPLACE it (CNodeTerrainUI.setTerrainVisible(false)).
+    tileWaterApplicable() {
+        return NodeMan.get("TerrainModel", false)?.UI?.isGooglePhotorealisticActive?.() === true;
+    }
+
+    // Keep the tiles' compiled-in water branch in step with the settings.
+    //
+    // A #define rather than a uniform, because the branch carries the whole
+    // ocean BRDF and a dead copy of it still costs every tile registers — so
+    // this is edge-triggered, and switching it recompiles the tile programs
+    // once. Cheap to call every frame, which is what it is: the answer depends
+    // on the map source and on whether the tiles have finished starting up,
+    // neither of which raises an event this node listens to.
+    syncTileWater() {
+        const want = this.enabled && this.tileWater && this.tileWaterApplicable();
+        if (want === this._tileWaterApplied) return;
+        this._tileWaterApplied = want;
+        // Set the module default FIRST, so tiles streaming in during the walk
+        // below are built with the branch already in the right state.
+        setTileWaterDefault(want);
+        NodeMan.get("buildings3DTiles", false)?.setTileWater?.(want);
+        if (!want) this.geoMask?.dispose();
+        setRenderOne(true);
+    }
+
+    // Point the tiles' water shading at the water: a mask of where it is, and
+    // the plane telling the shader how high it sits.
+    //
+    // Returns quietly without raising waterGeoActive whenever anything is
+    // missing — no plane, no mask yet, the feature off. The tiles then render
+    // as they always did, which is the right thing to fall back to: a partly
+    // built mask would paint water over land it has not loaded.
+    applyTileWater(plane) {
+        if (!this._tileWaterApplied || !plane) return;
+        // The mask arrives asynchronously, so something has to ask for the frame
+        // that finally uses it. Wave Speed 0 is a supported setting and draws no
+        // frames of its own, so without this a settled still scene would sit
+        // unshaded until the user happened to touch something.
+        this.geoMask ??= new CGeoWaterMask(() => setRenderOne(true));
+
+        // Centre the mask on the water being LOOKED AT, not on the camera. The
+        // plane's tangent point is already the centroid of the probe rays that
+        // found the water, which is exactly that point.
+        const lla = ECEFToLLAVD_radii(plane.point);
+        const texture = this.geoMask.update(lla.x, lla.y, this.tileWaterSpan);
+        const rect = this.geoMask.rect;
+        if (!texture || !rect) return;
+
+        sharedUniforms.waterGeoMask.value = texture;
+        // 1/side rather than side: the shader divides by it once per fragment.
+        sharedUniforms.waterGeoRect.value.set(rect.u0, rect.v0, 1 / rect.du, 0);
+        sharedUniforms.waterPlaneOrigin.value.copy(plane.point);
+        sharedUniforms.waterPlaneNormal.value.copy(plane.normal);
+        sharedUniforms.waterPlaneBand.value = this.tileWaterBand;
+        sharedUniforms.waterPlaneRadius.value = Globals.equatorRadius || 6378137;
+        sharedUniforms.waterGeoActive.value = 1.0;
+    }
+
     // Called immediately before the look view renders GlobalScene. Returns
     // true if the reflection is active, so the caller knows to pop it.
     push(view) {
@@ -1134,8 +1298,14 @@ export class CNodeWaterReflection extends CNode {
         // water. With a vector mask the imagery is never consulted, so demanding
         // one here is what stopped the whole effect from running on satellite
         // sources — they declare no water color, and push() bailed on line 2.
+        //
+        // The 3D tiles are the same argument taken further: while they are
+        // drawing the ground there is no map imagery in the frame AT ALL, so a
+        // property of the map source cannot be a reason to skip the effect.
+        // Without this the tiles reflect on OSM and ESRI and silently do
+        // nothing on Debug, NoClouds, or any other source with no water color.
         const waterColor = this.getWaterColor();
-        if (waterColor === undefined && !this.vectorWaterMask) return false;
+        if (waterColor === undefined && !this.vectorWaterMask && !this._tileWaterApplied) return false;
 
         const nightSky = NodeMan.get("NightSkyNode", false);
         if (!nightSky) return false;
@@ -1220,6 +1390,9 @@ export class CNodeWaterReflection extends CNode {
                 // sampler the ocean branch never reads.
                 this.applyOceanUniforms(view, skyColor, nightFactor);
             }
+            // After the early return above, so a frame that abandons the mirror
+            // does not leave the tiles' gate raised with nothing to pop it.
+            this.applyTileWater(this.planarMirror.plane);
         } else {
             sharedUniforms.waterMirror.value = 0.0;
             sharedUniforms.waterOcean.value = 0.0;
@@ -1234,6 +1407,15 @@ export class CNodeWaterReflection extends CNode {
                 sharedUniforms.waterOcclusion.value = 1.0;
             } else {
                 sharedUniforms.waterOcclusion.value = 0.0;
+            }
+
+            // Cube mode has no mirror and so no plane, but the tiles still need
+            // one: it is the only thing that says how high the sea is, and
+            // without it a photogrammetric mesh cannot tell the sea from the
+            // pier deck over it. Detecting one costs 25 cached ray marches.
+            if (this._tileWaterApplied) {
+                this.planarMirror ??= new CWaterPlanarMirror(this);
+                this.applyTileWater(this.planarMirror.detectPlane(view));
             }
         }
 
