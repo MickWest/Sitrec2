@@ -358,7 +358,12 @@ class ULogParser {
 }
 
 async function main() {
-    const filePath = process.argv[2] || '/Users/mick/Dropbox/sitrec-dev/sample.ulg';
+    const filePath = process.argv[2];
+    if (!filePath) {
+        console.error('Usage: node tools/test-px4-parser.js <flight-log.ulg>');
+        process.exitCode = 1;
+        return;
+    }
     
     console.log('='.repeat(60));
     console.log('PX4 ULog Parser Test');

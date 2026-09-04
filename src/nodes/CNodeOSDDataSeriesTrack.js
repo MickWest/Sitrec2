@@ -9,6 +9,13 @@ import {adjustHeightAboveGround, adjustHeightHAE} from "../threeExt";
 import {isAltitudeLockActive} from "../AltitudeLock";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 
+export function osdAltitudeToHAE(altitudeMeters, hasAltitudeValue, altitudeReference, lat, lon) {
+    if (altitudeReference === "MSL" && hasAltitudeValue) {
+        return altitudeMeters + meanSeaLevelOffset(lat, lon);
+    }
+    return altitudeMeters;
+}
+
 export class CNodeOSDDataSeriesTrack extends CNodeTrack {
     constructor(v) {
         super(v);
@@ -163,13 +170,12 @@ export class CNodeOSDDataSeriesTrack extends CNodeTrack {
         for (let f = 0; f < this.frames; f++) {
             if (latArr[f] === null || lonArr[f] === null) continue;
             let alt = 0;
-            if (altArr && altArr[f] !== null) {
+            const hasAltitudeValue = !!altArr && altArr[f] != null;
+            if (hasAltitudeValue) {
                 alt = altTrackFt ? f2m(altArr[f]) : altArr[f];
             }
             // Convert MSL to HAE if needed (h = H + N)
-            if (this.altitudeReference === "MSL" && alt !== 0) {
-                alt += meanSeaLevelOffset(latArr[f], lonArr[f]);
-            }
+            alt = osdAltitudeToHAE(alt, hasAltitudeValue, this.altitudeReference, latArr[f], lonArr[f]);
             this.array[f] = {position: LLAToECEF(latArr[f], lonArr[f], alt)};
         }
 

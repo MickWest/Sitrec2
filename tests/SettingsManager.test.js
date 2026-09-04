@@ -20,15 +20,10 @@ describe('sanitizeSettings', () => {
         expect(result.centerSidebar).toBe(false);
     });
 
-    test('should convert truthy value to boolean for centerSidebar', () => {
-        const result = sanitizeSettings({ centerSidebar: 1 });
-        expect(result.centerSidebar).toBe(true);
-    });
-
-    test('should convert falsy value to boolean for centerSidebar', () => {
-        const result = sanitizeSettings({ centerSidebar: 0 });
-        expect(result.centerSidebar).toBe(false);
-    });
+    test.each([1, 0, '1', '0', 'true', 'false'])(
+        'should reject non-boolean centerSidebar value %p',
+        value => expect(sanitizeSettings({centerSidebar: value}).centerSidebar).toBeUndefined(),
+    );
 
     test('should not include centerSidebar when not provided', () => {
         const result = sanitizeSettings({});
@@ -44,8 +39,20 @@ describe('sanitizeSettings', () => {
     test('should sanitize showAttribution as boolean', () => {
         expect(sanitizeSettings({ showAttribution: true }).showAttribution).toBe(true);
         expect(sanitizeSettings({ showAttribution: false }).showAttribution).toBe(false);
-        expect(sanitizeSettings({ showAttribution: 1 }).showAttribution).toBe(true);
-        expect(sanitizeSettings({ showAttribution: 0 }).showAttribution).toBe(false);
+    });
+
+    test('all boolean settings accept only JSON booleans', () => {
+        const keys = [
+            'enableOldAIModels', 'centerSidebar', 'showAttribution', 'showFilename',
+            'startupLocation', 'startupBuildings',
+        ];
+        for (const key of keys) {
+            expect(sanitizeSettings({[key]: true})[key]).toBe(true);
+            expect(sanitizeSettings({[key]: false})[key]).toBe(false);
+            for (const invalid of [1, 0, '1', '0', 'true', 'false']) {
+                expect(sanitizeSettings({[key]: invalid})[key]).toBeUndefined();
+            }
+        }
     });
 
     test('should not include showAttribution when not provided', () => {
@@ -66,9 +73,9 @@ describe('sanitizeSettings - new sitch startup preferences', () => {
         expect(sanitizeSettings({startupUnits: 'Nautical'}).startupUnits).toBe('nautical');
     });
 
-    test('startupLocation is coerced to a boolean', () => {
+    test('startupLocation accepts a boolean', () => {
         expect(sanitizeSettings({startupLocation: true}).startupLocation).toBe(true);
-        expect(sanitizeSettings({startupLocation: 0}).startupLocation).toBe(false);
+        expect(sanitizeSettings({startupLocation: false}).startupLocation).toBe(false);
     });
 
     test('latitude and longitude are clamped to the globe', () => {
@@ -93,8 +100,8 @@ describe('sanitizeSettings - new sitch startup preferences', () => {
         expect(sanitizeSettings({startupAlt: 'high'}).startupAlt).toBeUndefined();
     });
 
-    test('startupBuildings is coerced to a boolean', () => {
-        expect(sanitizeSettings({startupBuildings: 1}).startupBuildings).toBe(true);
+    test('startupBuildings accepts a boolean', () => {
+        expect(sanitizeSettings({startupBuildings: true}).startupBuildings).toBe(true);
         expect(sanitizeSettings({startupBuildings: false}).startupBuildings).toBe(false);
     });
 

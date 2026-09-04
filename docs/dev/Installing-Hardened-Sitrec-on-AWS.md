@@ -538,14 +538,8 @@ terraform apply plan.tfplan
    `X-Forwarded-For` processing to `remove` (the application never trusts it, and the
    trusted-proxy check uses the connection address).
 
-   The module configures those response headers and removes `X-Forwarded-For`. It does not
-   currently suppress the balancer's own `server: awselb/2.0` response header. If your
-   deployment requires that, set the load-balancer attribute explicitly after apply:
-
-   ```
-   aws elbv2 modify-load-balancer-attributes --load-balancer-arn <balancer-arn> \
-       --attributes Key=routing.http.response.server.enabled,Value=false
-   ```
+   The module configures those response headers, removes `X-Forwarded-For`, and suppresses
+   the balancer's own identifying `server` response header.
 
    The tightest policy the application runs under, and the module's default (`csp`):
 
@@ -791,7 +785,7 @@ authority issued; `curl` presents it with `--cert alice.p12:<password> --cert-ty
 | 10 | FIPS endpoints in use | the trail's S3 data events for the data bucket (section 8.1, item 7), delivered to the logs bucket within about fifteen minutes | in every event whose identity is the task role, `requestParameters.Host` ends in `s3-fips.<region>.<dns suffix>`, `tlsDetails.tlsVersion` is TLS 1.3, and `vpcEndpointId` is the gateway endpoint's id (so the FIPS hostname is reached through the endpoint, not the internet) |
 | 11 | No route out | `aws ecs execute-command … --command "curl -m 5 https://example.com"` | fails; the VPC flow logs (section 8.1, item 7) show only endpoint traffic and any narrowly allowed internal-source traffic |
 | 12 | Browser origins | browser developer tools, network panel, load a sitch, open terrain, save | every request is to `<host>`, or to an exact custom-source origin you intentionally added to routing, CORS and the content security policy |
-| 13 | Response headers | `curl -sI --cert … https://<host>/` | `strict-transport-security`, `x-frame-options`, `content-security-policy` present; if you disabled the server header in section 8.1, no `server: awselb` |
+| 13 | Response headers | `curl -sI --cert … https://<host>/` | `strict-transport-security`, `x-frame-options`, `content-security-policy` present; no identifying `server` header |
 | 14 | Image provenance | `aws ecs describe-tasks` → image digest | equals the digest you recorded in section 4 |
 | 15 | Logs | one accepted login, one refusal | both JSON lines present in the CloudWatch stream; the connection log has the serial |
 

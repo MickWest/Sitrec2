@@ -52,6 +52,6 @@ task_environment = {
   SITREC_CUSTOM_MAP_INTERNAL_NAME       = "Imagery"
   SITREC_CUSTOM_ELEVATION_INTERNAL_URL  = "https://<tiles>/terrain/{z}/{x}/{y}.png"
   SITREC_CUSTOM_ELEVATION_INTERNAL_NAME = "Elevation"
-  DEFAULT_MAP_TYPE                      = "INTERNAL"
-  DEFAULT_ELEVATION_TYPE                = "INTERNAL"
+  DEFAULT_MAP_TYPE                      = "CustomMap_INTERNAL"
+  DEFAULT_ELEVATION_TYPE                = "CustomElevation_INTERNAL"
 }

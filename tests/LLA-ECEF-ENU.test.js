@@ -4,12 +4,14 @@ import {
     ECEFToLLA,
     ECEFToLLA_Sphere,
     ENU2ECEF,
+    ENU2ECEF_radii,
     getN,
     haversineDistanceKM,
     LLAToECEF_Sphere,
     RLLAToECEF,
     RLLAToECEF_radii,
     RLLAToECEFV_Sphere,
+    updateEarthRadii,
     wgs84
 } from '../src/LLA-ECEF-ENU';
 import {Vector3} from 'three';
@@ -272,6 +274,45 @@ describe('getN (radius of curvature)', () => {
         const N45 = getN(Math.PI / 4);
         const Nminus45 = getN(-Math.PI / 4);
         expect(N45).toBeCloseTo(Nminus45, 5);
+    });
+});
+
+describe('ellipsoid-aware ENU helpers', () => {
+    beforeEach(() => updateEarthRadii(true));
+    afterEach(() => updateEarthRadii(false));
+
+    test('the geodetic origin maps to zero at a non-equatorial latitude', () => {
+        const lat = 47.6 * Math.PI / 180;
+        const lon = -122.3 * Math.PI / 180;
+        const origin = RLLAToECEF_radii(lat, lon, 0);
+
+        const enu = ECEF2ENU_radii(origin, lat, lon);
+
+        expect(enu.x).toBeCloseTo(0, 6);
+        expect(enu.y).toBeCloseTo(0, 6);
+        expect(enu.z).toBeCloseTo(0, 6);
+    });
+
+    test('ECEF to ENU and back is a tight round trip', () => {
+        const lat = 47.6 * Math.PI / 180;
+        const lon = -122.3 * Math.PI / 180;
+        const point = RLLAToECEF_radii(lat + 0.003, lon - 0.004, 1234.5);
+
+        const roundTrip = ENU2ECEF_radii(ECEF2ENU_radii(point, lat, lon), lat, lon);
+
+        expect(roundTrip.distanceTo(point)).toBeLessThan(1e-6);
+    });
+
+    test('justRotate preserves a direction and is reversible', () => {
+        const lat = 47.6 * Math.PI / 180;
+        const lon = -122.3 * Math.PI / 180;
+        const direction = new Vector3(0.2, -0.7, 0.5).normalize();
+
+        const enu = ECEF2ENU_radii(direction, lat, lon, true);
+        const roundTrip = ENU2ECEF_radii(enu, lat, lon, true);
+
+        expect(enu.length()).toBeCloseTo(1, 12);
+        expect(roundTrip.distanceTo(direction)).toBeLessThan(1e-12);
     });
 });
 

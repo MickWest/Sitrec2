@@ -39,6 +39,12 @@ Two things soften this in practice. Terrain, tracks and cameras all go through t
 
 **Use the ellipsoid for any quantitative work.**
 
+Changing the Earth model at runtime updates the global radii, recalculates the node graph,
+and refreshes terrain. Editable splines created from LLA or legacy local coordinates retain
+an LLA copy of their control points and reproject it when the model changes. Raw ECEF inputs
+remain raw ECEF by design: changing the model changes how geodetic coordinates are converted,
+not the meaning of an already Cartesian position.
+
 ## The EGM96 Geoid
 
 The ellipsoid is a smooth mathematical surface. The actual shape of sea level — driven by gravity variations from uneven mass distribution inside the Earth — is an irregular surface called the **geoid**.

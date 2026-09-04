@@ -64,15 +64,12 @@ anyGeometry.computeVertexNormals(); // Uses optimized version
 3. Set the same face normal for all 3 vertices of that triangle
 4. Normalize all vertex normals at the end
 
-## Performance Benchmarks
+## Performance
 
-Typical performance improvements observed:
-
-- **Small geometries** (< 10K vertices): 2-3x faster
-- **Medium geometries** (10K-100K vertices): 3-5x faster  
-- **Large geometries** (> 100K vertices): 4-8x faster
-
-The improvement is more significant for larger geometries due to reduced function call overhead.
+The implementation is intended for the large terrain and merged-object geometries where
+avoiding accessor calls and temporary vectors matters most. Measure it with representative
+Sitrec geometry before treating any speed-up as a fixed ratio; the result depends on vertex
+count, indexing, browser engine, and hardware.
 
 ## Compatibility
 
@@ -82,16 +79,18 @@ The improvement is more significant for larger geometries due to reduced functio
 - ✅ Handles edge cases (zero-length normals, degenerate triangles)
 - ⚠️ Assumes non-normalized buffer attributes (standard case)
 
-## Testing
+## Verification
 
-Run the performance and correctness tests:
+There is no standalone `FastComputeVertexNormalsTest.js` harness. Run the repository unit
+tests and a development build after changing the implementation:
 
-```javascript
-import { runPerformanceTest, runCorrectnessTest } from './FastComputeVertexNormalsTest.js';
-
-runCorrectnessTest(); // Verify correctness
-runPerformanceTest(); // Measure performance improvements
+```bash
+npm test
+npm run build
 ```
+
+For performance work, profile terrain generation in the browser with the same geometry
+before and after the change.
 
 ## Implementation Notes
 
@@ -114,7 +113,11 @@ The function is thread-safe as it doesn't modify any global state, only the geom
 
 This optimization has been integrated into the Sitrec codebase in the following files:
 
-- `QuadTreeTile.js`: Replaces all `geometry.computeVertexNormals()` calls
-- `CNode3DObject.js`: Used in the `getNormalsFromGeometry()` method
+- `src/QuadTreeTile.js`: synchronous and asynchronous terrain-normal generation
+- `src/TilesTreeFlatten.js`: normals for flattened and merged tile geometry
+- `src/nodes/CNode3DObject.js`: normals for imported object geometry
+
+`src/FastComputeVertexNormalsAsync.js` is the yielding counterpart used where terrain work
+must avoid monopolising the main thread.
 
 The integration provides significant performance improvements for terrain tile generation and 3D object normal computation.

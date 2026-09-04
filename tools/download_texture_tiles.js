@@ -25,7 +25,7 @@
  * and machine resources.
  *
  * Usage:
- *   node download_tiles.js
+ *   node tools/download_texture_tiles.js
 
  */
 

@@ -1205,7 +1205,7 @@ async function requestFileSystemAccessIfNeeded() {
         // Extract the expected directory path from SITREC_APP
         let expectedPath = "";
         if (SITREC_APP && SITREC_APP.startsWith('file://')) {
-            // Extract the path from SITREC_APP (e.g., file:///Users/mick/Dropbox/sitrec-dev/sitrec/dist-serverless/)
+            // Extract the path from SITREC_APP (e.g., file:///path/to/sitrec/dist-serverless/)
             expectedPath = SITREC_APP.replace('file://', '');
             // Remove trailing slash if present
             if (expectedPath.endsWith('/')) {

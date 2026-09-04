@@ -1119,7 +1119,7 @@ const en = {
     view3d: {
         northUp: { label: "Look View North Up", tooltip: "Set the look view to be north up, instead of world up.\nfor Satellite views and similar, looking straight down.\nDoes not apply in PTZ mode" },
         atmosphere: { label: "Atmosphere", tooltip: "Render the atmosperic-based sky and physically based aerial haze. Distant terrain and objects fade through the same line-of-sight atmosphere model as the sky." },
-        atmoVisibility: { label: "Atmo Visibility (km)", tooltip: "Distance where atmospheric contrast drops to about 50% (smaller = thicker atmosphere)" },
+        atmoVisibility: { label: "Atmo Visibility (km)", tooltip: "Meteorological visibility control (smaller = thicker atmosphere)" },
         atmoHDR: { label: "Atmo HDR", tooltip: "Physically-based HDR fog/tone mapping for bright sun reflections through haze" },
         atmoExposure: { label: "Atmo Exposure", tooltip: "HDR atmosphere tone-mapping exposure multiplier for highlight rolloff" },
         shadowsEnabled: {

@@ -109,6 +109,13 @@ To test with real data:
 2. Or use your own flight logs from PX4 autopilot
 3. Load in px4-viewer.html
 
+The repository also includes command-line diagnostics. Both require an explicit log path:
+
+```bash
+node tools/px4-debug.js path/to/flight-log.ulg
+node tools/test-px4-parser.js path/to/flight-log.ulg
+```
+
 ## Browser Compatibility
 
 Requires modern browser with:
@@ -117,11 +124,7 @@ Requires modern browser with:
 - File API
 - ArrayBuffer/DataView
 
-Tested on:
-- Chrome 90+
-- Firefox 88+
-- Safari 14+
-- Edge 90+
+Use a current browser that provides those APIs.
 
 ## License
 

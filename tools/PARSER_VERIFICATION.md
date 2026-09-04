@@ -1,5 +1,8 @@
 # PX4 ULog Parser Verification
 
+**Status:** Historical verification record for the parser comparison described below. It
+does not replace the current automated test suite.
+
 This document verifies that our JavaScript ULog parser correctly parses PX4 flight logs by comparing against the official **pyulog** reference implementation.
 
 ## Test Setup
@@ -140,8 +143,8 @@ alt:        62977           62977                     ✓ Exact match
 
 ## Files Generated
 
-Test outputs saved to:
-- `/Users/mick/Dropbox/sitrec-dev/our_gps_output.csv` - Our parser GPS CSV
-- `/Users/mick/Dropbox/sitrec-dev/our_track_output.csv` - Our parser track CSV
-- `/Users/mick/Dropbox/sitrec-dev/pyulog_output/` - PyULog reference outputs
+The verification run produced three disposable output sets in the chosen working directory:
 
+- `our_gps_output.csv` - Sitrec parser GPS CSV
+- `our_track_output.csv` - Sitrec parser track CSV
+- `pyulog_output/` - PyULog reference outputs

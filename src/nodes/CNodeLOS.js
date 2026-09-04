@@ -60,10 +60,9 @@ export class CNodeLOS extends CNodeTrack {
             -Math.sin(originLat) * Math.cos(originLon), -Math.sin(originLat) * Math.sin(originLon), Math.cos(originLat),
             Math.cos(originLat) * Math.cos(originLon), Math.cos(originLat) * Math.sin(originLon), Math.sin(originLat)
         );
-        const mENU2ECEF_Origin = new Matrix3().copy(mECEF2ENU_Origin).invert();
-
         // Build CSV
         let csv = "Time, SensorPositionX, SensorPositionY, SensorPositionZ, LOSUnitVectorX, LOSUnitVectorY, LOSUnitVectorZ, maxRange, LOSUncertaintyVertical, LOSUncertaintyHorizontal, OriginLat, OriginLon, BaseAltitude\n";
+        const exportedFrames = [];
 
         const fovSwitch = NodeMan.get("fovSwitch", false);
         const lookCamera = NodeMan.get("lookCamera", false);
@@ -165,6 +164,7 @@ export class CNodeLOS extends CNodeTrack {
             const baseAltitudeFormatted = baseAltitude.toFixed(3);
             
             csv += `${timestamp},${px},${py},${pz},${headingENU.x},${headingENU.y},${headingENU.z},${maxRangeFormatted},${uncertaintyVertical},${uncertaintyHorizontal},${originLatDeg},${originLonDeg},${baseAltitudeFormatted}\n`;
+            exportedFrames.push(f);
         }
 
         // Save the file
@@ -178,10 +178,10 @@ export class CNodeLOS extends CNodeTrack {
             saveAs(new Blob([csv]), `LOS-${this.id}.csv`);
         }
         // Test the reverse transformation
-        this.testReverseExport(csv, originLat, originLon);
+        this.testReverseExport(csv, originLat, originLon, exportedFrames);
     }
 
-    testReverseExport(csv, originLat, originLon) {
+    testReverseExport(csv, originLat, originLon, exportedFrames = []) {
         console.log("=== Testing Reverse Export Transformation ===");
         
         // Parse CSV
@@ -207,8 +207,10 @@ export class CNodeLOS extends CNodeTrack {
             
             const [timestamp, x, y, z, dx, dy, dz, maxRange, uncertaintyV, uncertaintyH, originLatDeg, originLonDeg, baseAltitude] = parts;
             
-            // Get original data
-            const originalData = this.getValueFrame(i);
+            // Match each CSV row to the frame that actually produced it. The export may
+            // start after frame 0 and may skip frames with incomplete LOS data.
+            const sourceFrame = exportedFrames[i] ?? i;
+            const originalData = this.getValueFrame(sourceFrame);
             if (!originalData || !originalData.position || !originalData.heading) {
                 continue;
             }
@@ -234,7 +236,7 @@ export class CNodeLOS extends CNodeTrack {
             
             // Log first few and any large errors
             if (i < 3 || posError > 0.01 || headingError > 0.1) {
-                console.log(`Frame ${i}:`);
+                console.log(`Frame ${sourceFrame}:`);
                 console.log(`  Position error: ${posError.toFixed(6)} meters`);
                 console.log(`  Heading error: ${headingError.toFixed(6)} degrees`);
                 console.log(`  Original pos: (${originalData.position.x.toFixed(3)}, ${originalData.position.y.toFixed(3)}, ${originalData.position.z.toFixed(3)})`);
@@ -257,6 +259,14 @@ export class CNodeLOS extends CNodeTrack {
         } else {
             console.warn("⚠ Transformation test shows significant errors");
         }
+
+        return {
+            count,
+            maxPosError,
+            averagePosError: count ? totalPosError / count : 0,
+            maxHeadingError,
+            averageHeadingError: count ? totalHeadingError / count : 0,
+        };
     }
 
 }

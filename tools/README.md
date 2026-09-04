@@ -11,7 +11,7 @@ This directory contains standalone tools for working with Sitrec data.
 Downloads ESRI World Imagery satellite tiles for offline/local caching.
 
 ```bash
-./download_texture_tiles.js
+node tools/download_texture_tiles.js
 ```
 
 ### Elevation Tile Downloader
@@ -21,7 +21,7 @@ Downloads ESRI World Imagery satellite tiles for offline/local caching.
 Downloads AWS Terrarium elevation tiles for offline terrain data.
 
 ```bash
-./download_elevation_tiles.js
+node tools/download_elevation_tiles.js
 ```
 
 Both scripts:
@@ -89,11 +89,7 @@ This tool uses modern web standards including:
 - Import maps
 - Three.js r180 (local copy)
 
-Recommended browsers:
-- Chrome 89+
-- Firefox 108+
-- Safari 16.4+
-- Edge 89+
+Use a current browser with ES modules, import maps, WebGL, and the File API.
 
 ### Development
 

@@ -158,6 +158,7 @@ resource "aws_lb_listener" "https" {
   routing_http_response_x_frame_options_header_value           = "DENY"
   routing_http_response_x_content_type_options_header_value    = "nosniff"
   routing_http_response_content_security_policy_header_value   = var.csp
+  routing_http_response_server_enabled                         = false
 
   default_action {
     type             = "forward"

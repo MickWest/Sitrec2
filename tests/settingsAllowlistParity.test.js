@@ -52,4 +52,18 @@ describe('settings allowlist parity', () => {
         const missingFromJs = [...php].filter(k => !js.has(k)).sort();
         expect(missingFromJs).toEqual([]);
     });
+
+    test('both sanitizers require actual booleans for boolean settings', () => {
+        const jsSource = fs.readFileSync(path.join(ROOT, 'src', 'SettingsManager.js'), 'utf8');
+        const phpSource = fs.readFileSync(path.join(ROOT, 'sitrecServer', 'settings.php'), 'utf8');
+        const keys = [
+            'enableOldAIModels', 'centerSidebar', 'showAttribution', 'showFilename',
+            'startupLocation', 'startupBuildings',
+        ];
+
+        for (const key of keys) {
+            expect(jsSource).toContain(`typeof settings.${key} === "boolean"`);
+            expect(phpSource).toContain(`is_bool($settings['${key}'])`);
+        }
+    });
 });

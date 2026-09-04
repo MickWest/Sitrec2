@@ -79,7 +79,7 @@ Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery mad
 
 **Three of these need your own free API key.** Ships, webcams and road traffic have no usable keyless source: every provider with worldwide coverage requires an account. Rather than ship a crippled regional substitute, Sitrec asks for a key — add one under **Settings → API Keys…**, and the feed's count line tells you when one is missing rather than silently showing an empty world. All three have a free tier.
 
-Those three talk to their provider **straight from your browser**, so your key never reaches the Sitrec server — the same rule as every other key Sitrec holds (see [Your API Keys](APIKeys)). A useful side effect: unlike the keyless feeds, they also work in the desktop app and other serverless builds, because no Sitrec server is involved.
+Those three talk to their provider **straight from your browser**, so your key never reaches the Sitrec server — the same rule as every other key Sitrec holds (see [Your API Keys](APIKeys.md)). A useful side effect: unlike the keyless feeds, they also work in the desktop app and other serverless builds, because no Sitrec server is involved.
 
 Some notes on reading them:
 
