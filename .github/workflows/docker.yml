@@ -634,9 +634,16 @@ jobs:
           NOTEEOF
           )
 
+          # --repo is required, not optional: this job never checks the repository out
+          # (it only assembles manifests), so gh has no git remote to infer the repo
+          # from and fails with "not a git repository". That is what 2.151.1 hit on
+          # this step's first-ever run. GITHUB_REPOSITORY is always set by Actions.
+          #
           # --verify-tag refuses to invent a release for a tag that does not exist.
           gh release create "$TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" \
             --notes "$NOTES" \
             --verify-tag \
-            || gh release upload "$TAG" release-assets/* --clobber
+            || gh release upload "$TAG" release-assets/* \
+                 --repo "$GITHUB_REPOSITORY" --clobber
