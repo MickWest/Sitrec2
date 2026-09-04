@@ -942,9 +942,32 @@ export const analysisMethods = {
             return;
         }
 
-        // Save state
+        // Everything that can refuse the job has now agreed, so it is safe to take
+        // the range over from the A-B preview loop. This must happen AFTER the
+        // preflight above: cancelling earlier meant any `alert(); return` left the
+        // Full A-B toggle switched on with no loop running and no result on screen.
+        //
+        // The two cannot overlap — both drive par.frame and both own
+        // Globals.justVideoAnalysis — and the preview is redundant regardless, since
+        // the export recomputes the same accumulation over the same range.
+        if (this._fullABEchoRunning) {
+            this._fullABEchoRunning = false;
+            this._fullABEchoResult = null;
+            // Hand back what that loop commandeered, BEFORE the snapshot below.
+            // Otherwise the snapshot captures the loop's blanked state and the
+            // finally faithfully restores it, leaving every viewport but the video
+            // one dark for good. All three A-B loops share these fields.
+            Globals.justVideoAnalysis = false;
+            par.paused = this._fullABEchoSavedPaused ?? false;
+        }
+
+        // Save state. justVideoAnalysis suppresses every viewport except the video
+        // one, so it must be RESTORED rather than forced false — that is what the
+        // other exporters do, and forcing it was how a nested run could hand back a
+        // half-blanked app.
         const savedPaused = par.paused;
         const savedFrame = par.frame;
+        const savedJVA = Globals.justVideoAnalysis;
         par.paused = true;
         Globals.justVideoAnalysis = true;
 
@@ -1088,18 +1111,25 @@ export const analysisMethods = {
             console.log(`[MakeVideo] Encoding complete, finalizing...`);
             const blob = await exporter.finalize();
 
-            // Generate unique name
-            this._makeVideoCounter = (this._makeVideoCounter || 0) + 1;
+            // SAVE the file, the same as every other export in the app — the video
+            // menu's viewport render and exportVideoFrame both hand the blob straight
+            // to the user. This used to load the result back in as the active video
+            // instead, which was the odd one out and did real damage: Sit.framesFromVideo
+            // means the loaded video DEFINES the sitch length, so a clip covering only
+            // the A-B range silently reshaped the timeline (788 frames to 340 here),
+            // stranded the A/B markers at absolute frame numbers that no longer meant
+            // the same thing, and left the camera track, MISB data and date/time mapped
+            // onto a timeline that no longer matched the footage.
             let baseName = this.fileName || "video";
             if (baseName.includes('/')) baseName = baseName.split('/').pop();
             if (baseName.includes('.')) baseName = baseName.substring(0, baseName.lastIndexOf('.'));
-            const uniqueName = `${baseName}-${processType}-${this._makeVideoCounter}.${extension}`;
+            const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+            const outName = `${baseName}-${processType}-${stamp}.${extension}`;
 
-            console.log(`[MakeVideo] Created ${uniqueName}, ${(blob.size / 1024 / 1024).toFixed(1)} MB`);
+            const {saveAs} = await import("file-saver");
+            saveAs(blob, outName);
 
-            // Load as a new video entry
-            const file = new File([blob], uniqueName, { type: blob.type });
-            await this.uploadFile(file, true);
+            console.log(`[MakeVideo] Saved ${outName}, ${(blob.size / 1024 / 1024).toFixed(1)} MB`);
 
         } catch (e) {
             console.error("[MakeVideo] Error:", e);
@@ -1107,10 +1137,16 @@ export const analysisMethods = {
         } finally {
             // Restore state
             this._fullABEchoResult = null;
-            Globals.justVideoAnalysis = false;
+            Globals.justVideoAnalysis = savedJVA;
             par.paused = savedPaused;
             par.frame = savedFrame;
             setRenderOne(true);
+
+            // The export took the range over from the A-B preview loop, so put the
+            // preview back: the toggles are still on, the video on screen is still
+            // the source, and the user should be looking at the same accumulation
+            // they were before they clicked. No-op if no A-B toggle is on.
+            this.restartFullABEchoIfActive();
         }
     },
 

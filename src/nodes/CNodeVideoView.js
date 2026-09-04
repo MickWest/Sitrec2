@@ -484,6 +484,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this._invertLastImage = undefined;
         this._invertLastFrame = undefined;
         this._invertLastSourceKey = undefined;
+        // Echo. Its accumulator and per-frame pixel cache are a filter stage too,
+        // and leaving them behind here served a stale echo after a flush.
+        clearEchoCache(this);
     }
 
     setClipWarningMaskEnabled(shadowEnabled, highlightEnabled) {
@@ -2007,6 +2010,17 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (filterStateKey !== this._lastFilterStateKey) {
             this.invalidateAllFilterCaches();
             this._lastFilterStateKey = filterStateKey;
+        }
+
+        // Every cache below is keyed by FRAME NUMBER, so loading or switching to a
+        // different video invalidates all of them at once — frame 100 now means a
+        // different picture. Nothing else catches this: the caches reset on a size
+        // change, and a swap usually keeps the same dimensions. Each load builds a
+        // fresh videoData, and switching entries picks a different one, so object
+        // identity is the reliable signal.
+        if (this._lastFilterVideoData !== this.videoData) {
+            this.invalidateAllFilterCaches();
+            this._lastFilterVideoData = this.videoData;
         }
 
         let sourceImage = image;

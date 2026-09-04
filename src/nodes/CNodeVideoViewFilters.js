@@ -595,7 +595,9 @@ export function applyConvolution(ctx, width, height, kernelName, params = {}) {
     ctx.putImageData(new ImageData(output, width, height), 0, 0);
 }
 
-function getOrCachePixelData(videoView, frameImage, frame, width, height) {
+// `store` false means "use these pixels for this pass, but do not remember them".
+// The cache is keyed by frame number alone, so a wrong entry is served forever.
+function getOrCachePixelData(videoView, frameImage, frame, width, height, store = true) {
     if (!videoView._echoPixelCache) {
         videoView._echoPixelCache = new Map();
     }
@@ -608,7 +610,7 @@ function getOrCachePixelData(videoView, frameImage, frame, width, height) {
     const tmpCtx = videoView._echoTmpCtx;
     tmpCtx.drawImage(frameImage, 0, 0, width, height);
     const data = tmpCtx.getImageData(0, 0, width, height).data;
-    videoView._echoPixelCache.set(frame, data);
+    if (store) videoView._echoPixelCache.set(frame, data);
     return data;
 }
 
@@ -633,6 +635,16 @@ export function clearEchoCache(videoView) {
 }
 
 export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, wantMax) {
+    // getImage() hands back a BLANK frame when the requested one has not decoded
+    // yet (CVideoWebCodecBase.getImage's last resort). A blank frame is full-size
+    // and black, so the `width === 0` guard below never sees it — and both the
+    // pixel cache and the result memo are keyed by FRAME NUMBER with no notion of
+    // "that frame wasn't real". Remembering one black pass therefore made the
+    // frame permanently black, which is exactly what a Make Video swap produced:
+    // the new video decodes nothing for a moment, and the echo froze on it.
+    // getCachedImage() is null unless the frame genuinely decoded.
+    const currentDecoded = videoView.videoData?.getCachedImage?.(currentFrame) != null;
+
     const numEchoFrames = Math.round(videoView.in.echoFrames?.v0 ?? 10);
     const startFrame = Math.max(0, currentFrame - numEchoFrames + 1);
     const width = currentImage.width;
@@ -676,7 +688,8 @@ export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, 
         }
         if (!frameImage || frameImage.width === 0) continue;
 
-        const frameData = getOrCachePixelData(videoView, frameImage, f, width, height);
+        const frameData = getOrCachePixelData(videoView, frameImage, f, width, height,
+            f !== currentFrame || currentDecoded);
 
         if (!initialized) {
             if (minPixels) minPixels.set(frameData);
@@ -725,11 +738,17 @@ export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, 
     const outputData = new ImageData(resultPixels, width, height);
     echoCtx.putImageData(outputData, 0, 0);
 
-    videoView._lastEchoFrame = currentFrame;
-    videoView._lastEchoWantMin = wantMin;
-    videoView._lastEchoWantMax = wantMax;
-    videoView._lastEchoNumFrames = numEchoFrames;
-    videoView._lastEchoResult = videoView._echoCanvas;
+    if (currentDecoded) {
+        videoView._lastEchoFrame = currentFrame;
+        videoView._lastEchoWantMin = wantMin;
+        videoView._lastEchoWantMax = wantMax;
+        videoView._lastEchoNumFrames = numEchoFrames;
+        videoView._lastEchoResult = videoView._echoCanvas;
+    } else {
+        // Provisional: show it, but recompute next render, once the frame is real.
+        videoView._lastEchoFrame = undefined;
+        videoView._lastEchoResult = undefined;
+    }
 
     return videoView._echoCanvas;
 }
