@@ -197,7 +197,26 @@ credential and takes its settings from the environment at container start, is re
 the default `--profile=published` instead. See
 [Container Security Review](Container-Security-Review.md).
 
-### 4.2 Run it as a non-root user
+### 4.2 Verify where the image came from
+
+An image you built yourself needs no provenance check. An image you **pulled** does, and the
+published ones carry a Sigstore-signed attestation naming the workflow, the commit and the
+runner that produced that exact digest:
+
+```
+gh attestation verify oci://ghcr.io/mickwest/sitrec2:<tag> --repo MickWest/Sitrec2
+```
+
+This is worth doing before the image enters your registry, and worth recording in the
+acceptance evidence alongside the digest from section 5. It answers a question the digest
+alone cannot: not "are these the bytes I recorded" but "did these bytes come from that
+source, built by that pipeline". Both architectures carry one.
+
+The review from section 4.1 covers the rest of what a reviewer usually asks — it is
+organised by the control areas of NIST SP 800-190 and ships a CycloneDX bill of materials
+per architecture. See [Container Security Review](Container-Security-Review.md).
+
+### 4.3 Run it as a non-root user
 
 The image declares no `USER`, so by default it runs as root. It does not need to: it
 listens on the unprivileged port 8080 and its writable paths are world-writable precisely so

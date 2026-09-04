@@ -205,7 +205,7 @@ The image declares no `USER`, so `CFG-01` fails. It is worth being clear that th
 the *default*, not about what the image can do: `--user 33:33` works today with no change to
 the image, and is verified to — Apache starts, the entrypoint's rewrite still succeeds, and
 the files it creates are owned by that user. A hardened deployment should set it, and
-section 4.2 of [Installing Hardened Sitrec on AWS](Installing-Hardened-Sitrec-on-AWS.md) says
+section 4.3 of [Installing Hardened Sitrec on AWS](Installing-Hardened-Sitrec-on-AWS.md) says
 how.
 
 The default stays root because the entrypoint's port-80 back-compat listener is root-only,
@@ -252,6 +252,46 @@ Two things are known, deliberate, and still **not** accepted:
   available and the derived policy starts recommending it automatically.
 - **The compiler and package managers inherited from the base image.** Real remediation
   exists, so it stays open as an improvement rather than being written off.
+
+## What a published image can be checked against
+
+A reviewer accepting the image usually wants to know which public standards it can be held
+to, and how to verify each claim without taking anyone's word. Three hold today.
+
+### Container security — NIST SP 800-190
+
+Every finding in the report is grouped by a control area of
+[NIST SP 800-190](https://csrc.nist.gov/pubs/sp/800/190/final), the public *Application
+Container Security Guide*, and the report names the areas it does **not** cover. That is the
+whole claim: the review is organised by a recognised framework and is honest about its
+scope. Verify it by reading a report — the mapping is printed in it, not asserted here.
+
+### Build provenance — signed, and verifiable by digest
+
+Every published image carries a Sigstore-signed provenance attestation recording which
+workflow, at which commit, on which runner produced that exact digest. Both architectures
+get one, generated in the `package` job right after each push. Check it with no local
+tooling beyond the GitHub CLI:
+
+```bash
+gh attestation verify oci://ghcr.io/mickwest/sitrec2:<tag> --repo MickWest/Sitrec2
+```
+
+That answers "did this image really come from this source, built by this pipeline" without
+trusting the tag, the registry, or us. It is the evidence a supply-chain reviewer asks for
+first.
+
+BuildKit also attaches its own provenance attestation when it pushes — visible as an
+`attestation-manifest` entry in `docker buildx imagetools inspect --raw` — but that one is
+unsigned and unnamed, so it proves less. The signed attestation above is the one to cite.
+
+### Contents — a bill of materials per architecture
+
+Each `package` job publishes a CycloneDX 1.6 bill of materials for the image it built, as
+part of the `container-security-review-amd64` / `-arm64` artifact. Components carry name,
+version, `purl`, `cpe` and licence, and the document carries its own timestamp, subject
+component and generating tool — the fields a consumer needs to match components against an
+advisory feed of their own.
 
 ## Running inside an isolated network
 

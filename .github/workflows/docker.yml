@@ -91,6 +91,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Build provenance attestation (see the step after the push). id-token is what
+      # signs it through Sigstore; attestations is what records it against the repo.
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@v6
@@ -134,6 +138,7 @@ jobs:
             org.opencontainers.image.description=Sitrec (${{ matrix.platform }})
 
       - name: Build and push (single-arch)
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -145,6 +150,24 @@ jobs:
           annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha,scope=${{ matrix.suffix }}
           cache-to: type=gha,scope=${{ matrix.suffix }},mode=max
+
+      # Signed build provenance: which workflow, at which commit, on which runner,
+      # produced this exact image digest. BuildKit already attaches its own provenance
+      # attestation when it pushes, but that one is unsigned and nothing names it, so
+      # nobody can be asked to verify it. This produces a Sigstore-signed attestation
+      # recorded against the repository, which anyone can check by digest with:
+      #
+      #   gh attestation verify oci://ghcr.io/mickwest/sitrec2:<tag> --repo MickWest/Sitrec2
+      #
+      # push-to-registry stores it beside the image, so verification needs the registry
+      # and not this repository's API. Runs per architecture, on the digest that leg
+      # just pushed, so both published images carry one.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
       # ── Container security review ────────────────────────────────────
       # Runs here, in the per-architecture matrix, rather than once in smoke-test.

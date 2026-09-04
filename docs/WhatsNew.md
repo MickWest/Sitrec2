@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.149.6 (2026-09-03)
+
+### Improvements
+
+- **You can now check that a published container image really came from this project** (self-hosted servers; *Verify where the image came from* in *Installing Hardened Sitrec on AWS*): every published image carries a signed record of which build produced it, from which commit, on which machine, for exactly those bytes. One command with the GitHub command-line tool verifies it, and it is worth doing before you take an image into your own registry. It answers what a checksum cannot — not "are these the bytes I was given", but "did they come from where they claim to". Both the Intel/AMD and the ARM image carry one.
+
 ## Version 2.149.5 (2026-09-03)
 
 ### Improvements
