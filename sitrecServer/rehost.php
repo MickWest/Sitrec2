@@ -22,6 +22,16 @@ header('Expires: 0');        // For older browsers
 require('./user.php');
 require_once __DIR__ . '/object_helpers.php';
 
+$auditActions = [
+    'getPresignedUrl' => 'upload.authorize',
+    'initiateMultipart' => 'upload.initiate',
+    'completeMultipart' => 'upload.complete',
+];
+$auditAction = $_GET['action'] ?? '';
+sitrecAuditRequest(isset($_GET['getuser']) ? 'identity.read'
+    : ((isset($_POST['delete']) && $_POST['delete'] === 'true') ? 'object.delete'
+    : ($auditActions[is_string($auditAction) ? $auditAction : ''] ?? 'object.upload')));
+
 $aws = null;
 
 function startS3() {
@@ -183,6 +193,7 @@ if (isset($_GET['getuser'])) {
         $response['canUse3DBuildings'] = true;
     }
 
+    sitrecAuditResult();
     echo json_encode($response);
     exit();
 }
@@ -192,7 +203,7 @@ $userDir = getUserDir($user_id);
 
 // need to be logged in, and a member of group 9 (Verified users)
 if ($user_id == 0 /*|| !in_array(9,$user->secondary_group_ids)*/) {
-    http_response_code(501);
+    http_response_code(401);
     exit("Internal Server Error");
 }
 
@@ -260,6 +271,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'getPresignedUrl') {
         $s3Path = $user_id . '/' . $fileName . '/' . $newFileName;
     }
     
+    sitrecAuditResource($s3Path);
+
     if ($contentHash) {
         try {
             $s3->headObject([
@@ -267,6 +280,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'getPresignedUrl') {
                 'Key' => $s3Path
             ]);
             $objectUrl = buildObjectAccessUrl($s3Path);
+            sitrecAuditResult('success', 'already_exists');
             echo json_encode([
                 'exists' => true,
                 'objectRef' => canonicalObjectRef($s3Path),
@@ -295,6 +309,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'getPresignedUrl') {
         
         $objectUrl = buildObjectAccessUrl($s3Path);
         
+        sitrecAuditResult();
         echo json_encode([
             'objectRef' => canonicalObjectRef($s3Path),
             'presignedUrl' => $presignedUrl,
@@ -302,7 +317,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'getPresignedUrl') {
         ]);
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Failed to generate presigned URL: ' . $e->getMessage()]);
+        echo json_encode(['error' => 'Failed to generate presigned URL']);
     }
     
     exit();
@@ -373,6 +388,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'initiateMultipart') {
         $s3Path = $user_id . '/' . $fileName . '/' . $newFileName;
     }
     
+    sitrecAuditResource($s3Path);
+
     if ($contentHash) {
         try {
             $s3->headObject([
@@ -380,6 +397,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'initiateMultipart') {
                 'Key' => $s3Path
             ]);
             $objectUrl = buildObjectAccessUrl($s3Path);
+            sitrecAuditResult('success', 'already_exists');
             echo json_encode([
                 'exists' => true,
                 'objectRef' => canonicalObjectRef($s3Path),
@@ -419,6 +437,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'initiateMultipart') {
         
         $objectUrl = buildObjectAccessUrl($s3Path);
         
+        sitrecAuditResult();
         echo json_encode([
             'uploadId' => $uploadId,
             'uploadUrls' => $uploadUrls,
@@ -427,7 +446,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'initiateMultipart') {
         ]);
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Failed to initiate multipart upload: ' . $e->getMessage()]);
+        echo json_encode(['error' => 'Failed to initiate multipart upload']);
     }
     
     exit();
@@ -487,6 +506,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'completeMultipart') {
             exit();
         }
         
+        sitrecAuditResource($s3Path);
         $result = $s3->completeMultipartUpload([
             'Bucket' => $aws['bucket'],
             'Key' => $s3Path,
@@ -498,6 +518,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'completeMultipart') {
         
         $objectUrl = buildObjectAccessUrl($s3Path);
         
+        sitrecAuditResult();
         echo json_encode([
             'objectRef' => canonicalObjectRef($s3Path),
             'objectUrl' => $objectUrl,
@@ -505,7 +526,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'completeMultipart') {
         ]);
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Failed to complete multipart upload: ' . $e->getMessage()]);
+        echo json_encode(['error' => 'Failed to complete multipart upload']);
     }
     
     exit();
@@ -558,6 +579,7 @@ function isSafeExtension($filename) {
 if (isset($_POST['delete']) && $_POST['delete'] == 'true') {
     $filename = $_POST['filename'] ?? '';
     $version = $_POST['version'] ?? null;
+    sitrecAuditResource($user_id . '/' . (is_string($filename) ? $filename : '') . '/' . (is_string($version) ? $version : ''));
 
     // Strictly validate filename and version
     if (!isSafeName($filename) || ($version && !isSafeName($version))) {
@@ -566,47 +588,60 @@ if (isset($_POST['delete']) && $_POST['delete'] == 'true') {
         exit("Invalid filename or version");
     }
 
-    if ($useAWS) {
-        // delete the entire folder from s3
-        require 'vendor/autoload.php';
-        $s3 = startS3();
-    }
+    try {
+        if ($useAWS) {
+            // delete the entire folder from s3
+            require 'vendor/autoload.php';
+            $s3 = startS3();
+        }
 
-    // if no version name is supplied, then we delete the entire folder
-    if (!$version) {
-        if ($useAWS) {
-            $s3Path = $user_id . '/' . $filename . '/';
-            $s3->deleteMatchingObjects($aws['bucket'], $s3Path);
-        } else {
-            $dir = $userDir . basename($filename);
-            if (file_exists($dir)) {
-                $files = glob($dir . '/*'); // get all file names
-                foreach ($files as $file) { // iterate files
-                    if (is_file($file)) {
-                        unlink($file); // delete file
+        // if no version name is supplied, then we delete the entire folder
+        if (!$version) {
+            if ($useAWS) {
+                $s3Path = $user_id . '/' . $filename . '/';
+                $s3->deleteMatchingObjects($aws['bucket'], $s3Path);
+            } else {
+                $dir = $userDir . basename($filename);
+                if (file_exists($dir)) {
+                    $files = glob($dir . '/*'); // get all file names
+                    if ($files === false) throw new RuntimeException('Object deletion failed');
+                    foreach ($files as $file) { // iterate files
+                        if (is_file($file)) {
+                            if (!unlink($file)) throw new RuntimeException('Object deletion failed');
+                        }
                     }
+                    if (!rmdir($dir)) throw new RuntimeException('Object deletion failed');
                 }
-                rmdir($dir);
             }
-        }
-    } else {
-        if ($useAWS) {
-            // delete the specific version from s3
-            $s3Path = $user_id . '/' . $filename . '/' . $version;
-            $s3->deleteMatchingObjects($aws['bucket'], $s3Path);
         } else {
-            $file = $userDir . basename($filename) . '/' . basename($version);
-            if (file_exists($file)) {
-                unlink($file);
+            if ($useAWS) {
+                // delete the specific version from s3
+                $s3Path = $user_id . '/' . $filename . '/' . $version;
+                $s3->deleteMatchingObjects($aws['bucket'], $s3Path);
+            } else {
+                $file = $userDir . basename($filename) . '/' . basename($version);
+                if (file_exists($file)) {
+                    if (!unlink($file)) throw new RuntimeException('Object deletion failed');
+                }
             }
         }
+    } catch (Exception $e) {
+        http_response_code(500);
+        exit('Object deletion failed');
     }
+    sitrecAuditResult();
     exit(0);
 }
 
 // Check if file and filename are provided
 if (!isset($_FILES['fileContent']) || !isset($_POST['filename'])) {
+    http_response_code(400);
     die("File or filename not provided");
+}
+
+if (($_FILES['fileContent']['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
+    http_response_code(400);
+    exit('Upload did not complete');
 }
 
 // Enforce file size limit on filesystem uploads
@@ -619,6 +654,10 @@ if ($_FILES['fileContent']['size'] > $maxBytes) {
 // Securely retrieve the file and filename
 $fileName = basename($_POST['filename']);
 $fileContent = file_get_contents($_FILES['fileContent']['tmp_name']);
+if ($fileContent === false) {
+    http_response_code(500);
+    exit('Upload could not be read');
+}
 $version = isset($_POST['version']) ? basename($_POST['version']) : null;
 
 // sanitize the filename by removing any path components
@@ -665,6 +704,8 @@ if ($useAWS) {
         $s3Path = $user_id . '/' . $fileName . '/' . $newFileName;
     }
 
+    sitrecAuditResource($s3Path);
+
     // Upload the file using the high-level upload method
     // Using upload instead of putObject to allow for larger files
     // putObject was giving odd timeout errors.
@@ -677,30 +718,39 @@ if ($useAWS) {
             $s3->upload($aws['bucket'], $s3Path, $fileStream);
         }
         echo buildObjectAccessUrl($s3Path);
-    } catch (Aws\Exception\S3Exception $e) {
+    } catch (Exception $e) {
         // Catch an S3 specific exception.
-        http_response_code(555);
-        exit("Internal Server Error: " . $e->getMessage());
+        http_response_code(500);
+        exit('Upload failed');
     } finally {
         if (is_resource($fileStream)) {
             fclose($fileStream);  // Close the file stream to free up resources
         }
     }
+    sitrecAuditResult();
     exit(0);
 }
 
 // Local server storage
 if (!file_exists($userDir)) {
-    mkdir($userDir, 0755, true);
+    if (!mkdir($userDir, 0755, true) && !is_dir($userDir)) {
+        http_response_code(500);
+        exit('Upload storage unavailable');
+    }
 }
 
 $userFilePath = $userDir . $newFileName;
+sitrecAuditResource($user_id . '/' . ($version ? $baseName . '/' : '') . $newFileName);
 
 
 // Move the file to the user's directory
 if (!file_exists($userFilePath)) {
-    move_uploaded_file($_FILES['fileContent']['tmp_name'], $userFilePath);
+    if (!move_uploaded_file($_FILES['fileContent']['tmp_name'], $userFilePath)) {
+        http_response_code(500);
+        exit('Upload failed');
+    }
 }
+sitrecAuditResult();
 
 // Return the URL of the rehosted file
 if ($version) {

@@ -4,6 +4,8 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/curlGetRequest.php';
 require_once __DIR__ . '/gpData.php';
+require_once __DIR__ . '/audit.php';
+sitrecAuditRequest('catalogue.read');
 
 // SECURITY: Rate limiting by IP - max 30 requests per minute
 $clientIP = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
@@ -54,15 +56,18 @@ $request = strtok($request, "?");
 
 
 if (!$request) {
+    http_response_code(400);
     exit("No request");
 }
 if (!array_key_exists($request, $request_url_map)) {
+    http_response_code(400);
     exit("Invalid request key ".htmlspecialchars($request, ENT_QUOTES, 'UTF-8'));
 }
 
 
 
 $url = $request_url_map[$request];
+sitrecAuditResource('catalogue/' . $request);
 $url_parts = parse_url($url);
 
 // We don't need this check any more, as all URLs are from the $request_url_map array
@@ -90,6 +95,7 @@ if (strcmp($url_parts['host'], "celestrak.org") === 0) {
 // csv is the OMM format Sitrec now prefers; the *le formats are legacy TLE.
 $allowed_extensions = ["txt", "tle", "2le", "3le", "csv"];
 if (!in_array($ext, $allowed_extensions, true)) {
+    http_response_code(400);
     exit("Illegal File Type " . $ext);
 }
 
@@ -123,9 +129,11 @@ if (!$isFresh) {
 
     if (isValidGPData($dataBlob, $httpStatus, $ext)) {
         if (!writeGPCache($cachedFile, $dataBlob)) {
+            http_response_code(500);
             exit("ERROR: Failed to write cache file");
         }
     } else if ($haveCache) {
+        sitrecAuditWrite('storage.fetch', 'failure', 'upstream_error');
         // Upstream had nothing new (or nothing valid) for us. Keep serving the
         // copy we already have rather than caching an error page as if it were
         // satellite data, but re-arm a refresh attempt reasonably soon.
@@ -136,13 +144,13 @@ if (!$isFresh) {
     } else {
         // Nothing cached and nothing usable upstream - tell the client plainly.
         // The "ERROR:" prefix is what src/TLEUtils.ts looks for to surface this.
-        exit("ERROR: Failed to fetch GP data (HTTP " . $httpStatus . "): "
-            . substr(trim((string)$dataBlob), 0, 200));
+        http_response_code(502);
+        exit('ERROR: Failed to fetch GP data');
     }
 }
 
 // Serve pre-compressed when the client can take it, which cuts the
 // current-Starlink payload from ~1.7 MB to ~480 KB. Clients that don't
 // advertise gzip get the original redirect to the plain cached file.
-serveGPCached($cachedFile, $cachePath, $lifetime);
+serveGPCached($cachedFile, $cachePath, $lifetime, 'sitrecAuditResult');
 ?>

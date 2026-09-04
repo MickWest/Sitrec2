@@ -44,9 +44,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
-require('./user.php');
+require_once __DIR__ . '/user.php';
+sitrecAuditRequest(($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' ? 'metadata.write' : 'metadata.read');
 
 $user_id = getUserID();
+sitrecAuditResource('metadata/' . $user_id);
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
@@ -180,7 +182,9 @@ function writeS3Json($s3, $aws, $key, $data) {
 
 function readLocalJson($path) {
     if (!is_file($path)) return [];
-    $data = json_decode(file_get_contents($path), true);
+    $storedMetadata = file_get_contents($path);
+    if ($storedMetadata === false) throw new RuntimeException('Metadata read failed');
+    $data = json_decode($storedMetadata, true);
     return is_array($data) ? $data : [];
 }
 
@@ -189,7 +193,9 @@ function writeLocalJson($path, $data) {
     if (!is_dir($dir)) {
         mkdir($dir, 0777, true);
     }
-    file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT));
+    if (file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT), LOCK_EX) === false) {
+        throw new RuntimeException('Metadata write failed');
+    }
 }
 
 function readFeaturedData($s3Data = null) {
@@ -367,6 +373,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     // GET ?featured=1 — return global featured.json (no auth required beyond login)
     // Returns [{name, userID, screenshotUrl, date}] so any user can browse and load featured sitches.
     if (isset($_GET['featured'])) {
+        sitrecAuditOperation('featured.read');
+        sitrecAuditResource('metadata/featured');
         try {
             global $useAWS;
             $s3Data = $useAWS ? startS3() : null;
@@ -413,13 +421,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             header('Cache-Control: public, max-age=60, stale-while-revalidate=300');
             header('ETag: ' . $etag);
             if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && trim($_SERVER['HTTP_IF_NONE_MATCH']) === $etag) {
+                sitrecAuditResult();
                 http_response_code(304);
                 exit();
             }
+            sitrecAuditResult();
             echo $payload;
         } catch (Exception $e) {
             http_response_code(500);
-            echo json_encode(['error' => 'Server error: ' . $e->getMessage()]);
+            echo json_encode(['error' => 'Metadata storage unavailable']);
         }
         exit();
     }
@@ -436,10 +446,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $raw = readLocalJson($path);
         }
         $sanitized = sanitizeMetadata($raw);
+        sitrecAuditResult();
         echo json_encode($sanitized);
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Server error: ' . $e->getMessage()]);
+        echo json_encode(['error' => 'Metadata storage unavailable']);
     }
     exit();
 }
@@ -458,6 +469,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Handle screenshotVersion bump: read-modify-write
         if (isset($input['bumpScreenshotVersions']) && is_array($input['bumpScreenshotVersions'])) {
+            sitrecAuditOperation('metadata.screenshot_versions');
             global $useAWS;
             $metaKey = $useAWS ? ('metadata/' . $user_id . '.json') : null;
             $metaPath = $useAWS ? null : ($GLOBALS['UPLOAD_PATH'] . 'metadata/' . $user_id . '.json');
@@ -516,6 +528,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
+            sitrecAuditResult();
             echo json_encode(['success' => true, 'screenshotVersions' => $existing['screenshotVersions']]);
             exit();
         }
@@ -523,6 +536,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Handle updateFeatured: admin-only, writes global metadata/featured.json
         // Each featured entry stores {name, userID} so any user can load them.
         if (isset($input['updateFeatured']) && $input['updateFeatured']) {
+            sitrecAuditOperation('featured.write');
+            sitrecAuditResource('metadata/featured');
             if (!isAdmin()) {
                 http_response_code(403);
                 echo json_encode(['error' => 'Admin access required']);
@@ -571,6 +586,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             writeFeaturedData($featuredData, $s3Data);
 
+            sitrecAuditResult();
             echo json_encode(['success' => true, 'featured' => $featuredData]);
             exit();
         }
@@ -617,10 +633,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        sitrecAuditResult();
         echo json_encode(['success' => true, 'metadata' => $sanitized]);
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Server error: ' . $e->getMessage()]);
+        echo json_encode(['error' => 'Metadata storage unavailable']);
     }
     exit();
 }

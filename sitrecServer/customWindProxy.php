@@ -20,7 +20,11 @@
  * subsequent requests. Otherwise the upstream is hit on every call.
  */
 
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/curlGetRequest.php';
+require_once __DIR__ . '/audit.php';
+sitrecAuditRequest('wind.read');
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
@@ -41,6 +45,7 @@ if ($hour < 0 || $hour > 23) {
     exit;
 }
 
+sitrecAuditResource('wind/' . $date . '/' . $hour . '/' . $level);
 $urlTemplate = getenv('CUSTOM_WIND_URL');
 if (!$urlTemplate) {
     http_response_code(500);
@@ -85,7 +90,7 @@ if ($caching) {
         @mkdir($cacheDir, 0755, true);
     }
     if (file_exists($cacheFile)) {
-        readfile($cacheFile);
+        if (readfile($cacheFile) !== false) sitrecAuditResult();
         exit;
     }
 }
@@ -96,7 +101,7 @@ $http_status = $result['http_status'];
 
 if ($data === false || empty($data)) {
     http_response_code(502);
-    echo json_encode(['error' => 'Empty response from custom wind source', 'url' => $url]);
+    echo json_encode(['error' => 'Empty response from custom wind source']);
     exit;
 }
 
@@ -104,8 +109,6 @@ if ($http_status !== 200) {
     http_response_code(502);
     echo json_encode([
         'error' => "Custom wind source returned HTTP {$http_status}",
-        'url' => $url,
-        'response' => substr($data, 0, 500),
     ]);
     exit;
 }
@@ -116,8 +119,6 @@ if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
     http_response_code(502);
     echo json_encode([
         'error' => 'Custom wind source returned non-JSON: ' . json_last_error_msg(),
-        'url' => $url,
-        'response' => substr($data, 0, 500),
     ]);
     exit;
 }
@@ -126,4 +127,5 @@ if ($caching) {
     @file_put_contents($cacheFile, $data, LOCK_EX);
 }
 
+sitrecAuditResult();
 echo $data;

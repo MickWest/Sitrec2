@@ -135,6 +135,8 @@ $server_config = [
 // or you can set clear_env = no in www.conf to allow passing env vars from the shell
 
 if (isset($_GET["FETCH_CONFIG"])) {
+	require_once __DIR__ . '/audit.php';
+	sitrecAuditRequest('configuration.read');
 	// SECURITY: Strip server-side filesystem paths and internal details before sending to client
 	$client_config = $server_config;
 	unset($client_config['UPLOAD_PATH']);
@@ -162,6 +164,7 @@ if (isset($_GET["FETCH_CONFIG"])) {
 	}
 
 	header('Content-Type: application/json');
+	sitrecAuditResult();
 	echo json_encode($client_config);
 	exit (0);
 }

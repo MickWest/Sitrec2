@@ -3,6 +3,7 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/user.php';
+sitrecAuditRequest('administrator.user_read');
 
 $userInfo = getUserInfo();
 $currentUserId = $userInfo['user_id'];
@@ -18,6 +19,7 @@ if (!isset($_GET['user']) || !is_numeric($_GET['user'])) {
 }
 
 $targetUserId = (int)$_GET['user'];
+sitrecAuditResource('user/' . $targetUserId);
 
 function getXFUserInfo($userId) {
     $info = ['username' => 'Unknown', 'ip' => 'Unknown'];
@@ -37,6 +39,8 @@ function getXFUserInfo($userId) {
                 }
             }
         } catch (Exception $e) {
+            sitrecAuditWrite('administrator.lookup', 'failure', 'storage_error');
+            sitrecAuditResult('failure', 'storage_error');
         }
     }
     
@@ -87,6 +91,8 @@ function getUserSitches($userId) {
                 ];
             }
         } catch (Exception $e) {
+            sitrecAuditWrite('administrator.lookup', 'failure', 'storage_error');
+            sitrecAuditResult('failure', 'storage_error');
         }
     } else {
         $fullPath = $UPLOAD_PATH . $userDir;
@@ -227,3 +233,5 @@ $sitches = getUserSitches($targetUserId);
     </div>
 </body>
 </html>
+
+<?php sitrecAuditResult(); ?>

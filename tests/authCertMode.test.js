@@ -89,6 +89,7 @@ describeIfTools("AUTH_MODE=cert: client certificate authentication", () => {
         // The real files under test, beside a stub injectEnv.php.
         fs.copyFileSync(path.join(REPO, "config", "config.php.example"), path.join(serverDir, "config.php"));
         fs.copyFileSync(path.join(REPO, "sitrecServer", "auth_cert.php"), path.join(serverDir, "auth_cert.php"));
+        fs.copyFileSync(path.join(REPO, "sitrecServer", "audit.php"), path.join(serverDir, "audit.php"));
         fs.writeFileSync(path.join(serverDir, "injectEnv.php"), "<?php\n");
         fs.writeFileSync(path.join(serverDir, "harness.php"), [
             "<?php",
@@ -275,9 +276,14 @@ describeIfTools("AUTH_MODE=cert: client certificate authentication", () => {
     test("(1) a valid leaf via the proxy header from a trusted proxy maps to its user", () => {
         const r = userInfo(fromProxy("alice"), certEnv());
         expect(r.out).toEqual({ user_id: 42, user_groups: [2, 14] });
-        // The audit line names the outcome and a hash prefix, never the identifier.
+        // The shared audit schema records the identity digest, never the identifier.
         expect(r.stderr).toMatch(/"auth":"cert"/);
         expect(r.stderr).toMatch(/"outcome":"accepted"/);
+        const audit = JSON.parse(r.stderr.split('SITREC_AUDIT ')[1].split('\n')[0]);
+        expect(audit).toMatchObject({schema: 'sitrec.audit.v1', event: 'authentication', actor_id: 42,
+            effective_user_id: 42, outcome: 'accepted'});
+        expect(audit.identifier_sha256).toMatch(/^[a-f0-9]{64}$/);
+        expect(audit.request_id).toMatch(/^[a-f0-9]{32}$/);
         expect(r.stderr).not.toMatch(/1234567890/);
         expect(r.stderr).not.toMatch(/SMITH/);
     });

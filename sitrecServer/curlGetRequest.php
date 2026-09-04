@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/audit.php';
 // Simple cURL proxy function to forward requests with Authorization header (if present)
 //
 // $extraHeaders: optional additional request headers, e.g.
@@ -41,6 +42,11 @@ function curlGetRequest($url, $extraHeaders = [], $timeoutSec = 0) {
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     $data = curl_exec($ch);
+    if ($data === false) {
+        $tlsErrors = [CURLE_SSL_CONNECT_ERROR, CURLE_PEER_FAILED_VERIFICATION, CURLE_SSL_CACERT_BADFILE];
+        sitrecAuditWrite('storage.fetch', 'failure',
+            in_array(curl_errno($ch), $tlsErrors, true) ? 'tls_error' : 'transport_error');
+    }
     $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     

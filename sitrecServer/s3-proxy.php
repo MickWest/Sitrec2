@@ -23,6 +23,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/object_helpers.php';
 require_once __DIR__ . '/s3_client.php';
+require_once __DIR__ . '/audit.php';
 
 $requestOrigin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if ($requestOrigin) {
@@ -44,6 +45,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
 }
+
+sitrecAuditRequest('object.read');
 
 function proxyError($status, $message) {
     http_response_code($status);
@@ -92,20 +95,15 @@ function proxyObjectWithSdk($key, $rangeHeader) {
         }
         $result = $s3->getObject($params);
     } catch (Aws\S3\Exception\S3Exception $e) {
+        sitrecAuditWrite('storage.fetch', 'failure', 'upstream_error');
         if ($e->getAwsErrorCode() === 'NoSuchKey') {
             proxyError(404, 'Object not found');
         }
-        // getMessage() embeds the request URI, and so the object key: the SDK formats it
-        // as `Error executing "GetObject" on "<url>"; ...`. getAwsErrorMessage() is the
-        // service's concise text, without the URI.
-        error_log('s3-proxy: signed fetch failed for key ' . objectKeyDigest($key)
-            . ' (' . ($e->getAwsErrorCode() ?: get_class($e)) . '), using the unsigned URL: '
-            . ($e->getAwsErrorMessage() ?: 'no service message'));
+        error_log('s3-proxy: signed fetch failed for object ' . objectKeyDigest($key));
         return false;
     } catch (Exception $e) {
-        // No message here: a transport exception embeds the request URI in its own text.
-        error_log('s3-proxy: signed fetch failed for key ' . objectKeyDigest($key)
-            . ' (' . get_class($e) . '), using the unsigned URL');
+        sitrecAuditWrite('storage.fetch', 'failure', 'upstream_error');
+        error_log('s3-proxy: signed fetch failed for object ' . objectKeyDigest($key));
         return false;
     }
 
@@ -130,11 +128,13 @@ function proxyObjectWithSdk($key, $rangeHeader) {
     while (!$body->eof()) {
         echo $body->read(65536);
     }
+    sitrecAuditResult();
     return true;
 }
 
 $key = $_GET['key'] ?? '';
 $key = ltrim(trim((string)$key), '/');
+sitrecAuditResource($key);
 
 if ($key === '') {
     proxyError(400, 'Missing key parameter');
@@ -237,10 +237,15 @@ curl_setopt($ch, CURLOPT_WRITEFUNCTION, function ($ch, $chunk) use ($emitHeaders
 
 $ok = curl_exec($ch);
 if ($ok === false && !$headersSent) {
-    proxyError(502, 'Upstream S3 fetch failed: ' . curl_error($ch));
+    proxyError(502, 'Upstream storage fetch failed');
 }
 // Emit headers+status even when upstream returned an empty body (e.g. 404 with
 // no content). Without this, the write callback never fires, no status is
 // sent, and PHP defaults to "200 OK, empty body."
 $emitHeaders();
+if ($ok !== false && $statusCode >= 200 && $statusCode < 300) {
+    sitrecAuditResult();
+} else {
+    sitrecAuditResult('failure', 'upstream_error');
+}
 curl_close($ch);

@@ -174,8 +174,9 @@ describe("auditServerTree against the server allow-list", () => {
     test("a missing server tree is a finding, and the checked-in server allow-list is valid", () => {
         expect(auditServerTree(root, entries())).toEqual([{ issue: "Server tree missing from output", file: "sitrecServer/" }]);
         const checkedIn = loadServerAllowlist();
-        expect(checkedIn.get("config.php").mustContain).toEqual(expect.arrayContaining(["resolveCertIdentity"]));
+        expect(checkedIn.get("config.php").mustContain).toEqual(expect.arrayContaining(["resolveCertIdentity", "sitrecAuditAuthentication"]));
         expect(checkedIn.get("auth_cert.php").required).toBe(true);
+        expect(checkedIn.get("audit.php").required).toBe(true);
         expect(checkedIn.has("chatbot.php")).toBe(false);
         expect(() => validateServerAllowlist({ files: [{ file: "../x.php", purpose: "p" }] })).toThrow(/plain file/);
         expect(() => validateServerAllowlist({ files: [{ file: "a.php", purpose: "p" }, { file: "a.php", purpose: "p" }] })).toThrow(/duplicate/);

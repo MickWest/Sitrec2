@@ -43,6 +43,8 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/object_helpers.php';
 require_once __DIR__ . '/s3_client.php';
+require_once __DIR__ . '/audit.php';
+sitrecAuditRequest(($_GET['get'] ?? '') === 'versions' ? 'sitch.versions' : 'sitch.list');
 
 define('SITCH_NAME_PATTERN', '/^[^\/\\\\<>\x00-\x1f]+$/u');
 
@@ -142,7 +144,9 @@ function getSitches()
 // if no parapmeters passed then return the sitches as a json object
 // return the text-based sitches as a json object
 if (count($_GET) == 0) {
-    echo json_encode(getSitches());
+    $sitches = getSitches();
+    sitrecAuditResult();
+    echo json_encode($sitches);
     exit();
 }
 
@@ -202,10 +206,11 @@ function isFeaturedSitch($userID, $name) {
 // if it's "myfiles", then return a list of the files in the local folder
 
 if (isset($_GET['get'])) {
-    require('./user.php');
+    require_once __DIR__ . '/user.php';
 
     $userID = getUserID();
     $dir = getUserDir($userID);
+    sitrecAuditResource('sitches/' . $userID);
 
     // Not logged in: an empty array, EXCEPT for the version list of a sitch that is
     // actually on the published featured list. The old condition allowed any
@@ -219,6 +224,7 @@ if (isset($_GET['get'])) {
             && isset($_GET['name']) && preg_match(SITCH_NAME_PATTERN, $_GET['name'])
             && isFeaturedSitch($_GET['userid'], basename($_GET['name']));
         if (!$featuredOK) {
+            sitrecAuditResult('denied', 'authentication_required');
             echo json_encode(array());
             exit();
         }
@@ -268,11 +274,13 @@ if (isset($_GET['get'])) {
         if (!$useAWS) {
             try {
                 if (!is_dir($dir)) {
+                    sitrecAuditResult();
                     echo json_encode(array());
                     exit();
                 }
                 $files = @scandir($dir);
                 if ($files === false) {
+                    sitrecAuditResult('failure', 'storage_error');
                     echo json_encode(array());
                     exit();
                 }
@@ -305,11 +313,12 @@ if (isset($_GET['get'])) {
                         $folders[] = [$file, $lastDate, $screenshotUrl, $latestVersion];
                     }
                 }
+                sitrecAuditResult();
                 echo json_encode($folders);
                 exit();
             } catch (Exception $e) {
                 http_response_code(503);
-                echo json_encode(['error' => 'Server error: ' . $e->getMessage()]);
+                echo json_encode(['error' => 'Sitch storage unavailable']);
                 exit();
             }
         } else {
@@ -367,15 +376,16 @@ if (isset($_GET['get'])) {
                     $latestVersion = isset($folderLatest[$name]) ? $folderLatest[$name] : null;
                     $folders[] = [$name, $date, $screenshotUrl, $latestVersion];
                 }
+                sitrecAuditResult();
                 echo json_encode($folders);
                 exit();
             } catch (Aws\S3\Exception\S3Exception $e) {
                 http_response_code(503);
-                echo json_encode(['error' => 'S3 error: ' . $e->getMessage()]);
+                echo json_encode(['error' => 'Sitch storage unavailable']);
                 exit();
             } catch (Exception $e) {
                 http_response_code(503);
-                echo json_encode(['error' => 'Server error: ' . $e->getMessage()]);
+                echo json_encode(['error' => 'Sitch storage unavailable']);
                 exit();
             }
         }
@@ -388,6 +398,7 @@ if (isset($_GET['get'])) {
 
     } else if ($_GET['get'] == "versions") {
             $name = $_GET['name'];
+            sitrecAuditResource('versions/' . $userID . '/' . (is_string($name) ? $name : ''));
 
             // SECURITY: Validate name to prevent path traversal
             if (!preg_match(SITCH_NAME_PATTERN, $name)) {
@@ -408,13 +419,21 @@ if (isset($_GET['get'])) {
                     || isFeaturedSitch($requested, $name)) {
                     $userID = $requested;
                     $dir = $useAWS ? getShortDir($userID) : getUserDir($userID);
+                } else {
+                    sitrecAuditResource('versions/' . $requested . '/' . $name);
+                    sitrecAuditWrite('authorization.version_list', 'denied', 'owner_or_featured_required');
                 }
             }
 
+            sitrecAuditResource('versions/' . $userID . '/' . $name);
             $dir .= "/" . $name;
             $versions = array();
             if (!$useAWS) {
                 $files = scandir($dir);
+                if ($files === false) {
+                    http_response_code(500);
+                    exit('Sitch storage unavailable');
+                }
                 foreach ($files as $file) {
                     if (is_file($dir . '/' . $file) && $file != '.' && $file != '..' && $file != '.DS_Store' && !isScreenshotFile($file) && $file !== 'metadata.json') {
                         $url = $storagePath . $userID . '/' . $name. '/' . $file;
@@ -426,6 +445,7 @@ if (isset($_GET['get'])) {
                         );
                     }
                 }
+                sitrecAuditResult();
                 echo json_encode($versions);
                 exit();
             } else {
@@ -455,15 +475,16 @@ if (isset($_GET['get'])) {
 
                         }
                     }
+                    sitrecAuditResult();
                     echo json_encode($versions);
                     exit();
                 } catch (Aws\S3\Exception\S3Exception $e) {
                     http_response_code(503);
-                    echo json_encode(['error' => 'S3 error: ' . $e->getMessage()]);
+                    echo json_encode(['error' => 'Sitch storage unavailable']);
                     exit();
                 } catch (Exception $e) {
                     http_response_code(503);
-                    echo json_encode(['error' => 'Server error: ' . $e->getMessage()]);
+                    echo json_encode(['error' => 'Sitch storage unavailable']);
                     exit();
                 }
             }

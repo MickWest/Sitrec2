@@ -200,12 +200,13 @@ function gpCacheEntry($plainFile) {
  * Falls back to redirecting at $redirectUrl for legacy entries written before
  * compression became the only stored form. Does not return.
  */
-function serveGPCached($plainFile, $redirectUrl, $maxAge) {
+function serveGPCached($plainFile, $redirectUrl, $maxAge, $onComplete = null) {
     $gzFile = $plainFile . ".gz";
 
     // Legacy entry stored uncompressed only: redirect at it as before.
     if (!file_exists($gzFile)) {
         header("Location: " . $redirectUrl);
+        if ($onComplete) $onComplete('success', 'redirect_issued');
         exit();
     }
 
@@ -224,6 +225,7 @@ function serveGPCached($plainFile, $redirectUrl, $maxAge) {
     $ifModifiedSince = strtotime($_SERVER['HTTP_IF_MODIFIED_SINCE'] ?? '');
     if ($ifNoneMatch === $etag || ($ifModifiedSince !== false && $ifModifiedSince >= $lastModified)) {
         http_response_code(304);
+        if ($onComplete) $onComplete('success', 'not_modified');
         exit();
     }
 
@@ -233,7 +235,8 @@ function serveGPCached($plainFile, $redirectUrl, $maxAge) {
     if ($acceptsGzip) {
         header("Content-Encoding: gzip");
         header("Content-Length: " . filesize($gzFile));
-        readfile($gzFile);
+        $bytes = readfile($gzFile);
+        if ($onComplete) $onComplete($bytes !== false && $bytes === filesize($gzFile) ? 'success' : 'failure', 'stream_finished');
         exit();
     }
 
@@ -242,12 +245,17 @@ function serveGPCached($plainFile, $redirectUrl, $maxAge) {
     $in = @gzopen($gzFile, 'rb');
     if ($in === false) {
         header("Location: " . $redirectUrl);
+        if ($onComplete) $onComplete('failure', 'cache_read_failed');
         exit();
     }
+    $ok = true;
     while (!gzeof($in)) {
-        echo gzread($in, 1024 * 1024);
+        $chunk = gzread($in, 1024 * 1024);
+        if ($chunk === false) { $ok = false; break; }
+        echo $chunk;
     }
     gzclose($in);
+    if ($onComplete) $onComplete($ok ? 'success' : 'failure', 'stream_finished');
     exit();
 }
 ?>

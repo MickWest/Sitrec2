@@ -151,6 +151,8 @@ AUTH_ID_SOURCE
 AUTH_ID_PATTERN
 AUTH_USER_MAP
 AUTH_REQUIRE_CLIENT_EKU
+AUDIT_LOG_ENABLED
+AUDIT_LOG_DESTINATION
 "
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,7 @@
 # Security Headers
 
+For server activity records and protected collection, see [Audit Logging](AuditLogging.md).
+
 What Sitrec sets for you, what it deliberately leaves to you, and why the split falls
 where it does.
 

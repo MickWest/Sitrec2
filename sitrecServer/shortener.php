@@ -4,13 +4,14 @@
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
-require_once __DIR__ . './user.php';
+require_once __DIR__ . '/user.php';
+sitrecAuditRequest('share.create');
 $user_id = getUserID();
 
 
 // need to be logged in
 if ($user_id === 0 ) {
-    http_response_code(501);
+    http_response_code(401);
     exit("Internal Server Error");
 }
 
@@ -37,6 +38,7 @@ parse_str($queryString, $params);
 
 if (isset($params['url'])) {
     $url = $params['url'];
+    if (is_string($url)) sitrecAuditResource($url);
 
     // SECURITY: Validate URL scheme - only allow http/https
     // Also block javascript: and data: URLs that could be embedded
@@ -56,6 +58,7 @@ if (isset($params['url'])) {
 
     // Check if the URL contains the string "sitRecServer"
     if (strpos($url, 'sitrecServer') !== false) {
+        http_response_code(400);
         echo "URL containing 'sitrecServer' is not allowed.";
         exit;
     }
@@ -70,11 +73,16 @@ if (isset($params['url'])) {
     $html = createRedirectHtml($url);
 
     // Save the URL to the filesystem
-    file_put_contents($SHORTENER_PATH . $code . '.html', $html);
+    if (file_put_contents($SHORTENER_PATH . $code . '.html', $html, LOCK_EX) === false) {
+        http_response_code(500);
+        exit('Share link could not be saved');
+    }
+    sitrecAuditResult();
 
     // Return the shortened URL to the client
     echo $shortURL;
 } else {
+    http_response_code(400);
     echo "Please provide a URL to shorten.";
 }
 

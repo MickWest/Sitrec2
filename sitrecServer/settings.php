@@ -16,10 +16,12 @@
 
 require('./user.php');
 require_once __DIR__ . '/s3_client.php';
+sitrecAuditRequest(($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' ? 'settings.write' : 'settings.read');
 
 header('Content-Type: application/json');
 
 $user_id = getUserID();
+sitrecAuditResource('settings/' . $user_id);
 
 global $useAWS, $s3creds, $UPLOAD_PATH;
 
@@ -226,19 +228,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         } else {
             $localPath = $UPLOAD_PATH . 'settings/' . $user_id . '.json';
             if (file_exists($localPath)) {
-                $settings = json_decode(file_get_contents($localPath), true);
+                $storedSettings = file_get_contents($localPath);
+                if ($storedSettings === false) throw new RuntimeException('Settings read failed');
+                $settings = json_decode($storedSettings, true);
             } else {
                 $settings = null;
             }
         }
 
         $sanitized = ($settings !== null) ? sanitizeSettings($settings) : [];
+        sitrecAuditResult();
         http_response_code(200);
         echo json_encode(['settings' => $sanitized, 'userID' => $user_id]);
 
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Server error: ' . $e->getMessage()]);
+        echo json_encode(['error' => 'Settings storage unavailable']);
     }
     exit();
 }
@@ -279,9 +284,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!is_dir($localDir)) {
                 mkdir($localDir, 0777, true);
             }
-            file_put_contents($localDir . $user_id . '.json', $settingsJson);
+            if (file_put_contents($localDir . $user_id . '.json', $settingsJson, LOCK_EX) === false) {
+                throw new RuntimeException('Settings write failed');
+            }
         }
 
+        sitrecAuditResult();
         http_response_code(200);
         echo json_encode([
             'success' => true,
@@ -291,7 +299,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Server error: ' . $e->getMessage()]);
+        echo json_encode(['error' => 'Settings storage unavailable']);
     }
     exit();
 }

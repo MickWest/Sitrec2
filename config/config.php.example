@@ -57,8 +57,9 @@ function getUserInfoCustom()
         // This file is copied to sitrecServer/config.php at build time (webpackCopyPatterns.js),
         // so auth_cert.php is beside it at runtime.
         require_once __DIR__ . '/auth_cert.php';
+        require_once __DIR__ . '/audit.php';
         $certResult = resolveCertIdentity($_SERVER, getenv());
-        error_log(authCertLogLine($certResult));
+        sitrecAuditAuthentication($certResult);
         return ['user_id' => $certResult['user_id'], 'user_groups' => $certResult['user_groups']];
     }
     if ($authMode !== 'forum' && $authMode !== '') {

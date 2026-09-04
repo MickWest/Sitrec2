@@ -9,13 +9,14 @@
     "diagnostics pages, and the telemetry writers. See docs/dev/Secure-Build.md."
   ],
   "files": [
-    {"file": "config.php", "required": true, "mustContain": ["AUTH_MODE", "resolveCertIdentity"],
+    {"file": "config.php", "required": true, "mustContain": ["AUTH_MODE", "resolveCertIdentity", "sitrecAuditAuthentication"],
      "purpose": "the identity seam and storage settings; always the tracked config/config.php.example in the secure build"},
     {"file": "config_paths.php", "required": true, "purpose": "path and URL resolution; the configuration endpoint"},
     {"file": "injectEnv.php", "required": true, "purpose": "loads shared.env.php into the environment"},
     {"file": "requestScheme.php", "required": true, "purpose": "the request scheme behind a proxy that terminates TLS"},
     {"file": "user.php", "required": true, "purpose": "the cached identity wrapper"},
     {"file": "auth_cert.php", "required": true, "purpose": "client certificate authentication"},
+    {"file": "audit.php", "required": true, "purpose": "structured authentication and server activity audit events"},
     {"file": "object_helpers.php", "required": true, "purpose": "object key, visibility and URL helpers"},
     {"file": "s3_client.php", "required": true, "purpose": "the object storage client factory"},
     {"file": "getsitches.php", "purpose": "the list of situations and the user's saved files"},

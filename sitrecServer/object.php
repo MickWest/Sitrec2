@@ -42,6 +42,8 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/object_helpers.php';
 require_once __DIR__ . '/s3_client.php';
+require_once __DIR__ . '/audit.php';
+sitrecAuditRequest('object.resolve');
 
 /**
  * Sends a JSON error response and terminates execution.
@@ -316,6 +318,8 @@ if ($resolvedKey === null) {
     jsonError(400, 'Invalid ref parameter');
 }
 
+sitrecAuditResource($resolvedKey);
+
 if (str_ends_with($resolvedKey, '/')) {
     // Folder resolution turns <userid>/<name>/ into the newest version inside it.
     //
@@ -352,6 +356,8 @@ if (str_ends_with($resolvedKey, '/')) {
 }
 
 $result = buildResolvedObjectUrl($resolvedKey);
+sitrecAuditResource($resolvedKey);
+sitrecAuditResult();
 
 echo json_encode([
     'ref' => canonicalObjectRef($resolvedKey),

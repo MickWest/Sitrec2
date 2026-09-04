@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
+require_once __DIR__ . '/audit.php';
 
 // Cached wrapper around getUserInfoCustom() (defined in config.php).
 // getUserInfoCustom() must only be called once per request because
@@ -10,6 +11,7 @@ function getCachedUserInfoCustom() {
   static $cached = null;
   if ($cached !== null) return $cached;
   $cached = getUserInfoCustom();
+  sitrecAuditIdentity($cached);
   return $cached;
 }
 
@@ -36,6 +38,10 @@ function getUserInfo() {
   $testUserID = isset($_GET['testUserID']) ? intval($_GET['testUserID']) : 0;
   if (isAdmin($info) && $testUserID > 1) {
     $info['user_id'] = $testUserID;
+    sitrecAuditIdentity(getCachedUserInfoCustom(), $info);
+    sitrecAuditWrite('authorization.impersonation', 'accepted', 'administrator');
+  } elseif ($testUserID > 1) {
+    sitrecAuditWrite('authorization.impersonation', 'denied', 'administrator_required');
   }
   $cached = $info;
   return $info;
@@ -76,4 +82,3 @@ function getUserDir($user_id)
 
     return $userDir;
 }
-
