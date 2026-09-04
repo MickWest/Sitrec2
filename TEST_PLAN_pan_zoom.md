@@ -1,5 +1,9 @@
 # Pan+Zoom Feature Test Plan
 
+**Status:** The pan-and-zoom feature is implemented. This file is the retained manual
+regression checklist; it is not an active implementation plan. Section 12 remains a possible
+future enhancement rather than current behavior.
+
 ## Changes Summary
 Added `panOffsetX`/`panOffsetY` to CNodeVideoView to support panning alongside the existing videoZoom system. The lookView syncs pan via `camera.setViewOffset()`. Mirror video and UI overlays also sync pan state.
 

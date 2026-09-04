@@ -146,7 +146,7 @@ top-left to change your inputs):
   stale TLE propagates outside a LEO sanity band, so old elements can't conjure phantom flares.)
 - **Geocoding** — [OpenStreetMap Nominatim](https://nominatim.openstreetmap.org/).
 - **Airports** — the [OpenFlights](https://openflights.org/data.html) dataset, bundled as
-  `airports.json`. Regenerate it with `tools/build-airports.mjs` (see that file's header for the
+  `airports.json`. Regenerate it with `tools/shf/tools/build-airports.mjs` (see that file's header for the
   exact `npm pack airport-data` steps).
 
 ## Accuracy caveats
@@ -198,7 +198,7 @@ look-ahead limit. A query made at midday therefore skips ahead to the next dusk 
 | `app.js` | Two-screen UI (form ↔ results), inputs, and result presentation; drives the worker. |
 | `flareWorker.js` | Web Worker that propagates TLEs and runs the flare scan off the main thread. |
 | `lib/satellite.es.js` | Vendored satellite.js v6 (SGP4 propagation, ECI→ECEF, GMST). |
-| `airports.json` | Bundled OpenFlights airport list (regenerate via `tools/build-airports.mjs`). |
+| `airports.json` | Bundled OpenFlights airport list (regenerate via `tools/shf/tools/build-airports.mjs`). |
 | `manifest.webmanifest` | PWA manifest (installable app metadata). |
 | `sw.js` | Service worker (offline + installability); cache name carries the build stamp. |
 | `icons/`, `screenshots/` | App icons (incl. maskable + SVG) and manifest screenshots. |

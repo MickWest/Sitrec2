@@ -14,7 +14,8 @@ export const CONFIG = {
         mode: 'serverless'
     },
 
-    // Storage settings
+    // Browser-local settings and cache storage. User sitch files themselves are
+    // saved through the local file/folder workflow, not into this database.
     storage: {
         // IndexedDB settings
         indexedDB: {
@@ -41,10 +42,10 @@ export const CONFIG = {
 
     // Features that are enabled in serverless mode
     enabledFeatures: {
-        localSave: true,            // Save to IndexedDB
-        localLoad: true,            // Load from IndexedDB
-        offline: true,              // Offline-first
-        dataCaching: true,          // Cache data in IndexedDB
+        localSave: true,            // Save to a local file or selected working folder
+        localLoad: true,            // Open a local sitch file or working folder
+        offline: true,              // No PHP dependency; required assets must still be local
+        dataCaching: true,          // Cache eligible data in IndexedDB
         manifestLoading: true       // Load available sitches from manifest
     },
 

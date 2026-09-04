@@ -1,5 +1,10 @@
 # Transition to ECEF: Making EUS Identical to ECEF
 
+> **Status:** Historical implementation record. Sitrec now uses the ECEF-based model
+> described here, and the conversion module is `src/LLA-ECEF-ENU.ts`. "Ongoing" and
+> "known issue" wording below records the migration sequence; current behavior is documented
+> in [GIS Concepts in Sitrec](GIS.md).
+
 ## Overview
 
 Experimental change to place the EUS origin at the center of the Earth, making EUS an identical frame to ECEF (Earth-Centered Earth-Fixed). Previously EUS was a local tangent plane (East-Up-South) centered on the Earth's surface at `Sit.lat/Sit.lon`, with a rotation matrix and translation offset separating it from ECEF.
@@ -10,7 +15,7 @@ Despite coordinates now being ~6,378 km from the origin, there is no visible jit
 
 ## Changes Made
 
-### 1. Core Conversion Functions (`src/LLA-ECEF-ENU.js`)
+### 1. Core Conversion Functions (`src/LLA-ECEF-ENU.ts`)
 
 All EUS<->ECEF conversion functions made into identity transforms:
 
@@ -158,7 +163,7 @@ After changing the center to `(0, 0, 0)` with `radius = R_equatorial`, the camer
 
 **Note:** This is a workaround, not a precise fix. Using `POLAR_RADIUS` means the collision sphere is smaller than the actual Earth at the equator, so satellites that are genuinely occluded by the equatorial bulge (up to ~21 km of terrain) may incorrectly pass the visibility check for cameras near the surface. **TODO:** Implement a more accurate occlusion test — e.g., nudge the ray origin slightly outward along the local radial before testing, or use an ellipsoidal intersection test, to correctly handle cameras at any latitude without a fixed radius mismatch.
 
-### 14. Legacy EUS `initialPoints` Conversion (`src/LLA-ECEF-ENU.js`, `src/PointEditor.js`, `src/SplineEditor.js`, `src/nodes/CNodeSplineEdit.js`, `src/SituationSetup.js`)
+### 14. Legacy EUS `initialPoints` Conversion (`src/LLA-ECEF-ENU.ts`, `src/PointEditor.js`, `src/SplineEditor.js`, `src/nodes/CNodeSplineEdit.js`, `src/SituationSetup.js`)
 
 **Problem:** Several sitches (e.g., SitAguadilla) define spline control points via `initialPoints` arrays containing hardcoded EUS coordinates. These coordinates were calculated relative to the old EUS local tangent plane at `Sit.lat/Sit.lon` on a spherical Earth (radius = `wgs84.RADIUS`). In ECEF, these coordinates are meaningless — they need to be converted.
 
@@ -173,7 +178,7 @@ After changing the center to `(0, 0, 0)` with `radius = R_equatorial`, the camer
 
 This chain is important because the old points were defined on a sphere, but the new ECEF system uses the WGS84 ellipsoid. Going through LLA ensures the points end up at the correct geographic locations on the ellipsoid.
 
-New function `legacyEUSToECEF(eus, lat, lon)` in `LLA-ECEF-ENU.js` implements this chain.
+New function `legacyEUSToECEF(eus, lat, lon)` in `LLA-ECEF-ENU.ts` implements this chain.
 
 **Threading the flag:**
 - `SituationSetup.js` sets `legacyEUS: true` when a sitch provides `initialPoints` (not `initialPointsLLA`)

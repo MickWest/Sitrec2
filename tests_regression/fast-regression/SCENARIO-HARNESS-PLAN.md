@@ -1,6 +1,10 @@
 # Fast-Regression Scenario Harness — Coverage Expansion Plan
 
-**Status:** M1 IMPLEMENTED & green (custom-sitch focus); M2–M6 proposed. See §13.
+**Status:** Historical design record. M1 was implemented as described in §13; later layout,
+export, and Local Compute scenarios evolved outside the proposed M2–M6 sequence. The
+maintained commands, current scenario inventory, and authoring instructions are in
+[`README.md`](README.md). Treat the remaining milestone text as design context, not a current
+commitment or a statement that named defects are still present.
 **Author:** derived from a 20-agent coverage/design/verify workflow, corrected against four
 adversarial code-grounded reviews.
 **Scope:** Extend the existing fast visual-regression harness so that a single warm sitch

@@ -36,7 +36,7 @@ const STALE_MINUTES = 30; // agents not seen in this long are pruned
 const log = (msg) => process.stderr.write(`[sitrec-comms] ${msg}\n`);
 
 // ── Agent identity ──────────────────────────────────────────────────
-// Derive agent name from cwd: worktrees are in /Users/mick/sitrec-agents/<name>,
+// Derive agent name from cwd: worktrees conventionally end in /sitrec-agents/<name>,
 // main repo is "main". Falls back to the basename of cwd.
 
 function deriveAgentName() {

@@ -75,6 +75,53 @@ describe("docsRegistry entries", () => {
     });
 });
 
+describe("README documentation index", () => {
+    const readme = fs.readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
+
+    test.each(helpDocs.filter(d => d.file !== "README").map(d => [d.file, d]))(
+        "%s is linked from the README index", (file, d) => {
+            expect(readme).toContain(`](${d.file}.md)`);
+        });
+});
+
+describe("user-documentation links", () => {
+    const sources = [...new Set(["README", ...helpDocs.map(d => d.file)])];
+
+    test("relative Markdown links resolve on disk", () => {
+        const broken = [];
+
+        for (const source of sources) {
+            const sourcePath = docPath(source);
+            const markdown = fs.readFileSync(sourcePath, "utf8");
+            const links = markdown.matchAll(/!?\[[^\]]*]\(([^)\s]+)(?:\s+[^)]*)?\)/g);
+
+            for (const match of links) {
+                const rawTarget = match[1].replace(/^<|>$/g, "");
+                if (!rawTarget || rawTarget.startsWith("#") || rawTarget.startsWith("/")) continue;
+                if (/^[a-z][a-z0-9+.-]*:/i.test(rawTarget)) continue;
+
+                const withoutFragment = rawTarget.split("#", 1)[0].split("?", 1)[0];
+                if (!withoutFragment) continue;
+
+                let decoded;
+                try {
+                    decoded = decodeURIComponent(withoutFragment);
+                } catch {
+                    broken.push(`${source}.md -> ${rawTarget} (invalid URL encoding)`);
+                    continue;
+                }
+
+                const targetPath = path.resolve(path.dirname(sourcePath), decoded);
+                if (!fs.existsSync(targetPath)) {
+                    broken.push(`${source}.md -> ${rawTarget}`);
+                }
+            }
+        }
+
+        expect(broken).toEqual([]);
+    });
+});
+
 describe("AI assistant doc list", () => {
     // getHelpDoc validates the name against /^[A-Za-z0-9_-]+$/ and then reads
     // docs/<name>.md. Anything that fails either check is offered to the model and then

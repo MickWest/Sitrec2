@@ -4,7 +4,8 @@
  * Standalone Serverless Server for Sitrec
  * 
  * This is a minimal Node.js server that serves the Sitrec frontend without requiring PHP.
- * All data is stored locally in the browser's IndexedDB.
+ * Settings and cache metadata stay browser-local. Sitches and their assets use
+ * Sitrec's local file/folder workflow rather than a server-side upload service.
  * 
  * Usage:
  *   npm run build-serverless

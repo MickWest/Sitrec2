@@ -186,7 +186,7 @@ compass.onStatusChange = (message, isError) => {
 ### Examples
 
 See:
-- `/tools/compass/index-v2.html` - Standalone compass tool using the library
+- `/tools/compass/index.html` - Standalone compass tool using the library
 - `/src/ARMode.js` - AR mode integration with PTZ system
 
 ### Development Notes

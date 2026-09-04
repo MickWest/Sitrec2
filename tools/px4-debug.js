@@ -661,5 +661,13 @@ async function analyzeFile(filePath) {
     }
 }
 
-const filePath = process.argv[2] || '/Users/mick/flight_review/app/data/downloaded/3747b396-c3f1-4498-833b-6ccedffc3ea7.ulg';
-analyzeFile(filePath).catch(console.error);
+const filePath = process.argv[2];
+if (!filePath) {
+    console.error('Usage: node tools/px4-debug.js <flight-log.ulg>');
+    process.exitCode = 1;
+} else {
+    analyzeFile(filePath).catch(error => {
+        console.error(error);
+        process.exitCode = 1;
+    });
+}

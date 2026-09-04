@@ -29,7 +29,10 @@ T = exp(-beta_extinction * ray_distance_meters)
 
 The constant 3.912 corresponds to 2% contrast at the meteorological optical range. This makes the Atmo Visibility value a physical input rather than an arbitrary artistic slider.
 
-Note: the in-app `Atmo Visibility (km)` tooltip currently reads "Distance where atmospheric contrast drops to about 50%". That describes Sitrec's separate fog-density path (`getAtmosphereDensity()`, which uses `sqrt(ln 2) / visibility`), not the aerial-perspective composite documented here, which uses the 2%-contrast Koschmieder constant 3.912.
+The older fallback fog path uses a different density mapping (`getAtmosphereDensity()` uses
+`sqrt(ln 2) / visibility`). The control is therefore labelled as a meteorological visibility
+control without promising one contrast threshold for both rendering paths. The aerial-perspective
+path described here uses the 2%-contrast Koschmieder constant 3.912.
 
 ## Current Implementation
 

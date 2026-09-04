@@ -46,7 +46,7 @@ export const Globals = {
     shadowCastersDirtyVersion: 0,
     lastShadowCastersDirtyReason: null,
 
-    // Earth model radii — updated by updateEarthRadii() in LLA-ECEF-ENU.js.
+    // Earth model radii — updated by updateEarthRadii() in LLA-ECEF-ENU.ts.
     // Both default to wgs84.RADIUS so legacy code is unaffected until a sitch loads.
     // useEllipsoid=false → both equal wgs84.RADIUS (degenerate sphere).
     // useEllipsoid=true  → equatorRadius=wgs84.RADIUS, polarRadius=wgs84.POLAR_RADIUS.

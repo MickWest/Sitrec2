@@ -21,6 +21,7 @@ assistant — so if you add a doc, add it there.
 - [Getting Started - What Sitrec is, and building your first sitch](docs/CustomSitchTool.md)
 - [Doing Defensible Analysis - How to reach a conclusion that holds up, and how to write it up](docs/DefensibleAnalysis.md)
 - [The Sitrec User Interface - How the menus work](docs/UserInterface.md)
+- [The AI Assistant - Models, tools, privacy, and troubleshooting](docs/AIAssistant.md)
 - [Keyboard Shortcuts](docs/KeyboardShortcuts.md)
 - [Glossary - sitch, traverse, LOS, HAE, MISB, and the rest](docs/Glossary.md)
 - [What's New](docs/WhatsNew.md)
@@ -40,6 +41,7 @@ assistant — so if you add a doc, add it there.
 - [Atmospheric Refraction - Horizons, and why distant things look higher than they are](docs/Refraction.md)
 - [Wind in Sitrec - Wind menu, atmospheric data sources, streamlines](docs/Wind.md)
 - [Historic Skies - Reconstructing the sky for dates back to 1700, and what stays accurate there](docs/HistoricSkies.md)
+- [Lunar Eclipses - Reconstructing eclipse geometry and appearance](docs/LunarEclipse.md)
 - [Haze and Aerial Perspective](docs/AtmosphericAerialPerspective.md)
 
 **Video tools**
@@ -53,9 +55,14 @@ assistant — so if you add a doc, add it there.
 
 **Analysis**
 
+- [Traverse Concepts - What a traverse is and what can be inferred from line of sight](docs/TraverseConcepts.md)
+- [Ground Track - Intersecting a line of sight with terrain](docs/GroundTrack.md)
 - [Traverse Methods - How LOS + physical assumptions resolve target positions per frame](docs/TraverseMethods.md)
 - [Traverse Analysis and the Verdict - The Analyze button, the gallery, and what it licenses](docs/TraverseAnalysis.md)
+- [BOTBench - Evaluating bearings-only tracking methods against known truth](docs/BOTBench.md)
+- [BOTBench Scenarios - Provenance and regeneration of benchmark scenarios](docs/BOTBenchScenarios.md)
 - [Camera Modes - Normal (Az/El) and Satellite (quaternion) view modes](docs/satcam.md)
+- [Fisheye and All-Sky Lenses](docs/Fisheye.md)
 - [Recreating Starlink Situations - Horizon Flares](docs/Starlink.md)
 
 **Bespoke examples (not typical)**
@@ -66,6 +73,7 @@ assistant — so if you add a doc, add it there.
 
 **Advanced**
 
+- [Your API Keys - Bring-your-own-provider keys, storage, limits, and privacy](docs/APIKeys.md)
 - [Control Sitrec with ChatGPT site tools (WebMCP)](docs/WebMCP.md)
 - [Local Custom Sitches - JSON-based sitch definitions for advanced setups](docs/LocalCustomSitches.md)
 - [Scripted Camera Moves](docs/ScriptedVideo.md)
@@ -105,7 +113,7 @@ Sitrec uses or ingests a variety of data sources
 
 - ADS-B files in KML format from ADSB Exchange, FlightAware, Planefinder, and others
 - Satellite orbital data (mostly Starlink) as CCSDS OMM in CSV, or as legacy Two/Three Line Element (TLE) files
-- Star catalogs (BSC, etc.)
+- The Hipparcos star catalogue
 - Video (mp4, mov, H.264, H.265 )
 - DJI Drone tracks from Airdata as .csv
 - GLB (Binary GLTF 3D models)

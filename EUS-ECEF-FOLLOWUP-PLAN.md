@@ -1,68 +1,32 @@
-# EUS/ECEF Follow-Up Plan (Post-Implementation Review)
+# EUS/ECEF Follow-Up Status
 
-## Scope
-This plan covers only remaining gaps found after reviewing the implemented EUS/ECEF, sphere/ellipsoid, and EGM96 changes.
+**Status: completed.** This file is retained as the disposition record for the
+post-implementation review. The coordinate-system design and user-facing Earth-model
+contract live in [GIS Concepts in Sitrec](docs/GIS.md); this is not an active plan.
 
-## Remaining Issues
+## Resolved findings
 
-### 1) OSD altitude conversion skips valid zero-MSL altitudes
-**File:** `src/nodes/CNodeOSDDataSeriesTrack.js`  
-Current code applies geoid offset only when `alt !== 0`.  
-That incorrectly treats true `0 m MSL` values as if they were already HAE.
+1. **A valid zero-metre MSL OSD altitude was treated as missing.**
+   `CNodeOSDDataSeriesTrack` now tests whether an altitude sample exists, independently of
+   its numeric value, before applying the EGM96 MSL-to-HAE offset. Focused tests cover zero
+   MSL, missing altitude, and an already-HAE value.
+2. **The ellipsoid-aware ENU helpers lacked direct inverse coverage.**
+   `tests/LLA-ECEF-ENU.test.js` now checks a non-equatorial origin, a tight
+   ECEF→ENU→ECEF round trip, and reversible `justRotate` behavior with the ellipsoid active.
+3. **The LOS CSV reverse check compared rows with frames starting at zero.**
+   Export now records the exact source frame for each emitted row. The reverse check uses
+   that list, so a nonzero `Sit.aFrame` and skipped incomplete frames cannot shift the
+   comparison.
+4. **LOS export needed coverage under both Earth models.**
+   `tests/CNodeLOSExport.test.js` exercises position and heading reconstruction in sphere
+   and ellipsoid modes, including a non-contiguous exported frame list.
+5. **The runtime Earth-model rebuild contract was unclear.**
+   `updateEarthRadii()` recalculates the node graph and refreshes terrain. Editable splines
+   sourced from LLA or legacy local coordinates retain LLA control points for reprojection;
+   raw ECEF values remain Cartesian. The same contract is now documented in `docs/GIS.md`.
 
-**Action**
-1. Convert MSL->HAE when altitude data exists for the frame (`altArr[f] !== null`), not when `alt !== 0`.
-2. Keep "missing altitude" behavior unchanged.
+## Focused verification
 
-**Acceptance**
-1. A frame with altitude exactly `0 m MSL` still gets geoid offset applied.
-2. Frames with missing altitude do not get synthetic geoid offset added.
-
-### 2) Add tests for new ellipsoid ENU helpers
-**File:** `tests/LLA-ECEF-ENU.test.js`
-
-**Action**
-1. Add tests for `ECEF2ENU_radii` and `ENU2ECEF_radii` inverse behavior.
-2. Add origin test at non-equatorial latitude in ellipsoid mode.
-3. Add `justRotate` parity tests vs existing behavior.
-
-**Acceptance**
-1. Round-trip `ECEF -> ENU_radii -> ECEF` stays within tight tolerance.
-2. Tests fail if helper origin math regresses back to spherical-only behavior.
-
-### 3) Harden LOS export reverse-check indexing
-**File:** `src/nodes/CNodeLOS.js`
-
-**Action**
-1. In `testReverseExport`, map CSV row index back to exported frame index (`Sit.aFrame` offset) before `getValueFrame`.
-2. Remove unused local `mENU2ECEF_Origin` in `exportLOSCSV` setup (cleanup).
-
-**Acceptance**
-1. Reverse-check compares against the correct source frame range when `aFrame != 0`.
-
-### 4) Add regression test coverage for LOS export in ellipsoid mode
-**Files:** `tests/` (new test file or extension of existing LOS tests)
-
-**Action**
-1. Add a deterministic LOS fixture with known position+heading.
-2. Validate export->reverse path under sphere and ellipsoid radii.
-
-**Acceptance**
-1. Position and heading errors stay within thresholds in both Earth modes.
-
-### 5) Complete (or consciously defer) Earth-model-change rebuild contract
-**Files:** node-level cache/reprojection surfaces (`CNodeArray`, `CNodeSplineEdit`, any other cached EUS producers)
-
-**Action**
-1. Decide whether to add explicit `earthModelChanged` event now.
-2. If deferred, document current guarantees and known limits.
-
-**Acceptance**
-1. Clear documented contract exists for what does/does not reproject on Earth-model toggle.
-
-## Recommended Order
-1. Fix OSD zero-altitude conversion condition.
-2. Add ENU_radii unit tests.
-3. Fix LOS reverse-check frame indexing.
-4. Add LOS export regression tests.
-5. Finalize Earth-model-change contract decision.
+```bash
+npx jest tests/LLA-ECEF-ENU.test.js tests/CNodeOSDDataSeriesTrack.test.js tests/CNodeLOSExport.test.js --runInBand
+```

@@ -1,138 +1,80 @@
-# Object References: Transition from Direct URLs
+# Reference Objects
 
-## Summary
+Sitrec uses object references for files stored by a full-server installation. A reference
+identifies an object without permanently embedding the storage bucket or host in a saved
+situation.
 
-Sitrec is moving from storing and sharing direct file URLs (especially S3 URLs) to storing and sharing object references.
+For example, the canonical internal form is:
 
-Old model:
+```text
+sitrec://42/My Situation/20260904_120000.js
+```
 
-`?custom=https://sitrec.s3.us-west-2.amazonaws.com/1/Red%20Rock%20Arena/20260307_210104.js`
+A share link normally uses the same object key without the `sitrec://` prefix:
 
-New model:
+```text
+?custom=42/My%20Situation/20260904_120000.js
+```
 
-`?custom=1/Red%20Rock%20Arena/20260307_210104.js`
+This indirection lets an installation change storage hosts or issue temporary read URLs
+without invalidating saved sitches and share links.
 
-Internal canonical form:
+## Forms Sitrec accepts
 
-`sitrec://1/Red Rock Arena/20260307_210104.js`
+The resolver recognises:
 
-This decouples shared links from a specific bucket/domain and enables private storage behind short-lived presigned URLs.
+- a canonical `sitrec://<key>` reference;
+- a raw key beginning with a numeric user id, such as `42/My Situation/file.js`;
+- a compatible legacy S3 URL whose path contains such a key; and
+- a folder key ending in `/`, which asks for that folder's newest `.js` version.
 
-## Why This Change
+Ordinary `https://` URLs that are not recognised storage references remain ordinary URLs.
+Sitrec does not route every external URL through its object resolver.
 
-- Shared links should not depend on a hardcoded host like `sitrec.s3.us-west-2.amazonaws.com`.
-- Storage backends and hostnames should be swappable without breaking existing sitches.
-- Reads can be routed through a resolver that issues temporary URLs (presigned S3 URLs in AWS mode).
-- It creates a path to private objects and per-sitch access controls.
+## Resolution
 
-## Core Concepts
+When Sitrec needs the bytes behind a reference, `src/SitrecObjectResolver.js` sends the
+canonical reference to `sitrecServer/object.php`. The endpoint returns JSON containing:
 
-- Object key: backend path, e.g. `1/Red Rock Arena/20260307_210104.js`.
-- Object reference: canonical form `sitrec://<key>`.
-- Share value: compact URL param value, usually the raw key (`1/...`) instead of a full URL.
-- Resolved URL: temporary fetch URL returned by the server resolver.
+- the canonical reference;
+- the decoded object key and compact share value;
+- a fetchable URL; and
+- an expiry time when the URL is temporary.
 
-## Accepted Reference Inputs
+The browser caches that result until it is close to expiry. A private object can therefore
+use a short-lived signed URL while a public object can use a stable URL. Callers use
+`resolveURLForFetch()` rather than depending on either storage form.
 
-The resolver accepts all of these:
+## Saving and sharing
 
-- Canonical object ref: `sitrec://1/Red Rock Arena/20260307_210104.js`
-- Raw key: `1/Red Rock Arena/20260307_210104.js`
-- Legacy S3 URL: `https://<bucket>.s3.<region>.amazonaws.com/1/Red%20Rock%20Arena/20260307_210104.js`
-- Folder reference ending with `/`: `1/Red Rock Arena/` (resolves to latest `.js` in that folder)
+New object-storage uploads prefer the `objectRef` returned by the server. Compatibility
+responses may also include an `objectUrl`, and older saved sitches with direct URLs remain
+loadable.
 
-## How Resolution Works
+A complete, versioned key is the right value for a public share link. A folder reference
+means "latest version" and may be resolved only by its owner or an administrator; this
+prevents a previously shared folder URL from revealing a newer, unshared version.
 
-1. Client sees a resolvable reference (custom sitch, linked assets, versions, video URLs, overlays).
-2. Client calls `sitrecServer/object.php?ref=<input>`.
-3. Server normalizes input to an object key.
-4. Server returns:
-   - canonical ref
-   - key/share value
-   - resolved URL
-   - expiry timestamp (for presigned/private URLs; `null` for public stable URLs)
-5. Client fetches using the resolved URL.
+For the complete upload, storage, and configuration contract, see [File Rehosting and
+Object References](dev/FileRehosting.md).
 
-## Main Implementation Points
+## Security boundary
 
-- `src/SitrecObjectResolver.js`
-  - Detects canonical refs, raw keys, and legacy S3 URLs.
-  - Canonicalizes refs (`sitrec://...`).
-  - Resolves fetch URLs through `object.php`.
-  - Caches resolved URLs until near expiry.
+An exact object key currently acts as a read capability: knowing a valid complete key is
+normally enough to ask the resolver for it. Choosing private object-storage visibility
+changes how the bytes are delivered, but does not by itself create per-object user
+authorization. Do not use a guessable key as an access-control boundary.
 
-- `sitrecServer/object.php`
-  - Normalizes and validates incoming refs.
-  - Supports folder refs (`.../`) by selecting latest `.js`.
-  - Returns local URL in filesystem mode.
-  - In AWS mode, returns stable unsigned URLs for public keys and presigned GET URLs for private keys.
+Folder references are more restricted, as described above. Upload and deletion requests
+also require an authenticated nonzero user and are constrained to that user's prefix.
 
-- `sitrecServer/rehost.php`
-  - Upload responses now include `objectRef` (`sitrec://...`) in addition to `objectUrl`.
-  - Presigned PUT and multipart expiry now come from env settings.
+## Serverless and local files
 
-- `sitrecServer/getsitches.php`
-  - Version listings include `ref` plus legacy `url` for compatibility.
+Static serverless deployments have no `object.php` resolver and no server-side object
+store. Use **File → Local** to save and open sitches with local assets. A raw object key
+from a full-server share link requires that server's resolver; copying only the key into an
+unrelated static deployment does not make the stored object available there.
 
-## URL Sharing Behavior
-
-- New links generated by Sitrec use share values (raw key) instead of full S3 URL.
-- Internally, Sitrec may keep/store canonical refs.
-- Legacy shared links with full S3 URLs still resolve through compatibility parsing.
-
-## Presigned URL Expiry Settings
-
-These are configured in `config/shared.env` / `config/shared.env.example`:
-
-- `S3_PRESIGNED_GET_EXPIRY_SECONDS` (default `1800`)
-- `S3_PRESIGNED_PUT_EXPIRY_SECONDS` (default `900`)
-- `S3_PRESIGNED_MULTIPART_EXPIRY_SECONDS` (default `3600`)
-
-## Visibility and Cache Strategy
-
-- `S3_DEFAULT_VISIBILITY=public|private` controls whether keys are public or private by default.
-- `S3_PRIVATE_PREFIXES` and `S3_PUBLIC_PREFIXES` provide prefix overrides for mixed-mode deployments.
-- Public keys resolve to stable unsigned URLs (optionally via `S3_PUBLIC_BASE_URL`) so browser/CDN caches can be reused across sessions.
-- Private keys resolve to short-lived presigned GET URLs and should eventually move to CloudFront signed cookies/headers for better edge caching without URL churn.
-
-## Current Security Posture
-
-- Resolver supports temporary URLs and private buckets.
-- Current read behavior is key-based resolution (knowledge of key can resolve URL).
-- Per-object or per-sitch authorization is not fully enforced yet.
-
-## Migration Notes
-
-- Existing sitches containing direct S3 URLs continue to work.
-- New saves/uploads should prefer storing refs/share values.
-- Version dropdowns and custom-load flows now handle refs first, URLs second.
-
-## TODO
-
-### 1. Add explicit access control for object reads (owner-only/private/public modes)
-
-Right now, if someone knows a valid object key, the resolver can usually return a fetch URL for it. This item means we should make read permission an explicit rule, not just an implicit key lookup. We need server-side checks that decide whether the current user is allowed to resolve a given object key based on a privacy mode. A simple first model is `owner-only`, `private/shared`, and `public`. Once this is in place, unauthorized requests should fail with a clear error code instead of returning a usable URL.
-
-### 2. Add share tokens for private sitches (tokenized read access)
-
-Private sitches still need a way to be shared intentionally with specific people or via a link. This item means generating a token that grants limited read access to one sitch (or one object prefix), without making it globally public. The token should be time-limited, scoped, and verifiable by the resolver endpoint. In plain terms, this gives users a “share this privately” link that works without exposing the whole bucket. The long-term goal is share links that can also be revoked or expired safely.
-
-### 3. Add object metadata/ACL endpoint and UI for privacy controls
-
-To enforce privacy rules, we need a place to store and manage object-level settings. This item means adding backend APIs to read and update metadata like owner, visibility, and maybe an allowlist. It also means adding a UI in Sitrec so users can change those settings without editing anything manually. In practical terms, users should be able to mark a sitch as public/private and understand who can access it. This also creates a clear source of truth for resolver authorization checks.
-
-### 4. Support resolver path in serverless stubs (`object.php` equivalent)
-
-The serverless mode currently stubs some PHP endpoints, but not the new resolver path used by object references. This item means adding a compatible `object.php`-like endpoint in serverless builds so key/ref loading still works there. The response shape should match the full server implementation (`ref`, `key`, `url`, etc.) so client code does not need special cases. For serverless, resolution can map to local static assets instead of presigned S3 URLs. This keeps behavior consistent across deployment modes and simplifies testing.
-
-### 5. Add cache-bypass policy for folder refs after save (force latest refresh)
-
-Folder refs (like `1/MySitch/`) resolve to “latest version,” but client-side cache can keep an older resolved URL briefly. This item means defining rules that force a fresh resolve when we know a newer version was just saved. For example, after save we can invalidate folder-ref cache entries or call resolver with a force-refresh option. In plain language, users should immediately get the newest sitch they just saved, not a stale one for a few minutes. This is mostly a correctness and UX consistency improvement.
-
-### 6. Add optional CDN fronting for resolved URLs
-
-Presigned URLs can point directly to S3, but in some deployments a CDN may improve speed and cost characteristics. This item means allowing resolved URLs to optionally use a CDN domain in front of storage. For private content, the preferred model is CloudFront signed cookies or signed headers so the object path stays stable and cacheable. That avoids the cache churn caused by per-request query signatures in object URLs. The key goal is performance flexibility without changing how sitches are shared.
-
-### 7. Update `docs/dev/FileRehosting.md` to describe object refs as the primary model
-
-Current docs still describe a URL-first model in several places. This item means rewriting the rehosting documentation so object references are described as the default architecture. It should explain how `objectRef`, resolver fetch, presigned expiry, and legacy URL fallback all fit together. It also needs updated examples for `?custom=` sharing using keys/refs rather than hardcoded bucket hosts. Clear docs reduce future regressions and make onboarding easier for anyone touching this code path.
+The included `standalone-serverless.js` helper deliberately returns errors for unsupported
+server operations instead of pretending that server objects were saved in browser
+storage.
