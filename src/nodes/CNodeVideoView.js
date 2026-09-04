@@ -30,10 +30,10 @@
  */
 
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
-import {showChoice} from "../showError";
+import {showChoice, showConfirm} from "../showError";
 import {par} from "../par";
 import {quickToggle} from "../KeyBoardHandler";
-import {CustomManager, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {CustomManager, FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit, SitchMan} from "../Globals";
 import {CMouseHandler} from "../CMouseHandler";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CVideoMp4Data} from "../CVideoMp4Data";
@@ -47,7 +47,7 @@ import {assert} from "../assert";
 import {EventManager} from "../CEventManager";
 import {getFlowAlignRotation} from "../FlowAlignment";
 import {VideoLoadingManager} from "../CVideoLoadingManager";
-import {updateSitFrames} from "../UpdateSitFrames";
+import {clampSitFrameRange, updateSitFrames} from "../UpdateSitFrames";
 import {applyImportedImageMetadata, extractJPEGImportMetadata, stripImageRotationMetadata} from "../EXIFUtils";
 import {EXIFInfoPanel} from "../EXIFInfoPanel";
 import {isResolvableSitrecReference, resolveURLForFetch} from "../SitrecObjectResolver";
@@ -512,6 +512,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     }
 
     dispatchVideoAvailabilityChanged() {
+        // Every load, selection and removal passes through here, which makes it the one place
+        // the Remove entry has to follow to appear and disappear with the media.
+        this.updateRemoveVideoButton();
         // Custom-sitch UI depends on whether the video view has a real pixel coordinate system yet.
         EventManager.dispatchEvent("videoAvailabilityChanged", {
             viewId: this.id,
@@ -550,6 +553,19 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 this.errorCallback(error);
             });
             return;
+        }
+
+        // What the timeline looked like before any video touched it, captured at the moment the
+        // FIRST one arrives and never overwritten while videos remain. Remove Video restores
+        // this; without it there is no way back to the sitch's own duration, because the value
+        // is about to be replaced (and, with clearFrames, replaced by undefined).
+        //
+        // Not captured while deserializing: a sitch being rebuilt from a save is not a user
+        // loading a video, and the "before" it would record is a half-built graph.
+        if (this.ownsTimeline && !this._preVideoTimeline && !this.hasMedia() && !Globals.deserializing) {
+            this._preVideoTimeline = {
+                frames: Sit.frames, fps: Sit.fps, aFrame: Sit.aFrame, bFrame: Sit.bFrame,
+            };
         }
 
         if (clearFrames) {
@@ -1842,6 +1858,152 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     }
 
     /**
+     * Ask, then remove. Destructive and not undoable - a painted mask, a manual track and any
+     * analysis keyed to this footage go with it - so it asks first, which dropping a video
+     * never has to.
+     */
+    async promptRemoveVideo() {
+        const name = this.videos.length > 1
+            ? `${this.videos.length} videos`
+            : `"${this.currentVideoName() ?? this.fileName ?? "this video"}"`;
+        const yes = await showConfirm(
+            `Remove ${name} from this view?\n\n`
+            + "The view returns to the state it was in before any video was loaded, and the "
+            + "sitch's own start time and duration come back. Anything measured from the "
+            + "footage - a painted mask, tracking, an analysis - is not kept.",
+            {title: "Remove Video", yesLabel: "Remove", noLabel: "Cancel"});
+        if (!yes) return;
+        this.removeAllVideosAndReset();
+    }
+
+    /** The selected entry's own name, for the confirmation text. */
+    currentVideoName() {
+        return this.videos[this.currentVideoIndex]?.fileName;
+    }
+
+    /**
+     * Remove every video from this view and leave it as though none had ever been loaded.
+     *
+     * Per VIEW rather than global: the second video view owns its own media and gets its own
+     * menu entry, so removing the primary video must not silently take the other one with it.
+     *
+     * disposeAllVideos() already does the media half - decoders, audio, the videos array, the
+     * selector, the EXIF panel and the availability event. What it does NOT do is the part that
+     * makes this "never loaded" rather than "emptied": the file registration, the timeline the
+     * video took over, the sitch's record of what to reload, and the view's own visibility.
+     */
+    removeAllVideosAndReset() {
+        // Read the names BEFORE disposeAllVideos empties the array.
+        const fileNames = this.videos.map((e) => e.fileName).filter((n) => typeof n === "string");
+
+        this.stopStreaming();
+        this.disposeAllVideos();
+
+        // Only the files this view brought in. A DROPPED video is registered in FileManager
+        // under its own name (DragDropHandler), where it would otherwise be written into the
+        // next save; one loaded from a URL never enters FileManager at all, so exists() is what
+        // separates the two rather than the file's kind.
+        for (const name of fileNames) {
+            if (FileManager.exists(name)) {
+                FileManager.remove(name);
+            }
+        }
+
+        this.fileName = undefined;
+        this.staticURL = undefined;
+        this.pendingVideoRestore = null;
+        this.positioned = false;
+        this.removeText();
+        setFilenameOverlaySource(undefined);
+
+        this.restorePreVideoTimeline();
+
+        // The sitch's own record of what to load back. Left in place these would resurrect the
+        // video on the next save/reload, which is the one thing "removed" must not do.
+        if (this.id === "video") {
+            Sit.videos = undefined;
+            Sit.currentVideoIndex = undefined;
+            Sit.videoFile = undefined;
+            if (Sit.files) Sit.files.videoFile = undefined;
+        } else if (this.id === "video2") {
+            Sit.videos2 = undefined;
+            Sit.currentVideoIndex2 = undefined;
+            Sit.videoFile2 = undefined;
+        }
+
+        // Hidden is how the sitch itself defines this view before a video arrives
+        // (SitCustom.js: videoView {... visible: false}), not a state the user has to tidy up.
+        this.setVisible(false);
+
+        NodeMan.recalculateAllRootFirst();
+        setRenderOne(true);
+    }
+
+    /**
+     * Put Sit's timeline back to what it was before the video replaced it.
+     *
+     * Clearing it is not an option: Sit.frames feeds CNodeMath through the "frames" node, which
+     * asserts the moment the graph recalculates with it undefined - so a half-done removal takes
+     * the whole app down rather than leaving a shorter timeline.
+     *
+     * Sit.videoFrames goes too, and updateSitFrames() is deliberately NOT called afterwards:
+     * with framesFromVideo set it asserts on exactly the undefined it would then be reading.
+     */
+    restorePreVideoTimeline() {
+        if (!this.ownsTimeline) return;
+
+        // The capture from this session, or - for a sitch that was LOADED with its video already
+        // in it, where no before-state was ever seen - the sitch definition SitchMan still holds.
+        let before = this._preVideoTimeline;
+        if (!before) {
+            const def = Sit.name ? SitchMan.get(Sit.name, false) : null;
+            if (def && Number.isFinite(def.frames)) {
+                before = {frames: def.frames, fps: def.fps, aFrame: def.aFrame, bFrame: def.bFrame};
+            }
+        }
+
+        Sit.videoFrames = undefined;
+
+        if (before && Number.isFinite(before.frames)) {
+            Sit.frames = before.frames;
+            if (Number.isFinite(before.fps)) Sit.fps = before.fps;
+            if (Number.isFinite(before.aFrame)) Sit.aFrame = before.aFrame;
+            if (Number.isFinite(before.bFrame)) Sit.bFrame = before.bFrame;
+        }
+        this._preVideoTimeline = undefined;
+
+        clampSitFrameRange();
+        par.frame = 0;
+        par.paused = true;
+        GlobalDateTimeNode?.changedFrames?.();
+    }
+
+    /**
+     * The Video menu's Remove entry, gated on this view actually holding media so it never
+     * offers to remove nothing. Created and destroyed from dispatchVideoAvailabilityChanged(),
+     * which is already the convergence point for every load, selection and removal.
+     */
+    updateRemoveVideoButton() {
+        if (!guiMenus.video) return;
+        if (this.isMirrorView) return;   // the view it mirrors owns the media, so it owns this
+
+        if (!this.hasMedia()) {
+            if (this.removeVideoController) {
+                this.removeVideoController.destroy();
+                this.removeVideoController = null;
+            }
+            return;
+        }
+
+        if (this.removeVideoController) return;
+
+        this.removeVideoController = guiMenus.video.add(this, "promptRemoveVideo")
+            .name(t("videoView.removeVideo.label") + this.viewMenuSuffix())
+            .tooltip(t("videoView.removeVideo.tooltip"));
+        this.removeVideoController.shareAs(viewMenuKey(this.id, "removeVideo"));
+    }
+
+    /**
      * Synchronize audio playback with current video frame
      * Handles play/pause state changes and frame position jumps
      * @param {number} frame - Current video frame number
@@ -1880,6 +2042,11 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (this.exifInfoButtonController) {
             this.exifInfoButtonController.destroy();
             this.exifInfoButtonController = null;
+        }
+        // Outlives the media for the same reason, and by the same route.
+        if (this.removeVideoController) {
+            this.removeVideoController.destroy();
+            this.removeVideoController = null;
         }
         // Call parent dispose
         super.dispose();

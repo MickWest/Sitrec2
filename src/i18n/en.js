@@ -1308,6 +1308,12 @@ const en = {
             grid: "Grid",
         },
         currentVideo: { label: "Current Video" },
+        removeVideo: {
+            label: "Remove Video",
+            tooltip: "Remove the video from this view and put it back the way it was before one "
+                + "was loaded - the file is unloaded, the view is hidden again, and the sitch's "
+                + "own duration comes back. Anything measured from the footage is not kept.",
+        },
         videoRotation: { label: "Video Rotation" },
         setCameraToExifGps: { label: "Set Camera To EXIF GPS" },
         expandOutput: {
