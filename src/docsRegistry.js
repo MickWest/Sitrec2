@@ -10,6 +10,35 @@
 // with no file at all), which made getHelpDoc return an error mid-conversation. Deriving
 // the chat doc-name from the same `file` the menu links to makes that class of bug
 // structurally impossible. tests/docsRegistry.test.js enforces the rest.
+
+
+import {getEnvBool} from "./envUtils";
+
+/**
+ * The URL for one registry doc, built the SAME way the Help menu builds it.
+ *
+ * Two forms, because a build without LOCAL_DOCS has no docs to serve: locally
+ * the rendered .html sits beside the app, otherwise the raw .md on GitHub. Any
+ * surface that wants to link a doc must come through here — a hard-coded
+ * "./docs/X.html" silently 404s in the second case, which is most deployments.
+ *
+ * `absolute` resolves against the current page. The analysis report is the
+ * reason it exists: it is generated in the browser and then DOWNLOADED, so a
+ * relative link in it breaks the moment the file is opened from disk.
+ */
+export function docUrl(file, {anchor = null, absolute = false} = {}) {
+    const frag = anchor ? `#${anchor}` : "";
+    if (!getEnvBool("LOCAL_DOCS", process.env.LOCAL_DOCS)) {
+        return `https://github.com/MickWest/Sitrec2/blob/main/${file}.md${frag}`;
+    }
+    const rel = `./${file}.html${frag}`;
+    if (!absolute || typeof window === "undefined") return rel;
+    try {
+        return new URL(rel, window.location.href).href;
+    } catch (e) {
+        return rel;
+    }
+}
 //
 // Each entry:
 //   file      - path for the Help-menu link, WITHOUT extension. Usually

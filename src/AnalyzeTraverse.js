@@ -76,6 +76,7 @@ import {
     coLeaderBadge,
 } from "./TraverseRanking";
 import {mundanenessCost, mundanenessSummary} from "./TraverseMundaneness";
+import {docUrl} from "./docsRegistry";
 import {platformMirrorSummary} from "./TraversePlatformMirror";
 import {
     terrainAnalysisConfigScalars,
@@ -709,7 +710,38 @@ function buildSceneCoupledHypotheses({dataset, originLat, originLon, sweep,
             if (typeof node === "string") node = NodeMan.get(node, false);
             if (!node || typeof node.p !== "function") continue;
             const h = methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig);
-            if (h) list.push(h);
+            if (!h) continue;
+            // A METHOD NODE READS HAND-SET GUI VALUES, so a non-physical track
+            // here means its inputs were never configured — not that anything
+            // was measured. Straight Line is the case that forced this: it is
+            // not a fit at all but a construction, intersecting each sightline
+            // with a fixed vertical plane set by the Target Heading and start
+            // distance. As the camera pans, a sightline approaches parallel to
+            // that plane and the intersection runs away, so on any clip with a
+            // wide sweep the default gives 2.7 million knots at 594645 g,
+            // 51 km underground — and a 0.000 deg residual, because every point
+            // is on its own sightline by construction and the residual
+            // therefore measures nothing.
+            //
+            // Shown, it cost a gallery slot and asserted an ordinariness figure
+            // ("misses a jet's envelope by 455522x") about an unset default.
+            // The flag was already trusted enough to exclude the track from the
+            // chart extents and the ground-plane fold; it now excludes it from
+            // the gallery too.
+            //
+            // NOT the same judgement as the swept Monte Carlo / polynomial fits
+            // in TraverseHypotheses.js, which compute their own result: a
+            // non-physical one there is a real finding about the fit and stays
+            // visible, ranked last. A configured Straight Line is physical and
+            // still appears.
+            if (h.nonPhysical) {
+                console.warn(`Traverse analysis: "${meth.display ?? meth.label}" excluded — its `
+                    + `hand-set inputs give a non-physical track `
+                    + `(${(h.metricsFull.airSpeed.mean / KNOTS_TO_MS).toFixed(0)} kt mean, `
+                    + `${h.metricsFull.gLoad.max.toFixed(0)} g). Set its distance and heading to use it.`);
+                continue;
+            }
+            list.push(h);
         }
     }
     return list;
@@ -4235,6 +4267,12 @@ function showResultGallery(results, uiState = null) {
             border:1px solid rgba(255,255,255,0.16); background:rgba(255,255,255,0.05);
             color:#cfd5dd; font-size:13px; font-weight:700; cursor:pointer; }
         .traverse-gallery-overlay .tg-toggle:hover { border-color:rgba(120,170,240,0.55); color:#fff; }
+        /* One toolbar control is a real link (the documentation), so it can be
+           middle-clicked and its address copied. A <button> takes the UA font
+           while an <a> inherits, so the family is stated here for both rather
+           than left to differ. */
+        .traverse-gallery-overlay .tg-toggle { font-family:system-ui,-apple-system,'Segoe UI',sans-serif; }
+        .traverse-gallery-overlay a.tg-toggle { text-decoration:none; display:inline-block; line-height:normal; }
         .traverse-gallery-overlay .tg-toggle.on { background:rgba(57,135,229,0.24);
             border-color:#3987e5; color:#eef6ff; }
         .traverse-gallery-overlay .tg-body { flex:1 1 auto; min-height:0; display:flex; gap:18px; }
@@ -4724,11 +4762,28 @@ function showResultGallery(results, uiState = null) {
     openWeakBtn.title = "As Open Consistent, but also loading the weak candidates (w_ names): "
         + "fits that passed the broad screen but were declined for a search-bound pin, an "
         + "incomplete optimizer run, or a lower fit tier. Set-aside candidates are not included.";
+    // THE ONE ROUTE OUT OF THE GALLERY TO THE EXPLANATION. Every tile ends in a
+    // "Rank basis" line full of terms the page never defines — "Passes broad
+    // screen", "within-group score", "residual-equivalent", "co-leader" — and
+    // until this link there was no href in the whole overlay except the report
+    // download, so a reader had no way to discover that an explanation exists,
+    // let alone reach it.
+    const howBtn = document.createElement("a");
+    howBtn.className = "tg-toggle";
+    howBtn.href = docUrl("docs/TraverseAnalysis", {anchor: "how-the-tiles-are-ranked"});
+    howBtn.target = "_blank";
+    howBtn.rel = "noopener";
+    howBtn.textContent = "How ranking works";
+    howBtn.title = "Open the documentation section that defines every term in the "
+        + "\u201cRank basis\u201d line: the ordering keys, the three tier grades, the "
+        + "within-group score, and the balloon nudge.";
+
     toolbar.appendChild(syncOrientationBtn);
     toolbar.appendChild(syncScaleBtn);
     toolbar.appendChild(restoreBtn);
     toolbar.appendChild(openBtn);
     toolbar.appendChild(openWeakBtn);
+    toolbar.appendChild(howBtn);
     // Apply / set aside the selected truth track. Shown only when a usable one
     // was computed for this run — with nothing to compare against there is
     // nothing to toggle. rerenderWithTruth is a function declaration so this
@@ -6870,7 +6925,11 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
     <p class="sub">Panels include trajectory constraints, fitting algorithms, and forward physical models;
     they are not independent object identifications and there is no global winner. Each path is shown against the same
     sightlines and ordered only within its comparison group. Screening pills summarize maneuvering, peak speed,
-    completeness, active model limits, and raw LOS residual under the stated assumptions.</p>
+    completeness, active model limits, and raw LOS residual under the stated assumptions.
+    Every term in the &ldquo;Rank basis&rdquo; line below &mdash; the ordering keys, the three tier
+    grades, the within-group score, the balloon nudge &mdash; is defined in
+    <a href="${escapeHtml(docUrl("docs/TraverseAnalysis", {anchor: "how-the-tiles-are-ranked", absolute: true}))}"
+    target="_blank" rel="noopener">How the tiles are ranked</a>.</p>
     ${cardsHTML}
 </section>
 
