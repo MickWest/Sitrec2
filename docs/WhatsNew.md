@@ -9,11 +9,25 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
-## Version 2.149.7 (2026-09-03)
+## Version 2.150.0 (2026-09-03)
+
+### New Features
+
+- **Water reflections on Google Photorealistic 3D Tiles** (Effects → Water Reflection → *Water on 3D Tiles*, on by default): the photorealistic tiles replace the terrain rather than sit on it, so with them on the sea used to revert to Google's own daylight photograph of it. Water is now shaded on the tiles themselves. It is found from the same real water polygons *Vector Water Mask* uses, plus a height band around the sea surface and a test that the surface faces the sky — which together keep pier decks, boats, the beach and the pilings out of it. *3D Tile Water Band* sets that height band and *3D Tile Mask Span* how far around the water the mask reaches; a wider span sees more water but a coarser shoreline. Like the vector mask it needs a MapTiler key, and where there is none it switches itself off and says why, because a photogrammetric tile has no map imagery to fall back on.
+
+- **Water can come from your own polygon server** (self-hosted servers): a new SITREC_VECTOR_WATER_URL setting points the water polygons at any server using the same open scheme, instead of always calling MapTiler — so an offline install needs an account with nobody. The polygons now carry their own on-screen credit, which defaults to OpenStreetMap contributors and can be corrected for your own data. **Note for self-hosters:** this release adds settings to the shared settings file, so a build from your own checkout will stop and ask you to merge them into your copy before it will continue. All the new settings are commented out, so an install that wants none of this needs no change beyond the version line.
 
 ### Improvements
 
 - **Sitrec now has a published security policy** (the Security tab of the project's page on GitHub): it says how to report a vulnerability privately rather than in a public issue, what to include, and when to expect a reply — acknowledgement within a week, an assessment within two. Only the latest release is supported, because patch releases are frequent enough that updating is the remedy. The policy also lists the automatic checks a release goes through, separating those that can stop a release from those that only report, and gives the command that verifies a published container image came from this project.
+
+### Bug Fixes
+
+- Fixed *Make Video* (Video → Video Processing) loading its own output back in as the current video instead of saving it. In a sitch that takes its length from the loaded video, that reshaped the timeline to the length of the exported A–B range — 788 frames to 340 in the one measured — left the A and B markers on frame numbers that no longer meant the same thing, and put the camera track, the video metadata and the date and time on a timeline that no longer matched the footage. It now saves an MP4 file, like every other export, named after the source with the effect and a timestamp. Anything you saved before is unchanged, and a sitch that was reshaped by the old behaviour stays as it was.
+- Fixed the video view going permanently black when the rolling echo effect met a frame the video had not finished decoding, which most often happened just after the video changed. Switching or loading a different video now also clears the effect caches, which are held per frame number and so mean something different once the footage changes.
+- Fixed *Make Video* started while a Full A–B preview was running leaving every view but the video one dark, with the preview toggle switched on and nothing playing.
+- Fixed objects failing to draw when the fisheye lens (Camera → FOV (Zoom) → Fisheye) and refraction of terrain (View → Atmospheric Refraction → *Terrain and Buildings*) were both switched on.
+- Fixed a water surface found while only coarse terrain had loaded being kept until the camera moved, rather than being found again as better terrain arrived.
 
 ## Version 2.149.6 (2026-09-03)
 
