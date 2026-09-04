@@ -262,17 +262,30 @@ jobs:
     permissions:
       contents: read
       packages: read
-    env:
-      # Playwright base image (external, hosted on MCR). Bump in lockstep with
-      # the `playwright` devDependency in package.json. Single source of truth:
-      # referenced by the cache key, the cache/pull step, and the test run.
-      PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.58.2-noble
 
     steps:
       - uses: actions/checkout@v6
         with:
           # No job here pushes with the checkout token.
           persist-credentials: false
+
+      # The browser image must match the installed Playwright EXACTLY: a mismatch
+      # fails with "Executable doesn't exist at /ms-playwright/...", not a warning.
+      # This was a hardcoded tag with a comment saying to bump it in lockstep with
+      # the devDependency, which is a coupling nothing enforced — so when Dependabot
+      # moved @playwright/test from 1.58.2 to 1.62.1 it went unnoticed until the
+      # 2.151.0 release gate failed on it. Reading the version out of the lockfile
+      # makes the two move together by construction. It is still the single source
+      # of truth for the cache key, the pull step and the test run.
+      - name: Derive the Playwright image from the lockfile
+        run: |
+          V=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version" 2>/dev/null || true)
+          if [ -z "$V" ]; then
+            echo "Could not read @playwright/test's version from package-lock.json" >&2
+            exit 1
+          fi
+          echo "PLAYWRIGHT_IMAGE=mcr.microsoft.com/playwright:v${V}-noble" >> "$GITHUB_ENV"
+          echo "@playwright/test ${V} -> mcr.microsoft.com/playwright:v${V}-noble"
 
       - name: Lowercase image name
         run: echo "IMAGE_NAME_LC=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
