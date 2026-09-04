@@ -78,6 +78,7 @@ import {
 import {mundanenessCost, mundanenessSummary} from "./TraverseMundaneness";
 import {docUrl} from "./docsRegistry";
 import {platformMirrorSummary} from "./TraversePlatformMirror";
+import {candidateCriteria, criteriaSummary, CRITERION_COLORS} from "./TraverseCriteria";
 import {
     terrainAnalysisConfigScalars,
     terrainDependencyMismatch,
@@ -2971,6 +2972,32 @@ function describeRangeConvergence(profile) {
         loNM: toNM(rows[0].startDist), hiNM: toNM(rows[rows.length - 1].startDist)};
 }
 
+/**
+ * The criteria ribbon: one small coloured square per criterion, each carrying
+ * its own sentence on hover (a plain `title`, so it works for keyboard focus
+ * and for the printed report alike).
+ *
+ * Squares are LABELLED IN THE TOOLTIP, not on screen. Eight labels would cost
+ * more width than the whole tile has, and the ribbon's job is the pattern —
+ * which quantity is red — rather than reading each one. The container's own
+ * tooltip names the order, so a reader who has not hovered yet still knows what
+ * they are looking at.
+ */
+function criteriaRibbonHTML(h, rating, {dataset = null, useTruth = true} = {}) {
+    const criteria = candidateCriteria(h, rating, {dataset, useTruth});
+    if (!criteria.length) return "";
+    const order = criteria.map((c) => `${c.letter} ${c.label}`).join(" · ");
+    const squares = criteria.map((c) =>
+        `<span class="tg-crit${c.status === "na" ? " na" : ""}" ` +
+        `style="background:${CRITERION_COLORS[c.status]}" ` +
+        `title="${escapeHtml(`${c.label}: ${c.value} — ${c.why}`)}" ` +
+        `role="img" aria-label="${escapeHtml(`${c.label} ${c.status}`)}">` +
+        `${escapeHtml(c.letter ?? "")}</span>`).join("");
+    return `<div class="tg-ribbon" title="${escapeHtml(`Criteria, left to right: ${order}. `
+        + `${criteriaSummary(criteria)}. Hover a square for what it measures and why it is that colour. `
+        + `Grey means not evaluated, which is not a pass.`)}">${squares}</div>`;
+}
+
 // One-time solution-space context shared by every Details pane.
 function analyzeSolutionSpace(results) {
     const geo = describeSceneGeometry(results.dataset);
@@ -4347,6 +4374,19 @@ function showResultGallery(results, uiState = null) {
         .traverse-gallery-overlay .tg-order { color:#7fb0ee; font-size:11px; margin:-4px 0 8px; }
         .traverse-gallery-overlay .tg-rank-basis { color:#b8c0ca; font-size:11.5px; line-height:1.45;
             margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.07); }
+        .traverse-gallery-overlay .tg-ribbon { display:flex; gap:1px; margin:8px 0 2px; flex-wrap:wrap; }
+        /* The letter is what makes the ribbon readable without hovering, so it
+           has to stay legible on all four fills. White measures 2.1:1 on the
+           caution amber and 2.8:1 on the pass green — below even the 3:1
+           large-text floor — so the glyph carries a dark shadow rather than the
+           fills being darkened, which would cost the traffic-light reading. */
+        .traverse-gallery-overlay .tg-crit { width:21px; height:21px; border-radius:3px; cursor:help;
+            border:1px solid rgba(0,0,0,.35); flex:0 0 auto; display:flex;
+            align-items:center; justify-content:center; color:#fff; font-size:12px;
+            font-weight:700; line-height:1; font-family:inherit; user-select:none;
+            text-shadow:0 0 2px rgba(0,0,0,.75), 0 1px 1px rgba(0,0,0,.55); }
+        .traverse-gallery-overlay .tg-crit.na { border-style:dashed; color:#d6dade;
+            text-shadow:none; }
         .traverse-gallery-overlay .tg-stats { display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; }
         .traverse-gallery-overlay .tg-st { display:flex; flex-direction:column; }
         .traverse-gallery-overlay .tg-stk { font-size:10px; color:#8a9099; text-transform:uppercase;
@@ -5246,6 +5286,7 @@ function showResultGallery(results, uiState = null) {
             `</div>` +
             `<div class="tg-sub">${escapeHtml(h.subtitle)}</div>` +
             `<div class="tg-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>` +
+            criteriaRibbonHTML(h, r, {dataset, useTruth}) +
             `<div class="tg-stats">${statsHTML}</div>` +
             `<div class="tg-rank-basis"><strong>Rank basis:</strong> ${escapeHtml(rankingExplanation(h, r, {useTruth}))}</div>`;
         tile.addEventListener("click", () => selectTile(i));
