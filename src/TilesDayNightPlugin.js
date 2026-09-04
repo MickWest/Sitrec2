@@ -1,4 +1,4 @@
-import {DayNightStandardMaterial} from "./js/map33/material/DayNightStandardMaterial";
+import {DayNightStandardMaterial, setTileWaterDefault} from "./js/map33/material/DayNightStandardMaterial";
 import {Globals} from "./Globals";
 
 // Symbol used to stash original materials on meshes for clean restore
@@ -71,6 +71,23 @@ export class TilesDayNightPlugin {
                 return;
         }
         Globals.shadowDiagCounters.materialModeApplications++;
+    }
+
+    // Turn the water branch on or off for every tile, loaded and future.
+    //
+    // Unlike setMaterialMode below, this DOES re-walk the loaded tiles, and is
+    // safe to: it flips a #define on the material each mesh already has, where
+    // the mode switch would have to build a replacement material and orphan the
+    // TilesFadePlugin entry keyed on the old one. Without the re-walk the sea
+    // would only start reflecting on tiles that happened to stream in after the
+    // toggle, which over a settled view is none of them.
+    setTileWater(on) {
+        setTileWaterDefault(on);
+        this.tiles?.forEachLoadedModel(scene => {
+            scene.traverse(child => {
+                if (child.isMesh) child.material?.setTileWater?.(on);
+            });
+        });
     }
 
     // Update the active material mode. Applies to FUTURE tile loads only —

@@ -49,7 +49,7 @@ import {
     WebGLRenderTarget,
 } from "three";
 import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "./LocalFrame";
-import {Globals} from "./Globals";
+import {Globals, NodeMan} from "./Globals";
 import {altitudeHAE, getLocalUpVector} from "./SphericalMath";
 import {raycastGroundElevationFast} from "./raycastGround";
 import {sharedUniforms} from "./js/map33/material/SharedUniforms";
@@ -138,6 +138,17 @@ export class CWaterPlanarMirror {
 
         // Cheap "are we still looking at the same thing" cache. Rotation is
         // included because turning around can bring a different lake into view.
+        //
+        // And so is the elevation revision, because the probes march the
+        // ELEVATION MAP and that map changes underneath us. A sitch that opens
+        // looking at the sea detects its plane while a dozen coarse tiles are
+        // all that exist, lands metres above sea level — 18.5 m instead of
+        // −36.0 m at Santa Monica, measured — and, with the camera stationary,
+        // keeps that answer for as long as the user leaves the view alone. The
+        // mirror could survive it (a wrong level mostly shifts the reflection);
+        // the 3D-tile water cannot, because the plane is what tells it how high
+        // the sea is, so a stale plane means no water at all.
+        const terrainNode = NodeMan.get("TerrainModel", false);
         const e = camera.matrixWorld.elements;
         const key = [
             Math.round(camPos.x / PLANE_RECHECK_M),
@@ -145,6 +156,7 @@ export class CWaterPlanarMirror {
             Math.round(camPos.z / PLANE_RECHECK_M),
             e[8].toFixed(3), e[9].toFixed(3), e[10].toFixed(3),
             camera.fov.toFixed(3),
+            terrainNode?.elevationRevision ?? 0,
         ].join(",");
         if (key === this._planeKey) return this.plane;
         this._planeKey = key;

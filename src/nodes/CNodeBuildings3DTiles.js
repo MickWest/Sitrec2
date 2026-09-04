@@ -998,6 +998,24 @@ export class CNodeBuildings3DTiles extends CNode {
         }
     }
 
+    // Shade water on the tiles themselves (CNodeWaterReflection).
+    //
+    // Google Photorealistic tiles REPLACE the terrain — CNodeTerrainUI hides the
+    // whole quadtree while they are active — so the water shader, which lives in
+    // the terrain tile material, has nothing left to draw on and the sea reverts
+    // to Google's baked photograph of it. This puts the same shading on the
+    // tiles' own material instead, gated on a geographic water mask.
+    //
+    // A compiled-in branch, so it is set once when the effect is switched on
+    // rather than tested every frame; the plugin re-walks loaded tiles because
+    // over a settled view none of them would otherwise be re-created.
+    setTileWater(on) {
+        this._tileWater = !!on;
+        for (const pv of Object.values(this._perView)) {
+            pv.dayNightPlugin?.setTileWater?.(this._tileWater);
+        }
+    }
+
     // Effective opacity for one view's tiles: the global opacity, times the look-view-only
     // sim fade for the look view's renderer.
     _effectiveOpacity(viewId) {
