@@ -31,6 +31,11 @@ tests/__image_snapshots__/
 /dist-serverless/
 /dist-secure/
 
+# webpack --json output, written at the repo root because npm sets cwd to the package
+# root on every platform. It used to be /tmp/sitrec-webpack-stats.json, which Windows
+# resolves against the current drive as D:\tmp\ and cannot open.
+/.webpack-stats.json
+
 # Container security review: the scratch release-shaped bundle and the generated
 # reports, SBOMs and evidence (scripts/auditReleaseImage.mjs, auditContainerImage.mjs).
 /dist-release-audit/
