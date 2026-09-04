@@ -195,6 +195,8 @@ describe("docs on disk", () => {
         "dev/ADDING_NEW_SETTINGS.md",       // how to add a user setting
         "dev/AddSitchInCode.md",            // legacy in-code sitch authoring
         "dev/Container-Security-Review.md", // the automated container image review
+        "dev/SecurityRequirements.md",      // what the project holds itself to, and how each is verified
+        "dev/VulnerabilityHandling.md",     // triage, root cause and response times
         "dev/CustomTerrainSources.md",      // map/elevation source configuration
         "dev/Deploying-on-a-VPS.md",        // VPS deployment with Podman and Caddy
         "dev/Deploying-on-GitHub-Pages.md", // the serverless build on GitHub Pages

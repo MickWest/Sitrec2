@@ -457,7 +457,9 @@ jobs:
     needs: [package, smoke-test]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # contents: write creates the GitHub Release at the end of this job, which is
+      # what makes a release's security evidence durable rather than expiring.
+      contents: write
       packages: write
 
     steps:
@@ -560,3 +562,68 @@ jobs:
               echo "Warning: could not find version for tag ${TAG}"
             fi
           done
+
+      # ── Durable release evidence ─────────────────────────────────────
+      # The container security review, its bill of materials and its raw evidence are
+      # uploaded as build artifacts, which expire after 90 days. That is fine for
+      # debugging and wrong for a release record: an operator asked to justify the image
+      # they are running may be asked a year later, and a reviewer who wants to check a
+      # claim should not need an account that can read a build artifact.
+      #
+      # A GitHub Release for the tag holds them permanently, publicly, and beside the
+      # version they describe. Runs last in this job so it only happens once the image
+      # is actually published — a release pointing at an image that was never created
+      # would be worse than no release at all.
+      - name: Download the review artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: container-security-review-*
+          path: review
+
+      - name: Publish the release with its security evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p release-assets
+          # One set per architecture; the names must not collide as release asset names.
+          for arch in amd64 arm64; do
+            src="review/container-security-review-${arch}"
+            [ -d "$src" ] || continue
+            [ -f "$src/container-security-review.md" ] \
+              && cp "$src/container-security-review.md" "release-assets/container-security-review-${arch}.md"
+            # The bill of materials is 3.3 MB of JSON and compresses to under a
+            # megabyte, so it is attached gzipped. Nothing needs it un-gzipped to
+            # read: every tool that consumes CycloneDX takes a file path.
+            [ -f "$src/sbom.cdx.json" ] \
+              && gzip -9 -c "$src/sbom.cdx.json" > "release-assets/sbom-${arch}.cdx.json.gz"
+          done
+          ls -la release-assets/
+
+          NOTES=$(cat <<NOTEEOF
+          Container images for ${TAG} are published to the GitHub Container Registry for
+          linux/amd64 and linux/arm64.
+
+          **Verify where an image came from** — every published image carries a signed
+          record of the workflow, commit and runner that produced that exact digest:
+
+              gh attestation verify oci://ghcr.io/mickwest/sitrec2:${TAG} --repo MickWest/Sitrec2
+
+          **Attached to this release**
+
+          - \`container-security-review-<arch>.md\` — the image review for each published
+            architecture, grouped by the control areas of NIST SP 800-190
+          - \`sbom-<arch>.cdx.json.gz\` — a CycloneDX software bill of materials per
+            architecture, gzipped
+
+          See the changelog in \`docs/WhatsNew.md\` for what changed in this version, and
+          \`docs/dev/Container-Security-Review.md\` for how to read the review.
+          NOTEEOF
+          )
+
+          # --verify-tag refuses to invent a release for a tag that does not exist.
+          gh release create "$TAG" release-assets/* \
+            --title "$TAG" \
+            --notes "$NOTES" \
+            --verify-tag \
+            || gh release upload "$TAG" release-assets/* --clobber

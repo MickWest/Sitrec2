@@ -22,6 +22,11 @@ whether it is confirmed — within two weeks. Fixes ship in an ordinary patch re
 no separate embargoed release channel. You will be credited in the changelog unless you ask
 not to be.
 
+What happens after that — how a finding is triaged, the response times by severity, what
+counts as closing one, and when a root cause is required — is written down in
+[Vulnerability Handling](docs/dev/VulnerabilityHandling.md). The properties those checks
+exist to protect are listed in [Security Requirements](docs/dev/SecurityRequirements.md).
+
 **Please do not** run automated scanners against the hosted site, attempt denial of service,
 or access data belonging to other users. Testing against your own local build or your own
 container is always fine and is the easiest way to be sure of a finding.
@@ -61,10 +66,11 @@ that produced that exact digest. Check one before you use it:
 gh attestation verify oci://ghcr.io/mickwest/sitrec2:<tag> --repo MickWest/Sitrec2
 ```
 
-Each release also publishes a CycloneDX software bill of materials per architecture, and a
-container security review report, as build artifacts. See
-[Container Security Review](docs/dev/Container-Security-Review.md) for what those contain and
-how to read them.
+Each release also publishes a CycloneDX software bill of materials and a container security
+review report, one of each per architecture. They are **attached to the GitHub Release** for
+that version, so they remain available for as long as the release does rather than expiring
+with a build artifact. See [Container Security Review](docs/dev/Container-Security-Review.md)
+for what they contain and how to read them.
 
 ## Deploying Sitrec securely
 

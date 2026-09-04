@@ -22,9 +22,21 @@ jobs:
     strategy:
       matrix:   # run a separate jub for all combinations of the following variables
         node-version: [22.4]
-        # it should typically be enough to build the web app on macOS
-        # but allow building it on three platforms if the workflow is triggered manually
-        os: ${{ fromJSON(github.event_name != 'workflow_dispatch' && '["macos-latest"]' ||
+        # Ubuntu by default; all three on a manual run.
+        #
+        # This was pinned to macOS because the suite failed on Linux. The cause was one
+        # character: a test read "input/" where the directory is "Input/", which resolves
+        # on a case-insensitive filesystem and not on a case-sensitive one. That was fixed,
+        # and a workflow_dispatch run on 2026-09-03 confirmed ubuntu-latest green.
+        #
+        # Ubuntu is the better default for two reasons beyond cost. Development happens on
+        # macOS, so a macOS-only CI tested nothing that was not already being tested; and
+        # every CI runner and the production container are case-sensitive, so Linux is the
+        # platform that catches the class of bug that pin was hiding — three instances of
+        # it surfaced on the day this changed. macOS is also ten times the price per minute,
+        # which matters on a public repository only as a courtesy, but the coverage argument
+        # stands on its own.
+        os: ${{ fromJSON(github.event_name != 'workflow_dispatch' && '["ubuntu-latest"]' ||
           '["ubuntu-latest","windows-latest","macos-latest"]') }}
       fail-fast: false   # don't stop all of the jobs when one of them fails
     runs-on: ${{ matrix.os }}
