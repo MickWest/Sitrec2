@@ -229,12 +229,14 @@ cannot determine:
   probabilities, and category order only breaks what would otherwise be an
   unsound tie. Each tile still reports its standing within its own category
   ("#1 of 4 physically based").
-- **Fit quality and ordinariness are separate judgements**: a tile's tier is
-  the worse of how well the model reproduces the sightlines and how ordinary the
-  motion it requires is, but the **badge names whichever one is binding**. When
+- **Fit quality, ordinariness and platform mirroring are separate judgements**:
+  a tile's tier is the worst of the three, but the **badge names whichever one
+  is binding**. When
   the fit is the limit the labels read `Passes broad screen` / `Fair fit` /
   `Weak fit` / `Poor fit`; when the motion is the limit they read `Passes broad
-  screen` / `Moderate` / `Low` / `Kinematically extreme`. This stops a slow,
+  screen` / `Moderate` / `Low` / `Kinematically extreme`; when the solved path
+  turns out to be the camera's own path they read `Partly mirrors the platform`
+  / `Mirrors the platform`. This stops a slow,
   ordinary object with a middling residual being called "Implausible" (that word
   is about the object; the evidence was about the fit), and stops a 12 g solution
   that threads the rays exactly being hidden as merely a good fit. Search-edge,
@@ -249,6 +251,19 @@ cannot determine:
   every comparable key (screen pass, eligibility, completeness, tier, pin
   count), so the one shown first leads only by category priority; with a truth
   track selected, truth separation breaks the tie instead.
+- **Platform mirroring (the "Coryat curve")**: assume the wrong range and the
+  observing platform's own manoeuvre is injected into the solved path, because
+  both the candidate and the real object lie on the same rays — the candidate
+  track becomes a blend of the object's path and the camera's. Neither of the
+  other two judgements can see this: such a tile follows the sightlines
+  perfectly and its speeds and g-loads are unremarkable. Each trajectory tile is
+  therefore regressed against the platform's manoeuvre, and reports what share
+  of its own manoeuvring that explains, at what scale factor, and the range at
+  which the mirroring would vanish. An object *can* pace the camera — a chase
+  aircraft, a drone flown to follow it — so a mirroring tile keeps its place in
+  the gallery; it is simply an extraordinary thing for an object to do, and the
+  tier now says so. See
+  [Does it fly the camera's path?](#does-it-fly-the-cameras-path).
 - **Balloon-consistency tie-break**: a *Physically based* balloon tile is
   scored on whether its own fitted motion is self-consistent with a passive
   wind tracer — a steady climb, level, or descent drifting in one direction is
@@ -391,7 +406,9 @@ Notes on the gallery tiles:
   it. Implied object size converts the file's angular-size bound to metres at
   the candidate's range; a sub-pixel target gives an upper bound only, and the
   line says so rather than printing a fictitious lower end. Neither line moves
-  the order of the tiles. See
+  the order of the tiles — the **Platform mirroring** line, which appears only
+  when a tile actually flies the camera's path, is the one stats line that does.
+  See
   [How ordinary is the answer?](BOTBench.md#how-ordinary-is-the-answer) for the
   definition and the measured behaviour.
 - The **Sky Lantern / Balloon (measured wind)** variant pins the drift to a
@@ -511,14 +528,39 @@ units. Compared directly the planet would "win" purely on units, so
 category priority decides that pair and the unsound comparison is never
 made.
 
-**The tier** for trajectory tiles is the worse of two independent 0–3
-grades, and the badge names whichever one is binding. *Fit quality*, from
-the scored LOS residual (ray-constrained solutions first get a fixed 0.05°
-solver-fidelity allowance subtracted): ≤ 0.05° is the top grade, then
-≤ 0.15° (*Fair fit*), ≤ 0.5° (*Weak fit*), and worse (*Poor fit*).
+**The tier** for trajectory tiles is the worst of three independent 0–3
+grades, and the badge names whichever one is binding.
+
+*Fit quality*, from the scored LOS residual (ray-constrained solutions first get
+a fixed 0.05° solver-fidelity allowance subtracted), graded **relative to the
+scene**: the boundaries are 1.2×, 2× and 5× the flexible constant-acceleration
+reference residual for that clip, clamped to a scale between 0.02° and 0.20°.
+Inside 1.2× is the top grade, then *Fair fit*, *Weak fit*, and worse is a *Poor
+fit*. The scale exists because scenes do not resolve equally well: on the
+Aguadilla ground-track sitch every fitted candidate lands between 0.07° and
+0.19° while the reference itself leaves 0.14°, so fit quality is not
+distinguishing anything there and a fixed ladder would only sort noise. The
+clamp is what stops the scale becoming an alibi — at the upper end the broad
+screen still sits at 0.24°, well inside the old 0.5° boundary — and what stops a
+noiseless synthetic file, where a truth track threads its own rays, from failing
+every real model. It is deliberately **not** taken from a loaded truth track's
+residual, so that blind evaluation sees exactly the tiers an analyst sees.
+
 *Kinematic ordinariness*: ≤ 1.5 g and ≤ 650 kt is the top grade; up to 4 g
 (still ≤ 650 kt) is *Moderate*; above 4 g or 650 kt is *Low*; above 9 g or
-900 kt is *Kinematically extreme*. One locally load-bearing model limit
+900 kt is *Kinematically extreme*.
+
+*Platform mirroring*: the share of the tile's own manoeuvring that the observing
+platform's manoeuvre explains — 0.85 and above is *Mirrors the platform*, 0.50
+and above is *Partly mirrors the platform*. It applies only when the mirrored
+motion is at least three times the positional scale the tile's own residual can
+resolve, so a few metres of platform-shaped wander is never treated as evidence,
+and it never reaches the bottom grade, because pacing the camera is
+extraordinary rather than impossible. On a tie it does not take the label: a
+model that both fits poorly and mirrors is reported as fitting poorly, with the
+mirroring still spelled out in the rank basis.
+
+One locally load-bearing model limit
 caps the tier at 2, two or more at 1, and an unconverged optimizer caps it
 at 1 as a *Provisional fit*. Two iteration-limit stops are **not** counted as
 unconverged: a Nelder-Mead simplex that has collapsed to its position tolerance
@@ -538,7 +580,11 @@ so one score unit equals 0.05° of LOS residual, putting "how much
 manoeuvring does this require" and "how well does it thread the rays" on
 one scale. The composite prices exactly the things a wrong assumed
 distance forces on a solution: sustained and peak acceleration, erratic
-turning, and implausible climb or descent.
+turning, and implausible climb or descent. A tile that mirrors the platform
+carries a further demotion of up to about 0.3° of residual-equivalent, in
+proportion to the mirrored share. That term only ever demotes: not flying the
+camera's path is the ordinary expectation, not an achievement, and rewarding it
+would be a standing thumb on the scale for distant solutions.
 
 **The balloon special case.** Buoyant tiles get a bounded consistency
 nudge. A passive wind tracer is physically confined to a single steady
@@ -562,6 +608,168 @@ ahead on one of the earlier keys — a better combined tier, a complete
 search where the balloon's is not, fewer load-bearing limits — is out of
 its reach.
 
+### Does it fly the camera's path?
+
+Range is the hard part of a bearings-only reconstruction, and getting it wrong
+has a specific, recognisable consequence.
+
+**Where the blend comes from.** Every point on frame `f`'s sightline is
+`P(f) + R·u(f)`, where `P` is the platform's position and `u` the unit direction
+it recorded. So a true object at range `R_t` and a candidate at range `R_c` are
+both on that ray:
+
+    X_t(f) = P(f) + R_t(f)·u(f)
+    X_c(f) = P(f) + R_c(f)·u(f)
+
+Divide the second by the first, after subtracting `P` from each, and the
+direction cancels — which is exactly the trouble with a bearing. Writing
+`k(f) = R_c(f) / R_t(f)` for the range ratio and rearranging:
+
+    X_c(f) = k(f)·X_t(f) + (1 − k(f))·P(f)
+
+That is exact, frame by frame. Over a clip where the range ratio holds roughly
+steady it reads as a single blend with a constant `k`, and the coefficient on
+the platform is `(1 − k)`: **guess the range wrong and the camera aircraft's own
+motion is added into the solved trajectory**, scaled by how wrong the guess is,
+and reversed in sign when the guess is too far. The result is a plausible-looking
+banking or turning path that is really the platform's flight wearing the object's
+clothes. This is what Metabunk's Gimbal thread named a *Coryat curve*.
+
+![A wrong range stamps the platform's turn on the object](docimages/traverse-mirror-01-blend.svg)
+
+Nothing about the fit exposes it. Such a candidate follows the sightlines as
+faithfully as any other — it is a member of the same exact-ray family — and its
+speeds and accelerations are unremarkable. Aguadilla's Constant Altitude tile sat
+at 0.073° residual, 51 kt and 0.48 g, and led the gallery. What exposes it is
+comparing the candidate's motion with the **platform's**.
+
+**Why the straight line comes off first.** Both paths have their uniform motion
+— the best-fitting straight line at constant speed — removed before anything
+else. That step is the whole method rather than a tidying-up, and it has a
+one-line justification: bearings-only observability says a constant-velocity
+observer cannot resolve range against a constant-velocity target. Only the
+observer's *manoeuvre* carries range information, so removing the straight line
+is what isolates the informative part.
+
+Call the leftover of a path its *residual* after that straight line is
+subtracted. Subtracting a best-fit straight line is a linear operation — the
+leftover of a sum is the sum of the leftovers, and scaling a path scales its
+leftover — so applying it to the blend above gives, with `x` for the candidate's
+leftover and `p` for the platform's:
+
+    x(f) = k·(the object's leftover) + (1 − k)·p(f)
+
+An object flying straight at constant speed has **no** leftover of its own, and
+the expression collapses to
+
+    x(f) = (1 − k)·p(f)
+
+The candidate's leftover *is* the platform's leftover, scaled by exactly
+`(1 − k)`. Two consequences follow immediately, and both are behaviours of the
+shipped test: a platform that never manoeuvres has `p = 0`, so there is nothing
+to compare against and no verdict is returned; and a candidate at the right range
+has `k = 1`, so it has nothing left to explain.
+
+![Take away the straight line, and the camera's wiggle is what remains](docimages/traverse-mirror-02-detrend.svg)
+
+**Measuring it.** A real object does manoeuvre, so `x` is only *partly* the
+platform's. Stack every frame's leftover — all three coordinates — into two long
+lists of numbers, `x` and `p`, and write `x·p` for their dot product (multiply
+matching entries, add the results). Fit `x ≈ β p` by choosing the `β` that
+minimises the squared miss:
+
+    E(β) = (x − βp)·(x − βp) = x·x − 2β(x·p) + β²(p·p)
+
+That is an ordinary parabola in one unknown. Differentiating and setting the
+result to zero,
+
+    E'(β) = −2(x·p) + 2β(p·p) = 0        so     β = (x·p) / (p·p)
+
+and `E''(β) = 2(p·p)`, which is positive whenever the platform manoeuvred at
+all, so this is the minimum rather than a maximum.
+
+The part left over, `x − βp`, is at a right angle to `p` — substituting `β`
+gives `p·(x − βp) = p·x − (x·p) = 0` — so the two pieces combine by Pythagoras:
+
+    x·x  =  β²(p·p)  +  (x − βp)·(x − βp)
+            \_______/   \_________________/
+          the platform's    the candidate's own
+
+The **share** is the first piece as a fraction of the whole, and because
+`cos θ = (x·p) / (|x||p|)` for the angle `θ` between the two, it is also that
+angle's cosine squared:
+
+    share = β²(p·p) / (x·x) = (x·p)² / ((x·x)(p·p)) = cos²θ
+
+So the two numbers on a tile mean two different things and both are needed:
+`β` is *how much* of the platform is in the candidate, and the share is *how
+completely* the platform accounts for the candidate's motion. The check that the
+algebra is consistent: for the pure blend above, `x = (1 − k)p` exactly, so
+`β = 1 − k` and the share is 1.
+
+![The test is a projection](docimages/traverse-mirror-03-projection.svg)
+
+**Reading a range back out.** Since `β = 1 − k` and `k = R_c / R_ref`, the range
+at which the mirroring would vanish falls out directly:
+
+    R_ref = R_c / (1 − β)
+
+Constant Altitude sits at `R_c` = 2245 m with `β` = 0.229, so it predicts
+2245 / 0.771 = **2911 m**. Applied across the gallery this is the most useful
+thing the test produces, because it turns a score into a distance the reader can
+act on.
+
+It also explains the one case where no distance is quoted. Differentiating,
+`dR_ref/dβ = R_c / (1 − β)²`, so the *fractional* error behaves as
+
+    (error in R_ref) / R_ref  =  (error in β) / (1 − β)
+
+At `β` = 0.23 an uncertainty of 0.01 in `β` moves the answer by 1.3%; at
+`β` = 0.95 the same uncertainty moves it by 20%, and the figure grows without
+limit as `β` approaches 1. Below `1 − β` = 0.05 the division stops being a
+measurement, and the analysis says so instead of printing a number.
+
+![Measured: candidates at different ranges agree on where the mirroring stops](docimages/traverse-mirror-04-agreement.svg)
+
+That agreement is the check that this describes real geometry rather than a
+coincidence. On the Aguadilla ground track, eleven candidates whose own ranges
+differ by a factor of **1.78** — 1587 m to 2828 m — predict ranges that differ by
+a factor of only **1.12**: 2598 m to 2911 m. Measured the same way, as a spread
+against the smallest of each set, the inputs disagree by 78% and their
+predictions by 12% — a factor of 6.5 between them. That is the parallax the
+sightlines contain, recovered by asking which range stops requiring the object
+to copy the camera.
+
+It is worth being precise about what that does and does not establish. The
+candidates are not independent measurements — they are eleven readings of the
+same sightlines under different assumptions — so their agreement is a
+consistency check, not an error bar, and the spread is not an uncertainty. What
+it does establish is that the answer is a property of the geometry rather than
+of any one model's priors: a fixed-wing fit and a balloon fit, which share
+nothing but the rays, land 22 m apart.
+
+Note also that the g cost alone never found it: the stamped bend cost Constant
+Altitude only 0.48 g, which no screen on acceleration would stop.
+
+**The two guards, in units.** A high share means nothing if the mirrored motion
+is smaller than the sightlines can resolve. The mirrored component measures
+`|β| × rms(p)` metres, where `rms(p)` is the root-mean-square size of the
+platform's leftover; the sightlines resolve about `R × ε` metres at range `R`
+with a residual of `ε` radians. The finding needs the first to be at least three
+times the second. The case that gate exists for is a drone fit whose whole
+manoeuvre was an 11 m wander:
+
+    drone              0.010 × 1182 =  11 m   against  2802 × 0.00215 =  6.0 m   →  1.9×   declined
+    Constant Altitude  0.229 × 1182 = 270 m   against  2245 × 0.00128 =  2.9 m   →   94×   reported
+
+The residual is also floored at 0.01° before that comparison, because the
+exact-ray Straight Line candidate reaches 3 × 10⁻⁷ degrees by construction and
+would otherwise make any mirrored metre infinitely significant.
+
+And a mirroring tile is never called invalid. An object *can* pace the camera,
+so the reading stays available, keeps its tile, and is priced as extraordinary
+instead of free.
+
 **Surfacing true anomalies.** Several deliberate choices keep a genuinely
 anomalous solution from being ranked or labelled out of sight. The
 fit/ordinariness split means a 12 g solution that reproduces the
@@ -570,7 +778,11 @@ describing extraordinary motion — rather than blending in among good
 fits or being dismissed as a bad one. The free Quadcopter fit is left
 unseeded as the unconstrained, anomaly-reachable search. The balloon
 nudge is tier-bounded and symmetric, so no mundane reading is ever
-forced. And when nothing passes, the verdict is *Unresolved* — stated
+forced. The platform-mirror test demotes only what it can measure — it
+needs a manoeuvring platform, a resolvable mirrored component, and a
+majority share before it says anything — and it never rules a tile out,
+because an object pacing the camera is a real possibility rather than an
+impossible one. And when nothing passes, the verdict is *Unresolved* — stated
 with what was and wasn't tested — rather than either a manufactured
 conventional winner or an anomaly claim the uncalibrated noise floor
 cannot support.

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="470" viewBox="0 0 760 470" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="470" fill="#FFFFFF"/>
+<defs><marker id="ap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#2F6FD6"/></marker><marker id="an" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#C9690F"/></marker></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">The test is a projection: β is the scale, the share is the angle</text>
+<line x1="70.0" y1="268.0" x2="310.0" y2="268.0" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<text x="318.0" y="273.0" font-family="Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#2F6FD6" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">p</text>
+<text x="318.0" y="289.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2F6FD6" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">platform</text>
+<line x1="125.2" y1="256.6" x2="125.2" y2="268.0" stroke="#7E8893" stroke-width="1.4" stroke-dasharray="4 3"/>
+<line x1="70.0" y1="268.0" x2="125.2" y2="256.6" stroke="#C9690F" stroke-width="3" marker-end="url(#an)"/>
+<text x="119.2" y="230.6" font-family="Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#C9690F" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">x</text>
+<text x="119.2" y="245.6" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#C9690F" text-anchor="end" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">candidate</text>
+<line x1="70.0" y1="284.0" x2="125.2" y2="284.0" stroke="#C9690F" stroke-width="5"/>
+<line x1="70.0" y1="279.0" x2="70.0" y2="289.0" stroke="#C9690F" stroke-width="1.5"/>
+<line x1="125.2" y1="279.0" x2="125.2" y2="289.0" stroke="#C9690F" stroke-width="1.5"/>
+<text x="70.0" y="308.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">x&#x27;s shadow on p</text>
+<text x="70.0" y="324.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">as a fraction of p&#x27;s length, that is β = 0.23</text>
+<polyline points="130.0,268.0 130.0,267.0 130.0,266.0 129.9,264.9 129.9,263.9 129.8,262.9 129.7,261.9 129.6,260.9 129.4,259.9 129.3,258.9 129.1,257.9 129.0,256.9 128.8,255.9" fill="none" stroke="#7E8893" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+<line x1="134.0" y1="260.0" x2="216.0" y2="234.0" stroke="#7E8893" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="220.0" y="232.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">θ = 12°</text>
+<text x="70.0" y="58.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">Constant Altitude</text>
+<text x="70.0" y="78.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">96% of its manoeuvre is the platform&#x27;s.</text>
+<text x="70.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Only the short perpendicular part is its own.</text>
+<text x="70.0" y="350.0" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">share = cos²θ = 0.96</text>
+<text x="70.0" y="370.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">drawn to scale: the shadow really is</text>
+<text x="70.0" y="384.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">0.23 of p, and x really is this short.</text>
+<line x1="422.0" y1="268.0" x2="662.0" y2="268.0" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<text x="670.0" y="273.0" font-family="Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#2F6FD6" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">p</text>
+<text x="670.0" y="289.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2F6FD6" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">platform</text>
+<line x1="432.7" y1="140.4" x2="432.7" y2="268.0" stroke="#7E8893" stroke-width="1.4" stroke-dasharray="4 3"/>
+<line x1="422.0" y1="268.0" x2="432.7" y2="140.4" stroke="#C9690F" stroke-width="3" marker-end="url(#an)"/>
+<text x="440.7" y="132.4" font-family="Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">x</text>
+<text x="440.7" y="147.4" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">candidate</text>
+<line x1="422.0" y1="284.0" x2="432.7" y2="284.0" stroke="#C9690F" stroke-width="5"/>
+<line x1="422.0" y1="279.0" x2="422.0" y2="289.0" stroke="#C9690F" stroke-width="1.5"/>
+<line x1="432.7" y1="279.0" x2="432.7" y2="289.0" stroke="#C9690F" stroke-width="1.5"/>
+<text x="422.0" y="308.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">x&#x27;s shadow on p</text>
+<text x="422.0" y="324.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">as a fraction of p&#x27;s length, that is β = 0.001</text>
+<polyline points="482.0,268.0 481.5,260.6 480.2,253.3 477.9,246.2 474.8,239.5 470.8,233.2 466.2,227.4 460.8,222.2 454.9,217.8 448.4,214.1 441.5,211.3 434.4,209.3 427.0,208.2" fill="none" stroke="#7E8893" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="480.2" y="221.4" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">θ = 85°</text>
+<text x="422.0" y="58.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">Sky Lantern / Balloon</text>
+<text x="422.0" y="78.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Almost nothing in common with the platform.</text>
+<text x="422.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Its manoeuvre is very nearly all its own.</text>
+<text x="422.0" y="350.0" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#C9690F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">share = cos²θ = 0.01</text>
+<text x="422.0" y="370.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">x and its shadow drawn 45× enlarged;</text>
+<text x="422.0" y="384.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">at p&#x27;s scale x would be 2.9 px long.</text>
+<text x="380.0" y="424.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Stack every frame&#x27;s leftover into one long vector and the test is a projection: β is how much of p is in x,</text>
+<text x="380.0" y="440.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">and the share is how much of x that projection accounts for. The dashed side is the motion the platform cannot explain.</text>
+</svg>

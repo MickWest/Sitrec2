@@ -76,6 +76,7 @@ import {
     coLeaderBadge,
 } from "./TraverseRanking";
 import {mundanenessCost, mundanenessSummary} from "./TraverseMundaneness";
+import {platformMirrorSummary} from "./TraversePlatformMirror";
 import {
     terrainAnalysisConfigScalars,
     terrainDependencyMismatch,
@@ -2995,6 +2996,16 @@ function hypothesisStats(h, dataset = null) {
                 `${mund.impliedM.lo.toFixed(2)}–${mund.impliedM.hi.toFixed(2)} m at this range`]);
         }
     }
+    // DOES THIS CANDIDATE FLY THE CAMERA'S PATH? Shown only when it does, so a
+    // candidate moving under its own steam stays uncluttered. Unlike the
+    // ordinariness line above this one DOES move the ranking (it is a third
+    // binding tier dimension in TraverseRanking), because neither residual nor
+    // g-load can see it: a wrong range injects the platform's own manoeuvre
+    // into the solved path while the fit stays perfect and the numbers stay
+    // unremarkable. See TraversePlatformMirror.js.
+    const mirrorWhy = platformMirrorSummary(h.platformMirror);
+    if (mirrorWhy) stats.push(["Platform mirroring", mirrorWhy]);
+
     // What the model's soft priors cost at the solution, in the same units as
     // the residual above. Shown only when it is worth noticing (0.005°, an
     // order of magnitude below the tier boundaries) so a fit the priors barely
