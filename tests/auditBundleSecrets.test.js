@@ -72,4 +72,25 @@ describe("secure mode", () => {
         const other = write("tests/other.test.js", 'const k = "sk-' + "b".repeat(30) + '";');
         expect(scanFile(other, [], { mode: "secure", scanRoot: root }).map((f) => f.issue)).toEqual(["OpenAI-style key"]);
     });
+
+    // "sk-" occurs inside ordinary words, so the OpenAI pattern needs a left boundary.
+    // Without one, aws-sdk-php's bedrock-agentcore API definition — which contains
+    // "task-instruction-category-non-compliance" — aborted a production deploy. Both
+    // directions are asserted, because a boundary added carelessly is how a detector
+    // stops detecting.
+    test("a key must start at a token boundary, but is still found at one", () => {
+        const vendor = write("vendor/api-2.json.php", [
+            "'task-instruction-category-non-compliance',",
+            "'execution-error-category-tool-schema',",
+            "'risk-assessment-category-identifier-value',",
+        ].join("\n"));
+        expect(scanFile(vendor, [], { mode: "server", scanRoot: root })).toEqual([]);
+
+        const real = "sk-live-" + "c".repeat(28);
+        for (const line of [`const k = "${real}";`, `KEY=${real}`, `'${real}'`, `[${real}]`]) {
+            const f = write(`case-${line.length}-${line[0]}.js`, line);
+            expect(scanFile(f, [], { mode: "server", scanRoot: root }).map((x) => x.issue))
+                .toEqual(["OpenAI-style key"]);
+        }
+    });
 });

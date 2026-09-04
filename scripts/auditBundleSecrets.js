@@ -136,7 +136,14 @@ const GENERIC_SECRET_PATTERNS = [
     // '{"'). Measured against the whole production tree, the only match is inside
     // shared.env.php, which server mode does not scan.
     { label: "JWT (Cesium Ion-style token)", regex: /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g },
-    { label: "OpenAI-style key", regex: /sk-[A-Za-z0-9_-]{20,}/g },
+    // The lookbehind is load-bearing. A key starts at a token boundary, but "sk-" also
+    // sits inside ordinary words — task-, risk-, disk-, desk- — and without a left
+    // boundary any of those followed by 20 identifier characters is a "finding". That
+    // is not hypothetical: aws-sdk-php's bedrock-agentcore API definition contains
+    // "task-instruction-category-non-compliance", which aborted a production deploy.
+    // A detector that cries wolf on vendored data is one people learn to wave through,
+    // so the precision matters as much as the recall here.
+    { label: "OpenAI-style key", regex: /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g },
     { label: "GitHub token", regex: /ghp_[A-Za-z0-9]{20,}/g },
     { label: "Slack token", regex: /xox[baprs]-[A-Za-z0-9-]{10,}/g },
 ];
