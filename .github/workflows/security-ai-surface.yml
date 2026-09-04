@@ -50,12 +50,12 @@ jobs:
     name: Deterministic guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           # No job here pushes with the checkout token.
           persist-credentials: false
       - name: use node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22.4'
       - name: config script setup
@@ -89,7 +89,7 @@ jobs:
     # Fork PRs cannot read secrets, and a missing secret should not look like a failure.
     if: github.event.pull_request.head.repo.full_name == github.repository
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           # No job here pushes with the checkout token.
           persist-credentials: false
@@ -107,7 +107,7 @@ jobs:
           fi
       - name: focused security review
         if: steps.haskey.outputs.present == 'true'
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@ef8bb1e43bf303cff727a1dd0b8837029fe982a2 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |

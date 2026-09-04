@@ -29,7 +29,7 @@ jobs:
   dependency-review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
@@ -37,7 +37,7 @@ jobs:
       # no v5 to follow. v5.0.0 is current. (An action reference that cannot resolve fails
       # the job at "Set up job", before any step runs — see the 2.149.1 release.)
       - name: Dependency review
-        uses: actions/dependency-review-action@v5.0.0
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           # Fail on a newly introduced advisory of high severity or worse. Moderate and
           # below are reported in the job summary without failing, because the existing

@@ -41,7 +41,7 @@ jobs:
       fail-fast: false   # don't stop all of the jobs when one of them fails
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       with:
         # No job here pushes with the checkout token.
         persist-credentials: false
@@ -50,7 +50,7 @@ jobs:
         # fetch-tags: true is supposed to fetch the tags without a full clone, but doesn't work ?
         fetch-depth: 0    # do a full clone instead. for now it doesn't seem to be any slower
     - name: use node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
       with:
         node-version: ${{ matrix.node-version }}
         # cache the downloaded node version and the package dependencies
@@ -95,12 +95,12 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       with:
         # No job here pushes with the checkout token.
         persist-credentials: false
     - name: use node.js 22
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
       with:
         node-version: 22.4
     - name: partition lint
@@ -125,12 +125,12 @@ jobs:
       fail-fast: false   # don't stop all of the jobs when one of them fails
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       with:
         # No job here pushes with the checkout token.
         persist-credentials: false
     - name: install bun
-      uses: oven-sh/setup-bun@v2
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
     - name: install deps
       run: bun install --production # a bit faster than npm i/ci, except on windows
       # (Mick) changed back to npm ci, bun install has issues with frozen lockfile errors

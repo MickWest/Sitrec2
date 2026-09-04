@@ -9,6 +9,40 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.151.4 (2026-09-04)
+
+### Security
+
+- **Every GitHub Actions reference is pinned to a commit SHA** (all seven of `.github/workflows/`: `ci.yml`, `dependency-review.yml`, `docker-cleanup.yml`, `docker.yml`, `pages.yml`, `security-ai-surface.yml`, `user-data-egress-check.yml`). 43 `uses:` lines across 18 distinct actions, each moved from a floating tag to a full 40-character commit SHA with the version preserved in a trailing comment — `uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6`. No `uses:` line in the tree now names anything but a SHA, and no action resolves to two different SHAs.
+
+  A tag is a mutable pointer that the action's owner can move at any time, to any commit, without notice and without the reference in this repository changing. These workflows are not incidental tooling: they hold `packages: write`, `contents: write` and the attestation signing identity, so an action that moved under them could push an image and sign for it. The loosest reference was `anchore/sbom-action/download-syft@v0` — a whole pre-1.0 major series, where the API is by convention still allowed to change — and it produces the bill of materials the GitHub Release publishes, which is the document a reader is meant to trust *about* the image.
+
+  Three of the eighteen are published as annotated tags, where the ref resolves to a tag object rather than to a commit; each was dereferenced to the commit that tag object points at, since the tag object's own SHA is not a valid `uses:` target. Two things were checked afterwards rather than assumed: every trailing version comment is byte-identical to the tag it replaced, so nothing was upgraded or downgraded while being pinned, and the workflow diff touches `uses:` lines only.
+
+  Pinning is only sustainable because `.github/dependabot.yml` already configures the `github-actions` ecosystem. Dependabot reads the trailing version comment, so a pinned action still produces an update pull request rather than silently going stale — which is the usual and fair objection to pinning. Recorded as **SR-16** ("A workflow runs the code it was reviewed with") in `docs/dev/SecurityRequirements.md`.
+
+- **Release tags are signed, starting with this one** (`docs/dev/SecurityRequirements.md`, new **SR-15** — "A version name cannot be moved to a different commit"). Provenance (SR-2) proves a published image came from a particular commit. It says nothing about which commit a *version* names, and that is the link an operator actually relies on when they ask for `2.151.3`. Commit signing does not close it either: a lightweight tag is only a ref, so anyone with push access can repoint it at a different commit and every commit signature still verifies afterwards — the commits were never what changed. Signing the tag puts the version-name-to-commit binding under a signature of its own.
+
+  Every release tag up to and including 2.151.3 is lightweight — `git cat-file -t 2.151.3` reports `commit`, not `tag` — so 2.151.4 is the first signed one. Earlier tags keep their numbers and are not retrofitted, because re-tagging published history is the very thing SR-14 forbids. Verify with `git tag -v <version>`. The release procedure now creates tags with `git tag -s -m` and forbids working around the signing prompt by disabling it, since a tag created without `-s` is silently lightweight and `tag.gpgSign` does nothing for it.
+
+  SR-15 and SR-16 are appended after SR-14 rather than inserted, because the document states at its head that its numbering is stable so other documents can cite it.
+
+### Internal
+
+- **A byte-identity test was a coin flip on a slow runner** (`tests/botbench/cacheReplayFidelity.test.js`). The test "the HTML report is byte-identical" compares two `buildHtml()` outputs to prove a replayed analysis rebuilds the same closure over the same data. But the report stamps itself with `new Date().toLocaleString()` (`src/AnalyzeTraverse.js:6801`), so two calls straddling a second boundary differ in that one line and nowhere else. It failed CI on 2026-09-04 with `Generated 9/4/2026, 7:30:14 AM` against `7:30:15 AM` — on macOS, the slowest of the three runners, while Ubuntu and Windows passed, which is the signature of a timing flake rather than a real difference.
+
+  The fix replaces `global.Date` with a subclass whose no-argument constructor and `now()` both return a frozen instant, across BOTH `buildHtml()` calls, restoring the real `Date` in a `finally`. Freezing rather than filtering the timestamp out of the comparison is deliberate: filtering would weaken the assertion to "identical apart from the date" and quietly stop covering that line, whereas freezing makes the two stamps equal by construction and keeps the test at full byte-identity. Generation time is not part of what replay is supposed to reproduce. A further assertion, `expect(a).toContain(frozen.toLocaleString())`, guards the guard — if the freeze ever stopped taking effect the two reports would still match most of the time, so the test would go back to being a coin flip while appearing to pass. Suite passes 5/5.
+
+- **The fast-regression harness called a flake a regression** (`tests_regression/fast-regression/run.mjs`). When a sitch fails the main run the harness retries it alone in a fresh browser context, to separate a flake from a real regression — and it started that retry immediately, while the other concurrent contexts were still tearing down and their tile requests still draining. "Solo" therefore meant the busiest moment of the whole suite, not a quiet machine. On 2026-09-04 it reported `4326 Test` as STABLE at 11.219% differing pixels; the same sitch invoked genuinely on its own a few minutes later differed by ZERO pixels. That sitch's map source, `NRL_WMTS`, is slower than the ESRI source most sitches use, so under contention it renders a coarser level of detail and the screenshot catches terrain that has not finished resolving.
+
+  Two changes, both paid only when something has already failed: a 3-second settle (`RETRY_SETTLE_MS`) before the retry loop begins, and a second attempt after an 8-second pause (`RETRY_BACKOFF_MS`, `RETRY_ATTEMPTS = 2`) before anything is called STABLE. The STABLE line now reports how many solo attempts failed (`soloAttempts`), and a recovery reports which attempt succeeded (`recoveredOnAttempt`). The point is the label: STABLE has to mean "failed alone, twice", or a reader learns to distrust it — and a label that cries wolf is how a real regression gets waved through.
+
+### Documentation
+
+- **Operators who followed an earlier version of the hardened AWS guide should re-run the container audit** (`docs/dev/Installing-Hardened-Sitrec-on-AWS.md`, section 4.1 *Review the image*). This is the only item in this release that asks a reader to do something. Up to 2.151.2 the guide instructed `npm run audit-container -- --image=sitrec-hardened:local --profile=site`; `6d2d0711` corrected it to `--profile=published`, but a correction only reaches someone who re-reads the page. A callout now sits directly beneath the command telling anyone who ran the old form to run it again.
+
+  The difference runs in the permissive direction, which is why it is worth a callout rather than a silent correction. `scripts/auditContainerImage.mjs` reports a baked-in credential under `--profile=site` as a handling requirement — "expected in a site image" — and under the strict default `--profile=published` as a defect. The reasoning behind the old instruction was that a locally built hardened image carries its own configuration; it does not, since the secure bundle ships `config/shared.env.example` and takes deployment settings from the environment at container start. An audit run the old way was therefore more permissive than the image warranted. Nothing else about a deployment is affected; the remedy is to re-run it and read the result.
+
 ## Version 2.151.3 (2026-09-04)
 
 ### Internal

@@ -191,6 +191,13 @@ Before the image goes anywhere, review it:
 npm run audit-container -- --image=sitrec-hardened:local --profile=published
 ```
 
+> **If you followed an earlier version of this guide, re-run that command.** It used to say
+> `--profile=site`, on the reasoning that a locally built hardened image carries its own
+> configuration. It does not — see the paragraph below — and `site` is the *laxer* reading:
+> it reports a baked-in credential as a handling requirement rather than as a defect. An
+> audit run that way was more permissive than the image warranted. Re-run it without
+> `--profile=site` and read the result; nothing else about your deployment is affected.
+
 This writes a report, a bill of materials and the supporting evidence to `dist-audit/`. It
 is the document to give whoever must accept the image, and it is worth reading yourself
 first: it states what the image runs as, what the base image brings with it, which package

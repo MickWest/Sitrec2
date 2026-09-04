@@ -107,6 +107,29 @@ passing on an empty result.
 non-fast-forward, with no bypass actors.
 *Verified:* the ruleset is active; a force-push is refused for everyone, including the owner.
 
+**SR-15 — A version name cannot be moved to a different commit.**
+Provenance (SR-2) proves an image came from a particular commit. It says nothing about which
+commit a *version* names, and that is the link an operator actually relies on when they ask
+for `2.151.3`.
+*Implemented:* release tags are signed (`git tag -s`), so the binding between the version
+name and the commit carries its own signature rather than resting on a mutable ref. Commit
+signing alone does not give this: a lightweight tag can be repointed by anyone with push
+access, and every commit signature still verifies afterwards, because the commits were never
+what changed.
+*Verified:* `git tag -v <version>` reports a good signature; the release procedure creates
+tags signed and forbids working around the signing prompt by disabling it.
+*Deliberately excluded:* tags created before this became the convention. They keep their
+numbers and are not retrofitted, because re-tagging published history would be the very thing
+SR-14 forbids.
+
+**SR-16 — A workflow runs the code it was reviewed with.**
+*Implemented:* every GitHub Actions reference is pinned to a full commit SHA with its version
+in a trailing comment, rather than to a tag. A tag is a mutable pointer the action's owner can
+move at any time, and these workflows hold `packages: write`, `contents: write` and the
+attestation signing identity.
+*Verified:* no `uses:` line in `.github/workflows/` names anything but a 40-character SHA;
+Dependabot's `github-actions` ecosystem proposes updates, so pinning does not mean going stale.
+
 ## What is deliberately not a requirement
 
 Stating these prevents a reader mistaking a decision for an oversight.

@@ -170,7 +170,39 @@ describe("a replayed analysis equals a fresh one", () => {
     // instead. Same bytes out means the closure was rebuilt over the same data.
     test("the HTML report is byte-identical", () => {
         expect(typeof replayed.results.buildHtml).toBe("function");
-        const a = fresh.results.buildHtml(), b = replayed.results.buildHtml();
+
+        // The report stamps itself with `new Date().toLocaleString()`
+        // (src/AnalyzeTraverse.js), so two calls that straddle a second boundary differ
+        // in that one line and nowhere else. That is a real flake, not a theoretical
+        // one: it failed CI on 2026-09-04 with 7:30:14 AM against 7:30:15 AM, on the
+        // slowest runner of three, having passed on the other two.
+        //
+        // The clock is frozen across BOTH calls rather than the stamp being filtered
+        // out of the comparison. Filtering would weaken the assertion to "identical
+        // apart from the date" and quietly stop covering that line; freezing makes the
+        // two stamps equal by construction and keeps the test at full byte-identity.
+        // The generation time is not part of what replay is supposed to reproduce.
+        const RealDate = Date;
+        const frozen = new RealDate("2026-01-01T00:00:00Z");
+        global.Date = class extends RealDate {
+            constructor(...args) {
+                return args.length ? new RealDate(...args) : new RealDate(frozen);
+            }
+            static now() { return frozen.getTime(); }
+        };
+
+        let a, b;
+        try {
+            a = fresh.results.buildHtml();
+            b = replayed.results.buildHtml();
+        } finally {
+            global.Date = RealDate;
+        }
+
+        // Guard the guard. If the freeze ever stops taking effect, the two reports
+        // would still match most of the time and this test would quietly go back to
+        // being a coin flip on a slow runner — passing here while covering nothing.
+        expect(a).toContain(frozen.toLocaleString());
         if (a !== b) {
             let i = 0;
             while (i < a.length && i < b.length && a[i] === b[i]) i++;

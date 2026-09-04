@@ -101,7 +101,7 @@ jobs:
 
       - name: Prune untagged manifests (keep newest 10)
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/delete-package-versions@v5
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5
         with:
           package-name: 'sitrec2'
           package-type: 'container'

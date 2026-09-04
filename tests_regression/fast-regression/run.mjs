@@ -770,23 +770,53 @@ export async function main() {
         const toRetry = results.filter(r => r.status === 'fail' || r.status === 'error');
         if (toRetry.length) {
             console.log(`\n${toRetry.length} sitch(es) failed the main run — retrying each solo in a fresh browser context (flake vs. real regression)...\n`);
+
+            // "Solo" has to mean solo. The main run finishes with concurrency browser
+            // contexts tearing down and their tile requests still draining, so a retry
+            // started immediately is not running on a quiet machine — it is running on
+            // the busiest moment of the whole suite. On 2026-09-04 that mislabelled
+            // `4326 Test` STABLE at 11.219%, when the same sitch invoked on its own a
+            // few minutes later differed by ZERO pixels. Its map source, NRL_WMTS, is
+            // slower than the ESRI most sitches use, so under contention it renders a
+            // coarser LOD and the screenshot catches terrain that has not resolved.
+            //
+            // Two changes, both paid only when something already failed. Settle first,
+            // and give a failing retry a second attempt after a longer pause before
+            // calling it STABLE — a label that has to mean "failed alone, twice", or a
+            // reader learns to distrust it, which is the failure mode that matters:
+            // a real regression waved through because STABLE cries wolf.
+            const RETRY_SETTLE_MS = 3000;
+            const RETRY_BACKOFF_MS = 8000;
+            const RETRY_ATTEMPTS = 2;
+            await new Promise(res => setTimeout(res, RETRY_SETTLE_MS));
+
             for (const r of toRetry) {
                 const sitch = sitches.find(s => s.slug === r.slug);
                 if (!sitch) continue;
                 const idx = results.findIndex(x => x.slug === r.slug);
-                const rc = await chromium.launchPersistentContext(profileDir, launchOpts);
-                let rr;
-                try { rr = await processSitch(rc, sitch); } finally { await rc.close().catch(() => {}); }
+
+                let rr, attempt = 0;
+                while (attempt < RETRY_ATTEMPTS) {
+                    attempt++;
+                    if (attempt > 1) await new Promise(res => setTimeout(res, RETRY_BACKOFF_MS));
+                    const rc = await chromium.launchPersistentContext(profileDir, launchOpts);
+                    try { rr = await processSitch(rc, sitch); } finally { await rc.close().catch(() => {}); }
+                    if (rr.status === 'pass') break;
+                }
+
                 if (rr.status === 'pass') {
                     rr.recoveredFromFlake = true;
                     rr.firstRunCause = r.cause;
+                    rr.recoveredOnAttempt = attempt;
                     results[idx] = rr;
                     recovered.push(r.name);
-                    console.log(`  ↻ FLAKE   ${r.name.padEnd(34)} first run: ${r.cause}  →  passed solo retry (diff ${rr.diffPixels}px)`);
+                    const which = attempt > 1 ? ` (attempt ${attempt} of ${RETRY_ATTEMPTS})` : '';
+                    console.log(`  ↻ FLAKE   ${r.name.padEnd(34)} first run: ${r.cause}  →  passed solo retry${which} (diff ${rr.diffPixels}px)`);
                 } else {
                     rr.stableFail = true;
+                    rr.soloAttempts = attempt;
                     results[idx] = rr;
-                    console.log(`  ✗ STABLE  ${r.name.padEnd(34)} ${rr.cause}`);
+                    console.log(`  ✗ STABLE  ${r.name.padEnd(34)} ${rr.cause}  (failed ${attempt} solo attempts)`);
                 }
             }
         }
