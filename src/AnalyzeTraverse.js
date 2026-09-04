@@ -76,7 +76,9 @@ import {
     coLeaderBadge,
 } from "./TraverseRanking";
 import {mundanenessCost, mundanenessSummary} from "./TraverseMundaneness";
+import {docUrl} from "./docsRegistry";
 import {platformMirrorSummary} from "./TraversePlatformMirror";
+import {candidateCriteria, criteriaSummary, CRITERION_COLORS} from "./TraverseCriteria";
 import {
     terrainAnalysisConfigScalars,
     terrainDependencyMismatch,
@@ -709,7 +711,38 @@ function buildSceneCoupledHypotheses({dataset, originLat, originLon, sweep,
             if (typeof node === "string") node = NodeMan.get(node, false);
             if (!node || typeof node.p !== "function") continue;
             const h = methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig);
-            if (h) list.push(h);
+            if (!h) continue;
+            // A METHOD NODE READS HAND-SET GUI VALUES, so a non-physical track
+            // here means its inputs were never configured — not that anything
+            // was measured. Straight Line is the case that forced this: it is
+            // not a fit at all but a construction, intersecting each sightline
+            // with a fixed vertical plane set by the Target Heading and start
+            // distance. As the camera pans, a sightline approaches parallel to
+            // that plane and the intersection runs away, so on any clip with a
+            // wide sweep the default gives 2.7 million knots at 594645 g,
+            // 51 km underground — and a 0.000 deg residual, because every point
+            // is on its own sightline by construction and the residual
+            // therefore measures nothing.
+            //
+            // Shown, it cost a gallery slot and asserted an ordinariness figure
+            // ("misses a jet's envelope by 455522x") about an unset default.
+            // The flag was already trusted enough to exclude the track from the
+            // chart extents and the ground-plane fold; it now excludes it from
+            // the gallery too.
+            //
+            // NOT the same judgement as the swept Monte Carlo / polynomial fits
+            // in TraverseHypotheses.js, which compute their own result: a
+            // non-physical one there is a real finding about the fit and stays
+            // visible, ranked last. A configured Straight Line is physical and
+            // still appears.
+            if (h.nonPhysical) {
+                console.warn(`Traverse analysis: "${meth.display ?? meth.label}" excluded — its `
+                    + `hand-set inputs give a non-physical track `
+                    + `(${(h.metricsFull.airSpeed.mean / KNOTS_TO_MS).toFixed(0)} kt mean, `
+                    + `${h.metricsFull.gLoad.max.toFixed(0)} g). Set its distance and heading to use it.`);
+                continue;
+            }
+            list.push(h);
         }
     }
     return list;
@@ -2939,6 +2972,32 @@ function describeRangeConvergence(profile) {
         loNM: toNM(rows[0].startDist), hiNM: toNM(rows[rows.length - 1].startDist)};
 }
 
+/**
+ * The criteria ribbon: one small coloured square per criterion, each carrying
+ * its own sentence on hover (a plain `title`, so it works for keyboard focus
+ * and for the printed report alike).
+ *
+ * Squares are LABELLED IN THE TOOLTIP, not on screen. Eight labels would cost
+ * more width than the whole tile has, and the ribbon's job is the pattern —
+ * which quantity is red — rather than reading each one. The container's own
+ * tooltip names the order, so a reader who has not hovered yet still knows what
+ * they are looking at.
+ */
+function criteriaRibbonHTML(h, rating, {dataset = null, useTruth = true} = {}) {
+    const criteria = candidateCriteria(h, rating, {dataset, useTruth});
+    if (!criteria.length) return "";
+    const order = criteria.map((c) => `${c.letter} ${c.label}`).join(" · ");
+    const squares = criteria.map((c) =>
+        `<span class="tg-crit${c.status === "na" ? " na" : ""}" ` +
+        `style="background:${CRITERION_COLORS[c.status]}" ` +
+        `title="${escapeHtml(`${c.label}: ${c.value} — ${c.why}`)}" ` +
+        `role="img" aria-label="${escapeHtml(`${c.label} ${c.status}`)}">` +
+        `${escapeHtml(c.letter ?? "")}</span>`).join("");
+    return `<div class="tg-ribbon" title="${escapeHtml(`Criteria, left to right: ${order}. `
+        + `${criteriaSummary(criteria)}. Hover a square for what it measures and why it is that colour. `
+        + `Grey means not evaluated, which is not a pass.`)}">${squares}</div>`;
+}
+
 // One-time solution-space context shared by every Details pane.
 function analyzeSolutionSpace(results) {
     const geo = describeSceneGeometry(results.dataset);
@@ -4235,6 +4294,12 @@ function showResultGallery(results, uiState = null) {
             border:1px solid rgba(255,255,255,0.16); background:rgba(255,255,255,0.05);
             color:#cfd5dd; font-size:13px; font-weight:700; cursor:pointer; }
         .traverse-gallery-overlay .tg-toggle:hover { border-color:rgba(120,170,240,0.55); color:#fff; }
+        /* One toolbar control is a real link (the documentation), so it can be
+           middle-clicked and its address copied. A <button> takes the UA font
+           while an <a> inherits, so the family is stated here for both rather
+           than left to differ. */
+        .traverse-gallery-overlay .tg-toggle { font-family:system-ui,-apple-system,'Segoe UI',sans-serif; }
+        .traverse-gallery-overlay a.tg-toggle { text-decoration:none; display:inline-block; line-height:normal; }
         .traverse-gallery-overlay .tg-toggle.on { background:rgba(57,135,229,0.24);
             border-color:#3987e5; color:#eef6ff; }
         .traverse-gallery-overlay .tg-body { flex:1 1 auto; min-height:0; display:flex; gap:18px; }
@@ -4309,6 +4374,19 @@ function showResultGallery(results, uiState = null) {
         .traverse-gallery-overlay .tg-order { color:#7fb0ee; font-size:11px; margin:-4px 0 8px; }
         .traverse-gallery-overlay .tg-rank-basis { color:#b8c0ca; font-size:11.5px; line-height:1.45;
             margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.07); }
+        .traverse-gallery-overlay .tg-ribbon { display:flex; gap:1px; margin:8px 0 2px; flex-wrap:wrap; }
+        /* The letter is what makes the ribbon readable without hovering, so it
+           has to stay legible on all four fills. White measures 2.1:1 on the
+           caution amber and 2.8:1 on the pass green — below even the 3:1
+           large-text floor — so the glyph carries a dark shadow rather than the
+           fills being darkened, which would cost the traffic-light reading. */
+        .traverse-gallery-overlay .tg-crit { width:21px; height:21px; border-radius:3px; cursor:help;
+            border:1px solid rgba(0,0,0,.35); flex:0 0 auto; display:flex;
+            align-items:center; justify-content:center; color:#fff; font-size:12px;
+            font-weight:700; line-height:1; font-family:inherit; user-select:none;
+            text-shadow:0 0 2px rgba(0,0,0,.75), 0 1px 1px rgba(0,0,0,.55); }
+        .traverse-gallery-overlay .tg-crit.na { border-style:dashed; color:#d6dade;
+            text-shadow:none; }
         .traverse-gallery-overlay .tg-stats { display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; }
         .traverse-gallery-overlay .tg-st { display:flex; flex-direction:column; }
         .traverse-gallery-overlay .tg-stk { font-size:10px; color:#8a9099; text-transform:uppercase;
@@ -4724,11 +4802,28 @@ function showResultGallery(results, uiState = null) {
     openWeakBtn.title = "As Open Consistent, but also loading the weak candidates (w_ names): "
         + "fits that passed the broad screen but were declined for a search-bound pin, an "
         + "incomplete optimizer run, or a lower fit tier. Set-aside candidates are not included.";
+    // THE ONE ROUTE OUT OF THE GALLERY TO THE EXPLANATION. Every tile ends in a
+    // "Rank basis" line full of terms the page never defines — "Passes broad
+    // screen", "within-group score", "residual-equivalent", "co-leader" — and
+    // until this link there was no href in the whole overlay except the report
+    // download, so a reader had no way to discover that an explanation exists,
+    // let alone reach it.
+    const howBtn = document.createElement("a");
+    howBtn.className = "tg-toggle";
+    howBtn.href = docUrl("docs/TraverseAnalysis", {anchor: "how-the-tiles-are-ranked"});
+    howBtn.target = "_blank";
+    howBtn.rel = "noopener";
+    howBtn.textContent = "How ranking works";
+    howBtn.title = "Open the documentation section that defines every term in the "
+        + "\u201cRank basis\u201d line: the ordering keys, the three tier grades, the "
+        + "within-group score, and the balloon nudge.";
+
     toolbar.appendChild(syncOrientationBtn);
     toolbar.appendChild(syncScaleBtn);
     toolbar.appendChild(restoreBtn);
     toolbar.appendChild(openBtn);
     toolbar.appendChild(openWeakBtn);
+    toolbar.appendChild(howBtn);
     // Apply / set aside the selected truth track. Shown only when a usable one
     // was computed for this run — with nothing to compare against there is
     // nothing to toggle. rerenderWithTruth is a function declaration so this
@@ -5191,6 +5286,7 @@ function showResultGallery(results, uiState = null) {
             `</div>` +
             `<div class="tg-sub">${escapeHtml(h.subtitle)}</div>` +
             `<div class="tg-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>` +
+            criteriaRibbonHTML(h, r, {dataset, useTruth}) +
             `<div class="tg-stats">${statsHTML}</div>` +
             `<div class="tg-rank-basis"><strong>Rank basis:</strong> ${escapeHtml(rankingExplanation(h, r, {useTruth}))}</div>`;
         tile.addEventListener("click", () => selectTile(i));
@@ -6870,7 +6966,11 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
     <p class="sub">Panels include trajectory constraints, fitting algorithms, and forward physical models;
     they are not independent object identifications and there is no global winner. Each path is shown against the same
     sightlines and ordered only within its comparison group. Screening pills summarize maneuvering, peak speed,
-    completeness, active model limits, and raw LOS residual under the stated assumptions.</p>
+    completeness, active model limits, and raw LOS residual under the stated assumptions.
+    Every term in the &ldquo;Rank basis&rdquo; line below &mdash; the ordering keys, the three tier
+    grades, the within-group score, the balloon nudge &mdash; is defined in
+    <a href="${escapeHtml(docUrl("docs/TraverseAnalysis", {anchor: "how-the-tiles-are-ranked", absolute: true}))}"
+    target="_blank" rel="noopener">How the tiles are ranked</a>.</p>
     ${cardsHTML}
 </section>
 

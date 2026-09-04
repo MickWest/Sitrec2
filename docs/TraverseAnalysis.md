@@ -251,6 +251,35 @@ cannot determine:
   every comparable key (screen pass, eligibility, completeness, tier, pin
   count), so the one shown first leads only by category priority; with a truth
   track selected, truth separation breaks the tie instead.
+- **The criteria ribbon**: a row of small squares under each tile's heading, one
+  per criterion, each carrying one white letter — **P** physically admissible,
+  **L** line-of-sight fit, **S** speed, **A** acceleration, **Z** size,
+  **M** mirroring, **C** convergence, **W** wind, **T** truth — coloured
+  green, yellow or red, with grey for anything that was not evaluated. Hovering
+  a square says what it measures, what this candidate scored, and why it is that
+  colour. It is a reading aid, not an input: nothing in the ribbon moves the
+  order, and every number in it appears in full in the stats and the rank basis
+  below.
+
+  **Each square is judged against an object class, not an absolute threshold**,
+  because almost none of these quantities has a threshold that is right for
+  every candidate: 0.48 g is unremarkable for a multirotor and self-refuting for
+  a balloon. A tile that names an object type — the balloon, drone and
+  fixed-wing models — is graded against *the class it claims to be*, so a
+  "balloon" that needs half a g shows red rather than being quietly re-judged as
+  the drone that would admit the number. Every other tile claims no object type,
+  so it is graded against the most ordinary class that admits it, and the
+  tooltip names that class. Speed and acceleration are additionally held to the
+  absolute kinematic screen, and the worse of the two verdicts wins, so the
+  ribbon can never show green where the tier badge shows a kinematic problem.
+
+  **Grey is not a pass.** It means either that the check could not run — no
+  angular size in the file, no truth track loaded, no manoeuvre by the platform
+  to compare against — or that it ran and settled nothing, such as an
+  inconclusive wind comparison. Each grey tooltip says which. The first square
+  is what keeps the rest honest: a candidate rejected outright (underground,
+  non-physical, off-mode) carries no ranks at all, so without it such a tile
+  would show mostly grey and read as unobjectionable.
 - **Platform mirroring (the "Coryat curve")**: assume the wrong range and the
   observing platform's own manoeuvre is injected into the solved path, because
   both the candidate and the real object lie on the same rays — the candidate
