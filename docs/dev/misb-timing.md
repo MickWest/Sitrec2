@@ -15,12 +15,8 @@ debugging a sync issue in a TS-sourced sitch.
 
 ### Standards and organizations
 
-- **MISB** — Motion Imagery Standards Board. The authority (under NGA, the
-  US National Geospatial-Intelligence Agency) that publishes the metadata
-  standards for ISR motion imagery. Its public document catalogue is at
-  `gwg.nga.mil/misb`.
-- **NGA** — National Geospatial-Intelligence Agency (US). Hosts the MISB
-  standards.
+- **MISB** — Motion Imagery Standards Board, which publishes metadata
+  standards for motion imagery.
 - **MISB ST nnnn** — A specific MISB Standard. The standards we cite are:
   - **ST 0601** — UAS Datalink Local Set (the actual KLV metadata structure
     with all the tag definitions like SensorLatitude, SensorTrueAltitude,
@@ -204,14 +200,14 @@ parent — is the source of essentially every sync bug we've seen.
                                   ↓ TSParser captures pesEntries[]
                                   ↓ parseKLVFile shifts by -videoFirstPESus
    ┌─────────────────────────────────────────────────────────────────────┐
-   │  Layer 1: PCR-relative microseconds (per substream, normalized)     │
+   │  Layer 1: PCR-relative microseconds (cross-stream comparison)       │
    │                                                                     │
-   │   videoData.framePTSus[i]    ←   first video frame at t=0           │
-   │   misb.pesPTSus[j]           ←   same axis (negative values OK if   │
-   │                                  KLV started before video)         │
+   │   videoData.framePTSus[i] - videoData.framePTSus[0]                 │
+   │   misb.pesPTSus[j]           ← same video-relative axis; negative   │
+   │                                  values are valid                   │
    │                                                                     │
-   │   Both arrays land on a SHARED axis: "PCR-µs since first video      │
-   │   frame." This is the only layer where cross-stream sync is exact.  │
+   │   Video retains its source origin; the subtraction and the already- │
+   │   shifted KLV values produce "PCR-µs since first video frame."      │
    └─────────────────────────────────────────────────────────────────────┘
                                   ↓ Sit.fps re-samples PCR uniformly
    ┌─────────────────────────────────────────────────────────────────────┐
@@ -220,10 +216,10 @@ parent — is the source of essentially every sync bug we've seen.
    │   par.frame ∈ [0 … Sit.frames-1]   ←  the scrubber position         │
    │   physics_seconds  =  par.frame / Sit.fps                           │
    │                                                                     │
-   │   Each timeline tick asks every source: "what value applies at      │
-   │   PCR-µs = par.frame × 1e6/Sit.fps?" Video picks the closest        │
-   │   framePTSus[i]; KLV interpolates between bracketing pesPTSus[j].   │
-   │   They arrive coherent because both live on Layer 1.                │
+   │   par.frame indexes the active video data. For real PTS, KLV lookup │
+   │   uses framePTSus[par.frame] - framePTSus[0] and interpolates       │
+   │   between bracketing pesPTSus[j]. A patched wrapper inserts held    │
+   │   virtual frames when source PTS contains dropped-frame gaps.       │
    └─────────────────────────────────────────────────────────────────────┘
                                   ↓ Sit.startTime adds a UTC label
    ┌─────────────────────────────────────────────────────────────────────┐
@@ -294,26 +290,25 @@ sources, flat-file `.klv`).
   60 fps depending on the sitch).
 - Defines the rate at which physics, animations, the node graph, and the
   scrubber UI advance.
-- Aligned to PCR at construction time: timeline frame `N` ↔ PCR-µs
-  `N × 1e6 / Sit.fps` (with the origin pinned to first video frame).
-- All time-indexed lookups (video frame selection, KLV interpolation) are
-  driven from this layer. The downsample from source rates (e.g., 27.003
-  fps video, variable-rate KLV) to `Sit.fps` is done at lookup time, not
-  at decode time — the source arrays keep their full resolution, the
-  timeline just samples them uniformly.
-- Independent of Sit.fps choice: increasing Sit.fps makes the timeline
-  finer (more lookups per PCR second, smoother interpolation) but doesn't
-  change *what time* any given timeline frame represents. PCR alignment
-  is preserved at any Sit.fps.
+- `par.frame` indexes the active video data. In PTS-pairing mode, that
+  frame's real timestamp supplies the lookup time after subtracting the
+  first frame's timestamp; Sitrec does not infer it from `N / Sit.fps`.
+- When dropped-frame patching applies, `CVideoPatchedData` exposes a virtual
+  active video whose timestamp at frame `N` is
+  `T0 + N × 1e6 / Sit.fps`; missing source slots become held frames. This is
+  the path that makes the runtime timeline uniform without discarding the
+  source frame/PTS mapping.
+- When real timing is unavailable, KLV lookup falls back to the nominal
+  sitch rate and UnixTimeStamp values as described in §6c.
 
 ### 1f. `Sit.startTime` (Layer 3 — wall-clock display label)
 - A single UTC value attached to the sitch: "what wall-clock moment is
   par.frame = 0?"
-- Computed at sitch construction. For TS-sourced sitches, derived from
-  the first KLV record's UnixTimeStamp minus its `pesPTSus[0]` shift
-  (so frame 0 displays the wall-clock the encoder claimed for the first
-  video PCR moment). For sitches without KLV, set from container metadata
-  or user input.
+- Usually synchronized to the imported timed track's first usable timestamp
+  through `CNodeDateTime.syncToTrack()`. A sitch definition or the user can
+  override it; sources without a timed track use their available metadata or
+  configured start time. Sitrec does not currently subtract `pesPTSus[0]`
+  when choosing this wall-clock label.
 - **Decorative for sync purposes.** The displayed scrubber date is
   `Sit.startTime + par.frame / Sit.fps`; if Sit.startTime is wrong by a
   minute, the scrubber's date label is wrong by a minute and the sun's
@@ -416,7 +411,11 @@ kinds of timestamps:
 
 - **MP4 source (`CVideoMp4Data`)**: timestamps come from mp4box.js, which
   reads them out of the `stts`/`ctts` boxes — *real* per-frame PTS values
-  with B-frame reorder already handled. These honor any non-uniform frame
+  with B-frame reorder already handled. `mp4_demuxer.js` converts each
+  sample's CTS and duration from the track's media timescale to integer
+  microseconds before constructing `EncodedVideoChunk`; WebCodecs requires
+  microseconds, and treating another timescale as if it were 1,000,000 would
+  create false interval gaps. These timestamps honor any non-uniform frame
   spacing the encoder produced.
 - **H.264 elementary stream from TS demux (`CVideoH264Data`)**: NAL units
   are grouped into frames inside `H264Decoder.createEncodedVideoChunks`,
@@ -539,12 +538,9 @@ permanently failed and keep the rest of the stream playable
 
 ### 5g. "Derived tracks inherit their parent's PES PTS"
 A subtle one. When Sitrec splits a single MISB stream into multiple tracks
-— most commonly the platform track (sensor LLA, MISB tags 13/14/15) and
-the Center track (frame-center LLA, tags 23/24/25) — the platform side
-returns the source `data` array directly, so its `pesPTSus` property
-travels along automatically. The Center side, however, builds a *fresh*
-array (`new Array(MISBFields).fill(null)` per row, with selected fields
-copied), and that fresh array has no `pesPTSus` property by default.
+— the source platform plus derived Center or Truth tracks — a derived path
+builds a fresh row array. Array properties such as `pesPTSus` do not follow
+those rows automatically.
 
 The result on a healthy file is invisible: KLV UnixTimeStamps and PES
 PTS values agree closely, so falling back to UnixTimeStamp pairing on the
@@ -556,14 +552,11 @@ is up to tens of seconds out of phase. Visually: scrub to anywhere late
 in the run, the platform is in the right spot but it's pointing at where
 the gimbal was looking many seconds ago.
 
-The fix (`CTrackFileMISB.toMISB(trackIndex=1)`) builds a parallel
-`centerPES` array alongside the row copy, applying the same
-filter-by-valid-center predicate, then attaches it to the returned array
-as `centerMisb.pesPTSus = centerPES`. After this, `hasRecordPTS()`
-is true on both nodes and PTS pairing runs for both. Any future
-`toMISB(N)` paths that synthesize derived arrays must apply the same
-forwarding pattern, or the derived track silently regresses to UTS
-pairing on encoder-broken clocks.
+The fix is centralized in `CTrackFileMISB._buildDerivedTrack()`: it builds a
+parallel PES array while applying the same row filter as the derived data,
+then attaches that array as `derivedMisb.pesPTSus`. Center and Truth tracks
+both use the helper. Any future derived path must do the same or it silently
+falls back to UTS pairing.
 
 ### 5h. "There's only one KLV stream"
 Some MISB-compliant transmitters emit **two** KLV streams in the same TS:
@@ -661,8 +654,8 @@ During the per-TS-packet scan, when `PAYLOAD_UNIT_START_INDICATOR` is set:
 
 After scanning, the video stream's first PES PTS is captured as
 `videoFirstPESus` and threaded onto every emitted stream's metadata —
-metadata streams (KLV) need this value to align their own PES PTS values
-to the video's normalized origin.
+metadata streams (KLV) need this value to express their own PES PTS values
+relative to the first video frame.
 
 ### 6b. KLV record pairing (`src/MISBUtils.js parseKLVFile`)
 
@@ -678,9 +671,26 @@ Three pairing strategies, in priority order:
 ```
 
 Each strategy applies the same shift: `pesPTSus[i] = pesEntries[i].ptsUs - videoFirstPESus`.
-This puts KLV PTS values on the same axis as the (normalized-to-zero)
-video `framePTSus`. Negative values are valid — they represent KLV
-records the camera emitted before the first video frame on the PCR clock.
+This puts KLV PTS values on the video-relative axis used by
+`framePTSus[F] - framePTSus[0]`; the raw video array itself retains its
+source origin. Negative KLV values are valid — they represent records emitted
+before the first video frame on the PCR clock.
+
+#### Saving and reloading PES timing
+
+Once a TS has been split into substreams, a saved sitch may reload those
+substream files without the parent TS. `CFileManagerSave._makePesSidecarBuffer()`
+therefore writes a JSON timing sidecar next to every persisted substream that
+has PES timing. New saves use `<substream>.pts.txt`; the loader also accepts the
+older `.pts.json` form.
+
+The sidecar stores the raw `pesEntries[]` and `videoFirstPESus`, not the derived
+`pesPTSus[]`. On reload, `CustomManagerSerialize` fetches the sidecar in
+parallel with the substream and passes those canonical inputs back through
+`parseKLVFile()`. This lets future pairing fixes apply on reload and avoids
+demuxing a parent TS that may no longer be present. A missing or invalid
+sidecar does not abort the import: the loader records the failure for Timing
+Analysis, and the track falls back to its usable non-PES timing path.
 
 ### 6c. Track recalc (`src/nodes/CNodeTrackFromMISB.js`)
 
@@ -986,8 +996,10 @@ the KLV side.
 | `src/TSParser.js`                     | TS demux, per-PES PTS capture (per PID), cross-stream origin |
 | `src/H264Decoder.js`                  | `createEncodedVideoChunks(nalUnits, fps, pesPtsUs?)` — uses real PES PTS when supplied |
 | `src/MISBUtils.js`                    | `parseKLVFile()` pairs records to PES PTS             |
-| `src/TrackFiles/CTrackFileMISB.js`    | `toMISB(trackIndex)` splits a single MISB stream into platform vs. Center derived tracks; **must forward `pesPTSus[]`** to derived arrays so PTS pairing applies to both — see §5g |
+| `src/TrackFiles/CTrackFileMISB.js`    | Splits a MISB stream into source and derived tracks; `_buildDerivedTrack()` forwards filtered `pesPTSus[]` values — see §5g |
 | `src/CFileManagerParse.js`            | Threads pesEntries + videoFirstPESus into parseKLVFile and stashes them on FileManager entries (also for video substreams, used by CVideoH264Data) |
+| `src/CFileManagerSave.js`             | Writes `.pts.txt` timing sidecars for local and rehosted TS substreams |
+| `src/CustomManagerSerialize.js`       | Saves sidecar references and restores their timing metadata during reload |
 | `src/CVideoData.js`                   | `getFrameTimeMs()` and `hasRealFramePTS()` virtuals  |
 | `src/CVideoH264Data.js`               | Reads pesEntries off FileManager entry and threads through createEncodedVideoChunks; sets `framePTSFromPES` |
 | `src/CVideoWebCodecBase.js`           | `framePTSus[]`, `hasRealFramePTS()` impl, per-group decode failure tolerance |
@@ -1094,15 +1106,15 @@ Two distinct frame-index spaces, with a sharp persistence boundary:
 | `Sit.frames`, `Sit.videoFrames` | virtual count |
 | `videoData.framePTSus[V]` consumed by PTS pairing | virtual |
 | Scrubber UI position | virtual |
-| Saved JSON: tracking keyframes, bookmarks | **source** |
-| URL `?frame=N`, MCP `sitrec_set_frame(N)` | **source** |
+| Saved JSON: manual-tracking keyframes with `frameSpace: "source"` | **source** |
+| URL `?frame=N` and frame-control APIs | virtual/runtime |
 | Timing Analysis report frame numbers | source |
 
-**Why split.** Source-indexed storage is stable across re-import,
-patching toggles, and `Sit.fps` changes — a tracking keyframe authored
-against specific pixels follows those pixels rather than a wall-clock
-slot. Virtual-indexed runtime is what makes scrubbing feel uniform and
-makes PTS pairing align with KLV by construction.
+**Why split.** Source-indexed manual-tracking storage is stable across
+re-import, patching toggles, and `Sit.fps` changes — a keyframe authored
+against specific pixels follows those pixels rather than a wall-clock slot.
+Runtime navigation stays virtual because that is the timeline the user sees
+and the node graph evaluates.
 
 The wrapper exposes both directions:
 
@@ -1114,7 +1126,7 @@ The wrapper exposes both directions:
 keyframe and emits `frameSpace: "source"`. `modDeserialize` waits on
 `videoLoaded`, then translates source→virtual via `sourceToVirtual`.
 
-### 12d. Held-frame keyframe rule (option a)
+### 12d. Held-frame keyframe rule
 
 Manual-tracking UI **forbids** placing keyframes on held virtual frames.
 Held frames have no unique pixels, so a keyframe authored there would
@@ -1151,8 +1163,9 @@ The Timing Analysis report's Video Timing section gains a "Frame
 patching" block reporting source frame count, virtual frame count, held
 frame count and percent, and longest hold. The PTS pairing log line
 prints `[wrapped]` when `videoData.getPatchStats` is available. During
-debugging, held frames are returned with a 60-px red square in the top-
-right corner (`DEBUG_HELD_MARKER` flag in `CVideoPatchedData.js`).
+the current build, held frames are returned with a 60-px red square in the
+top-right corner because the module constant `DEBUG_HELD_MARKER` is `true` in
+`CVideoPatchedData.js`; set that constant to `false` to hide the marker.
 
 ### 12h. Where to look in the code
 

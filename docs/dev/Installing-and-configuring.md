@@ -9,8 +9,8 @@ For developers, there are additional options:
 | **Docker Image** | Running Sitrec, no setup needed | Docker Desktop or Podman | ~30 seconds |
 | Docker Build | Testing from source | Docker Desktop + Git | ~2 minutes |
 | Serverless | Offline/portable use | Node.js (or just a browser) | ~30 seconds |
-| Standalone | Development without web server | Node.js + PHP | ~30 seconds |
-| Local Server | Full development environment | Node.js + Nginx/Apache + PHP | ~5 minutes |
+| Standalone | Development without web server | Node.js + PHP + Composer | ~30 seconds |
+| Local Server | Full development environment | Node.js + Nginx/Apache + PHP + Composer | ~5 minutes |
 
 ---
 
@@ -276,7 +276,7 @@ copy on a USB stick or `scp`):
 ```
 
 That writes `sitrec-configured.tar` to the current folder. To install it on the target
-machine, see [Air-Gapped / Offline Install](#air-gapped--offline-install) below.
+machine, see [Offline Install](#offline-install) below.
 
 **Or push to a registry** (an online store for images) instead of making a tarball:
 
@@ -515,7 +515,7 @@ Two things to know about the manifest above:
 - `envFrom: secretRef` injects **every** key in the Secret as an environment variable —
   keep `sitrec-s3` limited to Sitrec's variables, don't park unrelated keys in it.
 - `replicas: 1` is deliberate. Don't scale beyond one replica unless `SAVE_TO_S3=true` and
-  you use no local-filesystem storage — user uploads and the tile cache are written inside
+  you use no local-filesystem storage — user uploads and server caches are written inside
   each pod and aren't shared between replicas (see [Production hardening](#production-hardening-recommended) below).
 
 **Private registry?** If you used the baked-image pattern above, your image lives in a
@@ -525,7 +525,7 @@ private registry and the cluster needs pull credentials — without them the pod
 ```bash
 kubectl create secret docker-registry regcred \
   --docker-server=registry.example.com \
-  --docker-username=<user> --docker-password=<token-or-password>
+  --docker-username=YOUR_USER --docker-password=YOUR_TOKEN
 ```
 ```yaml
     spec:
@@ -582,9 +582,10 @@ everything in one file separated by `---`). The Ingress needs an ingress control
 # 1. Is the pod running?
 kubectl get pods -l app=sitrec
 
-# 2. Did the credentials reach the container? This file should list all five S3 lines
-#    between a "<?php /*;" header and a "*/" footer.
-kubectl exec deploy/sitrec -- cat /var/www/html/shared.env.php
+# 2. Did the storage settings reach the container? Print names only, never values.
+#    With the example above this prints the five configured S3_* / SAVE_TO_S3 names.
+kubectl exec deploy/sitrec -- sed -n -E \
+  's/^((SAVE_TO_S3|S3_[A-Z0-9_]+))=.*/\1=<set>/p' /var/www/html/shared.env.php
 
 # 3. Is Sitrec actually serving? (no browser needed)
 kubectl exec deploy/sitrec -- curl -sf http://localhost:8080/ >/dev/null && echo OK
@@ -607,7 +608,7 @@ The minimal Deployment runs, but a real deployment should add four things. They 
 into the same Deployment `spec`/container:
 
 **1. Persistent storage — or accept that uploads/cache are scratch.** Sitrec writes user
-uploads to `/var/www/html/sitrec-upload` and a tile cache to `/var/www/html/sitrec-cache`,
+uploads to `/var/www/html/sitrec-upload` and server-side caches to `/var/www/html/sitrec-cache`,
 both *inside the pod* — so both are **wiped on every pod restart or reschedule**. Either set
 `SAVE_TO_S3=true` (saves go to S3; local uploads/cache stay disposable) or attach
 PersistentVolumeClaims:
@@ -686,7 +687,7 @@ kubectl rollout restart deployment/sitrec
 
 ### Using Podman Instead of Docker
 
-[Podman](https://podman.io/) is a drop-in Docker alternative commonly used on systems where Docker is unavailable (e.g. secure environments, RHEL, Fedora). Sitrec's install script and compose file are compatible with both. See [Installing Podman](#installing-podman-optional) above for setup instructions.
+[Podman](https://podman.io/) is a drop-in Docker alternative commonly used on systems where Docker is unavailable (for example, restricted environments, RHEL, or Fedora). Sitrec's install script and compose file are compatible with both. See [Installing Podman](#installing-podman-optional) above for setup instructions.
 
 **Key differences from Docker:**
 
@@ -712,9 +713,9 @@ kubectl rollout restart deployment/sitrec
 | View logs | `./sitrec.sh logs` | `.\sitrec.cmd logs` |
 | Show status | `./sitrec.sh status` | `.\sitrec.cmd status` |
 
-### Air-Gapped / Offline Install
+### Offline Install
 
-For systems with no internet access (e.g. secure or classified environments), you can transfer the image and install files manually.
+For isolated systems with no internet access, you can transfer the image and install files manually.
 
 **On a machine with internet access:**
 
@@ -805,8 +806,10 @@ The app will be at **http://localhost:8080**. The Dockerfile automatically copie
 For active development with automatic recompilation:
 
 ```bash
-docker-compose -f docker-compose.dev.yml up --build
+docker compose -f docker-compose.dev.yml up --build
 ```
+
+With Podman, use `podman-compose -f docker-compose.dev.yml up --build`.
 
 | Feature | Standard Docker | Development Docker |
 |---------|----------------|-------------------|
@@ -819,9 +822,13 @@ docker-compose -f docker-compose.dev.yml up --build
 
 ## Serverless Build (No Backend Required)
 
-Creates a version of Sitrec that runs without PHP. All data is stored in the browser's IndexedDB.
+Creates a version of Sitrec that runs without PHP. Loaded files stay in browser memory;
+settings are stored locally, and Chrome/Edge can save files through a user-selected working
+folder. The browser stores that folder's permission handle in IndexedDB so it can request
+access again on later visits.
 
-**Prerequisites:** Node.js (for server mode) or just a modern browser (for static files)
+**Prerequisites:** Node.js 22 with npm to build or run the included static server. A built
+copy needs only a modern browser.
 
 ### Node.js Server Mode
 
@@ -837,9 +844,13 @@ Open **http://localhost:3000/sitrec**
 
 ### Static Files Mode
 
-After building with `npm run build-serverless`, the files in `dist-serverless/` can be opened directly in a browser, hosted on any static server (GitHub Pages, S3, etc.), or run completely offline.
+After building with `npm run build-serverless`, the files in `dist-serverless/` can be
+hosted on any static server (GitHub Pages, object storage, and so on) or run offline. You
+can also open `dist-serverless/index.html` directly in Chrome or Edge; on first load, use
+the directory picker to grant access to the `dist-serverless` folder. Serving the directory
+over HTTP is the more portable option for browsers without the File System Access API.
 
-The build is about 141 MB and works from any path, so it can be published in a subdirectory.
+The current build is about 140 MB and works from any path, so it can be published in a subdirectory.
 One thing needs configuring when you do: the built-in internet map sources are stripped from
 serverless builds, and the "Local" source that remains reads tiles from a sibling directory a
 subdirectory-only host cannot serve. Define your own keyless sources instead, or set
@@ -848,7 +859,8 @@ subdirectory-only host cannot serve. Define your own keyless sources instead, or
 nothing to the repository — the build goes up as a workflow artifact, never as a commit.
 
 **Limitations:** No server-side saves, no cloud sync, no AI chat.
-**Advantages:** Zero backend dependencies, works offline, data never leaves your machine.
+**Advantages:** Zero backend dependencies, works offline, and does not upload local files
+to a Sitrec server.
 
 ---
 
@@ -856,13 +868,14 @@ nothing to the repository — the build goes up as a workflow artifact, never as
 
 Self-contained build using Node.js + your system's PHP. No separate web server needed.
 
-**Prerequisites:** Node.js, PHP 8.3+ in PATH
+**Prerequisites:** Node.js 22 with npm, PHP 8.4.1+ in `PATH`, and Composer
 
 ```bash
 git clone https://github.com/MickWest/Sitrec2 sitrec-test-dev
 cd sitrec-test-dev
 for f in config/*.example; do cp "$f" "${f%.example}"; done
 npm install
+composer --working-dir=sitrecServer install --no-dev --prefer-dist --optimize-autoloader
 npm run dev-standalone-debug
 ```
 
@@ -880,8 +893,9 @@ Full development environment with Nginx/Apache + PHP. This is the setup used for
 
 ### Prerequisites
 
-- Web server (Nginx or Apache) with PHP 8.3+ and HTTPS support
-- Node.js with npm
+- Web server (Nginx or Apache) with PHP 8.4.1+ and HTTPS support
+- Node.js 22 with npm
+- Composer
 
 ### Setup
 
@@ -890,6 +904,7 @@ git clone https://github.com/MickWest/Sitrec2 sitrec-test-dev
 cd sitrec-test-dev
 for f in config/*.example; do cp "$f" "${f%.example}"; done
 npm install
+composer --working-dir=sitrecServer install --no-dev --prefer-dist --optimize-autoloader
 ```
 
 **Windows:** Replace the `for` line with: `for %f in (config\*.example) do copy /Y "%f" "%~dpnf"`
@@ -909,7 +924,10 @@ module.exports = {
 
 These paths apply to `npm run build` and `npm run deploy` only — those produce **static files that your own web server serves** (Apache/Nginx + PHP), so point `dev_path` / `prod_path` at a directory your web server serves: a docroot like `/var/www/html/sitrec`, or serve the default `dist/<branch>` directly. The two can differ if you want development and production builds in separate locations.
 
-> The **Standalone** and **Serverless** builds ignore `config-install.js` — they always write to fixed `dist-standalone/` and `dist-serverless/` and bundle their own Node server, so they need no external web server.
+> The **Standalone** and **Serverless** builds ignore `config-install.js` and always write
+> to fixed `dist-standalone/` and `dist-serverless/`. The repository includes Node launchers
+> for both outputs, so neither requires Apache or Nginx; the serverless directory can also
+> be served by any ordinary static-file host.
 
 ### Create Server Directory Structure
 
@@ -947,7 +965,7 @@ would only find out when a feature quietly failed to work.
 So `shared.env.example` carries a version stamp near the top:
 
 ```bash
-SHARED_ENV_VERSION=2026-08-06
+SHARED_ENV_VERSION=2026-09-03
 ```
 
 It is a date (with a `.1`, `.2` suffix if it changes more than once in a day), and it
@@ -969,8 +987,8 @@ immediately with a report like this:
  config/shared.env.example has changed since your config/shared.env was last brought
  up to date. New or changed settings may affect this install.
 
-     your    config/shared.env          SHARED_ENV_VERSION=2026-05-01
-     current config/shared.env.example  SHARED_ENV_VERSION=2026-08-06
+     your    config/shared.env          SHARED_ENV_VERSION=2026-08-06
+     current config/shared.env.example  SHARED_ENV_VERSION=2026-09-03
 
  Commits touching config/shared.env.example since your version:
    0fd2bfb0 2026-08-02  Satellites: read OMM CSV, not TLE — the TLE format ran out of...
@@ -1004,7 +1022,7 @@ the report links to the file's history on GitHub instead.
    exactly as the report gives it:
 
    ```bash
-   SHARED_ENV_VERSION=2026-08-06
+   SHARED_ENV_VERSION=2026-09-03
    ```
 
    If your `shared.env` has no such line (it predates version stamping), add one
@@ -1037,8 +1055,8 @@ and your own choices. Only the version line decides whether the build proceeds.
 
 ### Download Videos
 
-Public videos (government-produced, unrestricted) are available at:
-https://www.dropbox.com/scl/fo/biko4zk689lgh5m5ojgzw/h?rlkey=stuaqfig0f369jzujgizsicyn&dl=0
+Publicly released videos are available in this
+[Dropbox folder](https://www.dropbox.com/scl/fo/biko4zk689lgh5m5ojgzw/h?rlkey=stuaqfig0f369jzujgizsicyn&dl=0).
 
 Place them in `sitrec-videos/public/`.
 
@@ -1155,24 +1173,35 @@ The Docker images (`Dockerfile`, `Dockerfile.dev`, `Dockerfile.release`) already
 
 | Feature | Requirement |
 |---------|-------------|
-| PHP backend | `php-cli`, `php-xml`, `php-mbstring`, `php-curl`, `php-zip`, `composer` |
+| PHP backend | PHP 8.4.1+ with CLI, XML, mbstring, cURL and ZIP extensions |
+| PHP dependencies (build checkout) | Composer; run `composer install` before `npm run deploy` so `sitrecServer/vendor/` is included in the output |
 | Wind visualization | `python3`, `pip3`, and the pip packages `eccodes` and `certifi` — `sitrecServer/windProxy.php` shells out to `tools/fetch_wind.py`, which parses GRIB2 with `eccodes`. Without these, every wind request returns HTTP 502. |
 | Wind cache dir | `data/wind/` writable by the web-server user (auto-created on first request if the parent is writable). |
 
-One-time setup on a fresh Ubuntu / Debian server (run as root or with `sudo`):
+One-time setup on a current Ubuntu / Debian server whose package repositories provide PHP
+8.4.1 or newer (run as root or with `sudo`):
 
 ```bash
 apt-get update
-apt-get install -y php-cli php-xml php-mbstring php-curl php-zip composer \
-                   python3 python3-pip
+apt-get install -y php-cli php-xml php-mbstring php-curl php-zip python3 python3-pip
 pip3 install --no-cache-dir --break-system-packages eccodes certifi
 ```
 
-`--break-system-packages` is a no-op on Ubuntu ≤ 22.04 and required on Debian 12+ / Ubuntu 24.04+ (PEP 668).
+Confirm the installed PHP version with `php -v`. The current Composer lock file needs PHP
+8.4.1 or newer on both the build machine and the server. `--break-system-packages` is needed on distributions that
+mark the system Python environment as externally managed (PEP 668).
+
+On the build machine, install the locked PHP dependencies in the source checkout before
+building and transferring `dist/`:
+
+```bash
+composer --working-dir=sitrecServer install --no-dev --prefer-dist --optimize-autoloader
+npm run deploy
+```
 
 ### Behind a reverse proxy that terminates TLS
 
-When HTTPS ends at a proxy in front of Sitrec (Caddy, nginx, a load balancer, a Kubernetes ingress) and the proxy speaks plain HTTP to Apache or PHP, the backend must be told the real scheme or every URL it builds — the tile-cache redirects, the upload and terrain paths, the CORS origin — comes out as `http://` on an `https://` page, and the browser refuses to fetch them. Sitrec reads the standard `X-Forwarded-Proto` header for this (`sitrecServer/requestScheme.php`). Caddy's `reverse_proxy` sends it by default; for nginx add `proxy_set_header X-Forwarded-Proto $scheme;`. Only the scheme is taken from the proxy; the client address is not, because the localhost rule in `config.php` grants administrator rights and must never trust a client-supplied header.
+When HTTPS ends at a proxy in front of Sitrec (Caddy, nginx, a load balancer, a Kubernetes ingress) and the proxy speaks plain HTTP to Apache or PHP, the backend must be told the real scheme or every absolute URL it builds — upload, cache and terrain paths, plus the CORS origin — comes out as `http://` on an `https://` page, and the browser refuses to fetch it. Sitrec reads the standard `X-Forwarded-Proto` header for this (`sitrecServer/requestScheme.php`). Caddy's `reverse_proxy` sends it by default; for nginx add `proxy_set_header X-Forwarded-Proto $scheme;`. Only the scheme is taken from the proxy; the client address is not, because the localhost rule in `config.php` grants administrator rights and must never trust a client-supplied header.
 
 A related point for the container image: run the proxy and Sitrec as separate containers on a shared network, not in one pod proxying to `127.0.0.1`, for the same reason — Apache would see every visitor as localhost.
 

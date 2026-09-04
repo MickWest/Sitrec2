@@ -1,6 +1,6 @@
 # Deploying Sitrec on GitHub Pages
 
-The copy of Sitrec at `https://mickwest.github.io/Sitrec2/` is the **serverless build**, published by GitHub Actions each time a release is tagged. There is no server behind it: no PHP, no accounts, no provider keys. GitHub's static file hosting serves the built files, and everything else happens in the browser.
+The copy of Sitrec at `https://mickwest.github.io/Sitrec2/` is the **serverless build**, published by GitHub Actions each time a release is tagged. There is no Sitrec server behind it: no PHP, no accounts, and no site-supplied provider keys. GitHub's static file hosting serves the built files, and the application itself runs in the browser.
 
 This page explains what that build is, what it can and cannot do, how it gets published, and how to run or fork it.
 
@@ -11,7 +11,10 @@ The normal Sitrec install is a web app plus a PHP back end (`sitrecServer/`) tha
 - sets `IS_SERVERLESS_BUILD=true` before anything else loads, so the code and the copy rules can tell which build they are in;
 - swaps the runtime configuration module for `src/runtimeConfig.serverless.js`, which carries no install-specific values at all;
 - builds the client environment with `buildServerlessClientEnv()` in `scripts/serverlessClientEnv.js`. Every provider credential is blanked (map tokens, 3D tile tokens, AI and storage keys), and a few settings are forced off regardless of what the config says: the AI assistant, server and cloud saves, and server-side settings storage;
-- generates `manifest.json`, a list of the built-in sitches read from `data/`, which replaces the server's sitch listing. The legacy video sitches that depend on large media files are left out;
+- bundles the serverless-compatible sitch definitions registered from `src/sitch/` and
+  leaves out the legacy video sitches that depend on large media files. It also emits
+  `manifest.json` for the repository's server wrappers and desktop tooling; the browser's
+  built-in sitch menu comes from the bundled definitions, not a PHP listing;
 - copies only the files a browser needs. `sitrecServer/` is not part of the output;
 - after the build, generates the third-party notices and runs `scripts/auditBundleSecrets.js` over the output. A configured key found in any emitted file fails the build, so a leaked credential can never reach a published site.
 
@@ -23,7 +26,11 @@ Everything that runs in the browser works as in a full install: loading tracks, 
 
 What changes:
 
-- **Saves stay in the browser.** There is no server to save to, so sitches and imported files are kept in the browser's own storage (IndexedDB). They persist across visits on the same browser and are not shared anywhere. Settings are stored locally too.
+- **Saving is local.** There is no server to save to. Loaded files remain in browser memory,
+  and Chrome/Edge can save or reopen sitch files through a working folder the user selects.
+  IndexedDB stores the folder handle, not copies of every imported file; the browser asks
+  for access again on a later visit. Settings are stored locally in browser cookies in the
+  published configuration.
 - **No accounts or sharing links.** Login, file rehosting and short links all need the server.
 - **No AI assistant.** The assistant relays through the server, so it is off.
 - **No street-level imagery**, and no usage statistics are collected.
@@ -56,7 +63,9 @@ Two settings matter:
 - **Settings → Pages → Source must be "GitHub Actions".** With the older "deploy from a branch" setting the build succeeds and the deploy step fails.
 - **Concurrency.** Deploys are serialised and never cancelled in flight, so a push during a deploy waits for it rather than leaving a half-published site.
 
-The site is about 140 MB in under 500 files, against Pages' 1 GB limit, with the largest file around 12 MB against the 100 MB per-file limit. No `.nojekyll` marker is needed: an Actions deployment serves the artifact as-is.
+The current site is roughly 140 MB in about 520 files, comfortably below Pages' 1 GB
+published-site limit. No `.nojekyll` marker is needed: an Actions deployment serves the
+artifact as-is.
 
 ## Running the same build yourself
 

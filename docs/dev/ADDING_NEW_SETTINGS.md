@@ -1,276 +1,215 @@
-# How to Add New Settings to Sitrec
+# How to Add a User Setting
 
-This guide explains how to add a new user setting to the Sitrec application.
+This guide covers settings stored in `Globals.settings` and, normally, exposed in the
+Settings menu. These settings are per-user application preferences, not part of a saved
+sitch.
 
-## Overview
+## Where Settings Live
 
-Settings in Sitrec are:
-- Stored on the server (S3) for logged-in users
-- Stored in browser cookies as a fallback
-- Sanitized on both client and server to prevent exploits
-- Always available: the Settings menu/folder (language, performance, etc.) is created unconditionally on every sitch load. (`Sit.isCustom || Sit.canMod` gates the broader custom-sitch setup, not the settings menu.)
+A persisted setting normally touches six places in five files:
 
-## Required Changes
+1. Its default in [`src/SettingsManager.js`](../../src/SettingsManager.js).
+2. The browser allowlist in `sanitizeSettings()` in that file.
+3. The server allowlist in [`sitrecServer/settings.php`](../../sitrecServer/settings.php).
+4. Its control and behavior in [`src/CustomSupport.js`](../../src/CustomSupport.js).
+5. Its English label and tooltip in [`src/i18n/en.js`](../../src/i18n/en.js).
+6. Its unit tests in [`tests/SettingsManager.test.js`](../../tests/SettingsManager.test.js).
 
-When adding a new setting, you must make **6 changes across 5 files** (steps 1 and 2 both edit `SettingsManager.js`):
+The two sanitizers are both allowlists. A key omitted from either one is discarded. The
+parity test in
+[`tests/settingsAllowlistParity.test.js`](../../tests/settingsAllowlistParity.test.js)
+checks that the browser and PHP lists contain exactly the same keys.
 
-### 1. SettingsManager.js - Add Default Value
+## 1. Add the Default
 
-**File:** `sitrec/src/SettingsManager.js`
-
-In the `initializeSettings()` function, add your default value:
+Add the property to the defaults created by `initializeSettings()`:
 
 ```javascript
-export async function initializeSettings() {
-    if (!Globals.settings) {
-        Globals.settings = {
-            maxDetails: 20,
-            yourNewSetting: defaultValue  // ← Add here
-        };
+Globals.settings = {
+    // Existing defaults...
+    yourNewSetting: false,
+};
+```
+
+Choose a safe default that works before storage has loaded. Sitrec initializes settings after
+the login check and before nodes are created, then verifies initialization again before it
+builds the Settings menu. Feature code should read the initialized value; it should not call
+`initializeSettings()` itself.
+
+If the setting is one of the performance controls, also keep the defaults and the `Balanced`
+entry in `PERFORMANCE_PRESETS` in `src/CustomSupport.js` consistent.
+
+## 2. Add Browser-Side Sanitization
+
+Add the key to `sanitizeSettings()` in `src/SettingsManager.js`. Reject non-finite numbers
+before clamping them:
+
+```javascript
+if (typeof settings.yourNewSetting === "boolean") {
+    sanitized.yourNewSetting = settings.yourNewSetting;
+}
+
+if (settings.yourNewNumber !== undefined) {
+    const raw = settings.yourNewNumber;
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+        sanitized.yourNewNumber = Math.max(0, Math.min(100, raw));
     }
-    // ...
+}
+
+if (settings.yourNewChoice !== undefined) {
+    const value = String(settings.yourNewChoice);
+    if (["first", "second"].includes(value)) {
+        sanitized.yourNewChoice = value;
+    }
 }
 ```
 
-### 2. SettingsManager.js - Add Sanitization (Client-Side)
+Keep settings small and JSON-serializable. Do not put credentials in `Globals.settings`:
+cookies and server settings are not secret stores.
 
-**File:** `sitrec/src/SettingsManager.js`
+## 3. Add Matching Server-Side Sanitization
 
-In the `sanitizeSettings()` function, add validation:
-
-```javascript
-export function sanitizeSettings(settings) {
-    const sanitized = {};
-    
-    // ... existing settings ...
-    
-    if (settings.yourNewSetting !== undefined) {
-        // For boolean:
-        sanitized.yourNewSetting = Boolean(settings.yourNewSetting);
-        
-        // For number with range:
-        // const value = Number(settings.yourNewSetting);
-        // sanitized.yourNewSetting = Math.max(min, Math.min(max, value));
-        
-        // For string:
-        // sanitized.yourNewSetting = String(settings.yourNewSetting).substring(0, maxLength);
-    }
-    
-    return sanitized;
-}
-```
-
-### 3. settings.php - Add Sanitization (Server-Side)
-
-**File:** `sitrec/sitrecServer/settings.php`
-
-⚠️ **CRITICAL:** This is the most commonly forgotten step!
-
-In the `sanitizeSettings()` function, add validation:
+Add equivalent validation to `sanitizeSettings()` in `sitrecServer/settings.php`:
 
 ```php
-function sanitizeSettings($settings) {
-    // ... existing code ...
-    
-    if (isset($settings['yourNewSetting'])) {
-        // For boolean:
-        $sanitized['yourNewSetting'] = (bool)$settings['yourNewSetting'];
-        
-        // For number with range:
-        // $value = floatval($settings['yourNewSetting']);
-        // $sanitized['yourNewSetting'] = max($min, min($max, $value));
-        
-        // For string:
-        // $sanitized['yourNewSetting'] = substr($settings['yourNewSetting'], 0, $maxLength);
+if (isset($settings['yourNewSetting']) && is_bool($settings['yourNewSetting'])) {
+    $sanitized['yourNewSetting'] = $settings['yourNewSetting'];
+}
+
+if (isset($settings['yourNewNumber'])
+    && (is_int($settings['yourNewNumber']) || is_float($settings['yourNewNumber']))) {
+    $value = floatval($settings['yourNewNumber']);
+    if (is_finite($value)) {
+        $sanitized['yourNewNumber'] = max(0, min(100, $value));
     }
-    
-    return $sanitized;
+}
+
+if (isset($settings['yourNewChoice'])) {
+    $value = strval($settings['yourNewChoice']);
+    if (in_array($value, ['first', 'second'], true)) {
+        $sanitized['yourNewChoice'] = $value;
+    }
 }
 ```
 
-### 4. CustomSupport.js - Add UI Control
+The JavaScript and PHP versions must accept, reject, coerce, and clamp values the same way.
+The parity test checks key names, but behavior tests are still needed for the chosen type and
+range.
 
-**File:** `sitrec/src/CustomSupport.js`
+## 4. Add the UI Control
 
-In the `setupSettingsMenu()` method, add a UI control. The folder, labels, and
-tooltips are internationalized: use `t("custom.settings.<yourSetting>.label")`
-and `t("custom.settings.<yourSetting>.tooltip")` (you'll add those keys in step 6):
+`CCustomManager.setupSettingsMenu()` in `src/CustomSupport.js` creates the Settings folder.
+Bind the controller directly to `Globals.settings`.
 
-```javascript
-setupSettingsMenu() {
-    const settingsFolder = guiMenus.main.addFolder(t("custom.settings.title"))
-        .tooltip(tooltipText)
-        .close();
-    
-    // ... existing controls ...
-    
-    // For boolean (checkbox):
-    settingsFolder.add(Globals.settings, "yourNewSetting")
-        .name(t("custom.settings.yourNewSetting.label"))
-        .tooltip(t("custom.settings.yourNewSetting.tooltip"))
-        .onChange((value) => {
-            Globals.settings.yourNewSetting = Boolean(value);
-            this.saveGlobalSettings(true); // Immediate save for toggles
-        })
-        .listen();
-    
-    // For number (slider) — see the real maxDetails/tileSegments sliders:
-    // don't save on every onChange frame; force an immediate save on release.
-    // settingsFolder.add(Globals.settings, "yourNewSetting", min, max, step)
-    //     .name(t("custom.settings.yourNewSetting.label"))
-    //     .tooltip(t("custom.settings.yourNewSetting.tooltip"))
-    //     .onChange((value) => {
-    //         // Sanitize/clamp here, but do NOT save (this fires every frame of the drag)
-    //         Globals.settings.yourNewSetting = value;
-    //     })
-    //     .onFinishChange(() => {
-    //         this.saveGlobalSettings(true); // Force immediate save on release
-    //     })
-    //     .listen();
-}
-```
-
-### 5. i18n/en.js - Add Label & Tooltip Strings
-
-**File:** `sitrec/src/i18n/en.js`
-
-The UI control's `.name()`/`.tooltip()` use `t(...)` keys, so add the strings
-under the `custom.settings` object:
+For a checkbox or dropdown, save immediately:
 
 ```javascript
-custom: {
-    settings: {
-        // ... existing settings ...
-        yourNewSetting: { label: "Your Setting Name", tooltip: "Description of what this setting does" },
-    },
-}
-```
-
-(Add matching keys to the other locale files if you want the setting translated;
-untranslated keys fall back to English.)
-
-### 6. SettingsManager.test.js - Add Tests
-
-**File:** `sitrec/tests/SettingsManager.test.js`
-
-Add test cases for your new setting:
-
-```javascript
-describe('sanitizeSettings', () => {
-    // ... existing tests ...
-    
-    test('should sanitize yourNewSetting as boolean', () => {
-        const input = { yourNewSetting: true };
-        const result = sanitizeSettings(input);
-        expect(result.yourNewSetting).toBe(true);
-        expect(typeof result.yourNewSetting).toBe('boolean');
-    });
-    
-    test('should convert truthy values to boolean for yourNewSetting', () => {
-        const input = { yourNewSetting: 1 };
-        const result = sanitizeSettings(input);
-        expect(result.yourNewSetting).toBe(true);
-    });
-    
-    test('should convert falsy values to boolean for yourNewSetting', () => {
-        const input = { yourNewSetting: 0 };
-        const result = sanitizeSettings(input);
-        expect(result.yourNewSetting).toBe(false);
-    });
-});
-
-describe('initializeSettings', () => {
-    test('should initialize with default yourNewSetting', async () => {
-        const result = await initializeSettings();
-        expect(result.yourNewSetting).toBe(defaultValue);
-    });
-});
-```
-
-## Checklist
-
-When adding a new setting, use this checklist:
-
-- [ ] Add default value in `initializeSettings()` (SettingsManager.js)
-- [ ] Add client-side sanitization in `sanitizeSettings()` (SettingsManager.js)
-- [ ] Add server-side sanitization in `sanitizeSettings()` (settings.php) ⚠️
-- [ ] Add UI control in `setupSettingsMenu()` (CustomSupport.js)
-- [ ] Add label & tooltip strings under `custom.settings` (i18n/en.js)
-- [ ] Add tests in SettingsManager.test.js
-- [ ] Run `npm test` to verify all tests pass
-- [ ] Run `npm run build` to verify build succeeds
-- [ ] Test in browser:
-  - [ ] Toggle/change the setting
-  - [ ] Reload page and verify it persists
-  - [ ] Check browser console for any errors
-
-## Common Pitfalls
-
-1. **Forgetting server-side sanitization** - This is the most common mistake! The PHP `sanitizeSettings()` function will strip out any settings it doesn't recognize.
-
-2. **Type mismatches** - Make sure the sanitization on both client and server produces the same type (boolean, number, string).
-
-3. **Not using `.listen()`** - GUI controls need `.listen()` to update when the value changes programmatically.
-
-4. **Wrong save timing** - Use `saveGlobalSettings(true)` for immediate saves: call it directly from `.onChange()` for checkboxes/dropdowns, and from `.onFinishChange()` (on release) for sliders. Don't save on every slider `onChange` frame.
-
-## Example: Adding a "Dark Mode" Setting
-
-Here's a complete example:
-
-```javascript
-// 1. SettingsManager.js - initializeSettings()
-Globals.settings = {
-    maxDetails: 20,
-    centerSidebar: false,
-    darkMode: false  // ← New setting
-};
-
-// 2. SettingsManager.js - sanitizeSettings()
-if (settings.darkMode !== undefined) {
-    sanitized.darkMode = Boolean(settings.darkMode);
-}
-
-// 3. settings.php - sanitizeSettings()
-if (isset($settings['darkMode'])) {
-    $sanitized['darkMode'] = (bool)$settings['darkMode'];
-}
-
-// 4. CustomSupport.js - setupSettingsMenu()
-settingsFolder.add(Globals.settings, "darkMode")
-    .name(t("custom.settings.darkMode.label"))
-    .tooltip(t("custom.settings.darkMode.tooltip"))
+settingsFolder.add(Globals.settings, "yourNewSetting")
+    .name(t("custom.settings.yourNewSetting.label"))
+    .tooltip(t("custom.settings.yourNewSetting.tooltip"))
     .onChange((value) => {
-        Globals.settings.darkMode = Boolean(value);
+        Globals.settings.yourNewSetting = Boolean(value);
+        applyYourNewSetting();
         this.saveGlobalSettings(true);
-        // Apply dark mode styling here
-        document.body.classList.toggle('dark-mode', value);
     })
     .listen();
+```
 
-// 5. i18n/en.js - custom.settings
-darkMode: { label: "Dark Mode", tooltip: "Enable dark color scheme" },
+For a slider, update the live effect in `onChange()` and save once the gesture finishes:
 
-// 6. SettingsManager.test.js
-test('should sanitize darkMode as boolean', () => {
-    const input = { darkMode: true };
-    const result = sanitizeSettings(input);
-    expect(result.darkMode).toBe(true);
+```javascript
+settingsFolder.add(Globals.settings, "yourNewNumber", 0, 100, 1)
+    .name(t("custom.settings.yourNewNumber.label"))
+    .tooltip(t("custom.settings.yourNewNumber.tooltip"))
+    .onChange((value) => {
+        Globals.settings.yourNewNumber = Math.max(0, Math.min(100, Math.round(value)));
+        applyYourNewNumber();
+    })
+    .onFinishChange(() => this.saveGlobalSettings(true))
+    .listen();
+```
+
+For a text or number field that fires on every keystroke, use the debounced save during edits
+and an immediate save on commit. `setupStartupSettings()` contains the current latitude,
+longitude, and altitude examples:
+
+```javascript
+controller
+    .onChange(() => this.saveGlobalSettings())
+    .onFinishChange(() => this.saveGlobalSettings(true));
+```
+
+`.listen()` is needed when code can change the bound value without going through this
+controller. It is harmless but not mandatory for a value that changes only through one
+controller.
+
+## 5. Add Translatable Text
+
+Add the English strings under `custom.settings` in `src/i18n/en.js`:
+
+```javascript
+yourNewSetting: {
+    label: "Your Setting",
+    tooltip: "Explain what changes, including any important units or limits",
+},
+```
+
+Use the matching keys in `.name()` and `.tooltip()`. Add translations to the other locale
+files when available; a missing translation falls back to English.
+
+## 6. Add Tests
+
+Import and test the real sanitizer in `tests/SettingsManager.test.js`:
+
+```javascript
+import {sanitizeSettings} from "../src/SettingsManager";
+
+test("sanitizes yourNewSetting as a boolean", () => {
+    expect(sanitizeSettings({yourNewSetting: true}).yourNewSetting).toBe(true);
+    expect(sanitizeSettings({yourNewSetting: false}).yourNewSetting).toBe(false);
+    expect(sanitizeSettings({yourNewSetting: 0}).yourNewSetting).toBeUndefined();
+    expect(sanitizeSettings({}).yourNewSetting).toBeUndefined();
 });
 ```
 
-## Testing Your Changes
+For a number or enumerated string, cover valid values, both bounds, coercion, and rejected
+input. The allowlist parity test requires no edit; it will fail until the PHP key has been
+added.
 
-1. **Build:** `npm run build`
-2. **Test:** `npm test`
-3. **Manual test:**
-   - Load a custom sitch
-   - Open browser console (F12)
-   - Change your setting
-   - Check console for save confirmation
-   - Reload page
-   - Verify setting persists
+Run the targeted tests:
 
-## Questions?
+```bash
+npx jest tests/SettingsManager.test.js tests/settingsAllowlistParity.test.js --runInBand
+```
 
-If you're unsure about any step, refer to the existing `maxDetails`, `centerSidebar`, or `showAttribution` settings as examples.
+Then run the complete unit suite and a build:
+
+```bash
+npm test
+npm run build
+```
+
+## Browser Check
+
+After building, verify the setting through the normal UI:
+
+- Change it and confirm the effect is applied without a reload when appropriate.
+- Reload and confirm that the value persists.
+- Check both an authenticated server-backed session and the intended browser-only mode if
+  the deployment supports both.
+- Check the console and network response for a rejected or stripped setting.
+
+## Common Failure Modes
+
+- **Only one allowlist was updated.** The other sanitizer strips the key. The parity test is
+  designed to catch this.
+- **The two sanitizers disagree.** Matching key names do not guarantee matching coercion or
+  ranges.
+- **The setting was put in sitch serialization.** Global preferences belong in
+  `Globals.settings`; a sitch-specific value belongs in the relevant node or sitch instead.
+- **A slider saves every drag event.** Save in `onFinishChange()` unless each intermediate value
+  genuinely must be persisted.
+- **A programmatic update leaves the controller stale.** Add `.listen()` or explicitly update
+  the controller display.
+- **A setting stores sensitive data.** Use the dedicated browser-only key store instead of the
+  settings backends.

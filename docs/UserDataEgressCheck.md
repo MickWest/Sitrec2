@@ -35,11 +35,11 @@ The same file lists Sitrec's own server endpoints (`uilog.php`, `rehost.php` and
 
 ## Where Sitrec sends data today
 
-This is the inventory of the actual egress routes in the code as of September 2026, by build. The allow-list above is the authoritative, always-current version; this section is the narrative reading of it, and it will be refreshed when the routes change.
+This is the narrative inventory of the actual egress routes in the code, verified against `scripts/egress-allowlist.json`, the serverless environment filter, and the workflow on September 4, 2026. The allow-list is the authoritative version and is updated with route changes.
 
-### With no user action, in every build
+### Baseline requests without feature use
 
-Opening Sitrec, loading a sitch, and looking at the map cause these requests and no others:
+In the default full-server configuration, opening Sitrec, loading a sitch, and looking at the map can cause these baseline requests. Operator-enabled features described below can add their own routes; serverless builds replace or omit the server calls.
 
 | Request | Goes to | Carries |
 |---|---|---|
@@ -69,7 +69,7 @@ Each of these is the same code with a different configuration and, in the last t
 
 - **Local install with the PHP server** (`npm run build` behind a web server, or the standalone Node.js build). The example configuration ships with usage statistics off, the assistant off, and saves to the operator's own server on. The startup requests above go to that server. "Save to server" and share links upload to it, on the user's action. Keyed providers and 3D buildings are not available until the operator adds keys.
 - **Container** (Docker or Podman), and **the VPS install** built on it. The image carries the example configuration, and the operator's environment file overrides it, so a container in its default configuration behaves exactly like the local install above. The VPS guide adds a reverse proxy and automatic updates; it adds no egress.
-- **Serverless build on any static host.** No server requests at all: the sitch list is a file shipped with the site, the login check is skipped, settings and saved sitches live in the browser's storage, and statistics, the assistant, sharing and the proxied data sources are off. It also has **no internet map provider** unless the operator defines one through the custom-source variables, so in its plain default configuration it contacts nothing. Loaded files never leave the browser.
+- **Serverless build on any static host.** No PHP or third-party service requests by default: the sitch list and application assets come from the static host, the login check is skipped, settings and saved sitches live in browser storage, and statistics, the assistant, sharing, and proxied data sources are off. It has **no internet map provider** unless the operator defines one through the custom-source variables. Ordinary same-origin requests for the application, bundled data, and manifest still go to the static host; loaded user files are not uploaded.
 - **The GitHub Pages copy** (`mickwest.github.io/Sitrec2`). The serverless build plus the two keyless tile providers. Its complete egress, with no user action, is tile coordinates to ESRI and to AWS. The [Pages guide](dev/Deploying-on-GitHub-Pages.md) covers how it is built.
 
 Summary, for the default configuration of each:

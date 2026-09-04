@@ -15,8 +15,9 @@ What you get:
 
 What it assumes: a domain whose DNS you control, a VPS with root SSH, and about an hour.
 
-Tested with: AlmaLinux 9.8, Podman 5.8, Caddy 2, a 2 vCPU / 2 GB / 40 GB VPS, Sitrec 2.147.
-This is how `sitrec.work` is deployed.
+Tested with: AlmaLinux 9.8, Podman 5.8, Caddy 2, and a 2 vCPU / 2 GB / 40 GB VPS.
+The image and configuration details were rechecked against Sitrec 2.151.1. This is how
+`sitrec.work` is deployed.
 
 ---
 
@@ -35,11 +36,12 @@ configuration of the site. Changing a setting is editing one file and restarting
 
 **Rootless Podman under a dedicated user, managed by systemd.** Quadlet turns a
 `.container` file into a systemd service, so the site starts at boot, restarts on failure,
-and can be updated by `podman auto-update` on a timer. Nothing runs as root.
+and can be updated by `podman auto-update` on a timer. The containers may have their own
+root user internally, but neither site service has root privileges on the host.
 
 **Caddy in front, for HTTPS.** The Sitrec image is Apache on port 8080 with no TLS. Caddy
 terminates HTTPS, obtains certificates from Let's Encrypt, renews them, and proxies to the
-Sitrec container. Its whole configuration is six lines.
+Sitrec container. Its whole configuration is one small Caddyfile.
 
 **Two containers, each in its own pasta network namespace. Not one pod, and not a bridge
 network.** Both halves of that are correctness requirements, not style: the pod would make
@@ -117,9 +119,8 @@ id -u $SITE_USER >/dev/null 2>&1 || useradd -m $SITE_USER
 loginctl enable-linger $SITE_USER
 install -d -m 700 -o $SITE_USER -g $SITE_USER /home/$SITE_USER/.ssh
 install -m 600 -o $SITE_USER -g $SITE_USER /root/.ssh/authorized_keys /home/$SITE_USER/.ssh/authorized_keys
-if ! grep -q "^$SITE_USER:" /etc/subuid; then
-  usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $SITE_USER
-fi
+grep -q "^$SITE_USER:" /etc/subuid || usermod --add-subuids 100000-165535 $SITE_USER
+grep -q "^$SITE_USER:" /etc/subgid || usermod --add-subgids 100000-165535 $SITE_USER
 
 # Last, once both accounts hold the key: password login off. The provider's web console
 # still works without a key if something is wrong.
@@ -214,15 +215,10 @@ adding its line and restarting the service. `chmod 600` the file once it holds o
 
 **Only the settings the entrypoint knows are forwarded.** `docker/entrypoint.sh` copies the
 variables on its `CLIENT_VARS` and `SERVER_VARS` lists, plus any `SITREC_CUSTOM_MAP_*` and
-`SITREC_CUSTOM_ELEVATION_*`, and silently ignores everything else. Every setting in
-`config/shared.env.example` that applies to a server build is on those lists in releases
-after 2.147.2 (a few settings are for serverless builds only and are not forwarded, which
-the example file says next to each); up to and including 2.147.2 eight were missing and
-are dropped by the image: `SITREC_USE_CUSTOM_WIND`,
-`SITREC_CUSTOM_WIND_MENU_NAME`, `SITREC_CUSTOM_WIND_TOOLTIP`, `CUSTOM_WIND_URL`,
-`CACHE_CUSTOM_WIND`, `LOG_UI_INTERACTIONS`, `ADSBX_RAPIDAPI_KEY` and `GEMINI_API`. When a
-setting you set has no effect, check those lists first. When a new setting is added to the
-example file, it must be added to the entrypoint too.
+`SITREC_CUSTOM_ELEVATION_*`, and silently ignores everything else. In the current release,
+those lists cover every setting in `config/shared.env.example` that applies to a server
+build; settings marked serverless-only in the example are intentionally omitted. If a
+setting has no effect, check the entrypoint lists and the spelling in `sitrec.env` first.
 
 **Do not set `SITREC_DEFAULT_USERID` on a public site.** It exists for closed, single-user
 installs. On a public site it makes every visitor that user, with that user's groups, which
@@ -296,7 +292,7 @@ WantedBy=default.target
   is what you type into `podman logs` and `podman exec` all day.
 - **`PublishPort=127.0.0.1:8080:8080`.** The loopback prefix is what keeps 8080 off the
   public interface; the firewall would block it anyway, but this makes it not exist.
-- **No volumes, deliberately.** See [section 5](#5-persistent-data). If you do add one for
+- **No volumes, deliberately.** See [section 5](#5-persistent-application-data). If you do add one for
   a directory Apache writes, use a *named* volume: Apache runs as `www-data`, which rootless
   Podman maps to a subordinate ID on the host, so a bind mount of a directory you created
   would be owned by the wrong ID and not writable, while a named volume is initialised
@@ -305,8 +301,8 @@ WantedBy=default.target
 - **`TimeoutStartSec=900`.** The first start pulls the image, which can take minutes on a
   slow link. The default timeout would kill it.
 - **`AutoUpdate=registry`** labels the container so `podman auto-update` checks the registry
-  for a newer image with the same tag, pulls it, and restarts the service. If the restarted
-  service fails, it rolls back to the previous image.
+  for a newer image with the same tag, pulls it, and restarts the service. If restarting the
+  systemd unit fails, Podman rolls back to the previous image.
 - **`LogOpt=max-size=50mb`.** The container log is a plain file with no rotation; a public
   site's Apache access log would grow without limit. It also vanishes when auto-update
   replaces the container, which is why the durable access log lives in Caddy.
@@ -422,10 +418,12 @@ confusing the first time.
 
 ---
 
-## 5. Persistent data
+## 5. Persistent application data
 
-There is none, and that is worth understanding because it decides what kind of host can run
-this. Three directories look like state and are not:
+This deployment has no persistent Sitrec application data, and that is worth understanding
+because it decides what kind of host can run this. Caddy's certificate and configuration
+state does persist in the named volumes from section 4.4. Three Sitrec directories look like
+state and are not:
 
 - **`sitrec-cache`** is the server's scratch space: current satellite element sets from
   CelesTrak with a freshness window, ADS-B traces, soundings, live-feed responses, a
@@ -450,7 +448,7 @@ Caddyfile that answers plain HTTP on the bare IP:
 
 ```
 http://203.0.113.10 {
-	reverse_proxy sitrec:8080
+	reverse_proxy 127.0.0.1:8080
 }
 ```
 
@@ -535,9 +533,8 @@ Releases after 2.147.2 read the standard `X-Forwarded-Proto` header
 The client address is deliberately not, for the reason below.
 
 With the default configuration the impact was nil, because the browser fetches ESRI and
-Terrarium tiles directly and server saves are off. The tile cache's redirect is relative,
-so it was never affected. It would have bitten the first time someone chose a proxied map
-source or uploaded a file.
+Terrarium tiles directly and server saves are off. It would have bitten the first time
+someone chose a server-proxied source or uploaded a file.
 
 A related limitation remains: per-caller throttles in the backend key on the client
 address, which behind the proxy is always Caddy's. They act as global limits. Trusting
@@ -591,9 +588,10 @@ must have the new domain added there first.
 
 **Disk.** `podman system df`. The prune timer removes old images weekly.
 
-**Resizing or rebuilding.** The box holds no state beyond the files under `~/sitrec`, which
-you keep a copy of. Rebuilding on a bigger VPS, or a different provider, is the root script
-and the user files. Nothing needs to be migrated.
+**Resizing or rebuilding.** The box holds no Sitrec application state beyond the files under
+`~/sitrec`, which you keep a copy of. Rebuilding on a bigger VPS, or a different provider,
+is the root script and the user files. Caddy can obtain fresh certificates, so its volumes
+do not need to be migrated.
 
 ---
 

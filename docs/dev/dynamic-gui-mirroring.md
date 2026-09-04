@@ -1,192 +1,232 @@
 # Dynamic GUI Mirroring
 
-> **There are two unrelated mirroring systems in Sitrec. This document describes the older one.**
->
-> - **`src/CustomManagerMirror.js` — this document.** Mirrors a WHOLE lil-gui folder (or a node's
->   GUI) into a standalone floating window, rebuilding it when the source's structure changes.
->   Nothing in the shipping UI uses it; it is a developer/console tool.
-> - **`src/MenuMirror.js` — not documented here.** Mirrors an INDIVIDUAL controller into another
->   menu, with the twin and the source bound to the same `object[property]`. This is the one the
->   shipping UI is built on (`ViewUIBarMenus.js`, `StarTrackerUI.js`, `CMotionAnalysisUI.js`,
->   `CNodeVIewChat.js`). If you are wiring a control into a view header or a second menu, that is
->   the system you want — read the header comment in `src/MenuMirror.js` and note its requirement
->   that the target menu be a polled root (`src/GUIRootRegistry.js`).
+Sitrec uses two related layers for GUI mirroring:
 
-The dynamic GUI mirroring system allows you to create standalone floating menus that mirror any existing GUI folder or node controls. These mirrors automatically update when the original GUI changes, making them perfect for scenarios where menus are programmatically modified (like switching between model and geometry modes).
+- [`src/MenuMirror.js`](../../src/MenuMirror.js) clones an individual lil-gui controller. The
+  source and twin bind to the same `object[property]`, and the helper copies controller type,
+  label, tooltip, range, units, visibility, options, and relevant callbacks. Its keyed
+  `shareAs()`/`addMirror()` API is used when independently built menus need the same control.
+- [`src/CustomManagerMirror.js`](../../src/CustomManagerMirror.js) manages a whole-folder mirror
+  in a draggable standalone menu. It uses `GUI.mirrorFolderFrom()` from `MenuMirror.js` for the
+  controller clones, then rebuilds the folder when supported structural or visibility changes
+  are detected.
 
-## Features
+Whole-folder mirroring is part of the shipping UI. Object, building, cloud, overlay, track, and
+video-adjustment edit/context menus use `setupDynamicMirroring()` or `showNodeEditMenu()`.
+The convenience methods `mirrorGUIFolder()`, `mirrorNodeGUI()`, and `createDynamicMirror()` are
+also useful from the browser console.
 
-- **Automatic Updates**: Mirrors detect when original menus change and update accordingly
-- **Event-Based Detection**: Uses efficient event hooking when possible, falls back to polling
-- **Model/Geometry Switching**: Handles dynamic GUI changes like CNode3DObject switching modes
-- **Manual Refresh**: Provides manual refresh capability when needed
-- **Proper Cleanup**: Automatically cleans up resources when mirrors are destroyed
+## Initialization Requirements
 
-## Basic Usage
+Call these methods only after Sitrec has created `Globals.menuBar`. A menu mirror also requires
+the named `guiMenus` entry to exist; a node mirror requires `NodeMan` and the node's GUI to have
+been created. Normal browser-console use after a sitch finishes loading satisfies these
+requirements.
 
-### Mirror a Standard GUI Menu
+`CustomManagerMirror.js` exports `mirrorMethods`, which `CustomSupport.js` mixes into
+`CCustomManager.prototype`. The running instance is exposed as `window.CustomManager`.
+
+## Convenience API
+
+### Mirror a Top-Level Menu
 
 ```javascript
-// Mirror the objects menu
-const objectsMirror = CustomManager.mirrorGUIFolder('objects', 'Objects Mirror', 300, 100);
-
-// Mirror the effects menu
-const effectsMirror = CustomManager.mirrorGUIFolder('effects', 'Effects Mirror', 400, 200);
+const objectsMirror = CustomManager.mirrorGUIFolder(
+    "objects",
+    "Objects Mirror",
+    300,
+    100,
+);
 ```
 
-### Mirror a Node's GUI
+`mirrorGUIFolder(sourceFolderName, menuTitle, x = 200, y = 200)` looks up
+`guiMenus[sourceFolderName]`, creates a persistent standalone menu, installs dynamic mirroring,
+opens it, and returns the GUI. It reports an error and returns `null` when the source menu is
+missing.
+
+The source name is the internal menu ID such as `objects`, `effects`, `view`, or `camera`, not
+the translated title displayed to the user.
+
+### Mirror a Node's `gui`
 
 ```javascript
-// Mirror a specific node's GUI (useful for 3D objects)
-const nodeMirror = CustomManager.mirrorNodeGUI('myObjectNode', 'Object Controls', 500, 150);
+const nodeMirror = CustomManager.mirrorNodeGUI(
+    "myObjectNode",
+    "Object Controls",
+    500,
+    150,
+);
 ```
 
-### Universal Mirror Creation
+`mirrorNodeGUI(nodeId, menuTitle, x = 200, y = 200)` resolves the node with `NodeMan.get(nodeId)`
+and mirrors `node.gui`. Use an existing node ID: the manager asserts on a missing ID in a
+development build. This convenience method does not fall back to `node.guiFolder`; use
+`showNodeEditMenu()` or pass the folder to `setupDynamicMirroring()` for those nodes.
+
+### Dispatch by Source Type
 
 ```javascript
-// Create mirrors using the universal function
-const menuMirror = CustomManager.createDynamicMirror('menu', 'objects', 'My Objects', 200, 100);
-const nodeMirror = CustomManager.createDynamicMirror('node', 'myNode', 'My Node', 300, 200);
+const menuMirror = CustomManager.createDynamicMirror(
+    "menu",
+    "objects",
+    "My Objects",
+    200,
+    100,
+);
+
+const nodeMirror = CustomManager.createDynamicMirror(
+    "node",
+    "myNode",
+    "My Node",
+    300,
+    200,
+);
 ```
 
-## Advanced Usage
+`createDynamicMirror(sourceType, sourceName, title, x = 200, y = 200)` dispatches to the two
+methods above. `sourceType` must be `"menu"` or `"node"`; another value logs an error and
+returns `null`.
 
-### Manual Refresh
+## Shipping Edit Menus
 
-If automatic detection misses a change, you can manually refresh:
+`showNodeEditMenu(node, clientX, clientY)` is the shared entry point for object edit windows.
+It:
+
+- uses `node.guiFolder`, or an object-valued `node.gui` as a fallback;
+- creates a persistent standalone menu;
+- installs dynamic mirroring;
+- enables object editing and its move widget for `CNode3DObject` instances;
+- opens the menu and places it clear of the invocation point; and
+- clears the editing-object state when the menu is destroyed.
+
+It returns the standalone GUI, or `null` when the node has no usable GUI or menu creation is
+blocked.
+
+Other context-menu paths already create their own standalone GUI and call the lower-level API:
 
 ```javascript
-const mirror = CustomManager.mirrorGUIFolder('objects', 'Objects Mirror');
-mirror.refreshMirror(); // Force update
+const menu = Globals.menuBar.createStandaloneMenu("Track", x, y, true);
+if (menu) {
+    CustomManager.setupDynamicMirroring(track.guiFolder, menu);
+    menu.open();
+}
 ```
 
-### Handling Model/Geometry Switching
+The fourth `createStandaloneMenu()` argument controls outside-click dismissal. Persistent edit
+menus normally pass `false`; short-lived context menus pass `true`.
 
-The system automatically handles CNode3DObject switching between model and geometry modes:
+## Refresh and Cleanup
+
+Mirrors returned by `mirrorGUIFolder()` and `mirrorNodeGUI()` get a convenience method:
 
 ```javascript
-// Create a mirror for a 3D object
-const objectMirror = CustomManager.mirrorNodeGUI('myObject', '3D Object Controls');
-
-// When the object switches from model to geometry (or vice versa),
-// the mirror will automatically update to show the new controls
+const mirror = CustomManager.mirrorGUIFolder("objects", "Objects Mirror");
+mirror?.refreshMirror();
 ```
 
-### Multiple Mirrors
+`refreshMirror()` calls `updateMirror()`. It rebuilds only when the current GUI signature differs
+from the last one. A menu wired directly with `setupDynamicMirroring()` does not receive this
+convenience method; call `CustomManager.updateMirror(menu)` instead.
+
+Destroy a standalone mirror through its normal `destroy()` method:
 
 ```javascript
-// Create multiple mirrors for different menus
-const mirrors = [];
-['objects', 'effects', 'view'].forEach((menuName, index) => {
-    const mirror = CustomManager.mirrorGUIFolder(
-        menuName, 
-        `${menuName} Mirror`, 
-        200 + (index * 250), 
-        100
-    );
-    mirrors.push(mirror);
+mirror?.destroy();
+```
+
+The installed destroy wrapper unregisters the standalone GUI root, clears a fallback polling
+interval when present, runs the recorded event-hook cleanup, and then destroys the GUI.
+
+## What Stays Synchronized
+
+`setupDynamicMirroring(sourceFolder, standaloneMenu)` performs an initial clone and registers the
+standalone menu as a polled GUI root. Each controller clone binds to the same object and property
+as its source. `MenuMirror` wires changes in either controller through the source's side effect,
+and whole-folder clones force `.listen()` on both ends so direct writes from code or 3D handles
+are reflected during the render loop.
+
+`CustomManagerMirror` separately watches folder structure and visibility. It wraps supported
+lil-gui operations (`add`, `addColor`, `addFolder`, `remove`, controller destruction, and
+`show`) and schedules `updateMirror()` for the next task. If installing those hooks throws, it
+falls back to checking the signature every 100 ms.
+
+The signature contains:
+
+- controller names, runtime types, and hidden/visible state; and
+- nested folder titles, open/closed state, hidden/visible state, and recursive contents.
+
+When the signature changes, the standalone contents are destroyed and recreated in source DOM
+order through `GUI.mirrorFolderFrom()`.
+
+The event hooks do not observe every possible in-place mutation. In particular, changing only a
+label, tooltip, option list, or folder open state does not by itself schedule a whole-folder
+signature check. Keyed single-controller mirrors have stronger propagation for names,
+visibility, and dropdown options. For a whole-folder source that mutates unsupported metadata,
+call `updateMirror()` after the mutation or rebuild through a supported structural operation.
+
+## Single-Controller Mirroring
+
+Do not create a whole standalone folder when one control needs to appear in a second menu. Use
+the keyed API from `MenuMirror.js`:
+
+```javascript
+sourceController.shareAs("view:lookView:labels");
+headerMenu.addMirror("view:lookView:labels", {
+    name: "Labels",
 });
 ```
 
-## API Reference
+Registration and subscription are order-independent. The target must be a polled root; see
+[`src/GUIRootRegistry.js`](../../src/GUIRootRegistry.js). Register the source after its
+`.name().tooltip().onChange()` chain so `shareAs()` captures its finished side effect.
 
-### `mirrorGUIFolder(sourceFolderName, menuTitle, x, y)`
-
-Creates a dynamic mirror of a GUI menu.
-
-- `sourceFolderName` (string): Name of the menu in guiMenus to mirror
-- `menuTitle` (string): Title for the mirrored menu
-- `x` (number): X position for the menu (default: 200)
-- `y` (number): Y position for the menu (default: 200)
-- Returns: GUI object or null if source not found
-
-### `mirrorNodeGUI(nodeId, menuTitle, x, y)`
-
-Creates a dynamic mirror of a node's GUI.
-
-- `nodeId` (string): ID of the node whose GUI to mirror
-- `menuTitle` (string): Title for the mirrored menu
-- `x` (number): X position for the menu (default: 200)
-- `y` (number): Y position for the menu (default: 200)
-- Returns: GUI object or null if node not found
-
-### `createDynamicMirror(sourceType, sourceName, title, x, y)`
-
-Universal function to create dynamic mirrors.
-
-- `sourceType` (string): Either 'menu' or 'node'
-- `sourceName` (string): Menu name or node ID
-- `title` (string): Title for the mirrored menu
-- `x` (number): X position (default: 200)
-- `y` (number): Y position (default: 200)
-- Returns: GUI object, or null if the source is not found or `sourceType` is not 'menu'/'node'
-
-## How It Works
-
-### Detection Methods
-
-1. **Event-Based Detection** (Preferred): Hooks into GUI structure methods (`add()`, `addColor()`, `addFolder()`, `remove()`) and each controller's `destroy()` to detect changes immediately.
-
-2. **Polling Detection** (Fallback): If event-based detection fails, falls back to checking for changes every 100ms using GUI signatures.
-
-### GUI Signatures
-
-The system creates signatures of GUI state by examining:
-- Controller names, types, and visibility
-- Folder names and open/closed state
-- Recursive structure of nested folders
-
-When signatures change, the mirror is rebuilt to match the new state.
-
-### Cleanup
-
-Mirrors automatically clean up when destroyed:
-- Clears polling intervals
-- Restores original GUI methods
-- Removes event listeners
-- Disposes of GUI elements
-
-## Examples
-
-See `tests/dynamic-mirroring.test.js` for usage examples, or use the console examples below.
-
-## Console Usage
-
-You can create mirrors directly from the browser console:
+For a one-off controller clone when both controllers are already in hand:
 
 ```javascript
-// Mirror the objects menu
-CustomManager.mirrorGUIFolder('objects', 'Objects Mirror');
-
-// Mirror a specific node
-CustomManager.mirrorNodeGUI('myNode', 'Node Mirror');
-
-// Universal creation
-CustomManager.createDynamicMirror('menu', 'effects', 'Effects Mirror');
+sourceController.mirrorTo(targetMenu);
 ```
+
+See the header comments in `MenuMirror.js` for lifecycle and rebuild details.
+
+## Multiple Console Mirrors
+
+Only one persistent standalone menu is tracked at a time. Creating another persistent
+standalone menu destroys the previous one. If several controls must coexist, mirror one common
+folder or build a single standalone target and mirror the desired controllers into it.
+
+## Tests
+
+Run the mirroring tests directly:
+
+```bash
+npx jest tests/dynamic-mirroring.test.js tests/MenuMirror.test.js tests/PanAzimuth360.test.js --runInBand
+```
+
+`tests/dynamic-mirroring.test.js` models the whole-folder orchestration with test doubles.
+`tests/MenuMirror.test.js` and `tests/PanAzimuth360.test.js` exercise the real controller-mirror
+implementation, including type fidelity, callbacks, ranges, and wrapping.
 
 ## Troubleshooting
 
-### Mirror Not Updating
+### The Source Cannot Be Found
 
-1. Check if the original GUI is actually changing
-2. Try manual refresh: `mirror.refreshMirror()`
-3. Check console for error messages
+Use the internal `guiMenus` ID, and wait until the menu or node has been constructed. Check a
+node with `NodeMan.exists(id)` before calling the node convenience method.
 
-### Performance Issues
+### Values Do Not Follow Code or a 3D Handle
 
-1. Increase the polling interval by editing the hard-coded `checkInterval` value (default 100ms) in `setupDynamicMirroring` in `src/CustomManagerMirror.js`. Note this only affects the polling fallback; event-based detection is used when available.
-2. Limit the number of active mirrors
-3. Destroy unused mirrors to free resources
+The standalone GUI must remain registered as a root so `.listen()` controllers are polled.
+Always use `setupDynamicMirroring()` rather than calling `mirrorFolderFrom()` alone for a
+floating edit menu.
 
-### Event Detection Not Working
+### Structure Does Not Update
 
-The system automatically falls back to polling if event detection fails. Check console logs to see which method is being used.
+Call `mirror.refreshMirror()` for a convenience mirror, or
+`CustomManager.updateMirror(standaloneMenu)` for a directly wired menu. If a new kind of source
+mutation needs automatic support, add a focused hook and test rather than shortening the
+100 ms fallback interval globally.
 
-## Best Practices
+### A Second Popup Closes the First
 
-1. **Destroy Unused Mirrors**: Call `mirror.destroy()` when no longer needed
-2. **Use Descriptive Titles**: Make it easy to identify different mirrors
-3. **Position Strategically**: Place mirrors where they won't overlap with main UI
-4. **Test Dynamic Changes**: Verify mirrors update correctly for your specific use case
-5. **Monitor Performance**: Watch for performance impact with many active mirrors
+This is expected for persistent standalone menus. `createStandaloneMenu()` enforces a single
+active persistent menu and a single active context menu.

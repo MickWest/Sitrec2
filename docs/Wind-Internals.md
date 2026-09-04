@@ -1,13 +1,13 @@
 # Wind: data flow, formats, and sources
 
-Companion to [Wind.md](Wind.md). That doc explains what each control does; this one explains where the data comes from, how it moves through the stack, and what the on-disk and in-memory formats look like. It ends with a discussion of how to make the source list *configurable* (env vars / config files) so deployers and end users can plug in their own.
+Companion to [Wind.md](Wind.md). That doc explains what each control does; this one explains the implemented data sources, how data moves through the stack, and what the on-disk and in-memory formats look like.
 
 ## Conventions used below
 
 A few short names recur:
 
 - **`wn`** — shorthand for "the wind node", `NodeMan.get("windField")` (an instance of `CNodeDisplayWindField` defined in `src/nodes/CNodeDisplayWindField.js`). The Wind GUI binds directly to its fields.
-- **`par`** — Sitrec's global runtime-parameter object (`import {par} from "../par"`). Holds cross-cutting UI strings and a few non-node knobs (`par.windStatus`, `par.balloonCount`).
+- **`par`** — Sitrec's global runtime-parameter object (`import {par} from "../par"`). The Wind GUI mirrors `wn.statusText` into `par.windStatus`; `par.balloonCount` controls how many nearby sounding profiles are requested.
 - **GFS** — the NOAA Global Forecast System. Numerical weather prediction model run four times daily.
 - **MISB** — Motion Imagery Standards Board. Standard 0903 defines a tag set used by aircraft pod metadata, including columns for wind direction (35) and speed (36).
 - **eccodes** — ECMWF's GRIB decoding library (`pip install eccodes` + a system shared lib). `tools/fetch_wind.py` imports it.
@@ -34,7 +34,7 @@ Each entry in `WIND_SOURCES` (`src/nodes/WindSources.js`) maps to one branch ins
 |---|---|---|---|---|
 | `gfs` | `_fillFromGridSource(altFt)` | NOMADS GRIB filter, AWS S3 fallback | `windProxy.php` → `fetch_wind.py` → eccodes | direct (already gridded) |
 | `custom` | `_fillFromGridSource(altFt)` | env `CUSTOM_WIND_URL` template | `customWindProxy.php` | direct (already gridded) |
-| `uwyo` | `_fillFromSoundings(altFt, "uwyo")` | weather.uwyo.edu (cgi-bin or wsgi) | `proxySounding.php` (CORS) | **IDW** |
+| `uwyo` | `_fillFromSoundings(altFt, "uwyo")` | weather.uwyo.edu WSGI endpoint | `proxySounding.php` (CORS, caching, rate limiting) | **IDW** |
 | `igra2` | `_fillFromSoundings(altFt, "igra2")` | ncei.noaa.gov IGRA2 zips | direct browser `fetch()` | **IDW** |
 | `manual-soundings` | `_fillFromSoundings(altFt, "manual-soundings")` | files the user dropped in (IGRA2, UWYO-CSV, or UWYO-LIST — content-detected) | `FileManager.parseResult()` → `CTrackFileSonde` | **IDW** |
 | `openmeteo` | `_fillFromOpenMeteo(altFt)` | api.open-meteo.com / historical-forecast-api.open-meteo.com | direct browser `fetch()` | **IDW** |
@@ -70,7 +70,8 @@ fetch_wind.py:
   └ write JSON to the cache directory
 
 Browser (continued):
-  ├ FileManager.add(fileId, json) — `skipSerialization = true` (don't bake the URL into save files)
+  ├ compress JSON with pako and FileManager.add(fileId, json, compressed.buffer)
+  │   — `skipSerialization = true`; save only the level/date/cycle catalog
   ├ this._levelCache[`${dateStr}_${hour}_${level}`] = json
   ├ this.windU / windV = arrays
   └ rebuildStreamlines() + propagateToWindNodes()
@@ -128,7 +129,8 @@ User-side fetching (separate from the above):
             │   (one station database for both UWYO and IGRA2 — UWYO has no separate file)
             ├ for each: fetchUWYOSounding(...) or fetchIGRA2Data(...)
             │   on UWYO 429 → uwyoRateLimitUntil = now + 66 s, retry later
-            │   on no-data → walk to the next-nearest station
+            │   on no-data or fewer than two usable wind levels → try the next station
+            │   stop after count × 3 attempts (or the end of the station list)
             └ FileManager.add(filename, parsedProfile) → creates a CNodeAtmosphericProfile
 ```
 
@@ -136,10 +138,11 @@ User-side fetching (separate from the above):
 
 UWYO's web endpoints don't allow cross-origin requests, so the browser hits `sitrecServer/proxySounding.php` instead. The proxy:
 
-1. Builds the upstream URL (CGI-bin LIST format, or the newer WSGI per-second CSV).
-2. Hashes the URL with MD5 and looks for `sitrec-cache/<md5>.html`. Cache lifetime is 24 h.
-3. On miss, makes a curl request to UWYO and writes the response to the cache.
-4. Returns the response as `text/html`, with `X-Sounding-Cache: hit|miss`.
+1. Builds a WSGI URL for either `TEXT:LIST` or `TEXT:CSV`. The retired CGI endpoint is no longer used.
+2. Hashes the URL with MD5 and looks for `sitrec-cache/<md5>.html`. A positive response is cached for 24 hours.
+3. Checks a negative-cache marker, `sitrec-cache/<md5>.miss`, before contacting UWYO. A missing sounding older than 12 hours is cached for 30 days; a recent miss is retried after one hour.
+4. On a cold cache miss, applies a per-client limit of 20 real upstream requests per minute, fetches with curl, and stores either the response or a missing marker. Positive and negative cache hits do not consume the request budget.
+5. Returns `X-Sounding-Cache: hit`, `miss`, `miss-hit`, or `miss-store`, which distinguishes the four cache outcomes.
 
 The browser also enforces a **client-side rate limit**: after a 429, all UWYO calls in the tab pause for 66 s (`RATE_LIMIT_DELAY_MS`) and update the status field with a countdown.
 
@@ -180,7 +183,7 @@ This is a *per-point* request — Open-Meteo doesn't supply gridded fields the w
 
 ### Track-derived winds
 
-If a sitch has a track file with MISB columns **35 (WindDirection)** and **36 (WindSpeed)**, the dropdown automatically gets a **Track: \<shortName\>** entry. Picking it sets `this.source` to the `track:TrackData_<shortName>` key. `_fillFromTrackSource(altFt)` then reads the MISB WindDirection (35) / WindSpeed (36) row at the current frame, converts it to (u, v), and builds the wind grid from it — uniform if there are no wind-node positions, otherwise IDW over the wind-relevant track points. The streamline mesh and arrow overlay sample it like any other source.
+If a sitch has a track file with MISB columns **35 (WindDirection)** and **36 (WindSpeed)**, the dropdown automatically gets a **Track: \<shortName\>** entry. Picking it sets `this.source` to the `track:TrackData_<shortName>` key. `_fillFromTrackSource(altFt)` reads the row at the timeline's corresponding track slot, interprets WindSpeed as knots, converts the direction and speed to `(u, v)` in m/s, and builds the wind grid — uniform if there are no wind-node positions, otherwise IDW over the wind-relevant track points. During playback the field is rebuilt when direction changes by more than 2° or speed changes by more than 1 knot.
 
 ## Debugging wind end-to-end
 
@@ -189,7 +192,7 @@ A checklist for "wind isn't working" reports, pre-checked against the layers abo
 1. **What does the browser say?** Read `wn.statusText` (also displayed as **Status** in the GUI). Errors there name the failing source — start there.
 2. **Is the wind node actually trying?** In the browser console: `NodeMan.get("windField").source` and `.windAltFt`. Confirm they match what the user thinks they picked.
 3. **Did the request reach the proxy?** Network tab → filter `windProxy` (or `proxySounding`). Status code, response size. A 502 from the proxy means upstream failed; a 200 with empty / wrong content means cache or parse problem.
-4. **Did the proxy cache miss / hit?** Server logs show the python invocation; the response header `X-Sounding-Cache: hit|miss` (sounding only) reports cache status directly.
+4. **Did the proxy cache miss / hit?** Server logs show the Python invocation; for soundings, inspect `X-Sounding-Cache` for `hit`, `miss`, `miss-hit`, or `miss-store`.
 5. **Did `fetch_wind.py` succeed?** Run it by hand: `python3 tools/fetch_wind.py --date 20260427 --hour 12 --level 500 --output /tmp/`. If eccodes import fails, the deployer's missing the system library.
 6. **Did the JSON make it back?** `ls -la data/wind/` for an entry matching the date / hour / level. Truncated files (`size < 1KB`) usually mean a partial GRIB decode — delete and retry.
 7. **Did the browser register it in FileManager?** `FileManager.list[fileId]` should be present after a successful load. Stale `_levelCache` entries can survive a source switch — `wn._levelCache = {}` followed by **Refresh Wind Data** is the nuclear option.
@@ -249,15 +252,15 @@ The implementation choices in `_buildGridFromSamples` (`src/nodes/CNodeDisplayWi
 
 ![Cache layers](wind-images/cache-layout.svg)
 
-- **Server disk cache** — `data/wind/wind_<DATE>_<HH>z_<LEVEL>.json` (no expiry on exact-cycle hits, 4 h staleness on fallback hits) and `sitrec-cache/<md5>.html` (24 h).
-- **Browser FileManager** — every successful GFS level is registered with a deterministic `fileId = "windGrid_${source}_${suffix}"` and `entry.skipSerialization = true` (so the blob doesn't bloat save files). `entry.staticURL = "data/wind/..."` lets a reload re-fetch the same JSON deterministically.
+- **Server disk cache** — `data/wind/wind_<DATE>_<HH>z_<LEVEL>.json` (no expiry on exact-cycle hits, 4 h staleness on fallback hits), `sitrec-cache/<md5>.html` (positive soundings, 24 h), and `sitrec-cache/<md5>.miss` (missing soundings, one hour or 30 days depending on age).
+- **Browser FileManager** — every successful GFS or custom level is compressed with pako and registered under a deterministic `fileId = "windGrid_${source}_${suffix}"`. The entry is marked `compressed`, `dynamicLink`, and `skipSerialization`, so the grid blob does not bloat save files. Save metadata retains the date, cycle, level, and source; reloads re-fetch those levels through the proxy and repopulate FileManager.
 - **In-flight node state** — `wn._levelCache["<date>_<hour>_<level>"]` holds the last-applied JSON, keyed by a composite `dateStr_hour_level` string (e.g. `"20260427_12_500"`); `wn.windU`, `wn.windV`, `wn.windCov` are the three flat arrays the shader and `sampleWind()` read from.
 
 ### Time / units
 
 - All timestamps round-trip as ISO 8601 UTC.
 - GFS uses **m/s** internally (eccodes returns SI). Sounding parsers normalize whatever the source format provides into m/s before building (u, v).
-- Track MISB rows specify direction in degrees and speed in m/s (per MISB 0903 std).
+- Track-derived rows are interpreted as direction in degrees and speed in knots by `_fillFromTrackSource`; the conversion to m/s happens before grid construction.
 - The GUI displays speeds in knots, but every internal value (windU, windV, sampleWind) is m/s. The conversion is at the GUI boundary only.
 
 ### Coordinate systems
@@ -271,7 +274,7 @@ The implementation choices in `_buildGridFromSamples` (`src/nodes/CNodeDisplayWi
 Two layers of coalescing keep things sane when the user drags the altitude slider or flips sources mid-fetch:
 
 1. **In `fetchWindForAltitude`** — `this.fetching` flag plus `_pendingAltFt` / `_pendingSource` slots. While a fetch is in flight, new requests update the slots; the in-flight call's tail re-runs once with the latest values when it lands.
-2. **In `CustomManagerSetup._loadWindForCurrentSource`** — `this._windLoadInFlight` promise. Subsequent calls forward through `Promise.allSettled`, ensuring `par.windStatus` ends up reflecting the *final* state, not whatever the first fetch said.
+2. **In `CustomManagerSetup._loadWindForCurrentSource`** — `this._windLoadInFlight` promise. Subsequent calls forward through `Promise.allSettled`, ensuring the GUI's `par.windStatus` mirror ends up reflecting the wind node's final `statusText`, not whatever the first fetch said.
 
 The combination means rapid slider drags collapse to one network round-trip per cached level, and rapid source flips don't end up showing the old source's status text.
 
@@ -279,153 +282,22 @@ The combination means rapid slider drags collapse to one network round-trip per 
 
 - **Time-varying GFS** — only the f000 analysis is fetched; forecasts (f003, f006, …) are not currently used.
 - **Wind animation across cycles** — Sitrec snapshots one cycle at the sitch's start time and keeps it for the whole sitch. Long sitches that span multiple cycles see static wind.
-- **Anything below 10 m AGL or above 100 hPa** — outside that range, GFS levels exist (50 hPa, 30 hPa, 10 hPa) and Open-Meteo levels exist (50, 30 hPa) but the sounding profiles often don't, and the GUI altitude slider stops at 60,000 ft (roughly the 70 hPa level) by convention.
+- **Interactive display above 60,000 ft** — the GUI altitude slider and track-altitude lock clamp at 60,000 ft. The GFS/custom level table itself reaches 10 hPa (about 101,000 ft), and balloon baking calls `ensureLevelsUpToAltitude()` to prefetch every level through one bracket above the requested climb altitude, with at most three level requests in flight at once. Sounding coverage at those altitudes still depends on the loaded profile.
 - **Resolution > 1°** — code paths exist (`build_nomads_url(... resolution="0p25")`) but PHP doesn't expose a `resolution` parameter to the browser.
 
 ---
 
-# Toward configurable data sources
+## Extending the implemented source list
 
-A first step already exists: a single env-driven custom gridded source (`SITREC_USE_CUSTOM_WIND` + `CUSTOM_WIND_URL` template + `sitrecServer/customWindProxy.php`), which lets a deployer add one extra GFS-format source without a code change. The proposal below generalizes that one-off into a full registry. Apart from that custom hook, the upstream URLs and the source list are still hard-coded in three places:
+The built-in entries are defined in `src/nodes/WindSources.js`. Adding another built-in source requires a source declaration there and a matching fetch branch in `CNodeDisplayWindField.fetchWindForAltitude()`; sources that produce scattered samples can reuse `_buildGridFromSamples()`, while gridded sources must return the Wind JSON shape above.
 
-1. `src/nodes/WindSources.js` — the dropdown menu.
-2. `tools/fetch_wind.py` (`build_nomads_url`, `build_aws_url`) — GFS endpoints.
-3. `sitrecServer/proxySounding.php` (`weather.uwyo.edu/...`) — UWYO endpoints.
+One deployment-configured gridded source is implemented already:
 
-That's fine for the upstream public sources we know about, but it shuts the door on:
+- Set `SITREC_USE_CUSTOM_WIND=true` to add it to the dropdown.
+- Set `SITREC_CUSTOM_WIND_MENU_NAME` to choose its label.
+- Set `CUSTOM_WIND_URL` to a server-side URL template containing `{YYYY}`, `{MM}`, `{DD}`, `{HH}`, and `{LEVEL}`.
+- Optionally set `CACHE_CUSTOM_WIND=true` to cache responses in `data/wind/`.
 
-- **Internal NWP feeds** (e.g. a research lab's HRRR mirror, an institutional ECMWF subscription).
-- **Geographically-restricted users** who are blocked from NOMADS / AWS but have a working alternative.
-- **Air-gapped deployments** that need to point at a LAN-hosted GRIB cache.
-- **Future public sources** that come and go — adding one shouldn't require a code release.
+The browser calls `sitrecServer/customWindProxy.php`; the upstream URL and any credentials remain server-side. The upstream must return the same gridded JSON used by GFS. The proxy rounds requests to a six-hour cycle for its cache key and expands `{LEVEL}` to `10m` for the surface or `<n>hPa` for a pressure level.
 
-## Proposal: env-driven source registry
-
-The smallest change with the biggest payoff is to make `WIND_SOURCES` a *runtime configuration* instead of a hard-coded array. Three pieces:
-
-1. **A schema** — what fields a source declaration has.
-2. **A loader** — reads declarations from env vars / a config file at startup, falls back to the current built-in list.
-3. **A registration hook** in `CNodeDisplayWindField` so each source can plug its own `_fillFrom*` implementation without touching the node.
-
-### Schema (sketch)
-
-A source declaration object:
-
-```jsonc
-{
-  "key": "ecmwf-internal",                  // id used in wn.source / save files
-  "label": "ECMWF (internal mirror)",       // dropdown label
-  "short": "ECMWF",                         // compact label for the compass widget
-  "type": "gridded",                        // gridded | sounding | uniform | per-point
-  "endpoints": {
-    "browser": null,                        // direct browser fetch URL template (or null = use proxy)
-    "proxy":   "ecmwfProxy.php"             // PHP proxy endpoint relative to sitrecServer/ (or null = direct)
-  },
-  "params": {                               // template params for URL construction
-    "resolution": "0p25",
-    "levels": [10, 50, 100, 200, 250, 300, 500, 700, 850, 925, 1000]
-  },
-  "auth": {                                 // optional — value comes from env var, never committed
-    "header": "X-API-Key",
-    "envVar": "WIND_ECMWF_KEY"
-  },
-  "autoLoad": null,                         // for sounding-style sources only
-  "handler": "gfs"                          // which built-in JS handler to use; OR a path to a plugin module
-}
-```
-
-### Config file shape
-
-The config file (`config/wind-sources.json`) is a *meta-document* — it describes how to derive the runtime registry from the built-ins, not a flat list. Three top-level verbs:
-
-```jsonc
-{
-  "version": 1,
-  "extends": "default",     // start from built-in WIND_SOURCES (or "none" for empty)
-  "add":     [<source-decl>, ...],
-  "disable": ["uwyo", ...]
-}
-```
-
-A loader applies `extends` → `add` → `disable` in that order to produce the final list. `version` is mandatory and refused if newer than the loader understands.
-
-### Loader
-
-The loader walks three surfaces in priority order and merges:
-
-1. **Built-in defaults** — the current `WIND_SOURCES` array, kept in `WindSources.js` as the fallback (`extends: "default"`).
-2. **Deployment config file** — `config/wind-sources.json` (read at server boot for the PHP layer; injected as a JS module for the browser via the existing `config-install.js` overlay pattern).
-3. **Environment variables** (highest precedence):
-   - `SITREC_WIND_SOURCES_FILE` — path to a JSON file overriding any of the above.
-   - `SITREC_WIND_DISABLE` — comma-separated keys to remove (e.g. `gfs,uwyo` for an air-gapped install).
-   - `SITREC_WIND_ENABLE_ONLY` — whitelist (only these keys appear).
-   - `SITREC_WIND_<KEY>_ENDPOINT` / `SITREC_WIND_<KEY>_KEY` — per-source URL / auth overrides. The `<KEY>` placeholder uppercases the source key and replaces `-` with `_` (so `ecmwf-internal` → `SITREC_WIND_ECMWF_INTERNAL_ENDPOINT`).
-
-The PHP layer reads the same JSON. `windProxy.php` becomes a generic gridded-source proxy that picks an entry by `?source=<key>` and applies the entry's `endpoints.proxy` template; the fetcher's GFS path stays as the built-in handler keyed `"handler": "gfs"`.
-
-### Handler dispatch
-
-`CNodeDisplayWindField.fetchWindForAltitude` currently has a hard `if (source === "gfs") … else if (source === "uwyo") …` ladder. Replace it with a registry lookup keyed on the declaration's `handler` field:
-
-```js
-const decl    = WindSourceRegistry.get(this.source);
-const handler = WindSourceRegistry.getHandler(decl.handler);
-if (!handler) throw new Error(`Unknown handler '${decl.handler}' for source '${this.source}'`);
-await handler.fetch(this, altFt, decl);
-```
-
-The handler receives the source declaration, so multiple declarations can share one implementation by setting the same `handler` value (e.g. an HRRR mirror and a GFS mirror both use `handler: "gfs"` if the upstream wire format matches).
-
-Built-in handlers move to `src/nodes/wind/handlers/{gfs,sounding,openmeteo,manual}.js` — each behind the same registry interface. **A custom handler not covered by these four still requires shipping JS code** (a new module, plus a build); the JSON config alone can only re-point existing handlers at new endpoints. v1 of the registry is intentionally limited to that case to keep the surface small. A future iteration could load handlers from a configured directory at runtime.
-
-### Example: enabling a private GFS-format mirror
-
-A deployer at a research lab wants to point their team's Sitrec at an internal mirror that serves GFS-format JSON over a different URL. The wire format is GFS, so the built-in `gfs` handler works as-is — only the endpoint changes:
-
-```bash
-# .env (server-side)
-SITREC_WIND_SOURCES_FILE=/etc/sitrec/wind-sources.json
-```
-
-```jsonc
-// /etc/sitrec/wind-sources.json
-{
-  "version": 1,
-  "extends": "default",
-  "add": [
-    {
-      "key": "gfs-lab",
-      "label": "GFS (lab mirror)",
-      "short": "GFS-lab",
-      "type": "gridded",
-      "handler": "gfs",
-      "endpoints": { "proxy": "windProxyLab.php" },
-      "params": { "resolution": "1p00" }
-    }
-  ],
-  "disable": ["uwyo"]
-}
-```
-
-After a server restart, the Wind Source dropdown gains `GFS (lab mirror)` and loses `UWYO Soundings`. The lab provides `sitrecServer/windProxyLab.php` (often a symlink or trivial wrapper around `windProxy.php` configured to talk to a different upstream). **No JS code change is required** in this case because the wire format matches the built-in `gfs` handler.
-
-A truly different format (e.g. ECMWF MARS extracts) would require a new handler module — not just a config file. That's the v1 limitation called out above.
-
-### Migration
-
-- Phase 1: ship `WindSourceRegistry` + the loader. Built-ins are registered through it but no config file is read yet. **No behaviour change.**
-- Phase 2: add the JSON / env loader. Existing sitches keep their `wn.source = "gfs"` etc., still resolve to the same handlers. Save files are forward-compatible (the registry resolves keys by the same string).
-- Phase 3: surface this in the docs as a deployer-facing feature. Update `config-install.js` template with `wind-sources.json` overlay example.
-- Phase 4 (optional): in-app GUI for source management — "+ Add Source…" with URL template / preview. Probably gated behind admin role.
-
-### Open questions for the plan
-
-1. **Where do per-source secrets go?** Browser-level fetches with `X-API-Key` headers expose the key to anyone who opens DevTools. The proxy layer is a better home for keys, but then the source is "proxied" and the browser-direct shortcut goes away. Probably correct to mandate proxy-routing for any source that needs auth.
-2. **How do we handle source-specific UI knobs?** GFS has no per-source knobs today; UWYO has `Sounding Count`. A truly generic registry would let a source declare its own GUI controls. Out of scope for v1, probably — start with shape-fixed sources.
-3. **What about the `Track:` synthetic sources?** Those are runtime-discovered, not config-driven — they should bypass the registry. The current `windSourceLabelsToKeysWithTracks()` mechanism already handles that and can stay.
-4. **Save-file forward compatibility.** A sitch saved with `wn.source = "hrrr-lab"` loaded on an instance that doesn't have that source registered should fall back gracefully. Proposal: surface a one-time warning, switch to `"manual"`, leave the saved string alone in `wn.source` so a re-save preserves it. (Don't silently rewrite — the user may move to another instance that *does* have it.)
-5. **Plugin handler discovery.** v1 = handlers are registered at module load (built-ins import each other). v2 (out of scope) = `import.meta.glob` over a configured plugin directory. v1 docs need to make this distinction explicit for deployers.
-
----
-
-This document is a description of the system *as built today*. The "Toward configurable data sources" section is a starting-point proposal — a basis for a separate plan, not a commitment.
+This hook adds one GFS-shaped source. It is not a general runtime source registry: changing the wire format, adding source-specific controls, or adding a new fetch strategy still requires code and a build.

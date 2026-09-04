@@ -1,12 +1,13 @@
 # Installing Hardened Sitrec on AWS
 
-A hardened Sitrec deployment is a full-server install that runs inside a network with no
-route to the internet, authenticates every user with a client certificate, keeps user files
-in a private object-storage bucket, and reaches no external data source unless the operator
-stages a mirror of it inside the same network. This guide describes how to build, deploy,
-configure and verify that shape on AWS. It is written for a person doing the deployment and
-for an automated agent maintaining it, so every setting is named, every command is given,
-and the status table below says exactly which parts exist in this release.
+A hardened Sitrec deployment is a full-server install whose application tasks have no
+default route to the internet. A public load balancer terminates HTTPS and authenticates
+every user with a client certificate; private object storage holds user files; and external
+data is used only when the operator stages an approved source on a reachable service. This
+guide describes how to build, deploy, configure and verify that shape on AWS. It is written
+for a person doing the deployment and for an automated agent maintaining it, so every
+setting is named, every command is given, and the status table below says exactly which
+parts exist in this release.
 
 It complements, and does not replace, the general [install guide](Installing-and-configuring.md),
 the [secure build](Secure-Build.md) reference, and the [VPS guide](Deploying-on-a-VPS.md),
@@ -60,8 +61,14 @@ ECS service on Fargate, one task, the Sitrec image from your ECR
    - no default route out; interface endpoints for ECR, logs, secrets; gateway endpoint for S3
         |
         +--> S3 bucket "data": user saves; private; Block Public Access; SSE-KMS
-        +--> your own map, elevation, element-set and wind services (section 9)
+
+browser --> your own map and elevation services (direct browser requests)
+task    --> your own current element-set and wind services (server-side proxies)
 ```
+
+Only the load balancer subnets have an internet-gateway route. The application tasks are in
+private subnets with no default route and no NAT gateway. Section 9 explains which custom
+data requests originate in the browser and which originate in the task.
 
 Why this shape: there is no host to patch, the image already runs as any user on port
 8080, configuration is environment, the only state is S3, and the container's standard
@@ -102,7 +109,8 @@ You need:
 - A user map: which certificate identifiers may log in, and as which Sitrec user and groups.
   Section 7.3.
 - A machine that can build the image (Node 22, Docker or Podman) and push to ECR, or a
-  way to carry a saved image in (section 5.3).
+  way to carry a saved image in (section 5.3). To use `deploy/aws/`, install Terraform
+  1.9 or newer; `terraform init` installs the module's AWS provider constraint (`~> 6.0`).
 - Optionally, an internal map tile service and elevation service to point the app at.
   Without one the map is blank, by design, and the first tile error says so: it names the
   directory or service it expected, the setting that points at it, and the container mount
@@ -180,7 +188,7 @@ with `no_trust_store`.
 Before the image goes anywhere, review it:
 
 ```
-npm run audit-container -- --image=sitrec-hardened:local --profile=site
+npm run audit-container -- --image=sitrec-hardened:local --profile=published
 ```
 
 This writes a report, a bill of materials and the supporting evidence to `dist-audit/`. It
@@ -189,12 +197,13 @@ first: it states what the image runs as, what the base image brings with it, whi
 advisories a rebuild would close, and the runtime restrictions the image will tolerate —
 which is the raw material for the task definition in section 8.4.
 
-Use `--profile=site` for an image you build with your own configuration compiled in: the
-credentials it carries are expected, and the report treats them as a handling requirement —
-the image becomes as sensitive as its contents, and belongs only in a registry whose read
-access matches. An image built from `config/shared.env.example`, which carries no
-credential and takes its settings from the environment at container start, is reviewed with
-the default `--profile=published` instead. See
+The secure bundle always packages `config/shared.env.example` and takes deployment settings
+from the environment at container start, so the strict `--profile=published` is the right
+profile even for a locally built hardened image. Use `--profile=site` only if you deliberately
+build a different image with the deployment's live configuration compiled in. That profile
+still reports every credential-shaped value, but treats it as a handling requirement: the
+image becomes as sensitive as its contents and belongs only in a registry with matching read
+controls. See
 [Container Security Review](Container-Security-Review.md).
 
 ### 4.2 Verify where the image came from
@@ -467,6 +476,12 @@ made. Names in angle brackets are yours.
 cd deploy/aws
 cp target.tfvars.example target.tfvars      # fill in; this file is ignored by git
 terraform init
+
+# First apply in a new account: create the repository, then build and push the
+# derived image from section 8.3 and put its digest in target.tfvars.
+terraform apply -var-file=target.tfvars -target=aws_ecr_repository.sitrec
+
+# Full reviewed apply.
 terraform plan -var-file=target.tfvars -out plan.tfplan
 terraform show -json plan.tfplan > plan.json
 node lint/partition-lint.mjs --region <region> --plan plan.json   # section 12
@@ -510,10 +525,20 @@ terraform apply plan.tfplan
    extra margin against header injection (then set `AUTH_CERT_HEADER` to match), and
    insert the response headers the application does not yet set itself:
    `Strict-Transport-Security`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
-   and a `Content-Security-Policy`. Check the "HTTP header modification" page of the
-   Elastic Load Balancing guide for the exact attribute keys. Set the balancer's
+   and a `Content-Security-Policy`. See AWS's
+   [HTTP header modification documentation](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/header-modification.html)
+   for the exact attribute keys. Set the balancer's
    `X-Forwarded-For` processing to `remove` (the application never trusts it, and the
    trusted-proxy check uses the connection address).
+
+   The module configures those response headers and removes `X-Forwarded-For`. It does not
+   currently suppress the balancer's own `server: awselb/2.0` response header. If your
+   deployment requires that, set the load-balancer attribute explicitly after apply:
+
+   ```
+   aws elbv2 modify-load-balancer-attributes --load-balancer-arn <balancer-arn> \
+       --attributes Key=routing.http.response.server.enabled,Value=false
+   ```
 
    The tightest policy the application runs under, and the module's default (`csp`):
 
@@ -674,8 +699,8 @@ that are set exist in the container):
       {"name": "SITREC_CUSTOM_MAP_INTERNAL_NAME", "value": "Imagery"},
       {"name": "SITREC_CUSTOM_ELEVATION_INTERNAL_URL", "value": "https://<tiles>/terrain/{z}/{x}/{y}.png"},
       {"name": "SITREC_CUSTOM_ELEVATION_INTERNAL_NAME", "value": "Elevation"},
-      {"name": "DEFAULT_MAP_TYPE", "value": "INTERNAL"},
-      {"name": "DEFAULT_ELEVATION_TYPE", "value": "INTERNAL"}
+      {"name": "DEFAULT_MAP_TYPE", "value": "CustomMap_INTERNAL"},
+      {"name": "DEFAULT_ELEVATION_TYPE", "value": "CustomElevation_INTERNAL"}
     ]
   }]
 }
@@ -694,7 +719,9 @@ Notes on that block:
   be re-enabled at runtime.
 - Custom map and elevation sources follow the [custom sources guide](CustomTerrainSources.md);
   the `_URL`, `_NAME`, `_MAX_ZOOM` and related suffixes are all forwarded to the browser.
-  Point them at a service inside your network. Section 9 covers staging data.
+  The source key is `CustomMap_<NAME>` or `CustomElevation_<NAME>`, which is why the two
+  default values above include those prefixes. Point the URLs at services reachable from
+  user workstations. Section 9 covers routing, CORS and content security policy.
 - No `S3_ACCESS_KEY_ID`, no `XENFORO_PATH`, no `SITREC_DEFAULT_USERID`, no provider keys.
 
 Register and run:
@@ -716,11 +743,23 @@ you stage:
 |---|---|---|
 | Elevation | `SITREC_CUSTOM_ELEVATION_<NAME>_*` or `SITREC_TERRAIN_URL` | a Terrarium-format PNG tile pyramid; `scripts/download_local_tiles.js` builds one for an area on a connected machine |
 | Imagery | `SITREC_CUSTOM_MAP_<NAME>_*`, or a WMS/WMTS source in `config.js` | your own imagery service; check the licence of any public imagery before copying it |
-| Satellite element sets | `CUSTOM_TLE` with `CACHE_CUSTOM_TLE`; `CURRENT_STARLINK` and `CURRENT_ACTIVE` for the fixed-key proxy | a scheduled copy of the public catalogues onto an internal web path |
-| Wind | `CUSTOM_WIND_URL` via `customWindProxy.php` | GRIB2 grids for the dates of interest |
+| Current satellite element sets | `CURRENT_STARLINK` and `CURRENT_ACTIVE`, fetched by the fixed-key `proxy.php` endpoint | scheduled OMM CSV catalogues on an internal web path |
+| Wind | `CUSTOM_WIND_URL`, fetched by `customWindProxy.php` | earth.nullschool-format JSON grids for the dates, cycles and levels of interest |
 
-Each of these settings takes a URL template; today the URL must be a service your network
-serves. A built-in endpoint that serves these from a second bucket is planned.
+Map and elevation tiles are requested directly by each user's browser. Their services must
+therefore be reachable from user workstations and must permit the site's origin with CORS.
+The default content security policy permits only the site's own origin; either publish the
+tiles below that origin or add the exact approved tile origins to the appropriate `img-src`
+and `connect-src` directives. These browser requests never traverse the task security group.
+
+`proxy.php` and `customWindProxy.php` fetch their configured URLs from the application task.
+The Terraform module deliberately grants the task egress only to its AWS endpoints and S3,
+so a separate route and narrowly scoped security-group egress rule are required before those
+services can work. `CUSTOM_TLE` is not listed here because its historical-data endpoint,
+`proxyStarlink.php`, is intentionally absent from the secure server artifact.
+
+Today each URL must resolve to a service your deployment provides. A built-in endpoint that
+serves these data sets from the module's mirror bucket is planned.
 
 Everything else the standard build can fetch (live feeds, aircraft traces, soundings,
 geocoding, approximate location, public source videos, the assistant, street-level
@@ -743,9 +782,9 @@ authority issued; `curl` presents it with `--cert alice.p12:<password> --cert-ty
 | 8 | Configuration endpoint | `curl … "https://<host>/sitrecServer/config_paths.php?FETCH_CONFIG"` | `APP` begins `https://<host>/` |
 | 9 | Save and read back | in the browser, save a sitch with a video; then `aws s3api head-object` on the key | object present with `ServerSideEncryption: aws:kms`; anonymous `curl` of the object's URL returns 403; playback in the app works (through `s3-proxy.php`) |
 | 10 | FIPS endpoints in use | the trail's S3 data events for the data bucket (section 8.1, item 7), delivered to the logs bucket within about fifteen minutes | in every event whose identity is the task role, `requestParameters.Host` ends in `s3-fips.<region>.<dns suffix>`, `tlsDetails.tlsVersion` is TLS 1.3, and `vpcEndpointId` is the gateway endpoint's id (so the FIPS hostname is reached through the endpoint, not the internet) |
-| 11 | No route out | `aws ecs execute-command … --command "curl -m 5 https://example.com"` | fails; the VPC flow logs (section 8.1, item 7) show only endpoint traffic |
-| 12 | No foreign origin from the page | browser developer tools, network panel, load a sitch, open terrain, save | every request is to `<host>` |
-| 13 | Response headers | `curl -sI --cert … https://<host>/` | `strict-transport-security`, `x-frame-options`, `content-security-policy` present; no `server: awselb` |
+| 11 | No route out | `aws ecs execute-command … --command "curl -m 5 https://example.com"` | fails; the VPC flow logs (section 8.1, item 7) show only endpoint traffic and any narrowly allowed internal-source traffic |
+| 12 | Browser origins | browser developer tools, network panel, load a sitch, open terrain, save | every request is to `<host>`, or to an exact custom-source origin you intentionally added to routing, CORS and the content security policy |
+| 13 | Response headers | `curl -sI --cert … https://<host>/` | `strict-transport-security`, `x-frame-options`, `content-security-policy` present; if you disabled the server header in section 8.1, no `server: awselb` |
 | 14 | Image provenance | `aws ecs describe-tasks` → image digest | equals the digest you recorded in section 4 |
 | 15 | Logs | one accepted login, one refusal | both JSON lines present in the CloudWatch stream; the connection log has the serial |
 
