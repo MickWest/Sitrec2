@@ -42,9 +42,8 @@ export class CNodeControllerTrackingWobble extends CNodeController {
         this.simpleSerials.push("wobbleEnabled", "amplitude", "driftSpeed",
             "reactionTime", "correctionSpeed", "accuracy", "seed");
 
-        // last quaternion we left the camera with (see apply)
-        this._preQuat = null;
-        this._postQuat = null;
+        // Keep live and LOS/export probe cameras independent.
+        this.cameraPoses = new WeakMap();
 
         this.offsets = [];
 
@@ -115,10 +114,12 @@ export class CNodeControllerTrackingWobble extends CNodeController {
         // re-applies on deserialize, etc.). If the camera quaternion is exactly
         // what we left it at, nothing reset the pose since our last apply —
         // un-apply the previous offset first so it can never accumulate.
-        if (this._postQuat && camera.quaternion.equals(this._postQuat)) {
-            camera.quaternion.copy(this._preQuat);
+        const unperturbed = this.getUnperturbedQuaternion(camera);
+        if (unperturbed) {
+            camera.quaternion.copy(unperturbed);
+            camera.updateMatrix();
         }
-        this._postQuat = null;
+        this.cameraPoses.delete(camera);
 
         if (!this.wobbleEnabled) return;
 
@@ -136,11 +137,20 @@ export class CNodeControllerTrackingWobble extends CNodeController {
         const o = this.offsets[f];
         if (!o) return;
 
-        this._preQuat = camera.quaternion.clone();
+        const before = camera.quaternion.clone();
         camera.rotateY(radians(o.pan));
         camera.rotateX(radians(o.tilt));
         camera.updateMatrix();
-        this._postQuat = camera.quaternion.clone();
+        this.cameraPoses.set(camera, {before, after: camera.quaternion.clone()});
+    }
+
+    // PTZ settings describe the underlying aim, before tracking noise. Reading
+    // the perturbed roll back into TrackToTrack's input creates a feedback loop
+    // even while paused. Only use the saved pose while the camera still has
+    // our output, so a later interactive camera movement remains authoritative.
+    getUnperturbedQuaternion(camera) {
+        const pose = this.cameraPoses.get(camera);
+        return pose && camera.quaternion.equals(pose.after) ? pose.before : undefined;
     }
 
     dispose() {

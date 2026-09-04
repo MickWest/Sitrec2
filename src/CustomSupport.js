@@ -1304,6 +1304,11 @@ export class CCustomManager {
             NodeMan.get("lookCamera").addControllerNode(mxCtrl);
         }
 
+        // Wobble must remain the final pose modifier, including after roll
+        // controllers added here. PTZ sync then reads its clean input pose,
+        // retaining the computed roll without feeding tracking noise back in.
+        NodeMan.get("lookCamera", false)?.moveControllerToEnd("trackingWobbleController");
+
         // Consolidated "Turn Rate Source" dropdown. Selects which signal
         // drives the JetTrack's turn rate input:
         //   Manual Turn Rate   → the user's Turn Rate slider directly
