@@ -399,7 +399,7 @@ jobs:
       # touches MCR; only the first run after a version bump pulls.
       - name: Cache Playwright image
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /tmp/playwright-image.tar
           key: playwright-image-${{ env.PLAYWRIGHT_IMAGE }}
