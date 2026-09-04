@@ -1194,7 +1194,7 @@ const en = {
         satCutOff: { label: "Sat Cut-Off", tooltip: "Satellites dimmed to this level or less will not be displayed" },
         displayRange: { label: "Display Range (km)", tooltip: "Satellites beyond this distance will not have their names or arrows displayed" },
         equatorialGridMain: { label: "Equatorial Grid in Main", tooltip: "Show the celestial equatorial coordinate grid in the main 3D view" },
-        constellationLines: { label: "Constellation Lines", tooltip: "Show lines connecting stars in constellations" },
+        constellationLines: { label: "Constellation Lines", tooltip: "Show lines connecting stars in constellations, and label each one with its name" },
         constellationStyle: {
             label: "Asterism Style",
             tooltip: "Which set of stick-figure lines to draw between stars",
@@ -1308,6 +1308,12 @@ const en = {
             grid: "Grid",
         },
         currentVideo: { label: "Current Video" },
+        removeVideo: {
+            label: "Remove Video",
+            tooltip: "Remove the video from this view and put it back the way it was before one "
+                + "was loaded - the file is unloaded, the view is hidden again, and the sitch's "
+                + "own duration comes back. Anything measured from the footage is not kept.",
+        },
         videoRotation: { label: "Video Rotation" },
         setCameraToExifGps: { label: "Set Camera To EXIF GPS" },
         expandOutput: {
