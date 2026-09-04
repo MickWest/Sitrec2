@@ -38,6 +38,26 @@ const limiter = rateLimit({
     legacyHeaders: false,
 });
 app.use(limiter);
+
+// Response headers that cannot break anything, set on every response.
+//
+// Deliberately only two. `nosniff` stops a browser second-guessing a declared
+// Content-Type, which matters here because Sitrec serves user-supplied files back
+// to the page. The referrer policy is already Chrome's default, so it changes
+// nothing there and improves browsers that still send a full URL cross-origin —
+// and Sitrec URLs carry the sitch and often a position in their query string.
+//
+// The headers NOT set here — Content-Security-Policy, Strict-Transport-Security,
+// X-Frame-Options/frame-ancestors and Permissions-Policy — each need a decision
+// this server cannot make for the operator, and two of them would break features
+// outright: Sitrec uses geolocation (src/GeoLocation.js) and device orientation
+// (src/ARMode.js), so a restrictive Permissions-Policy disables AR mode and
+// "use my location". See docs/dev/SecurityHeaders.md for what to set and why.
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+});
 const PORT = process.env.SITREC_PORT || process.env.PORT || 3000;
 const DIST_DIR = path.resolve(__dirname, 'dist-serverless');
 

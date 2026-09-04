@@ -243,6 +243,7 @@ describe("docs on disk", () => {
         "dev/AddSitchInCode.md",            // legacy in-code sitch authoring
         "dev/Container-Security-Review.md", // the automated container image review
         "dev/SecurityRequirements.md",      // what the project holds itself to, and how each is verified
+        "dev/SecurityHeaders.md",           // what a deployment should set, and what Sitrec sets itself
         "dev/VulnerabilityHandling.md",     // triage, root cause and response times
         "dev/CustomTerrainSources.md",      // map/elevation source configuration
         "dev/Deploying-on-a-VPS.md",        // VPS deployment with Podman and Caddy

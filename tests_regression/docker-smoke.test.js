@@ -71,4 +71,48 @@ test.describe('Docker Smoke Tests', () => {
             threshold: 0.3,
         });
     });
+
+    // The baseline response headers, proven against a RUNNING container rather than
+    // read out of the Dockerfile. tests/securityHeaders.test.js already asserts the
+    // conf says the right thing; only this can show Apache actually attaches it,
+    // which is a different claim — a Header directive is inert unless mod_headers
+    // is loaded and the conf enabled, and both of those are silent when missing.
+    //
+    // See docs/dev/SecurityHeaders.md for why the set is only these two.
+    const BASELINE_HEADERS = {
+        'x-content-type-options': 'nosniff',
+        'referrer-policy': 'strict-origin-when-cross-origin',
+    };
+
+    test('baseline security headers are served', async ({request}) => {
+        const res = await request.get('/');
+        expect(res.status()).toBeLessThan(400);
+        const headers = res.headers();
+        for (const [name, value] of Object.entries(BASELINE_HEADERS)) {
+            expect(`${name}: ${headers[name]}`).toBe(`${name}: ${value}`);
+        }
+    });
+
+    test('the headers survive an error response', async ({request}, testInfo) => {
+        // This is what earns `Header always set`. Without `always`, Apache attaches
+        // the header to 2xx/3xx only, so the test above passes while the error
+        // response — where a browser sniffing the body matters most — carries none.
+        //
+        // The status is NOT asserted. A deployment is free to answer an unknown path
+        // with a rewrite to the app instead of a 404 (www.metabunk.org does exactly
+        // that), and this test must not fail a release over a routing choice it has
+        // no opinion about. The headers are asserted unconditionally; the status only
+        // decides whether `always` was actually exercised, which is recorded either
+        // way so a green run cannot quietly mean "checked nothing".
+        const res = await request.get('/this-path-does-not-exist-' + Date.now());
+        const headers = res.headers();
+        for (const [name, value] of Object.entries(BASELINE_HEADERS)) {
+            expect(`${name} on ${res.status()}: ${headers[name]}`)
+                .toBe(`${name} on ${res.status()}: ${value}`);
+        }
+        testInfo.annotations.push({
+            type: res.status() >= 400 ? 'always-exercised' : 'always-not-exercised',
+            description: `unknown path answered ${res.status()}`,
+        });
+    });
 });

@@ -63,6 +63,13 @@ RUN sed -i 's/^Listen 80$/Listen ${SITREC_LISTEN_PORT}/' /etc/apache2/ports.conf
     && sed -i 's/<VirtualHost \*:80>/<VirtualHost *:${SITREC_LISTEN_PORT}>/' /etc/apache2/sites-available/000-default.conf \
     && echo 'export SITREC_LISTEN_PORT=${SITREC_LISTEN_PORT:-8080}' >> /etc/apache2/envvars
 
+# Baseline response headers. mod_headers is not enabled in php:8.4-apache by
+# default, so the conf below is inert without a2enmod — the reason both lines
+# are here and the header check in tests/dockerSecurityHeaders.test.js asserts
+# the module is on rather than only that the file exists.
+COPY docker/security-headers.conf /etc/apache2/conf-available/sitrec-security-headers.conf
+RUN a2enmod headers && a2enconf sitrec-security-headers
+
 COPY docker/entrypoint.sh /usr/local/bin/sitrec-entrypoint.sh
 RUN chmod +x /usr/local/bin/sitrec-entrypoint.sh
 
