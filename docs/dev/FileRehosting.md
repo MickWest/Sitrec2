@@ -142,6 +142,28 @@ writable by the PHP process and served at the matching `$UPLOAD_URL`. Filesystem
 local to one server: use shared persistent storage or object storage when more than one app
 instance must see the same saves.
 
+## Upload input and generated names
+
+New saved-version and screenshot names retain their sortable timestamp prefix and
+append 128 random bits. New share-link codes use 22 alphanumeric characters (over
+128 random bits). Unversioned presigned uploads without a content hash also use
+128 random bits. Existing object references and shorter share links keep working.
+Content-derived names still support deduplication; they are not unpredictable
+access tokens and require appropriate access controls when that distinction matters.
+
+Upload JSON requires string filenames and optional string versions/content hashes.
+An optional `fileSize` must be a nonnegative JSON integer; the configured size
+limit still applies. Multipart initialization accepts integer part counts from 1
+through 10,000. Completion requires a nonempty JSON array of at most 10,000 parts,
+with strictly increasing integer `PartNumber` values in that range and nonempty
+string `ETag` values. These checks reject malformed requests before storage work;
+they do not independently measure bytes sent directly to storage. The protocol
+bounds follow the [storage service's multipart limits](https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html).
+
+Upload/delete names cannot consist only of dots or spaces. Deleting a single
+object version uses an exact key; it does not delete other keys sharing that
+version's prefix. Whole-folder deletion remains a separate operation.
+
 ## S3-compatible object storage
 
 The PHP AWS SDK is pinned by `sitrecServer/composer.lock`. A bare-metal deployment installs

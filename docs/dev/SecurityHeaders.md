@@ -33,6 +33,17 @@ its query string. A full referrer tells every third-party host where the user wa
 both installed *and* enabled with `mod_headers` loaded — a `Header` directive in a conf that
 was never enabled reads exactly like a working control and sets nothing.
 
+The restricted build's application page also sets `<meta name="referrer"
+content="no-referrer">`. This suppresses the hostname as well as the path/query on
+requests originating from that page. Other HTML pages and directly served content
+still need the operator's response-header policy; a meta tag on the app page does
+not configure the whole server. Public builds retain their existing referrer behavior.
+
+Every built application page prohibits `<base>` overrides with `base-uri 'none'`
+in its existing CSP meta tag. Sitrec uses document-relative URLs and does not need
+a base element. The supplied restricted AWS CSP response-header default uses the
+same directive. This small meta policy does not replace a complete deployment CSP.
+
 ## What Sitrec deliberately does not set
 
 Each of these needs a decision about *your* deployment. Two of them break features outright

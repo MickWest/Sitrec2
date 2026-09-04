@@ -159,7 +159,7 @@ export class CRehoster {
             const PARALLEL_UPLOADS = getEnvNumber("S3_PARALLEL_UPLOADS", process.env.S3_PARALLEL_UPLOADS, 8);
 
             if (data.byteLength > MULTIPART_THRESHOLD) {
-                console.log(`[Multipart Upload] Starting upload for ${filename} (${(data.byteLength / 1024 / 1024).toFixed(2)} MB)`);
+                console.log('[Multipart Upload] Starting upload');
                 
                 initUploadProgress(filename, data.byteLength);
                 
@@ -173,12 +173,12 @@ export class CRehoster {
                     
                     if (initResult.exists) {
                         const existingRef = (initResult.objectRef || initResult.objectUrl).replace(/ /g, "%20");
-                        console.log('File already exists on S3:', existingRef);
+                        console.log('File already exists in storage');
                         return existingRef;
                     }
                     
                     const { uploadId, uploadUrls } = initResult;
-                    console.log(`[Multipart Upload] Initiated with uploadId: ${uploadId}`);
+                    console.log('[Multipart Upload] Initiated');
 
                     const uploadedBytesPerPart = new Array(totalParts).fill(0);
                     const updateProgress = () => {
@@ -277,13 +277,11 @@ export class CRehoster {
 
                     const resultUrl = (result.objectRef || result.objectUrl).replace(/ /g, "%20");
                     
-                    console.log(`[Multipart Upload] Success! File uploaded to: ${resultUrl}`);
-                    console.log(`  Sent: ${filename} (version: ${version || 'none'})`);
-                    console.log(`  Received: ${resultUrl}`);
+                    console.log('[Multipart Upload] Upload completed');
 
                     return resultUrl;
                 } catch (error) {
-                    console.error('[Multipart Upload] Error:', error);
+                    console.error('[Multipart Upload] Upload failed');
                     showError('Error uploading large file to S3:', error);
                     throw new Error("S3 multipart upload problem: " + error.message);
                 }
@@ -323,7 +321,7 @@ export class CRehoster {
                 
                 if (presignedData.exists) {
                     const existingRef = (presignedData.objectRef || presignedData.objectUrl).replace(/ /g, "%20");
-                    console.log('File already exists on S3:', existingRef);
+                    console.log('File already exists in storage');
                     return existingRef;
                 }
                 
@@ -356,12 +354,10 @@ export class CRehoster {
                     xhr.send(data);
                 });
 
-                console.log('File uploaded to S3:', presignedData.objectRef || presignedData.objectUrl);
+                console.log('File uploaded to storage');
 
                 const resultUrl = (presignedData.objectRef || presignedData.objectUrl).replace(/ /g, "%20");
 
-                console.log(`  Sent: ${filename} (version: ${version || 'none'})`);
-                console.log(`  Received: ${resultUrl}`);
 
                 return resultUrl;
             } catch (error) {
@@ -408,12 +404,10 @@ export class CRehoster {
                     xhr.send(formData);
                 });
 
-                console.log('File uploaded:', resultUrl);
+                console.log('File uploaded');
 
                 const escapedUrl = resultUrl.replace(/ /g, "%20");
 
-                console.log(`  Sent: ${filename} (version: ${version || 'none'})`);
-                console.log(`  Received: ${escapedUrl}`);
 
                 return escapedUrl;
             } catch (error) {
@@ -431,7 +425,7 @@ export class CRehoster {
         formData.append('filename', filename);
         formData.append('delete', 'true');
         const serverURL = SITREC_SERVER +'rehost.php?unique=' + Date.now();
-        console.log("Deleting file: ", filename, " with URL: ", serverURL);
+        console.log("Deleting file");
         let response = await fetch(withTestUser(serverURL), {
             method: 'POST',
             body: formData,  // Send FormData with file and filename
@@ -462,7 +456,7 @@ export class CRehoster {
         }
 
         if (data.byteLength > limit * 1024 * 1024) {
-            console.warn("File is too big to rehost: ", filename, " size: ", data.byteLength, " bytes");
+            console.warn("File exceeds the upload size limit");
             alert("File is too big to rehost: " + filename + " size: " + data.byteLength + " bytes. Please use a smaller file. Limit = " + limit + " MB");
             return Promise.reject(new Error("File is too big to rehost: " + filename + " size: " + data.byteLength + " bytes. Please use a smaller file."));
         }
@@ -470,7 +464,7 @@ export class CRehoster {
         // make surethe filename does not end with a space or a dot
         while (filename.endsWith(" ") || filename.endsWith(".")) {
             assert(0, "Filename should not end with a space or a dot: " + filename);
-            console.warn("Filename ends with a space or a dot, removing it: ", filename);
+            console.warn("Removing trailing spaces or dots from the upload name");
             filename = filename.trim().replace(/\.$/, "");
         }
 

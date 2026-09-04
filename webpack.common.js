@@ -220,7 +220,7 @@ module.exports = (env = {}) => ({
                 // Each was checked against the codebase first:
                 //   object-src 'none'  — Sitrec creates no <object>/<embed>; kills a
                 //                        legacy script-execution vector outright.
-                //   base-uri 'self'    — Sitrec never sets a <base> tag. Without this, an
+                //   base-uri 'none'    — Sitrec never sets a <base> tag. Without this, an
                 //                        injected <base> silently repoints every relative
                 //                        URL on the page, which turns a small HTML
                 //                        injection into full script control.
@@ -255,8 +255,10 @@ module.exports = (env = {}) => ({
                 // See docs/APIKeys.md, which tells users this gap exists.
                 'Content-Security-Policy': {
                     'http-equiv': 'Content-Security-Policy',
-                    content: "object-src 'none'; base-uri 'self'; form-action 'self'",
+                    content: "object-src 'none'; base-uri 'none'; form-action 'self'",
                 },
+                // Restricted pages must not disclose their hostname or URL to link targets.
+                ...(process.env.IS_SECURE_BUILD === 'true' ? {referrer: 'no-referrer'} : {}),
                 'Cache-Control': { 'http-equiv': 'Cache-Control', content: 'no-cache, no-store, must-revalidate' },
                 'Pragma': { 'http-equiv': 'Pragma', content: 'no-cache' },
                 'Expires': { 'http-equiv': 'Expires', content: '0' },

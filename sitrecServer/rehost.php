@@ -18,6 +18,7 @@
 header('Cache-Control: no-cache, no-store, must-revalidate');
 header('Pragma: no-cache');  // HTTP/1.0 compatibility
 header('Expires: 0');        // For older browsers
+header('Content-Type: text/plain; charset=UTF-8');
 
 require('./user.php');
 require_once __DIR__ . '/object_helpers.php';
@@ -147,7 +148,7 @@ function getTileServiceDailyUsage($userId, $service) {
 
 // if we were passed the parameter "getuser", then we return user data as JSON
 if (isset($_GET['getuser'])) {
-    header('Content-Type: application/json');
+    header('Content-Type: application/json; charset=UTF-8');
 
     // Avoid double auth initialization by resolving identity once on this path.
     $userInfo = getUserInfo();
@@ -208,14 +209,13 @@ if ($user_id == 0 /*|| !in_array(9,$user->secondary_group_ids)*/) {
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'getPresignedUrl') {
-    header('Content-Type: application/json');
+    header('Content-Type: application/json; charset=UTF-8');
     
-    $input = file_get_contents('php://input');
-    $requestData = json_decode($input, true);
+    $requestData = readUploadRequest();
     
-    if (!isset($requestData['filename'])) {
+    if (!isValidUploadRequest($requestData, 'authorize')) {
         http_response_code(400);
-        echo json_encode(['error' => 'Filename not provided']);
+        echo json_encode(['error' => 'Invalid upload request']);
         exit();
     }
     
@@ -262,7 +262,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'getPresignedUrl') {
     if ($version) {
         $newFileName = $version;
     } else {
-        $uniqueId = $contentHash ? $contentHash : uniqid();
+        $uniqueId = $contentHash ? $contentHash : bin2hex(random_bytes(16));
         $newFileName = $baseName . '-' . $uniqueId . '.' . $extension;
     }
     
@@ -324,14 +324,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'getPresignedUrl') {
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'initiateMultipart') {
-    header('Content-Type: application/json');
+    header('Content-Type: application/json; charset=UTF-8');
     
-    $input = file_get_contents('php://input');
-    $requestData = json_decode($input, true);
+    $requestData = readUploadRequest();
     
-    if (!isset($requestData['filename']) || !isset($requestData['parts'])) {
+    if (!isValidUploadRequest($requestData, 'initiate')) {
         http_response_code(400);
-        echo json_encode(['error' => 'Filename and parts count required']);
+        echo json_encode(['error' => 'Invalid multipart upload request']);
         exit();
     }
     
@@ -379,7 +378,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'initiateMultipart') {
     if ($version) {
         $newFileName = $version;
     } else {
-        $uniqueId = $contentHash ? $contentHash : uniqid();
+        $uniqueId = $contentHash ? $contentHash : bin2hex(random_bytes(16));
         $newFileName = $baseName . '-' . $uniqueId . '.' . $extension;
     }
     
@@ -453,14 +452,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'initiateMultipart') {
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'completeMultipart') {
-    header('Content-Type: application/json');
+    header('Content-Type: application/json; charset=UTF-8');
     
-    $input = file_get_contents('php://input');
-    $requestData = json_decode($input, true);
+    $requestData = readUploadRequest();
     
-    if (!isset($requestData['filename']) || !isset($requestData['uploadId']) || !isset($requestData['parts'])) {
+    if (!isValidUploadRequest($requestData, 'complete')) {
         http_response_code(400);
-        echo json_encode(['error' => 'Filename, uploadId, and parts required']);
+        echo json_encode(['error' => 'Invalid multipart completion request']);
         exit();
     }
     
@@ -557,11 +555,49 @@ function writeLog($message) {
 //    file_put_contents($logPath, $logEntry, FILE_APPEND);
 }
 
-// Secure validation function
-function isSafeName($name) {
-    // Check if the name contains only allowed characters
-    // which are A-Z, a-z, 0-9, space, _, -, ., (, ), ,
-    return preg_match('/^[A-Za-z0-9 _\\-\\.\\(\\),]+$/', $name);
+// Preserve the distinction between JSON arrays and numeric-keyed JSON objects.
+function readUploadRequest() {
+    $decoded = json_decode(file_get_contents('php://input'));
+    if (!($decoded instanceof stdClass)) return null;
+    $data = get_object_vars($decoded);
+    if (isset($data['parts']) && is_array($data['parts'])) {
+        $data['parts'] = array_map(function ($part) {
+            return $part instanceof stdClass ? get_object_vars($part) : $part;
+        }, $data['parts']);
+    }
+    return $data;
+}
+
+// Validate external shapes before basename(), casts or storage calls.
+function isValidUploadRequest($data, string $operation): bool {
+    if (!is_array($data) || !isset($data['filename']) || !is_string($data['filename'])) return false;
+    foreach (['version', 'contentHash'] as $field) {
+        if (isset($data[$field]) && !is_string($data[$field])) return false;
+    }
+    if (isset($data['fileSize']) && (!is_int($data['fileSize']) || $data['fileSize'] < 0)) return false;
+    if ($operation === 'initiate') {
+        // Storage accepts at most 10,000 parts, numbered from 1.
+        return isset($data['parts']) && is_int($data['parts']) && $data['parts'] >= 1 && $data['parts'] <= 10000;
+    }
+    if ($operation === 'complete') {
+        if (!isset($data['uploadId']) || !is_string($data['uploadId']) || $data['uploadId'] === ''
+            || !isset($data['parts']) || !is_array($data['parts']) || !array_is_list($data['parts'])
+            || count($data['parts']) < 1 || count($data['parts']) > 10000) return false;
+        $previous = 0;
+        foreach ($data['parts'] as $part) {
+            if (!is_array($part) || !isset($part['PartNumber'], $part['ETag'])
+                || !is_int($part['PartNumber']) || $part['PartNumber'] <= $previous || $part['PartNumber'] > 10000
+                || !is_string($part['ETag']) || $part['ETag'] === '') return false;
+            $previous = $part['PartNumber'];
+        }
+    }
+    return true;
+}
+
+function isSafeName($name): bool {
+    // Dot-only paths and non-string parameters are never object names.
+    return is_string($name) && trim($name, ' .') !== ''
+        && preg_match('/\A[A-Za-z0-9 _().,-]+\z/D', $name) === 1;
 }
 
 // Extensions that must never be stored — server-side executables and config overrides
@@ -579,10 +615,11 @@ function isSafeExtension($filename) {
 if (isset($_POST['delete']) && $_POST['delete'] == 'true') {
     $filename = $_POST['filename'] ?? '';
     $version = $_POST['version'] ?? null;
+    $hasVersion = $version !== null && $version !== '';
     sitrecAuditResource($user_id . '/' . (is_string($filename) ? $filename : '') . '/' . (is_string($version) ? $version : ''));
 
     // Strictly validate filename and version
-    if (!isSafeName($filename) || ($version && !isSafeName($version))) {
+    if (!isSafeName($filename) || ($hasVersion && !isSafeName($version))) {
         // exit with error code
         http_response_code(400);
         exit("Invalid filename or version");
@@ -596,7 +633,7 @@ if (isset($_POST['delete']) && $_POST['delete'] == 'true') {
         }
 
         // if no version name is supplied, then we delete the entire folder
-        if (!$version) {
+        if (!$hasVersion) {
             if ($useAWS) {
                 $s3Path = $user_id . '/' . $filename . '/';
                 $s3->deleteMatchingObjects($aws['bucket'], $s3Path);
@@ -617,7 +654,7 @@ if (isset($_POST['delete']) && $_POST['delete'] == 'true') {
             if ($useAWS) {
                 // delete the specific version from s3
                 $s3Path = $user_id . '/' . $filename . '/' . $version;
-                $s3->deleteMatchingObjects($aws['bucket'], $s3Path);
+                $s3->deleteObject(['Bucket' => $aws['bucket'], 'Key' => $s3Path]);
             } else {
                 $file = $userDir . basename($filename) . '/' . basename($version);
                 if (file_exists($file)) {
@@ -634,7 +671,8 @@ if (isset($_POST['delete']) && $_POST['delete'] == 'true') {
 }
 
 // Check if file and filename are provided
-if (!isset($_FILES['fileContent']) || !isset($_POST['filename'])) {
+if (!isset($_FILES['fileContent']) || !is_string($_POST['filename'] ?? null)
+    || (isset($_POST['version']) && !is_string($_POST['version']))) {
     http_response_code(400);
     die("File or filename not provided");
 }

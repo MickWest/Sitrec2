@@ -96,7 +96,7 @@ variable "ssl_policy" {
 variable "csp" {
   description = "Content-Security-Policy response header the balancer inserts on every response. The default is the tightest policy the application runs under: scripts only from the site (the entrypoint writes runtime settings to a file, never inline) plus WebAssembly for the video and tracking code; styles from the site plus inline, because the UI library injects its stylesheet as a style element; workers, media and images from the site or blob URLs."
   type        = string
-  default     = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+  default     = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 }
 
 # ---------------------------------------------------------------------------

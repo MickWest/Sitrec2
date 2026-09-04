@@ -72,6 +72,10 @@ function getS3Client() {
         function getIterator($operation, $params) { return []; }
         function upload(...$args) { return []; }
         function deleteMatchingObjects(...$args) { return []; }
+        function deleteObject($params) {
+            file_put_contents(dirname(__DIR__) . '/storage-operations.log', json_encode(['operation' => 'deleteObject', 'key' => $params['Key']]) . "\\n", FILE_APPEND);
+            return [];
+        }
         function getCommand($operation, $params) { return []; }
         function createPresignedRequest(...$args) { return new class {
             function getUri() { return 'https://example.test/signed?token=DO_NOT_LOG'; }
@@ -135,7 +139,7 @@ serveGPCached(dirname(__DIR__) . '/cache/sample.csv', '/fallback.csv', 60, 'sitr
             const req = http.request({hostname: '127.0.0.1', port, path: `/sitrecServer/${endpoint}`, method, headers}, res => {
                 let text = '';
                 res.on('data', chunk => { text += chunk; });
-                res.on('end', () => resolve({status: res.statusCode, text}));
+                res.on('end', () => resolve({status: res.statusCode, text, headers: res.headers}));
             });
             req.on('error', reject);
             req.end(body);
@@ -214,13 +218,85 @@ serveGPCached(dirname(__DIR__) . '/cache/sample.csv', '/fallback.csv', 60, 'sitr
     test('presigned authorization and multipart completion are distinct events', async () => {
         for (const [action, event, extra] of [['getPresignedUrl', 'upload.authorize', {}],
             ['initiateMultipart', 'upload.initiate', {parts: 2}],
-            ['completeMultipart', 'upload.complete', {uploadId: 'DO_NOT_LOG', parts: []}]]) {
+            ['completeMultipart', 'upload.complete', {uploadId: 'DO_NOT_LOG', parts: [{ETag: 'example', PartNumber: 1}]}]]) {
             const result = await request(`rehost.php?action=${action}`, {method: 'POST', headers: {'X-Test-Storage': 's3'},
                 body: {filename: 'Test', version: 'v.js', ...extra}});
             expect(result.status).toBe(200);
             expect(finished(result)).toMatchObject({event, outcome: 'success', resource_sha256: digest('42/Test/v.js')});
             expect(JSON.stringify(result.events)).not.toContain('DO_NOT_LOG');
         }
+    });
+
+    test('malformed upload shapes and impossible multipart requests fail before storage', async () => {
+        const part = {ETag: 'example', PartNumber: 1};
+        const invalid = [
+            ['getPresignedUrl', {filename: []}],
+            ['getPresignedUrl', {version: []}],
+            ['getPresignedUrl', {contentHash: {}}],
+            ['getPresignedUrl', {filename: '..'}],
+            ['getPresignedUrl', {version: '...'}],
+            ['getPresignedUrl', {fileSize: -1}],
+            ['getPresignedUrl', {fileSize: '100'}],
+            ['initiateMultipart', {parts: 0}],
+            ['initiateMultipart', {parts: -1}],
+            ['initiateMultipart', {parts: 10001}],
+            ['initiateMultipart', {parts: 1.5}],
+            ['initiateMultipart', {parts: '2'}],
+            ['completeMultipart', {parts: []}],
+            ['completeMultipart', {parts: [part, part]}],
+            ['completeMultipart', {parts: [{...part, PartNumber: 10001}]}],
+            ['completeMultipart', {parts: [{...part, ETag: []}]}],
+            ['completeMultipart', {uploadId: []}],
+            ['completeMultipart', {parts: {0: part}}],
+            ['completeMultipart', {parts: [{...part, PartNumber: 2}, part]}],
+        ];
+        for (const [action, fields] of invalid) {
+            const result = await request(`rehost.php?action=${action}`, {method: 'POST',
+                headers: {'X-Test-Storage': 's3', 'X-Test-Storage-Error': '1'},
+                body: {filename: 'Test', version: 'v.js', uploadId: 'DO_NOT_LOG', parts: [part], ...fields}});
+            expect({action, fields, status: result.status}).toEqual({action, fields, status: 400});
+            expect(finished(result)).toMatchObject({outcome: 'rejected'});
+            expect(result.headers['content-type']).toMatch(/^application\/json; charset=UTF-8$/i);
+        }
+    });
+
+    test('deletion rejects dot segments and targets only the requested version', async () => {
+        for (const parameters of ['filename=..', 'filename=...', 'filename%5B%5D=Example',
+            'filename=Example&version=..', 'filename=Example&version%5B%5D=v.js']) {
+            const invalid = await request('rehost.php', {method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: `delete=true&${parameters}`});
+            expect(invalid.status).toBe(400);
+            expect(finished(invalid)).toMatchObject({outcome: 'rejected'});
+        }
+        for (const version of ['v.js', '0']) {
+            const result = await request('rehost.php', {method: 'POST',
+                headers: {'X-Test-Storage': 's3', 'Content-Type': 'application/x-www-form-urlencoded'},
+                body: `delete=true&filename=Example&version=${version}`});
+            expect(result.status).toBe(200);
+        }
+        const operations = fs.readFileSync(path.join(tmp, 'storage-operations.log'), 'utf8').trim().split('\n').map(JSON.parse);
+        expect(operations).toEqual([
+            {operation: 'deleteObject', key: '42/Example/v.js'},
+            {operation: 'deleteObject', key: '42/Example/0'},
+        ]);
+    });
+
+    test('new short links and unversioned upload paths use strong random tokens', async () => {
+        const shared = await request(`shortener.php?url=${encodeURIComponent('https://example.test/?custom=example')}`);
+        expect(shared.text).toMatch(/\/short\/[A-Za-z0-9]{22}\.html$/);
+        expect(shared.headers['content-type']).toMatch(/^text\/plain; charset=UTF-8$/i);
+        const invalid = await request('shortener.php?url%5B%5D=https://example.test');
+        expect(invalid.status).toBe(400);
+        for (const action of ['getPresignedUrl', 'initiateMultipart']) {
+            const uploaded = await request(`rehost.php?action=${action}`, {method: 'POST',
+                headers: {'X-Test-Storage': 's3'}, body: {filename: 'sample.mp4', parts: 1}});
+            expect(uploaded.status).toBe(200);
+            expect(JSON.parse(uploaded.text).objectRef).toMatch(/sample-[a-f0-9]{32}\.mp4$/);
+        }
+        // Existing complete keys, including the previous shorter token format, still resolve.
+        const oldKey = await request('object.php?ref=42%2FExample%2F20260904_120000_123456abcdef.js');
+        expect(oldKey.status).toBe(200);
+        expect(finished(oldKey)).toMatchObject({outcome: 'success'});
     });
 
     test('object reads/resolution and sharing identify targets without exposing capabilities', async () => {

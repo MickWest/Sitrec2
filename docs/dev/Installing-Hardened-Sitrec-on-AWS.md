@@ -546,7 +546,7 @@ terraform apply plan.tfplan
    ```
    default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline';
    img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:;
-   worker-src 'self' blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'self';
+   worker-src 'self' blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'none';
    form-action 'self'; frame-ancestors 'none'
    ```
 

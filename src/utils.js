@@ -1056,9 +1056,6 @@ export function cleanFloat(x, maxDecimals = 12) {
     return x; // nothing convincingly "artifacty"
 }
 
-// For making filenames unique based on date and time
-// get date and time into a string, so long as you don't save more than one a second
-// then this will be unique
 // Version token for a saved sitch. It doubles as the SHARING CAPABILITY: a share
 // URL is <userid>/<name>/<version>.js, and knowing that complete key is the
 // permission to read it.
@@ -1067,7 +1064,7 @@ export function cleanFloat(x, maxDecimals = 12) {
 // shared link — so the version has to carry the secrecy on its own. A bare
 // timestamp does not: an attacker who knows roughly when a sitch was saved has
 // only 86,400 possibilities for a known day, which is minutes of work against an
-// unauthenticated endpoint. The 48-bit random suffix makes the token itself the
+// unauthenticated endpoint. The 128-bit random suffix makes the token itself the
 // secret.
 //
 // The timestamp still leads, so filenames stay human-readable and sortable, and
@@ -1085,7 +1082,7 @@ export function getDateTimeFilename() {
     // strip out - and : so it's a valid filename (leave the underscore)
     const todayDateTimeFilename = todayDateTimeStr.replaceAll("-", "").replaceAll(":", "");
 
-    const bytes = new Uint8Array(6);
+    const bytes = new Uint8Array(16);
     globalThis.crypto.getRandomValues(bytes);
     const suffix = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 

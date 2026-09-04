@@ -6,6 +6,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/user.php';
 sitrecAuditRequest('share.create');
+header('Content-Type: text/plain; charset=UTF-8');
 $user_id = getUserID();
 
 
@@ -38,7 +39,11 @@ parse_str($queryString, $params);
 
 if (isset($params['url'])) {
     $url = $params['url'];
-    if (is_string($url)) sitrecAuditResource($url);
+    if (!is_string($url) || $url === '') {
+        http_response_code(400);
+        exit('A URL string is required.');
+    }
+    sitrecAuditResource($url);
 
     // SECURITY: Validate URL scheme - only allow http/https
     // Also block javascript: and data: URLs that could be embedded
@@ -93,7 +98,8 @@ function createRedirectHtml($url) {
     return '<html><head><meta http-equiv="refresh" content="0;url=' . $safeUrl . '"></head></html>';
 }
 
-function generateRandomCode($length = 6) {
+// 62^22 possibilities provide over 128 random bits. Existing short links remain files.
+function generateRandomCode($length = 22) {
     $characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
     $charactersLength = strlen($characters);
     $randomString = '';
@@ -107,6 +113,6 @@ function generateRandomCode($length = 6) {
 function generateUniqueCode($SHORTENER_PATH) {
     do {
         $code = generateRandomCode();
-    } while (file_exists($SHORTENER_PATH . $code));
+    } while (file_exists($SHORTENER_PATH . $code . '.html'));
     return $code;
 }
