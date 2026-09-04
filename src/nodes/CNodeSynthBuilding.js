@@ -28,7 +28,7 @@ import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {screenToNDC} from "../mouseMoveView";
 import {ViewMan} from "../CViewManager";
 import {CustomManager, Globals, guiMenus, markShadowCastersDirty, setRenderOne, Synth3DManager, UndoManager} from "../Globals";
-import {mouseInViewOnly} from "../ViewUtils";
+import {renderedRect, withDisplayedCamera} from "../ViewUtils";
 import {getVisiblePointBelow, patchMaterialForLinearOutput, pointAbove} from "../threeExt";
 import {EventManager} from "../CEventManager";
 import {isInLeftSidebar, isInRightSidebar} from "../PageStructure";
@@ -96,6 +96,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         this.editMode = false;
         this.isDragging = false;
         this.isRotating = false;
+        this.activeView = null;
         this.draggingPoint = null;
         this.draggingVertexIndex = -1;
         this.dragLocalUp = null;
@@ -1146,7 +1147,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                 
                 const sphere = new Mesh(geometry, material);
                 sphere.position.copy(vertex.position);
-                sphere.layers.mask = LAYER.MASK_HELPERS;
+                sphere.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 sphere.userData.vertexIndex = idx;
                 sphere.userData.isBottomHandle = true;
                 
@@ -1177,7 +1178,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                 // Orient the disc to align with the plane normal
                 rotationDisc.lookAt(vertex.position.clone().add(planeNormal));
                 
-                rotationDisc.layers.mask = LAYER.MASK_HELPERS;
+                rotationDisc.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 rotationDisc.userData.isRotationHandle = true;
                 rotationDisc.userData.cornerVertexIndex = idx;  // Link to corner vertex
                 
@@ -1205,7 +1206,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                 
                 this.roofCenterHandle = new Mesh(geometry, roofMaterial);
                 this.roofCenterHandle.position.copy(roofCenter);
-                this.roofCenterHandle.layers.mask = LAYER.MASK_HELPERS;
+                this.roofCenterHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 this.roofCenterHandle.userData.isRoofCenter = true;
                 
                 this.group.add(this.roofCenterHandle);
@@ -1228,7 +1229,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                 
                 this.rooflineHandle = new Mesh(geometry, rooflineMaterial);
                 this.rooflineHandle.position.copy(roof1.position);
-                this.rooflineHandle.layers.mask = LAYER.MASK_HELPERS;
+                this.rooflineHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 this.rooflineHandle.userData.isRoofline = true;
                 this.rooflineHandle.userData.vertexIndex = 8;
                 
@@ -1255,39 +1256,20 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         if (!this.editMode || !view || !view.pixelsToMeters) {
             return;
         }
-        
-        const handlePixelSize = 20; // Target size in screen pixels for visible handles
-        const rotationDiscPixelSize = 60; // Larger size for invisible rotation discs (easier to hit)
-        
-        // Update sphere handles (bottom corner handles and roof handles)
-        this.controlPoints.forEach(handle => {
-            if (handle && handle.geometry && handle.geometry.type === 'SphereGeometry') {
-                const scale = view.pixelsToMeters(handle.position, handlePixelSize);
-                // SphereGeometry with radius 3m, so scale to get handlePixelSize on screen
-                handle.scale.set(scale / 3, scale / 3, scale / 3);
-            }
-        });
-        
-        // Update roof center handle (also a sphere)
-        if (this.roofCenterHandle) {
-            const scale = view.pixelsToMeters(this.roofCenterHandle.position, handlePixelSize);
-            this.roofCenterHandle.scale.set(scale / 3, scale / 3, scale / 3);
-        }
-        
-        // Update roofline handle (also a sphere)
-        if (this.rooflineHandle) {
-            const scale = view.pixelsToMeters(this.rooflineHandle.position, handlePixelSize);
-            this.rooflineHandle.scale.set(scale / 3, scale / 3, scale / 3);
-        }
-        
-        // Update rotation disc handles with LARGER size since they're invisible
-        // The larger size makes them much easier to interact with for rotation
-        this.rotationHandles.forEach(handle => {
-            if (handle && handle.geometry && handle.geometry.type === 'CircleGeometry') {
-                const scale = view.pixelsToMeters(handle.position, rotationDiscPixelSize);
-                // CircleGeometry with radius 6m, so scale to get rotationDiscPixelSize on screen
-                handle.scale.set(scale / 6, scale / 6, scale / 6);
-            }
+        withDisplayedCamera(view, camera => {
+            const height = renderedRect(view, view.widthPx, view.heightPx).h;
+            if (!(height > 0)) return;
+            // Use the displayed projection, including zoom and y-compression.
+            // The base camera FOV alone gives a different size in the look view.
+            const pixelsPerMeterAtUnitDepth = height * Math.abs(camera.projectionMatrix.elements[5]) / 2;
+            const scaleHandle = (handle, pixels) => {
+                const depth = Math.abs(handle.position.clone().applyMatrix4(camera.matrixWorldInverse).z);
+                const radius = depth * pixels / pixelsPerMeterAtUnitDepth;
+                handle.scale.setScalar(radius / handle.geometry.parameters.radius);
+            };
+            // Roof handles are included in controlPoints.
+            this.controlPoints.forEach(handle => scaleHandle(handle, 20));
+            this.rotationHandles.forEach(handle => scaleHandle(handle, 60));
         });
     }
     

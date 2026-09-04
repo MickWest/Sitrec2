@@ -20,10 +20,40 @@ import {EventManager} from "../CEventManager";
 import {ViewMan} from "../CViewManager";
 import {assert} from "../assert";
 import * as LAYER from "../LayerMasks";
-import {mouseInViewOnly} from "../ViewUtils";
+import {mouseInViewOnly, withDisplayedCamera} from "../ViewUtils";
 import {screenToNDC} from "../mouseMoveView";
 
 export const eventMethods = {
+    // A drag stays with the camera it started in, even when the pointer leaves
+    // that pane. Hover and new presses can use either of the editing views.
+    setupRaycasterForEvent(event) {
+        let view = (this.isDragging || this.isRotating) ? this.activeView : null;
+        if (!view) {
+            view = ["mainView", "lookView"]
+                .map(id => ViewMan.get(id, false))
+                .find(candidate => {
+                    if (!candidate) return false;
+                    // Maximizing another pane hides this div without changing
+                    // node.visible or its stored pixel bounds.
+                    const rect = candidate.div?.getBoundingClientRect();
+                    if (rect && (!(rect.width > 0) || !(rect.height > 0))) return false;
+                    return mouseInViewOnly(candidate, event.clientX, event.clientY);
+                });
+        }
+        if (!view) return null;
+
+        this.activeView = view;
+        withDisplayedCamera(view, camera => {
+            // The shared handles were last scaled by whichever view rendered last.
+            // Pick against this view's scale and displayed projection, including
+            // video zoom/pan and letterboxing in the look view.
+            this.updateHandleScales(view);
+            this.group.updateMatrixWorld(true);
+            this.raycaster.setFromCamera(screenToNDC(view, event.clientX, event.clientY), camera);
+        });
+        return view;
+    },
+
     setupEventListeners() {
         this.onPointerDownBound = (e) => this.onPointerDown(e);
         this.onPointerMoveBound = (e) => this.onPointerMove(e);
@@ -83,8 +113,8 @@ export const eventMethods = {
      * Check if mouse is hovering over a handle and update cursor
      */
     checkHandleHover(event) {
-        const view = ViewMan.get("mainView");
-        if (!view || !mouseInViewOnly(view, event.clientX, event.clientY)) {
+        const view = this.setupRaycasterForEvent(event);
+        if (!view) {
             // Not in view, reset cursor
             if (this.hoveredHandle) {
                 document.body.style.cursor = 'default';
@@ -92,9 +122,6 @@ export const eventMethods = {
             }
             return;
         }
-        
-        const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
         
         // Check intersection with actual handles (control points + roof center handle + roofline handle)
         const allHandles = [...this.controlPoints];
@@ -199,22 +226,11 @@ export const eventMethods = {
         // Calculate distance from corner to projected point
         const projectedDistance = projectedPoint.distanceTo(cornerPosition);
         
-        // Check if projected distance exceeds visible handle radius (20 pixels, scaled dynamically)
-        // The visible sphere handle is 3m base radius, scaled to 20px screen size
-        const view = ViewMan.get("mainView");
-        if (view && view.pixelsToMeters) {
-            const handlePixelSize = 20; // Must match updateHandleScales()
-            const scaledHandleRadius = view.pixelsToMeters(cornerPosition, handlePixelSize);
-            
-            if (projectedDistance <= scaledHandleRadius) {
-                return false;
-            }
-        } else {
-            // Fallback to fixed 3m if view not available
-            if (projectedDistance <= 3) {
-                return false;
-            }
-        }
+        // setupRaycasterForEvent has already scaled the sphere for the active
+        // view. Use that radius so rotation starts outside the visible handle.
+        const handle = this.controlPoints.find(point => point.userData.vertexIndex === cornerVertexIndex);
+        const handleRadius = handle ? handle.geometry.parameters.radius * handle.scale.x : 3;
+        if (projectedDistance <= handleRadius) return false;
         
         // Additional check: only detect rotation if clicking on the "outward" side
         // X = projectedPoint (collision point on disk)
@@ -290,13 +306,10 @@ export const eventMethods = {
             target = target.parentElement;
         }
         
-        const view = ViewMan.get("mainView");
-        if (!view || !mouseInViewOnly(view, event.clientX, event.clientY)) {
+        const view = this.setupRaycasterForEvent(event);
+        if (!view) {
             return;
         }
-        
-        const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
         
         // Capture state before any drag operation begins (for undo/redo)
         this.stateBeforeDrag = this.captureState();
@@ -378,7 +391,7 @@ export const eventMethods = {
             let plane = new Plane();
             if (isRoofCenter || isTopVertex || isRoofline) {
                 // Create a vertical plane facing the camera for height adjustment
-                const cameraPos = view.camera.position;
+                const cameraPos = this.raycaster.ray.origin;
                 const toCamera = cameraPos.clone().sub(this.draggingPoint.position).normalize();
                 const tangent = new Vector3().crossVectors(this.dragLocalUp, toCamera).normalize();
                 const planeNormal = new Vector3().crossVectors(tangent, this.dragLocalUp).normalize();
@@ -491,11 +504,8 @@ export const eventMethods = {
      * Handle rotation while dragging
      */
     handleRotation(event) {
-        const view = ViewMan.get("mainView");
+        const view = this.setupRaycasterForEvent(event);
         if (!view || !this.buildingCentroid) return;
-        
-        const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
         
         // Create a ground plane at the building centroid
         const localUp = getLocalUpVector(this.buildingCentroid);
@@ -590,11 +600,8 @@ export const eventMethods = {
         
         if (!this.draggingPoint) return;
         
-        const view = ViewMan.get("mainView");
+        const view = this.setupRaycasterForEvent(event);
         if (!view) return;
-        
-        const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
         
         // Check if dragging the roof center handle, roofline handle, or building mesh
         const isRoofCenter = this.draggingPoint.userData.isRoofCenter;
@@ -615,7 +622,7 @@ export const eventMethods = {
             // For roof center handle and top vertices, create a vertical plane facing the camera
             // This allows height adjustment while keeping horizontal position locked
             // Use the INITIAL handle position to create the plane for consistent relative dragging
-            const cameraPos = view.camera.position;
+            const cameraPos = this.raycaster.ray.origin;
             const toCamera = cameraPos.clone().sub(this.dragInitialHandlePosition).normalize();
             
             // Make plane perpendicular to camera view but parallel to localUp
@@ -967,7 +974,7 @@ export const eventMethods = {
      */
     onPointerUp(event) {
         if (this.isDragging || this.isRotating) {
-            const view = ViewMan.get("mainView");
+            const view = this.activeView;
             if (view && view.controls) {
                 view.controls.enabled = true;
             }
@@ -1022,6 +1029,7 @@ export const eventMethods = {
         this.draggingPoint = null;
         this.draggingVertexIndex = -1;
         this.dragLocalUp = null;
+        this.activeView = null;
 
         // The ground moved while the drag was running, so the snap the drag was doing
         // was against a surface that no longer exists. Apply it now. Safe after the

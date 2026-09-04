@@ -3950,13 +3950,12 @@ export class CNodeView3D extends CNodeViewCanvas {
         updateObjectMoveWidget(this);
         if (globalProfiler) globalProfiler.pop();
 
-        // Profile: Building Handle Scaling (only for mainView)
-        if (this.id === "mainView" && globalProfiler) globalProfiler.push('#9467bd', 'buildingHandles');
-        // Update building handles to maintain constant screen size (size-invariant at 40px)
-        if (this.id === "mainView") {
+        // Scale shared building handles immediately before each editing view renders.
+        if (this.id === "mainView" || this.id === "lookView") {
+            if (globalProfiler) globalProfiler.push('#9467bd', 'buildingHandles');
             scaleBuildingHandles(this);
+            if (globalProfiler) globalProfiler.pop();
         }
-        if (this.id === "mainView" && globalProfiler) globalProfiler.pop();
 
         // Profile: Render Target and Effects (typically the most expensive)
         if (globalProfiler) globalProfiler.push('#ff0000', 'renderTargetEffects');
