@@ -1194,7 +1194,7 @@ const en = {
         satCutOff: { label: "Sat Cut-Off", tooltip: "Satellites dimmed to this level or less will not be displayed" },
         displayRange: { label: "Display Range (km)", tooltip: "Satellites beyond this distance will not have their names or arrows displayed" },
         equatorialGridMain: { label: "Equatorial Grid in Main", tooltip: "Show the celestial equatorial coordinate grid in the main 3D view" },
-        constellationLines: { label: "Constellation Lines", tooltip: "Show lines connecting stars in constellations" },
+        constellationLines: { label: "Constellation Lines", tooltip: "Show lines connecting stars in constellations, and label each one with its name" },
         constellationStyle: {
             label: "Asterism Style",
             tooltip: "Which set of stick-figure lines to draw between stars",

@@ -674,12 +674,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }).name(t("nightSky.constellationStyle.label")).tooltip(t("nightSky.constellationStyle.tooltip"))
         this.addSimpleSerial("constellationStyle")
 
-        // Build the lines and names now, as the pre-deferral code did (even when hidden —
-        // the group's visibility handles that). For the default d3celestial style the data
-        // is already loaded with the sitch assets and the build lands within a microtask;
-        // only a sitch SAVED in the astrometry style takes a real fetch first (that line
-        // set is the one deferred file — see ExtraFiles.js).
-        this._constellationNamesAdded = false;
+        // Build the lines now, as the pre-deferral code did (even when hidden — the group's
+        // visibility handles that). For the default d3celestial style the data is already
+        // loaded with the sitch assets and the build lands within a microtask; only a sitch
+        // SAVED in the astrometry style takes a real fetch first (that line set is the one
+        // deferred file — see ExtraFiles.js).
         this.rebuildConstellationLines();
 
         this.showStars = (v.showStars !== undefined) ? v.showStars : true;
@@ -689,9 +688,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }).name(t("nightSky.renderStars.label")).tooltip(t("nightSky.renderStars.tooltip"))
         this.addSimpleSerial("showStars")
 
-        // (constellation NAMES are added by rebuildConstellationLines, with the lines —
-        // they live in the same group, share its visibility, and their data file is
-        // deferred with the line sets.)
+        // (constellation NAMES are drawn by CNodeDisplaySkyOverlay, as 2D text at a fixed
+        // pixel size, and follow showConstellations rather than a switch of their own. Their
+        // data file is fetched here with the line sets, by rebuildConstellationLines.)
 
         // For the stars to show up in the lookView
         // we need to enable the layer for everything in the celestial sphere.
@@ -946,8 +945,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 
     /**
-     * (Re)build the constellation lines — and, first time through, the names — for the
-     * current asterism style. Called at setup and on every style switch. The default
+     * (Re)build the constellation lines for the current asterism style, and fetch the name
+     * data the sky overlay labels them with. Called at setup and on every style switch. The default
      * d3celestial data is loaded with the sitch assets, so the ensure resolves in a
      * microtask and the build is effectively synchronous; the astrometry line set is the
      * one deferred night-sky file (see ExtraFiles.js) and takes a fetch on first use.
@@ -964,10 +963,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             if (this._constellationRequest !== dataKey) return;
             this.celestialElements.clearConstellationLines(this.constellationsGroup);
             this.celestialElements.addConstellationLines(this.constellationsGroup, dataKey);
-            if (!this._constellationNamesAdded) {
-                this.celestialElements.addConstellationNames(this.constellationsGroup);
-                this._constellationNamesAdded = true;
-            }
             // Late adds start with default layer masks; re-propagate so the new lines
             // show in the look view exactly as setup-time adds did.
             propagateLayerMaskObject(this.celestialSphere);

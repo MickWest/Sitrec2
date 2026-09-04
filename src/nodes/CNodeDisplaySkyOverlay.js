@@ -1,12 +1,12 @@
 // CNodeDisplaySkyOverlay takes a CNodeCanvas derived node, CNodeDisplayNightSky and a camera
 // and displays star names on an overlay
 import {CNodeViewUI} from "./CNodeViewUI";
-import {GlobalDateTimeNode, guiShowHide, NodeMan, setRenderOne, Sit} from "../Globals";
+import {FileManager, GlobalDateTimeNode, guiShowHide, NodeMan, setRenderOne, Sit} from "../Globals";
 import {applyAnnualAberration, getStarDirectionECEF, raDec2Celestial} from "../CelestialMath";
 import {applyRefractionECI, refractionUniforms, refractionOptsFromUniforms} from "../atmosphere/refraction";
 import {wgs84} from "../LLA-ECEF-ENU";
 import {intersectSphere2, V3} from "../threeUtils";
-import {Ray, Raycaster, Sphere} from "three";
+import {MathUtils, Ray, Raycaster, Sphere} from "three";
 import {calculateAltitude} from "../threeExt";
 import {getHUDColor} from "../HUDColor";
 import {viewControlLabel, viewMenuKey} from "../ViewUIBarMenus";
@@ -160,11 +160,53 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         return this.nightSky.maxLabelsDisplayed;
     }
 
+    // A constellation is its lines and its name together, so the label follows the night sky's
+    // own Constellation Lines switch rather than adding a second one that could disagree with
+    // it - a named figure with no lines, or lines the user cannot identify.
+    get showConstellationNames() {
+        return !!this.nightSky?.showConstellations;
+    }
+
+    /**
+     * The constellation labels, prepared once rather than per frame: 89 features whose names
+     * and positions never change, against a draw that runs every rendered frame.
+     *
+     * Keyed on the DATA OBJECT, so a dataset that arrives after the first render - the file is
+     * fetched with the asterism lines, and this overlay may well draw before it lands -
+     * rebuilds the cache instead of leaving it empty for the session.
+     */
+    constellationLabels() {
+        // Not `get(id)`: its default asserts on a missing key, and this runs per frame while
+        // the file may still be in flight.
+        const data = FileManager.get("constellations", false);
+        if (!data?.features) return null;
+        if (this._constellationLabelsFor !== data) {
+            this._constellationLabelsFor = data;
+            this._constellationLabels = data.features.map((f) => {
+                // The label position the dataset ships, not a centroid computed from the
+                // lines: a constellation is not convex, and the shipped point is placed where
+                // the name reads well - inside the figure, clear of its own stars.
+                const [raDeg, decDeg] = f.geometry.coordinates;
+                const ra = MathUtils.degToRad(Number(raDeg));
+                const dec = MathUtils.degToRad(Number(decDeg));
+                // `name` is the IAU Latin name, diacritics and all - Boötes, Canis Major -
+                // which is what a star chart is labelled with in any language. Deliberately
+                // NOT the file's per-language fields: those translate the MEANING, so English
+                // would read "Swan", "Crab" and "Air Pump" where an astronomer expects Cygnus,
+                // Cancer and Antlia. 73 of the 89 differ that way.
+                return {name: f.properties.name, ra, dec, pos: raDec2Celestial(ra, dec, 100)};
+            });
+        }
+        return this._constellationLabels;
+    }
+
     renderCanvas(frame) {
         super.renderCanvas(frame);
 
         const showSatelliteNames = this.showSatelliteNames;
-        const anyLabels = registeredLabels.size > 0 || this.showStarNames || showSatelliteNames;
+        const showConstellationNames = this.showConstellationNames;
+        const anyLabels = registeredLabels.size > 0 || this.showStarNames || showSatelliteNames
+            || showConstellationNames;
         if (!anyLabels) return;
 
         // Measured once per frame: renderedRect() does two getBoundingClientRect()
@@ -184,13 +226,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
             this.renderLabels3D(frame, this.displayedCamera(live));
 
-            if (!this.showStarNames && !showSatelliteNames) return;
-
-            const font_h = 9
-            this.ctx.font = Math.floor(font_h) + 'px' + " " + 'Arial'
-            this.ctx.fillStyle = "#ffffff";
-            this.ctx.strokeStyle = '#ffffff';
-            this.ctx.textAlign = 'left';
+            if (!this.showStarNames && !showSatelliteNames && !showConstellationNames) return;
 
             const earthSphere = new Sphere(V3(0, 0, 0), wgs84.POLAR_RADIUS)
             const actualCameraPosition = this.camera.position
@@ -198,11 +234,39 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
             // Compute sky-brightness alpha so labels fade at dusk/dawn like the stars
             let starAlpha = 1;
+            // ... and the opacity of the daylight sky IN FRONT of them, which is what decides
+            // whether the celestial sphere is drawn at all. Read from the same camera position
+            // the view uses, so this agrees with the view's own decision rather than
+            // approximating it.
+            let skyOpacity = 0;
             const sunNode = NodeMan.get("theSun", true);
             if (sunNode) {
                 const skyBrightness = sunNode.calculateSkyBrightness(actualCameraPosition, date);
                 starAlpha = Math.max(0, 1 - skyBrightness);
+                skyOpacity = sunNode.calculateSkyOpacity(actualCameraPosition, date);
             }
+
+            // Constellations first: a star name landing on a constellation name is the more
+            // precise label of the two, so it is the one that should be readable on top.
+            // renderConstellationNames restores the text alignment it changed, because this
+            // context is the view's own and CNodeViewUI draws on it too.
+            // The gate is the one CNodeView3D applies to the night sky itself - "only draw the
+            // night sky if it will be visible", skyOpacity < 1, which calculateSkyOpacity
+            // (min(1, skyBrightness * 2)) reaches at a sky brightness of 0.5. Past that the
+            // whole GlobalNightSkyScene render is SKIPPED, asterism lines included, so a name
+            // drawn here would sit on an empty daylit sky with no figure under it. The lines do
+            // not fade on the way there, so neither does the name: they appear and go together.
+            if (showConstellationNames && skyOpacity < 1) {
+                // Camera at the origin, as for the stars: same celestial sphere.
+                this.renderConstellationNames(this.displayedCamera(live, true), earthSphere,
+                    actualCameraPosition, date);
+            }
+
+            const font_h = 9
+            this.ctx.font = Math.floor(font_h) + 'px' + " " + 'Arial'
+            this.ctx.fillStyle = "#ffffff";
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.textAlign = 'left';
 
             if (this.showStarNames) {
                 // Camera at the origin: the celestial sphere holds directions on a
@@ -216,6 +280,70 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 this.renderSatelliteNames(this.displayedCamera(live), earthSphere, starAlpha);
             }
         });
+    }
+
+    /**
+     * The names, drawn to track the asterism lines they belong to in every respect that can
+     * move them apart: refraction, occlusion and brightness. A name that leaves its figure is
+     * worse than no name, because it then labels whatever it happens to land on.
+     */
+    renderConstellationNames(camera, earthSphere, actualCameraPosition, date) {
+        const labels = this.constellationLabels();
+        if (!labels) return;
+
+        // Bigger than the 9px point labels, and centred on the position rather than offset from
+        // it, because this names a REGION: there is no dot here for the text to sit beside.
+        this.ctx.font = '16px Arial';
+        this.ctx.textAlign = 'center';
+        // The grey of the asterism lines (0x808080), lifted enough to hold up as text, so a name
+        // reads as belonging to the figure it sits in and stays quieter than the white star
+        // names drawn over it.
+        //
+        // Deliberately NOT faded by sky brightness the way the star and satellite labels are.
+        // The constellation LINES carry no fade of their own - addConstellationLines gives them
+        // a plain LineBasicMaterial - they are simply drawn or not drawn, so a name that dimmed
+        // through twilight would be doing something its own figure never does. The "or not
+        // drawn" half is the caller's skyOpacity gate; both halves are needed, and checking only
+        // the material (as an earlier version of this comment did) misses the render-level skip
+        // entirely.
+        this.ctx.fillStyle = "#a8a8a8";
+
+        // The line material has refraction installed on it (installRefractionOnMaterial in
+        // addConstellationLines), so the lines are bent in the shader. The names have to be bent
+        // by the same amount or they part from their figures near the horizon, where the bend is
+        // most of half a degree.
+        const refractApplies = refractionUniforms.uRefractionEnabled.value > 0.5;
+        const refractOpts = refractApplies ? refractionOptsFromUniforms() : null;
+
+        const target0 = V3();
+        const target1 = V3();
+        for (const c of labels) {
+            // Cloned because applyRefractionECI, applyMatrix4 and project all mutate, and the
+            // cached position has to survive for the next frame.
+            const pos = c.pos.clone();
+            if (refractApplies) {
+                applyRefractionECI(pos, refractionUniforms.uZenithECI.value, refractOpts);
+            }
+
+            // Occluded on the APPARENT sightline, for the same reason the star labels are: a
+            // constellation refracted into view from below the horizon has its lines drawn, and
+            // testing the true direction would suppress the name off a figure you can see.
+            const direction = refractApplies
+                ? pos.clone().applyMatrix4(this.nightSky.celestialSphere.matrix).normalize()
+                : getStarDirectionECEF(c.ra, c.dec, date);
+            const ray = new Ray(actualCameraPosition, direction);
+            if (intersectSphere2(ray, earthSphere, target0, target1)) continue;
+
+            pos.applyMatrix4(this.nightSky.celestialSphere.matrix);
+            projectForCamera(pos, camera);
+
+            if (pos.z > -1 && pos.z < 1 && pos.x >= -1 && pos.x <= 1 && pos.y >= -1 && pos.y <= 1) {
+                const [x, y] = this.labelXY(pos);
+                this.ctx.fillText(c.name, x, y);
+            }
+        }
+
+        this.ctx.textAlign = 'left';
     }
 
     renderStarNames(camera, earthSphere, actualCameraPosition, date, starAlpha = 1) {

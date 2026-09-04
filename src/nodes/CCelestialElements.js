@@ -146,27 +146,10 @@ export class CCelestialElements {
         }
     }
 
-    /**
-     * Placeholder for constellation name labels
-     * Currently unused - would display constellation name abbreviations on the celestial sphere
-     * 
-     * @param {Scene} scene Three.js scene to add constellation names to
-     */
-    addConstellationNames(scene) {
-        const constellations = FileManager.get("constellations");
-        if (!constellations) {
-            console.warn("CCelestialElements: constellations data not found in FileManager");
-            return;
-        }
-        
-        const features = constellations.features;
-        
-        // TODO: Implement constellation name labels
-        // This would typically involve:
-        // - Calculating the centroid of each constellation
-        // - Creating a Canvas texture with the constellation abbreviation
-        // - Placing a sprite at that position on the celestial sphere
-    }
+    // Constellation NAMES are not built here. They are drawn as 2D text by
+    // CNodeDisplaySkyOverlay, alongside the star and satellite labels: that keeps them at a
+    // fixed pixel size whatever the field of view, and gives them the same projection - fisheye
+    // included - and the same Earth occlusion and dusk fade as every other sky label.
 
     /**
      * Removes only the constellation lines (leaves the grid intact).
