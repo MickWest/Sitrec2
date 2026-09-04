@@ -88,6 +88,11 @@ import {
 } from "./GimbalCustomSetup";
 import {Color} from "three";
 import {registerGUIRoot, unregisterGUIRoot} from "./GUIRootRegistry";
+import {
+    hookMirrorControllerDestroy,
+    replacePropertyWithCleanup,
+    runMirrorHookCleanup,
+} from "./guiMirrorHookLifecycle";
 
 export const mirrorMethods = {
     /**
@@ -225,7 +230,7 @@ export const mirrorMethods = {
                 standaloneMenu._mirrorEventCleanup();
                 standaloneMenu._mirrorEventCleanup = null;
             }
-            originalDestroy(...args);
+            return originalDestroy(...args);
         };
     },
 
@@ -236,23 +241,22 @@ export const mirrorMethods = {
      * @returns {boolean} True if event-based mirroring was successfully set up
      */
     setupEventBasedMirroring(sourceFolder, standaloneMenu) {
+        const cleanupActions = [];
+        cleanupActions.active = true;
         try {
-            // Store all hooked methods for cleanup
-            const allHookedMethods = [];
-
             // Recursively hook into all folders and sub-folders
-            this.hookFolderRecursively(sourceFolder, standaloneMenu, allHookedMethods);
+            this.hookFolderRecursively(sourceFolder, standaloneMenu, cleanupActions);
 
             // Store cleanup function
             standaloneMenu._mirrorEventCleanup = () => {
-                // Restore all original methods
-                allHookedMethods.forEach(({ folder, methodName, originalMethod }) => {
-                    folder[methodName] = originalMethod;
-                });
+                cleanupActions.active = false;
+                runMirrorHookCleanup(cleanupActions);
             };
 
             return true;
         } catch (error) {
+            cleanupActions.active = false;
+            runMirrorHookCleanup(cleanupActions);
             console.warn('Failed to set up event-based mirroring:', error);
             return false;
         }
@@ -262,9 +266,9 @@ export const mirrorMethods = {
      * Recursively hook into a folder and all its sub-folders
      * @param {GUI} folder - The folder to hook into
      * @param {GUI} standaloneMenu - Target standalone menu to update
-     * @param {Array} allHookedMethods - Array to store hooked methods for cleanup
+     * @param {Array} cleanupActions - Restorers for every hook in this mirror lifecycle
      */
-    hookFolderRecursively(folder, standaloneMenu, allHookedMethods) {
+    hookFolderRecursively(folder, standaloneMenu, cleanupActions) {
         // console.log('hookFolderRecursively called for folder:', folder._title || 'root', 'controllers:', folder.controllers.length);
 
         const methodsToHook = ['add', 'addColor', 'addFolder', 'remove'];
@@ -272,18 +276,16 @@ export const mirrorMethods = {
         // Hook into GUI methods that modify the structure
         methodsToHook.forEach(methodName => {
             if (typeof folder[methodName] === 'function') {
-                const originalMethod = folder[methodName].bind(folder);
-
-                // Store for cleanup
-                allHookedMethods.push({ folder, methodName, originalMethod });
-
-                folder[methodName] = (...args) => {
-                    const result = originalMethod(...args);
+                const originalMethod = folder[methodName];
+                replacePropertyWithCleanup(folder, methodName, (...args) => {
+                    const result = originalMethod.apply(folder, args);
 
                     // If we just added a folder, hook into it too
                     if (methodName === 'addFolder' && result) {
                         setTimeout(() => {
-                            this.hookFolderRecursively(result, standaloneMenu, allHookedMethods);
+                            if (cleanupActions.active) {
+                                this.hookFolderRecursively(result, standaloneMenu, cleanupActions);
+                            }
                         }, 0);
                     }
 
@@ -295,31 +297,35 @@ export const mirrorMethods = {
 
                         // Also hook visibility methods for the new controller
                         setTimeout(() => {
-                            this.hookSingleControllerVisibility(result, standaloneMenu, allHookedMethods);
+                            if (cleanupActions.active) {
+                                this.hookSingleControllerVisibility(result, standaloneMenu, cleanupActions);
+                            }
                         }, 0);
                     }
 
                     // Defer update to next tick to allow GUI to stabilize
-                    setTimeout(() => this.updateMirror(standaloneMenu), 0);
+                    setTimeout(() => {
+                        if (cleanupActions.active) this.updateMirror(standaloneMenu);
+                    }, 0);
                     return result;
-                };
+                }, cleanupActions);
             }
         });
 
         // Hook into controller destroy method for any existing controllers
         // console.log('About to call hookControllerDestroy for folder:', folder._title || 'root');
-        this.hookControllerDestroy(folder, standaloneMenu);
+        this.hookControllerDestroy(folder, standaloneMenu, cleanupActions);
 
         // Hook into visibility methods for existing controllers
-        this.hookControllerVisibility(folder, standaloneMenu, allHookedMethods);
+        this.hookControllerVisibility(folder, standaloneMenu, cleanupActions);
 
         // Hook into visibility methods for this folder
-        this.hookFolderVisibility(folder, standaloneMenu, allHookedMethods);
+        this.hookFolderVisibility(folder, standaloneMenu, cleanupActions);
 
         // Recursively hook into existing sub-folders
         // console.log('Processing sub-folders, count:', folder.folders.length);
         folder.folders.forEach(subfolder => {
-            this.hookFolderRecursively(subfolder, standaloneMenu, allHookedMethods);
+            this.hookFolderRecursively(subfolder, standaloneMenu, cleanupActions);
         });
     },
 
@@ -327,18 +333,17 @@ export const mirrorMethods = {
      * Hook into controller destroy methods to detect when controllers are removed
      * @param {GUI} sourceFolder - Source GUI folder
      * @param {GUI} standaloneMenu - Target standalone menu
+     * @param {Array} cleanupActions - Restorers for every hook in this mirror lifecycle
      */
-    hookControllerDestroy(sourceFolder, standaloneMenu) {
+    hookControllerDestroy(sourceFolder, standaloneMenu, cleanupActions) {
         const hookController = (controller) => {
-            if (controller._mirrorHooked) return; // Already hooked
-            controller._mirrorHooked = true;
-
-            const originalDestroy = controller.destroy.bind(controller);
-            controller.destroy = () => {
-                originalDestroy();
-                // Defer update to next tick
-                setTimeout(() => this.updateMirror(standaloneMenu), 0);
-            };
+            if (!cleanupActions.active) return;
+            hookMirrorControllerDestroy(controller, () => {
+                // Defer update to next tick, unless this mirror was closed meanwhile.
+                setTimeout(() => {
+                    if (cleanupActions.active) this.updateMirror(standaloneMenu);
+                }, 0);
+            }, cleanupActions);
         };
 
         // Hook existing controllers in this folder
@@ -349,27 +354,27 @@ export const mirrorMethods = {
         });
 
         // Store the hook function so the recursive method can use it for new controllers
-        sourceFolder._controllerHookFunction = hookController;
+        replacePropertyWithCleanup(sourceFolder, '_controllerHookFunction', hookController, cleanupActions);
     },
 
     /**
      * Hook into controller visibility methods to detect hide/show changes
      * @param {GUI} sourceFolder - The folder containing controllers to hook
      * @param {GUI} standaloneMenu - The mirrored menu to update
-     * @param {Array} allHookedMethods - Array to store hooked methods for cleanup
+     * @param {Array} cleanupActions - Restorers for every hook in this mirror lifecycle
      */
-    hookControllerVisibility(sourceFolder, standaloneMenu, allHookedMethods) {
+    hookControllerVisibility(sourceFolder, standaloneMenu, cleanupActions) {
         sourceFolder.controllers.forEach(controller => {
             // Hook show method
             if (typeof controller.show === 'function') {
-                const originalShow = controller.show.bind(controller);
-                allHookedMethods.push({ folder: controller, methodName: 'show', originalMethod: originalShow });
-
-                controller.show = (show) => {
-                    const result = originalShow(show);
-                    setTimeout(() => this.updateMirror(standaloneMenu), 0);
+                const originalShow = controller.show;
+                replacePropertyWithCleanup(controller, 'show', (show) => {
+                    const result = originalShow.call(controller, show);
+                    setTimeout(() => {
+                        if (cleanupActions.active) this.updateMirror(standaloneMenu);
+                    }, 0);
                     return result;
-                };
+                }, cleanupActions);
             }
         });
     },
@@ -378,19 +383,19 @@ export const mirrorMethods = {
      * Hook into visibility methods for a single controller
      * @param {Controller} controller - The controller to hook
      * @param {GUI} standaloneMenu - The mirrored menu to update
-     * @param {Array} allHookedMethods - Array to store hooked methods for cleanup
+     * @param {Array} cleanupActions - Restorers for every hook in this mirror lifecycle
      */
-    hookSingleControllerVisibility(controller, standaloneMenu, allHookedMethods) {
+    hookSingleControllerVisibility(controller, standaloneMenu, cleanupActions) {
         // Hook show method
         if (typeof controller.show === 'function') {
-            const originalShow = controller.show.bind(controller);
-            allHookedMethods.push({ folder: controller, methodName: 'show', originalMethod: originalShow });
-
-            controller.show = (show) => {
-                const result = originalShow(show);
-                setTimeout(() => this.updateMirror(standaloneMenu), 0);
+            const originalShow = controller.show;
+            replacePropertyWithCleanup(controller, 'show', (show) => {
+                const result = originalShow.call(controller, show);
+                setTimeout(() => {
+                    if (cleanupActions.active) this.updateMirror(standaloneMenu);
+                }, 0);
                 return result;
-            };
+            }, cleanupActions);
         }
     },
 
@@ -398,20 +403,20 @@ export const mirrorMethods = {
      * Hook into folder visibility methods to detect hide/show changes
      * @param {GUI} folder - The folder to hook visibility methods for
      * @param {GUI} standaloneMenu - The mirrored menu to update
-     * @param {Array} allHookedMethods - Array to store hooked methods for cleanup
+     * @param {Array} cleanupActions - Restorers for every hook in this mirror lifecycle
      */
-    hookFolderVisibility(folder, standaloneMenu, allHookedMethods) {
+    hookFolderVisibility(folder, standaloneMenu, cleanupActions) {
 
         // Hook show method
         if (typeof folder.show === 'function') {
-            const originalShow = folder.show.bind(folder);
-            allHookedMethods.push({ folder, methodName: 'show', originalMethod: originalShow });
-
-            folder.show = (show = true) => {
-                const result = originalShow(show);
-                setTimeout(() => this.updateMirror(standaloneMenu), 0);
+            const originalShow = folder.show;
+            replacePropertyWithCleanup(folder, 'show', (show = true) => {
+                const result = originalShow.call(folder, show);
+                setTimeout(() => {
+                    if (cleanupActions.active) this.updateMirror(standaloneMenu);
+                }, 0);
                 return result;
-            };
+            }, cleanupActions);
         }
 
         // we don't hook the hide method

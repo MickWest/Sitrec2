@@ -32,7 +32,9 @@ kubectl apply -f sitrec-deployment.yaml
 kubectl rollout status deploy/sitrec
 
 # 4. Test (see the install guide's "Step 4" for the full checks)
-kubectl exec deploy/sitrec -- cat /var/www/html/shared.env.php          # creds present?
+# Show which S3 settings are present without printing their values.
+kubectl exec deploy/sitrec -- sed -n -E \
+  's/^((SAVE_TO_S3|S3_[A-Z0-9_]+))=.*/\1=<set>/p' /var/www/html/shared.env.php
 kubectl exec deploy/sitrec -- curl -sf http://localhost:8080/ >/dev/null && echo OK
 kubectl port-forward deploy/sitrec 8080:8080                            # then open http://localhost:8080
 

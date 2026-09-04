@@ -136,8 +136,8 @@ function sanitizeSettings($settings) {
         }
     }
 
-    if (isset($settings['enableOldAIModels'])) {
-        $sanitized['enableOldAIModels'] = boolval($settings['enableOldAIModels']);
+    if (isset($settings['enableOldAIModels']) && is_bool($settings['enableOldAIModels'])) {
+        $sanitized['enableOldAIModels'] = $settings['enableOldAIModels'];
     }
 
     if (isset($settings['voiceModel'])) {
@@ -149,16 +149,16 @@ function sanitizeSettings($settings) {
         }
     }
 
-    if (isset($settings['centerSidebar'])) {
-        $sanitized['centerSidebar'] = boolval($settings['centerSidebar']);
+    if (isset($settings['centerSidebar']) && is_bool($settings['centerSidebar'])) {
+        $sanitized['centerSidebar'] = $settings['centerSidebar'];
     }
 
-    if (isset($settings['showAttribution'])) {
-        $sanitized['showAttribution'] = boolval($settings['showAttribution']);
+    if (isset($settings['showAttribution']) && is_bool($settings['showAttribution'])) {
+        $sanitized['showAttribution'] = $settings['showAttribution'];
     }
 
-    if (isset($settings['showFilename'])) {
-        $sanitized['showFilename'] = boolval($settings['showFilename']);
+    if (isset($settings['showFilename']) && is_bool($settings['showFilename'])) {
+        $sanitized['showFilename'] = $settings['showFilename'];
     }
 
     if (isset($settings['language'])) {
@@ -177,8 +177,8 @@ function sanitizeSettings($settings) {
         }
     }
 
-    if (isset($settings['startupLocation'])) {
-        $sanitized['startupLocation'] = boolval($settings['startupLocation']);
+    if (isset($settings['startupLocation']) && is_bool($settings['startupLocation'])) {
+        $sanitized['startupLocation'] = $settings['startupLocation'];
     }
 
     if (isset($settings['startupLat'])) {
@@ -194,8 +194,8 @@ function sanitizeSettings($settings) {
         $sanitized['startupAlt'] = max(0, min(100000, floatval($settings['startupAlt'])));
     }
 
-    if (isset($settings['startupBuildings'])) {
-        $sanitized['startupBuildings'] = boolval($settings['startupBuildings']);
+    if (isset($settings['startupBuildings']) && is_bool($settings['startupBuildings'])) {
+        $sanitized['startupBuildings'] = $settings['startupBuildings'];
     }
 
     return $sanitized;

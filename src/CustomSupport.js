@@ -522,7 +522,7 @@ export class CCustomManager {
             .listen();
 
         // Tile Segments — terrain mesh resolution per tile.
-        tweaksFolder.add(Globals.settings, "tileSegments", [8, 16, 32, 64, 128])
+        tweaksFolder.add(Globals.settings, "tileSegments", [16, 32, 64, 128])
             .name(t("custom.settings.tileSegments.label"))
             .tooltip(t("custom.settings.tileSegments.tooltip"))
             .onFinishChange(() => {

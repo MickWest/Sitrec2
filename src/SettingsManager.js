@@ -115,8 +115,8 @@ export function sanitizeSettings(settings) {
         }
     }
 
-    if (settings.enableOldAIModels !== undefined) {
-        sanitized.enableOldAIModels = Boolean(settings.enableOldAIModels);
+    if (settings.enableOldAIModels !== undefined && typeof settings.enableOldAIModels === "boolean") {
+        sanitized.enableOldAIModels = settings.enableOldAIModels;
     }
 
     if (settings.voiceModel !== undefined) {
@@ -128,16 +128,16 @@ export function sanitizeSettings(settings) {
         }
     }
 
-    if (settings.centerSidebar !== undefined) {
-        sanitized.centerSidebar = Boolean(settings.centerSidebar);
+    if (settings.centerSidebar !== undefined && typeof settings.centerSidebar === "boolean") {
+        sanitized.centerSidebar = settings.centerSidebar;
     }
 
-    if (settings.showAttribution !== undefined) {
-        sanitized.showAttribution = Boolean(settings.showAttribution);
+    if (settings.showAttribution !== undefined && typeof settings.showAttribution === "boolean") {
+        sanitized.showAttribution = settings.showAttribution;
     }
 
-    if (settings.showFilename !== undefined) {
-        sanitized.showFilename = Boolean(settings.showFilename);
+    if (settings.showFilename !== undefined && typeof settings.showFilename === "boolean") {
+        sanitized.showFilename = settings.showFilename;
     }
 
     if (settings.language !== undefined) {
@@ -158,8 +158,8 @@ export function sanitizeSettings(settings) {
         }
     }
 
-    if (settings.startupLocation !== undefined) {
-        sanitized.startupLocation = Boolean(settings.startupLocation);
+    if (settings.startupLocation !== undefined && typeof settings.startupLocation === "boolean") {
+        sanitized.startupLocation = settings.startupLocation;
     }
 
     if (settings.startupLat !== undefined) {
@@ -185,8 +185,8 @@ export function sanitizeSettings(settings) {
         }
     }
 
-    if (settings.startupBuildings !== undefined) {
-        sanitized.startupBuildings = Boolean(settings.startupBuildings);
+    if (settings.startupBuildings !== undefined && typeof settings.startupBuildings === "boolean") {
+        sanitized.startupBuildings = settings.startupBuildings;
     }
 
     return sanitized;
