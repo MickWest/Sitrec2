@@ -55,7 +55,7 @@ jobs:
           # No job here pushes with the checkout token.
           persist-credentials: false
       - name: use node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '22.4'
       - name: config script setup
