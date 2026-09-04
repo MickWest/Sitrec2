@@ -741,6 +741,19 @@ function generate() {
     const copyIdx = args.indexOf("--copy-to");
     let copyTo = copyIdx !== -1 ? args[copyIdx + 1] : null;
 
+    // The repo-root ThirdPartyNotices.txt is TRACKED, so it must describe one
+    // build, and that build is production. Three lifecycle hooks generate notices
+    // — postdeploy, postbuild-serverless and postbuild-secure — and each used to
+    // write that same path from whichever stats file was on disk. The committed
+    // file was therefore whichever build ran last: a serverless build added the
+    // Node server's dependencies, the next production build removed them again,
+    // and the diff read as packages appearing and disappearing for no reason.
+    //
+    // --dist-only writes the notices into that build's own output directory,
+    // which is where the obligation actually sits (that directory is what gets
+    // distributed), and leaves the tracked file alone.
+    const distOnly = args.includes("--dist-only");
+
     // --copy-to-prod resolves the path from config/config-install.js, or from
     // SITREC_PROD_PATH when building for another deployment (see buildTarget.js)
     if (args.includes("--copy-to-prod")) {
@@ -748,6 +761,11 @@ function generate() {
         if (!copyTo) {
             console.warn("  WARNING: No prod_path in config/config-install.js and no SITREC_PROD_PATH");
         }
+    }
+
+    if (distOnly && !copyTo && !args.includes("--copy-to-prod")) {
+        console.error("ERROR: --dist-only writes nowhere without --copy-to or --copy-to-prod");
+        process.exit(1);
     }
 
     if (statsPath && !fs.existsSync(statsPath)) {
@@ -845,16 +863,22 @@ function generate() {
 
     const allDeps = [...bundledDeps, ...dataFileDeps, ...optionalDeps];
     const content = lines.join("\n");
-    fs.writeFileSync(OUTPUT, content, "utf-8");
-    console.log(`\nWrote ${OUTPUT} (${allDeps.length} entries, ${content.length} bytes)`);
+    if (distOnly) {
+        console.log(`\nLeaving ${OUTPUT} alone (--dist-only): it tracks the production build.`);
+    } else {
+        fs.writeFileSync(OUTPUT, content, "utf-8");
+        console.log(`\nWrote ${OUTPUT} (${allDeps.length} entries, ${content.length} bytes)`);
+    }
 
-    // Copy to build output directory if requested
+    // Write into the build output directory if requested. This writes `content`
+    // rather than copying OUTPUT, so it does not depend on the root file having
+    // just been written — which under --dist-only it has not.
     if (copyTo) {
         const destDir = path.resolve(copyTo);
         if (fs.existsSync(destDir)) {
             const dest = path.join(destDir, "ThirdPartyNotices.txt");
-            fs.copyFileSync(OUTPUT, dest);
-            console.log(`Copied to ${dest}`);
+            fs.writeFileSync(dest, content, "utf-8");
+            console.log(`Wrote ${dest} (${allDeps.length} entries)`);
         } else {
             console.warn(`WARNING: Output directory does not exist, skipping copy: ${destDir}`);
         }
