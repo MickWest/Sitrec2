@@ -7,10 +7,18 @@ const {spawnSync} = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const {pathToFileURL} = require('url');
 
 const ROOT = path.resolve(__dirname, '..');
 const LINT = path.join(ROOT, 'deploy', 'aws', 'lint', 'partition-lint.mjs');
 const REFRESH = path.join(ROOT, 'deploy', 'aws', 'lint', 'refresh-services.mjs');
+
+// An ESM import specifier is a URL, not a path. On POSIX an absolute path happens to
+// work because it reads as a root-relative URL; on Windows "D:\\a\\..." is read as the
+// scheme "d:" and the loader refuses it with ERR_UNSUPPORTED_ESM_URL_SCHEME. A file://
+// URL is correct on both, so build the specifier rather than interpolating the path.
+const LINT_URL = JSON.stringify(pathToFileURL(LINT).href);
+const REFRESH_URL = JSON.stringify(pathToFileURL(REFRESH).href);
 
 const TARGET = 'xx-isolated-1';
 const OTHER = 'xx-other-9';
@@ -346,7 +354,7 @@ describe('partition-lint: exports', () => {
     test('RESOURCE_SERVICE_MAP, serviceForResourceType and hostnameRegion', () => {
         const out = evalModule(`
             import { RESOURCE_SERVICE_MAP, serviceForResourceType, hostnameRegion, checkPlan, scanSources }
-                from ${JSON.stringify(LINT)};
+                from ${LINT_URL};
             const types = ['aws_lb_trust_store_revocation', 'aws_ecs_service', 'aws_ecr_lifecycle_policy',
                 'aws_s3_bucket_policy', 'aws_kms_alias', 'aws_iam_role_policy_attachment',
                 'aws_cloudwatch_log_group', 'aws_cloudwatch_metric_alarm', 'aws_cloudtrail',
@@ -389,7 +397,7 @@ describe('partition-lint: exports', () => {
 
     test('refresh-services: service codes come from the parameter names, across pages, sorted', () => {
         const out = evalModule(`
-            import { servicesFromPages, servicesPath } from ${JSON.stringify(REFRESH)};
+            import { servicesFromPages, servicesPath } from ${REFRESH_URL};
             const base = servicesPath('${TARGET}');
             const pages = [
                 { Parameters: [{ Name: base + '/s3', Value: 's3' }, { Name: base + '/ec2', Value: 'ec2' }], NextToken: 't' },

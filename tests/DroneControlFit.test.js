@@ -141,13 +141,18 @@ async function fitFreeQuad(scene) {
 }
 
 describe("drone control-input fit", () => {
-    // 10 minutes, not 5: the corkscrew test runs two full DE fits and took
-    // 363 s on a slow shared macOS CI runner (2.104.0 CI #1298 timed out at
-    // 300 s there while passing locally in a fraction of that). The budgets
-    // themselves must NOT be trimmed to fit a timeout — an under-budgeted
-    // control fit degrades toward straight flight (see the turning-flight
-    // test below), which would be a quiet bias, not a speedup.
-    jest.setTimeout(600000);
+    // 20 minutes. The corkscrew test runs two full DE fits, and the cost of a
+    // shared CI runner has needed this raised twice: 300 s timed out on macOS
+    // (2.104.0 CI #1298) against 363 s actual, and 600 s then timed out on
+    // Windows. One multi-platform run on 2026-09-04 measured the whole suite at
+    // 356 s on macOS, 518 s on Linux and 772 s on Windows — better than a
+    // factor of two between the fastest and slowest runner for identical work,
+    // which is what the headroom has to absorb.
+    //
+    // The budgets themselves must NOT be trimmed to fit a timeout — an
+    // under-budgeted control fit degrades toward straight flight (see the
+    // turning-flight test below), which would be a quiet bias, not a speedup.
+    jest.setTimeout(1200000);
 
     test("inverse controls recover the inputs that produced a known flight", () => {
         // A leg at 9 m/s on heading 40, then a turn to 130 over the second half.

@@ -39,7 +39,13 @@ const NATIVE_PROMPT_CALL = /(?<![\w.$])prompt\s*\(|window\s*\.\s*prompt\s*\(/;
 function stripCommentsAndStrings(line) {
     // Comments mention prompt() deliberately (explaining what was replaced), and i18n
     // keys contain the word; neither is a call.
-    const withoutComment = line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '');
+    // No $ anchor: JavaScript treats \r as a line terminator, so `.` stops before the
+    // \r of a CRLF line while an unanchored-by-m `$` only matches true end-of-input —
+    // the match then fails, the comment survives, and every comment that names prompt()
+    // reads as a call. That is a Windows-only failure, because that is where the
+    // checkout has CRLF endings. `.*` cannot cross a newline, so the anchor bought
+    // nothing to begin with.
+    const withoutComment = line.replace(/\/\/.*/, '').replace(/\/\*.*?\*\//g, '');
     return withoutComment
         .replace(/`(?:[^`\\]|\\.)*`/g, '``')
         .replace(/"(?:[^"\\]|\\.)*"/g, '""')
@@ -59,7 +65,7 @@ describe('no native prompt() in src/', () => {
     test('no file calls the native prompt()', () => {
         const offenders = [];
         for (const file of files) {
-            const lines = fs.readFileSync(file, 'utf-8').split('\n');
+            const lines = fs.readFileSync(file, 'utf-8').split(/\r?\n/);
             lines.forEach((line, i) => {
                 if (NATIVE_PROMPT_CALL.test(stripCommentsAndStrings(line))) {
                     offenders.push(`${path.relative(SRC, file)}:${i + 1}: ${line.trim()}`);
