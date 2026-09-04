@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.151.0 (2026-09-04)
+
+### New Features
+
+- **Remove Video** (Video → *Remove Video*, and the menu on the video view's own title bar): takes the video back out of a view and leaves it exactly as it was before one was loaded — the file is unloaded, the view is hidden again, the sitch stops remembering the video for next time, and the sitch's own start time and duration come back. It asks first, because anything measured from the footage — a painted mask, a manual track, an analysis — is not kept. The entry appears only while that view is holding a video, and a second video view gets its own.
+
+- **Constellation names** (Show → Celestial → *Constellation Lines*): every constellation is now labelled with its name wherever its lines are drawn. The names use the standard Latin names an astronomer expects — Cygnus, Cancer, Antlia, not Swan, Crab and Air Pump — stay the same size however far you zoom in, and are drawn like every other sky label, so they bend with refraction near the horizon, hide behind the Earth, and appear and disappear together with the lines they belong to. They follow the same switch as the lines, so a name never turns up without its figure.
+
+### Improvements
+
+- **The Star Tracker overlay switches are now three separate things** (Video → Star Tracker): *Show stars* is renamed **Show star markers** and controls the green circles alone; **Show star names** now works whether or not those circles are drawn; and a new **Show quad lines** switch, on by default so nothing looks different unless you change it, controls the four-star shapes the solver matched against the catalog. You can now read the star names over clean video. Clicking a star to take it out of the solve follows the circle, so with the markers hidden there is no longer an invisible spot that toggles a star off when you click what looks like empty sky, and a name with no circle sits right beside its star instead of well off to one side.
+
+- **Each release now carries its own security evidence** (the Releases page of the project on GitHub): the container security review and the software bill of materials, one of each for every published architecture, are attached to the release itself. They used to be build artifacts, which are deleted after ninety days; now they stay available for as long as the release does, so anyone running a published image can still check a year later what was in it.
+
 ## Version 2.150.0 (2026-09-03)
 
 ### New Features

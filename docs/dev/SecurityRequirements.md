@@ -120,6 +120,15 @@ Stating these prevents a reader mistaking a decision for an oversight.
   breaks deployments still mapping to it.
 - **Object storage is public by design.** The object key is the capability; that decision is
   recorded rather than treated as a finding.
+- **Independent review of every change is not a requirement.** The project has one
+  maintainer. Changes are reviewed before they are pushed, but that review is not
+  independent and there is no second approver to record. A required pull-request approval
+  would be unsatisfiable, since the author of a pull request cannot approve it, and a
+  self-approval would produce an audit trail that misrepresents itself. What the project
+  provides instead is authorship and integrity evidence: every commit is signed, and the
+  default branch ruleset makes published history append-only with no bypass actors. This
+  is a decision about headcount rather than about maturity — with a second regular
+  contributor, required review becomes both satisfiable and worth having.
 - **The project makes no availability guarantee.** Nothing here is about uptime.
 
 ## Reviewing this document

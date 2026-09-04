@@ -2039,6 +2039,7 @@ const en = {
         grid: "Grid",
         annotations: "Annotations",
         exifPanel: "EXIF / Metadata",
+        removeVideo: "Remove Video",
         effects: "Enable Effects",
         brightness: "Brightness",
         contrast: "Contrast",

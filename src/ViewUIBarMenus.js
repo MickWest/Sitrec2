@@ -112,6 +112,7 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "grid", name: "Grid"},
         {slot: "annotations", name: "Annotations"},
         {slot: "exifPanel", name: "EXIF / Metadata"},
+        {slot: "removeVideo", name: "Remove Video"},
         {slot: "effects", name: "Enable Effects", folder: "adjustments"},
         {slot: "brightness", name: "Brightness", folder: "adjustments"},
         {slot: "contrast", name: "Contrast", folder: "adjustments"},
