@@ -3,6 +3,22 @@
 # (uploaded as an artifact from the build-js stage).
 # The full multi-stage Dockerfile is still used for local builds.
 
+# --- Build arguments an operator may need to change ---------------------------
+# BASE_IMAGE selects the runtime base. The default is the public Docker Hub image
+# this project publishes from. A site that must build against an approved registry
+# — a hardened base with its own accreditation, rather than docker.io — overrides
+# it instead of forking this file:
+#
+#   docker build -f Dockerfile.release \
+#     --build-arg BASE_IMAGE=<registry>/<hardened-php-apache-image>:<tag> \
+#     --build-arg WITH_GFS_WIND=0 --build-arg DIST_DIR=dist-secure .
+#
+# Anything but the default is untested by this project's CI, which builds and
+# reviews only the published image. A site overriding it owns verifying the result
+# — `npm run audit-container` is the tool for that, and it makes no assumption
+# about which base was used.
+ARG BASE_IMAGE=php:8.4-apache
+
 # --- PHP dependencies (AWS SDK for S3, Guzzle) -------------------------------
 # composer.json/composer.lock ship in sitrecServer (and in dist/), but vendor/ is
 # gitignored and never committed — so it must be built into the image here.
@@ -18,12 +34,31 @@ WORKDIR /sitrecServer
 COPY sitrecServer/composer.json sitrecServer/composer.lock ./
 RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress --ignore-platform-reqs
 
-FROM php:8.4-apache
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# WITH_GFS_WIND=0 omits Python and the GRIB decoder.
+#
+# They exist for ONE path: windProxy.php shells out to tools/fetch_wind.py, which
+# uses eccodes to decode NOAA GFS GRIB files fetched from NOMADS. A deployment with
+# no route to NOMADS cannot use that path at all, and the hardened install does not
+# — it takes wind from CUSTOM_WIND_URL through customWindProxy.php, which is pure
+# PHP over JSON grids and needs neither Python nor eccodes.
+#
+# So for an isolated deployment this is not a feature being given up; it is a
+# language runtime, a package installer and a native decoder removed from an image
+# that never had a way to use them. The advisory count in the container review
+# falls accordingly. Leave it at 1 for the published image, where GFS works.
+ARG WITH_GFS_WIND=1
 
 RUN apt-get update && apt-get install -y libzip-dev libonig-dev \
-    python3 python3-pip \
     && docker-php-ext-install zip mbstring iconv \
-    && pip3 install --no-cache-dir --break-system-packages eccodes certifi \
+    && if [ "$WITH_GFS_WIND" = "1" ]; then \
+           apt-get install -y python3 python3-pip \
+           && pip3 install --no-cache-dir --break-system-packages eccodes certifi; \
+       else \
+           echo "WITH_GFS_WIND=0 — Python and eccodes omitted; windProxy.php (GFS) will not work"; \
+       fi \
     && rm -rf /var/lib/apt/lists/*
 
 # DIST_DIR selects which pre-built output directory is packaged. The default is the
