@@ -159,12 +159,15 @@ const params = {
     // rather than three per frame, which is what makes a sparse, sub-pixel-per-frame allsky
     // timelapse solvable at all. Off by default: most footage is hand-held or panned.
     fixedCamera: false,
-    // Display
+    // Display. Each of these gates ONE thing on the overlay, so any of them can be turned off
+    // without taking a neighbour with it: the star circles, the catalog names beside them and
+    // the solver's quad lines are three independent layers over the same stars.
     showStars: true,
+    showStarNames: true,
+    showQuadLines: true,
     showMoving: true,
     showClusters: true,
     showRejected: false,
-    showStarNames: true,
     showDuringAnalysis: true,
     useMask: true,
     // Analyse the frame the user is LOOKING at, not the raw decode. Levels, curves, sharpen,
@@ -3091,7 +3094,10 @@ export function drawStarTrackerOverlay() {
     for (const c of result.solved.classified) {
         if (!c.position) continue;
         if (c.klass === "short") continue;
-        if (c.klass === "star" && !params.showStars) continue;
+        // A star is dropped only when NEITHER of its two layers is wanted. "Show star markers"
+        // governs the circle alone, so with it off and names on the label still has to be placed,
+        // which needs the star's position computed exactly as before.
+        if (c.klass === "star" && !params.showStars && !params.showStarNames) continue;
         if (c.klass === "moving" && !params.showMoving) continue;
         if ((c.klass === "incoherent" || c.klass === "cameraFixed") && !params.showRejected) continue;
 
@@ -3161,18 +3167,26 @@ export function drawStarTrackerOverlay() {
         // visibly changes when it is toggled off. Movers draw at half strength so the circle and
         // its label mark the object without painting over it.
         const disabled = c.klass === "star" && result.disabledStars?.has(c.index);
-        if (c.klass === "star") overlayStarHits.push({x: px, y: py, r: radius, index: c.index});
+        // The circle is what the user clicks, so the hit follows the circle rather than the star:
+        // with the markers hidden there is nothing to aim at, and a registered hit would toggle a
+        // star out of the working set on a click that appeared to land on empty sky.
+        const drawMarker = c.klass !== "star" || params.showStars;
+        if (c.klass === "star" && drawMarker) {
+            overlayStarHits.push({x: px, y: py, r: radius, index: c.index});
+        }
         const alpha = disabled
             ? (faint ? 0.15 : 0.3)
             : (faint ? 0.25 : c.klass === "moving" ? 0.5 : 1);
         if (alpha !== 1) overlayCtx.globalAlpha = alpha;
 
-        overlayCtx.beginPath();
-        overlayCtx.arc(px, py, radius, 0, Math.PI * 2);
-        overlayCtx.strokeStyle = COLORS[c.klass] || "#888";
-        overlayCtx.lineWidth = c.klass === "moving" ? 3 : faint ? 1 : 1.8;
-        overlayCtx.setLineDash(c.klass === "incoherent" ? [4, 4] : []);
-        overlayCtx.stroke();
+        if (drawMarker) {
+            overlayCtx.beginPath();
+            overlayCtx.arc(px, py, radius, 0, Math.PI * 2);
+            overlayCtx.strokeStyle = COLORS[c.klass] || "#888";
+            overlayCtx.lineWidth = c.klass === "moving" ? 3 : faint ? 1 : 1.8;
+            overlayCtx.setLineDash(c.klass === "incoherent" ? [4, 4] : []);
+            overlayCtx.stroke();
+        }
 
         if (c.klass === "moving") {
             overlayCtx.setLineDash([]);
@@ -3187,7 +3201,9 @@ export function drawStarTrackerOverlay() {
             overlayCtx.setLineDash([]);
             overlayCtx.fillStyle = properlyNamed ? "#fff" : "#9fdcb0";
             overlayCtx.font = properlyNamed ? "12px sans-serif" : "11px sans-serif";
-            overlayCtx.fillText(identifiedStar.label, px + radius + 4, py + 4);
+            // Clear of the circle when there is one; a bright star's circle is 24 px, and holding
+            // that offset with the markers hidden would strand the name far from its star.
+            overlayCtx.fillText(identifiedStar.label, px + (drawMarker ? radius + 4 : 6), py + 4);
         }
         if (alpha !== 1) overlayCtx.globalAlpha = 1;
     }
@@ -3237,7 +3253,7 @@ export function drawStarTrackerOverlay() {
     // thickness by quad residual would draw every candidate the same. A wrong quad explains a
     // handful of stars and stays hairline; the winning one explains most of the field and is
     // unmistakable.
-    if (liveQuads.length) {
+    if (params.showQuadLines && liveQuads.length) {
         liveQuads.forEach((q, qi) => {
             const sChart = result.sphereChart?.chart;
             const pts = q.points.map(([qx, qy]) => {
@@ -3459,10 +3475,21 @@ export function setupStarTrackerMenu() {
             + "exposure interval the fitted rate implies. Leave off for hand-held or panned "
             + "footage.");
     folder.add(params, "lensStatus").name("Lens").listen().disable();
-    folder.add(params, "showStars").name("Show stars").onChange(setRenderOne);
+    // The overlay switches, in the order they are reached for: the circles, the names beside
+    // them, the solver's quad lines, then the less-used classes. Each gates exactly one layer.
+    folder.add(params, "showStars").name("Show star markers").onChange(setRenderOne)
+        .tooltip("Draw the circle round each identified star. Only the circles - the catalog "
+            + "names and the quad lines have their own switches, so the names can be read over "
+            + "clean video with every circle hidden.");
+    folder.add(params, "showStarNames").name("Show star names").onChange(setRenderOne)
+        .tooltip("Label each identified star with its catalog name. Works whether or not the "
+            + "star markers are drawn.");
+    folder.add(params, "showQuadLines").name("Show quad lines").onChange(setRenderOne)
+        .tooltip("Draw the four-star shapes the blind solve matched against the catalog, with "
+            + "line weight showing how much of the field each one explains. They are the visible "
+            + "evidence for the identification; turn them off once you trust it.");
     folder.add(params, "showMoving").name("Show moving").onChange(setRenderOne);
     folder.add(params, "showClusters").name("Show light clusters").onChange(setRenderOne);
-    folder.add(params, "showStarNames").name("Show star names").onChange(setRenderOne);
     folder.add(params, "showRejected").name("Show rejected").onChange(setRenderOne);
     folder.add(params, "showDuringAnalysis").name("Display during analysis")
         .tooltip("While an analysis is scanning, circle each frame's detections as they are "
