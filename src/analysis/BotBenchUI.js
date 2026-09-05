@@ -42,6 +42,8 @@ import {
 import {longestUniformRun, measureAnchorRate} from "./BotBenchClock";
 import {putFileHandoff} from "../FileHandoff";
 import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBenchRunner";
+import {botBenchConcurrency, runBotBenchQueue} from "./BotBenchWorkerPool";
+import {BotBenchAnalysisPool} from "./BotBenchAnalysisPool";
 import {packForCache, unpackFromCache} from "./BotBenchCacheCodec";
 import {botENUToLLA} from "../TrackFiles/CTrackFileBOT";
 import {
@@ -981,21 +983,29 @@ async function loadDirCache(state, entry) {
     if (!entry.dirHandle) return null;   // drag-and-drop: no writable folder
     if (!state.dirCaches) state.dirCaches = [];
     const already = state.dirCaches.find((r) => r.handle === entry.dirHandle);
-    if (already) return already;
-    let data = {schema: CACHE_SCHEMA, results: {}};
-    try {
-        const fh = await entry.dirHandle.getFileHandle(CACHE_FILENAME);
-        const parsed = JSON.parse(await (await fh.getFile()).text());
-        if (parsed?.schema === CACHE_SCHEMA && parsed.results) data = parsed;
-    } catch (e) { /* absent or unreadable — start fresh */ }
-    const rec = {handle: entry.dirHandle, data,
-        // "Folder (Read)" runs reuse existing caches but never write them.
+    if (already) return already.loading;
+    const rec = {handle: entry.dirHandle, data: null,
         writable: entry.cacheWritable !== false};
     state.dirCaches.push(rec);
-    return rec;
+    rec.loading = (async () => {
+        let data = {schema: CACHE_SCHEMA, results: {}};
+        try {
+            const fh = await entry.dirHandle.getFileHandle(CACHE_FILENAME);
+            const parsed = JSON.parse(await (await fh.getFile()).text());
+            if (parsed?.schema === CACHE_SCHEMA && parsed.results) data = parsed;
+        } catch (e) { /* absent or unreadable — start fresh */ }
+        rec.data = data;
+        return rec;
+    })();
+    return rec.loading;
 }
 
-async function writeDirCache(rec) {
+function writeDirCache(rec) {
+    rec.writing = (rec.writing ?? Promise.resolve()).catch(() => {}).then(() => saveDirCache(rec));
+    return rec.writing;
+}
+
+async function saveDirCache(rec) {
     rec.data.schema = CACHE_SCHEMA;
     rec.data.savedAt = new Date().toISOString();
     rec.data.appVersion = APP_VERSION;
@@ -2170,9 +2180,11 @@ function makeYield() {
         return () => new Promise((resolve) => setTimeout(resolve, 0));
     }
     const channel = new MessageChannel();
-    let pending = null;
-    channel.port1.onmessage = () => { const r = pending; pending = null; if (r) r(); };
-    return () => new Promise((resolve) => { pending = resolve; channel.port2.postMessage(0); });
+    const pending = [];
+    channel.port1.onmessage = () => pending.shift()?.();
+    const yieldTask = () => new Promise((resolve) => { pending.push(resolve); channel.port2.postMessage(0); });
+    yieldTask.dispose = () => { channel.port1.close(); channel.port2.close(); };
+    return yieldTask;
 }
 
 async function analyzeEntries(state, found) {
@@ -2188,162 +2200,181 @@ async function analyzeEntries(state, found) {
     const options = runOptions(state);
     const yieldToDOM = makeYield();
 
-    for (let i = 0; i < found.length; i++) {
-        if (state.cancelled) break;
-        // The options this file was actually run under, frozen per entry. The
-        // dialog's controls stay live between batches, so a run at one anchor
-        // followed by a run at another used to have BOTH batches labelled with
-        // whatever the controls read at export time — making a deliberately
-        // mixed comparison look uniform, which is the one thing it must not do.
-        const entry = {...found[i], key: state.nextRowId++, status: "queued", row: null,
-            results: null, options: {...options}};
-        state.entries.push(entry);
-        makeRow(state, entry);
-        state.progress.value = i / found.length;
-        state.status.textContent = `Analysing ${i + 1} of ${found.length}: `
-            + `${entry.relativePath}${state.memoryNote ?? ""}`;
-        await yieldToDOM();
+    const concurrency = typeof Worker === "undefined" ? 1 : botBenchConcurrency(found.length);
+    const pool = new BotBenchAnalysisPool(concurrency);
+    state.workerPool = pool;
+    let completed = 0;
+    const fractions = new Float64Array(found.length);
+    const updateProgress = () => {
+        state.progress.value = fractions.reduce((sum, f) => sum + f, 0) / found.length;
+        state.status.textContent = `Analysing ${completed} of ${found.length} complete`
+            + (pool.workers && !pool.workers.closed ? ` (${concurrency} workers)` : "") + (state.memoryNote ?? "");
+    };
+    const fitEntry = (record, onProgress) => pool.run(record, {
+        ...options, onProgress, isCancelled: () => state.cancelled, yieldToDOM,
+    });
 
-        // Cache lookup, best-effort: any failure here (hashing, an unreadable
-        // cache file) falls through to a normal run rather than an error row.
-        let hashes = null, dirCache = null, cachedHit = false;
-        try {
-            setRowStatus(entry, "hashing");
-            hashes = await entryFileHashes(entry);
-            dirCache = await loadDirCache(state, entry);
-            const hit = dirCache?.data.results[entry.name];
-            if (hit && hit.hash === combinedHash(hashes) && hit.battery
-                && (hit.appVersion ?? null) === APP_VERSION
-                && JSON.stringify(hit.options ?? null) === JSON.stringify(entry.options ?? null)) {
-                setRowStatus(entry, "cached", "Replaying the cached analysis…");
-                await yieldToDOM();
-                const battery = await readBatteryBlob(dirCache, hit.battery);
-                // The SAME ingest and the SAME runner a fresh analysis uses —
-                // only the fit is handed in rather than computed. Nothing here
-                // reconstructs a result; the result is built by the code that
-                // builds every other result.
-                const record = await ingestBotBenchEntry(entry);
-                const {results, row} = await runBotBenchAnalysis(record, {
-                    ...options, battery, elapsedMs: hit.elapsedMs ?? null,
-                    isCancelled: () => state.cancelled,
-                });
-                // Before the comparison, not after: the stored row carries the
-                // hashes too, and a row that is complete on one side of the
-                // check and not the other fails it every single time.
-                if (hashes) row.fileSha256 = hashes;
-                // THE CACHE CHECKS ITSELF. The row was stored when the fit ran;
-                // this one was just rebuilt from it. They can only differ if
-                // something the three keys do not cover has moved underneath —
-                // so a mismatch discards the entry and runs the file properly,
-                // rather than showing a number no current code would produce.
-                // Compared through the codec because a row can hold NaN and
-                // Infinity, and plain stringify flattens both to null, which
-                // would hide exactly the differences worth catching.
-                if (JSON.stringify(packForCache(row)) !== JSON.stringify(hit.row)) {
-                    console.warn("BotBench: cached analysis for", entry.relativePath,
-                        "no longer reproduces its stored row — re-analysing.");
-                    delete dirCache.data.results[entry.name];
-                } else {
-                    entry.results = results;
-                    entry.row = row;
-                    entry.status = "done";
-                    entry.fromCache = true;
-                    cachedHit = true;
-                    fillRow(state, entry);
-                    setRowStatus(entry, "cached",
-                        `Reused from ${CACHE_FILENAME} (saved ${hit.savedAt ?? "?"}, `
-                        + `app ${dirCache.data.appVersion ?? "?"}).\n`
-                        + `Input hashes, analysis options and app version all match this `
-                        + `file's cached run, and the replayed row reproduces the stored `
-                        + `one exactly.\nThe fit was reused; everything else was `
-                        + `recomputed, so Gallery, Report and Open in Sitrec all work.`);
-                }
-            }
-        } catch (cacheError) {
-            console.warn("BotBench cache lookup failed for", entry.relativePath, cacheError);
-        }
-
-        if (!cachedHit) try {
-            setRowStatus(entry, "reading");
+    try {
+        await runBotBenchQueue(found, concurrency, async (source, i) => {
+            // The options this file was actually run under, frozen per entry. The
+            // dialog's controls stay live between batches, so a run at one anchor
+            // followed by a run at another used to have BOTH batches labelled with
+            // whatever the controls read at export time — making a deliberately
+            // mixed comparison look uniform, which is the one thing it must not do.
+            const entry = {...source, key: state.nextRowId++, status: "queued", row: null,
+                results: null, options: {...options}};
+            state.entries.push(entry);
+            makeRow(state, entry);
+            updateProgress();
             await yieldToDOM();
-            const record = await ingestBotBenchEntry(entry);
 
-            const {results, row, battery, elapsedMs} = await runBotBenchAnalysis(record, {
-                ...options,
-                isCancelled: () => state.cancelled,
-                onProgress: async (frac, label) => {
-                    setRowStatus(entry, `${Math.round(frac * 100)}%`, label);
-                    state.progress.value = (i + frac) / found.length;
+            // Cache lookup, best-effort: any failure here (hashing, an unreadable
+            // cache file) falls through to a normal run rather than an error row.
+            let hashes = null, dirCache = null, cachedHit = false;
+            try {
+                setRowStatus(entry, "hashing");
+                hashes = await entryFileHashes(entry);
+                dirCache = await loadDirCache(state, entry);
+                const hit = dirCache?.data.results[entry.name];
+                if (hit && hit.hash === combinedHash(hashes) && hit.battery
+                    && (hit.appVersion ?? null) === APP_VERSION
+                    && JSON.stringify(hit.options ?? null) === JSON.stringify(entry.options ?? null)) {
+                    setRowStatus(entry, "cached", "Replaying the cached analysis…");
                     await yieldToDOM();
-                },
-            });
-            entry.results = results;
-            entry.row = row;
-            // The hashes ride on the ROW, so Export JSON records exactly which
-            // bytes produced each result.
-            if (hashes) row.fileSha256 = hashes;
-            entry.status = "done";
-            fillRow(state, entry);
-            if (dirCache?.writable && hashes) {
-                const hash = combinedHash(hashes);
-                const name = blobName(hash);
-                // The fit first, the index second. A blob with no index entry is
-                // dead weight a flush will collect; an index entry pointing at a
-                // blob that was never written would be a hit that throws on every
-                // future run. The row is stored EXACTLY AS BUILT, because the
-                // replay's self-check compares against it — note that row.fileSha256
-                // is already on it, and the replay re-applies the same hashes.
-                let stored = false;
-                try { await writeBatteryBlob(dirCache, name, battery); stored = true; }
-                catch (writeError) {
-                    // The codec refuses anything it cannot represent exactly.
-                    // Skipping the cache costs a re-run next time; writing a
-                    // lossy blob would cost a wrong answer.
-                    console.warn("BotBench: not caching the analysis for",
-                        entry.relativePath, writeError);
-                }
-                if (stored) {
-                    dirCache.data.results[entry.name] = {
-                        hash, hashes,
-                        savedAt: new Date().toISOString(),
-                        appVersion: APP_VERSION,
-                        options: {...entry.options},
-                        // Stored in the codec's encoding, not raw: it exists to
-                        // be compared against a replayed row, and that
-                        // comparison has to see NaN and Infinity as themselves.
-                        row: packForCache(row),
-                        elapsedMs, battery: name,
-                    };
-                    try { await writeDirCache(dirCache); }
-                    catch (writeError) {
-                        console.warn("BotBench cache write failed for",
-                            entry.relativePath, writeError);
+                    const battery = await readBatteryBlob(dirCache, hit.battery);
+                    // The SAME ingest and the SAME runner a fresh analysis uses —
+                    // only the fit is handed in rather than computed. Nothing here
+                    // reconstructs a result; the result is built by the code that
+                    // builds every other result.
+                    const record = await ingestBotBenchEntry(entry);
+                    const {results, row} = await runBotBenchAnalysis(record, {
+                        ...options, battery, elapsedMs: hit.elapsedMs ?? null,
+                        isCancelled: () => state.cancelled,
+                    });
+                    // Before the comparison, not after: the stored row carries the
+                    // hashes too, and a row that is complete on one side of the
+                    // check and not the other fails it every single time.
+                    if (hashes) row.fileSha256 = hashes;
+                    // THE CACHE CHECKS ITSELF. The row was stored when the fit ran;
+                    // this one was just rebuilt from it. They can only differ if
+                    // something the three keys do not cover has moved underneath —
+                    // so a mismatch discards the entry and runs the file properly,
+                    // rather than showing a number no current code would produce.
+                    // Compared through the codec because a row can hold NaN and
+                    // Infinity, and plain stringify flattens both to null, which
+                    // would hide exactly the differences worth catching.
+                    if (JSON.stringify(packForCache(row)) !== JSON.stringify(hit.row)) {
+                        console.warn("BotBench: cached analysis for", entry.relativePath,
+                            "no longer reproduces its stored row — re-analysing.");
+                        delete dirCache.data.results[entry.name];
+                    } else {
+                        entry.results = results;
+                        entry.row = row;
+                        entry.status = "done";
+                        entry.fromCache = true;
+                        cachedHit = true;
+                        fillRow(state, entry);
+                        setRowStatus(entry, "cached",
+                            `Reused from ${CACHE_FILENAME} (saved ${hit.savedAt ?? "?"}, `
+                            + `app ${dirCache.data.appVersion ?? "?"}).\n`
+                            + `Input hashes, analysis options and app version all match this `
+                            + `file's cached run, and the replayed row reproduces the stored `
+                            + `one exactly.\nThe fit was reused; everything else was `
+                            + `recomputed, so Gallery, Report and Open in Sitrec all work.`);
                     }
                 }
+            } catch (cacheError) {
+                console.warn("BotBench cache lookup failed for", entry.relativePath, cacheError);
             }
-        } catch (error) {
-            if (state.cancelled) {
-                entry.status = "cancelled";
-                setRowStatus(entry, "cancelled");
-                break;
+
+            if (!cachedHit) try {
+                setRowStatus(entry, "reading");
+                await yieldToDOM();
+                const record = await ingestBotBenchEntry(entry);
+
+                const {results, row, battery, elapsedMs} = await fitEntry(record, (frac, label) => {
+                    setRowStatus(entry, `${Math.round(frac * 100)}%`, label);
+                    fractions[i] = frac;
+                    updateProgress();
+                });
+                if (state.cancelled) throw new Error("cancelled");
+                entry.results = results;
+                entry.row = row;
+                // The hashes ride on the ROW, so Export JSON records exactly which
+                // bytes produced each result.
+                if (hashes) row.fileSha256 = hashes;
+                entry.status = "done";
+                fillRow(state, entry);
+                if (dirCache?.writable && hashes) {
+                    const hash = combinedHash(hashes);
+                    const name = blobName(hash);
+                    // The fit first, the index second. A blob with no index entry is
+                    // dead weight a flush will collect; an index entry pointing at a
+                    // blob that was never written would be a hit that throws on every
+                    // future run. The row is stored EXACTLY AS BUILT, because the
+                    // replay's self-check compares against it — note that row.fileSha256
+                    // is already on it, and the replay re-applies the same hashes.
+                    let stored = false;
+                    try { await writeBatteryBlob(dirCache, name, battery); stored = true; }
+                    catch (writeError) {
+                        // The codec refuses anything it cannot represent exactly.
+                        // Skipping the cache costs a re-run next time; writing a
+                        // lossy blob would cost a wrong answer.
+                        console.warn("BotBench: not caching the analysis for",
+                            entry.relativePath, writeError);
+                    }
+                    if (stored) {
+                        dirCache.data.results[entry.name] = {
+                            hash, hashes,
+                            savedAt: new Date().toISOString(),
+                            appVersion: APP_VERSION,
+                            options: {...entry.options},
+                            // Stored in the codec's encoding, not raw: it exists to
+                            // be compared against a replayed row, and that
+                            // comparison has to see NaN and Infinity as themselves.
+                            row: packForCache(row),
+                            elapsedMs, battery: name,
+                        };
+                        try { await writeDirCache(dirCache); }
+                        catch (writeError) {
+                            console.warn("BotBench cache write failed for",
+                                entry.relativePath, writeError);
+                        }
+                    }
+                }
+            } catch (error) {
+                if (state.cancelled) {
+                    entry.status = "cancelled";
+                    setRowStatus(entry, "cancelled");
+                    return;
+                }
+                entry.status = "error";
+                entry.error = error?.message || String(error);
+                setRowError(entry, entry.error);
             }
-            entry.status = "error";
-            entry.error = error?.message || String(error);
-            setRowError(entry, entry.error);
-        }
-        updateSummary(state);
-        // EVERY ROW HOLDS ITS FULL RESULTS — that is what makes "Gallery"
-        // instant, and it means memory grows with files x frames x candidates.
-        // Checked EVERY FILE, not once at the end: a warning that arrives after
-        // the batch arrives after the browser has already struggled. Shown in
-        // the visible status line rather than a tooltip nobody hovers.
-        state.heldFrames = state.entries.reduce((sum, e) =>
-            sum + (e.results?.dataset?.n ?? 0) * (e.results?.hypotheses?.length ?? 0), 0);
-        if (state.heldFrames > 2e6) {
-            state.memoryNote = ` — holding ~${(state.heldFrames / 1e6).toFixed(1)}M `
-                + `candidate-frames; use Clear Results before another large batch`;
-        }
-        await yieldToDOM();
+            fractions[i] = 1;
+            completed++;
+            updateProgress();
+            updateSummary(state);
+            // EVERY ROW HOLDS ITS FULL RESULTS — that is what makes "Gallery"
+            // instant, and it means memory grows with files x frames x candidates.
+            // Checked EVERY FILE, not once at the end: a warning that arrives after
+            // the batch arrives after the browser has already struggled. Shown in
+            // the visible status line rather than a tooltip nobody hovers.
+            state.heldFrames = state.entries.reduce((sum, e) =>
+                sum + (e.results?.dataset?.n ?? 0) * (e.results?.hypotheses?.length ?? 0), 0);
+            if (state.heldFrames > 2e6) {
+                state.memoryNote = ` — holding ~${(state.heldFrames / 1e6).toFixed(1)}M `
+                    + `candidate-frames; use Clear Results before another large batch`;
+            }
+            await yieldToDOM();
+        }, () => state.cancelled);
+    } finally {
+        pool?.dispose();
+        state.workerPool = null;
+        yieldToDOM.dispose?.();
+        state.running = false;
+        refreshControls(state);
     }
 
     state.progress.value = state.cancelled ? state.progress.value : 1;
@@ -2501,6 +2532,7 @@ export function openBotBenchDialog() {
 
     state.closeButton.onclick = () => {
         state.cancelled = true;
+        state.workerPool?.dispose();
         releaseAnalysisPauseLock(state);
         disposeScatterView(state);
         if (state.overlay.parentNode) document.body.removeChild(state.overlay);
@@ -2508,7 +2540,8 @@ export function openBotBenchDialog() {
     };
     state.cancelButton.onclick = () => {
         state.cancelled = true;
-        state.status.textContent = "Cancelling after the current file...";
+        state.workerPool?.dispose();
+        state.status.textContent = "Cancelling active analyses...";
         setButtonDisabled(state.cancelButton, true);
     };
     state.clearButton.onclick = () => clearResults(state);
@@ -2569,6 +2602,7 @@ export function addBotBenchMenu(fileAnalysisFolder) {
             open: openBotBenchDialog,
             run: (state, entries) => analyzeEntries(state, entries),
             pairSidecars, ingestBotBenchEntry, runBotBenchAnalysis,
+            createAnalysisPool: (size) => new BotBenchAnalysisPool(size),
             // The two ingest internals worth exercising directly: a timebase
             // choice and a continuity decision are hard to provoke through a
             // real file and trivial to provoke through a synthetic one.

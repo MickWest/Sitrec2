@@ -7,6 +7,115 @@ exports[`traversePlausible is bit-stable across refactors default sweep cell 1`]
 }
 `;
 
+exports[`traversePlausible is bit-stable across refactors fast speed rows 1`] = `
+{
+  "lam": "ff5d0727",
+  "track": "38345852",
+}
+`;
+
+exports[`traversePlausible is bit-stable across refactors range search preserves its profiles and final fit 1`] = `
+{
+  "lam": "2499476f",
+  "metadata": {
+    "boundaryLimited": true,
+    "boundarySides": {
+      "hi": false,
+      "lo": true,
+    },
+    "decisiveness": 3.572984803681143,
+    "flatFamilyCount": 7,
+    "geometryDecisive": false,
+    "profile": [
+      {
+        "score": 1.1714006029335027,
+        "startDist": 926.0000000000001,
+      },
+      {
+        "score": 1.2916294987541166,
+        "startDist": 1220.9360280916285,
+      },
+      {
+        "score": 1.4531471366092443,
+        "startDist": 1609.8107826049277,
+      },
+      {
+        "score": 1.6694995799941097,
+        "startDist": 2122.5442579835167,
+      },
+      {
+        "score": 1.9583276601106017,
+        "startDist": 2798.586129364028,
+      },
+      {
+        "score": 2.3426567378960756,
+        "startDist": 3689.9510076220736,
+      },
+      {
+        "score": 2.852456509890201,
+        "startDist": 4865.22043963153,
+      },
+      {
+        "score": 3.5269124050669847,
+        "startDist": 6414.819567336854,
+      },
+      {
+        "score": 4.417118279866585,
+        "startDist": 8457.974431391702,
+      },
+      {
+        "score": 5.589142780979691,
+        "startDist": 11151.885213783966,
+      },
+      {
+        "score": 7.126276108575077,
+        "startDist": 14703.821208046604,
+      },
+      {
+        "score": 9.125187958758557,
+        "startDist": 19387.06810315537,
+      },
+      {
+        "score": 11.660931799192534,
+        "startDist": 25561.954563939973,
+      },
+      {
+        "score": 14.375585649523813,
+        "startDist": 33703.575891528664,
+      },
+      {
+        "score": 19.15803520739839,
+        "startDist": 44438.347820181254,
+      },
+      {
+        "score": 27.089129476618208,
+        "startDist": 58592.20289689663,
+      },
+      {
+        "score": 37.39040984034682,
+        "startDist": 77254.13766962841,
+      },
+      {
+        "score": 51.69511996355465,
+        "startDist": 101859.99999999996,
+      },
+    ],
+    "score": 1.17134006676512,
+    "speedSanityOverride": false,
+    "startDist": 926.0000000000001,
+    "usedSpeedTarget": true,
+    "valleyFloorShaped": false,
+    "valleyMultimodal": false,
+    "valleyWalls": {
+      "hiCrossed": true,
+      "loCrossed": false,
+    },
+    "valleyWidthLog": 1.82,
+  },
+  "track": "20383827",
+}
+`;
+
 exports[`traversePlausible is bit-stable across refactors slow speed prior 1`] = `
 {
   "lam": "80fbb8e9",
@@ -21,6 +130,29 @@ exports[`traversePlausible is bit-stable across refactors smoothed output 1`] = 
 }
 `;
 
+exports[`traversePlausible is bit-stable across refactors speed and climb rows 1`] = `
+{
+  "lam": "da1b7ef2",
+  "track": "aa271b91",
+}
+`;
+
+exports[`traversePlausible is bit-stable across refactors speed rows with n=10 K=40 1`] = `
+{
+  "floorActive": false,
+  "lam": "eeb3f7a9",
+  "track": "86693228",
+}
+`;
+
+exports[`traversePlausible is bit-stable across refactors speed rows with n=47 K=12 1`] = `
+{
+  "floorActive": false,
+  "lam": "8e959489",
+  "track": "97dfe69c",
+}
+`;
+
 exports[`traversePlausible is bit-stable across refactors strided acceleration 1`] = `
 {
   "lam": "ecc5c1d0",
@@ -32,5 +164,12 @@ exports[`traversePlausible is bit-stable across refactors with range floor 1`] =
 {
   "lam": "397e6b79",
   "track": "79fab9de",
+}
+`;
+
+exports[`traversePlausible is bit-stable across refactors zero weighted speed rows 1`] = `
+{
+  "lam": "355aafc7",
+  "track": "7a110bcb",
 }
 `;

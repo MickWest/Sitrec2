@@ -22,7 +22,7 @@
  * paths through the row assembly.
  */
 
-import {traversePlausible} from "../src/TraverseAnalysis";
+import {fitPlausibleBestRange, traversePlausible} from "../src/TraverseAnalysis";
 
 const KNOTS = 0.514444;
 
@@ -61,6 +61,9 @@ const CASES = [
     {label: "slow speed prior", opts: {K: 25, iters: 6, vTarget: 5 * KNOTS, vSigma: 20 * KNOTS}},
     {label: "strided acceleration", opts: {K: 18, iters: 4, accelStride: 3, rangeFloor: true}},
     {label: "smoothed output", opts: {K: 25, iters: 3, smoothOutput: true, smoothSpacingSec: 2}},
+    {label: "fast speed rows", opts: {K: 25, iters: 3, vTarget: 190, rangeFloor: true}},
+    {label: "speed and climb rows", opts: {K: 18, iters: 4, vTarget: 2, wClimb: 0.5, rangeFloor: true}},
+    {label: "zero weighted speed rows", opts: {K: 25, iters: 3, vTarget: 0, wSpd: 0, rangeFloor: true}},
 ];
 
 describe("traversePlausible is bit-stable across refactors", () => {
@@ -85,5 +88,16 @@ describe("traversePlausible is bit-stable across refactors", () => {
             if (r.lam[i] > max) max = r.lam[i];
         }
         expect(max - min).toBeGreaterThan(1);   // the ranges genuinely vary
+    });
+
+    test.each([{n: 10, K: 40}, {n: 47, K: 12}])("speed rows with n=$n K=$K", ({n, K}) => {
+        const r = traversePlausible(makeDataset(n), 4200,
+            {K, vTarget: 25, iters: 3, accelStride: 3, rangeFloor: true});
+        expect({lam: hashFloats(r.lam), track: hashFloats(r.track), floorActive: r.floorActive}).toMatchSnapshot();
+    });
+
+    test("range search preserves its profiles and final fit", () => {
+        const {track, lam, ...metadata} = fitPlausibleBestRange(dataset);
+        expect({track: hashFloats(track), lam: hashFloats(lam), metadata}).toMatchSnapshot();
     });
 });

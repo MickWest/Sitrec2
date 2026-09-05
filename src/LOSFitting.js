@@ -126,6 +126,7 @@
  *     of one sample time: [1,t,t^2,...].
  */
 
+import {integrateRK4} from "./PhysicsModel";
 import {assessBoundPins} from "./BoundedFit";
 
 // ---------------------------------------------------------------------------
@@ -1579,7 +1580,7 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         const initialState = model.getInitialState(params, dataset);
         let states;
         try {
-            states = _integrateRK4_inline(model, initialState, params, frameTimes, fitMaxDt);
+            states = integrateRK4(model, initialState, params, frameTimes, {maxDt: fitMaxDt, checkDivergence: true});
         } catch (e) {
             return null; // diverged
         }
@@ -1627,7 +1628,7 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
             }
             if (groundPrior.endZ !== undefined && groundPrior.endZ !== null) {
                 try {
-                    const st = _integrateRK4_inline(model, init, params, [0, T], fitMaxDt);
+                    const st = integrateRK4(model, init, params, [0, T], {maxDt: fitMaxDt, checkDivergence: true});
                     const e = st[st.length - 1];
                     cost += ((hae(e) - groundPrior.endZ) / sig) ** 2;
                 } catch (err) {
@@ -1638,53 +1639,6 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
             }
         }
         return Number.isFinite(cost) ? cost : Infinity;
-    }
-
-    // Inline RK4 to avoid import overhead — same logic as PhysicsModel.js.
-    // maxDtOverride coarsens the step for the SEARCH only (see fitMaxDt); the
-    // final trajectory passes none, so it integrates at the model's own maxDt.
-    function _integrateRK4_inline(mdl, initState, prms, sTimes, maxDtOverride) {
-        // Integration begins at sTimes[0], which must be part of a nondecreasing
-        // sequence. The final substep is clipped to land exactly on each
-        // observation time, keeping states index-aligned with requested samples.
-        const results = [];
-        const state = initState.slice();
-        const n = state.length;
-        let t = sTimes[0];
-        let si = 0;
-        const maxDt = maxDtOverride ?? mdl.maxDt ?? 0.02;
-
-        if (Math.abs(t - sTimes[si]) < 1e-10) {
-            results.push(state.slice());
-            si++;
-        }
-
-        while (si < sTimes.length) {
-            const tNext = sTimes[si];
-            while (t < tNext - 1e-10) {
-                const dt = Math.min(maxDt, tNext - t);
-                const k1 = mdl.derivatives(state, prms, t);
-                const s2 = new Array(n);
-                for (let i = 0; i < n; i++) s2[i] = state[i] + 0.5 * dt * k1[i];
-                const k2 = mdl.derivatives(s2, prms, t + 0.5 * dt);
-                const s3 = new Array(n);
-                for (let i = 0; i < n; i++) s3[i] = state[i] + 0.5 * dt * k2[i];
-                const k3 = mdl.derivatives(s3, prms, t + 0.5 * dt);
-                const s4 = new Array(n);
-                for (let i = 0; i < n; i++) s4[i] = state[i] + dt * k3[i];
-                const k4 = mdl.derivatives(s4, prms, t + dt);
-                for (let i = 0; i < n; i++) {
-                    state[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
-                }
-                t += dt;
-                // Bail on divergence
-                if (Math.abs(state[0]) > 1e8 || Math.abs(state[2]) > 1e6) throw new Error("diverged");
-            }
-            t = tNext;
-            results.push(state.slice());
-            si++;
-        }
-        return results;
     }
 
     // Run the optimizer: single-start Nelder-Mead (default, original behavior)
@@ -1762,7 +1716,7 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
 
     let allStates;
     try {
-        allStates = _integrateRK4_inline(model, bestState0, bestParams, allTimes);
+        allStates = integrateRK4(model, bestState0, bestParams, allTimes, {checkDivergence: true});
     } catch (e) {
         return null;
     }

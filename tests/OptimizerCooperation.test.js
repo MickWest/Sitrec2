@@ -1,4 +1,4 @@
-import {differentialEvolution, patternSearchPolish} from "../src/DifferentialEvolution";
+import {differentialEvolution, mulberry32, patternSearchPolish} from "../src/DifferentialEvolution";
 import {nelderMead} from "../src/NelderMead";
 
 describe("optimizer cooperation", () => {
@@ -46,5 +46,49 @@ describe("optimizer cooperation", () => {
         expect(de.cost).toBe(Infinity);
         expect(nm.cost).toBe(Infinity);
         expect(ps.cost).toBe(Infinity);
+    });
+
+    test.each(["de", "polish"])("%s bounded costs preserve every candidate and the exact result", async (kind) => {
+        const measure = async (boundedCost) => {
+            const candidates = [], callbacks = [];
+            let terms = 0, rejected = 0;
+            const objective = (x, incumbent = Infinity) => {
+                candidates.push(x.slice());
+                let sum = 0;
+                for (let i = 0; i < x.length; i++) {
+                    sum += (x[i] - i) ** 2;
+                    terms++;
+                    if (sum > incumbent) { rejected++; return Infinity; }
+                }
+                return sum;
+            };
+            const options = {boundedCost, onEvaluation: payload => { callbacks.push(payload); }};
+            const result = kind === "de"
+                ? await differentialEvolution(objective, [-20, -20, -20], [20, 20, 20],
+                    {...options, rng: mulberry32(31), pop: 10, gens: 15})
+                : await patternSearchPolish(objective, [4, -3, 7], [1, 1, 1], options);
+            return {result, candidates, callbacks, terms, rejected};
+        };
+        const full = await measure(false), bounded = await measure(true);
+        expect(bounded.result).toEqual(full.result);
+        expect(bounded.candidates).toEqual(full.candidates);
+        expect(bounded.callbacks).toEqual(full.callbacks);
+        expect(bounded.rejected).toBeGreaterThan(0);
+        expect(bounded.terms).toBeLessThan(full.terms);
+    });
+
+    test("bounded DE still accepts exact ties and preserves its random sequence", async () => {
+        const run = async boundedCost => differentialEvolution((x, incumbent = Infinity) => {
+            expect(incumbent).toBeGreaterThanOrEqual(0);
+            return 0;
+        }, [-1], [1], {rng: mulberry32(12), pop: 5, gens: 3, boundedCost});
+        expect(await run(true)).toEqual(await run(false));
+    });
+
+    test("bounds are opt-in and ordinary costs still receive one argument", async () => {
+        const objective = jest.fn(bowl);
+        await differentialEvolution(objective, [-1], [1], {pop: 5, gens: 1});
+        await patternSearchPolish(objective, [1], [1], {maxIter: 2});
+        expect(objective.mock.calls.every(args => args.length === 1)).toBe(true);
     });
 });

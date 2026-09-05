@@ -987,6 +987,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
     const {K: smoothK, curvature} = trajectorySmoothingSettings(ds.n, ds.fps);
     const results = [];
 
+    const workspace = {};
     const sweepRanges = async (rangeList, progressBase, progressSpan) => {
         for (let ri = 0; ri < rangeList.length; ri++) {
             for (const speedMs of speeds) {
@@ -1002,7 +1003,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
                 // This is a declared near-field prior: solutions closer than
                 // 120 m are pushed out, not forbidden (the penalty is soft).
                 const {track} = traversePlausible(ds, rangeList[ri],
-                    {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true});
+                    {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true, [PLAUSIBLE_WORKSPACE]: workspace});
                 const sm = smoothTrackBspline(track, ds.n, smoothK, curvature);
                 const m = trackMetrics(ds, sm);
                 let score = straightFlightScore(m, 0);
@@ -1022,6 +1023,9 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
             }
             if (options.progress) {
                 await options.progress(progressBase + progressSpan * (ri + 1) / rangeList.length);
+                // Progress callbacks may edit observations. Reuse only across
+                // synchronous cells, never across an external yield.
+                workspace.acceleration = null;
             }
         }
     };
@@ -1199,6 +1203,8 @@ export function summarizeMetrics(m) {
 // different (n, K) pairs: full-resolution and downsampled datasets, and the
 // smoothing pass with its own K.
 const _bsplineCache = new Map();
+const _speedBasisCache = new WeakMap();
+const PLAUSIBLE_WORKSPACE = Symbol("plausible workspace");
 const BSPLINE_CACHE_MAX = 8;
 
 /** Uniform cubic B-spline basis over n frames with K control points. */
@@ -1225,6 +1231,24 @@ export function bsplineBasis(n, K) {
     }
     _bsplineCache.set(key, B);
     return B;
+}
+
+// Consecutive speed rows always visit the first frame's four columns, then
+// any new columns from the next frame. Cache this symbolic layout with the
+// immutable basis; it contains no observations or iteration-dependent values.
+function speedBasis(B) {
+    let rows = _speedBasisCache.get(B);
+    if (rows) return rows;
+    rows = [];
+    for (let f = 0; f < B.length - 1; f++) {
+        const [a, wa] = B[f], [b, wb] = B[f + 1];
+        const offset = Math.min(4, b - a);
+        const cols = [a, a + 1, a + 2, a + 3];
+        for (let q = 4 - offset; q < 4; q++) cols.push(b + q);
+        rows.push({cols, offset, previous: wa.map(w => -1 * w), next: wb});
+    }
+    _speedBasisCache.set(B, rows);
+    return rows;
 }
 
 /**
@@ -1278,6 +1302,8 @@ export function traversePlausible(dataset, startDist, options = {}) {
     const floorW = new Float64Array(n);
 
     const B = bsplineBasis(n, K);
+    const speedRows = vTarget !== null ? speedBasis(B) : null;
+    const speedWeights = new Float64Array(8);
     const accelScale = fps * fps / G_ACCEL / (hA * hA);
     const lam = new Float64Array(n).fill(startDist);
     let c = null;
@@ -1289,11 +1315,19 @@ export function traversePlausible(dataset, startDist, options = {}) {
     const scratchSeen = new Uint8Array(K);
     const scratchIdx = new Int32Array(K);
 
+    // Acceleration is independent of the IRLS iterate. Copy its completed
+    // prefix of the normal equations; adding separately summed matrices here
+    // would reorder floating-point additions and perturb the optimizer.
+    const workspace = options[PLAUSIBLE_WORKSPACE];
+    let acceleration = workspace?.acceleration;
+    if (acceleration && (acceleration.dataset !== dataset || acceleration.K !== K
+        || acceleration.hA !== hA || acceleration.fps !== fps)) acceleration = null;
     const maxIters = useFloor ? iters + 5 : iters;
+    const A = Array.from({length: K}, () => new Float64Array(K));
+    const rhs = new Float64Array(K);
     for (let iter = 0; iter < maxIters; iter++) {
-        const A = [];
-        for (let k = 0; k < K; k++) A.push(new Float64Array(K));
-        const rhs = new Float64Array(K);
+        for (const row of A) row.fill(0);
+        rhs.fill(0);
         const addRow = (cols, weights, constTerm, w2 = 1) => {
             for (let i = 0; i < cols.length; i++) {
                 rhs[cols[i]] -= w2 * weights[i] * constTerm;
@@ -1359,7 +1393,14 @@ export function traversePlausible(dataset, startDist, options = {}) {
         };
 
         // acceleration rows, in g (strided second difference when accelStride > 1)
-        for (let r = hA; r <= n - 1 - hA; r++) stencil([r - hA, r, r + hA], [1, -2, 1], accelScale);
+        if (acceleration) {
+            for (let k = 0; k < K; k++) A[k].set(acceleration.A[k]);
+            rhs.set(acceleration.rhs);
+        } else {
+            for (let r = hA; r <= n - 1 - hA; r++) stencil([r - hA, r, r + hA], [1, -2, 1], accelScale);
+            acceleration = {dataset, K, hA, fps, A: A.map(row => row.slice()), rhs: rhs.slice()};
+            if (workspace) workspace.acceleration = acceleration;
+        }
 
         // soft anchor lambda(anchorFrame) = startDist (weight 10 => centimeter-to-meter
         // slop; a hard/huge weight wrecks the conditioning of the dense solve)
@@ -1377,23 +1418,43 @@ export function traversePlausible(dataset, startDist, options = {}) {
                 const a1 = S[(f + 1) * 3 + 1] + lam[f + 1] * D[(f + 1) * 3 + 1] - (S[f * 3 + 1] + lam[f] * D[f * 3 + 1]) - W[f * 3 + 1];
                 const a2 = S[(f + 1) * 3 + 2] + lam[f + 1] * D[(f + 1) * 3 + 2] - (S[f * 3 + 2] + lam[f] * D[f * 3 + 2]) - W[f * 3 + 2];
                 const al = Math.hypot(a0, a1, a2) || 1;
-                const u = [a0 / al, a1 / al, a2 / al];
-                let constTerm = -(u[0] * W[f * 3] + u[1] * W[f * 3 + 1] + u[2] * W[f * 3 + 2]) - vTarget / fps;
-                const colW = new Map();
-                const frames = [f, f + 1], cs = [-1, 1];
-                for (let i = 0; i < 2; i++) {
-                    const fr = frames[i];
-                    for (let comp = 0; comp < 3; comp++) {
-                        constTerm += cs[i] * S[fr * 3 + comp] * u[comp];
-                    }
-                    const [seg, w] = B[fr];
-                    const dDotU = D[fr * 3] * u[0] + D[fr * 3 + 1] * u[1] + D[fr * 3 + 2] * u[2];
-                    for (let q = 0; q < 4; q++) {
-                        const k = seg + q;
-                        colW.set(k, (colW.get(k) || 0) + cs[i] * w[q] * dDotU);
+                const u0 = a0 / al, u1 = a1 / al, u2 = a2 / al;
+                let constTerm = -(u0 * W[f * 3] + u1 * W[f * 3 + 1] + u2 * W[f * 3 + 2]) - vTarget / fps;
+                const b = f * 3, next = b + 3;
+                constTerm += -1 * S[b] * u0;
+                constTerm += -1 * S[b + 1] * u1;
+                constTerm += -1 * S[b + 2] * u2;
+                constTerm += S[next] * u0;
+                constTerm += S[next + 1] * u1;
+                constTerm += S[next + 2] * u2;
+                const dot0 = D[b] * u0 + D[b + 1] * u1 + D[b + 2] * u2;
+                const dot1 = D[next] * u0 + D[next + 1] * u1 + D[next + 2] * u2;
+                const row = speedRows[f];
+                const {cols, offset, previous, next: nextWeights} = row;
+                // Keep the original zero-add and falsy reset, including signed
+                // zero, and combine overlapping columns in first-touch order.
+                for (let q = 0; q < 4; q++) speedWeights[q] = 0 + previous[q] * dot0;
+                for (let q = 4; q < cols.length; q++) speedWeights[q] = 0;
+                for (let q = 0; q < 4; q++) {
+                    const k = offset + q;
+                    speedWeights[k] = (speedWeights[k] || 0) + nextWeights[q] * dot1;
+                }
+                for (let q = 0; q < cols.length; q++) speedWeights[q] *= wv;
+                const cTerm = constTerm * wv;
+                for (let a = 0; a < cols.length; a++) {
+                    const ca = cols[a], wa = speedWeights[a];
+                    rhs[ca] -= wa * cTerm;
+                    const Aa = A[ca];
+                    Aa[ca] += wa * wa;
+                    // Only this row's products are symmetric. Add to each
+                    // existing entry separately: weighted anchor/floor rows
+                    // can leave the accumulated matrix slightly asymmetric.
+                    for (let b = a + 1; b < cols.length; b++) {
+                        const cb = cols[b], product = wa * speedWeights[b];
+                        Aa[cb] += product;
+                        A[cb][ca] += product;
                     }
                 }
-                addRow([...colW.keys()], [...colW.values()].map(v => v * wv), constTerm * wv);
             }
         } else {
             // tiny velocity ridge to regularize the near-degenerate smooth modes
@@ -1478,23 +1539,21 @@ export function traversePlausible(dataset, startDist, options = {}) {
 // spurious g-load. The curvature penalty also tames the classic B-spline
 // boundary overshoot (the endpoint control points are otherwise data-starved
 // and can spike the g-load in the first/last fraction of a second).
+const _smoothSystemCache = new Map();
+
 function smoothTrackBspline(pts, n, K, curvature = 0) {
     K = Math.max(4, Math.min(K, n));
     const B = bsplineBasis(n, K);
-    const out = new Float64Array(n * 3);
-    for (let a = 0; a < 3; a++) {
-        const A = [];
-        for (let k = 0; k < K; k++) A.push(new Float64Array(K));
-        const rhs = new Float64Array(K);
+    const key = `${n}:${K}:${curvature}`;
+    let system = _smoothSystemCache.get(key);
+    if (!system) {
+        const A = Array.from({length: K}, () => new Float64Array(K));
         for (let f = 0; f < n; f++) {
             const [seg, w] = B[f];
-            const p = pts[f * 3 + a];
             for (let i = 0; i < 4; i++) {
-                rhs[seg + i] += w[i] * p;
                 for (let j = 0; j < 4; j++) A[seg + i][seg + j] += w[i] * w[j];
             }
         }
-        // curvature penalty: mu * sum (c[k-1] - 2 c[k] + c[k+1])^2 (target 0)
         if (curvature > 0) {
             for (let k = 1; k < K - 1; k++) {
                 const cols = [k - 1, k, k + 1], cs = [1, -2, 1];
@@ -1504,7 +1563,21 @@ function smoothTrackBspline(pts, n, K, curvature = 0) {
             }
         }
         for (let k = 0; k < K; k++) A[k][k] += 1e-9 * (A[k][k] || 1);
-        const c = solveDense(A, rhs);
+        system = factorDense(A);
+        if (_smoothSystemCache.size >= BSPLINE_CACHE_MAX) {
+            _smoothSystemCache.delete(_smoothSystemCache.keys().next().value);
+        }
+        _smoothSystemCache.set(key, system);
+    }
+    const out = new Float64Array(n * 3);
+    for (let a = 0; a < 3; a++) {
+        const rhs = new Float64Array(K);
+        for (let f = 0; f < n; f++) {
+            const [seg, w] = B[f];
+            const p = pts[f * 3 + a];
+            for (let i = 0; i < 4; i++) rhs[seg + i] += w[i] * p;
+        }
+        const c = solveFactoredDense(system, rhs);
         for (let f = 0; f < n; f++) {
             const [seg, w] = B[f];
             out[f * 3 + a] = c[seg] * w[0] + c[seg + 1] * w[1] + c[seg + 2] * w[2] + c[seg + 3] * w[3];
@@ -1805,6 +1878,9 @@ export function fitPlausibleBestRange(dataset, options = {}) {
         smoothOutput: true,
         smoothSpacingSec: 4,
         rangeFloor: true,
+        // This search is synchronous; all its ranges share the observation
+        // prefix. traversePlausible refreshes it when the final K changes.
+        [PLAUSIBLE_WORKSPACE]: {},
     };
     const mk = (vt, K, iters) => ({...common, vTarget: vt, vSigma, K, iters});
     const searchK = options.searchK ?? 15, searchIters = options.searchIters ?? 3;
@@ -2101,23 +2177,58 @@ export function fitPlausibleBestRange(dataset, options = {}) {
 
 // Gaussian elimination with partial pivoting (small dense systems, K ~ 25)
 function solveDense(A, b) {
-    const nn = b.length;
-    const M = A.map(row => Float64Array.from(row));
-    const x = Float64Array.from(b);
+    const {M, x} = factorDense(A, b);
+    return backSubstituteDense(M, x);
+}
+
+// The same elimination for changing and constant systems. Store the actual
+// pivots and multipliers, then replay RHS operations in their original order.
+// Inverting A or multiplying by an inverse would change rounding.
+function factorDense(A, b = null) {
+    // Consumes A. Callers assemble it for this solve and keep any reusable
+    // prefix in a separate copy before passing it here.
+    const nn = A.length;
+    const M = A;
+    // Ordinary solves need no elimination log. Only constant systems retain
+    // the pivots/factors for additional right-hand sides.
+    const x = b === null ? null : Float64Array.from(b);
+    const pivots = x ? null : new Int32Array(nn);
+    const factors = x ? null : Array.from({length: nn}, () => new Float64Array(nn));
     for (let col = 0; col < nn; col++) {
         let maxV = Math.abs(M[col][col]), maxR = col;
         for (let r = col + 1; r < nn; r++) {
             if (Math.abs(M[r][col]) > maxV) { maxV = Math.abs(M[r][col]); maxR = r; }
         }
+        if (pivots) pivots[col] = maxR;
         [M[col], M[maxR]] = [M[maxR], M[col]];
-        const t = x[col]; x[col] = x[maxR]; x[maxR] = t;
+        if (x) { const t = x[col]; x[col] = x[maxR]; x[maxR] = t; }
         for (let r = col + 1; r < nn; r++) {
             const f = M[r][col] / M[col][col];
+            if (factors) factors[col][r] = f;
             if (f === 0) continue;
             for (let k = col; k < nn; k++) M[r][k] -= f * M[col][k];
-            x[r] -= f * x[col];
+            if (x) x[r] -= f * x[col];
         }
     }
+    return {M, pivots, factors, x};
+}
+
+function solveFactoredDense({M, pivots, factors}, b) {
+    const nn = b.length;
+    const x = Float64Array.from(b);
+    for (let col = 0; col < nn; col++) {
+        const maxR = pivots[col];
+        const t = x[col]; x[col] = x[maxR]; x[maxR] = t;
+        for (let r = col + 1; r < nn; r++) {
+            const f = factors[col][r];
+            if (f !== 0) x[r] -= f * x[col];
+        }
+    }
+    return backSubstituteDense(M, x);
+}
+
+function backSubstituteDense(M, x) {
+    const nn = x.length;
     for (let i = nn - 1; i >= 0; i--) {
         let s = x[i];
         for (let k = i + 1; k < nn; k++) s -= M[i][k] * x[k];
@@ -2210,7 +2321,7 @@ function cumulativeWind(dataset) {
 // Fast optimizer cost: integrate the model block-by-block over `costFrames`
 // (midpoint heading per block — 2nd order, more accurate than the full-res
 // forward Euler, and O(costFrames) instead of O(n)). cumW is cumulativeWind().
-function aircraftCostErrDeg(dataset, params, costFrames, cumW) {
+function aircraftCostErrDeg(dataset, params, costFrames, cumW, incumbent, errSigma, scoreError) {
     const {S, D, fps} = dataset;
     const [R0, h0, V, w0, wd, climb] = params;
     let px = S[0] + D[0] * R0, py = S[1] + D[1] * R0, pz = S[2] + D[2] * R0;
@@ -2240,6 +2351,14 @@ function aircraftCostErrDeg(dataset, params, costFrames, cumW) {
         const dot = Math.min(1, Math.max(-1, rx * D[b] + ry * D[b + 1] + rz * D[b + 2]));
         sum += Math.acos(dot);
         count++;
+        // Each remaining angular error and every aircraft prior is nonnegative.
+        // Divide the partial sum by the FINAL count, in the original arithmetic
+        // order, to bound the eventual cost from below. Never rearrange this as
+        // a precomputed threshold: rounding at a tie could reject a winner.
+        // The near-sensor sentinel above can return 1e9, so only prune against
+        // incumbents below it. Invalid/nonpositive scales take the full path.
+        if ((ci & 7) === 0 && incumbent < 1e9 && errSigma > 0
+            && scoreError(sum / costFrames.length * 180 / Math.PI, params) > incumbent) return Infinity;
     }
     return sum / count * 180 / Math.PI;
 }
@@ -2261,6 +2380,8 @@ function aircraftCostErrDeg(dataset, params, costFrames, cumW) {
  *   runs, pop, gens      DE effort (defaults 3, 60, 150)
  *   progress(frac)       awaited on a wall-clock budget between evaluations
  *   shouldCancel()       checked between optimizer evaluations
+ *   boundedCost          skip provably losing evaluations (default true);
+ *                        false runs the full objective for comparison
  *
  * Returns {params: {startDist, heading, tas, turnRate, turnAccel, climb},
  *          cost, errDeg, track, metrics, runs: [per-run summaries]}
@@ -2276,6 +2397,7 @@ export async function fitAircraft(dataset, options = {}) {
     const nRuns = options.runs ?? 3;
     const pop = options.pop ?? 60;
     const gens = options.gens ?? 150;
+    const boundedCost = options.boundedCost ?? true;
     const T = Math.max(0, dataset.n - 1) / dataset.fps;
 
     // Strided cost integration (block midpoint) keeps the many DE/polish
@@ -2297,9 +2419,7 @@ export async function fitAircraft(dataset, options = {}) {
     const gpS0 = [dataset.S[0], dataset.S[1], dataset.S[2]];   // frame-0 ray
     const gpD0 = [dataset.D[0], dataset.D[1], dataset.D[2]];
 
-    const cost = (p) => {
-        const e = aircraftCostErrDeg(dataset, p, costFrames, cumW);
-        if (e > 1e8) return e;
+    const scoreError = (e, p) => {
         const wEnd = p[3] + p[4] * T;
         let c = (
             e / errSigma +
@@ -2323,6 +2443,16 @@ export async function fitAircraft(dataset, options = {}) {
             }
         }
         return Number.isFinite(c) ? c : Infinity;
+    };
+
+    const cost = (p, incumbent = Infinity) => {
+        // Score zero error in the SAME addition order as the final objective.
+        // This is a lower bound even at floating-point ties; subtracting a
+        // separately summed prior from the incumbent would not be equivalent.
+        if (incumbent < 1e9 && errSigma > 0 && scoreError(0, p) > incumbent) return Infinity;
+        const e = aircraftCostErrDeg(dataset, p, costFrames, cumW, incumbent, errSigma, scoreError);
+        if (e > 1e8) return e;
+        return scoreError(e, p);
     };
 
     // Generic horizontal-speed floor. It is intentionally low enough to keep
@@ -2356,6 +2486,7 @@ export async function fitAircraft(dataset, options = {}) {
         };
         const de = await differentialEvolution(cost, lo, hi, {
             pop: popN, gens: gensN,
+            boundedCost,
             // Deterministic per-run seed: identical inputs give identical
             // fits (run-to-run variance was user-visible); distinct seeds per
             // run preserve the independent-restart diversity.
@@ -2372,7 +2503,7 @@ export async function fitAircraft(dataset, options = {}) {
         stageEvaluations = 0;
         const pol = await patternSearchPolish(
             cost, de.params, [200, 0.5, 2, 0.02, 0.002, 0.5],
-            {lo, hi, onEvaluation: optimizerPulse});
+            {lo, hi, onEvaluation: optimizerPulse, boundedCost});
         if (pol.cancelled || (options.shouldCancel && options.shouldCancel())) {
             throw new Error("cancelled");
         }
