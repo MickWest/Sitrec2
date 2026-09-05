@@ -1,3 +1,5 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {mouseInViewOnly} from "../ViewUtils";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {Vector2} from "three";
 import {setRenderOne} from "../Globals";
@@ -91,16 +93,17 @@ export class CNodeDDI extends CNodeViewUI {
         this.autoFill = true;
         this.autoFillColor = v.autoFillColor ?? "#000000";
 
-        // MQ9UI-style click handling:
-        // Canvas starts with pointerEvents 'none' so events pass through for dragging.
-        // On mousemove, if cursor is over a button, enable pointerEvents so clicks are captured.
         this.canvas.style.pointerEvents = 'none';
-
-        this._boundDocMouseMove = (e) => this._handleDocMouseMove(e);
-        document.addEventListener('mousemove', this._boundDocMouseMove);
-
-        this._boundCanvasPointerDown = (e) => this._handleCanvasPointerDown(e);
-        this.canvas.addEventListener('pointerdown', this._boundCanvasPointerDown);
+        this.unregisterButtonInteraction = registerSurfaceInteraction(this.canvas, {
+            model: this, view: this, profile: "buttons", intent: {kind: "click", priority: 85},
+            contains: e => (e.target === this.div || e.target?.tagName === "CANVAS") && mouseInViewOnly(this, e.clientX, e.clientY),
+            hitTest: e => {
+                const r = this.canvas.getBoundingClientRect();
+                return this._hitTestButton(e.clientX - r.left, e.clientY - r.top) ? {} : null;
+            },
+            click: e => this._handleCanvasPointerDown(e),
+            cursor: "pointer",
+        });
 
         this._boundCanvasDblClick = (e) => { e.stopPropagation(); e.preventDefault(); };
         this.canvas.addEventListener('dblclick', this._boundCanvasDblClick);
@@ -119,28 +122,6 @@ export class CNodeDDI extends CNodeViewUI {
             }
         }
         return null;
-    }
-
-    _handleDocMouseMove(e) {
-        const rect = this.canvas.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) return;
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        // Only care about moves within the canvas bounds
-        if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
-            this.canvas.style.pointerEvents = 'none';
-            this.canvas.style.cursor = '';
-            return;
-        }
-
-        if (this._hitTestButton(x, y)) {
-            this.canvas.style.pointerEvents = 'auto';
-            this.canvas.style.cursor = 'pointer';
-        } else {
-            this.canvas.style.pointerEvents = 'none';
-            this.canvas.style.cursor = '';
-        }
     }
 
     _handleCanvasPointerDown(e) {
@@ -163,12 +144,6 @@ export class CNodeDDI extends CNodeViewUI {
         }
     }
 
-    // Legacy hooks — kept for compatibility but no longer the primary path.
-    onMouseMove(e,mouseX,mouseY) {}
-    onMouseDown(e,mouseX,mouseY) {}
-    onMouseUp(e,mouseX,mouseY) {}
-    onMouseDrag(e,mouseX,mouseY) {}
-
     setButton(number, text="BTN", toggle=false, callback=null) {
         this.buttons[number] = new CDDIButton(number,text, toggle, callback)
         this.buttons[number].textObject = this.addText(number,text,this.buttons[number].position.x, this.buttons[number].position.y, 3.5)
@@ -182,8 +157,7 @@ export class CNodeDDI extends CNodeViewUI {
     }
 
     dispose() {
-        document.removeEventListener('mousemove', this._boundDocMouseMove);
-        this.canvas.removeEventListener('pointerdown', this._boundCanvasPointerDown);
+        this.unregisterButtonInteraction?.();
         this.canvas.removeEventListener('dblclick', this._boundCanvasDblClick);
         super.dispose();
     }

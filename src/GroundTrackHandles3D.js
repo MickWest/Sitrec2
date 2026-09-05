@@ -41,6 +41,7 @@ const CURSOR_COLOR = "#FFFF00";
  * One overlay per 3D view: draws that view's ground track and owns editing in it.
  */
 class CGroundTrackOverlay extends CTerrainHandleOverlay {
+    interactionProfile = "groundTrack";
     /** Canvas position of every keyframe in this view, as [{frame, index, cx, cy}]. */
     projected() {
         return this.projectPoints(this.owner.getKeyframes());
@@ -73,7 +74,7 @@ class CGroundTrackOverlay extends CTerrainHandleOverlay {
             const selected = this.isSelected(h.frame);
             drawFitHandle(this.ctx, h.cx, h.cy,
                           selected ? SELECTED_KEYFRAME_COLOR : TRACK_COLOR,
-                          selected ? String(h.frame) : "");
+                          selected ? String(h.frame) : "", 1, this.handleState(h.frame));
         }
     }
 
@@ -147,6 +148,14 @@ class CGroundTrackOverlay extends CTerrainHandleOverlay {
         ctx.moveTo(cx - r, cy - r); ctx.lineTo(cx + r, cy + r);
         ctx.moveTo(cx - r, cy + r); ctx.lineTo(cx + r, cy - r);
         ctx.stroke();
+    }
+
+    getInteractionIntent(e, mouseX, mouseY) {
+        const hit = super.getInteractionIntent(e, mouseX, mouseY);
+        if (hit) return hit;
+        if (!this.owner.enabled || e.button !== 0 || !(e.ctrlKey || e.metaKey)) return null;
+        const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
+        return this.groundUnder(cx, cy) ? {kind: "drag", priority: 70} : null;
     }
 
     onMouseDown(e, mouseX, mouseY) {

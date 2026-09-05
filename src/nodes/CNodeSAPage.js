@@ -1,3 +1,6 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {mouseInViewOnly} from "../ViewUtils";
+import {wheelPixels} from "../GestureActions";
 import {cos, metersFromNM, radians, sin} from "../utils";
 import {CNodeDDI} from "./CNodeDDI";
 import {Globals, setRenderOne, Sit} from "../Globals";
@@ -104,15 +107,13 @@ export class CNodeSAPage extends CNodeDDI {
             this.updateScaleDisplay()
         })
 
-        // Scroll-wheel zoom: step through SCL_STEPS while the cursor is over the
-        // SA page.  Uses a document-level listener (like CNodeDDI's mousemove
-        // hover detection) because the canvas itself is pointer-events:'none'
-        // until the cursor hits a button, so wheel events don't reach it
-        // directly.  Accumulator + threshold smooths trackpad gestures so one
-        // physical scroll = one scale step rather than 5+.
         this._wheelAccum = 0;
-        this._boundDocWheel = (e) => this._handleDocWheel(e);
-        document.addEventListener('wheel', this._boundDocWheel, {passive: false});
+        this.unregisterWheelInteraction = registerSurfaceInteraction(this.canvas, {
+            model: this, view: this, profile: "instrumentScale", content: false,
+            hitTest: () => null,
+            contains: e => (e.target === this.div || e.target?.tagName === "CANVAS") && mouseInViewOnly(this, e.clientX, e.clientY),
+            wheel: e => this._handleDocWheel(e),
+        });
     //    this.setButton(9,"MK1")
         this.setButton(10,"DCNTR",true, button => {
             if (button.textObject.boxed) {
@@ -181,7 +182,7 @@ export class CNodeSAPage extends CNodeDDI {
         // Accumulate deltaY and step once per threshold crossed so trackpad
         // inertia flicks don't blow through every zoom level in one frame.
         const STEP_THRESHOLD = 40;
-        this._wheelAccum += e.deltaY;
+        this._wheelAccum += wheelPixels(e);
         let stepped = false;
         while (this._wheelAccum >= STEP_THRESHOLD) {
             this._wheelAccum -= STEP_THRESHOLD;
@@ -200,7 +201,7 @@ export class CNodeSAPage extends CNodeDDI {
     }
 
     dispose() {
-        document.removeEventListener('wheel', this._boundDocWheel);
+        this.unregisterWheelInteraction?.();
         super.dispose();
     }
 

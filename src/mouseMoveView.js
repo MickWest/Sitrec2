@@ -2,19 +2,18 @@
 // Also handled 3D raycasting calculation based on mouse position and view
 //
 
-import {V2} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
-import {mouseInViewOnly, renderedRect} from "./ViewUtils";
+import {mouseInViewOnly, mouseToNDC, viewToNDC} from "./ViewUtils";
 import {setRenderOne} from "./Globals";
+import {getInteractionRouter} from "./InteractionRouter";
+import {installViewInteractions} from "./ViewInteraction";
 
-let mouseDragView
-let mouseDown = false
+let removeViewInteractions;
+function router() {
+    if (!removeViewInteractions) removeViewInteractions = installViewInteractions();
+    return getInteractionRouter();
+}
 
-// Deliberately NOT exposed: mouseDragView is not "the view that claimed the press". The
-// dispatcher below sets it for any handler that did not return an explicit false, and most fall
-// off the end returning undefined — CNodeTrackingOverlay does so on every ordinary click. An
-// overlay wanting to know whether a press belongs to somebody else must ask that overlay
-// directly (see CNodeVideoView._isMaskEditing / _isAnnotateEditing / _isOverlayDragging).
 export const DRAG = {
     NONE: 0,
     PAN: 1,
@@ -22,9 +21,6 @@ export const DRAG = {
     ZOOM: 3,
     MOVEHANDLE: 4,
 }
-let dragMode = DRAG.NONE;
-let mouseLastX = 0;
-let mouseLastY = 0;
 // Current mouse position, REALLY needs encapsulating....
 let mouseX = 0;
 let mouseY = 0;
@@ -66,16 +62,19 @@ export function getCursorPositionFromTopView() {
 
 
 
+let handlersInstalled = false;
 export function SetupMouseHandler() {
-    document.addEventListener( 'pointermove', onDocumentMouseMove, false );
-    document.addEventListener( 'pointerdown', onDocumentMouseDown, false );
-    document.addEventListener( 'pointerup', onDocumentMouseUp, false );
+    if (handlersInstalled) return;
+    handlersInstalled = true;
+    router();
+    const remember = e => { mouseX = e.clientX; mouseY = e.clientY; };
+    document.addEventListener('pointermove', remember, true);
+    document.addEventListener('pointerdown', remember, true);
     // CAPTURE phase: a hover-revealed CUIBar stops 'dblclick' in the bubble phase (so header
     // clicks don't fullscreen-via-content), and the video canvas has its own bubble dblclick
     // (pan/zoom reset). Capturing at the document lets the header-strip handler run first and
     // swallow the event so neither of those fires on a header double-click.
     document.addEventListener( 'dblclick', onDocumentDoubleClick, true );
-    document.addEventListener( 'wheel', onDocumentWheel, false );
 
     // Initial press of a cursor-consuming key needs an immediate cursor
     // refresh — onMouseMove only raycasts while one of these keys is already
@@ -102,140 +101,28 @@ export function SetupMouseHandler() {
 }
 
 export function onDocumentWheel(event) {
-    // console.log("onDocumentWheel " + event.deltaX + "," + event.deltaY)
-    mouseX = (event.clientX);
-    mouseY = (event.clientY);
-
-    if (!mouseDragView && isTopMenuElementAt(mouseX, mouseY)) return;
-
-    // if we started dragging in a view, then send moves only to that
-    if (mouseDragView) {
-        if (mouseDragView.onMouseWheel) {
-            mouseDragView.onMouseWheel(event, mouseX, mouseY, event.deltaX, event.deltaY)
-        } else {
-            console.warn("No onMouseWheel handler for " + mouseDragView.id)
-        }
-    } else {
-        ViewMan.iterateVisibleIncludingOverlays((name, view) => {
-            if (mouseInViewOnly(view, mouseX, mouseY) && view.onMouseWheel !== undefined) {
-                view.onMouseWheel(event, mouseX, mouseY, event.deltaX, event.deltaY)
-            }
-        })
-    }
-
+    mouseX = event.clientX; mouseY = event.clientY;
+    return router().wheel(event);
 }
 
-//
 export function onDocumentMouseDown(event) {
-
-    if (!mouseDown) {
-        mouseX = (event.clientX);
-        mouseY = (event.clientY);
-
-        if (isTopMenuElementAt(mouseX, mouseY)) {
-            mouseDragView = null;
-            setRenderOne(true);
-            return;
-        }
-
-        const vm = ViewMan
-
-//        console.log("Mouse Down, checking exclusive")
-
-        vm.iterateVisibleIncludingOverlays((name, view) => {
-//            console.log("onDocumentMouseDown checking" + view.id)
-
-            if (mouseInViewOnly(view, mouseX, mouseY, false)) {
-  //              console.log("onDocumentMouseDown has mouseInViewOnly true for" + view.id)
-                if (view.onMouseDown !== undefined) {
-                  //  console.log("Calling onMouseDown for" + view.id)
-                    // Every view under the cursor gets onMouseDown and the LAST one wins
-                    // mouseDragView, because mouseInViewOnly only rejects a view when a
-                    // HIGHER-z view with an onMouseDown covers the point — overlays sharing
-                    // a z-index (all the video overlays sit at z=3) never exclude each other.
-                    //
-                    // So a handler that DECLINES the click by returning false was still
-                    // being handed the drag, stealing it from the view that actually took
-                    // it. That is how dragging a manual-tracking keyframe broke: the
-                    // trackingOverlay started the drag (and jumped to the keyframe's frame,
-                    // which is why it looked like a seek), then annotateOverlay — not in
-                    // editing mode, returning false — overwrote mouseDragView, so the
-                    // mousemove never reached the overlay and the point never moved.
-                    //
-                    // Treat an explicit false as "not mine". Anything else (true, or the
-                    // undefined that most handlers return) keeps the previous behaviour,
-                    // so this only changes views that already opted out on purpose.
-                    if (view.onMouseDown(event, mouseX, mouseY) !== false) {
-                        mouseDragView = view;
-                    }
-                } else {
-                   // console.log("No callback onMouseDown for" + view.id)
-                }
-
-
-            }
-        })
-    }
-
-    // click forces update
-    setRenderOne(true);
-
-    mouseDown = true;
+    mouseX = event.clientX; mouseY = event.clientY;
+    return router().down(event);
 }
 
 export function onDocumentMouseMove(event) {
-
-
-    mouseX = (event.clientX);
-    mouseY = (event.clientY);
-
-    if (!mouseDragView && isTopMenuElementAt(mouseX, mouseY)) {
-        mouseLastX = mouseX;
-        mouseLastY = mouseY;
-        return;
-    }
-
-    // console.log("onDocumentMouseMove " + mouseX + "," + mouseY)
-
-
-    // if we started dragging in a view, then send moves only to that
-    if (mouseDragView) {
-//         console.log("Mouse Dragging " + mouseDragView.id)
-        if (mouseDragView.onMouseDrag) {
-            // console.log("Mouse Dragging " + mouseDragView.id)
-            mouseDragView.onMouseDrag(event, mouseX, mouseY, mouseX - mouseLastX, mouseY - mouseLastY)
-        } else {
-//            console.log("Mouse Unhandled Dragging " + mouseDragView.id)
-            mouseDragView.onMouseMove(event, mouseX, mouseY, mouseX - mouseLastX, mouseY - mouseLastY)
-        }
-    } else {
-        // otherwise, send to the view we are inside
-        ViewMan.iterateVisibleIncludingOverlays((name, view) => {
-
-            if (mouseInViewOnly(view, mouseX, mouseY) && view.onMouseMove !== undefined) {
-                // console.log("Mouse Move (no drag) in view "+view.id)
-                view.onMouseMove(event, mouseX, mouseY, mouseX-mouseLastX, mouseY-mouseLastY)
-            }
-        })
-
-    }
-
-    // Mouse dragging is likely to need rendering update
-    if (mouseDown)
-        setRenderOne(true);
-
-    mouseLastX = mouseX;
-    mouseLastY = mouseY;
-
+    mouseX = event.clientX; mouseY = event.clientY;
+    return router().move(event);
 }
 
 export function onDocumentMouseUp(event) {
-    if (mouseDragView && mouseDragView.onMouseUp !== undefined ) {
-        mouseDragView.onMouseUp(event, mouseX, mouseY)
-        dragMode = DRAG.NONE;
-    }
-    mouseDragView = null;
-    mouseDown = false;
+    mouseX = event.clientX; mouseY = event.clientY;
+    return router().up(event);
+}
+
+export function onDocumentMouseCancel(event) {
+    if (event.type === 'blur') return router().finish(event, 'interrupted');
+    return router().cancelPointer(event);
 }
 
 // Double-clicking a view's HEADER STRIP (its UIBar) toggles fullscreen — the same action as
@@ -294,25 +181,7 @@ export function onDocumentDoubleClick(event) {
  * @returns {Vector2} NDC coordinates in range [-1, 1] for both axes
  */
 export function screenToNDC(view, screenX, screenY) {
-    // Convert screen coords to view-relative coords
-    // view.leftPx is relative to the container, so we also need the container's screen offset
-    const containerOffsetX = ViewMan.screenOffsetX || 0;
-    const viewX = screenX - view.leftPx - containerOffsetX;
-    const viewY = screenY - view.topPx;
-
-    // Against the rect the 3D canvas actually fills, NOT the whole pane. NDC is by definition
-    // relative to the rendered image, and with "Match Video Aspect" on the render is letterboxed
-    // into part of the div (see renderedRect). Every caller feeds this to setFromCamera, so
-    // measuring across the full pane put the pick ray somewhere the user was not pointing —
-    // correct at the centre and drifting toward the edges. Reduces to the old formula exactly
-    // when the render fills the canvas.
-    const r = renderedRect(view, view.widthPx, view.heightPx);
-
-    // Convert to NDC: x from -1 (left) to +1 (right), y from -1 (bottom) to +1 (top)
-    const ndcX = ((viewX - r.x) / r.w) * 2 - 1;
-    const ndcY = -((viewY - r.y) / r.h) * 2 + 1;  // Invert Y for Three.js
-
-    return V2(ndcX, ndcY);
+    return mouseToNDC(view, screenX, screenY);
 }
 
 /**
@@ -324,11 +193,5 @@ export function screenToNDC(view, screenX, screenY) {
  * expectation has caused many bugs.
  */
 export function makeMouseRay(view, mouseX, mouseY) {
-    // Legacy function - expects view-relative coords with Y measured from bottom
-    // Convert to proportion
-    const viewXp = mouseX / view.widthPx;
-    const viewYp = mouseY / view.heightPx;
-
-    // Convert to Three.js NDC: -1 to +1
-    return V2(viewXp * 2 - 1, viewYp * 2 - 1);
+    return viewToNDC(view, mouseX, view.heightPx - mouseY);
 }

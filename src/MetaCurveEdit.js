@@ -1,3 +1,6 @@
+import {registerSurfaceInteraction} from "./SurfaceInteraction";
+import {interactionEvent} from "./InteractionRouter";
+import {HANDLE_STYLE} from "./HandleStyle";
 /////////////////////////////////////////////////////////////////////////
 // Bezier code editor and utilites by Mick West
 // regression module: https://github.com/Tom-Alexander/regression-js (MIT license)
@@ -452,30 +455,28 @@ class MetaBezierCurveEditor {
 
         this.curve = new MetaBezierCurve(p);
 
-        // Note use of .bind(this) on the event handler functions declared here
-        // this makes them be called in the context of this object
-
-        this.c.addEventListener("mousedown", (function (e) {
-            this.mouseDown(e)
-        }).bind(this), false);
-
-
-        this.c.addEventListener("mouseup", (function (e) {
-            this.mouseFinished(e)
-        }).bind(this), false);
-
-
-        this.c.addEventListener("mouseleave", (function (e) {
-            this.mouseFinished(e)
-        }).bind(this), false);
-
-
-        this.c.addEventListener("mousemove", (function (e) {
-            this.mouseMove(e)
-        }).bind(this), false);
-
-    // disable right click menu
-        this.c.addEventListener("contextmenu", e => e.preventDefault());
+        const local = e => {
+            const rect = this.c.getBoundingClientRect();
+            return interactionEvent(e, {layerX: (e.clientX - rect.left) * this.c.clientWidth / rect.width,
+                layerY: (e.clientY - rect.top) * this.c.clientHeight / rect.height});
+        };
+        this.unregisterInteraction = registerSurfaceInteraction(this.c, {
+            profile: "legacyCurve",
+            model: this, view: p.view, buttons: [0, 2],
+            hitTest: e => { const at = local(e); return this.insideGraph(at.layerX, at.layerY) ? {} : null; },
+            begin: e => {
+                const at = local(e);
+                this.interactionRadius = e.pointerType === "touch" ? HANDLE_STYLE.touchRadius : 10;
+                this.lastMouseX = at.layerX; this.lastMouseY = at.layerY;
+                this.mouseDown(at);
+            },
+            move: e => this.mouseMove(local(e)),
+            hover: e => { if (e) this.mouseMove(local(e)); },
+            end: e => this.mouseFinished(local(e)), contextMenu: () => {},
+            snapshot: () => this.getProfile().slice(),
+            restore: state => { this.selectedPoint = null; this.setPointsFromFlatArray(state); this.onChange(); this.dirty = true; },
+            undo: "Edit curve points",
+        });
 
         this.dirty = true;
         this.update();
@@ -959,7 +960,7 @@ class MetaBezierCurveEditor {
         const len = this.curve.ps.length;
         for (let i = 0; i < len; i++) {
             const d = Math.sqrt(Math.pow(this.D2CX(this.curve.ps[i].x) - x, 2) + Math.pow(this.D2CY(this.curve.ps[i].y) - y, 2));
-            if (d <= 10) {
+            if (d <= (this.interactionRadius ?? 10)) {
                 // if we've already got a selected point, then only select a new one if it's a control point
                 // this avoids control points being "hidden" by their curve points.
                 if (!this.selectedPoint || (i & 1) === 1) {
@@ -972,6 +973,7 @@ class MetaBezierCurveEditor {
 
 
     mouseDown(e) {
+        if (e.button !== 0 && e.button !== 2) return;
 
         // we use shift key to drag the window, so ignore mouse down if shift pressed
      //   if (e.shiftKey) return;
@@ -1000,6 +1002,7 @@ class MetaBezierCurveEditor {
 
                     e.preventDefault();
                     e.stopPropagation();
+                    return;
                 }
 //                return false;
 
@@ -1116,7 +1119,7 @@ class MetaBezierCurveEditor {
             for (let i = 0; i < len; i++) {
                 if (i%2 === 0 || !this.curve.useRegression) {
                     const d = Math.sqrt(Math.pow(this.D2CX(this.curve.ps[i].x) - e.layerX, 2) + Math.pow(this.D2CY(this.curve.ps[i].y) - e.layerY, 2));
-                    if (d <= 10) {
+                    if (d <= (this.interactionRadius ?? 10)) {
                         ctx.fillStyle = "green";
                         if (i % 2 === 0) {
                             ctx.fillStyle = "black"

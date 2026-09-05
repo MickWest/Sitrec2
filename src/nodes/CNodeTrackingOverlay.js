@@ -1,3 +1,5 @@
+import {commandModifier} from "../GestureActions";
+import {undoManager} from "../UndoManager";
 // Manual Tracking - A tracking view that overlays the video and shows manual tracking data
 // User manually places keyframes to track objects
 // This is distinct from Auto Tracking (CObjectTracking) which automatically tracks objects
@@ -5,7 +7,7 @@
 
 import {CNodeViewUI} from "./CNodeViewUI";
 import {assert} from "../assert";
-import {Globals, NodeMan, Sit, Units} from "../Globals";
+import {Globals, NodeMan, Sit, Units, setRenderOne} from "../Globals";
 import {par} from "../par";
 import {extractFOV} from "./CNodeControllerVarious";
 import {mouseToCanvas} from "../ViewUtils";
@@ -97,6 +99,7 @@ export class CDraggableItem {
 export class CDraggableCircle extends CDraggableItem {
      constructor(v) {
         super(v);
+        this.interactionProfile = "tracking";
         this.radius = v.radius ?? 5;
     }
 
@@ -207,7 +210,16 @@ export class CNodeActiveOverlay extends CNodeViewUI {
         return null;
     }
 
+    isInteractionEnabled() { return this.showTracking !== false; }
+
+    getInteractionIntent(e, mouseX, mouseY) {
+        if (e.button !== 0 || this.showTracking === false) return null;
+        const [x, y] = mouseToCanvas(this, mouseX, mouseY);
+        return this.pickDraggable(x, y, e) ? {kind: "drag", priority: 70} : null;
+    }
+
     onMouseDown(e, mouseX, mouseY) {
+        if (e.button !== 0) return false;
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY)
 
         const x = cx;
@@ -879,7 +891,40 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         }
     }
 
+    captureTrackingEdit() {
+        return this.keyframes.map(k => ({x: k.x, y: k.y, frame: k.frame,
+            b: k.bPoint ? {x: k.bPoint.x, y: k.bPoint.y, edited: k.bPoint.edited} : null}));
+    }
+
+    restoreTrackingEdit(state) {
+        this.draggable = [];
+        this.keyframes = state.map(k => {
+            const point = this.add(new CNodeVideoTrackKeyframe({view: this,
+                x: k.x, y: k.y, frame: k.frame, coordinatesAreVideo: true}));
+            if (k.b) this.makeBPoint(point, k.b.x, k.b.y, k.b.edited);
+            return point;
+        });
+        this.updateSizeSolution();
+        this.recalculateCascade();
+        setRenderOne(true);
+    }
+
+    onMouseRollback() {
+        const before = this._trackingBefore;
+        this._trackingBefore = null;
+        if (before) this.restoreTrackingEdit(before);
+    }
+
     onMouseUp(e, mouseX, mouseY) {
+        const before = this._trackingBefore;
+        this._trackingBefore = null;
+        if (before) {
+            const after = this.captureTrackingEdit();
+            if (JSON.stringify(before) !== JSON.stringify(after)) undoManager.add({
+                description: "Edit video tracking point",
+                undo: () => this.restoreTrackingEdit(before), redo: () => this.restoreTrackingEdit(after),
+            });
+        }
         const wasDragging = this.draggable.some(d => d.dragging);
         super.onMouseUp(e, mouseX, mouseY);
 
@@ -1616,14 +1661,22 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
 
 
+    getInteractionIntent(e, mouseX, mouseY) {
+        if (!this.hasVideoGeometry() || this.showTracking === false || e.button !== 0) return null;
+        if (commandModifier(e)) return {kind: "click", priority: 70};
+        return super.getInteractionIntent(e, mouseX, mouseY);
+    }
+
     onMouseDown(e, mouseX, mouseY) {
+        if (e.button !== 0) return false;
         if (!this.hasVideoGeometry()) {
             return false;
         }
 
         // if we clicked on a draggable item, then we return true
         // we don't need to check this
-        if (!e.ctrlKey && super.onMouseDown(e, mouseX, mouseY)) {
+        this._trackingBefore = this.captureTrackingEdit();
+        if (!commandModifier(e) && super.onMouseDown(e, mouseX, mouseY)) {
             // this means we clicked on a draggable item
             // check to see if the alt key is down
             // if so, we remove the item from the lists
@@ -1655,7 +1708,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
             }
 
 
-           // if (!e.ctrlKey)
+           // if (!commandModifier(e))
            //     return true;
         }
 
@@ -1663,7 +1716,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
         const [vX, vY] = this.overlayView.canvasToVideoCoordsOriginal(x, y);
 
-         if (e.ctrlKey) {
+         if (commandModifier(e)) {
             // control key means we add a new one at this frame
              // we disable the default action
                 e.preventDefault();
@@ -1677,7 +1730,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
             if (videoData && videoData.isHeldFrame && videoData.isHeldFrame(par.frame)) {
                 const sourceV = videoData.sourceToVirtual(videoData.virtualToSource(par.frame));
                 console.warn(`[TrackingOverlay] frame ${par.frame} is a held (duplicate) frame; scrub to frame ${sourceV} or the next real frame to place a keyframe.`);
-                return;
+                return true;
             }
 
             // interate over keyframes and find if there is one at this frame
@@ -1723,6 +1776,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
          }
 
 
+        return true;
     }
 
     renderCanvas(frame) {

@@ -1,3 +1,4 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
 // The compass UI displays the compass rose and the heading
 // base on an input camera node
 
@@ -37,11 +38,6 @@ export class   CNodeCompassUI extends CNodeViewUI {
         this.lastARMode = false;
         this.lastWindSourceKey = null;
         
-        // Long-press detection for AR mode
-        this.longPressTimer = null;
-        this.longPressDelay = 800; // milliseconds
-        this.isLongPress = false;
-        
         // Enable pointer events for compass interactions (overrides parent's ignoreMouseEvents)
         this.canvas.style.pointerEvents = 'auto';
 
@@ -56,168 +52,33 @@ export class   CNodeCompassUI extends CNodeViewUI {
             this.showHideController.shareAs(viewMenuKey(hostView.id, "compass"));
         }
         
-        // Add touch event listeners for mobile support
-        if (Globals.isMobile) {
-            this.canvas.addEventListener('touchstart', this.handleTouchStart.bind(this), { passive: false });
-            this.canvas.addEventListener('touchend', this.handleTouchEnd.bind(this), { passive: false });
-            this.canvas.addEventListener('touchmove', this.handleTouchMove.bind(this), { passive: false });
-        }
+        this.installInteraction();
     }
 
+    installInteraction() {
+        this.unregisterCompassInteraction = registerSurfaceInteraction(this.canvas, {
+            model: this, view: this, profile: "compass", cursor: "pointer", intent: {kind: "click", priority: 85},
+            click: () => this.activateCompass(),
+            contextMenu: e => {
+                if (e.pointerType === "touch" && Globals.isMobile && this.in.relativeTo?.id === "lookView") this.toggleARMode();
+            },
+        });
+    }
 
-    onMouseDown(e, mouseX, mouseY) {
+    activateCompass() {
         const view = this.in.relativeTo;
-        
-        console.log("Compass onMouseDown - view:", view?.id, "isMobile:", Globals.isMobile);
-        
-        // For lookView on mobile, start long-press detection for AR mode
-        if (view?.id === "lookView" && Globals.isMobile) {
-            console.log("Starting long-press timer for AR mode");
-            this.isLongPress = false;
-            this.longPressTimer = setTimeout(() => {
-                console.log("Long-press detected! Toggling AR mode");
-                this.isLongPress = true;
-                this.toggleARMode();
-            }, this.longPressDelay);
-            return;
-        }
-        
-        // clicking on the compass in the main view should rotate the view to north
         if (view?.id === "mainView") {
-            // There's a plane defined by the camera's position and the local up vector and the north pole
-            // the camera shoudl end up with it up and forward vectors in that plane
-            // and the right vector pointing east
-            // so the camera's rotation matrix should be set to that
             view.controls.fixUp(true);
-            view.controls.fixHeading(0)
-            view.controls.fixHeading(0)
-            view.controls.fixHeading(0)
-            view.controls.fixHeading(0)
-        }
-        // clicking on the compass in the look view should toggle "Show Compass Elevation"
-        else if (view?.id === "lookView") {
+            // The existing heading solver converges over these corrections.
+            for (let i = 0; i < 4; i++) view.controls.fixHeading(0);
+        } else if (view?.id === "lookView") {
             Globals.showCompassElevation = !Globals.showCompassElevation;
-            // Force update of all compass UI nodes by resetting their state
             NodeMan.iterate((id, node) => {
-                if (node.constructor.name === "CNodeCompassUI") {
-                    node.lastHeading = null;
-                }
+                if (node instanceof CNodeCompassUI) node.lastHeading = null;
             });
         }
     }
-    
-    onMouseUp(e, mouseX, mouseY) {
-        const view = this.in.relativeTo;
-        
-        // Cancel long-press timer if released early
-        if (this.longPressTimer) {
-            clearTimeout(this.longPressTimer);
-            this.longPressTimer = null;
-        }
-        
-        // If this wasn't a long press on lookView mobile, handle as regular click
-        if (view?.id === "lookView" && Globals.isMobile && !this.isLongPress) {
-            Globals.showCompassElevation = !Globals.showCompassElevation;
-            // Force update of all compass UI nodes by resetting their state
-            NodeMan.iterate((id, node) => {
-                if (node.constructor.name === "CNodeCompassUI") {
-                    node.lastHeading = null;
-                }
-            });
-        }
-        
-        // Reset long-press state
-        this.isLongPress = false;
-    }
-    
-    onMouseMove(e, mouseX, mouseY) {
-        // Cancel long-press if user moves finger (helps prevent accidental activation)
-        if (this.longPressTimer) {
-            console.log("Movement detected - canceling long-press timer");
-            clearTimeout(this.longPressTimer);
-            this.longPressTimer = null;
-        }
-    }
-    
-    handleTouchStart(e) {
-        const view = this.in.relativeTo;
-        
-        console.log("Compass touchStart - view:", view?.id, "isMobile:", Globals.isMobile);
-        
-        // Prevent default to avoid triggering mouse events afterward
-        e.preventDefault();
-        
-        // Store initial touch position for movement detection
-        if (e.touches.length > 0) {
-            this.touchStartX = e.touches[0].clientX;
-            this.touchStartY = e.touches[0].clientY;
-        }
-        
-        // For lookView on mobile, start long-press detection for AR mode
-        if (view?.id === "lookView" && Globals.isMobile) {
-            console.log("Starting long-press timer for AR mode (touch)");
-            this.isLongPress = false;
-            this.touchStartTime = Date.now();
-            this.longPressTimer = setTimeout(() => {
-                console.log("Long-press detected! Toggling AR mode (touch)");
-                this.isLongPress = true;
-                this.toggleARMode();
-            }, this.longPressDelay);
-        }
-    }
-    
-    handleTouchEnd(e) {
-        const view = this.in.relativeTo;
-        
-        console.log("Compass touchEnd - view:", view?.id, "isLongPress:", this.isLongPress);
-        
-        // Prevent default to avoid triggering mouse events
-        e.preventDefault();
-        
-        // Cancel long-press timer if released early
-        if (this.longPressTimer) {
-            clearTimeout(this.longPressTimer);
-            this.longPressTimer = null;
-        }
-        
-        // If this wasn't a long press on lookView mobile, handle as regular tap (toggle elevation)
-        if (view?.id === "lookView" && Globals.isMobile && !this.isLongPress) {
-            console.log("Short tap detected - toggling compass elevation");
-            Globals.showCompassElevation = !Globals.showCompassElevation;
-            // Force update of all compass UI nodes by resetting their state
-            NodeMan.iterate((id, node) => {
-                if (node.constructor.name === "CNodeCompassUI") {
-                    node.lastHeading = null;
-                }
-            });
-        }
-        
-        // Reset long-press state
-        this.isLongPress = false;
-    }
-    
-    handleTouchMove(e) {
-        // Cancel long-press if user moves finger significantly
-        // Allow small movements (< 10px) to account for natural finger wobble
-        if (this.longPressTimer && e.touches.length > 0) {
-            const touch = e.touches[0];
-            
-            // Calculate movement distance from initial touch position
-            const moveDistance = Math.sqrt(
-                Math.pow(touch.clientX - this.touchStartX, 2) +
-                Math.pow(touch.clientY - this.touchStartY, 2)
-            );
-            
-            // Only cancel if moved more than 10 pixels from initial position
-            if (moveDistance > 10) {
-                console.log("Significant movement detected - canceling long-press timer");
-                e.preventDefault();
-                clearTimeout(this.longPressTimer);
-                this.longPressTimer = null;
-            }
-        }
-    }
-    
+
     async toggleARMode() {
         if (Globals.arMode) {
             arModeManager.disableARMode();

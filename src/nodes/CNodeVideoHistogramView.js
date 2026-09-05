@@ -1,3 +1,4 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
 import {setRenderOne} from "../Globals";
 import {getClipComparisonValue} from "./CNodeVideoViewFilters";
@@ -49,11 +50,20 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
             pointerEvents: "auto",
         });
         this.div.appendChild(this.tonalLossTooltipDiv);
-        this.div.addEventListener("pointerdown", this.handlePointerDown, true);
+        this.unregisterInteraction = registerSurfaceInteraction(this.div, {
+            profile: "adjustments",
+            view: this, model: this, intent: {kind: "click"},
+            hitTest: e => {
+                const p = this.eventToLocalPoint(e);
+                return this.rectContainsPoint(this.shadowIndicatorRect, p.x, p.y)
+                    || this.rectContainsPoint(this.highlightIndicatorRect, p.x, p.y) ? {} : null;
+            },
+            click: e => this.handlePointerDown(e),
+        });
     }
 
     dispose() {
-        this.div?.removeEventListener("pointerdown", this.handlePointerDown, true);
+        this.unregisterInteraction?.();
         this.sampleCtx = null;
         this.sampleCanvas = null;
         this.originalSampleCtx = null;

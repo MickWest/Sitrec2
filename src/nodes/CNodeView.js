@@ -1,3 +1,5 @@
+import {rebindSurfaceInteractions} from "../SurfaceInteraction";
+import {getInteractionRouter} from "../InteractionRouter";
 ///////////////////////////////////////////////////////////////////////////////
 // CNodeView is the base class of all the views (2D, text, 3D, and maybe more)
 // it has a div, which can be resized with our modern drag/resize utilities
@@ -618,6 +620,10 @@ class CNodeView extends CNode {
     }
 
     dispose() {
+        this._surfaceInteractions?.forEach(dispose => dispose());
+        getInteractionRouter(this.div?.ownerDocument)?.cancelOwner(this);
+        this.mouse?.dispose?.();
+        this.controls?.dispose?.();
         console.log("Disposing CNodeView: "+this.id)
         const sidebar = this.dockedSidebar ? this.getDockSidebar(this.dockedSidebar) : null;
 
@@ -1400,7 +1406,7 @@ class CNodeView extends CNode {
         return true;
     }
 
-    onViewDragEnd(event) {
+    onViewDragEnd(event, data = {}) {
         if (!this.visible) return;
 
         // How far this drag actually moved (0 for a click). Reset for next time.
@@ -1408,7 +1414,7 @@ class CNodeView extends CNode {
         this._dragDisplacement = 0;
 
         if (this.dockedSidebar) {
-            if (!this.isEventInDockSidebar(event, this.dockedSidebar)) {
+            if (!data.cancelled && !this.isEventInDockSidebar(event, this.dockedSidebar)) {
                 this.undockFromSidebar(event);
             } else {
                 this.updateDockedWH();
@@ -1426,7 +1432,7 @@ class CNodeView extends CNode {
         // dropped over a tile's EDGE band (the blue preview was showing), split that tile to
         // insert it — the inverse of detach. dockViewAt no-ops for a central (no-snap) drop, so
         // the view stays free-floating there. Takes precedence over sidebar docking.
-        if (moved >= HEADER_DRAG_MOVE_THRESHOLD && LayoutMan.active && !LayoutMan.hasLeaf(this.id)
+        if (!data.cancelled && moved >= HEADER_DRAG_MOVE_THRESHOLD && LayoutMan.active && !LayoutMan.hasLeaf(this.id)
             && event && event.clientX !== undefined) {
             if (LayoutMan.dockViewAt(this.id, event.clientX, event.clientY)) {
                 this.setResizeHandlesVisible(false);   // tiled views resize via the seams
@@ -1434,7 +1440,7 @@ class CNodeView extends CNode {
             }
         }
 
-        if (!this.dockable) return;
+        if (!this.dockable || data.cancelled) return;
 
         // Docking requires a DELIBERATE drag, not a click that happens to land near an edge.
         if (moved < HEADER_DRAG_DOCK_THRESHOLD) return;
@@ -1660,7 +1666,10 @@ class CNodeView extends CNode {
             + "background:var(--sitrec-bg-app,#1a1a1a); color:var(--sitrec-text,#ebebeb); --sitrec-header-h:0px;";
         const bar = this.uiBar && this.uiBar.bar;
         this._poppedContent = [...this.div.children].filter(c => c !== bar);
-        for (const c of this._poppedContent) win.document.body.appendChild(win.document.adoptNode(c));
+        for (const c of this._poppedContent) {
+            win.document.body.appendChild(win.document.adoptNode(c));
+            rebindSurfaceInteractions(c);
+        }
         // (Closing the popup window docks it back — see the beforeunload handler below — so no
         //  separate in-popup dock button is needed.)
         this.windowed = true;
@@ -1698,7 +1707,10 @@ class CNodeView extends CNode {
         if (this._popPoll) { clearInterval(this._popPoll); this._popPoll = null; }
         if (this._poppedContent) {
             for (const c of this._poppedContent) {
-                if (c.ownerDocument !== document) this.div.appendChild(document.adoptNode(c));
+                if (c.ownerDocument !== document) {
+                    this.div.appendChild(document.adoptNode(c));
+                    rebindSurfaceInteractions(c);
+                }
             }
             this._poppedContent = null;
         }

@@ -536,6 +536,7 @@ export class CTrackBrowser {
         Globals.menuBar?.hideNonBarMenus();
 
         const overlay = document.createElement("div");
+        overlay.dataset.interactionNative = "true";
         this.overlay = overlay;
         const menuBarEl = document.getElementById("menuBarBlackBar");
         const topPx = menuBarEl ? (menuBarEl.offsetTop + menuBarEl.offsetHeight) : 0;

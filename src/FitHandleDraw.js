@@ -1,3 +1,4 @@
+import {HANDLE_STYLE, drawHandleHalo} from "./HandleStyle";
 // The look of a camera-fit control point: a circle with a crosshair through it.
 //
 // Shared, because the same handle is drawn in three places — on the video, and on each 3D view —
@@ -12,7 +13,7 @@ export const POINT_COLORS = [
 ];
 
 /** Radius of the drawn circle, in canvas pixels. */
-export const HANDLE_RADIUS = 9;
+export const HANDLE_RADIUS = HANDLE_STYLE.pointRadius;
 
 /** Click within this many canvas pixels of a handle to grab it. */
 export const GRAB_RADIUS = 12;
@@ -25,7 +26,7 @@ export const GRAB_RADIUS = 12;
  * not editable here. Shared so the video and the 3D views fade by the same amount — a point
  * that looked live in one view and faded in the other was the confusing part.
  */
-export const OFF_FRAME_ALPHA = 0.3;
+export const OFF_FRAME_ALPHA = HANDLE_STYLE.unavailableOpacity;
 
 /**
  * Draw one handle at a canvas position.
@@ -33,10 +34,14 @@ export const OFF_FRAME_ALPHA = 0.3;
  * Stroked twice — a dark halo, then the colour — because these sit over video and terrain of
  * every brightness, and a single-colour hairline disappears against half of it.
  */
-export function drawFitHandle(ctx, cx, cy, color, label, alpha = 1) {
+export function drawFitHandle(ctx, cx, cy, color, label, alpha = 1, state = "idle") {
     const r = HANDLE_RADIUS;
     ctx.save();
     ctx.globalAlpha = alpha;
+
+    // An outer ring indicates interaction without replacing a point's identity
+    // color or its off-keyframe opacity.
+    drawHandleHalo(ctx, cx, cy, r, state);
 
     const path = () => {
         ctx.beginPath();

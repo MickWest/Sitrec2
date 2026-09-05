@@ -8,6 +8,10 @@
  * origin (host fallback) handle any tab not claimed by another server.
  */
 
+import {DEV_MODE} from "./dev-mode.js";
+import {createDevBrowser} from "./dev-browser.js";
+
+const handleDevBrowser = createDevBrowser(chrome, DEV_MODE);
 const MCP_PORT_MIN = 9780;
 const MCP_PORT_MAX = 9799;
 const KEEPALIVE_ALARM_NAME = "sitrec-bridge-keepalive";
@@ -524,6 +528,19 @@ async function handleServerMessage(port, msg) {
         scheduleFallbackPrune();
     }
 
+    if (action?.startsWith("browser_")) {
+        trackCommandStart(action, params, _cwd, params?.tab, port);
+        try {
+            const result = await handleDevBrowser(action, params);
+            sendToServer(port, {id, result});
+            trackCommandEnd(true);
+        } catch (error) {
+            sendToServer(port, {id, error: error.message});
+            trackCommandEnd(false);
+        }
+        return;
+    }
+
     if (action === "reload") {
         trackCommandStart(action, params, _cwd, null, port);
         sendToServer(port, { id, result: { ok: true, reloading: true } });
@@ -547,6 +564,7 @@ async function handleServerMessage(port, msg) {
             id,
             result: {
                 installedVersion: chrome.runtime.getManifest().version,
+                developmentMode: DEV_MODE,
                 workerStartedAt: WORKER_STARTED_AT,
                 workerAliveMs: Date.now() - WORKER_STARTED_AT,
                 connections: [...connections.values()].map((c) => ({
@@ -880,7 +898,7 @@ chrome.alarms.create(KEEPALIVE_ALARM_NAME, { periodInMinutes: KEEPALIVE_ALARM_PE
 chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name !== KEEPALIVE_ALARM_NAME) return;
     await refreshKnownTabs();
-    if (knownSitrecTabs.size > 0) {
+    if (DEV_MODE || knownSitrecTabs.size > 0) {
         await scanForServers();
     }
     // Send a ping on every open connection so the server keeps the worker awake
@@ -902,7 +920,7 @@ let fastRescanTimer = null;
 function startFastRescan() {
     if (fastRescanTimer) return;
     fastRescanTimer = setInterval(async () => {
-        if (knownSitrecTabs.size === 0) return;
+        if (!DEV_MODE && knownSitrecTabs.size === 0) return;
         const before = connections.size;
         await scanForServers();
         if (connections.size !== before) {
@@ -958,6 +976,8 @@ function updatePopupState() {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    // Popup controls are extension UI, not commands available to content scripts.
+    if (sender.tab || sender.id !== chrome.runtime.id) return;
     if (msg.type === "getState") {
         refreshKnownTabs().then(() => sendResponse(buildPopupState()));
         return true;
@@ -1041,7 +1061,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // bridge feel like it needed constant reconnecting.
     diag("worker-start", {version: chrome.runtime.getManifest().version});
     await refreshKnownTabs();
-    if (knownSitrecTabs.size > 0) {
+    if (DEV_MODE) {
+        await chrome.action.setBadgeText({text: "DEV"});
+        await chrome.action.setBadgeBackgroundColor({color: "#a34b00"});
+    }
+    if (DEV_MODE || knownSitrecTabs.size > 0) {
         await scanForServers();
     }
 })();

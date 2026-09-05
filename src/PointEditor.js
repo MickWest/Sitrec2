@@ -1,3 +1,4 @@
+import {registerEditorInteraction} from "./EditorInteraction";
 import {PointEditorWidget} from "./PointEditorWidget";
 import {
     BoxGeometry,
@@ -16,7 +17,7 @@ import {ECEFToLLAVD_radii, legacyEUSToECEF, LLAToECEF} from "./LLA-ECEF-ENU";
 import {assert} from "./assert";
 import {V3} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
-import {mouseInViewOnly, mouseToViewNormalized} from "./ViewUtils";
+import {getInteractiveViewAt, mouseToNDC, setRaycasterFromView} from "./ViewUtils";
 import {NodeMan, setRenderOne, Sit} from "./Globals";
 import {radians} from "./utils";
 import {undoManager as UndoManager} from "./UndoManager";
@@ -58,19 +59,6 @@ export class PointEditor {
         this.transformControl = new PointEditorWidget(this.camera, this.renderer.domElement);
         this.transformControl.addEventListener('change', () => setRenderOne());
         this.transformControl.addEventListener('dragging-changed', (event) => {
-            controls.enabled = !event.value;
-
-            // The widget can now be dragged from either main or look view, so
-            // we must also gate the other views' camera controls — otherwise
-            // a drag started in lookView would orbit the look camera while
-            // the user thinks they're moving the point. Toggle every visible
-            // 3D view's controls in lockstep with mainView's.
-            ViewMan.iterate((id, v) => {
-                if (v && v.controls && v.controls !== controls) {
-                    v.controls.enabled = !event.value;
-                }
-            });
-
             if (event.value) {
                 // Drag started - capture state
                 this.stateBeforeDrag = this.captureState();
@@ -147,12 +135,23 @@ export class PointEditor {
         // Initially hide the measurement
         this.measureAltitude.group.visible = false;
 
-        this._onPointerDown = event => this.onPointerDown(event);
-        this._onPointerUp = event => this.onPointerUp(event);
-        this._onPointerMove = event => this.onPointerMove(event);
-        document.addEventListener('pointerdown', this._onPointerDown);
-        document.addEventListener('pointerup', this._onPointerUp);
-        document.addEventListener('pointermove', this._onPointerMove);
+        this.transformControl.rollbackEdit = () => {
+            if (this.stateBeforeDrag) this.restoreState(this.stateBeforeDrag);
+            this.stateBeforeDrag = null;
+        };
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            id: `track-points:${this.transformControl.group.uuid}`,
+            relatedModels: [this.transformControl],
+            enabled: () => this.enable,
+            pick: e => {
+                if (!this.setupRaycasterForEvent(e)) return null;
+                return this.getIntersectedControlPoint() ? {priority: 65} : null;
+            },
+            begin: e => { this.onPointerMove(e); this.transformControl.onPointerDown(e); },
+            move: e => this.transformControl.onPointerMove(e),
+            end: e => { this.transformControl.onPointerUp(e); this.exportSpline(); },
+            rollback: e => this.transformControl.rollbackDrag(e),
+        });
 
 
 
@@ -371,10 +370,8 @@ export class PointEditor {
         // Try mainView first, then lookView — clicks/hovers in either view should
         // be able to interact with the editing controls. Each view supplies its
         // own camera so the raycaster's ray comes out of the correct viewpoint.
-        for (const id of ["mainView", "lookView"]) {
-            const view = ViewMan.get(id, false);
-            if (!view) continue;
-            if (!mouseInViewOnly(view, event.clientX, event.clientY)) continue;
+        const view = getInteractiveViewAt(event.clientX, event.clientY);
+        if (view) {
 
             // Rescale the cubes for THIS view's pixel space before raycasting.
             // The per-render scale is whichever view rendered last (typically
@@ -384,11 +381,8 @@ export class PointEditor {
             this.updateCubeScales(view);
             for (const cube of this.splineHelperObjects) cube.updateMatrixWorld();
 
-            const [px, py] = mouseToViewNormalized(view, event.clientX, event.clientY);
-            this.pointer.x = px;
-            this.pointer.y = py;
-            this.raycaster.setFromCamera(this.pointer, view.camera);
-            return true;
+            this.pointer.copy(mouseToNDC(view, event.clientX, event.clientY));
+            return setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
         }
         return false;
     }
@@ -485,6 +479,7 @@ export class PointEditor {
     }
 
     onPointerMove(event) {
+        if (this.transformControl.isPointerDown) return;
         if (!this.enable) return;
 
         if (!this.setupRaycasterForEvent(event)) {
@@ -964,6 +959,7 @@ export class PointEditor {
      * Clean up resources when the editor is disposed
      */
     dispose() {
+        this.unregisterInteraction?.();
         // Remove and dispose the position indicator cone
         if (this.positionIndicatorCone) {
             this.scene.remove(this.positionIndicatorCone);
@@ -993,11 +989,6 @@ export class PointEditor {
             this.transformControl.detach();
             this.transformControl.dispose();
         }
-
-        // Remove document event listeners
-        document.removeEventListener('pointerdown', this._onPointerDown);
-        document.removeEventListener('pointerup', this._onPointerUp);
-        document.removeEventListener('pointermove', this._onPointerMove);
 
         // Remove all control point objects
         for (let i = 0; i < this.splineHelperObjects.length; i++) {

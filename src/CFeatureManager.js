@@ -1,15 +1,16 @@
+import {registerEditorInteraction} from "./EditorInteraction";
+import {getInteractiveViewAt} from "./ViewUtils";
 import {CManager} from "./CManager";
 import {showConfirm} from "./showError";
 import {CNodeFeatureMarker} from "./nodes/CNodeLabels3D";
 import {Globals, NodeMan, setRenderOne, UndoManager} from "./Globals";
-import {Raycaster, Vector3} from "three";
+import {Raycaster} from "three";
 import {ViewMan} from "./CViewManager";
 import {t} from "./i18n";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {raycastLocalGround} from "./raycastGround";
-import {screenToNDC} from "./mouseMoveView";
-import {mouseInViewOnly} from "./ViewUtils";
+import {mouseInRenderedView, setRaycasterFromView, projectWorldToView, viewToClient} from "./ViewUtils";
 import {getPointBelowLL} from "./threeExt";
 
 // Screen-space pick radius for a pin, in pixels. Pins are drawn screen-space
@@ -236,7 +237,7 @@ class CFeatureManager extends CManager {
 
     /**
      * The two grab points of a pin, in absolute screen pixels: the arrow base on
-     * the ground, and the label sitting arrowLength pixels above it.
+     * the ground, and the label at its saved display offset.
      * @returns {Array<{x: number, y: number}>} empty if hidden or behind the camera
      */
     featureScreenPoints(featureNode, view) {
@@ -246,24 +247,14 @@ class CFeatureManager extends CManager {
 
         const positions = [
             featureNode.featurePosition,  // Arrow base
-            view.offsetScreenPixels(featureNode.featurePosition.clone(), 0, featureNode.arrowLength)  // Label position
+            featureNode.labelPosition(view)
         ];
 
-        // Note: leftPx/topPx are container-relative, add screenOffsetX for absolute screen position
-        const containerOffsetX = ViewMan.screenOffsetX || 0;
-
         for (const pos3D of positions) {
-            // Project to screen space
-            const screenPos = new Vector3(pos3D.x, pos3D.y, pos3D.z);
-            screenPos.project(view.camera);
-
-            // Skip if behind camera
-            if (screenPos.z > 1) continue;
-
-            points.push({
-                x: (screenPos.x * 0.5 + 0.5) * view.widthPx + view.leftPx + containerOffsetX,
-                y: (1 - (screenPos.y * 0.5 + 0.5)) * view.heightPx + view.topPx,
-            });
+            const projected = projectWorldToView(view, pos3D);
+            if (!projected) continue;
+            const [x, y] = viewToClient(view, ...projected);
+            points.push({x, y});
         }
 
         return points;
@@ -435,23 +426,16 @@ class CFeatureManager extends CManager {
         this.editView = view ?? ViewMan.get("mainView", false);
         this.editMenu = menu;
 
-        this.onPointerDownBound = (e) => this.onPointerDown(e);
-        this.onPointerMoveBound = (e) => this.onPointerMove(e);
-        this.onPointerUpBound = (e) => this.onPointerUp(e);
-        this.onPointerCancelBound = () => this.endDrag();
-
-        // CAPTURE phase, so a drag we take is entirely ours: the events never reach
-        // the view's canvas. Otherwise CameraControls sees the press (before we can
-        // disable it), has its state cleared by the first disabled move, and then
-        // reads the drag's pointerup as a TAP - so a click within 300ms and 15px
-        // double-tap-zooms the camera. Presses we don't take propagate as normal.
-        document.addEventListener('pointerdown', this.onPointerDownBound, true);
-        document.addEventListener('pointermove', this.onPointerMoveBound, true);
-        document.addEventListener('pointerup', this.onPointerUpBound, true);
-        // A cancelled pointer (touch/pen gesture taken over by the browser) never
-        // sends pointerup, and would otherwise leave the drag - and the disabled
-        // camera controls - stuck on
-        document.addEventListener('pointercancel', this.onPointerCancelBound, true);
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            id: "feature-marker", enabled: () => !!this.editingFeature,
+            pick: (e, view) => this.screenDistanceToFeature(this.editingFeature, view, e.clientX, e.clientY)
+                <= FEATURE_PICK_RADIUS ? {priority: 70} : null,
+            leave: () => this.setHoverCursor(false),
+            rollback: e => {
+                if (this.dragStartLLA) this.setFeatureLLA(this.editingFeature.id, this.dragStartLLA);
+                this.endDrag();
+            },
+        });
     }
 
     /**
@@ -461,12 +445,9 @@ class CFeatureManager extends CManager {
     stopEditing() {
         if (!this.editingFeature) return;
 
+        this.unregisterInteraction?.();
+        this.unregisterInteraction = null;
         this.endDrag();
-
-        document.removeEventListener('pointerdown', this.onPointerDownBound, true);
-        document.removeEventListener('pointermove', this.onPointerMoveBound, true);
-        document.removeEventListener('pointerup', this.onPointerUpBound, true);
-        document.removeEventListener('pointercancel', this.onPointerCancelBound, true);
 
         this.setHoverCursor(false);
 
@@ -536,16 +517,17 @@ class CFeatureManager extends CManager {
             target = target.parentElement;
         }
 
-        const view = this.editView;
-        if (!view || !view.camera || !mouseInViewOnly(view, event.clientX, event.clientY)) return;
+        const view = this.isDragging ? this.activeView : getInteractiveViewAt(event.clientX, event.clientY);
+        if (!view || !view.camera || !mouseInRenderedView(view, event.clientX, event.clientY)) return;
 
+        this.activeView = view;
         const featureNode = this.editingFeature;
         if (this.screenDistanceToFeature(featureNode, view, event.clientX, event.clientY) > FEATURE_PICK_RADIUS) {
             return;
         }
 
         // Grab offset from the arrow base, so grabbing the label (which floats
-        // arrowLength pixels above the base) doesn't snap the pin to the cursor
+        // above the base) doesn't snap the pin to the cursor
         const points = this.featureScreenPoints(featureNode, view);
         if (points.length === 0) return;
         this.dragGrabOffset = {
@@ -558,23 +540,10 @@ class CFeatureManager extends CManager {
 
         this.setHoverCursor(true);
 
-        // Disable camera controls while dragging
-        if (view.controls) {
-            view.controls.enabled = false;
-        }
-
         event.stopPropagation();
         event.preventDefault();
 
-        // Capture the pointer, so a release OUTSIDE the browser window still comes
-        // back to us - without it that pointerup is never delivered and the drag (and
-        // the disabled camera controls) would stay stuck on. LAST, and guarded:
-        // setPointerCapture throws on a pointer the browser doesn't consider active,
-        // and that must not take the rest of the drag setup down with it.
-        try {
-            view.canvas.setPointerCapture(event.pointerId);
-            this.dragPointerId = event.pointerId;
-        } catch (e) { /* no capture - the buttons===0 guard in onPointerMove covers it */ }
+
     }
 
     /**
@@ -583,12 +552,12 @@ class CFeatureManager extends CManager {
     onPointerMove(event) {
         if (!this.editingFeature) return;
 
-        const view = this.editView;
+        const view = this.isDragging ? this.activeView : getInteractiveViewAt(event.clientX, event.clientY);
         if (!view || !view.camera) return;
 
         if (!this.isDragging) {
             // Hover feedback: "move" cursor when the pin can be grabbed
-            const overFeature = mouseInViewOnly(view, event.clientX, event.clientY)
+            const overFeature = mouseInRenderedView(view, event.clientX, event.clientY)
                 && this.screenDistanceToFeature(this.editingFeature, view, event.clientX, event.clientY) <= FEATURE_PICK_RADIUS;
             this.setHoverCursor(overFeature);
             return;
@@ -597,7 +566,7 @@ class CFeatureManager extends CManager {
         // The button was released somewhere we never heard about (the same guard
         // CameraControls uses) - stop dragging rather than following the bare cursor
         if (event.buttons === 0) {
-            this.endDrag();
+            this.onPointerUp(event);
             return;
         }
 
@@ -606,7 +575,7 @@ class CFeatureManager extends CManager {
         // Cast at where the pin's BASE should end up, not at the cursor itself
         const baseX = event.clientX - this.dragGrabOffset.x;
         const baseY = event.clientY - this.dragGrabOffset.y;
-        this.raycaster.setFromCamera(screenToNDC(view, baseX, baseY), view.camera);
+        setRaycasterFromView(this.raycaster, view, baseX, baseY);
 
         const ground = raycastLocalGround(this.raycaster, view.camera);
         if (ground && ground.point) {
@@ -673,20 +642,7 @@ class CFeatureManager extends CManager {
         this.isDragging = false;
         this.dragStartLLA = null;
 
-        const view = this.editView;
-
-        if (this.dragPointerId !== undefined) {
-            // Only the capturing element can release, and it may already have lost the
-            // capture (pointercancel), which throws
-            try {
-                view.canvas.releasePointerCapture(this.dragPointerId);
-            } catch (e) { /* capture already gone */ }
-            this.dragPointerId = undefined;
-        }
-
-        if (view && view.controls) {
-            view.controls.enabled = true;
-        }
+        this.activeView = null;
     }
 }
 

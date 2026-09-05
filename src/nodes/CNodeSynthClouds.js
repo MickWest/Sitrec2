@@ -1,3 +1,5 @@
+import {registerEditorInteraction} from "../EditorInteraction";
+import {getInteractionRouter} from "../InteractionRouter";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {showConfirm} from "../showError";
 import {
@@ -18,10 +20,9 @@ import {
 import * as LAYER from "../LayerMasks";
 import {dropFromDistance, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
-import {screenToNDC} from "../mouseMoveView";
 import {ViewMan} from "../CViewManager";
 import {CustomManager, Globals, guiMenus, NodeMan, setRenderOne, Sit, Synth3DManager, UndoManager} from "../Globals";
-import {mouseInViewOnly} from "../ViewUtils";
+import {mouseInRenderedView, getInteractiveViewAt, setRaycasterFromView, withDisplayedCamera} from "../ViewUtils";
 import {f2m, metersPerSecondFromKnots, radians} from "../utils";
 import {SITREC_APP} from "../configUtils";
 import seedrandom from "seedrandom";
@@ -123,7 +124,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         this.moveHandle = null;
         
         this.raycaster = new Raycaster();
-        this.raycaster.layers.mask = LAYER.MASK_HELPERS;
+        this.raycaster.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         
         this.buildCloudMesh();
         this.setupEventListeners();
@@ -536,13 +537,12 @@ export class CNodeSynthClouds extends CNode3DGroup {
     }
     
     setupEventListeners() {
-        this.onPointerDownBound = this.onPointerDown.bind(this);
-        this.onPointerMoveBound = this.onPointerMove.bind(this);
-        this.onPointerUpBound = this.onPointerUp.bind(this);
-        
-        document.addEventListener('pointerdown', this.onPointerDownBound);
-        document.addEventListener('pointermove', this.onPointerMoveBound);
-        document.addEventListener('pointerup', this.onPointerUpBound);
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            pick: e => {
+                const handle = this.getHandleAtMouse(e.clientX, e.clientY);
+                return handle ? {handle: this[handle + "Handle"]} : null;
+            },
+        });
     }
     
     onPointerDown(event) {
@@ -558,9 +558,10 @@ export class CNodeSynthClouds extends CNode3DGroup {
             target = target.parentElement;
         }
         
-        const view = ViewMan.get("mainView");
+        const view = (this.isDragging ? this.activeView : getInteractiveViewAt(event.clientX, event.clientY));
         if (!view) return;
-        if (!mouseInViewOnly(view, event.clientX, event.clientY)) return;
+        if (!mouseInRenderedView(view, event.clientX, event.clientY)) return;
+        this.activeView = view;
         
         const handle = this.getHandleAtMouse(event.clientX, event.clientY);
         if (handle) {
@@ -577,13 +578,13 @@ export class CNodeSynthClouds extends CNode3DGroup {
             this.dragInitialCenterECEF = centerECEF.clone();
             
             // Calculate initial intersection point on the drag plane
-            const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-            this.raycaster.setFromCamera(mouseRay, view.camera);
+            setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
             
             const plane = new Plane();
             if (handle === 'altitude') {
                 // Create vertical plane facing camera (allows height adjustment)
-                const toCamera = view.camera.position.clone().sub(centerECEF).normalize();
+                const toCamera = withDisplayedCamera(view, camera =>
+                    camera.getWorldPosition(new Vector3()).sub(centerECEF).normalize());
                 const tangent = new Vector3().crossVectors(this.dragLocalUp, toCamera).normalize();
                 const planeNormal = new Vector3().crossVectors(tangent, this.dragLocalUp).normalize();
                 plane.setFromNormalAndCoplanarPoint(planeNormal, centerECEF);
@@ -599,12 +600,8 @@ export class CNodeSynthClouds extends CNode3DGroup {
             
             this.isDragging = true;
             this.draggingHandle = handle;
-            
-            // Disable camera controls while dragging
-            if (view.controls) {
-                view.controls.enabled = false;
-            }
-            
+            this.dragPlane = plane;
+
             event.stopPropagation();
             event.preventDefault();
         }
@@ -614,26 +611,13 @@ export class CNodeSynthClouds extends CNode3DGroup {
         if (!this.editMode) return;
         
         if (this.isDragging && this.draggingHandle) {
-            const view = ViewMan.get("mainView");
+            const view = (this.isDragging ? this.activeView : getInteractiveViewAt(event.clientX, event.clientY));
             if (!view) return;
 
-            const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-            this.raycaster.setFromCamera(mouseRay, view.camera);
-            
-            // Use INITIAL center position for plane - this is key for relative dragging
-            const plane = new Plane();
-            if (this.draggingHandle === 'altitude') {
-                // Create vertical plane facing camera (allows height adjustment)
-                const toCamera = view.camera.position.clone().sub(this.dragInitialCenterECEF).normalize();
-                const tangent = new Vector3().crossVectors(this.dragLocalUp, toCamera).normalize();
-                const planeNormal = new Vector3().crossVectors(tangent, this.dragLocalUp).normalize();
-                plane.setFromNormalAndCoplanarPoint(planeNormal, this.dragInitialCenterECEF);
-            } else {
-                plane.setFromNormalAndCoplanarPoint(this.dragLocalUp, this.dragInitialCenterECEF);
-            }
+            setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
             
             const currentIntersection = new Vector3();
-            if (this.raycaster.ray.intersectPlane(plane, currentIntersection)) {
+            if (this.raycaster.ray.intersectPlane(this.dragPlane, currentIntersection)) {
                 // Calculate displacement from initial click point
                 const displacement = currentIntersection.clone().sub(this.dragInitialIntersection);
                 
@@ -717,22 +701,19 @@ export class CNodeSynthClouds extends CNode3DGroup {
             this.isDragging = false;
             this.draggingHandle = null;
             
-            // Re-enable camera controls
-            const view = ViewMan.get("mainView");
-            if (view && view.controls) {
-                view.controls.enabled = true;
-            }
+            this.activeView = null;
             
             CustomManager.saveGlobalSettings();
         }
     }
     
     getHandleAtMouse(mouseX, mouseY) {
-        const view = ViewMan.get("mainView");
+        const view = getInteractiveViewAt(mouseX, mouseY);
         if (!view) return null;
+        this.updateHandleScales(view);
+        this.group.updateMatrixWorld(true);
 
-        const mouseRay = screenToNDC(view, mouseX, mouseY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
+        setRaycasterFromView(this.raycaster, view, mouseX, mouseY);
         
         const handles = [];
         if (this.altitudeHandle) handles.push({mesh: this.altitudeHandle, name: 'altitude'});
@@ -779,25 +760,28 @@ export class CNodeSynthClouds extends CNode3DGroup {
         
         // Use fixed 3m radius geometry (same as buildings) - scaled dynamically in updateHandleScales
         const handleGeometry = new SphereGeometry(3, 16, 16);
-        
+
         const altitudeMaterial = new MeshBasicMaterial({color: 0xffff00, depthTest: false, transparent: true, opacity: 0.8});
         this.altitudeHandle = new Mesh(handleGeometry.clone(), altitudeMaterial);
         this.altitudeHandle.position.set(0, 0, 0);
-        this.altitudeHandle.layers.mask = LAYER.MASK_HELPERS;
+        this.altitudeHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
+        this.altitudeHandle.userData.handleRole = 'altitude';
         this.group.add(this.altitudeHandle);
-        
+
         const radiusMaterial = new MeshBasicMaterial({color: 0x00ffff, depthTest: false, transparent: true, opacity: 0.8});
         this.radiusHandle = new Mesh(handleGeometry.clone(), radiusMaterial);
         this.radiusHandle.position.copy(east.clone().multiplyScalar(this.radius));
-        this.radiusHandle.layers.mask = LAYER.MASK_HELPERS;
+        this.radiusHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
+        this.radiusHandle.userData.handleRole = 'resize';
         this.group.add(this.radiusHandle);
-        
+
         const moveMaterial = new MeshBasicMaterial({color: 0xff8800, depthTest: false, transparent: true, opacity: 0.8});
         this.moveHandle = new Mesh(handleGeometry.clone(), moveMaterial);
         this.moveHandle.position.copy(east.clone().multiplyScalar(-this.radius * 0.5));
-        this.moveHandle.layers.mask = LAYER.MASK_HELPERS;
+        this.moveHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
+        this.moveHandle.userData.handleRole = 'move';
         this.group.add(this.moveHandle);
-        
+
         handleGeometry.dispose(); // Dispose the template
     }
     
@@ -846,6 +830,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
     }
     
     setEditMode(enabled) {
+        if (!enabled) getInteractionRouter()?.cancelOwner(this);
         if (this.editMode === enabled) return;
         
         this.editMode = enabled;
@@ -1180,9 +1165,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
     }
     
     dispose() {
-        document.removeEventListener('pointerdown', this.onPointerDownBound);
-        document.removeEventListener('pointermove', this.onPointerMoveBound);
-        document.removeEventListener('pointerup', this.onPointerUpBound);
+        this.unregisterInteraction?.();
         
         this.removeControlHandles();
         

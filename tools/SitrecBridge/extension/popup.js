@@ -16,6 +16,18 @@ const historyListEl = document.getElementById("history-list");
 const installLocalComputeBtn = document.getElementById("install-local-compute-btn");
 const localComputeStatusEl = document.getElementById("local-compute-status");
 
+const manifest = chrome.runtime.getManifest();
+document.getElementById("extension-name").textContent = manifest.name;
+if (manifest.permissions.includes("desktopCapture")) {
+    document.getElementById("dev-controls").hidden = false;
+    document.getElementById("desktop-capture-btn").addEventListener("click", async () => {
+        const url = chrome.runtime.getURL("desktop-capture.html");
+        const pages = await chrome.tabs.query({url});
+        if (pages.length) await chrome.tabs.update(pages[0].id, {active: true});
+        else await chrome.tabs.create({url});
+    });
+}
+
 let elapsedTimer = null;
 
 function formatDuration(ms) {

@@ -3,7 +3,8 @@ import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {DebugSphere, removeDebugSphere} from "../threeExt";
 import {Group, Raycaster} from "three";
 import {GlobalScene} from "../LocalFrame";
-import {screenToNDC} from "../mouseMoveView";
+import {setRaycasterFromView} from "../ViewUtils";
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import * as LAYERS from "../LayerMasks";
 import * as LAYER from "../LayerMasks";
 import {CNodeViewUI} from "../nodes/CNodeViewUI";
@@ -86,13 +87,20 @@ export const SitFAA2023 = {
 
 
         const mainView = ViewMan.get("mainView");
-        mainView.div.addEventListener("pointermove", (event) => {
-            this.handleMouseMove(event)
-        })
-        mainView.div.addEventListener("pointerdown", (event) => {
-            this.handleMouseMove(event)
-        })
-
+        let marker;
+        this.unregisterMarkerInteraction?.();
+        this.unregisterMarkerInteraction = registerSurfaceInteraction(mainView.canvas, {
+            model: this, view: mainView, content: false, profile: "markers",
+            intent: {kind: "pending", priority: 40},
+            hitTest: event => { const hit = this.markerAt(event); return hit ? {marker: hit} : null; },
+            begin: (event, hit) => { marker = hit.marker; },
+            click: () => this.selectMarker(marker.userData.markerNumber),
+            hover: (event) => {
+                const hit = event && this.markerAt(event);
+                if (hit) this.selectHover(hit.userData.markerNumber);
+                else removeDebugSphere("FAA_hover_index");
+            },
+        });
 
         window.addEventListener('keydown', (e) => {
 
@@ -113,29 +121,12 @@ export const SitFAA2023 = {
 
     },
 
-    handleMouseMove: function (event) {
-        const mainView = ViewMan.get("mainView");
-        // Convert screen coordinates to NDC for raycasting
-        const mouseRay = screenToNDC(mainView, event.clientX, event.clientY);
-
+    markerAt(event) {
+        const view = ViewMan.get("mainView");
         const raycaster = new Raycaster();
-        raycaster.layers.mask = LAYERS.MASK_MAINRENDER
-        raycaster.layers.mask  |= LAYER.MASK_MAIN | LAYER.MASK_LOOK;
-        raycaster.setFromCamera(mouseRay, mainView.camera);
-        const intersects = raycaster.intersectObjects(this.markerGroup.children);
-
-
-        if (intersects.length > 0) {
-            //  console.log("INTERSECTED", intersects[0].object.userData.time);
-            // if left button pressed
-            if (event.buttons === 1) {
-                this.selectMarker(intersects[0].object.userData.markerNumber)
-            } else {
-                this.selectHover(intersects[0].object.userData.markerNumber)
-            }
-        } else {
-            removeDebugSphere("FAA_hover_index")
-        }
+        raycaster.layers.mask = LAYERS.MASK_MAINRENDER | LAYER.MASK_MAIN | LAYER.MASK_LOOK;
+        setRaycasterFromView(raycaster, view, event.clientX, event.clientY);
+        return raycaster.intersectObjects(this.markerGroup.children)[0]?.object;
     },
 
     redoIndexSphere() {

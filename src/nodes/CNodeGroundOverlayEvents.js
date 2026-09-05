@@ -19,8 +19,7 @@ import {Vector3} from "three";
 import {NodeMan, setRenderOne, UndoManager} from "../Globals";
 import {degrees, radians} from "../mathUtils";
 import {ViewMan} from "../CViewManager";
-import {mouseInViewOnly} from "../ViewUtils";
-import {screenToNDC} from "../mouseMoveView";
+import {mouseInRenderedView, getInteractiveViewAt, setRaycasterFromView} from "../ViewUtils";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import * as LAYER from "../LayerMasks";
 import {getPointBelow, pointAbove} from "../threeExt";
@@ -39,8 +38,9 @@ export const eventMethods = {
             target = target.parentElement;
         }
         
-        const view = ViewMan.get("mainView");
-        if (!view || !mouseInViewOnly(view, event.clientX, event.clientY)) return;
+        const view = (this.isDragging ? this.activeView : getInteractiveViewAt(event.clientX, event.clientY));
+        if (!view) return;
+        this.activeView = view;
         
         let handle = this.getHandleAtMouse(event.clientX, event.clientY);
 
@@ -103,8 +103,7 @@ export const eventMethods = {
                     ).multiplyScalar(0.25);
                 }
 
-                const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-                this.raycaster.setFromCamera(mouseRay, view.camera);
+                setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
 
                 const savedMask = this.raycaster.layers.mask;
                 this.raycaster.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
@@ -134,17 +133,13 @@ export const eventMethods = {
                 this.raycaster.layers.mask = savedMask;
             }
 
-            if (view.controls) {
-                view.controls.enabled = false;
-            }
-
             event.stopPropagation();
             event.preventDefault();
         }
     },
     
     getOverlayAtMouse(mouseX, mouseY) {
-        const view = ViewMan.get("mainView");
+        const view = getInteractiveViewAt(mouseX, mouseY);
         if (!view) return null;
         
         const corners = this.getCornerPositions();
@@ -155,8 +150,7 @@ export const eventMethods = {
             return pointAbove(groundPos, 5);
         });
         
-        const mouseRay = screenToNDC(view, mouseX, mouseY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
+        setRaycasterFromView(this.raycaster, view, mouseX, mouseY);
         const ray = this.raycaster.ray;
         
         const target = new Vector3();
@@ -174,11 +168,12 @@ export const eventMethods = {
     },
     
     getHandleAtMouse(mouseX, mouseY) {
-        const view = ViewMan.get("mainView");
+        const view = getInteractiveViewAt(mouseX, mouseY);
         if (!view) return null;
+        this.updateHandleScales(view);
+        this.group.updateMatrixWorld(true);
         
-        const mouseRay = screenToNDC(view, mouseX, mouseY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
+        setRaycasterFromView(this.raycaster, view, mouseX, mouseY);
 
         const handles = [];
         this.cornerHandles.forEach((mesh, index) => {
@@ -208,12 +203,11 @@ export const eventMethods = {
     onPointerMove(event) {
         if (!this.editMode) return;
 
-        const view = ViewMan.get("mainView");
+        const view = (this.isDragging ? this.activeView : getInteractiveViewAt(event.clientX, event.clientY));
         if (!view) return;
 
         if (this.isDragging && this.draggingHandle) {
-            const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-            this.raycaster.setFromCamera(mouseRay, view.camera);
+            setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
 
             if (NodeMan.exists("TerrainModel")) {
                 const terrainNode = NodeMan.get("TerrainModel");
@@ -916,10 +910,6 @@ export const eventMethods = {
 
     onPointerUp(event) {
         if (this.isDragging) {
-            const view = ViewMan.get("mainView");
-            if (view && view.controls) {
-                view.controls.enabled = true;
-            }
             
             if (this.stateBeforeDrag && UndoManager) {
                 const stateAfterDrag = this.captureState();
@@ -955,8 +945,9 @@ export const eventMethods = {
     onContextMenu(event) {
         if (!this.editMode) return;
         
-        const view = ViewMan.get("mainView");
-        if (!view || !mouseInViewOnly(view, event.clientX, event.clientY)) return;
+        const view = (this.isDragging ? this.activeView : getInteractiveViewAt(event.clientX, event.clientY));
+        if (!view) return;
+        this.activeView = view;
         
         const overlayHit = this.getOverlayAtMouse(event.clientX, event.clientY);
         if (!overlayHit) return;
@@ -993,11 +984,12 @@ export const eventMethods = {
     },
     
     getLockPointAtMouse(mouseX, mouseY) {
-        const view = ViewMan.get("mainView");
+        const view = getInteractiveViewAt(mouseX, mouseY);
         if (!view) return -1;
+        this.updateHandleScales(view);
+        this.group.updateMatrixWorld(true);
         
-        const mouseRay = screenToNDC(view, mouseX, mouseY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
+        setRaycasterFromView(this.raycaster, view, mouseX, mouseY);
         
         for (let i = 0; i < this.lockPointHandles.length; i++) {
             const handle = this.lockPointHandles[i];

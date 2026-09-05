@@ -1,3 +1,4 @@
+import {registerSurfaceInteraction} from "./SurfaceInteraction";
 // The "Mask Ground" tool: pick a sky point and a ground point on the video, grow the sky from the
 // sky point, and add everything else to the video mask.
 //
@@ -53,8 +54,9 @@ function clearHint(view) {
 
 function cancelPick() {
     if (!picking) return;
-    const {view, handler, keyHandler} = picking;
-    view.div.removeEventListener("pointerdown", handler, true);
+    const {view, unregister, keyHandler} = picking;
+    picking = null;
+    unregister();
     window.removeEventListener("keydown", keyHandler, true);
     clearHint(view);
     picking = null;
@@ -105,10 +107,14 @@ export function startMaskGroundPick(onDone) {
         if (e.key === "Escape") { cancelPick(); onDone?.({error: "cancelled"}); }
     };
 
-    view.div.addEventListener("pointerdown", handler, true);
+    const unregister = registerSurfaceInteraction(view.div, {
+        model: seeds, view, content: false, intent: {kind: "click", priority: 90, zIndex: view.zIndex ?? 0},
+        click: handler, end: (e, reason) => { if (reason !== "released") cancelPick(); },
+        rollback: cancelPick,
+    });
     window.addEventListener("keydown", keyHandler, true);
     showHint(view, "Click the SKY — Esc to cancel");
-    picking = {view, handler, keyHandler};
+    picking = {view, unregister, keyHandler};
 }
 
 /**

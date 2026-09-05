@@ -1,3 +1,4 @@
+import {registerEditorInteraction} from "../EditorInteraction";
 // CNodeFloodSim.js - Flood simulator using Position Based Fluids (PBF)
 //
 // Based on Macklin & Müller 2013 "Position Based Fluids".
@@ -9,17 +10,16 @@
 //   GROUND: slope acceleration + terrain clamping (PBF handles fluid pressure)
 
 import {CNode3DGroup} from "./CNode3DGroup";
-import {BufferAttribute, BufferGeometry, Color, DoubleSide, DynamicDrawUsage, InstancedMesh, LineBasicMaterial, LineLoop, Matrix4, Mesh, MeshBasicMaterial, MeshPhongMaterial, Raycaster, SphereGeometry} from "three";
+import {BufferAttribute, BufferGeometry, Color, DoubleSide, DynamicDrawUsage, InstancedMesh, LineBasicMaterial, LineLoop, Matrix4, Mesh, MeshBasicMaterial, MeshPhongMaterial, Raycaster, SphereGeometry, Vector3} from "three";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
-import {guiPhysics, NodeMan, setRenderOne, Sit} from "../Globals";
+import {guiPhysics, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
 import {par} from "../par";
 import {EventManager} from "../CEventManager";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import * as LAYER from "../LayerMasks";
-import {screenToNDC} from "../mouseMoveView";
 import {ViewMan} from "../CViewManager";
-import {mouseInViewOnly} from "../ViewUtils";
+import {mouseInRenderedView, getInteractiveViewAt, setRaycasterFromView, withDisplayedCamera} from "../ViewUtils";
 import {t} from "../i18n";
 
 const GRAVITY = 9.81;
@@ -1494,11 +1494,11 @@ export class CNodeFloodSim extends CNode3DGroup {
         this.boundaryLine.frustumCulled = false;
         this.group.add(this.boundaryLine);
 
-        const handleGeo = new SphereGeometry(1, 8, 8);
-        const handleMat = new MeshBasicMaterial({color: 0xffff00, transparent: true, opacity: 0.8});
         this.cornerHandles = [];
         for (let c = 0; c < 4; c++) {
-            const handle = new Mesh(handleGeo, handleMat);
+            const handle = new Mesh(new SphereGeometry(1, 8, 8),
+                new MeshBasicMaterial({color: 0xffff00, transparent: true, opacity: 0.8}));
+            handle.userData.handleRole = "resize";
             handle.frustumCulled = false;
             this.cornerHandles.push(handle);
             this.group.add(handle);
@@ -1538,32 +1538,61 @@ export class CNodeFloodSim extends CNode3DGroup {
         }
         for (const h of this.cornerHandles) {
             this.group.remove(h);
+            h.geometry.dispose();
+            h.material.dispose();
         }
         this.cornerHandles = [];
     }
 
     setupDragListeners() {
-        this._onPointerDown = this.onPointerDown.bind(this);
-        this._onPointerMove = this.onPointerMove.bind(this);
-        this._onPointerUp = this.onPointerUp.bind(this);
-        document.addEventListener('pointerdown', this._onPointerDown);
-        document.addEventListener('pointermove', this._onPointerMove);
-        document.addEventListener('pointerup', this._onPointerUp);
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            enabled: () => this.originSet && this.method === "HeightMap" && this.cornerHandles.length > 0 && this.visible !== false,
+            pick: e => {
+                const index = this.getHandleAtMouse(e.clientX, e.clientY);
+                return index >= 0 ? {handle: this.cornerHandles[index]} : null;
+            },
+            begin: e => { this.boundaryBefore = this.captureBoundary(); this.onPointerDown(e); },
+            end: () => {
+                const before = this.boundaryBefore, after = this.captureBoundary();
+                this.boundaryBefore = null;
+                this.onPointerUp();
+                if (before && before.bounds.some((v, i) => v !== after.bounds[i])) UndoManager?.add({
+                    description: "Resize flood boundary",
+                    undo: () => this.restoreBoundary(before), redo: () => this.restoreBoundary(after),
+                });
+            },
+            rollback: () => {
+                if (this.boundaryBefore) this.restoreBoundary(this.boundaryBefore);
+                this.boundaryBefore = null;
+                this.onPointerUp();
+            },
+        });
+    }
+
+    captureBoundary() {
+        const state = {bounds: [this.hmEastMin, this.hmEastMax, this.hmNorthMin, this.hmNorthMax]};
+        for (const key of ["waterDepth", "flowX", "flowY", "velX", "velY"]) state[key] = this[key]?.slice();
+        return state;
+    }
+
+    restoreBoundary(state) {
+        this.resizeGrid(...state.bounds);
+        for (const key of ["waterDepth", "flowX", "flowY", "velX", "velY"]) if (state[key]) this[key] = state[key].slice();
+        this.updateBoundaryVisuals();
+        setRenderOne(true);
     }
 
     removeDragListeners() {
-        if (this._onPointerDown) {
-            document.removeEventListener('pointerdown', this._onPointerDown);
-            document.removeEventListener('pointermove', this._onPointerMove);
-            document.removeEventListener('pointerup', this._onPointerUp);
-        }
+        this.unregisterInteraction?.();
+        this.unregisterInteraction = null;
     }
 
     getHandleAtMouse(mouseX, mouseY) {
-        const view = ViewMan.get("mainView");
+        const view = getInteractiveViewAt(mouseX, mouseY);
         if (!view) return -1;
-        const mouseRay = screenToNDC(view, mouseX, mouseY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
+        this.updateHandleScales(view);
+        this.group.updateMatrixWorld(true);
+        setRaycasterFromView(this.raycaster, view, mouseX, mouseY);
         let closest = -1, closestDist = Infinity;
         for (let c = 0; c < this.cornerHandles.length; c++) {
             const intersects = this.raycaster.intersectObject(this.cornerHandles[c], false);
@@ -1575,6 +1604,20 @@ export class CNodeFloodSim extends CNode3DGroup {
         return closest;
     }
 
+    updateHandleScales(view) {
+        if (this.method !== "HeightMap") return;
+        withDisplayedCamera(view, () => {
+            for (const handle of this.cornerHandles) {
+                const position = handle.getWorldPosition(new Vector3());
+                handle.scale.setScalar(view.pixelsToMeters(position, 20));
+            }
+        });
+    }
+
+    preRender(view) {
+        if (view.id === "mainView" || view.id === "lookView") this.updateHandleScales(view);
+    }
+
     onPointerDown(event) {
         if (event.button !== 0 || !this.originSet || this.cornerHandles.length === 0) return;
         if (this.method !== "HeightMap") return;
@@ -1583,13 +1626,13 @@ export class CNodeFloodSim extends CNode3DGroup {
             if (target.classList && target.classList.contains('lil-gui')) return;
             target = target.parentElement;
         }
-        const view = ViewMan.get("mainView");
-        if (!view || !mouseInViewOnly(view, event.clientX, event.clientY)) return;
+        const view = (this.isDragging ? this.activeView : getInteractiveViewAt(event.clientX, event.clientY));
+        if (!view) return;
+        this.activeView = view;
         const cornerIdx = this.getHandleAtMouse(event.clientX, event.clientY);
         if (cornerIdx >= 0) {
             this.isDragging = true;
             this.draggingCorner = cornerIdx;
-            if (view.controls) view.controls.enabled = false;
             event.stopPropagation();
             event.preventDefault();
         }
@@ -1597,10 +1640,9 @@ export class CNodeFloodSim extends CNode3DGroup {
 
     onPointerMove(event) {
         if (!this.isDragging || this.draggingCorner < 0) return;
-        const view = ViewMan.get("mainView");
+        const view = (this.isDragging ? this.activeView : getInteractiveViewAt(event.clientX, event.clientY));
         if (!view) return;
-        const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
+        setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
         if (!NodeMan.exists("TerrainModel")) return;
         const terrainNode = NodeMan.get("TerrainModel");
         const savedMask = this.raycaster.layers.mask;
@@ -1633,9 +1675,8 @@ export class CNodeFloodSim extends CNode3DGroup {
 
     onPointerUp() {
         if (this.isDragging) {
-            const view = ViewMan.get("mainView");
-            if (view && view.controls) view.controls.enabled = true;
             this.isDragging = false;
+            this.activeView = null;
             this.draggingCorner = -1;
         }
     }

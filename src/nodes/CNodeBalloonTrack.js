@@ -15,10 +15,12 @@
 // its originTrack outside the graph).
 
 import {CNodeTrack} from "./CNodeTrack";
-import {NodeMan, Sit} from "../Globals";
+import {markSitchDirty, NodeMan, Sit} from "../Globals";
 import {metersPerSecondFromKnots, radians} from "../utils";
 import {integrateBalloonPositions} from "../BalloonPhysics";
 import {EventManager} from "../CEventManager";
+import {LLAToECEF} from "../LLA-ECEF-ENU";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 export class CNodeBalloonTrack extends CNodeTrack {
     constructor(v) {
@@ -53,6 +55,25 @@ export class CNodeBalloonTrack extends CNodeTrack {
     dispose() {
         EventManager.removeEventListener("tracksChanged", this._onTracksChanged);
         super.dispose();
+    }
+
+    // The object move widget edits the launch point, even when the playhead
+    // shows the balloon later in flight. The baked path remains generated.
+    getPositionEditTarget() {
+        return {
+            getLLA: () => [this.startLat, this.startLon, this.in.startAltitude.v0],
+            getECEF: () => LLAToECEF(this.startLat, this.startLon,
+                this.in.startAltitude.v0 + meanSeaLevelOffset(this.startLat, this.startLon)),
+            setLLA: (lat, lon, alt) => {
+                this.startLat = lat;
+                this.startLon = lon;
+                // Update the existing GUI input quietly, then bake once with
+                // all three new coordinates. This also preserves save/load.
+                this.in.startAltitude.setValue(alt, true);
+                this.recalculateCascade();
+                markSitchDirty();
+            },
+        };
     }
 
     // Wind (u = east, v = north, m/s) at a position/altitude. Altitude-aware

@@ -1,3 +1,4 @@
+import {getInteractionRouter} from "../InteractionRouter";
 // Annotation overlay: a drawing surface sitting on top of CNodeVideoView.
 // - Vector strokes stored in original-video pixel coordinates (resolution independent)
 // - Toolbar with pencil/brush/line/arrow/rect/ellipse/text/eraser
@@ -67,6 +68,7 @@ const IMAGE_CACHE = new Map(); // dataURL -> HTMLImageElement
 export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
     constructor(v) {
         super(v);
+        this.interactionProfile = "annotation";
         assert(this.overlayView instanceof CNodeVideoView,
             "CNodeAnnotateOverlay: overlayView must be a CNodeVideoView");
 
@@ -357,6 +359,7 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
 
     setTool(tool) {
         if (!TOOLS.includes(tool)) return;
+        getInteractionRouter()?.cancelOwner(this);
         this.tool = tool;
         // Clear selection when switching away from select
         if (tool !== "select") this.selectedStroke = null;
@@ -619,7 +622,15 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
 
     // ---------- Mouse handling ----------
 
+    isInteractionEnabled() { return this.isEditingActive(); }
+
+    getInteractionIntent(e) {
+        return e.button === 0 && this.isEditingActive() && this._hasGeometry()
+            ? {kind: "drag", priority: 100} : null;
+    }
+
     onMouseDown(e, mouseX, mouseY) {
+        if (e.button !== 0) return false;
         if (!this.isEditingActive()) return false;
         if (!this._hasGeometry()) return false;
 
@@ -661,6 +672,7 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
         }
 
         if (this.tool === "eraser") {
+            this._eraseBefore = this.strokes.slice();
             this._eraseAt(cx, cy);
             return true;
         }
@@ -749,8 +761,25 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
         setRenderOne(true);
     }
 
+    onMouseRollback() {
+        if (this._eraseBefore) this.strokes = this._eraseBefore;
+        this._eraseBefore = null;
+        if (this._dragStart) this._restoreStroke(this._dragStart.stroke, this._dragStart.snapshot);
+        this._dragStart = this.dragMode = this.activeStroke = null;
+        setRenderOne(true);
+    }
+
     onMouseUp(e, mouseX, mouseY) {
-        if (!this.isEditingActive()) return;
+        if (this._eraseBefore) {
+            const before = this._eraseBefore, after = this.strokes.slice();
+            this._eraseBefore = null;
+            if (before.length !== after.length) undoManager.add({
+                description: "Erase annotations",
+                undo: () => { this.strokes = before.slice(); setRenderOne(true); },
+                redo: () => { this.strokes = after.slice(); setRenderOne(true); },
+            });
+            return;
+        }
 
         // Finalize a select-tool drag
         if (this.tool === "select" && this.dragMode && this._dragStart) {
@@ -842,6 +871,7 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
         if (removed.length > 0) {
             this.strokes = kept;
             setRenderOne(true);
+            if (this._eraseBefore) return;
             const self = this;
             undoManager.add({
                 description: "Erase annotations",

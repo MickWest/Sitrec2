@@ -32,6 +32,7 @@ import {
 import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 import {renderFisheyeMask} from "../FisheyeProjection";
+import {worldUnitsPerPixel, offsetWorldPointPixels} from "../ViewUtils";
 import {DRAG} from "../mouseMoveView";
 import {GPUMemoryMonitor} from "../GPUMemoryMonitor";
 import {
@@ -3950,13 +3951,12 @@ export class CNodeView3D extends CNodeViewCanvas {
         updateObjectMoveWidget(this);
         if (globalProfiler) globalProfiler.pop();
 
-        // Profile: Building Handle Scaling (only for mainView)
-        if (this.id === "mainView" && globalProfiler) globalProfiler.push('#9467bd', 'buildingHandles');
-        // Update building handles to maintain constant screen size (size-invariant at 40px)
-        if (this.id === "mainView") {
+        // Scale shared building handles immediately before each editing view renders.
+        if (this.id === "mainView" || this.id === "lookView") {
+            if (globalProfiler) globalProfiler.push('#9467bd', 'buildingHandles');
             scaleBuildingHandles(this);
+            if (globalProfiler) globalProfiler.pop();
         }
-        if (this.id === "mainView" && globalProfiler) globalProfiler.pop();
 
         // Profile: Render Target and Effects (typically the most expensive)
         if (globalProfiler) globalProfiler.push('#ff0000', 'renderTargetEffects');
@@ -4010,44 +4010,21 @@ export class CNodeView3D extends CNodeViewCanvas {
         return null;
     }
 
-    // given a 3D position in the scene and a length in pixele
-    // we known the verical field of view of the camera
-    // and we know the height of the canvas in pixels
-    // we can calculate the distance from the camera to the object
-    // So convert pixels into meters
+    // Convert vertical CSS pixels using the displayed projection and point depth.
     pixelsToMeters(position, pixels) {
-        // get the vertical field of view in radians
-        const vfov = this.camera.fov * Math.PI / 180;
-        // get the height of the canvas in pixels
-        const heightPx = this.heightPx;
-        // calculate the distance from the camera to the object
-        const meters = pixels * position.distanceTo(this.camera.position) / (heightPx / (2 * Math.tan(vfov / 2)));
-
-        return meters;
+        return pixels * worldUnitsPerPixel(this, position);
     }
 
     // this is just the inverse of the above function
     metersToPixels(position, meters) {
-        // get the vertical field of view in radians
-        const vfov = this.camera.fov * Math.PI / 180;
-        // get the height of the canvas in pixels
-        const heightPx = this.heightPx;
-        // calculate the distance from the camera to the object
-        const pixels = meters * (heightPx / (2 * Math.tan(vfov / 2))) / position.distanceTo(this.camera.position);
-
-        return pixels;
+        const units = worldUnitsPerPixel(this, position);
+        return units > 0 ? meters / units : 0;
     }
 
     // given a 3D position in the scene, and an offset in pixels
     // then return the new 3D position that will result in it being rendered by that offset
     offsetScreenPixels(position, pixelsX, pixelsY) {
-        const offsetPosition = position.clone();
-        if (pixelsX === 0 && pixelsY === 0) return offsetPosition;
-        offsetPosition.project(this.camera);
-        offsetPosition.x += pixelsX / this.widthPx;
-        offsetPosition.y += pixelsY / this.heightPx;
-        offsetPosition.unproject(this.camera);
-        return offsetPosition;
+        return offsetWorldPointPixels(this, position, pixelsX, pixelsY);
     }
 
     addOrbitControls() {

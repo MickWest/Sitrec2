@@ -19,6 +19,7 @@ export class CNodeViewCanvas extends CNodeView {
 
         this.canvas = document.createElement('canvas')
         this.canvas.style.position = 'absolute';
+        this.canvas.style.touchAction = 'none';
         this.canvas.style.top = 0 + 'px';
         this.canvas.style.left = 0 + 'px';
 

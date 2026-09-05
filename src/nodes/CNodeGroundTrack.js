@@ -490,6 +490,12 @@ export class CNodeGroundTrack extends CNodeTrack {
         this._undoBefore = this.captureState();
     }
 
+    onRollbackEdit() {
+        const before = this._undoBefore;
+        this._undoBefore = null;
+        if (before) this.restoreState(before);
+    }
+
     onEndEdit(description) {
         const before = this._undoBefore;
         this._undoBefore = null;

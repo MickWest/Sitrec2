@@ -1,3 +1,5 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {pointerHitRadius} from "../HandleStyle";
 import {par} from "../par";
 import {GlobalDateTimeNode, NodeMan, setRenderOne, Sit} from "../Globals";
 import {CNode} from "./CNode";
@@ -255,6 +257,7 @@ export class CNodeFrameSlider extends CNode {
         let isTouchDragging = false; // Track touch dragging separately
 
         const newFrame = (frame) => {
+            if (this.draggingALimit || this.draggingBLimit) return;
             par.frame = frame;
             GlobalDateTimeNode.liveMode = false;
             setRenderOne(true);
@@ -328,7 +331,7 @@ export class CNodeFrameSlider extends CNode {
                     return (frame / Sit.frames) * this.canvas.offsetWidth;
                 };
                 
-                const getNearLimit = (mouseX, mouseY) => {
+                const getNearLimit = (mouseX, mouseY, threshold = this.dragThreshold) => {
                     const aPixel = frameToPixel(Sit.aFrame);
                     const bPixel = frameToPixel(Sit.bFrame);
                     const currentFramePixel = frameToPixel(par.frame);
@@ -349,7 +352,7 @@ export class CNodeFrameSlider extends CNode {
                     }
                     
                     // Check if near A limit line or handle
-                    if (Math.abs(mouseX - aPixel) <= this.dragThreshold) {
+                    if (Math.abs(mouseX - aPixel) <= threshold) {
                         return 'A';
                     }
                     // Check if near A handle circle (top of line) - prioritize this area
@@ -358,7 +361,7 @@ export class CNodeFrameSlider extends CNode {
                     }
                     
                     // Check if near B limit line or handle
-                    if (Math.abs(mouseX - bPixel) <= this.dragThreshold) {
+                    if (Math.abs(mouseX - bPixel) <= threshold) {
                         return 'B';
                     }
                     // Check if near B handle circle (top of line) - prioritize this area
@@ -436,6 +439,7 @@ export class CNodeFrameSlider extends CNode {
 
         // Touch event support for mobile devices (improved for better responsiveness)
         this.sliderInput.addEventListener('touchstart', (event) => {
+            if (this.draggingALimit || this.draggingBLimit) return;
             isTouchDragging = true;
             const touch = event.touches[0];
             lastMouseX = touch.clientX;
@@ -530,7 +534,6 @@ export class CNodeFrameSlider extends CNode {
 
     setupLimitDragging() {
         let isDragging = false;
-        let dragStartX = 0;
 
         // Local alias so existing call sites stay terse.
         const getMousePos = (event) => this.getMousePos(event);
@@ -551,7 +554,7 @@ export class CNodeFrameSlider extends CNode {
         };
 
         // Helper function to check if mouse is near a limit line or handle
-        const getNearLimit = (mouseX, mouseY) => {
+        const getNearLimit = (mouseX, mouseY, threshold = this.dragThreshold) => {
             const aPixel = frameToPixel(Sit.aFrame);
             const bPixel = frameToPixel(Sit.bFrame);
             const currentFramePixel = frameToPixel(par.frame);
@@ -572,7 +575,7 @@ export class CNodeFrameSlider extends CNode {
             }
             
             // Check if near A limit line or handle
-            if (Math.abs(mouseX - aPixel) <= this.dragThreshold) {
+            if (Math.abs(mouseX - aPixel) <= threshold) {
                 return 'A';
             }
             // Check if near A handle circle (top of line) - prioritize this area
@@ -581,7 +584,7 @@ export class CNodeFrameSlider extends CNode {
             }
             
             // Check if near B limit line or handle
-            if (Math.abs(mouseX - bPixel) <= this.dragThreshold) {
+            if (Math.abs(mouseX - bPixel) <= threshold) {
                 return 'B';
             }
             // Check if near B handle circle (top of line) - prioritize this area
@@ -592,47 +595,13 @@ export class CNodeFrameSlider extends CNode {
             return null;
         };
 
-        // Mouse down event
-        this.canvas.addEventListener('mousedown', (event) => {
-            const mousePos = getMousePos(event);
-            const nearLimit = getNearLimit(mousePos.x, mousePos.y);
-
-            // Keyframe clicks are handled in the sliderInput's own mousedown/
-            // input listeners now — see _pendingKeyframeSnap. The canvas
-            // only intercepts A/B limit grabs.
-
-            if (nearLimit === 'A') {
-                this.draggingALimit = true;
-                isDragging = true;
-                dragStartX = mousePos.x;
-                this.canvas.style.cursor = 'ew-resize';
-                
-                // Show frame display for A limit
-                this.showFrameDisplay(Sit.aFrame, event.clientX);
-                
-                // Add global event listeners for dragging
-                document.addEventListener('mousemove', globalMouseMove);
-                document.addEventListener('mouseup', globalMouseUp);
-                
-                event.preventDefault();
-                event.stopPropagation();
-            } else if (nearLimit === 'B') {
-                this.draggingBLimit = true;
-                isDragging = true;
-                dragStartX = mousePos.x;
-                this.canvas.style.cursor = 'ew-resize';
-                
-                // Show frame display for B limit
-                this.showFrameDisplay(Sit.bFrame, event.clientX);
-                
-                // Add global event listeners for dragging
-                document.addEventListener('mousemove', globalMouseMove);
-                document.addEventListener('mouseup', globalMouseUp);
-                
-                event.preventDefault();
-                event.stopPropagation();
-            }
-        });
+        const beginLimit = (event, hit) => {
+            this.draggingALimit = hit.limit === "A";
+            this.draggingBLimit = hit.limit === "B";
+            isDragging = true;
+            this.canvas.style.cursor = "ew-resize";
+            this.showFrameDisplay(this.draggingALimit ? Sit.aFrame : Sit.bFrame, event.clientX);
+        };
 
         // Mouse move event on canvas (for hover detection when not dragging)
         this.canvas.addEventListener('mousemove', (event) => {
@@ -711,8 +680,6 @@ export class CNodeFrameSlider extends CNode {
                 }
 
                 // Remove global event listeners
-                document.removeEventListener('mousemove', globalMouseMove);
-                document.removeEventListener('mouseup', globalMouseUp);
             }
         };
 
@@ -727,110 +694,22 @@ export class CNodeFrameSlider extends CNode {
             // Don't stop dragging on mouse leave - let global mouse up handle it
         });
 
-        // Touch event support for A/B limit dragging (mobile)
-        this.canvas.addEventListener('touchstart', (event) => {
-            const touch = event.touches[0];
-            const touchEvent = {
-                clientX: touch.clientX,
-                clientY: touch.clientY,
-                touches: event.touches
-            };
-            const mousePos = getMousePos(touchEvent);
-            const nearLimit = getNearLimit(mousePos.x, mousePos.y);
-            
-            if (nearLimit === 'A') {
-                this.draggingALimit = true;
-                isDragging = true;
-                dragStartX = mousePos.x;
-                this.canvas.style.cursor = 'ew-resize';
-                
-                // Show frame display for A limit
-                this.showFrameDisplay(Sit.aFrame, touch.clientX);
-                
-                // Add global touch event listeners for dragging
-                document.addEventListener('touchmove', globalTouchMove, {passive: false});
-                document.addEventListener('touchend', globalTouchUp, {passive: false});
-                
-                event.preventDefault();
-                event.stopPropagation();
-            } else if (nearLimit === 'B') {
-                this.draggingBLimit = true;
-                isDragging = true;
-                dragStartX = mousePos.x;
-                this.canvas.style.cursor = 'ew-resize';
-                
-                // Show frame display for B limit
-                this.showFrameDisplay(Sit.bFrame, touch.clientX);
-                
-                // Add global touch event listeners for dragging
-                document.addEventListener('touchmove', globalTouchMove, {passive: false});
-                document.addEventListener('touchend', globalTouchUp, {passive: false});
-                
-                event.preventDefault();
-                event.stopPropagation();
-            }
-        }, {passive: false});
-
-        // Global touch move event for dragging
-        const globalTouchMove = (event) => {
-            if (isDragging && event.touches.length > 0) {
-                const touch = event.touches[0];
-                const touchEvent = {
-                    clientX: touch.clientX,
-                    clientY: touch.clientY,
-                    touches: event.touches
-                };
-                const mousePos = getMousePos(touchEvent);
-                const newFrame = Math.max(0, Math.min(Sit.frames - 1, pixelToFrame(mousePos.x)));
-                
-                if (this.draggingALimit) {
-                    const clampedFrame = Math.min(newFrame, Sit.bFrame - 1);
-                    Sit.aFrame = clampedFrame;
-                    par._frameOverride = clampedFrame;
-                    GlobalDateTimeNode.liveMode = false;
-                    this.needsCanvasRedraw = true;
-                    setRenderOne(true);
-                    this.updateFrameDisplay(clampedFrame, touch.clientX);
-                } else if (this.draggingBLimit) {
-                    const clampedFrame = Math.max(newFrame, Sit.aFrame + 1);
-                    Sit.bFrame = clampedFrame;
-                    par._frameOverride = clampedFrame;
-                    GlobalDateTimeNode.liveMode = false;
-                    this.needsCanvasRedraw = true;
-                    setRenderOne(true);
-                    this.updateFrameDisplay(clampedFrame, touch.clientX);
-                }
-                
-                event.preventDefault();
-            }
-        };
-
-        // Global touch up event for dragging
-        const globalTouchUp = (event) => {
-            if (isDragging) {
-                const wasAOrB = this.draggingALimit || this.draggingBLimit;
-                this.draggingALimit = false;
-                this.draggingBLimit = false;
-                isDragging = false;
-                this.canvas.style.cursor = 'default';
-                this.canvas.style.pointerEvents = 'none';
-
-                // Clear the frame override so rendering resumes at par._frame
-                par._frameOverride = undefined;
-                setRenderOne(true);
-
-                this.hideFrameDisplay();
-
-                if (wasAOrB) {
-                    EventManager.dispatchEvent("abFrameChanged");
-                }
-
-                // Remove global touch event listeners
-                document.removeEventListener('touchmove', globalTouchMove);
-                document.removeEventListener('touchend', globalTouchUp);
-            }
-            event.preventDefault();
-        };
+        this.unregisterLimitInteraction = registerSurfaceInteraction(this.sliderDiv, {
+            profile: "limits",
+            model: this, nativeControl: true, intent: {priority: 80, zIndex: 1002},
+            hitTest: e => {
+                const p = getMousePos(e), limit = getNearLimit(p.x, p.y, pointerHitRadius(e, this.dragThreshold));
+                return limit ? {limit} : null;
+            },
+            begin: beginLimit, move: globalMouseMove, end: globalMouseUp,
+            snapshot: () => ({a: Sit.aFrame, b: Sit.bFrame}),
+            restore: state => {
+                Sit.aFrame = state.a; Sit.bFrame = state.b;
+                this.needsCanvasRedraw = true; setRenderOne(true);
+                EventManager.dispatchEvent("abFrameChanged");
+            },
+            undo: "Change playback limits",
+        });
 
         // Double-click on the bar outside the A-B range resets that limit:
         // left of A puts A back to 0, right of B puts B at the last frame.
@@ -858,6 +737,7 @@ export class CNodeFrameSlider extends CNode {
     }
 
     dispose() {
+        this.unregisterLimitInteraction?.();
         super.dispose()
         // Disconnect the ResizeObserver
         if (this.resizeObserver) {

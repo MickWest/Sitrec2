@@ -460,8 +460,6 @@ export function scaleBuildingHandles(view) {
         return;
     }
 
-    const s = Synth3DManager;
-
     // Iterate over all synthetic buildings and update their handle scales
     if (Synth3DManager && Synth3DManager.list) {
         for (const buildingId in Synth3DManager.list) {
@@ -1356,4 +1354,3 @@ export function testColorCube(color, position, size, scene) {
 
 
 }
-

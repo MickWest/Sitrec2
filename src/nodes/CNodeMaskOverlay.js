@@ -44,6 +44,7 @@ export const SAVED_MASK_MAX_WIDTH = 1024;
 export class CNodeMaskOverlay extends CNodeActiveOverlay {
     constructor(v) {
         super(v);
+        this.interactionProfile = "mask";
         
         this.separateVisibility = true;
         
@@ -413,7 +414,14 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         this.lastDrawY = vY;
     }
     
+    isInteractionEnabled() { return this.editing; }
+
+    getInteractionIntent(e) {
+        return e.button === 0 && this.editing ? {kind: "drag", priority: 90} : null;
+    }
+
     onMouseDown(e, mouseX, mouseY) {
+        if (e.button !== 0) return false;
         if (!this.editing) return false;
         
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
@@ -474,8 +482,18 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         setRenderOne(true);
     }
     
+    onMouseRollback() {
+        if (this.preDrawMaskData && this.maskCanvas) {
+            this.maskCtx.putImageData(this.preDrawMaskData, 0, 0);
+            this.saveMask();
+        }
+        this.preDrawMaskData = null;
+        this.isRectDragging = this.isDrawing = false;
+        this.lastDrawX = this.lastDrawY = null;
+        setRenderOne(true);
+    }
+
     onMouseUp(e, mouseX, mouseY) {
-        if (!this.editing) return;
 
         if (this.isRectDragging) {
             this.isRectDragging = false;

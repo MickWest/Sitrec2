@@ -11,7 +11,7 @@
 
 import {assert} from "./assert";
 import {ViewMan} from "./CViewManager";
-import {Vector2} from "three";
+import {Vector2, Vector3} from "three";
 
 // ---------------------------------------------------------------------------------------------
 // Right-click arbitration between a view and an overlay sitting on top of it.
@@ -58,6 +58,11 @@ export function rightClickWasClaimed(windowMs = 600) {
  * @returns {[number, number]} View-relative [x, y] with (0,0) at view's top-left
  */
 export function mouseToView(view, x, y) {
+    const rect = view.div?.getBoundingClientRect();
+    if (rect?.width > 0 && rect?.height > 0) {
+        return [(x - rect.left) * view.widthPx / rect.width,
+            (y - rect.top) * view.heightPx / rect.height];
+    }
     // view.leftPx is relative to the container, so add container's screen offset
     const containerOffsetX = ViewMan.screenOffsetX || 0;
     const xv = x - view.leftPx - containerOffsetX;
@@ -76,7 +81,37 @@ export function mouseToView(view, x, y) {
  */
 export function mouseToViewNormalized(view, x, y) {
     const [xv, yv] = mouseToView(view, x, y);
-    return [(xv / view.widthPx) * 2 - 1, -(yv / view.heightPx) * 2 + 1];
+    const ndc = viewToNDC(view, xv, yv);
+    return [ndc.x, ndc.y];
+}
+
+/** Pane pixels -> rendered-image NDC. Use mouseToNDC for client coordinates. */
+export function viewToNDC(view, x, y, target = new Vector2()) {
+    const r = renderedRect(view, view.widthPx, view.heightPx);
+    return target.set((x - r.x) / r.w * 2 - 1, 1 - (y - r.y) / r.h * 2);
+}
+
+/** Rendered-image NDC -> pane pixels; the inverse of viewToNDC. */
+export function ndcToView(view, ndc) {
+    const r = renderedRect(view, view.widthPx, view.heightPx);
+    return [r.x + (ndc.x + 1) * r.w / 2, r.y + (1 - ndc.y) * r.h / 2];
+}
+
+/** Pane pixels -> client CSS pixels; the inverse of mouseToView. */
+export function viewToClient(view, x, y) {
+    const rect = view.div?.getBoundingClientRect();
+    if (rect?.width > 0 && rect?.height > 0) {
+        return [rect.left + x * rect.width / view.widthPx,
+            rect.top + y * rect.height / view.heightPx];
+    }
+    return [x + view.leftPx + (ViewMan.screenOffsetX || 0), y + view.topPx];
+}
+
+export function isViewDisplayed(view) {
+    if (!view?.visible || view._effectivelyVisible === false) return false;
+    if (!(view.widthPx > 0) || !(view.heightPx > 0)) return false;
+    const rect = view.div?.getBoundingClientRect();
+    return !rect || (rect.width > 0 && rect.height > 0);
 }
 
 /**
@@ -113,7 +148,7 @@ export function mouseInView(view, x, y, debug = false) {
         if (debug) console.log(`Mouse (${x},${y}) Ignored in view(${view.id})`)
         return false;
     }
-    if (!view.visible) {
+    if (!isViewDisplayed(view)) {
         if (debug) console.log(`Mouse (${x},${y}) NOT visible in view(${view.id})`)
         return false;
     }
@@ -139,6 +174,9 @@ export function mouseInViewOnly(view, x, y, debug = false) {
     
     ViewMan.iterateVisibleIncludingOverlays((key, otherView) => {
         if (otherView === view) return;
+        // Overlays compete with their host through InteractionRouter's intent
+        // probes; their transparent canvas is not a separate occluding pane.
+        if (otherView.overlayView === view || otherView.host === view) return;
         
         const otherZ = otherView.zIndex || 0;
         if (otherZ > viewZ && mouseInView(otherView, x, y)) {
@@ -152,6 +190,21 @@ export function mouseInViewOnly(view, x, y, debug = false) {
     })
 
     return inView;
+}
+
+/** A 3D pick starts inside the drawn image, never its letterbox bars. */
+export function mouseInRenderedView(view, x, y) {
+    if (!mouseInViewOnly(view, x, y)) return false;
+    const [cx, cy] = mouseToView(view, x, y);
+    const r = renderedRect(view, view.widthPx, view.heightPx);
+    return cx >= r.x && cy >= r.y && cx < r.x + r.w && cy < r.y + r.h;
+}
+
+/** Resolve an editing surface using current visibility and rendered bounds. */
+export function getInteractiveViewAt(x, y, ids = ["mainView", "lookView"]) {
+    return ids.map(id => ViewMan.get(id, false))
+        .filter(view => view?.camera && mouseInRenderedView(view, x, y))
+        .sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0))[0] ?? null;
 }
 /**
  * The sub-rectangle of a view's pixel space that its 3D canvas actually fills, as {x, y, w, h}.
@@ -175,7 +228,9 @@ export function renderedRect(view, w, h) {
     if (!canvas || !div) return whole;
     const rc = canvas.getBoundingClientRect();
     const rd = div.getBoundingClientRect();
-    if (!(rd.width > 0) || !(rd.height > 0) || !(rc.width > 0) || !(rc.height > 0)) return whole;
+    if (!(rd.width > 0) || !(rd.height > 0) || !(rc.width > 0) || !(rc.height > 0)) {
+        return {x: 0, y: 0, w: 0, h: 0};
+    }
     return {
         x: ((rc.left - rd.left) / rd.width) * w,
         y: ((rc.top - rd.top) / rd.height) * h,
@@ -202,11 +257,65 @@ export function renderedRect(view, w, h) {
  */
 export function withDisplayedCamera(view, fn) {
     const lodActive = view._lodSavedZoom !== undefined;
-    if (!lodActive) view.prepareCameraForLOD();
+    const prepare = !lodActive && typeof view.prepareCameraForLOD === "function";
+    if (prepare) view.prepareCameraForLOD();
     view.camera.updateMatrixWorld();
     try {
         return fn(view.camera);
     } finally {
-        if (!lodActive) view.restoreCameraAfterLOD();
+        if (prepare) view.restoreCameraAfterLOD();
     }
+}
+
+/** Configure a geometric ray using the same camera and viewport as rendering.
+ * Surface constraints (terrain, tiles, plane, axis) remain the caller's choice.
+ * Shader-only world warps must still go through their surface-picking adapter.
+ */
+export function setRaycasterFromView(raycaster, view, clientX, clientY) {
+    const ndc = mouseToNDC(view, clientX, clientY);
+    if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y)) return false;
+    withDisplayedCamera(view, camera => raycaster.setFromCamera(ndc, camera));
+    return true;
+}
+
+/** Geometric world point -> pane pixels, matching setRaycasterFromView. */
+export function projectWorldToView(view, position) {
+    return withDisplayedCamera(view, camera => {
+        const local = position.clone().applyMatrix4(camera.matrixWorldInverse);
+        if (local.z >= 0) return null;
+        const ndc = position.clone().project(camera);
+        if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y)) return null;
+        return ndcToView(view, ndc);
+    });
+}
+
+/** World units per vertical CSS pixel at a position's view-space depth.
+ * Includes displayed zoom/aspect/y-compression and the actual canvas height.
+ * Orthographic size is independent of distance. Off-axis distance is not depth.
+ */
+export function worldUnitsPerPixel(view, position) {
+    return withDisplayedCamera(view, camera => {
+        const height = view.canvas?.getBoundingClientRect().height
+            ?? renderedRect(view, view.widthPx, view.heightPx).h;
+        const projectionScale = Math.abs(camera.projectionMatrix.elements[5]);
+        if (!(height > 0) || !(projectionScale > 0)) return 0;
+        const depth = camera.isOrthographicCamera ? 1
+            : Math.max(0, -new Vector3().copy(position).applyMatrix4(camera.matrixWorldInverse).z);
+        return 2 * depth / (height * projectionScale);
+    });
+}
+
+/** Offset a world point by CSS pixels at the same displayed depth (positive Y is up). */
+export function offsetWorldPointPixels(view, position, x, y) {
+    if (x === 0 && y === 0) return position.clone();
+    return withDisplayedCamera(view, camera => {
+        const r = view.canvas?.getBoundingClientRect();
+        const rendered = renderedRect(view, view.widthPx, view.heightPx);
+        const width = r?.width ?? rendered.w, height = r?.height ?? rendered.h;
+        if (!(width > 0) || !(height > 0)) return position.clone();
+        const ndc = position.clone().project(camera);
+        ndc.x += 2 * x / width;
+        ndc.y += 2 * y / height;
+        return ndc.unproject(camera);
+    });
 }

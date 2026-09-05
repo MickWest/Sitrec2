@@ -1,3 +1,5 @@
+import {wheelZoomFactor} from "../GestureActions";
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
 import {guiMenus, NodeMan} from "../Globals";
 import {t} from "../i18n";
@@ -46,10 +48,14 @@ export class CNodeViewDAG extends CNodeViewCanvas2D {
     }
 
     setupMouseHandlers() {
-        this.canvas.addEventListener('wheel', (e) => this.onWheel(e));
-        this.canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
-        this.canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
-        this.canvas.addEventListener('pointerup', (e) => this.onPointerUp(e));
+        this.unregisterInteraction = registerSurfaceInteraction(this.canvas, {
+            model: this, view: this, profile: "graph", navigation: true, buttons: [0, 2],
+            begin: e => { if (e.button === 0) this.onPointerDown(e); },
+            move: e => this.onPointerMove(e), end: e => this.onPointerUp(e),
+            wheel: e => this.onWheel(e), contextMenu: e => this.onPointerDown({button: 2, clientX: e.clientX, clientY: e.clientY}),
+            snapshot: () => ({panX: this.panX, panY: this.panY, zoom: this.zoom}),
+            restore: state => Object.assign(this, state),
+        });
     }
 
     onWheel(e) {
@@ -61,7 +67,8 @@ export class CNodeViewDAG extends CNodeViewCanvas2D {
         const worldXBefore = (mouseX - this.panX) / this.zoom;
         const worldYBefore = (mouseY - this.panY) / this.zoom;
 
-        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+        const zoomFactor = wheelZoomFactor(e, "graph");
+        if (zoomFactor === 1) return;
         this.zoom *= zoomFactor;
         this.zoom = Math.max(0.1, Math.min(5, this.zoom));
 
@@ -75,7 +82,6 @@ export class CNodeViewDAG extends CNodeViewCanvas2D {
             this.lastMouseX = e.clientX;
             this.lastMouseY = e.clientY;
             this.canvas.style.cursor = 'grabbing';
-            this.canvas.setPointerCapture(e.pointerId);
         } else if (e.button === 2) {
             const nodeId = this.getNodeAtPosition(e.clientX, e.clientY);
             if (nodeId) {
@@ -101,7 +107,6 @@ export class CNodeViewDAG extends CNodeViewCanvas2D {
         if (this.isDragging) {
             this.isDragging = false;
             this.canvas.style.cursor = 'grab';
-            this.canvas.releasePointerCapture(e.pointerId);
         }
     }
 

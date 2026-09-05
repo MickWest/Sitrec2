@@ -853,14 +853,23 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     syncFromCamera(camera) {
         camera.updateMatrixWorld();
 
-        const fwd = new Vector3();
-        camera.getWorldDirection(fwd);
+        // Tracking noise belongs to the rendered pose, not the PTZ settings
+        // that drive the next controller pass (or a switch back to Manual).
+        // Build a separate matrix so syncing never changes the displayed camera.
+        const unperturbed = NodeMan.get("trackingWobbleController", false)?.getUnperturbedQuaternion(camera);
+        let matrixWorld = camera.matrixWorld;
+        if (unperturbed) {
+            matrixWorld = new Matrix4().compose(camera.position, unperturbed, camera.scale);
+            if (camera.parent) matrixWorld.premultiply(camera.parent.matrixWorld);
+        }
+
+        const fwd = new Vector3().setFromMatrixColumn(matrixWorld, 2).negate().normalize();
         const localUp = getLocalUpVector(camera.position);
         const dotUpFwd = fwd.dot(localUp);
 
         // Camera Y axis (up direction) from world matrix
         const cameraUp = new Vector3();
-        cameraUp.setFromMatrixColumn(camera.matrixWorld, 1);
+        cameraUp.setFromMatrixColumn(matrixWorld, 1);
 
         if (Math.abs(dotUpFwd) > 1 - 1e-6) {
             // Near-vertical (nadir/zenith): normal az/el has gimbal lock.

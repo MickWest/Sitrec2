@@ -14,13 +14,16 @@ import {
 } from "three";
 import * as LAYER from "./LayerMasks";
 import {getLocalUpVector} from "./SphericalMath";
-import {ViewMan} from "./CViewManager";
-import {mouseInViewOnly, mouseToViewNormalized} from "./ViewUtils";
+import {getInteractiveViewAt, isViewDisplayed, mouseToNDC, setRaycasterFromView} from "./ViewUtils";
+import {registerEditorInteraction} from "./EditorInteraction";
+import {getInteractionRouter} from "./InteractionRouter";
 import {adjustHeightAboveGround} from "./threeExt";
 
 // Screen size the handles are drawn at, in pixels (updateHandleScales applies these).
 // createArrowGeometry needs the arrow one to express its hit padding in pixels, so both
 // live out here rather than inside that method.
+// Preserve the established object/track widget proportions. These broad move
+// and altitude grips serve a different purpose from compact corner handles.
 const DISC_PIXEL_SIZE = 40;
 const ARROW_PIXEL_SIZE = 30;
 
@@ -44,6 +47,8 @@ function createArrowGeometry() {
     
     shaftMesh.position.y = shaftCenterY;
     headMesh.position.y = headCenterY;
+    shaftMesh.userData.arrowPart = 'shaft';
+    headMesh.userData.arrowPart = 'head';
     
     group.add(shaftMesh);
     group.add(headMesh);
@@ -69,14 +74,18 @@ function createArrowGeometry() {
     const hitTop = headCenterY + headHeight / 2 + padAlong;
     const hitRadius = headRadius + padAcross;
 
-    const hitMesh = new Mesh(
-        new CylinderGeometry(hitRadius, hitRadius, hitTop - hitBottom, 8)
-    );
-    hitMesh.position.y = (hitTop + hitBottom) / 2;
-    // Never drawn, still picked: Three.js's Raycaster does not test .visible. (The same
-    // property is what lets a control point be deleted while the widget hides its cube.)
-    hitMesh.visible = false;
-    group.add(hitMesh);
+    // Separate head and shaft picks so the disc can win over an overlapping
+    // shaft while an arrowhead remains a vertical grip, regardless of depth.
+    const headBottom = headCenterY - headHeight / 2 - padAlong;
+    for (const [part, bottom, top] of [['shaft', hitBottom, headBottom], ['head', headBottom, hitTop]]) {
+        const hitMesh = new Mesh(new CylinderGeometry(hitRadius, hitRadius, top - bottom, 8));
+        hitMesh.position.y = (top + bottom) / 2;
+        hitMesh.userData.arrowPart = part;
+        hitMesh.userData.isPickPadding = true;
+        // Three.js raycasting includes invisible meshes.
+        hitMesh.visible = false;
+        group.add(hitMesh);
+    }
 
     return group;
 }
@@ -117,13 +126,16 @@ export class PointEditorWidget extends EventDispatcher {
         
         this.createHandles();
         
-        this.boundPointerMove = (e) => this.onPointerMove(e);
-        this.boundPointerDown = (e) => this.onPointerDown(e);
-        this.boundPointerUp = (e) => this.onPointerUp(e);
-        
-        document.addEventListener('pointermove', this.boundPointerMove);
-        document.addEventListener('pointerdown', this.boundPointerDown);
-        document.addEventListener('pointerup', this.boundPointerUp);
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            id: `point-widget:${this.group.uuid}`,
+            enabled: () => !!this.object && this.group.visible,
+            pick: e => {
+                if (!this.setupRaycasterForEvent(e)) return null;
+                const hit = this.pickHandle();
+                return hit ? {distance: hit.distance, priority: 70, handle: hit.object} : null;
+            },
+            rollback: e => this.rollbackDrag(e),
+        });
     }
     
     createHandles() {
@@ -139,6 +151,7 @@ export class PointEditorWidget extends EventDispatcher {
         
         this.handles.disc = new Mesh(discGeometry, discMaterial);
         this.handles.disc.userData.type = 'horizontal';
+        this.handles.disc.userData.handleRole = 'move';
         this.handles.disc.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.group.add(this.handles.disc);
         
@@ -158,6 +171,7 @@ export class PointEditorWidget extends EventDispatcher {
                 child.material = arrowMaterial;
                 child.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 child.userData.type = 'vertical_up';
+                child.userData.handleRole = 'altitude';
             }
         });
         this.group.add(this.handles.arrowUp);
@@ -170,6 +184,7 @@ export class PointEditorWidget extends EventDispatcher {
                 child.material = arrowMaterial;
                 child.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 child.userData.type = 'vertical_down';
+                child.userData.handleRole = 'altitude';
             }
         });
         this.group.add(this.handles.arrowDown);
@@ -177,6 +192,7 @@ export class PointEditorWidget extends EventDispatcher {
     
     attach(object) {
         if (this.object === object) return;
+        getInteractionRouter()?.cancelOwner(this);
         
         if (this.object) {
             this.object.visible = true;
@@ -193,6 +209,7 @@ export class PointEditorWidget extends EventDispatcher {
     }
     
     detach() {
+        getInteractionRouter()?.cancelOwner(this);
         const wasDragging = this.isDragging;
         if (this.object) {
             this.object.visible = true;
@@ -255,16 +272,10 @@ export class PointEditorWidget extends EventDispatcher {
         if (this.isPointerDown && this.activeView) {
             view = this.activeView;
         } else {
-            for (const id of ["mainView", "lookView"]) {
-                const v = ViewMan.get(id, false);
-                if (v && mouseInViewOnly(v, event.clientX, event.clientY)) {
-                    view = v;
-                    break;
-                }
-            }
+            view = getInteractiveViewAt(event.clientX, event.clientY);
         }
 
-        if (!view) {
+        if (!view || !isViewDisplayed(view)) {
             return false;
         }
 
@@ -276,10 +287,8 @@ export class PointEditorWidget extends EventDispatcher {
         this.updateHandleScales(view);
         this.group.updateMatrixWorld(true);
 
-        const [px, py] = mouseToViewNormalized(view, event.clientX, event.clientY);
-        this.pointer.x = px;
-        this.pointer.y = py;
-        this.raycaster.setFromCamera(this.pointer, view.camera);
+        this.pointer.copy(mouseToNDC(view, event.clientX, event.clientY));
+        if (!setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY)) return false;
 
         // Remember which view this press belongs to so subsequent move events stay anchored.
         // (isPointerDown is set AFTER this call in onPointerDown, so on the very first call
@@ -289,6 +298,19 @@ export class PointEditorWidget extends EventDispatcher {
         }
 
         return true;
+    }
+
+    pickHandle() {
+        const objects = [this.handles.disc];
+        if (!this.altitudeLocked) objects.push(this.handles.arrowUp, this.handles.arrowDown);
+        const hits = this.raycaster.intersectObjects(objects, true);
+        // Resolve screen overlap by operation, not by which mesh is nearer.
+        // Hover and pointer-down share this ordering, including touch padding.
+        // Padding helps grab an exposed arrow, but must not steal the disc's
+        // center at steep camera angles when only the enlarged head volume overlaps.
+        return hits.find(hit => hit.object.userData.arrowPart === 'head' && !hit.object.userData.isPickPadding)
+            ?? hits.find(hit => hit.object === this.handles.disc)
+            ?? hits[0];
     }
     
     onPointerDown(event) {
@@ -310,18 +332,10 @@ export class PointEditorWidget extends EventDispatcher {
             return;
         }
 
-        const objectsToTest = [this.handles.disc];
-        if (!this.altitudeLocked) {
-            objectsToTest.push(this.handles.arrowUp, this.handles.arrowDown);
-        }
-        
-        const intersects = this.raycaster.intersectObjects(objectsToTest, true);
-        
-        if (intersects.length === 0) {
-            return;
-        }
-        
-        const intersected = intersects[0].object;
+        const hit = this.pickHandle();
+        if (!hit) return;
+
+        const intersected = hit.object;
         let dragType = intersected.userData.type;
         
         if (!dragType && intersected.parent) {
@@ -362,6 +376,7 @@ export class PointEditorWidget extends EventDispatcher {
                 this.raycaster.ray.origin,
                 this.raycaster.ray.direction
             );
+            if (!closest) { this.onPointerUp(event); return false; }
             this.startClosestPoint.copy(closest);
         }
         
@@ -383,6 +398,7 @@ export class PointEditorWidget extends EventDispatcher {
         const ew = w.dot(rayDir);
         
         const denom = b * c - a * a;
+        if (Math.abs(denom) < 1e-10) return null;
         const s = (dw * c - ew * a) / denom;
         
         return new Vector3().copy(linePoint).addScaledVector(lineDir, s);
@@ -448,6 +464,7 @@ export class PointEditorWidget extends EventDispatcher {
             this.raycaster.ray.origin,
             this.raycaster.ray.direction
         );
+        if (!newClosestPoint) return;
         
         const offset = new Vector3().subVectors(newClosestPoint, this.startClosestPoint);
         
@@ -462,6 +479,16 @@ export class PointEditorWidget extends EventDispatcher {
         this.dispatchEvent({ type: 'objectChange' });
     }
     
+    rollbackDrag(event) {
+        if (this.object && this.isDragging) {
+            this.object.position.copy(this.dragStartWorld);
+            this.group.position.copy(this.dragStartWorld);
+            this.rollbackEdit?.();
+            this.dispatchEvent({type: 'change'});
+        }
+        this.onPointerUp(event);
+    }
+
     onPointerUp(event) {
         const wasDragging = this.isDragging;
         
@@ -498,9 +525,7 @@ export class PointEditorWidget extends EventDispatcher {
     }
     
     dispose() {
-        document.removeEventListener('pointermove', this.boundPointerMove);
-        document.removeEventListener('pointerdown', this.boundPointerDown);
-        document.removeEventListener('pointerup', this.boundPointerUp);
+        this.unregisterInteraction?.();
         
         if (this.handles.disc) {
             this.handles.disc.geometry.dispose();

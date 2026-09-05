@@ -1,3 +1,5 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {pointerHitRadius} from "../HandleStyle";
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
 import {markSitchDirty, setRenderOne} from "../Globals";
 
@@ -38,19 +40,34 @@ export class CNodeVideoLevelsView extends CNodeViewCanvas2D {
         this.div.style.boxShadow = "0 2px 8px rgba(0,0,0,0.45)";
         this.canvas.style.pointerEvents = "none";
         this.div.tabIndex = 0;
-        this.div.addEventListener("pointerdown", this.handlePointerDown, true);
-        document.addEventListener("pointermove", this.handlePointerMove);
-        document.addEventListener("pointerup", this.handlePointerUp);
+        this.installInteraction();
     }
 
     dispose() {
-        this.div?.removeEventListener("pointerdown", this.handlePointerDown, true);
-        document.removeEventListener("pointermove", this.handlePointerMove);
-        document.removeEventListener("pointerup", this.handlePointerUp);
+        this.unregisterInteraction?.();
         this.sampleCtx = null;
         this.sampleCanvas = null;
         this.histogram = null;
         super.dispose();
+    }
+
+    installInteraction() {
+        this.unregisterInteraction = registerSurfaceInteraction(this.div, {
+            profile: "adjustments",
+            model: this, view: this, enabled: () => this.visible,
+            hitTest: e => {
+                const p = this.eventToLocalPoint(e);
+                return this.rectContainsPoint(this.resetButtonRect, p.x, p.y)
+                    || this.findControlAt(p.x, p.y, pointerHitRadius(e, HANDLE_RADIUS)) ? {} : null;
+            },
+            begin: e => this.handlePointerDown(e), move: e => this.handlePointerMove(e),
+            end: () => this.handlePointerUp(), snapshot: () => this.values(),
+            restore: state => {
+                for (const [key, value] of Object.entries(state)) this.setNodeValue(this[key + "Node"], value);
+                this.videoView?.invalidateLevelsResult?.(); setRenderOne(true);
+            },
+            undo: "Adjust video levels",
+        });
     }
 
     modSerialize() {
@@ -189,6 +206,7 @@ export class CNodeVideoLevelsView extends CNodeViewCanvas2D {
     }
 
     handlePointerDown = (event) => {
+        if (event.button !== 0) return;
         if (!this.visible) return;
         const local = this.eventToLocalPoint(event);
         if (this.rectContainsPoint(this.resetButtonRect, local.x, local.y)) {
@@ -198,12 +216,14 @@ export class CNodeVideoLevelsView extends CNodeViewCanvas2D {
             event.stopImmediatePropagation();
             return;
         }
-        const handle = this.findControlAt(local.x, local.y);
+        const radius = pointerHitRadius(event, HANDLE_RADIUS);
+        const handle = this.findControlAt(local.x, local.y, radius);
         if (!handle) return;
 
         this.activeHandle = handle;
         this.draggingHandle = handle;
-        this.setValue(handle, this.valueFromLocal(handle, local.x));
+        this.grabOffsetX = this.findHandle(local.x, local.y, radius) === handle ? local.x - this.handles.get(handle).x : 0;
+        this.setValue(handle, this.valueFromLocal(handle, local.x - this.grabOffsetX));
         this.div.focus();
         event.preventDefault();
         event.stopPropagation();
@@ -213,7 +233,7 @@ export class CNodeVideoLevelsView extends CNodeViewCanvas2D {
     handlePointerMove = (event) => {
         if (!this.draggingHandle) return;
         const local = this.eventToLocalPoint(event);
-        this.setValue(this.draggingHandle, this.valueFromLocal(this.draggingHandle, local.x));
+        this.setValue(this.draggingHandle, this.valueFromLocal(this.draggingHandle, local.x - (this.grabOffsetX ?? 0)));
         event.preventDefault();
         event.stopPropagation();
     };
@@ -222,9 +242,9 @@ export class CNodeVideoLevelsView extends CNodeViewCanvas2D {
         this.draggingHandle = null;
     };
 
-    findHandle(x, y) {
+    findHandle(x, y, radius = HANDLE_RADIUS) {
         let best = null;
-        let bestDistance = HANDLE_RADIUS + 1;
+        let bestDistance = radius + 1;
         for (const [name, point] of this.handles.entries()) {
             const dx = point.x - x;
             const dy = point.y - y;
@@ -241,8 +261,8 @@ export class CNodeVideoLevelsView extends CNodeViewCanvas2D {
         return !!rect && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     }
 
-    findControlAt(x, y) {
-        const directHandle = this.findHandle(x, y);
+    findControlAt(x, y, radius = HANDLE_RADIUS) {
+        const directHandle = this.findHandle(x, y, radius);
         if (directHandle) return directHandle;
 
         if (this.inputRect) {

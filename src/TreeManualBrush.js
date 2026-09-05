@@ -1,3 +1,4 @@
+import {registerEditorInteraction} from "./EditorInteraction";
 // TreeManualBrush.js
 //
 // Manual-edit brush for the "Tree Removal" feature. When the Tree Removal
@@ -5,12 +6,9 @@
 // Photorealistic 3D tiles paints the current Tree Action (snap / delete) onto
 // the geometry under the brush instead of relying on the automatic analysis.
 //
-// The interaction is owned here rather than in the per-view 3D mouse code: we
-// install document-level pointer listeners in the CAPTURE phase so that, when a
-// stroke begins on a tile hit, we can stopPropagation() and pre-empt the view's
-// own camera-drag handlers (which run in the bubble phase). When Manual Edit is
-// off — or the press isn't over a tile hit — we do nothing and let the normal
-// camera controls run, so the user can still orbit by dragging empty space.
+// The router grants an active brush one gesture before camera navigation.
+// A stroke can begin over sky and reach geometry later; its originating view
+// stays fixed. Middle/right navigation remains available between strokes.
 //
 // HOVER PREVIEW. While hovering (not yet painting) the brush shows a live
 // "ghost" of the geometry it would affect — those triangles are temporarily
@@ -37,7 +35,7 @@ import {
     Raycaster,
 } from "three";
 import {ViewMan} from "./CViewManager";
-import {mouseInViewOnly} from "./ViewUtils";
+import {getInteractiveViewAt, setRaycasterFromView} from "./ViewUtils";
 import {GlobalScene} from "./LocalFrame";
 import {setRenderOne} from "./Globals";
 import * as LAYER from "./LayerMasks";
@@ -79,17 +77,21 @@ export class TreeManualBrush {
         this.wireMesh.raycast = () => {};
         GlobalScene.add(this.wireMesh);
 
-        this._onPointerDown = (e) => this.onPointerDown(e);
-        this._onPointerMove = (e) => this.onPointerMove(e);
-        this._onPointerUp = (e) => this.onPointerUp(e);
-        // Hide the preview as soon as the window loses focus (e.g. alt-tab) — a
-        // stale ghost sitting in an unfocused window is just noise. End any
-        // in-progress stroke too so its undo entry is still recorded.
-        this._onBlur = () => { this._endStroke(); this.hidePreview(); };
-        document.addEventListener("pointerdown", this._onPointerDown, true);
-        document.addEventListener("pointermove", this._onPointerMove, true);
-        document.addEventListener("pointerup", this._onPointerUp, true);
-        window.addEventListener("blur", this._onBlur);
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            profile: "brush",
+            id: "brush:TreeManualBrush", enabled: () => this.active,
+            pick: e => e.target?.tagName === "CANVAS" ? {priority: 80} : null,
+            begin: e => { this._anchorBefore = this._lastPaintPoint?.clone(); this.onPointerDown(e); },
+            end: e => { this.onPointerUp(e); this.activeView = null; },
+            leave: () => { this.overCanvas = false; this.hidePreview(); },
+            rollback: e => {
+                const before = this._strokeBefore;
+                this._strokeBefore = null;
+                if (before) this.buildingsNode.restoreDabsState(before);
+                this._lastPaintPoint = this._anchorBefore;
+                this.onPointerUp(e); this.activeView = null; this.hidePreview();
+            },
+        });
     }
 
     // Active only while the Manual Edit checkbox is on.
@@ -125,43 +127,18 @@ export class TreeManualBrush {
     //     unproject with it and restore immediately. For the main view this is just
     //     the ordinary projection, so it's correct there too.
     pick(screenX, screenY) {
-        let best = null, bestZ = -Infinity, bestRect = null;
-        for (const id of BRUSH_VIEW_IDS) {
-            const view = ViewMan.get(id, false);
-            if (!view || !view.camera || !view._effectivelyVisible || !view.canvas) continue;
-            if (typeof view.prepareCameraForLOD !== "function") continue;
-            if (!mouseInViewOnly(view, screenX, screenY)) continue;
-            const rect = view.canvas.getBoundingClientRect();
-            if (rect.width <= 0 || rect.height <= 0) continue;
-            if (screenX < rect.left || screenX > rect.right || screenY < rect.top || screenY > rect.bottom) continue;
-            const z = view.zIndex || 0;
-            if (z > bestZ) { bestZ = z; best = {view, id}; bestRect = rect; }
-        }
-        if (!best) return null;
-        const group = this.buildingsNode.getViewRendererGroup(best.id);
-        if (!group) return null; // view has no Google renderer
-
-        const view = best.view;
+        const view = this.painting && this.activeView ? this.activeView : getInteractiveViewAt(screenX, screenY, BRUSH_VIEW_IDS);
+        if (!view) return null;
+        const group = this.buildingsNode.getViewRendererGroup(view.id);
+        if (!group) return null;
         const cam = view.camera;
-        const ndcX = ((screenX - bestRect.left) / bestRect.width) * 2 - 1;
-        const ndcY = -((screenY - bestRect.top) / bestRect.height) * 2 + 1;
-
-        // Temporarily put the camera into its on-screen (displayed) projection,
-        // unproject, then restore. Guard against re-entrancy with the terrain LOD
-        // pass (which also uses these), though they don't interleave in practice.
-        const lodActive = view._lodSavedZoom !== undefined;
-        if (!lodActive) view.prepareCameraForLOD();
-        cam.updateMatrixWorld();
-        const ray = this.raycaster.ray;
-        ray.origin.setFromMatrixPosition(cam.matrixWorld);
-        ray.direction.set(ndcX, ndcY, 0.5).unproject(cam).sub(ray.origin).normalize();
-        if (!lodActive) view.restoreCameraAfterLOD();
+        if (!setRaycasterFromView(this.raycaster, view, screenX, screenY)) return null;
 
         this.raycaster.camera = cam;
         this.raycaster.layers.mask = cam.layers.mask;
         const hits = this.raycaster.intersectObject(group, true);
         if (!hits.length) return null;
-        return {point: hits[0].point, mask: cam.layers.mask, id: best.id};
+        return {point: hits[0].point, mask: cam.layers.mask, id: view.id};
     }
 
     // Cheap fingerprint of everything that moves the hit point: the pointer
@@ -324,10 +301,7 @@ export class TreeManualBrush {
     }
 
     dispose() {
-        document.removeEventListener("pointerdown", this._onPointerDown, true);
-        document.removeEventListener("pointermove", this._onPointerMove, true);
-        document.removeEventListener("pointerup", this._onPointerUp, true);
-        window.removeEventListener("blur", this._onBlur);
+        this.unregisterInteraction?.();
         this._clearGhost();
         if (this.wireMesh) {
             GlobalScene.remove(this.wireMesh);

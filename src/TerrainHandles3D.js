@@ -1,3 +1,5 @@
+import {acquireControlLease, getInteractionRouter} from "./InteractionRouter";
+import {editingControls} from "./EditorInteraction";
 // Dragging a point across the terrain from a 3D view: the machinery two editors share.
 //
 // "Fit Camera to Points" and "Ground Track" are asking different questions — where is the camera,
@@ -159,30 +161,39 @@ export class CTerrainHandleOverlay extends CNodeViewUI {
      * CameraControls.handleMouseMove returns early and resets its state when disabled.
      */
     grabControls() {
-        this._controlsWere = {};
-        for (const id of HANDLE_VIEWS) {
-            const v = ViewMan.get(id, false);
-            if (v && v.controls) {
-                this._controlsWere[id] = v.controls.enabled;
-                v.controls.enabled = false;
-            }
-        }
+        this.releaseControls();
+        this.releaseLease = acquireControlLease(editingControls());
     }
 
-    /**
-     * Give them back exactly as they were found.
-     *
-     * Restored from the snapshot rather than switched back on: something else may have disabled
-     * them on purpose — Free Look, another editor mid-gesture — and enabling them would be
-     * quietly overruling a decision this overlay knows nothing about.
-     */
     releaseControls() {
-        if (this._controlsWere === null) return;
-        for (const id of Object.keys(this._controlsWere)) {
-            const v = ViewMan.get(id, false);
-            if (v && v.controls) v.controls.enabled = this._controlsWere[id];
-        }
-        this._controlsWere = null;
+        this.releaseLease?.();
+        this.releaseLease = null;
+    }
+
+    isInteractionEnabled() { return this.owner.enabled; }
+
+    getInteractionIntent(e, mouseX, mouseY) {
+        if (!this.owner.enabled || e.button !== 0) return null;
+        const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
+        const hit = this.pick(cx, cy, this.projected());
+        return hit ? {kind: "drag", priority: 70, handleId: hit.id ?? hit.frame} : null;
+    }
+
+    handleState(id) {
+        return this.draggingId === id ? "dragging" : this.interactionHover === id ? "hover" : "idle";
+    }
+
+    onMouseRollback() {
+        this.releaseControls();
+        this.draggingId = null;
+        this.owner.onRollbackEdit?.();
+        setRenderOne(true);
+    }
+
+    dispose() {
+        getInteractionRouter()?.cancelOwner(this);
+        this.onMouseUp();
+        super.dispose();
     }
 
     /** True while this overlay owns a drag, so the host view knows not to also act on it. */
@@ -217,8 +228,8 @@ export class TerrainHandles3D {
     setVisible(on) {
         if (on && this.overlays.length === 0) this.build();
         for (const o of this.overlays) {
+            if (!on) { getInteractionRouter()?.cancelOwner(o); o.onMouseUp(); }
             o.visible = on;
-            if (!on) o.draggingId = null;
         }
         setRenderOne(true);
     }

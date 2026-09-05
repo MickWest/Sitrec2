@@ -1,3 +1,4 @@
+import {wheelZoomFactor} from "./GestureActions";
 // While "Fit Camera to Points" is on, zooming or dragging the LOOK view drives the VIDEO's zoom
 // and pan instead of the 3D camera, so the two stay framed identically.
 //
@@ -14,9 +15,6 @@
 
 import {NodeMan, setRenderOne} from "./Globals";
 import {mouseToView, renderedRect} from "./ViewUtils";
-
-/** Same 10% per notch the video view uses, so a wheel click means the same thing in both. */
-const WHEEL_SCALE = 0.9;
 
 /**
  * Should this view's zoom/pan be forwarded to the video?
@@ -98,7 +96,9 @@ export function fitViewSyncWheel(view, event) {
 
     const oldZoom = zoomNode.v0 / 100;
     if (!(oldZoom > 0)) return;
-    const newZoom = oldZoom * (event.deltaY < 0 ? 1 / WHEEL_SCALE : WHEEL_SCALE);
+    const scale = wheelZoomFactor(event, "video");
+    if (scale === 1) return;
+    const newZoom = oldZoom * scale;
 
     // Same zoom-about-the-cursor step as CNodeVideoView.onMouseWheel: keep whatever is under the
     // pointer under the pointer, by moving the pan by the part of the frame the zoom took away.

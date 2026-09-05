@@ -1,3 +1,4 @@
+import {registerSurfaceInteraction} from "./SurfaceInteraction";
 /**
  * Modern drag and resize utilities to replace jQuery UI functionality
  *
@@ -404,6 +405,7 @@ export function makeDraggable(element, options = {}) {
     let isDragging = false;
     let startX, startY;
     let startLeft, startTop;
+    let startEvent;
     
     // Determine the handle element
     let handleElement = element;
@@ -464,6 +466,7 @@ export function makeDraggable(element, options = {}) {
     };
     
     const onPointerDown = (e) => {
+        startEvent = e;
         // Check if event target is in an excluded element
         if (isEventInExcludedElement(e)) {
             return;
@@ -497,13 +500,6 @@ export function makeDraggable(element, options = {}) {
             options.onDragStart(e, { left: startLeft, top: startTop, element, viewInstance });
         }
 
-        // Add global event listeners using pointer events for better off-screen support
-        document.addEventListener('pointermove', onPointerMove);
-        document.addEventListener('pointerup', onPointerUp);
-        // pointercancel: the gesture can be aborted (OS / browser / touch takeover) with NO
-        // pointerup to follow — end the drag there too so state, listeners and onDragEnd don't
-        // get left dangling.
-        document.addEventListener('pointercancel', onPointerCancel);
     };
 
     const onPointerMove = (e) => {
@@ -569,9 +565,6 @@ export function makeDraggable(element, options = {}) {
         if (options.closeOnDragOffTop) {
             element.style.opacity = "";
             if (willCloseOffTop(element, handleElement)) {
-                document.removeEventListener('pointermove', onPointerMove);
-                document.removeEventListener('pointerup', onPointerUp);
-                document.removeEventListener('pointercancel', onPointerCancel);
                 options.closeOnDragOffTop({
                     left: parseFloat(element.style.left) || 0,
                     top: parseFloat(element.style.top) || 0,
@@ -595,10 +588,6 @@ export function makeDraggable(element, options = {}) {
         // Recompute handle positions for all views after a drag
         updateAllHandlePositions();
 
-        // Remove global event listeners
-        document.removeEventListener('pointermove', onPointerMove);
-        document.removeEventListener('pointerup', onPointerUp);
-        document.removeEventListener('pointercancel', onPointerCancel);
     };
 
     // Pointer interaction interrupted (OS / browser / touch takeover): per the Pointer Events
@@ -624,13 +613,23 @@ export function makeDraggable(element, options = {}) {
             });
         }
         updateAllHandlePositions();
-        document.removeEventListener('pointermove', onPointerMove);
-        document.removeEventListener('pointerup', onPointerUp);
-        document.removeEventListener('pointercancel', onPointerCancel);
     };
 
-    // Add event listener to handle using pointerdown for better off-screen support
-    handleElement.addEventListener('pointerdown', onPointerDown);
+    // The document router owns capture and all gesture termination paths.
+    const unregisterInteraction = registerSurfaceInteraction(handleElement, {
+        view: viewInstance, model: viewInstance ?? element, content: false, profile: "layout",
+        intent: {priority: 100, zIndex: viewInstance?.zIndex ?? 0},
+        hitTest: e => isEventInExcludedElement(e) || (options.shiftKey && !e.shiftKey)
+            || (options.requiredKey && !isKeyHeld(options.requiredKey)) ? null : {},
+        begin: onPointerDown, move: onPointerMove,
+        end: (e, reason) => reason === "released" ? onPointerUp(e) : onPointerCancel(e),
+        snapshot: () => ({left: element.style.left, top: element.style.top}),
+        restore: state => {
+            Object.assign(element.style, state);
+            options.onDrag?.(startEvent, {left: parseFloat(state.left) || 0, top: parseFloat(state.top) || 0,
+                dx: 0, dy: 0, element, viewInstance});
+        },
+    });
     
     // Store cleanup function on element.
     // A single element can have makeDraggable called more than once (e.g. a view div with
@@ -639,10 +638,7 @@ export function makeDraggable(element, options = {}) {
     // for requiredKey — are removed too, instead of being orphaned by this reassignment.
     const _previousDragCleanup = element._dragCleanup;
     element._dragCleanup = () => {
-        handleElement.removeEventListener('pointerdown', onPointerDown);
-        document.removeEventListener('pointermove', onPointerMove);
-        document.removeEventListener('pointerup', onPointerUp);
-        document.removeEventListener('pointercancel', onPointerCancel);
+        unregisterInteraction();
         if (requiresKey) {
             document.removeEventListener('keydown', updateCursorAndBorder);
             document.removeEventListener('keyup', updateCursorAndBorder);
@@ -769,15 +765,20 @@ export function makeResizable(element, options = {}) {
         
         // Add resize event listeners
         let isResizing = false;
+        let pointerId;
         let startX, startY;
         let startWidth, startHeight, startLeft, startTop;
         let aspectRatio;
+        let startEvent;
         
         const onPointerDown = (e) => {
+            startEvent = e;
+            if (e.button !== 0 || isResizing) return;
             e.preventDefault();
             e.stopPropagation();
             
             isResizing = true;
+            pointerId = e.pointerId;
             startX = e.clientX;
             startY = e.clientY;
             
@@ -805,12 +806,14 @@ export function makeResizable(element, options = {}) {
                 });
             }
             
-            document.addEventListener('pointermove', onPointerMove);
-            document.addEventListener('pointerup', onPointerUp);
         };
         
         const onPointerMove = (e) => {
-            if (!isResizing) return;
+            if (!isResizing || e.pointerId !== pointerId) return;
+            if (e.type === 'pointermove' && e.buttons === 0) {
+                finishResize(e, true);
+                return;
+            }
             
             let newWidth = startWidth;
             let newHeight = startHeight;
@@ -943,10 +946,10 @@ export function makeResizable(element, options = {}) {
             }
         };
         
-        const onPointerUp = (e) => {
+        const finishResize = (e, cancelled) => {
             if (!isResizing) return;
-            
             isResizing = false;
+            pointerId = undefined;
             
             // Call onResizeEnd callback if provided
             if (options.onResizeEnd && typeof options.onResizeEnd === 'function') {
@@ -957,20 +960,31 @@ export function makeResizable(element, options = {}) {
                     top: parseInt(element.style.top), 
                     element,
                     direction: dir,
-                    viewInstance: element._resizeData.viewInstance
+                    viewInstance,
+                    cancelled,
                 });
             }
             
             // Recompute handle positions for all views after a resize
             updateAllHandlePositions();
 
-            document.removeEventListener('pointermove', onPointerMove);
-            document.removeEventListener('pointerup', onPointerUp);
         };
 
-        handle.addEventListener('pointerdown', onPointerDown);
+        const unregisterInteraction = registerSurfaceInteraction(handle, {
+            view: viewInstance, model: viewInstance ?? element, content: false, profile: "layout",
+            intent: {priority: 110, zIndex: viewInstance?.zIndex ?? 0},
+            begin: onPointerDown, move: onPointerMove,
+            end: (e, reason) => finishResize(e, reason !== "released"),
+            snapshot: () => ({width: element.style.width, height: element.style.height,
+                left: element.style.left, top: element.style.top}),
+            restore: state => {
+                Object.assign(element.style, state);
+                options.onResize?.(startEvent, {width: parseFloat(state.width), height: parseFloat(state.height),
+                    left: parseFloat(state.left), top: parseFloat(state.top), element, direction: dir, viewInstance});
+            },
+        });
         handle._resizeCleanup = () => {
-            handle.removeEventListener('pointerdown', onPointerDown);
+            unregisterInteraction();
         };
     });
 

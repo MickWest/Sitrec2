@@ -1,3 +1,4 @@
+import {wheelZoomFactor} from "../GestureActions";
 /**
  * Video view node for displaying and interacting with video content
  * Extends CNodeViewCanvas2D to provide video-specific rendering and controls
@@ -72,7 +73,6 @@ import {CNodeVideoHistogramView} from "./CNodeVideoHistogramView";
 import {CNodeVideoCurvesView} from "./CNodeVideoCurvesView";
 import {CNodeVideoLevelsView} from "./CNodeVideoLevelsView";
 import {CNodeAudioSpectrumView} from "./CNodeAudioSpectrumView";
-import {rightClickWasClaimed} from "../ViewUtils";
 import {viewMenuKey} from "../ViewUIBarMenus";
 
 // Re-export for external consumers (e.g. CMotionAnalysis).
@@ -1172,11 +1172,11 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             return;
         }
 
-        var scale = 0.90;  // zoom in/out by 10% on mouse wheel up/down
-        if (e.deltaY < 0) {
-            scale = 1 / scale
-        }
+        const scale = wheelZoomFactor(e, "video");
+        if (scale !== 1) this.zoomAtMouse(scale);
+    }
 
+    zoomAtMouse(scale) {
         if (this.in.zoom !== undefined) {
             const oldZoom = this.in.zoom.v0 / 100;
             const newZoom = oldZoom * scale; // scale < 1 = scroll down = zoom out
@@ -1212,50 +1212,6 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         return !!(fit && fit.enabled && fit.pointNear(canvasX, canvasY));
     }
 
-    // Check if a tracking overlay control is currently being dragged
-    _isOverlayDragging() {
-        const trackingOverlay = NodeMan.get("trackingOverlay", false);
-        if (!trackingOverlay || !trackingOverlay.draggable) return false;
-        return trackingOverlay.draggable.some(d => d.dragging);
-    }
-
-    // Check if a camera-fit control point is currently being dragged.
-    //
-    // Gated on the DRAG, not on the feature being enabled — unlike the mask and annotate gates
-    // below. Placing fit points accurately means panning and zooming the video to find the
-    // landmark, so taking left-drag away for the whole session would break the workflow. Only the
-    // gesture that grabbed a point is claimed.
-    _isFitPointDragging() {
-        const fit = NodeMan.get("fitCameraPoints", false);
-        return !!(fit && fit.enabled && fit.draggingId !== null);
-    }
-
-    // Check if the video mask overlay is currently in paint-edit mode.
-    //
-    // Both ids are checked because the mask used to belong to Motion Analysis and was named for
-    // it. "videoMask" is the shared one built for every custom sitch; "motionMaskOverlay" is
-    // still built for sitches that have no shared node, and appears in older saves.
-    _isMaskEditing() {
-        for (const id of ["videoMask", "motionMaskOverlay"]) {
-            const maskOverlay = NodeMan.get(id, false);
-            if (maskOverlay !== undefined && maskOverlay.editing === true) return true;
-        }
-        return false;
-    }
-
-    // Check if the annotation overlay is in edit mode — left-drag is then
-    // owned by the annotation tools (drawing / selecting / moving / resizing),
-    // not by video pan. Mirrors the mask overlay gate above. Uses the effective
-    // predicate so when "Show Annotations" is off the gate is also off (even
-    // if Edit Mode flag is still set).
-    _isAnnotateEditing() {
-        const annotateOverlay = NodeMan.get("annotateOverlay", false);
-        if (!annotateOverlay) return false;
-        return typeof annotateOverlay.isEditingActive === "function"
-            ? annotateOverlay.isEditingActive()
-            : annotateOverlay.editing === true;
-    }
-
     setupMouseHandler() {
         this.mouse = new CMouseHandler(this, {
 
@@ -1271,45 +1227,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 this.canvas.style.cursor = overControl ? 'grab' : '';
             },
 
-            wheel: (e) => {
-                // When zoom input exists, zoom is handled by onMouseWheel (document-level)
-                // which does zoom-around-cursor with panOffset.
-                // When no zoom input, use pos-based zoom.
-                if (this.in.zoom === undefined) {
-                    var scale = 0.90;
-                    if (e.deltaY > 0) {
-                    } else {
-                        scale = 1 / scale
-                    }
-                    this.zoomView(scale)
-                }
-                // Anchor position is already stored by CMouseHandler.newPosition
-            },
+            wheel: (e) => this.onMouseWheel(e),
+            pinch: scale => { this.zoomAtMouse(scale); setRenderOne(true); },
 
             drag: (e) => {
-                // Don't pan if a tracking overlay control point is being dragged
-                if (this._isOverlayDragging()) {
-                    this.canvas.style.cursor = 'grabbing';
-                    return;
-                }
-
-                // Same for a camera-fit control point.
-                if (this._isFitPointDragging()) {
-                    this.canvas.style.cursor = 'grabbing';
-                    return;
-                }
-
-                // Don't pan while painting the motion-analysis mask — left-drag paints instead
-                if (this._isMaskEditing()) {
-                    return;
-                }
-
-                // Don't pan while the annotate overlay is editing — left-drag is for drawing /
-                // selecting / moving / resizing annotation strokes, not for panning the video.
-                if (this._isAnnotateEditing()) {
-                    return;
-                }
-
                 if (this.in.zoom !== undefined) {
                     // Pan via panOffset when using videoZoom
                     this.getSourceAndDestCoords();
@@ -1371,10 +1292,6 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             },
 
             contextMenu: (e) => {
-                // An overlay on this view may have already used the right-click for its own
-                // purpose (deleting a camera-fit control point, say). It cannot cancel this
-                // event — different element, separate DOM event — so it leaves a claim instead.
-                if (rightClickWasClaimed()) return;
                 // Show Video Adjustments as a context menu at click position
                 if (!Globals.menuBar || !guiMenus.video || !CustomManager) return;
                 const adjFolder = guiMenus.video.folders.find(

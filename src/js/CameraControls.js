@@ -1,3 +1,4 @@
+import {commandModifier, wheelSteps} from "../GestureActions";
 // CameraControls
 
 import {Matrix4, Plane, Raycaster, Sphere, Vector2, Vector3} from "three";
@@ -23,7 +24,8 @@ import {intersectSphere2, V3} from "../threeUtils";
 import {getCursorPositionFromTopView, getTopViewWithCursor, onDocumentMouseMove} from "../mouseMoveView";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {isLocal} from "../configUtils"
-import {mouseInViewOnly, mouseToNDC, mouseToView} from "../ViewUtils";
+import {getInteractionRouter, INTERACTION} from "../InteractionRouter";
+import {isViewDisplayed, mouseToNDC, mouseToView, mouseInRenderedView, setRaycasterFromView, viewToNDC, withDisplayedCamera} from "../ViewUtils";
 import {raycastLocalGround} from "../raycastGround";
 import {CNodeMeasureAB} from "../nodes/CNodeLabels3D";
 import {CNodePositionXYZ} from "../nodes/CNodePositionLLA";
@@ -123,25 +125,37 @@ class CameraMapControls {
 		this.pinchDistance = 0;
 		this.lastPinchDistance = 0;
 
-		// Long press support for mobile context menu
-		this.longPressTimer = null;
-		this.longPressDuration = 500; // 500ms
-		this.longPressThreshold = 10; // 10px movement threshold
-		this.longPressStartX = 0;
-		this.longPressStartY = 0;
-		this.longPressEvent = null;
-		this.isLongPressTriggered = false;
-		this.activePointers = new Set(); // Track active pointer IDs for multi-touch detection
-
-		this.canvas.addEventListener('contextmenu', e => this.onContextMenu(e));
-		this.canvas.addEventListener('pointerdown', e => this.handleMouseDown(e));
-		this.canvas.addEventListener('pointerup', e => this.handleMouseUp(e));
-		this.canvas.addEventListener('pointercancel', e => this.handlePointerCancel(e));
-		this.canvas.addEventListener('pointermove', e => this.handleMouseMove(e));
-		this.canvas.addEventListener('wheel', e => this.handleMouseWheel(e));
-		this.canvas.addEventListener('touchstart', e => this.handleTouchStart(e), { passive: false });
-		this.canvas.addEventListener('touchmove', e => this.handleTouchMove(e), { passive: false });
-		this.canvas.addEventListener('touchend', e => this.handleTouchEnd(e), { passive: false });
+        const surface = e => mouseInRenderedView(this.view, e.clientX, e.clientY)
+            ? {kind: INTERACTION.DRAG, zIndex: this.view.zIndex ?? 0} : null;
+        this.unregisterInteraction = getInteractionRouter(this.canvas.ownerDocument).register({
+            id: `camera:${this.view.id}`, model: this.view, profile: "camera", navigation: true, priority: 0,
+            enabled: () => !isViewDragging && isViewDisplayed(this.view),
+            valid: () => isViewDisplayed(this.view), hitTest: surface, hitSurface: surface,
+            capture: () => this.canvas,
+            begin: e => {
+                if (e.resumed) this.lastTapTime = 0;
+                this.view.onMouseDown?.(e, e.clientX, e.clientY);
+                this.handleMouseDown(e);
+            },
+            move: e => this.handleMouseMove(e),
+            end: (e, gesture) => {
+                this.handleMouseUp(e, gesture.click);
+                if (gesture.click) this.view.onMouseUp?.(e, e.clientX, e.clientY);
+                else this.view.onMouseCancel?.(e);
+            },
+            cancel: e => { this.handlePointerCancel(e); this.view.onMouseCancel?.(e); },
+            beginTouches: e => this.handleTouchStart(e),
+            moveTouches: e => this.handleTouchMove(e),
+            endTouches: e => this.handleTouchEnd(e),
+            wheel: e => this.handleMouseWheel(e),
+            contextMenu: e => this.view.onContextMenu?.(e, e.clientX, e.clientY),
+            hover: e => {
+                if (!e) return;
+                this.view.onMouseMove?.(e, e.clientX, e.clientY);
+                this.handleMouseMove(e);
+            },
+        });
+        this.canvas.style.touchAction = "none";
 
 		// Prevent iOS long-press selection menu
 		this.canvas.addEventListener('selectstart', e => e.preventDefault(), { passive: false });
@@ -156,9 +170,6 @@ class CameraMapControls {
 		this.state = STATE.NONE
 		this.enabled = true;
 
-		// Track mouse position for context menu drag detection
-		this.contextMenuDownPos = null;
-		this.contextMenuDragThreshold = 2; // pixels
 
 		this.lastStartHitSphere = true;
 		this.lastEndHitSphere = true;
@@ -235,30 +246,6 @@ class CameraMapControls {
 	}
 
 
-	onContextMenu(event) {
-
-		//		console.log("onConrxt")
-
-		// Always prevent the default browser context menu
-		// This MUST be done for every contextmenu event, regardless of enabled state
-		event.preventDefault();
-		event.stopPropagation();
-
-		if (this.enabled === false) return;
-
-		// Don't show our context menu - we'll handle it in handleMouseUp instead
-		// This prevents the menu from showing on right-click down
-
-	}
-
-	clearLongPressTimer() {
-		if (this.longPressTimer) {
-			clearTimeout(this.longPressTimer);
-			this.longPressTimer = null;
-		}
-	}
-
-
 	handleMouseWheel(event) {
 
 		if (window.document.hasFocus() === false) {
@@ -266,17 +253,14 @@ class CameraMapControls {
 		}
 
 		if (this.enabled === false || this.enableZoom === false || this.state !== STATE.NONE) return;
+		if (!mouseInRenderedView(this.view, event.clientX, event.clientY)) return;
 
 		event.preventDefault();
 
-		// A SHIFT+wheel arrives as a HORIZONTAL scroll: the browser moves the value into
-		// deltaX and leaves deltaY at 0, so Math.sign(event.deltaY) would be 0 and zoomScale
-		// would return the fov unchanged - the gesture would silently do nothing. Fall back
-		// to deltaX ONLY while Shift is held: without Shift a non-zero deltaX is a genuine
-		// horizontal swipe, which must not be taken for a zoom. The dolly paths further down
-		// keep using event.deltaY because Shift never reaches them - the field-of-view branch
-		// below returns first.
-		const wheelDelta = (event.shiftKey && event.deltaY === 0) ? event.deltaX : event.deltaY;
+        // Shift-wheel may arrive on the horizontal axis. Ordinary horizontal
+        // trackpad movement never becomes camera zoom.
+		const wheelDelta = wheelSteps(event, {shiftHorizontal: true});
+        if (wheelDelta === 0) return;
 
 		// Ahead of the PTZ path: while a camera fit is being edited the wheel zooms the VIDEO, and
 		// the look view follows because it is already synced to it. Zooming the camera instead
@@ -290,7 +274,7 @@ class CameraMapControls {
 		// controller drives the camera. The pinhole fov is ignored by that render, and
 		// the dolly/sphere-rotate paths below would move the camera instead of the field.
 		if (isFisheyeCamera(this.camera)) {
-			this.zoomBy(Math.sign(wheelDelta));
+			this.zoomBy(wheelDelta);
 			setRenderOne(true);
 			return;
 		}
@@ -302,7 +286,7 @@ class CameraMapControls {
 		// suspended the PTZ controller (getInteractivePTZController) - where it is the
 		// only way to reach the field of view from the mouse.
 		if (event.shiftKey || getInteractivePTZController(this.view.cameraNode) !== undefined) {
-			this.zoomFovBy(Math.sign(wheelDelta));
+			this.zoomFovBy(wheelDelta);
 			setRenderOne(true);
 			return;
 		}
@@ -321,24 +305,23 @@ class CameraMapControls {
 		// sphere-rotate correction below assumes a spherical ground and would
 		// apply a bogus rotation.
 		if (Globals.flatEarthWarpPoint) {
-			this.zoomBy(Math.sign(event.deltaY));
+			this.zoomBy(wheelDelta);
 			setRenderOne(true);
 			return;
 		}
 
-		const ndc = mouseToNDC(this.view, event.clientX, event.clientY);
 		const raycaster = new Raycaster();
-		raycaster.setFromCamera(ndc, this.camera);
+		setRaycasterFromView(raycaster, this.view, event.clientX, event.clientY);
 
 		const earthCenter = earthCenterECEF();
 		const groundSphere = new Sphere(earthCenter.clone(), earthCenter.distanceTo(this.target));
 		const hitBefore = new Vector3();
 		const hasHit = intersectSphere2(raycaster.ray, groundSphere, hitBefore);
 
-		this.zoomBy(Math.sign(event.deltaY));
+		this.zoomBy(wheelDelta);
 
 		if (hasHit) {
-			raycaster.setFromCamera(ndc, this.camera);
+			setRaycasterFromView(raycaster, this.view, event.clientX, event.clientY);
 			const hitAfter = new Vector3();
 			if (intersectSphere2(raycaster.ray, groundSphere, hitAfter)) {
 				const originToBefore = hitBefore.clone().sub(earthCenter);
@@ -602,22 +585,13 @@ class CameraMapControls {
 			return; // Can't update target without view/raycaster
 		}
 
-		// Convert client coordinates to view-relative coordinates
-		const viewX = clientX - this.view.leftPx;
-		const viewY = clientY - this.view.topPx;
-
-		// Convert to normalized device coordinates (-1 to +1)
-		// Y is inverted for Three.js coordinate system
-		const mouseRay = new Vector2();
-		mouseRay.x = (viewX / this.view.widthPx) * 2 - 1;
-		mouseRay.y = -(viewY / this.view.heightPx) * 2 + 1;
-
-		// Set up raycaster from camera
-		this.view.raycaster.setFromCamera(mouseRay, this.camera);
+		// Touch centroids use the same displayed projection and canvas bounds as
+		// mouse picking, including sidebars, letterboxing and camera adjustments.
+		if (!setRaycasterFromView(this.view.raycaster, this.view, clientX, clientY)) return;
 
 		// Pass the camera so raycastLocalGround also considers Google 3D-tile
 		// buildings (touch pivot lands on rooftops, matching the mouse path).
-		const hit = raycastLocalGround(this.view.raycaster, this.camera);
+		const hit = withDisplayedCamera(this.view, camera => raycastLocalGround(this.view.raycaster, camera));
 		if (hit) {
 			this.target = hit.point;
 			this.targetIsTerrain = hit.isTerrain;
@@ -781,7 +755,7 @@ class CameraMapControls {
 
 		if (event.shiftKey) this.state = STATE.ROTATE;
 
-		if (event.metaKey || event.ctrlKey) this.state = STATE.PAN;
+		if (commandModifier(event)) this.state = STATE.PAN;
 
 		// might also be forced to just rotate, like when focusing on a track
 		if (this.justRotate) this.state = STATE.ROTATE;
@@ -798,74 +772,15 @@ class CameraMapControls {
 			return;
 		}
 		if (isViewDragging) return;
-		if (!mouseInViewOnly(this.view, event.clientX, event.clientY)) return;
+		if (!mouseInRenderedView(this.view, event.clientX, event.clientY)) return;
 		//		console.log ("CameraMapControls Mouse DOWN, button = "+event.button)
 		this.button = event.button;
-
-		// Track pointer for multi-touch detection
-		this.activePointers.add(event.pointerId);
-
-		// Track right mouse button down position for context menu drag detection
-		if (event.button === 2) {
-			this.contextMenuDownPos = { x: event.clientX, y: event.clientY };
-		}
-
-		// Cancel long press if a second finger touches down
-		if (this.activePointers.size > 1 && this.longPressTimer) {
-			clearTimeout(this.longPressTimer);
-			this.longPressTimer = null;
-			this.isLongPressTriggered = false;
-		}
-
-		// Start long press timer for single-finger touch events only (not for mouse right-click)
-		if (event.pointerType === 'touch' && event.button === 0 && this.activePointers.size === 1) {
-			this.longPressStartX = event.clientX;
-			this.longPressStartY = event.clientY;
-			this.longPressEvent = event;
-			this.isLongPressTriggered = false;
-
-			this.longPressTimer = setTimeout(() => {
-				this.isLongPressTriggered = true;
-
-				// Create synthetic context menu event
-				const syntheticEvent = new PointerEvent('contextmenu', {
-					bubbles: true,
-					cancelable: true,
-					clientX: this.longPressStartX,
-					clientY: this.longPressStartY,
-					pointerType: 'touch',
-					button: 2
-				});
-
-				// Add custom properties
-				Object.defineProperty(syntheticEvent, 'isSynthetic', { value: true });
-				Object.defineProperty(syntheticEvent, 'originalEvent', { value: event });
-
-				// Call the view's context menu handler directly (same as handleMouseUp does)
-				if (this.view && this.view.onContextMenu) {
-					this.view.onContextMenu(syntheticEvent, this.longPressStartX, this.longPressStartY);
-				}
-
-				// Clean up state since context menu interrupts normal pointer flow
-				this.activePointers.clear();
-				this.state = STATE.NONE;
-				if (event.pointerId !== undefined) {
-					this.canvas.releasePointerCapture(event.pointerId);
-				}
-
-				// Vibrate for tactile feedback
-				if (navigator.vibrate) {
-					navigator.vibrate(50);
-				}
-			}, this.longPressDuration);
-		}
 
 		this.updateStateFromEvent(event)
 		this.lastStartHitSphere = true;
 		this.lastEndHitSphere = true;
 		const [x, y] = mouseToView(this.view, event.clientX, event.clientY)
 		this.mouseStart.set(x, y);
-		this.canvas.setPointerCapture(event.pointerId)
 		setRenderOne(true);
 		if (this.view.showCursor) {
 			this.view.cursorSprite.visible = true;
@@ -890,10 +805,8 @@ class CameraMapControls {
 
 
 
-	handleMouseUp(event) {
+	handleMouseUp(event, allowTap = true) {
 
-		// Remove pointer from active set
-		this.activePointers.delete(event.pointerId);
 
 		// if not paused, then removed the cursor's LLA label
 		if (!par.paused) {
@@ -901,12 +814,9 @@ class CameraMapControls {
 		}
 		this.view.cursorSprite.visible = false;
 
-		// Clear long press timer
-		this.clearLongPressTimer();
 
 		// Check for tap gesture (left button, minimal movement) before handling context menu
-		// Don't trigger if long press was triggered
-		if (event.button === 0 && this.state === STATE.NONE && !this.isLongPressTriggered) {
+		if (allowTap && event.button === 0 && this.state === STATE.NONE) {
 			// It was a tap gesture - check for double-tap zoom, UNLESS the tap landed on the
 			// view's header strip (the UIBar). Double-clicking the header toggles fullscreen
 			// (handled at the document level, onDocumentDoubleClick) and must NOT zoom/recenter
@@ -917,35 +827,8 @@ class CameraMapControls {
 			}
 		}
 
-		// Reset long press flag
-		if (this.isLongPressTriggered) {
-			this.isLongPressTriggered = false;
-		}
-
-		// Check if this was a right-click release without dragging
-		if (event.button === 2 && this.contextMenuDownPos) {
-			const dx = event.clientX - this.contextMenuDownPos.x;
-			const dy = event.clientY - this.contextMenuDownPos.y;
-			const distance = Math.sqrt(dx * dx + dy * dy);
-
-			// If mouse didn't move much, show the context menu
-			if (distance <= this.contextMenuDragThreshold) {
-				// Prevent default context menu and stop propagation
-				event.preventDefault();
-				event.stopPropagation();
-
-				if (this.view && this.view.onContextMenu) {
-					this.view.onContextMenu(event, event.clientX, event.clientY);
-				}
-			}
-		}
-
-		// Reset context menu tracking
-		this.contextMenuDownPos = null;
-
 		this.state = STATE.NONE
 		if (!this.enabled) return;
-		this.canvas.releasePointerCapture(event.pointerId)
 
 		// dump a camera location to the console
 		var p = this.camera.position.clone()
@@ -967,13 +850,14 @@ class CameraMapControls {
 
 	}
 
+    dispose() {
+        this.unregisterInteraction?.();
+    }
+
 	handlePointerCancel(event) {
 		// Handle pointer interruptions (e.g., browser gestures, context menus)
-		this.canvas.releasePointerCapture(event.pointerId);
-		this.activePointers.delete(event.pointerId);
-		this.clearLongPressTimer();
+        if (this.view.cursorSprite) this.view.cursorSprite.visible = false;
 		this.state = STATE.NONE;
-		this.isLongPressTriggered = false;
 	}
 
 	handleMouseMove(event) {
@@ -982,16 +866,6 @@ class CameraMapControls {
 			return;
 		}
 		if (isViewDragging) return;
-
-		// Check if movement exceeds long press threshold
-		if (this.longPressTimer) {
-			const deltaX = Math.abs(event.clientX - this.longPressStartX);
-			const deltaY = Math.abs(event.clientY - this.longPressStartY);
-
-			if (deltaX > this.longPressThreshold || deltaY > this.longPressThreshold) {
-				this.clearLongPressTimer();
-			}
-		}
 
 		// Skip mouse move handling if we're in a touch gesture
 		// Touch events trigger pointer events which we need to ignore during touch gestures
@@ -1204,17 +1078,8 @@ class CameraMapControls {
 				raycaster.layers.mask |= LAYER.MASK_MAIN | LAYER.MASK_LOOK;
 
 
-				let width = this.view.widthPx
-				let height = this.view.heightPx
-
-				var startPointer = new Vector2(
-					this.mouseStart.x / width * 2 - 1,
-					- this.mouseStart.y / height * 2 + 1
-				)
-				var endPointer = new Vector2(
-					this.mouseEnd.x / width * 2 - 1,
-					- this.mouseEnd.y / height * 2 + 1
-				)
+				const startPointer = viewToNDC(this.view, this.mouseStart.x, this.mouseStart.y);
+				const endPointer = viewToNDC(this.view, this.mouseEnd.x, this.mouseEnd.y);
 
 				//				console.log(par.frame + ": STATE.DRAG: Start: "+vdump(startPointer)+" End: "+vdump(endPointer))
 
@@ -1228,7 +1093,7 @@ class CameraMapControls {
 				var start3D = new Vector3();
 				var end3D = new Vector3();
 
-				raycaster.setFromCamera(startPointer, this.camera)
+				withDisplayedCamera(this.view, camera => raycaster.setFromCamera(startPointer, camera));
 				let startHitSphere = false;
 				if (this.targetIsTerrain && !this.useGlobe) {
 					if (!raycaster.ray.intersectPlane(dragPlane, start3D)) break;
@@ -1240,7 +1105,7 @@ class CameraMapControls {
 						if (!raycaster.ray.intersectPlane(tangentPlane, start3D)) break;
 					}
 				}
-				raycaster.setFromCamera(endPointer, this.camera)
+				withDisplayedCamera(this.view, camera => raycaster.setFromCamera(endPointer, camera));
 				let endHitSphere = false;
 				if (this.targetIsTerrain && !this.useGlobe) {
 					if (!raycaster.ray.intersectPlane(dragPlane, end3D)) break;

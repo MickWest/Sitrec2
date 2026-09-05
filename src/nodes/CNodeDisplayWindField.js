@@ -1,3 +1,4 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
 // Wind field visualization with animated streamlines on the globe.
 // Uses GPU-efficient shader animation: a frame counter offsets a dash pattern
 // along each streamline, creating a flowing effect without per-frame geometry updates.
@@ -670,8 +671,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this._screenArrowNames = seen;
     }
 
-    // Toggle inspect mode. Installs/removes document mousemove + mouse-
-    // down/up listeners. On disable, hides all readout divs and removes
+    // Toggle inspect mode. Registers click ownership and a read-only pointer observer. On disable, hides all readout divs and removes
     // the per-point arrows (dropped points themselves stay in
     // this.inspectPoints so the next enable restores them).
     //
@@ -697,19 +697,28 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 this._inspectClient = {x: e.clientX, y: e.clientY};
                 setRenderOne(true);
             };
-            document.addEventListener("mousemove", this._inspectMouseHandler);
+            document.addEventListener("pointermove", this._inspectMouseHandler);
 
-            // Modified-click handler. Tracks mousedown vs mouseup so a drag
-            // (camera-orbit / pan) doesn't get reinterpreted as a click.
-            this._inspectClickHandler = this._handleInspectClick.bind(this);
-            document.addEventListener("mousedown", this._inspectClickHandler);
-            document.addEventListener("mouseup", this._inspectClickHandler);
+            const view = ViewMan.get("mainView", false);
+            if (view?.canvas) {
+                let action;
+                this._inspectInteraction = registerSurfaceInteraction(view.canvas, {
+                    model: this, view, content: false, profile: "wind",
+                    enabled: () => this.inspect && this.visible !== false,
+                    intent: {kind: "pending", priority: 30},
+                    hitTest: e => e.shiftKey || e.altKey ? {} : null,
+                    begin: e => { action = e.shiftKey ? "add" : "delete"; },
+                    click: e => this._handleInspectClick(e, action),
+                    snapshot: () => this.inspectPoints.map(p => ({...p})),
+                    restore: state => { this.inspectPoints = state.map(p => ({...p})); setRenderOne(true); },
+                    undo: "Edit wind samples",
+                });
+            }
         } else if (!this.inspect && this._inspectMouseHandler) {
-            document.removeEventListener("mousemove", this._inspectMouseHandler);
-            document.removeEventListener("mousedown", this._inspectClickHandler);
-            document.removeEventListener("mouseup", this._inspectClickHandler);
+            document.removeEventListener("pointermove", this._inspectMouseHandler);
+            this._inspectInteraction?.();
+            this._inspectInteraction = null;
             this._inspectMouseHandler = null;
-            this._inspectClickHandler = null;
         }
 
         if (!this.inspect) {
@@ -724,57 +733,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         }
     }
 
-    // True when the event target sits inside a UI panel (lil-gui, native
-    // form input, button) — clicks there should be handled by the GUI,
-    // never reinterpreted as drop/remove gestures even if their pixel
-    // coords happen to fall inside the mainView rectangle (lil-gui panels
-    // float over the canvas in many layouts).
-    _eventTargetIsGui(e) {
-        const t = e.target;
-        if (!t || typeof t.closest !== "function") return false;
-        return !!t.closest(".lil-gui, .dg, .gui, select, input, textarea, button, label");
-    }
-
-    // mousedown/mouseup pair-detector for click vs drag classification.
-    // We track the down position AND whether shift/alt was held; on up, if
-    // the modifier still matches (or was set on either edge), the delta is
-    // < 5 px, and the event target is in mainView, we treat it as a click.
-    //   shift → add a new point
-    //   alt   → remove the closest dropped point
-    // Larger deltas mean the user was orbiting/panning, so we ignore.
-    _handleInspectClick(e) {
+    // The action is frozen at pointer-down; the router admits only a stationary click.
+    _handleInspectClick(e, action) {
         if (!this.inspect) return;
-        if (e.button !== 0) return;  // only left-button
-        if (this._eventTargetIsGui(e)) {
-            this._inspectMouseDown = null;
-            return;
-        }
-
-        if (e.type === "mousedown") {
-            this._inspectMouseDown = {
-                x: e.clientX, y: e.clientY,
-                shift: e.shiftKey, alt: e.altKey,
-            };
-            return;
-        }
-        // mouseup
-        const down = this._inspectMouseDown;
-        this._inspectMouseDown = null;
-        if (!down) return;
-        const dx = e.clientX - down.x, dy = e.clientY - down.y;
-        if (dx * dx + dy * dy > 25) return;  // > 5 px = drag, not click
-
-        // Require the modifier on both edges OR on mouseup (some users only
-        // press the modifier mid-click). The down state covers users who
-        // release the modifier before mouseup. Either path is intentional.
-        const wantAdd = down.shift || e.shiftKey;
-        const wantDelete = down.alt || e.altKey;
-        if (!wantAdd && !wantDelete) return;
-        // Don't ambiguously do both if the user held both — prefer add,
-        // since destroying state on a stray modifier combo is the worse
-        // failure mode.
-        const action = wantAdd ? "add" : "delete";
-
         const view = ViewMan.get("mainView", false);
         if (!view || !mouseInView(view, e.clientX, e.clientY)) return;
 

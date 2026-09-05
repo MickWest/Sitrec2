@@ -87,6 +87,8 @@ The same presets are in the **View** menu, so you can see which one you are on.
 
 ## Moving the camera
 
+For the complete gesture reference, open **Help → Mouse, touch and pen controls**. Its action table is shared with the input adapters. With the **K** shortcut overlay open, hovering a registered tool also shows its controls.
+
 In the main 3D view:
 
 | Input | Action |
@@ -94,9 +96,10 @@ In the main 3D view:
 | Left drag | Drag the world around (the camera moves) |
 | Right drag | Tilt the viewpoint without moving the camera |
 | Middle drag | Orbit around a point in the world |
-| Mouse wheel | Zoom |
+| Mouse wheel | Move toward or away from the pointer; in PTZ mode, change field of view |
+| `Shift` + wheel | Change field of view |
 | `Shift` + drag | Force rotate |
-| `Cmd` or `Ctrl` + drag | Force pan |
+| `Cmd` or `Ctrl` + drag | Aim the camera without moving it |
 | `-` / `=` | Zoom out / in |
 | Numpad `.` | Reset the camera to its start position |
 | Numpad `1` / `7` / `3` | Snap to front / top / side |

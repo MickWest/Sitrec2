@@ -61,6 +61,7 @@ function behindQuad(occluder, eye, world) {
  * One overlay per 3D view: draws that view's control points and owns dragging in it.
  */
 class CFitHandleOverlay extends CTerrainHandleOverlay {
+    interactionProfile = "fit";
     /** Canvas position of every point in this view, as [{id, color, index, cx, cy}]. */
     projected() {
         return this.projectPoints(this.owner.getPoints());
@@ -82,7 +83,7 @@ class CFitHandleOverlay extends CTerrainHandleOverlay {
         // solid in one and faded in another said the two were different things.
         const alpha = this.owner.onCorrectFrame() ? 1 : OFF_FRAME_ALPHA;
         for (const h of this.projected()) {
-            drawFitHandle(this.ctx, h.cx, h.cy, h.color, String(h.index + 1), alpha);
+            drawFitHandle(this.ctx, h.cx, h.cy, h.color, String(h.index + 1), alpha, this.handleState(h.id));
         }
         // Last, so a video point stays readable where it lands on top of its own ground handle —
         // which is exactly what a well-fitted near landmark looks like from behind the camera.
@@ -124,7 +125,7 @@ class CFitHandleOverlay extends CTerrainHandleOverlay {
         // happens to land on a faded handle still orbits, as it does with the fit switched off.
         if (!this.owner.onCorrectFrame()) {
             this.owner.onWrongFrame();
-            return false;
+            return true;
         }
 
         this.owner.beginUndo();
@@ -178,6 +179,7 @@ export class FitPointHandles3D extends TerrainHandles3D {
         this.onWrongFrame = v.onWrongFrame ?? (() => {});
         this.onBeginEdit = v.onBeginEdit ?? (() => {});
         this.onEndEdit = v.onEndEdit ?? (() => {});
+        this.onRollbackEdit = v.onRollbackEdit ?? (() => {});
         this.enabled = false;
     }
 

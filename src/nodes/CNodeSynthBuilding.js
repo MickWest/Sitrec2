@@ -1,3 +1,4 @@
+import {getInteractionRouter} from "../InteractionRouter";
 // Synthetic 3D Building/Object Node
 // Uses a mesh-based data structure (vertices, edges, faces) for extensibility
 // to arbitrary 3D geometry editing (like SketchUp/Blender)
@@ -28,7 +29,7 @@ import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {screenToNDC} from "../mouseMoveView";
 import {ViewMan} from "../CViewManager";
 import {CustomManager, Globals, guiMenus, markShadowCastersDirty, setRenderOne, Synth3DManager, UndoManager} from "../Globals";
-import {mouseInViewOnly} from "../ViewUtils";
+import {worldUnitsPerPixel, withDisplayedCamera} from "../ViewUtils";
 import {getVisiblePointBelow, patchMaterialForLinearOutput, pointAbove} from "../threeExt";
 import {EventManager} from "../CEventManager";
 import {isInLeftSidebar, isInRightSidebar} from "../PageStructure";
@@ -96,6 +97,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         this.editMode = false;
         this.isDragging = false;
         this.isRotating = false;
+        this.activeView = null;
         this.draggingPoint = null;
         this.draggingVertexIndex = -1;
         this.dragLocalUp = null;
@@ -1143,11 +1145,12 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                     opacity: 0.9,
                     depthTest: true
                 });
-                
+
                 const sphere = new Mesh(geometry, material);
                 sphere.position.copy(vertex.position);
-                sphere.layers.mask = LAYER.MASK_HELPERS;
+                sphere.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 sphere.userData.vertexIndex = idx;
+                sphere.userData.handleRole = 'resize';
                 sphere.userData.isBottomHandle = true;
                 
                 this.group.add(sphere);
@@ -1177,8 +1180,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                 // Orient the disc to align with the plane normal
                 rotationDisc.lookAt(vertex.position.clone().add(planeNormal));
                 
-                rotationDisc.layers.mask = LAYER.MASK_HELPERS;
+                rotationDisc.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 rotationDisc.userData.isRotationHandle = true;
+                rotationDisc.userData.handleRole = 'rotate';
                 rotationDisc.userData.cornerVertexIndex = idx;  // Link to corner vertex
                 
                 this.group.add(rotationDisc);
@@ -1202,11 +1206,12 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                     opacity: 0.9,
                     depthTest: true
                 });
-                
+
                 this.roofCenterHandle = new Mesh(geometry, roofMaterial);
                 this.roofCenterHandle.position.copy(roofCenter);
-                this.roofCenterHandle.layers.mask = LAYER.MASK_HELPERS;
+                this.roofCenterHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 this.roofCenterHandle.userData.isRoofCenter = true;
+                this.roofCenterHandle.userData.handleRole = 'altitude';
                 
                 this.group.add(this.roofCenterHandle);
                 this.controlPoints.push(this.roofCenterHandle);
@@ -1225,11 +1230,12 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                     opacity: 0.9,
                     depthTest: true
                 });
-                
+
                 this.rooflineHandle = new Mesh(geometry, rooflineMaterial);
                 this.rooflineHandle.position.copy(roof1.position);
-                this.rooflineHandle.layers.mask = LAYER.MASK_HELPERS;
+                this.rooflineHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 this.rooflineHandle.userData.isRoofline = true;
+                this.rooflineHandle.userData.handleRole = 'altitude';
                 this.rooflineHandle.userData.vertexIndex = 8;
                 
                 this.group.add(this.rooflineHandle);
@@ -1255,39 +1261,14 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         if (!this.editMode || !view || !view.pixelsToMeters) {
             return;
         }
-        
-        const handlePixelSize = 20; // Target size in screen pixels for visible handles
-        const rotationDiscPixelSize = 60; // Larger size for invisible rotation discs (easier to hit)
-        
-        // Update sphere handles (bottom corner handles and roof handles)
-        this.controlPoints.forEach(handle => {
-            if (handle && handle.geometry && handle.geometry.type === 'SphereGeometry') {
-                const scale = view.pixelsToMeters(handle.position, handlePixelSize);
-                // SphereGeometry with radius 3m, so scale to get handlePixelSize on screen
-                handle.scale.set(scale / 3, scale / 3, scale / 3);
-            }
-        });
-        
-        // Update roof center handle (also a sphere)
-        if (this.roofCenterHandle) {
-            const scale = view.pixelsToMeters(this.roofCenterHandle.position, handlePixelSize);
-            this.roofCenterHandle.scale.set(scale / 3, scale / 3, scale / 3);
-        }
-        
-        // Update roofline handle (also a sphere)
-        if (this.rooflineHandle) {
-            const scale = view.pixelsToMeters(this.rooflineHandle.position, handlePixelSize);
-            this.rooflineHandle.scale.set(scale / 3, scale / 3, scale / 3);
-        }
-        
-        // Update rotation disc handles with LARGER size since they're invisible
-        // The larger size makes them much easier to interact with for rotation
-        this.rotationHandles.forEach(handle => {
-            if (handle && handle.geometry && handle.geometry.type === 'CircleGeometry') {
-                const scale = view.pixelsToMeters(handle.position, rotationDiscPixelSize);
-                // CircleGeometry with radius 6m, so scale to get rotationDiscPixelSize on screen
-                handle.scale.set(scale / 6, scale / 6, scale / 6);
-            }
+        withDisplayedCamera(view, () => {
+            const scaleHandle = (handle, pixels) => {
+                const radius = worldUnitsPerPixel(view, handle.getWorldPosition(new Vector3())) * pixels;
+                handle.scale.setScalar(radius / (handle.userData.handleRadius ?? handle.geometry.parameters.radius ?? handle.geometry.parameters.outerRadius));
+            };
+            // Roof handles are included in controlPoints.
+            this.controlPoints.forEach(handle => scaleHandle(handle, 20));
+            this.rotationHandles.forEach(handle => scaleHandle(handle, 60));
         });
     }
     
@@ -1295,6 +1276,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
      * Set edit mode on/off
      */
     setEditMode(enable) {
+        if (!enable) getInteractionRouter()?.cancelOwner(this);
         if (this.editMode === enable) return;
 
         this.editMode = enable;
@@ -1586,7 +1568,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
      * Duplicate this building and return the copy
      * @returns {CNodeSynthBuilding} The duplicated building
      */
-    duplicate() {
+    duplicate(recordUndo = true) {
         // Serialize the current building
         const serialized = this.serialize();
         
@@ -1617,7 +1599,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         const duplicate = Synth3DManager.addBuilding(buildingData);
         
         // Add undo action for duplication
-        if (UndoManager && duplicate) {
+        if (recordUndo && UndoManager && duplicate) {
             const duplicateID = duplicate.buildingID;
             
             UndoManager.add({
@@ -1785,11 +1767,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
      * Dispose of resources
      */
     dispose() {
+        this.unregisterInteraction?.();
         const hadCaster = this.solidMesh?.castShadow === true;
         // Remove event listeners
-        document.removeEventListener('pointerdown', this.onPointerDownBound);
-        document.removeEventListener('pointermove', this.onPointerMoveBound);
-        document.removeEventListener('pointerup', this.onPointerUpBound);
         
         // Remove control points
         this.controlPoints.forEach(cp => {

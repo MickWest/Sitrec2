@@ -9,7 +9,9 @@
   "scripts": {
     "start": "node mcp-server.js",
     "build": "node build-dist.mjs",
-    "test": "node --test tests/*.test.js"
+    "build:dev": "node build-dist.mjs --dev",
+    "test": "node --test tests/*.test.js",
+    "test:browser": "node --test tests_browser/*.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",
