@@ -28,6 +28,8 @@ import {addOptionToGUIMenu, removeOptionFromGUIMenu} from "./lil-gui-extras";
 import {showError} from "./showError";
 import {t} from "./i18n";
 import {abFrameRange, buildAnalysisDataset, trimHeldFrames, unpackTrackToECEF} from "./TraverseAnalysisData";
+import {captureInputFiltering, captureAnalysisFiltering, filteringSummaryHTML} from "./AnalysisFiltering";
+import {metricSmoothingWindow} from "./SmoothingPolicy";
 import {getPointBelow, calculateAltitude} from "./threeExt";
 // The fit battery moved to TraverseBattery.js, and with it every solver this
 // file used to call directly. What remains here are the ones the REPORT and the
@@ -1786,6 +1788,13 @@ function analysisFingerprint(losNode, scalars, frame0 = 0, frame1 = (losNode.fra
 // to decide a cache hit at Analyze time. Applying an exact snapshot is output
 // selection only: it must not change this key or feed an answer back into the
 // next analysis assumptions.
+function captureLiveInputFiltering(losNode, range) {
+    const roots = [{node: losNode, role: "Sightlines"}];
+    const truth = resolveTruthTrack();
+    if (truth) roots.push({node: truth.trackNode, role: `Reference “${truth.label}”`});
+    return captureInputFiltering(roots, {fps: Sit.fps / (Sit.simSpeed ?? 1), ...range});
+}
+
 function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
     const analysisFrames = analysisFrameRange(losNode);
     const windNode = NodeMan.get("targetWind", false) || null;
@@ -1850,6 +1859,9 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
         }
     }
     return analysisFingerprint(losNode, [
+        // Processing metadata can change even on a straight/constant track
+        // whose filtered positions do not. Do not reuse a differently labelled run.
+        JSON.stringify(captureLiveInputFiltering(losNode, analysisFrames)),
         analysisFrames.frame0, analysisFrames.frame1,
         analyzeTweaks.windMode,
         ...windSeries,
@@ -2317,6 +2329,14 @@ export async function runTraverseAnalysis() {
         overlay.setStatus("Building LOS dataset...");
         await yieldToDOM();
         const {dataset, originLat, originLon} = buildAnalysisDataset(losNode, analysisWindNode, anchorDist, analysisFrames);
+        const inputFiltering = captureLiveInputFiltering(losNode, analysisFrames);
+        const outputFiltering = captureInputFiltering([
+            {node: NodeMan.get("traverseSmoothedTrack", false), role: "Live traverse output", shallow: true},
+        ], {fps: dataset.fps, ...analysisFrames});
+        const kalmanFiltering = {
+            processNoise: Math.pow(10, NodeMan.get("kalmanProcessNoise", false)?.v0 ?? -4),
+            measurementNoise: Math.pow(10, NodeMan.get("kalmanMeasurementNoise", false)?.v0 ?? 0),
+        };
         // Terrain tiles can finish loading WHILE the analysis runs. The elevation
         // that actually feeds the fits is sampled once at the start, so a later
         // change means the report's ground samples and the fits are marginally
@@ -2404,6 +2424,7 @@ export async function runTraverseAnalysis() {
         ({fitRangeMin, fitRangeMax, caRangeMin, caRangeMax,
             plausRangeMin, plausRangeMax} = battery);
         provenance = battery.provenance;
+        kalmanFiltering.seedSource = battery.seedSource;
 
         // A non-airborne fit includes local ground height in its optimizer
         // cost. Re-run only if that actual sample improved/changed—not because
@@ -2560,6 +2581,8 @@ export async function runTraverseAnalysis() {
         // provenance was resolved (and possibly measured-substituted) up front,
         // then annotated with the sensor-baseline stats after the dataset build.
         const manifest = Object.freeze({
+            filtering: captureAnalysisFiltering(dataset, hypotheses, inputFiltering, outputFiltering,
+                {...kalmanFiltering, referenceCompared: !!truth?.usable}),
             inputFingerprint: `0x${fp.toString(16).padStart(8, "0")}`,
             situation: Sit.name ?? "unnamed sitch",
             frames: {start: dataset.frame0, end: dataset.frame1, count: dataset.n},
@@ -3024,7 +3047,8 @@ function hypothesisStats(h, dataset = null) {
             `${kt1(m.airSpeed.mean)} / ${kt1(m.airSpeed.max)} kt`],
         ["Altitude (geodetic)", `${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft`],
         ["Climb", `${fpm0(m.verticalSpeed.mean)} fpm`],
-        ["Max kinematic accel", `${m.gLoad.max.toFixed(2)} g`],
+        [dataset ? `Max kinematic accel (${(4 * metricSmoothingWindow(dataset.n, dataset.fps) / dataset.fps).toFixed(2)}\u00a0s)`
+            : "Max kinematic accel (filtered)", `${m.gLoad.max.toFixed(2)} g`],
         [errLabel, losErr],
     ];
     // HOW ORDINARY IS THIS? Disclosure only — it does not move the ranking (see
@@ -4571,6 +4595,22 @@ function showResultGallery(results, uiState = null) {
         "within its own category; open a tile for the exact rank basis. Repeated polynomial-order sweep fits sit " +
         "below the Extras separator at the end — only each strategy's best-ranked order appears in the main list.";
     tilesHead.appendChild(explain);
+
+    const filtering = document.createElement("details");
+    filtering.style.cssText = "margin:10px 0;padding:10px;border:1px solid #596575;border-radius:6px;" +
+        "color:#d8dee7;background:#14191f;font:13px/1.45 system-ui,sans-serif;";
+    const filterTitle = document.createElement("summary");
+    filterTitle.style.cssText = "cursor:pointer;font-weight:600;";
+    const capturedFilters = results.manifest?.filtering;
+    const filterCount = capturedFilters?.rows.filter(row => row.status === "active").length;
+    filterTitle.textContent = capturedFilters
+        ? `Filtering and interpolation — ${filterCount} active stages; show effective durations`
+        : "Filtering and interpolation — metadata unavailable for this run";
+    filtering.appendChild(filterTitle);
+    const filterBody = document.createElement("div");
+    filterBody.innerHTML = filteringSummaryHTML(capturedFilters);
+    filtering.appendChild(filterBody);
+    tilesHead.appendChild(filtering);
 
     // Truth-mode banner: ordering is by separation from the reference track
     if (results.truth) {
@@ -6921,6 +6961,11 @@ html.light #theme-toggle { background: rgba(255,255,255,0.95); color: #23262a;
 
 ${executiveHTML}
 
+<section>
+    <h2>Filtering and interpolation</h2>
+    ${filteringSummaryHTML(manifest.filtering)}
+</section>
+
 ${provenance?.circular ? `<div class="warning"><strong>Constructed LOS — validation only.</strong> ` +
     `${escapeHtml(provenance.reason)} Fits below test internal consistency, not independent object inference.</div>` : ""}
 
@@ -7089,11 +7134,11 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
     <p><strong>Constant-air-speed sweep.</strong> Solves a smoothed spline-QP trajectory over a grid of start
     ranges and air speeds, scoring each track by flight smoothness and speed fidelity. Applying a card installs
     that exact solved track as an analysis-result snapshot; it does not substitute the legacy sequential ray walker.</p>
-    <p><strong>Plausible traverse &amp; range profile.</strong> For a given start range, solves for the
-    smoothest trajectory that stays exactly on every line of sight, as a B-spline in range-along-ray,
-    minimizing squared acceleration with a soft airspeed target (iteratively reweighted least squares).
-    Swept over range, this shows how much maneuvering each assumed distance <em>requires</em> — a lower
-    bound no real object at that range can beat.</p>
+    <p><strong>Plausible traverse &amp; range profile.</strong> For a given start range, solves for
+    an acceleration-minimizing B-spline in range-along-ray with a soft airspeed target
+    (iteratively reweighted least squares). Output smoothing can move the final path off the sightlines;
+    its residual is reported. The range sweep compares maneuvering under these model and filtering
+    assumptions, rather than establishing a universal physical lower bound.</p>
     <p><strong>Aircraft fit.</strong> Fits a simple fixed-wing model — constant horizontal airspeed through the air
     mass, linearly varying turn rate, constant climb, positions advected by the wind — by differential
     evolution plus pattern-search polish. The cost blends LOS angular error with loose penalties for

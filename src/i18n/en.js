@@ -2268,7 +2268,7 @@ const en = {
         },
         smoothingMethod: {
             label: "Smoothing Method",
-            tooltip: "Algorithm used to smooth the camera track data",
+            tooltip: "Interpolation or filtering applied to this track. None disables this stage only; camera, angle, and traverse filters are separate. Active processing is listed in the traverse analysis filtering summary.",
         },
         showInLookView: {
             label: "Show in look view",

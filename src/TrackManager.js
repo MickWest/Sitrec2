@@ -307,6 +307,7 @@ class CMetaTrack {
 
         // a bit messy, should keep track of nodes some other way
         unlinkManagedNode(this.trackID + "_smoothValue");
+        unlinkManagedNode(this.trackID + "_anglesSmoothValue");
         unlinkManagedNode(this.trackID + "_tensionValue");
         unlinkManagedNode(this.trackID + "_intervalsValue");
         unlinkManagedNode(this.trackID + "_polyOrderValue");
@@ -2088,9 +2089,18 @@ class CTrackManager extends CManager {
             // overrides it via CTrackFile.anglesSmoothing.
             const anglesSmooth = roleFile?.anglesSmoothing
                 ? roleFile.anglesSmoothing(trackOb.trackIndex) : 120;
+            const anglesWindow = new CNodeGUIValue({
+                id: trackID + "_anglesSmoothValue",
+                value: anglesSmooth,
+                start: 0, end: 1000, step: 1,
+                desc: "Angle Smooth Window (frames)",
+                tooltip: "Average recorded platform and sensor angles before constructing sightlines. " +
+                    "0 disables the filter. This changes the evidence used by traverse analysis, " +
+                    "independently of position smoothing. Effective duration is shown in the analysis filtering summary.",
+            }, trackOb.guiFolder);
             let data = {
                 id: trackID + "_LOS",
-                smooth: anglesSmooth, // maybe GUI this?
+                smooth: anglesWindow,
             }
             let anglesNode = makeLOSNodeFromTrackAngles(trackID, data);
             trackOb.anglesNode = anglesNode;

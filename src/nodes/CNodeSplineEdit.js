@@ -36,6 +36,7 @@ export class CNodeSplineEditor extends CNodeTrack {
         
         // Store the curve type
         this.curveType = v.type ? v.type.toLowerCase() : 'chordal';
+        this.smoothingKind = "trackInterpolation";
 
         // Human-readable name, used for the Export Spline filename and the
         // "name" field in the exported interchange file. TrackManager sets

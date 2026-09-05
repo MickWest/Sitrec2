@@ -585,6 +585,7 @@ export async function runTraverseBattery({
     // different basin from a different seed; the free quadcopter is deliberately
     // NOT seeded (the unconstrained, anomaly-reachable envelope fit).
     let seedTrack = null;
+    let seedSource = null;
     try {
         // The kalmanProcessNoise / kalmanMeasurementNoise GUI sliders hold
         // log10 EXPONENTS, not variances — the live Kalman node converts them
@@ -600,6 +601,7 @@ export async function runTraverseBattery({
         // physical fits with NaN initial parameters.
         if (ks && ks.positions && allFinite(ks.positions)) {
             seedTrack = Float64Array.from(ks.positions);
+            seedSource = "kalman";
         } else if (ks && ks.positions) {
             console.warn("Kalman seed produced a non-finite track; "
                 + "falling back to the least-manoeuvring track.");
@@ -611,7 +613,10 @@ export async function runTraverseBattery({
     }
     // Fall back to the least-manoeuvring plausible track only if the smoother
     // is unavailable.
-    if (!seedTrack && plausible && plausible.track) seedTrack = plausible.track;
+    if (!seedTrack && plausible && plausible.track) {
+        seedTrack = plausible.track;
+        seedSource = "plausible";
+    }
 
     await at(0.82, 0.05, "Fitting balloon model (free wind)...")(0);
     let lantern = null;
@@ -889,7 +894,7 @@ export async function runTraverseBattery({
 
     return {
         sweep, resolvedRanges, fastProfile, slowProfile, slowOpts,
-        aircraft, ca, plausible, seedTrack,
+        aircraft, ca, plausible, seedTrack, seedSource,
         lantern, lanternMeasured, quad, droneCtl,
         families, mcSweep, satellite,
         hypotheses, executiveAssessment,

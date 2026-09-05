@@ -383,6 +383,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
             .tooltip(t("trackingOverlay.limitAB.tooltip"))
 
         this.curveType = "Spline2";
+        this.smoothingKind = "manualTracking";
         this.manualTrackingFolder.add(this, "curveType", ["Spline", "Spline2", "Linear", "Perspective"]).name(t("trackingOverlay.curveType.label")).listen().onChange(() => {
             if (this.curveType === "Perspective") {
                 const traverseSelect = NodeMan.get("LOSTraverseSelectTrack", false);

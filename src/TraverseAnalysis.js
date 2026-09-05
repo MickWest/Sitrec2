@@ -38,6 +38,7 @@
 
 import {differentialEvolution, mulberry32, patternSearchPolish} from "./DifferentialEvolution";
 import {assessBoundPins} from "./BoundedFit";
+import {metricSmoothingWindow, trajectorySmoothingSettings} from "./SmoothingPolicy";
 
 export const KNOTS_TO_MS = 0.514444;
 export const METERS_PER_NM = 1852;
@@ -72,8 +73,6 @@ export function trackMetrics(dataset, track, options = {}) {
     // fixed 15-frame window made the same continuous trajectory produce
     // different g/turn metrics (and therefore a different rank) at 15, 30 and
     // 60 fps.  Preserve the historical ~0.5 s window at 30 fps.
-    const smoothFrames = options.smoothFrames
-        ?? Math.max(3, Math.round((options.smoothSeconds ?? 0.5) * fps));
 
     const air = new Float64Array(n * 3);
     let cwx = 0, cwy = 0, cwz = 0;
@@ -90,7 +89,7 @@ export function trackMetrics(dataset, track, options = {}) {
     // violent trajectory "passed the broad screen" at 0 kt / 0.00 g. Short
     // windows now differentiate over the longest window that still leaves
     // interior samples.
-    const h = Math.max(1, Math.min(Math.floor(smoothFrames / 2), Math.floor((n - 5) / 2)));
+    const h = metricSmoothingWindow(n, fps, options);
     const vel = (arr, f) => {
         const f0 = Math.max(0, f - h), f1 = Math.min(n - 1, f + h);
         const dt = (f1 - f0) / fps;
@@ -660,8 +659,7 @@ export function fitConstAltitude(dataset, options = {}) {
     let zA = altAt(rangeMin), zB = altAt(rangeMax);
     if (zA > zB) { const t = zA; zA = zB; zB = t; }
 
-    const smoothK = Math.max(6, Math.min(34, Math.round(n / (6 * fps)) + 4));
-    const curvature = 0.02 * n / smoothK;
+    const {K: smoothK, curvature} = trajectorySmoothingSettings(n, fps);
     const evalZ = (z) => {
         const {track, badFrames} = traverseConstAltitude(dataset, z);
         const smooth = smoothTrackBspline(track, n, smoothK, curvature);
@@ -986,8 +984,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
     const spdFidSigma = options.spdFidSigma ?? 10 * KNOTS_TO_MS;
     const speedSigma = 250 * KNOTS_TO_MS;
     const {ds} = downsampleDataset(dataset, options.targetN ?? 2500);
-    const smoothK = Math.max(6, Math.min(34, Math.round(ds.n / (6 * ds.fps)) + 4));
-    const curvature = 0.02 * ds.n / smoothK;
+    const {K: smoothK, curvature} = trajectorySmoothingSettings(ds.n, ds.fps);
     const results = [];
 
     const sweepRanges = async (rangeList, progressBase, progressSpan) => {
@@ -1149,8 +1146,8 @@ export function constAirSpeedTrack(dataset, startDist, speedMs, options = {}) {
         raw[f * 3 + 1] = S[f * 3 + 1] + D[f * 3 + 1] * L;
         raw[f * 3 + 2] = S[f * 3 + 2] + D[f * 3 + 2] * L;
     }
-    const smoothK = Math.max(6, Math.min(34, Math.round(n / (6 * fps)) + 4));
-    const track = smoothTrackBspline(raw, n, smoothK, 0.02 * n / smoothK);
+    const {K: smoothK, curvature} = trajectorySmoothingSettings(n, fps);
+    const track = smoothTrackBspline(raw, n, smoothK, curvature);
     return {track, badFrames: 0};
 }
 
@@ -1462,9 +1459,10 @@ export function traversePlausible(dataset, startDist, options = {}) {
     // Optional post-smoothing: LIGHT (control point every smoothSpacingSec
     // seconds) — sheds frame-scale LOS jitter, keeps real loops visible.
     if (options.smoothOutput) {
-        const spacing = options.smoothSpacingSec ?? 2;
-        const smoothK = Math.max(6, Math.min(400, options.smoothK ?? (Math.round(n / (fps * spacing)) + 4)));
-        const curvature = options.smoothCurvature ?? (0.02 * n / smoothK);
+        const {K: smoothK, curvature} = trajectorySmoothingSettings(n, fps, {
+            spacing: options.smoothSpacingSec ?? 2, maxK: 400,
+            K: options.smoothK, curvature: options.smoothCurvature,
+        });
         track = smoothTrackBspline(track, n, smoothK, curvature);
         for (let f = 0; f < n; f++) {
             lam[f] = Math.hypot(track[f * 3] - S[f * 3], track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
@@ -1692,8 +1690,9 @@ export function traverseMinSpeed(dataset, options = {}) {
     // few hundredths of a degree, but smooth enough that the peak g-load sits
     // near a real drifting object's (a few tenths of a g, mostly residual sensor
     // jitter) rather than the tens-of-kt / several-g an exactly-on-ray path shows.
-    const smoothK = Math.max(6, Math.min(34, options.smoothK ?? (Math.round(n / (6 * fps)) + 4)));
-    const curvature = options.smoothCurvature ?? (0.02 * n / smoothK);
+    const {K: smoothK, curvature} = trajectorySmoothingSettings(n, fps, {
+        K: options.smoothK, curvature: options.smoothCurvature,
+    });
     const track = smoothTrackBspline(raw, n, smoothK, curvature);
     // report the smoothed track's actual slant range along each sightline
     for (let f = 0; f < n; f++) {

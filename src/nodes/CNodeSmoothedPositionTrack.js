@@ -1,7 +1,7 @@
 // given an array of "positions" smooth the x,y,and z tracks by moving average
 // or other techniques
 // optionally copy any other data (like color, fov, etc) to the new array
-import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {GlobalDateTimeNode, guiMenus, markSitchDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {RollingAveragePolyEdge, SavitzkyGolay, SlidingAverage} from "../smoothing";
 import {CatmullRomCurve3} from "three";
 import {CCachedCurveSampler} from "../CachedCurveSampler";
@@ -15,6 +15,8 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
     constructor(v) {
         super(v)
         this.method = v.method || "moving"
+        this.addSimpleSerial("method");
+        this.smoothingKind = "position";
         this.isDynamicSmoothing = v.isDynamicSmoothing ?? false
         this.input("source") // source array node
 
@@ -91,7 +93,20 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
     _onMethodChanged() {
         this._updateParameterVisibility();
         this.recalculateCascade();
+        markSitchDirty();
         setRenderOne(true);
+    }
+
+    modDeserialize(v) {
+        const previousMethod = this.method;
+        super.modDeserialize(v);
+        if (!["none", "moving", "movingPolyEdge", "sliding", "savgol", "spline", "catmull"].includes(this.method)) {
+            this.method = previousMethod;
+        }
+        this.smoothingMethodController?.updateDisplay();
+        this._updateParameterVisibility();
+        // Other input controls may be restored later in the same mods pass.
+        this._needsRecalculate = true;
     }
 
     _updateParameterVisibility() {
@@ -130,7 +145,11 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
         // switching camera tracks turns this on/off dynamically.
         const resolved = (typeof this.in.source.getObject === 'function')
             ? this.in.source.getObject() : this.in.source;
-        if (resolved?.lazyInterpolated === true) {
+        // A reviewed analysis snapshot is already the final sampled trajectory.
+        // Preserve it through output smoothers, including on saved-sitch reload.
+        this.preservesAnalysisSnapshot = resolved?.isAnalysisSnapshot === true
+            || resolved?.preservesAnalysisSnapshot === true;
+        if (resolved?.lazyInterpolated === true || this.preservesAnalysisSnapshot) {
             this._passthrough = true;
             // Propagate the lazy flag so a smoother-of-this-smoother (e.g. the
             // ObjectTilt orientation smoothers chained off cameraTrackSwitchSmooth)
