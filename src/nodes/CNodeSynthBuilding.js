@@ -28,7 +28,7 @@ import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {screenToNDC} from "../mouseMoveView";
 import {ViewMan} from "../CViewManager";
 import {CustomManager, Globals, guiMenus, markShadowCastersDirty, setRenderOne, Synth3DManager, UndoManager} from "../Globals";
-import {renderedRect, withDisplayedCamera} from "../ViewUtils";
+import {worldUnitsPerPixel, withDisplayedCamera} from "../ViewUtils";
 import {getVisiblePointBelow, patchMaterialForLinearOutput, pointAbove} from "../threeExt";
 import {EventManager} from "../CEventManager";
 import {isInLeftSidebar, isInRightSidebar} from "../PageStructure";
@@ -1256,15 +1256,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         if (!this.editMode || !view || !view.pixelsToMeters) {
             return;
         }
-        withDisplayedCamera(view, camera => {
-            const height = renderedRect(view, view.widthPx, view.heightPx).h;
-            if (!(height > 0)) return;
-            // Use the displayed projection, including zoom and y-compression.
-            // The base camera FOV alone gives a different size in the look view.
-            const pixelsPerMeterAtUnitDepth = height * Math.abs(camera.projectionMatrix.elements[5]) / 2;
+        withDisplayedCamera(view, () => {
             const scaleHandle = (handle, pixels) => {
-                const depth = Math.abs(handle.position.clone().applyMatrix4(camera.matrixWorldInverse).z);
-                const radius = depth * pixels / pixelsPerMeterAtUnitDepth;
+                const radius = worldUnitsPerPixel(view, handle.getWorldPosition(new Vector3())) * pixels;
                 handle.scale.setScalar(radius / handle.geometry.parameters.radius);
             };
             // Roof handles are included in controlPoints.

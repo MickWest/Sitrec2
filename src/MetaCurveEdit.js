@@ -972,6 +972,7 @@ class MetaBezierCurveEditor {
 
 
     mouseDown(e) {
+        if (e.button !== 0 && e.button !== 2) return;
 
         // we use shift key to drag the window, so ignore mouse down if shift pressed
      //   if (e.shiftKey) return;
@@ -1000,6 +1001,7 @@ class MetaBezierCurveEditor {
 
                     e.preventDefault();
                     e.stopPropagation();
+                    return;
                 }
 //                return false;
 

@@ -414,6 +414,7 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
     }
     
     onMouseDown(e, mouseX, mouseY) {
+        if (e.button !== 0) return false;
         if (!this.editing) return false;
         
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);

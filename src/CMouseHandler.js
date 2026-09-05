@@ -27,9 +27,10 @@ export class CMouseHandler {
         this.view.canvas.addEventListener('pointerdown', e => this.handleMouseDown(e));
         this.view.canvas.addEventListener('pointerup', e => this.handleMouseUp(e));
         this.view.canvas.addEventListener('pointercancel', e => this.handlePointerCancel(e));
+        this.view.canvas.addEventListener('lostpointercapture', e => this.handlePointerCancel(e));
         this.view.canvas.addEventListener('dblclick', e => this.handleMouseDblClick(e));
         this.view.canvas.addEventListener('contextmenu', e => this.handleContextMenu(e));
-        this.view.canvas.addEventListener('mouseLeave', e => this.handleMouseLeave(e));
+        this.view.canvas.addEventListener('mouseleave', e => this.handleMouseLeave(e));
     }
 
     newPosition(e, anchor) {
@@ -59,6 +60,7 @@ export class CMouseHandler {
     }
 
     handleMouseMove(e) {
+        if (this.dragging && e.buttons === 0) this.handlePointerCancel(e);
 //        console.log("Move, dragging = "+this.dragging)
 //        e.preventDefault();
         this.newPosition(e)
@@ -170,6 +172,8 @@ export class CMouseHandler {
 
     handleMouseUp(e) {
 //        e.preventDefault();
+        const wasDragging = this.dragging;
+        this.dragging = false;
         this.view.canvas.releasePointerCapture(e.pointerId)
 
         // Remove pointer from active set
@@ -194,7 +198,7 @@ export class CMouseHandler {
         }
 
         // Don't trigger up handler if long press was triggered
-        if (!this.isLongPressTriggered) {
+        if (wasDragging && !this.isLongPressTriggered) {
             if (this.handlers.up) this.handlers.up(e)
         } else {
             // Reset flag
@@ -205,11 +209,16 @@ export class CMouseHandler {
 
     handlePointerCancel(e) {
         // Handle pointer interruptions (e.g., browser gestures, context menus)
-        this.view.canvas.releasePointerCapture(e.pointerId);
+        const wasDragging = this.dragging;
+        this.dragging = false;
+        if (this.view.canvas.hasPointerCapture?.(e.pointerId)) {
+            this.view.canvas.releasePointerCapture(e.pointerId);
+        }
         this.activePointers.delete(e.pointerId);
         this.clearLongPressTimer();
-        this.dragging = false;
         this.isLongPressTriggered = false;
+        this._contextMenuDownPos = null;
+        if (wasDragging) (this.handlers.cancel ?? this.handlers.up)?.(e);
     }
 
     handleMouseDblClick(e) {

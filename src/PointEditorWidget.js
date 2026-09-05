@@ -14,8 +14,7 @@ import {
 } from "three";
 import * as LAYER from "./LayerMasks";
 import {getLocalUpVector} from "./SphericalMath";
-import {ViewMan} from "./CViewManager";
-import {mouseInViewOnly, mouseToViewNormalized} from "./ViewUtils";
+import {getInteractiveViewAt, isViewDisplayed, mouseToNDC, setRaycasterFromView} from "./ViewUtils";
 import {adjustHeightAboveGround} from "./threeExt";
 
 // Screen size the handles are drawn at, in pixels (updateHandleScales applies these).
@@ -255,16 +254,10 @@ export class PointEditorWidget extends EventDispatcher {
         if (this.isPointerDown && this.activeView) {
             view = this.activeView;
         } else {
-            for (const id of ["mainView", "lookView"]) {
-                const v = ViewMan.get(id, false);
-                if (v && mouseInViewOnly(v, event.clientX, event.clientY)) {
-                    view = v;
-                    break;
-                }
-            }
+            view = getInteractiveViewAt(event.clientX, event.clientY);
         }
 
-        if (!view) {
+        if (!view || !isViewDisplayed(view)) {
             return false;
         }
 
@@ -276,10 +269,8 @@ export class PointEditorWidget extends EventDispatcher {
         this.updateHandleScales(view);
         this.group.updateMatrixWorld(true);
 
-        const [px, py] = mouseToViewNormalized(view, event.clientX, event.clientY);
-        this.pointer.x = px;
-        this.pointer.y = py;
-        this.raycaster.setFromCamera(this.pointer, view.camera);
+        this.pointer.copy(mouseToNDC(view, event.clientX, event.clientY));
+        if (!setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY)) return false;
 
         // Remember which view this press belongs to so subsequent move events stay anchored.
         // (isPointerDown is set AFTER this call in onPointerDown, so on the very first call

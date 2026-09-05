@@ -8,7 +8,7 @@ import {CNodeGroundOverlay} from "./nodes/CNodeGroundOverlay";
 import {CNodeGroundGrid} from "./nodes/CNodeGroundGrid";
 import {Globals, NodeMan, setRenderOne, Units} from "./Globals";
 import {ViewMan} from "./CViewManager";
-import {screenToNDC} from "./mouseMoveView";
+import {getInteractiveViewAt, setRaycasterFromView} from "./ViewUtils";
 import {V3} from "./threeUtils";
 import {earthCenterECEF, getLocalUpVector} from "./SphericalMath";
 import {Sphere, Vector3} from "three";
@@ -162,22 +162,19 @@ export class C3DSynthManager extends CManager {
      * Get ground intersection point from mouse position
      */
     getGroundPoint(view, mouseX, mouseY) {
-        const mouseRay = screenToNDC(view, mouseX, mouseY);
-        view.raycaster.setFromCamera(mouseRay, view.camera);
-        return raycastLocalGround(view.raycaster)?.point ?? null;
+        if (!setRaycasterFromView(view.raycaster, view, mouseX, mouseY)) return null;
+        return raycastLocalGround(view.raycaster, view.camera)?.point ?? null;
     }
     
     /**
      * Check if mouse is over a building (for context menu)
      */
     getBuildingAtMouse(mouseX, mouseY) {
-        const view = ViewMan.get("mainView");
+        const view = getInteractiveViewAt(mouseX, mouseY);
         if (!view) return null;
         
         // Convert screen coordinates to NDC for raycasting
-        const mouseRay = screenToNDC(view, mouseX, mouseY);
-
-        view.raycaster.setFromCamera(mouseRay, view.camera);
+        setRaycasterFromView(view.raycaster, view, mouseX, mouseY);
         view.raycaster.layers.mask = view.camera.layers.mask; // Use camera's layer mask
         
         // Check intersection with building meshes

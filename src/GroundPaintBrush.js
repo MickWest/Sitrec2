@@ -38,7 +38,7 @@ import {
     Vector3,
 } from "three";
 import {ViewMan} from "./CViewManager";
-import {mouseInViewOnly} from "./ViewUtils";
+import {getInteractiveViewAt, setRaycasterFromView} from "./ViewUtils";
 import {GlobalScene} from "./LocalFrame";
 import {setRenderOne} from "./Globals";
 import {getLocalUpVector} from "./SphericalMath";
@@ -120,31 +120,10 @@ export class GroundPaintBrush {
     // under the cursor. Returns a world-space Vector3 or null. See the file header
     // for why the projection is bracketed with prepareCameraForLOD.
     pick(screenX, screenY) {
-        let best = null, bestZ = -Infinity, bestRect = null;
-        for (const id of BRUSH_VIEW_IDS) {
-            const view = ViewMan.get(id, false);
-            if (!view || !view.camera || !view._effectivelyVisible || !view.canvas) continue;
-            if (typeof view.prepareCameraForLOD !== "function") continue;
-            if (!mouseInViewOnly(view, screenX, screenY)) continue;
-            const rect = view.canvas.getBoundingClientRect();
-            if (rect.width <= 0 || rect.height <= 0) continue;
-            if (screenX < rect.left || screenX > rect.right || screenY < rect.top || screenY > rect.bottom) continue;
-            const z = view.zIndex || 0;
-            if (z > bestZ) { bestZ = z; best = view; bestRect = rect; }
-        }
-        if (!best) return null;
-
-        const cam = best.camera;
-        const ndcX = ((screenX - bestRect.left) / bestRect.width) * 2 - 1;
-        const ndcY = -((screenY - bestRect.top) / bestRect.height) * 2 + 1;
-
-        const lodActive = best._lodSavedZoom !== undefined;
-        if (!lodActive) best.prepareCameraForLOD();
-        cam.updateMatrixWorld();
-        const ray = this.raycaster.ray;
-        ray.origin.setFromMatrixPosition(cam.matrixWorld);
-        ray.direction.set(ndcX, ndcY, 0.5).unproject(cam).sub(ray.origin).normalize();
-        if (!lodActive) best.restoreCameraAfterLOD();
+        const view = getInteractiveViewAt(screenX, screenY, BRUSH_VIEW_IDS);
+        if (!view) return null;
+        const cam = view.camera;
+        if (!setRaycasterFromView(this.raycaster, view, screenX, screenY)) return null;
 
         this.raycaster.camera = cam;
         // Both the 3D-tile meshes and the terrain tiles live on the MAIN/LOOK

@@ -575,7 +575,7 @@ export class CNodeImageAnalysis extends CNodeImageView {
 
     onMouseDown(e,mouseX, mouseY) {
 //        console.log ("CImageView onMouseDown "+mouseX+","+mouseY)
-        this.region.onMouseDown(this, e,mouseX,mouseY)
+        return this.region.onMouseDown(this, e,mouseX,mouseY)
     }
 
 

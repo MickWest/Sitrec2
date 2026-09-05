@@ -1,11 +1,14 @@
 /** @jest-environment jsdom */
 
 import {beforeEach, expect, jest, test} from "@jest/globals";
-import {BoxGeometry, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Raycaster, Vector2, Vector3} from "three";
+import {BoxGeometry, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Raycaster, SphereGeometry, Vector2, Vector3} from "three";
 import {CNodeSynthBuilding} from "../src/nodes/CNodeSynthBuilding";
+import {CNodeSynthClouds} from "../src/nodes/CNodeSynthClouds";
+import {CNodeFloodSim} from "../src/nodes/CNodeFloodSim";
+import {eventMethods as groundOverlayEvents} from "../src/nodes/CNodeGroundOverlayEvents";
 import {ViewMan} from "../src/CViewManager";
 import {MASK_HELPERS, MASK_LOOKRENDER, MASK_MAINRENDER} from "../src/LayerMasks";
-import {withDisplayedCamera} from "../src/ViewUtils";
+import {withDisplayedCamera, worldUnitsPerPixel} from "../src/ViewUtils";
 
 jest.mock("../src/nodes/CNode3DGroup", () => ({CNode3DGroup: class {}}));
 jest.mock("../src/showError", () => ({}));
@@ -32,7 +35,7 @@ function makeView(id, leftPx, visible = true) {
     return {
         id, leftPx, topPx: 24, widthPx: 800, heightPx: 600, visible,
         camera, controls: {enabled: true}, displayedZoom: 1,
-        pixelsToMeters() {},
+        pixelsToMeters(position, pixels) { return worldUnitsPerPixel(this, position) * pixels; },
         prepareCameraForLOD() {
             this._lodSavedZoom = camera.zoom;
             camera.zoom = this.displayedZoom;
@@ -95,6 +98,34 @@ test("editing handles are visible to both cameras", () => {
         expect(handle.layers.mask & MASK_MAINRENDER).not.toBe(0);
         expect(handle.layers.mask & MASK_LOOKRENDER).not.toBe(0);
     }
+});
+
+test.each(["cloud", "overlay", "flood"])("%s picks the displayed handle after zoom and rejects a hidden main view", family => {
+    main.visible = true;
+    main.displayedZoom = 3;
+    const radius = family === "flood" ? 1 : 3;
+    const handle = new Mesh(new SphereGeometry(radius), new MeshBasicMaterial());
+    handle.position.set(18, 5, 0);
+    const group = new Group();
+    group.add(handle);
+    const shared = {group, raycaster: new Raycaster(), editMode: true};
+    let host;
+    if (family === "cloud") {
+        host = Object.assign(Object.create(CNodeSynthClouds.prototype), shared, {moveHandle: handle});
+    } else if (family === "overlay") {
+        host = Object.assign({}, groundOverlayEvents, shared, {cornerHandles: [handle], lockPointHandles: []});
+    } else {
+        host = Object.assign(Object.create(CNodeFloodSim.prototype), shared, {cornerHandles: [handle], method: "HeightMap"});
+    }
+    const at = pointerAt(main, handle.position);
+    const hit = host.getHandleAtMouse(at.clientX, at.clientY);
+    if (family === "cloud") expect(hit).toBe("move");
+    else if (family === "overlay") expect(hit).toMatchObject({type: "corner", index: 0});
+    else expect(hit).toBe(0);
+    expect(handle.scale.x * radius / worldUnitsPerPixel(main, handle.position)).toBeCloseTo(20, 8);
+    expect(main.camera.zoom).toBe(1);
+    main._effectivelyVisible = false;
+    expect(host.getHandleAtMouse(at.clientX, at.clientY)).toBe(family === "flood" ? -1 : null);
 });
 
 test.each([1, 3])("look-only layout picks the displayed roof handle at zoom %s", zoom => {

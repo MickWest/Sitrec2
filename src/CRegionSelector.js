@@ -120,6 +120,7 @@ export class CRegionSelector {
     // Move events are called by the onMouseDown, etc, in CMiageView
     // which in turn is called from onDocumentMouseDown, etc in index.js
     onMouseDown(view, e,mouseX, mouseY) {
+        if (e.button !== 0) return false;
         const [x,y] = mouseToCanvas(view, mouseX, mouseY)
         const p = new Vector2(x,y)
 

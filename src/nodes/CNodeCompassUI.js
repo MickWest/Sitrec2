@@ -106,6 +106,12 @@ export class   CNodeCompassUI extends CNodeViewUI {
         }
     }
     
+    onMouseCancel() {
+        clearTimeout(this.longPressTimer);
+        this.longPressTimer = null;
+        this.isLongPress = false;
+    }
+
     onMouseUp(e, mouseX, mouseY) {
         const view = this.in.relativeTo;
         

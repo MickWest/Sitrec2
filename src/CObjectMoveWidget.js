@@ -36,7 +36,7 @@ import {GlobalScene} from "./LocalFrame";
 import {CustomManager, mainLoopCount, NodeMan, setRenderOne} from "./Globals";
 import {par} from "./par";
 import {ViewMan} from "./CViewManager";
-import {mouseInViewOnly, mouseToViewNormalized} from "./ViewUtils";
+import {getInteractiveViewAt, projectWorldToView, viewToClient} from "./ViewUtils";
 import {findRootTrack} from "./FindRootTrack";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
@@ -57,9 +57,6 @@ const FADED_OPACITY = 0.25;
 
 // The widget's handle materials are authored at this opacity; the fade scales it.
 const WIDGET_OPACITY = 0.6;
-
-// Reused by the Option/Alt search, which projects every movable object every frame.
-const scratchNDC = new Vector3();
 
 /**
  * What, if anything, a drag on this object should write to.
@@ -288,15 +285,9 @@ class CObjectMoveWidget {
         return best;
     }
 
-    /** The editing-capable view the cursor is over, mainView first. */
+    /** The displayed editing view under the cursor. */
     viewUnderCursor() {
-        for (const id of ["mainView", "lookView"]) {
-            const view = ViewMan.get(id, false);
-            if (view && view.camera && mouseInViewOnly(view, this.pointerX, this.pointerY)) {
-                return view;
-            }
-        }
-        return null;
+        return getInteractiveViewAt(this.pointerX, this.pointerY);
     }
 
     setNode(node) {
@@ -346,18 +337,13 @@ class CObjectMoveWidget {
     /**
      * Screen-pixel distance from the cursor to a world point in this view.
      *
-     * Deliberately uses view.camera as-is, matching PointEditorWidget's own hit test,
-     * rather than the LOD-prepared display camera — the two have to agree about where
-     * the widget is or the reveal and the grab would disagree at the edges.
+     * Uses the displayed projection, just like the widget's handle pick.
      */
     cursorDistancePx(view, position) {
-        const ndc = scratchNDC.copy(position).project(view.camera);
-        if (ndc.z > 1) return Infinity;     // behind the camera
-
-        const [mouseNdcX, mouseNdcY] = mouseToViewNormalized(view, this.pointerX, this.pointerY);
-        const dx = (ndc.x - mouseNdcX) * view.widthPx / 2;
-        const dy = (ndc.y - mouseNdcY) * view.heightPx / 2;
-        return Math.hypot(dx, dy);
+        const projected = projectWorldToView(view, position);
+        if (!projected) return Infinity;
+        const [x, y] = viewToClient(view, ...projected);
+        return Math.hypot(x - this.pointerX, y - this.pointerY);
     }
 
     /** Wide enough to cover the object itself, so a large model is grabbable anywhere on it. */

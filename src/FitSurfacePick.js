@@ -16,7 +16,7 @@
 
 import {Raycaster, Vector3} from "three";
 import {NodeMan} from "./Globals";
-import {renderedRect, withDisplayedCamera} from "./ViewUtils";
+import {renderedRect, withDisplayedCamera, ndcToView, viewToNDC} from "./ViewUtils";
 import {ellipsoidAlongRay, intersectDisplayed, raycastGroundElevationFast} from "./raycastGround";
 import {liftWorldPoint} from "./atmosphere/terrestrialRefraction";
 import {currentTerrestrialLiftContext} from "./atmosphere/refractionSettings";
@@ -173,19 +173,16 @@ export function projectToCanvas(view, world) {
         if (apparent.clone().sub(eye).dot(fwd) <= 0) return null;   // behind the camera
         const ndc = apparent.project(cam);
         if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y)) return null;
-        const r = renderedRect(view, view.widthPx, view.heightPx);
-        return [r.x + (ndc.x + 1) * 0.5 * r.w, r.y + (1 - ndc.y) * 0.5 * r.h];
+        return ndcToView(view, ndc);
     });
 }
 
 /** The surface the GEOMETRIC ray through a canvas pixel meets, or null if it meets none. */
-function surfaceUnderCanvasRay(view, r, cx, cy, useTiles, useObjects) {
+function surfaceUnderCanvasRay(view, cx, cy, useTiles, useObjects) {
     const ray = withDisplayedCamera(view, (cam) => {
-        const ndcX = ((cx - r.x) / r.w) * 2 - 1;
-        const ndcY = -(((cy - r.y) / r.h) * 2 - 1);
-        const origin = new Vector3().setFromMatrixPosition(cam.matrixWorld);
-        const dir = new Vector3(ndcX, ndcY, 0.5).unproject(cam).sub(origin).normalize();
-        return {origin, dir};
+        const raycaster = new Raycaster();
+        raycaster.setFromCamera(viewToNDC(view, cx, cy), cam);
+        return {origin: raycaster.ray.origin, dir: raycaster.ray.direction};
     });
     if (!ray || !Number.isFinite(ray.dir.x)) return null;
     // view.camera, not the LOD-prepared one: prepareCameraForLOD changes fov, aspect and offsets
@@ -226,7 +223,7 @@ export function groundUnderCanvasPoint(view, cx, cy, useTiles = false, useObject
     let aimX = cx, aimY = cy;
     let found = null;
     for (let i = 0; i < PICK_ITERATIONS; i++) {
-        const hit = surfaceUnderCanvasRay(view, r, aimX, aimY, useTiles, useObjects);
+        const hit = surfaceUnderCanvasRay(view, aimX, aimY, useTiles, useObjects);
         // Aimed off the world (into the sky, past the horizon): keep the last real surface
         // rather than throwing away a good answer because a correction overshot.
         if (!hit) return found;

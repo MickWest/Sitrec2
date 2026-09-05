@@ -18,10 +18,9 @@ import {
 import * as LAYER from "../LayerMasks";
 import {dropFromDistance, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
-import {screenToNDC} from "../mouseMoveView";
 import {ViewMan} from "../CViewManager";
 import {CustomManager, Globals, guiMenus, NodeMan, setRenderOne, Sit, Synth3DManager, UndoManager} from "../Globals";
-import {mouseInViewOnly} from "../ViewUtils";
+import {mouseInRenderedView, getInteractiveViewAt, setRaycasterFromView, withDisplayedCamera} from "../ViewUtils";
 import {f2m, metersPerSecondFromKnots, radians} from "../utils";
 import {SITREC_APP} from "../configUtils";
 import seedrandom from "seedrandom";
@@ -560,7 +559,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         
         const view = ViewMan.get("mainView");
         if (!view) return;
-        if (!mouseInViewOnly(view, event.clientX, event.clientY)) return;
+        if (!mouseInRenderedView(view, event.clientX, event.clientY)) return;
         
         const handle = this.getHandleAtMouse(event.clientX, event.clientY);
         if (handle) {
@@ -577,13 +576,13 @@ export class CNodeSynthClouds extends CNode3DGroup {
             this.dragInitialCenterECEF = centerECEF.clone();
             
             // Calculate initial intersection point on the drag plane
-            const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-            this.raycaster.setFromCamera(mouseRay, view.camera);
+            setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
             
             const plane = new Plane();
             if (handle === 'altitude') {
                 // Create vertical plane facing camera (allows height adjustment)
-                const toCamera = view.camera.position.clone().sub(centerECEF).normalize();
+                const toCamera = withDisplayedCamera(view, camera =>
+                    camera.getWorldPosition(new Vector3()).sub(centerECEF).normalize());
                 const tangent = new Vector3().crossVectors(this.dragLocalUp, toCamera).normalize();
                 const planeNormal = new Vector3().crossVectors(tangent, this.dragLocalUp).normalize();
                 plane.setFromNormalAndCoplanarPoint(planeNormal, centerECEF);
@@ -599,6 +598,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             
             this.isDragging = true;
             this.draggingHandle = handle;
+            this.dragPlane = plane;
             
             // Disable camera controls while dragging
             if (view.controls) {
@@ -617,23 +617,10 @@ export class CNodeSynthClouds extends CNode3DGroup {
             const view = ViewMan.get("mainView");
             if (!view) return;
 
-            const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-            this.raycaster.setFromCamera(mouseRay, view.camera);
-            
-            // Use INITIAL center position for plane - this is key for relative dragging
-            const plane = new Plane();
-            if (this.draggingHandle === 'altitude') {
-                // Create vertical plane facing camera (allows height adjustment)
-                const toCamera = view.camera.position.clone().sub(this.dragInitialCenterECEF).normalize();
-                const tangent = new Vector3().crossVectors(this.dragLocalUp, toCamera).normalize();
-                const planeNormal = new Vector3().crossVectors(tangent, this.dragLocalUp).normalize();
-                plane.setFromNormalAndCoplanarPoint(planeNormal, this.dragInitialCenterECEF);
-            } else {
-                plane.setFromNormalAndCoplanarPoint(this.dragLocalUp, this.dragInitialCenterECEF);
-            }
+            setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
             
             const currentIntersection = new Vector3();
-            if (this.raycaster.ray.intersectPlane(plane, currentIntersection)) {
+            if (this.raycaster.ray.intersectPlane(this.dragPlane, currentIntersection)) {
                 // Calculate displacement from initial click point
                 const displacement = currentIntersection.clone().sub(this.dragInitialIntersection);
                 
@@ -728,11 +715,12 @@ export class CNodeSynthClouds extends CNode3DGroup {
     }
     
     getHandleAtMouse(mouseX, mouseY) {
-        const view = ViewMan.get("mainView");
+        const view = getInteractiveViewAt(mouseX, mouseY, ["mainView"]);
         if (!view) return null;
+        this.updateHandleScales(view);
+        this.group.updateMatrixWorld(true);
 
-        const mouseRay = screenToNDC(view, mouseX, mouseY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
+        setRaycasterFromView(this.raycaster, view, mouseX, mouseY);
         
         const handles = [];
         if (this.altitudeHandle) handles.push({mesh: this.altitudeHandle, name: 'altitude'});

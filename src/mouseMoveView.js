@@ -2,13 +2,14 @@
 // Also handled 3D raycasting calculation based on mouse position and view
 //
 
-import {V2} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
-import {mouseInViewOnly, renderedRect} from "./ViewUtils";
+import {mouseInViewOnly, mouseToNDC, viewToNDC} from "./ViewUtils";
 import {setRenderOne} from "./Globals";
 
 let mouseDragView
 let mouseDown = false
+let mousePointerId;
+let mouseButton;
 
 // Deliberately NOT exposed: mouseDragView is not "the view that claimed the press". The
 // dispatcher below sets it for any handler that did not return an explicit false, and most fall
@@ -70,6 +71,9 @@ export function SetupMouseHandler() {
     document.addEventListener( 'pointermove', onDocumentMouseMove, false );
     document.addEventListener( 'pointerdown', onDocumentMouseDown, false );
     document.addEventListener( 'pointerup', onDocumentMouseUp, false );
+    document.addEventListener('pointercancel', onDocumentMouseCancel, true);
+    document.addEventListener('lostpointercapture', onDocumentMouseCancel, true);
+    window.addEventListener('blur', onDocumentMouseCancel);
     // CAPTURE phase: a hover-revealed CUIBar stops 'dblclick' in the bubble phase (so header
     // clicks don't fullscreen-via-content), and the video canvas has its own bubble dblclick
     // (pan/zoom reset). Capturing at the document lets the header-strip handler run first and
@@ -131,6 +135,10 @@ export function onDocumentMouseDown(event) {
     if (!mouseDown) {
         mouseX = (event.clientX);
         mouseY = (event.clientY);
+        mouseLastX = mouseX;
+        mouseLastY = mouseY;
+        mousePointerId = event.pointerId;
+        mouseButton = event.button;
 
         if (isTopMenuElementAt(mouseX, mouseY)) {
             mouseDragView = null;
@@ -184,7 +192,11 @@ export function onDocumentMouseDown(event) {
 }
 
 export function onDocumentMouseMove(event) {
-
+    if (mouseDown && event.pointerId !== mousePointerId) return;
+    // A release outside the document may never deliver pointerup here.
+    if (mouseDown && event.buttons === 0) {
+        onDocumentMouseCancel(event);
+    }
 
     mouseX = (event.clientX);
     mouseY = (event.clientY);
@@ -206,7 +218,7 @@ export function onDocumentMouseMove(event) {
             mouseDragView.onMouseDrag(event, mouseX, mouseY, mouseX - mouseLastX, mouseY - mouseLastY)
         } else {
 //            console.log("Mouse Unhandled Dragging " + mouseDragView.id)
-            mouseDragView.onMouseMove(event, mouseX, mouseY, mouseX - mouseLastX, mouseY - mouseLastY)
+            mouseDragView.onMouseMove?.(event, mouseX, mouseY, mouseX - mouseLastX, mouseY - mouseLastY)
         }
     } else {
         // otherwise, send to the view we are inside
@@ -230,12 +242,39 @@ export function onDocumentMouseMove(event) {
 }
 
 export function onDocumentMouseUp(event) {
-    if (mouseDragView && mouseDragView.onMouseUp !== undefined ) {
-        mouseDragView.onMouseUp(event, mouseX, mouseY)
-        dragMode = DRAG.NONE;
-    }
+    if (mouseDown && (event.pointerId !== mousePointerId || event.button !== mouseButton)) return;
+    finishDocumentDrag(event, false);
+}
+
+export function onDocumentMouseCancel(event) {
+    if (event.type !== 'blur' && event.pointerId !== mousePointerId) return;
+    finishDocumentDrag(event, true);
+}
+
+function finishDocumentDrag(event, cancelled) {
+    const view = mouseDragView;
+    const x = cancelled ? mouseX : event.clientX;
+    const y = cancelled ? mouseY : event.clientY;
+    const dx = x - mouseLastX, dy = y - mouseLastY;
+    // Clear ownership before callbacks: releasing capture or disposing an editor
+    // can synchronously send another termination event.
     mouseDragView = null;
     mouseDown = false;
+    mousePointerId = undefined;
+    mouseButton = undefined;
+    dragMode = DRAG.NONE;
+    mouseX = mouseLastX = x;
+    mouseY = mouseLastY = y;
+    if (!view) return;
+    if (!cancelled && (dx !== 0 || dy !== 0)) {
+        // Editors normally mutate on move, so deliver the release's last delta
+        // before their undo snapshot is finalized.
+        (view.onMouseDrag ?? view.onMouseMove)?.call(view, event, x, y, dx, dy);
+    }
+    // Until editors have a dedicated cancellation policy, finish the visible
+    // edit through their normal up path so its undo bookkeeping is preserved.
+    (cancelled ? view.onMouseCancel ?? view.onMouseUp : view.onMouseUp)?.call(view, event, x, y);
+    setRenderOne(true);
 }
 
 // Double-clicking a view's HEADER STRIP (its UIBar) toggles fullscreen — the same action as
@@ -294,25 +333,7 @@ export function onDocumentDoubleClick(event) {
  * @returns {Vector2} NDC coordinates in range [-1, 1] for both axes
  */
 export function screenToNDC(view, screenX, screenY) {
-    // Convert screen coords to view-relative coords
-    // view.leftPx is relative to the container, so we also need the container's screen offset
-    const containerOffsetX = ViewMan.screenOffsetX || 0;
-    const viewX = screenX - view.leftPx - containerOffsetX;
-    const viewY = screenY - view.topPx;
-
-    // Against the rect the 3D canvas actually fills, NOT the whole pane. NDC is by definition
-    // relative to the rendered image, and with "Match Video Aspect" on the render is letterboxed
-    // into part of the div (see renderedRect). Every caller feeds this to setFromCamera, so
-    // measuring across the full pane put the pick ray somewhere the user was not pointing —
-    // correct at the centre and drifting toward the edges. Reduces to the old formula exactly
-    // when the render fills the canvas.
-    const r = renderedRect(view, view.widthPx, view.heightPx);
-
-    // Convert to NDC: x from -1 (left) to +1 (right), y from -1 (bottom) to +1 (top)
-    const ndcX = ((viewX - r.x) / r.w) * 2 - 1;
-    const ndcY = -((viewY - r.y) / r.h) * 2 + 1;  // Invert Y for Three.js
-
-    return V2(ndcX, ndcY);
+    return mouseToNDC(view, screenX, screenY);
 }
 
 /**
@@ -324,11 +345,5 @@ export function screenToNDC(view, screenX, screenY) {
  * expectation has caused many bugs.
  */
 export function makeMouseRay(view, mouseX, mouseY) {
-    // Legacy function - expects view-relative coords with Y measured from bottom
-    // Convert to proportion
-    const viewXp = mouseX / view.widthPx;
-    const viewYp = mouseY / view.heightPx;
-
-    // Convert to Three.js NDC: -1 to +1
-    return V2(viewXp * 2 - 1, viewYp * 2 - 1);
+    return viewToNDC(view, mouseX, view.heightPx - mouseY);
 }

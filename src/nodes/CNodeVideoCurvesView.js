@@ -204,6 +204,7 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
     }
 
     handlePointerDown = (event) => {
+        if (event.button !== 0) return;
         if (!this.visible || !this.graphRect) return;
         const local = this.eventToLocalPoint(event);
         if (this.rectContainsPoint(this.resetButtonRect, local.x, local.y)) {

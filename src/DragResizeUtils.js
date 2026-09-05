@@ -769,17 +769,21 @@ export function makeResizable(element, options = {}) {
         
         // Add resize event listeners
         let isResizing = false;
+        let pointerId;
+        let lastX, lastY;
         let startX, startY;
         let startWidth, startHeight, startLeft, startTop;
         let aspectRatio;
         
         const onPointerDown = (e) => {
+            if (e.button !== 0 || isResizing) return;
             e.preventDefault();
             e.stopPropagation();
             
             isResizing = true;
-            startX = e.clientX;
-            startY = e.clientY;
+            pointerId = e.pointerId;
+            startX = lastX = e.clientX;
+            startY = lastY = e.clientY;
             
             const rect = element.getBoundingClientRect();
             startWidth = rect.width;
@@ -807,10 +811,18 @@ export function makeResizable(element, options = {}) {
             
             document.addEventListener('pointermove', onPointerMove);
             document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerCancel, true);
+            window.addEventListener('blur', onBlur);
         };
         
         const onPointerMove = (e) => {
-            if (!isResizing) return;
+            if (!isResizing || e.pointerId !== pointerId) return;
+            if (e.type === 'pointermove' && e.buttons === 0) {
+                finishResize(e, true);
+                return;
+            }
+            lastX = e.clientX;
+            lastY = e.clientY;
             
             let newWidth = startWidth;
             let newHeight = startHeight;
@@ -944,9 +956,23 @@ export function makeResizable(element, options = {}) {
         };
         
         const onPointerUp = (e) => {
+            if (!isResizing || e.pointerId !== pointerId || e.button !== 0) return;
+            if (e.clientX !== lastX || e.clientY !== lastY) onPointerMove(e);
+            finishResize(e, false);
+        };
+
+        const onPointerCancel = (e) => {
+            if (e.pointerId === pointerId) finishResize(e, true);
+        };
+        const onBlur = (e) => finishResize(e, true);
+        const finishResize = (e, cancelled) => {
             if (!isResizing) return;
-            
             isResizing = false;
+            pointerId = undefined;
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerCancel, true);
+            window.removeEventListener('blur', onBlur);
             
             // Call onResizeEnd callback if provided
             if (options.onResizeEnd && typeof options.onResizeEnd === 'function') {
@@ -957,19 +983,19 @@ export function makeResizable(element, options = {}) {
                     top: parseInt(element.style.top), 
                     element,
                     direction: dir,
-                    viewInstance: element._resizeData.viewInstance
+                    viewInstance,
+                    cancelled,
                 });
             }
             
             // Recompute handle positions for all views after a resize
             updateAllHandlePositions();
 
-            document.removeEventListener('pointermove', onPointerMove);
-            document.removeEventListener('pointerup', onPointerUp);
         };
 
         handle.addEventListener('pointerdown', onPointerDown);
         handle._resizeCleanup = () => {
+            finishResize(null, true);
             handle.removeEventListener('pointerdown', onPointerDown);
         };
     });

@@ -258,6 +258,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
     }
     
     onMouseDown(e) {
+        if (e.button !== 0) return;
         if (this.isMenuInteraction(e)) {
             return;
         }
@@ -1105,6 +1106,7 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
     }
 
     onMouseDown(e) {
+        if (e.button !== 0) return;
         if (this.isFrameX) {
             super.onMouseDown(e);
             return;

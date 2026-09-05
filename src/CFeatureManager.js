@@ -2,14 +2,13 @@ import {CManager} from "./CManager";
 import {showConfirm} from "./showError";
 import {CNodeFeatureMarker} from "./nodes/CNodeLabels3D";
 import {Globals, NodeMan, setRenderOne, UndoManager} from "./Globals";
-import {Raycaster, Vector3} from "three";
+import {Raycaster} from "three";
 import {ViewMan} from "./CViewManager";
 import {t} from "./i18n";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {raycastLocalGround} from "./raycastGround";
-import {screenToNDC} from "./mouseMoveView";
-import {mouseInViewOnly} from "./ViewUtils";
+import {mouseInRenderedView, setRaycasterFromView, projectWorldToView, viewToClient} from "./ViewUtils";
 import {getPointBelowLL} from "./threeExt";
 
 // Screen-space pick radius for a pin, in pixels. Pins are drawn screen-space
@@ -249,21 +248,11 @@ class CFeatureManager extends CManager {
             view.offsetScreenPixels(featureNode.featurePosition.clone(), 0, featureNode.arrowLength)  // Label position
         ];
 
-        // Note: leftPx/topPx are container-relative, add screenOffsetX for absolute screen position
-        const containerOffsetX = ViewMan.screenOffsetX || 0;
-
         for (const pos3D of positions) {
-            // Project to screen space
-            const screenPos = new Vector3(pos3D.x, pos3D.y, pos3D.z);
-            screenPos.project(view.camera);
-
-            // Skip if behind camera
-            if (screenPos.z > 1) continue;
-
-            points.push({
-                x: (screenPos.x * 0.5 + 0.5) * view.widthPx + view.leftPx + containerOffsetX,
-                y: (1 - (screenPos.y * 0.5 + 0.5)) * view.heightPx + view.topPx,
-            });
+            const projected = projectWorldToView(view, pos3D);
+            if (!projected) continue;
+            const [x, y] = viewToClient(view, ...projected);
+            points.push({x, y});
         }
 
         return points;
@@ -537,7 +526,7 @@ class CFeatureManager extends CManager {
         }
 
         const view = this.editView;
-        if (!view || !view.camera || !mouseInViewOnly(view, event.clientX, event.clientY)) return;
+        if (!view || !view.camera || !mouseInRenderedView(view, event.clientX, event.clientY)) return;
 
         const featureNode = this.editingFeature;
         if (this.screenDistanceToFeature(featureNode, view, event.clientX, event.clientY) > FEATURE_PICK_RADIUS) {
@@ -588,7 +577,7 @@ class CFeatureManager extends CManager {
 
         if (!this.isDragging) {
             // Hover feedback: "move" cursor when the pin can be grabbed
-            const overFeature = mouseInViewOnly(view, event.clientX, event.clientY)
+            const overFeature = mouseInRenderedView(view, event.clientX, event.clientY)
                 && this.screenDistanceToFeature(this.editingFeature, view, event.clientX, event.clientY) <= FEATURE_PICK_RADIUS;
             this.setHoverCursor(overFeature);
             return;
@@ -606,7 +595,7 @@ class CFeatureManager extends CManager {
         // Cast at where the pin's BASE should end up, not at the cursor itself
         const baseX = event.clientX - this.dragGrabOffset.x;
         const baseY = event.clientY - this.dragGrabOffset.y;
-        this.raycaster.setFromCamera(screenToNDC(view, baseX, baseY), view.camera);
+        setRaycasterFromView(this.raycaster, view, baseX, baseY);
 
         const ground = raycastLocalGround(this.raycaster, view.camera);
         if (ground && ground.point) {

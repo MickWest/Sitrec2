@@ -16,7 +16,7 @@ import {ECEFToLLAVD_radii, legacyEUSToECEF, LLAToECEF} from "./LLA-ECEF-ENU";
 import {assert} from "./assert";
 import {V3} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
-import {mouseInViewOnly, mouseToViewNormalized} from "./ViewUtils";
+import {getInteractiveViewAt, mouseToNDC, setRaycasterFromView} from "./ViewUtils";
 import {NodeMan, setRenderOne, Sit} from "./Globals";
 import {radians} from "./utils";
 import {undoManager as UndoManager} from "./UndoManager";
@@ -371,10 +371,8 @@ export class PointEditor {
         // Try mainView first, then lookView — clicks/hovers in either view should
         // be able to interact with the editing controls. Each view supplies its
         // own camera so the raycaster's ray comes out of the correct viewpoint.
-        for (const id of ["mainView", "lookView"]) {
-            const view = ViewMan.get(id, false);
-            if (!view) continue;
-            if (!mouseInViewOnly(view, event.clientX, event.clientY)) continue;
+        const view = getInteractiveViewAt(event.clientX, event.clientY);
+        if (view) {
 
             // Rescale the cubes for THIS view's pixel space before raycasting.
             // The per-render scale is whichever view rendered last (typically
@@ -384,11 +382,8 @@ export class PointEditor {
             this.updateCubeScales(view);
             for (const cube of this.splineHelperObjects) cube.updateMatrixWorld();
 
-            const [px, py] = mouseToViewNormalized(view, event.clientX, event.clientY);
-            this.pointer.x = px;
-            this.pointer.y = py;
-            this.raycaster.setFromCamera(this.pointer, view.camera);
-            return true;
+            this.pointer.copy(mouseToNDC(view, event.clientX, event.clientY));
+            return setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
         }
         return false;
     }

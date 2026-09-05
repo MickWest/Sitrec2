@@ -9,7 +9,7 @@
 //   GROUND: slope acceleration + terrain clamping (PBF handles fluid pressure)
 
 import {CNode3DGroup} from "./CNode3DGroup";
-import {BufferAttribute, BufferGeometry, Color, DoubleSide, DynamicDrawUsage, InstancedMesh, LineBasicMaterial, LineLoop, Matrix4, Mesh, MeshBasicMaterial, MeshPhongMaterial, Raycaster, SphereGeometry} from "three";
+import {BufferAttribute, BufferGeometry, Color, DoubleSide, DynamicDrawUsage, InstancedMesh, LineBasicMaterial, LineLoop, Matrix4, Mesh, MeshBasicMaterial, MeshPhongMaterial, Raycaster, SphereGeometry, Vector3} from "three";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {guiPhysics, NodeMan, setRenderOne, Sit} from "../Globals";
@@ -17,9 +17,8 @@ import {par} from "../par";
 import {EventManager} from "../CEventManager";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import * as LAYER from "../LayerMasks";
-import {screenToNDC} from "../mouseMoveView";
 import {ViewMan} from "../CViewManager";
-import {mouseInViewOnly} from "../ViewUtils";
+import {mouseInRenderedView, getInteractiveViewAt, setRaycasterFromView, withDisplayedCamera} from "../ViewUtils";
 import {t} from "../i18n";
 
 const GRAVITY = 9.81;
@@ -1560,10 +1559,11 @@ export class CNodeFloodSim extends CNode3DGroup {
     }
 
     getHandleAtMouse(mouseX, mouseY) {
-        const view = ViewMan.get("mainView");
+        const view = getInteractiveViewAt(mouseX, mouseY, ["mainView"]);
         if (!view) return -1;
-        const mouseRay = screenToNDC(view, mouseX, mouseY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
+        this.updateHandleScales(view);
+        this.group.updateMatrixWorld(true);
+        setRaycasterFromView(this.raycaster, view, mouseX, mouseY);
         let closest = -1, closestDist = Infinity;
         for (let c = 0; c < this.cornerHandles.length; c++) {
             const intersects = this.raycaster.intersectObject(this.cornerHandles[c], false);
@@ -1575,6 +1575,20 @@ export class CNodeFloodSim extends CNode3DGroup {
         return closest;
     }
 
+    updateHandleScales(view) {
+        if (this.method !== "HeightMap") return;
+        withDisplayedCamera(view, () => {
+            for (const handle of this.cornerHandles) {
+                const position = handle.getWorldPosition(new Vector3());
+                handle.scale.setScalar(view.pixelsToMeters(position, 20));
+            }
+        });
+    }
+
+    preRender(view) {
+        if (view.id === "mainView") this.updateHandleScales(view);
+    }
+
     onPointerDown(event) {
         if (event.button !== 0 || !this.originSet || this.cornerHandles.length === 0) return;
         if (this.method !== "HeightMap") return;
@@ -1584,7 +1598,7 @@ export class CNodeFloodSim extends CNode3DGroup {
             target = target.parentElement;
         }
         const view = ViewMan.get("mainView");
-        if (!view || !mouseInViewOnly(view, event.clientX, event.clientY)) return;
+        if (!view || !mouseInRenderedView(view, event.clientX, event.clientY)) return;
         const cornerIdx = this.getHandleAtMouse(event.clientX, event.clientY);
         if (cornerIdx >= 0) {
             this.isDragging = true;
@@ -1599,8 +1613,7 @@ export class CNodeFloodSim extends CNode3DGroup {
         if (!this.isDragging || this.draggingCorner < 0) return;
         const view = ViewMan.get("mainView");
         if (!view) return;
-        const mouseRay = screenToNDC(view, event.clientX, event.clientY);
-        this.raycaster.setFromCamera(mouseRay, view.camera);
+        setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
         if (!NodeMan.exists("TerrainModel")) return;
         const terrainNode = NodeMan.get("TerrainModel");
         const savedMask = this.raycaster.layers.mask;

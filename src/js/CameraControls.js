@@ -23,7 +23,7 @@ import {intersectSphere2, V3} from "../threeUtils";
 import {getCursorPositionFromTopView, getTopViewWithCursor, onDocumentMouseMove} from "../mouseMoveView";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {isLocal} from "../configUtils"
-import {mouseInViewOnly, mouseToNDC, mouseToView} from "../ViewUtils";
+import {mouseToNDC, mouseToView, mouseInRenderedView, setRaycasterFromView, viewToNDC, withDisplayedCamera} from "../ViewUtils";
 import {raycastLocalGround} from "../raycastGround";
 import {CNodeMeasureAB} from "../nodes/CNodeLabels3D";
 import {CNodePositionXYZ} from "../nodes/CNodePositionLLA";
@@ -266,6 +266,7 @@ class CameraMapControls {
 		}
 
 		if (this.enabled === false || this.enableZoom === false || this.state !== STATE.NONE) return;
+		if (!mouseInRenderedView(this.view, event.clientX, event.clientY)) return;
 
 		event.preventDefault();
 
@@ -326,9 +327,8 @@ class CameraMapControls {
 			return;
 		}
 
-		const ndc = mouseToNDC(this.view, event.clientX, event.clientY);
 		const raycaster = new Raycaster();
-		raycaster.setFromCamera(ndc, this.camera);
+		setRaycasterFromView(raycaster, this.view, event.clientX, event.clientY);
 
 		const earthCenter = earthCenterECEF();
 		const groundSphere = new Sphere(earthCenter.clone(), earthCenter.distanceTo(this.target));
@@ -338,7 +338,7 @@ class CameraMapControls {
 		this.zoomBy(Math.sign(event.deltaY));
 
 		if (hasHit) {
-			raycaster.setFromCamera(ndc, this.camera);
+			setRaycasterFromView(raycaster, this.view, event.clientX, event.clientY);
 			const hitAfter = new Vector3();
 			if (intersectSphere2(raycaster.ray, groundSphere, hitAfter)) {
 				const originToBefore = hitBefore.clone().sub(earthCenter);
@@ -798,7 +798,7 @@ class CameraMapControls {
 			return;
 		}
 		if (isViewDragging) return;
-		if (!mouseInViewOnly(this.view, event.clientX, event.clientY)) return;
+		if (!mouseInRenderedView(this.view, event.clientX, event.clientY)) return;
 		//		console.log ("CameraMapControls Mouse DOWN, button = "+event.button)
 		this.button = event.button;
 
@@ -1204,17 +1204,8 @@ class CameraMapControls {
 				raycaster.layers.mask |= LAYER.MASK_MAIN | LAYER.MASK_LOOK;
 
 
-				let width = this.view.widthPx
-				let height = this.view.heightPx
-
-				var startPointer = new Vector2(
-					this.mouseStart.x / width * 2 - 1,
-					- this.mouseStart.y / height * 2 + 1
-				)
-				var endPointer = new Vector2(
-					this.mouseEnd.x / width * 2 - 1,
-					- this.mouseEnd.y / height * 2 + 1
-				)
+				const startPointer = viewToNDC(this.view, this.mouseStart.x, this.mouseStart.y);
+				const endPointer = viewToNDC(this.view, this.mouseEnd.x, this.mouseEnd.y);
 
 				//				console.log(par.frame + ": STATE.DRAG: Start: "+vdump(startPointer)+" End: "+vdump(endPointer))
 
@@ -1228,7 +1219,7 @@ class CameraMapControls {
 				var start3D = new Vector3();
 				var end3D = new Vector3();
 
-				raycaster.setFromCamera(startPointer, this.camera)
+				withDisplayedCamera(this.view, camera => raycaster.setFromCamera(startPointer, camera));
 				let startHitSphere = false;
 				if (this.targetIsTerrain && !this.useGlobe) {
 					if (!raycaster.ray.intersectPlane(dragPlane, start3D)) break;
@@ -1240,7 +1231,7 @@ class CameraMapControls {
 						if (!raycaster.ray.intersectPlane(tangentPlane, start3D)) break;
 					}
 				}
-				raycaster.setFromCamera(endPointer, this.camera)
+				withDisplayedCamera(this.view, camera => raycaster.setFromCamera(endPointer, camera));
 				let endHitSphere = false;
 				if (this.targetIsTerrain && !this.useGlobe) {
 					if (!raycaster.ray.intersectPlane(dragPlane, end3D)) break;

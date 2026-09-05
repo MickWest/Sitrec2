@@ -25,7 +25,7 @@ import {
 import {Sphere, Vector3} from "three";
 import {par} from "../par";
 import {DRAG, getMousePosition, screenToNDC} from "../mouseMoveView";
-import {mouseInViewOnly, renderedRect, withDisplayedCamera} from "../ViewUtils";
+import {mouseInViewOnly, mouseInRenderedView, ndcToView, viewToClient, withDisplayedCamera} from "../ViewUtils";
 import {DebugArrowAB} from "../threeExt";
 import {CNode3DObject} from "./CNode3DObject";
 import {FeatureManager} from "../CFeatureManager";
@@ -184,6 +184,13 @@ export const mouseMethods = {
         this.dragMode = DRAG.NONE;
         this.mouseDown = false;
 //        console.log("Mouse Down = "+this.mouseDown+ " Drag mode = "+this.dragMode)
+    },
+
+    onMouseCancel() {
+        // Losing capture is not a click on a live-feed item.
+        this._trafficClick = null;
+        this.dragMode = DRAG.NONE;
+        this.mouseDown = false;
     },
 
     // ── Live ADS-B traffic: click an aircraft to promote it to a track ───────
@@ -392,12 +399,8 @@ export const mouseMethods = {
 
     // Wrapper: pick with the displayed camera orientation (see _refreshCursorFromMouse).
     onMouseDown(event, mouseX, mouseY) {
-        const _dl = this.applyDisplayLookAt?.(par.frame);
-        try {
-            return this.onMouseDownInner(event, mouseX, mouseY);
-        } finally {
-            this.removeDisplayLookAt?.(_dl);
-        }
+        if (!mouseInRenderedView(this, mouseX, mouseY)) return false;
+        return withDisplayedCamera(this, () => this.onMouseDownInner(event, mouseX, mouseY));
     },
 
     onMouseDownInner(event, mouseX, mouseY) {
@@ -604,14 +607,8 @@ export const mouseMethods = {
             // Skip if both points are behind camera
             if (screenPos_A.z > 1 && screenPos_B.z > 1) continue;
             
-            // Convert from normalized device coordinates (-1 to 1) to screen pixels
-            // Note: leftPx/topPx are container-relative, add screenOffsetX for absolute screen position
-            const containerOffsetX = ViewMan.screenOffsetX || 0;
-            const screenX_A = (screenPos_A.x * 0.5 + 0.5) * this.widthPx + this.leftPx + containerOffsetX;
-            const screenY_A = (1 - (screenPos_A.y * 0.5 + 0.5)) * this.heightPx + this.topPx;
-
-            const screenX_B = (screenPos_B.x * 0.5 + 0.5) * this.widthPx + this.leftPx + containerOffsetX;
-            const screenY_B = (1 - (screenPos_B.y * 0.5 + 0.5)) * this.heightPx + this.topPx;
+            const [screenX_A, screenY_A] = viewToClient(this, ...ndcToView(this, screenPos_A));
+            const [screenX_B, screenY_B] = viewToClient(this, ...ndcToView(this, screenPos_B));
             
             // Calculate distance from mouse to line segment
             // Using point-to-line-segment distance formula
@@ -858,12 +855,7 @@ export const mouseMethods = {
         // its div, so mapping across the div puts every hit target radially out from
         // the pane centre and the click lands on the wrong object. This is the forward
         // twin of screenToNDC(), which already takes the mouse the other way.
-        const pickRect = renderedRect(this, this.widthPx, this.heightPx);
-        const containerOffsetX = ViewMan.screenOffsetX || 0;
-        const toScreen = (ndc) => [
-            pickRect.x + (ndc.x + 1) * 0.5 * pickRect.w + this.leftPx + containerOffsetX,
-            pickRect.y + (1 - ndc.y) * 0.5 * pickRect.h + this.topPx,
-        ];
+        const toScreen = ndc => viewToClient(this, ...ndcToView(this, ndc));
 
         // Convert mouse ray to a direction vector using the raycaster
         // mouseRay is in NDC coordinates (-1 to +1)
@@ -1122,12 +1114,8 @@ export const mouseMethods = {
     // so right-clicking hits what is on screen — including the traverse object
     // when the render camera is tracking it.
     onContextMenu(event, mouseX, mouseY) {
-        const _dl = this.applyDisplayLookAt?.(par.frame);
-        try {
-            return this.onContextMenuInner(event, mouseX, mouseY);
-        } finally {
-            this.removeDisplayLookAt?.(_dl);
-        }
+        if (!mouseInRenderedView(this, mouseX, mouseY)) return;
+        return withDisplayedCamera(this, () => this.onContextMenuInner(event, mouseX, mouseY));
     },
 
     onContextMenuInner(event, mouseX, mouseY) {

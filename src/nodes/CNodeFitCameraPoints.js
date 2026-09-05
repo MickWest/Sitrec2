@@ -614,8 +614,9 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
         // Only listened for while the feature is on, so a disabled fit really does cost nothing.
         if (on && !this._cancelListener) {
-            this._cancelListener = () => this.cancelGesture();
+            this._cancelListener = (e) => this.onMouseCancel(e);
             document.addEventListener("pointercancel", this._cancelListener);
+            document.addEventListener("lostpointercapture", this._cancelListener);
             window.addEventListener("blur", this._cancelListener);
             // The press on empty video returns false from onMouseDown so the video keeps its
             // pan, and mouseMoveView delivers onMouseDrag and onMouseUp only to the view that
@@ -634,6 +635,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             document.addEventListener("pointerup", this._upListener, true);
         } else if (!on && this._cancelListener) {
             document.removeEventListener("pointercancel", this._cancelListener);
+            document.removeEventListener("lostpointercapture", this._cancelListener);
             window.removeEventListener("blur", this._cancelListener);
             document.removeEventListener("pointermove", this._moveListener);
             document.removeEventListener("pointerup", this._upListener, true);
@@ -2501,6 +2503,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
      */
     trackPendingAdd(e) {
         if (!this.isPendingPointer(e)) return;
+        if (e.buttons === 0) {
+            this.pendingAdd = null;
+            return;
+        }
         const [cx, cy] = mouseToCanvas(this, e.clientX, e.clientY);
         if (Math.hypot(cx - this.pendingAdd.cx, cy - this.pendingAdd.cy) > CLICK_SLOP) {
             this.pendingAdd = null;
@@ -2556,6 +2562,14 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             this.addPointAtVideo(vx, vy);
             this.requestFit();
         });
+    }
+
+    onMouseCancel(e) {
+        // An interrupted click must never add a landmark. A point already moved
+        // on screen still needs its keyframe and undo span finalized.
+        if (this.pendingAdd !== null && !this.isPendingPointer(e)) return;
+        this.pendingAdd = null;
+        this.onMouseUp(e);
     }
 
     onMouseUp(e) {
@@ -2659,4 +2673,3 @@ function describeObservability(result) {
     const verb = d.conditioning === "unobservable" ? "cannot be determined" : "is weakly determined";
     return `Weak: ${worst} ${verb} by these points — held near its previous value`;
 }
-

@@ -20,8 +20,7 @@ import {EventManager} from "../CEventManager";
 import {ViewMan} from "../CViewManager";
 import {assert} from "../assert";
 import * as LAYER from "../LayerMasks";
-import {mouseInViewOnly, withDisplayedCamera} from "../ViewUtils";
-import {screenToNDC} from "../mouseMoveView";
+import {getInteractiveViewAt, isViewDisplayed, setRaycasterFromView, withDisplayedCamera} from "../ViewUtils";
 
 export const eventMethods = {
     // A drag stays with the camera it started in, even when the pointer leaves
@@ -29,27 +28,18 @@ export const eventMethods = {
     setupRaycasterForEvent(event) {
         let view = (this.isDragging || this.isRotating) ? this.activeView : null;
         if (!view) {
-            view = ["mainView", "lookView"]
-                .map(id => ViewMan.get(id, false))
-                .find(candidate => {
-                    if (!candidate) return false;
-                    // Maximizing another pane hides this div without changing
-                    // node.visible or its stored pixel bounds.
-                    const rect = candidate.div?.getBoundingClientRect();
-                    if (rect && (!(rect.width > 0) || !(rect.height > 0))) return false;
-                    return mouseInViewOnly(candidate, event.clientX, event.clientY);
-                });
+            view = getInteractiveViewAt(event.clientX, event.clientY);
         }
-        if (!view) return null;
+        if (!view || !isViewDisplayed(view)) return null;
 
         this.activeView = view;
-        withDisplayedCamera(view, camera => {
+        withDisplayedCamera(view, () => {
             // The shared handles were last scaled by whichever view rendered last.
             // Pick against this view's scale and displayed projection, including
             // video zoom/pan and letterboxing in the look view.
             this.updateHandleScales(view);
             this.group.updateMatrixWorld(true);
-            this.raycaster.setFromCamera(screenToNDC(view, event.clientX, event.clientY), camera);
+            setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
         });
         return view;
     },

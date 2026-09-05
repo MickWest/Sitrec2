@@ -620,6 +620,7 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
     // ---------- Mouse handling ----------
 
     onMouseDown(e, mouseX, mouseY) {
+        if (e.button !== 0) return false;
         if (!this.isEditingActive()) return false;
         if (!this._hasGeometry()) return false;
 

@@ -37,7 +37,7 @@ import {
     Raycaster,
 } from "three";
 import {ViewMan} from "./CViewManager";
-import {mouseInViewOnly} from "./ViewUtils";
+import {getInteractiveViewAt, setRaycasterFromView} from "./ViewUtils";
 import {GlobalScene} from "./LocalFrame";
 import {setRenderOne} from "./Globals";
 import * as LAYER from "./LayerMasks";
@@ -125,43 +125,18 @@ export class TreeManualBrush {
     //     unproject with it and restore immediately. For the main view this is just
     //     the ordinary projection, so it's correct there too.
     pick(screenX, screenY) {
-        let best = null, bestZ = -Infinity, bestRect = null;
-        for (const id of BRUSH_VIEW_IDS) {
-            const view = ViewMan.get(id, false);
-            if (!view || !view.camera || !view._effectivelyVisible || !view.canvas) continue;
-            if (typeof view.prepareCameraForLOD !== "function") continue;
-            if (!mouseInViewOnly(view, screenX, screenY)) continue;
-            const rect = view.canvas.getBoundingClientRect();
-            if (rect.width <= 0 || rect.height <= 0) continue;
-            if (screenX < rect.left || screenX > rect.right || screenY < rect.top || screenY > rect.bottom) continue;
-            const z = view.zIndex || 0;
-            if (z > bestZ) { bestZ = z; best = {view, id}; bestRect = rect; }
-        }
-        if (!best) return null;
-        const group = this.buildingsNode.getViewRendererGroup(best.id);
-        if (!group) return null; // view has no Google renderer
-
-        const view = best.view;
+        const view = getInteractiveViewAt(screenX, screenY, BRUSH_VIEW_IDS);
+        if (!view) return null;
+        const group = this.buildingsNode.getViewRendererGroup(view.id);
+        if (!group) return null;
         const cam = view.camera;
-        const ndcX = ((screenX - bestRect.left) / bestRect.width) * 2 - 1;
-        const ndcY = -((screenY - bestRect.top) / bestRect.height) * 2 + 1;
-
-        // Temporarily put the camera into its on-screen (displayed) projection,
-        // unproject, then restore. Guard against re-entrancy with the terrain LOD
-        // pass (which also uses these), though they don't interleave in practice.
-        const lodActive = view._lodSavedZoom !== undefined;
-        if (!lodActive) view.prepareCameraForLOD();
-        cam.updateMatrixWorld();
-        const ray = this.raycaster.ray;
-        ray.origin.setFromMatrixPosition(cam.matrixWorld);
-        ray.direction.set(ndcX, ndcY, 0.5).unproject(cam).sub(ray.origin).normalize();
-        if (!lodActive) view.restoreCameraAfterLOD();
+        if (!setRaycasterFromView(this.raycaster, view, screenX, screenY)) return null;
 
         this.raycaster.camera = cam;
         this.raycaster.layers.mask = cam.layers.mask;
         const hits = this.raycaster.intersectObject(group, true);
         if (!hits.length) return null;
-        return {point: hits[0].point, mask: cam.layers.mask, id: best.id};
+        return {point: hits[0].point, mask: cam.layers.mask, id: view.id};
     }
 
     // Cheap fingerprint of everything that moves the hit point: the pointer

@@ -208,6 +208,7 @@ export class CNodeActiveOverlay extends CNodeViewUI {
     }
 
     onMouseDown(e, mouseX, mouseY) {
+        if (e.button !== 0) return false;
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY)
 
         const x = cx;
@@ -1616,6 +1617,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
 
     onMouseDown(e, mouseX, mouseY) {
+        if (e.button !== 0) return false;
         if (!this.hasVideoGeometry()) {
             return false;
         }
