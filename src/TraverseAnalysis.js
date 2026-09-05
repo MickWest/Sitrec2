@@ -990,6 +990,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
     const curvature = 0.02 * ds.n / smoothK;
     const results = [];
 
+    const workspace = {};
     const sweepRanges = async (rangeList, progressBase, progressSpan) => {
         for (let ri = 0; ri < rangeList.length; ri++) {
             for (const speedMs of speeds) {
@@ -1005,7 +1006,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
                 // This is a declared near-field prior: solutions closer than
                 // 120 m are pushed out, not forbidden (the penalty is soft).
                 const {track} = traversePlausible(ds, rangeList[ri],
-                    {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true});
+                    {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true, [PLAUSIBLE_WORKSPACE]: workspace});
                 const sm = smoothTrackBspline(track, ds.n, smoothK, curvature);
                 const m = trackMetrics(ds, sm);
                 let score = straightFlightScore(m, 0);
@@ -1025,6 +1026,9 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
             }
             if (options.progress) {
                 await options.progress(progressBase + progressSpan * (ri + 1) / rangeList.length);
+                // Progress callbacks may edit observations. Reuse only across
+                // synchronous cells, never across an external yield.
+                workspace.acceleration = null;
             }
         }
     };
@@ -1202,6 +1206,7 @@ export function summarizeMetrics(m) {
 // different (n, K) pairs: full-resolution and downsampled datasets, and the
 // smoothing pass with its own K.
 const _bsplineCache = new Map();
+const PLAUSIBLE_WORKSPACE = Symbol("plausible workspace");
 const BSPLINE_CACHE_MAX = 8;
 
 /** Uniform cubic B-spline basis over n frames with K control points. */
@@ -1292,11 +1297,19 @@ export function traversePlausible(dataset, startDist, options = {}) {
     const scratchSeen = new Uint8Array(K);
     const scratchIdx = new Int32Array(K);
 
+    // Acceleration is independent of the IRLS iterate. Copy its completed
+    // prefix of the normal equations; adding separately summed matrices here
+    // would reorder floating-point additions and perturb the optimizer.
+    const workspace = options[PLAUSIBLE_WORKSPACE];
+    let acceleration = workspace?.acceleration;
+    if (acceleration && (acceleration.dataset !== dataset || acceleration.K !== K
+        || acceleration.hA !== hA || acceleration.fps !== fps)) acceleration = null;
     const maxIters = useFloor ? iters + 5 : iters;
+    const A = Array.from({length: K}, () => new Float64Array(K));
+    const rhs = new Float64Array(K);
     for (let iter = 0; iter < maxIters; iter++) {
-        const A = [];
-        for (let k = 0; k < K; k++) A.push(new Float64Array(K));
-        const rhs = new Float64Array(K);
+        for (const row of A) row.fill(0);
+        rhs.fill(0);
         const addRow = (cols, weights, constTerm, w2 = 1) => {
             for (let i = 0; i < cols.length; i++) {
                 rhs[cols[i]] -= w2 * weights[i] * constTerm;
@@ -1362,7 +1375,14 @@ export function traversePlausible(dataset, startDist, options = {}) {
         };
 
         // acceleration rows, in g (strided second difference when accelStride > 1)
-        for (let r = hA; r <= n - 1 - hA; r++) stencil([r - hA, r, r + hA], [1, -2, 1], accelScale);
+        if (acceleration) {
+            for (let k = 0; k < K; k++) A[k].set(acceleration.A[k]);
+            rhs.set(acceleration.rhs);
+        } else {
+            for (let r = hA; r <= n - 1 - hA; r++) stencil([r - hA, r, r + hA], [1, -2, 1], accelScale);
+            acceleration = {dataset, K, hA, fps, A: A.map(row => row.slice()), rhs: rhs.slice()};
+            if (workspace) workspace.acceleration = acceleration;
+        }
 
         // soft anchor lambda(anchorFrame) = startDist (weight 10 => centimeter-to-meter
         // slop; a hard/huge weight wrecks the conditioning of the dense solve)
@@ -1380,23 +1400,36 @@ export function traversePlausible(dataset, startDist, options = {}) {
                 const a1 = S[(f + 1) * 3 + 1] + lam[f + 1] * D[(f + 1) * 3 + 1] - (S[f * 3 + 1] + lam[f] * D[f * 3 + 1]) - W[f * 3 + 1];
                 const a2 = S[(f + 1) * 3 + 2] + lam[f + 1] * D[(f + 1) * 3 + 2] - (S[f * 3 + 2] + lam[f] * D[f * 3 + 2]) - W[f * 3 + 2];
                 const al = Math.hypot(a0, a1, a2) || 1;
-                const u = [a0 / al, a1 / al, a2 / al];
-                let constTerm = -(u[0] * W[f * 3] + u[1] * W[f * 3 + 1] + u[2] * W[f * 3 + 2]) - vTarget / fps;
-                const colW = new Map();
-                const frames = [f, f + 1], cs = [-1, 1];
+                const u0 = a0 / al, u1 = a1 / al, u2 = a2 / al;
+                let constTerm = -(u0 * W[f * 3] + u1 * W[f * 3 + 1] + u2 * W[f * 3 + 2]) - vTarget / fps;
+                let touched = 0;
                 for (let i = 0; i < 2; i++) {
-                    const fr = frames[i];
-                    for (let comp = 0; comp < 3; comp++) {
-                        constTerm += cs[i] * S[fr * 3 + comp] * u[comp];
-                    }
+                    const fr = f + i, sign = i === 0 ? -1 : 1;
+                    constTerm += sign * S[fr * 3] * u0;
+                    constTerm += sign * S[fr * 3 + 1] * u1;
+                    constTerm += sign * S[fr * 3 + 2] * u2;
                     const [seg, w] = B[fr];
-                    const dDotU = D[fr * 3] * u[0] + D[fr * 3 + 1] * u[1] + D[fr * 3 + 2] * u[2];
+                    const dDotU = D[fr * 3] * u0 + D[fr * 3 + 1] * u1 + D[fr * 3 + 2] * u2;
                     for (let q = 0; q < 4; q++) {
                         const k = seg + q;
-                        colW.set(k, (colW.get(k) || 0) + cs[i] * w[q] * dDotU);
+                        if (!scratchSeen[k]) {
+                            scratchSeen[k] = 1;
+                            scratchIdx[touched++] = k;
+                            scratchVal[k] = 0;
+                        }
+                        scratchVal[k] = (scratchVal[k] || 0) + sign * w[q] * dDotU;
                     }
                 }
-                addRow([...colW.keys()], [...colW.values()].map(v => v * wv), constTerm * wv);
+                const cTerm = constTerm * wv;
+                for (let a = 0; a < touched; a++) {
+                    const ca = scratchIdx[a], wa = scratchVal[ca] * wv;
+                    rhs[ca] -= wa * cTerm;
+                    for (let b = 0; b < touched; b++) {
+                        const cb = scratchIdx[b];
+                        A[ca][cb] += wa * (scratchVal[cb] * wv);
+                    }
+                }
+                for (let a = 0; a < touched; a++) scratchSeen[scratchIdx[a]] = 0;
             }
         } else {
             // tiny velocity ridge to regularize the near-degenerate smooth modes
@@ -1480,23 +1513,21 @@ export function traversePlausible(dataset, startDist, options = {}) {
 // spurious g-load. The curvature penalty also tames the classic B-spline
 // boundary overshoot (the endpoint control points are otherwise data-starved
 // and can spike the g-load in the first/last fraction of a second).
+const _smoothSystemCache = new Map();
+
 function smoothTrackBspline(pts, n, K, curvature = 0) {
     K = Math.max(4, Math.min(K, n));
     const B = bsplineBasis(n, K);
-    const out = new Float64Array(n * 3);
-    for (let a = 0; a < 3; a++) {
-        const A = [];
-        for (let k = 0; k < K; k++) A.push(new Float64Array(K));
-        const rhs = new Float64Array(K);
+    const key = `${n}:${K}:${curvature}`;
+    let system = _smoothSystemCache.get(key);
+    if (!system) {
+        const A = Array.from({length: K}, () => new Float64Array(K));
         for (let f = 0; f < n; f++) {
             const [seg, w] = B[f];
-            const p = pts[f * 3 + a];
             for (let i = 0; i < 4; i++) {
-                rhs[seg + i] += w[i] * p;
                 for (let j = 0; j < 4; j++) A[seg + i][seg + j] += w[i] * w[j];
             }
         }
-        // curvature penalty: mu * sum (c[k-1] - 2 c[k] + c[k+1])^2 (target 0)
         if (curvature > 0) {
             for (let k = 1; k < K - 1; k++) {
                 const cols = [k - 1, k, k + 1], cs = [1, -2, 1];
@@ -1506,7 +1537,21 @@ function smoothTrackBspline(pts, n, K, curvature = 0) {
             }
         }
         for (let k = 0; k < K; k++) A[k][k] += 1e-9 * (A[k][k] || 1);
-        const c = solveDense(A, rhs);
+        system = factorDense(A);
+        if (_smoothSystemCache.size >= BSPLINE_CACHE_MAX) {
+            _smoothSystemCache.delete(_smoothSystemCache.keys().next().value);
+        }
+        _smoothSystemCache.set(key, system);
+    }
+    const out = new Float64Array(n * 3);
+    for (let a = 0; a < 3; a++) {
+        const rhs = new Float64Array(K);
+        for (let f = 0; f < n; f++) {
+            const [seg, w] = B[f];
+            const p = pts[f * 3 + a];
+            for (let i = 0; i < 4; i++) rhs[seg + i] += w[i] * p;
+        }
+        const c = solveFactoredDense(system, rhs);
         for (let f = 0; f < n; f++) {
             const [seg, w] = B[f];
             out[f * 3 + a] = c[seg] * w[0] + c[seg + 1] * w[1] + c[seg + 2] * w[2] + c[seg + 3] * w[3];
@@ -2102,23 +2147,58 @@ export function fitPlausibleBestRange(dataset, options = {}) {
 
 // Gaussian elimination with partial pivoting (small dense systems, K ~ 25)
 function solveDense(A, b) {
-    const nn = b.length;
-    const M = A.map(row => Float64Array.from(row));
-    const x = Float64Array.from(b);
+    const {M, x} = factorDense(A, b);
+    return backSubstituteDense(M, x);
+}
+
+// The same elimination for changing and constant systems. Store the actual
+// pivots and multipliers, then replay RHS operations in their original order.
+// Inverting A or multiplying by an inverse would change rounding.
+function factorDense(A, b = null) {
+    // Consumes A. Callers assemble it for this solve and keep any reusable
+    // prefix in a separate copy before passing it here.
+    const nn = A.length;
+    const M = A;
+    // Ordinary solves need no elimination log. Only constant systems retain
+    // the pivots/factors for additional right-hand sides.
+    const x = b === null ? null : Float64Array.from(b);
+    const pivots = x ? null : new Int32Array(nn);
+    const factors = x ? null : Array.from({length: nn}, () => new Float64Array(nn));
     for (let col = 0; col < nn; col++) {
         let maxV = Math.abs(M[col][col]), maxR = col;
         for (let r = col + 1; r < nn; r++) {
             if (Math.abs(M[r][col]) > maxV) { maxV = Math.abs(M[r][col]); maxR = r; }
         }
+        if (pivots) pivots[col] = maxR;
         [M[col], M[maxR]] = [M[maxR], M[col]];
-        const t = x[col]; x[col] = x[maxR]; x[maxR] = t;
+        if (x) { const t = x[col]; x[col] = x[maxR]; x[maxR] = t; }
         for (let r = col + 1; r < nn; r++) {
             const f = M[r][col] / M[col][col];
+            if (factors) factors[col][r] = f;
             if (f === 0) continue;
             for (let k = col; k < nn; k++) M[r][k] -= f * M[col][k];
-            x[r] -= f * x[col];
+            if (x) x[r] -= f * x[col];
         }
     }
+    return {M, pivots, factors, x};
+}
+
+function solveFactoredDense({M, pivots, factors}, b) {
+    const nn = b.length;
+    const x = Float64Array.from(b);
+    for (let col = 0; col < nn; col++) {
+        const maxR = pivots[col];
+        const t = x[col]; x[col] = x[maxR]; x[maxR] = t;
+        for (let r = col + 1; r < nn; r++) {
+            const f = factors[col][r];
+            if (f !== 0) x[r] -= f * x[col];
+        }
+    }
+    return backSubstituteDense(M, x);
+}
+
+function backSubstituteDense(M, x) {
+    const nn = x.length;
     for (let i = nn - 1; i >= 0; i--) {
         let s = x[i];
         for (let k = i + 1; k < nn; k++) s -= M[i][k] * x[k];

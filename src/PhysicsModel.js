@@ -64,9 +64,12 @@ export class PhysicsModel {
 }
 
 // 4th-order Runge-Kutta integrator
-// Integrates from t=0 to t=tEnd with step dt, calling model.derivatives()
-// Returns array of states at each requested sample time
-export function integrateRK4(model, initialState, params, sampleTimes) {
+// Starts at sampleTimes[0], landing exactly on every requested sample time.
+// Fitting can override the substep cap and retain its existing divergence guard.
+// Stage scratch is local to the integration; saved output states own their arrays.
+export function integrateRK4(model, initialState, params, sampleTimes, {
+    maxDt: maxDtOverride, checkDivergence = false,
+} = {}) {
     const states = [];
     const state = initialState.slice();
     const n = state.length;
@@ -74,7 +77,8 @@ export function integrateRK4(model, initialState, params, sampleTimes) {
     let sampleIdx = 0;
 
     // Adaptive substep: model-defined cap for stability (default 0.02s)
-    const maxDt = model.maxDt ?? 0.02;
+    const maxDt = maxDtOverride ?? model.maxDt ?? 0.02;
+    const stages = [new Array(n), new Array(n), new Array(n)];
 
     // Record initial state
     if (sampleIdx < sampleTimes.length && Math.abs(t - sampleTimes[sampleIdx]) < 1e-10) {
@@ -86,8 +90,11 @@ export function integrateRK4(model, initialState, params, sampleTimes) {
         const tNext = sampleTimes[sampleIdx];
         while (t < tNext - 1e-10) {
             const dt = Math.min(maxDt, tNext - t);
-            rk4Step(model, state, params, t, dt, n);
+            rk4Step(model, state, params, t, dt, n, stages);
             t += dt;
+            if (checkDivergence && (Math.abs(state[0]) > 1e8 || Math.abs(state[2]) > 1e6)) {
+                throw new Error("diverged");
+            }
         }
         t = tNext; // snap to exact sample time
         states.push(state.slice());
@@ -97,18 +104,15 @@ export function integrateRK4(model, initialState, params, sampleTimes) {
     return states;
 }
 
-function rk4Step(model, state, params, t, dt, n) {
+function rk4Step(model, state, params, t, dt, n, [s2, s3, s4]) {
     const k1 = model.derivatives(state, params, t);
 
-    const s2 = new Array(n);
     for (let i = 0; i < n; i++) s2[i] = state[i] + 0.5 * dt * k1[i];
     const k2 = model.derivatives(s2, params, t + 0.5 * dt);
 
-    const s3 = new Array(n);
     for (let i = 0; i < n; i++) s3[i] = state[i] + 0.5 * dt * k2[i];
     const k3 = model.derivatives(s3, params, t + 0.5 * dt);
 
-    const s4 = new Array(n);
     for (let i = 0; i < n; i++) s4[i] = state[i] + dt * k3[i];
     const k4 = model.derivatives(s4, params, t + dt);
 
