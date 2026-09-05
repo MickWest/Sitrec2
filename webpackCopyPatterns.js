@@ -41,9 +41,23 @@ patterns.push({ from: "./src/workers/*.js", to:"" });
 patterns.push({ from: "./src/PixelFilters.js", to:"./src" });
 
 // Copy tools directory (exclude SitrecBridge dev artifacts — only the dist zip is needed)
+// The dev-only source is excluded too: the browser-wide capture and DevTools tooling is
+// built locally (npm run build:dev) and its packaged extension is already excluded above,
+// so publishing its source alongside the site serves no one. These globs are anchored at
+// "tools/SitrecBridge/..." on purpose, so they match the loose source only and leave the
+// packaged standard build under "SitrecBridge/dist/SitrecBridge/extension/" intact —
+// background.js imports dev-browser.js and dev-mode.js unconditionally, and the standard
+// extension ships them inert (DEV_MODE false, and no desktopCapture/debugger permission).
 patterns.push({ from: "tools", to: "./tools", globOptions: {
     ignore: [...globalIgnore, "**/SitrecBridge/node_modules/**", "**/SitrecBridge/package-lock.json",
         "**/SitrecBridge/dist/SitrecBridgeDev/**", "**/SitrecBridge/dist/SitrecBridgeDev.zip",
+        "**/tools/SitrecBridge/extension/dev-browser.js",
+        "**/tools/SitrecBridge/extension/desktop-capture.js",
+        "**/tools/SitrecBridge/extension/desktop-capture.html",
+        "**/tools/SitrecBridge/dev-tools.js", "**/tools/SitrecBridge/build-extension.mjs",
+        "**/tools/SitrecBridge/README-dev.md",
+        "**/tools/SitrecBridge/tests/dev-browser.test.js",
+        "**/tools/SitrecBridge/tests_browser/dev-extension.test.mjs",
         "**/sitrec-comms/node_modules/**", "**/sitrec-comms/package-lock.json"],
 } });
 

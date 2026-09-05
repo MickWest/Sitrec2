@@ -102,6 +102,167 @@ Click on "Remember Export Settings" and then ensure the following are set:
 
 Then export the file. If you want to embed a known real-world length, rename the file to include a length parameter (e.g. `my-drone~L3.5m~.glb`). You should now be able to drag and drop this into the Sitrec model inspector, or any moddable sitch that supports it (e.g. FLIR1).
 
+### Aircraft navigation lights
+
+Include working navigation lights when authoring aircraft models. A red or green lens mesh, even with an emissive material, is only visible geometry. **Sitrec's light glows, flashing controls, and long-exposure light trails require actual Blender light objects exported into the GLB.** Keep the small lens meshes for close views and put the corresponding light objects at their exposed surfaces.
+
+#### Placement and orientation
+
+Use the aircraft's left and right as seen by its pilot looking forward. With the Blender orientation documented above, **nose −Y and up +Z**, the port/left wing is **+X**, and the starboard/right wing is **−X**. After the normal Y-up glTF export, coordinates map as `(x, y, z) Blender → (x, z, −y) glTF`: forward becomes +Z, up becomes +Y, and port remains +X. Do not reverse the navigation colors based on the side of a screenshot.
+
+| Light | Placement | Color | Behavior |
+|---|---|---|---|
+| Left position | Port wingtip, Blender +X | Red `(1, 0, 0)` | Steady |
+| Right position | Starboard wingtip, Blender −X | Green `(0, 1, 0)` | Steady |
+| Tail position | Aft-facing tail position appropriate to the aircraft | White `(1, 1, 1)` | Steady |
+| Anti-collision beacon | Fin, fuselage top and/or belly, according to the aircraft | Red | Flashes |
+| Strobes | Wingtip and/or tail locations appropriate to the aircraft | White | Short flashes |
+| Landing/taxi lights, if included | Actual lamp positions; aim spotlights forward | White | Steady; switch visibility in Sitrec as needed |
+
+This is an authoring convention for a recognizable aircraft light layout, not a simulation of certified visibility sectors or a claim that every aircraft has the same equipment. Use references for the particular variant. A fictional craft can use this convention if requested, but identify those lights as added visualization equipment rather than historical detail.
+
+Use **Point** lights for position lights, strobes, and beacons. A **Spot** light can represent a landing beam. A Blender spotlight emits along its local −Z axis; aim that axis toward the aircraft's forward direction. Sitrec currently also creates a visible glow for a spotlight, and that glow does not obey the spotlight's beam angle.
+
+Keep each lamp a separate light object. Mesh joining must include only the exterior meshes, not the lamps. Give both the object and its Light data a meaningful, stable name, such as `Left_Position_Red`, `Right_Strobe_White`, or `Beacon_Top_Red`. Unique names make the Lights menu understandable and avoid changes to generated light IDs and flash phases when re-exporting.
+
+**Hierarchy matters:** export lights as unparented objects at their final model-space positions, alongside the aircraft meshes, with no transformed enclosing Empty. Ordinary Blender collections are fine. The current billboard implementation copies the imported light's *local* position into the owning Sitrec object's group; it does not reconstruct arbitrary nested parent transforms. A light under a rotated, scaled, or translated parent can therefore illuminate from one position while its visible glow appears elsewhere. Bake the aircraft's orientation and scale, then position the lights in that same coordinate system. Verify placement after import, not just in Blender.
+
+#### Flash timing: custom properties on the Light data
+
+Select a light and open **Light Data Properties → Custom Properties** (the light-bulb tab). Add numeric floating-point properties with these exact, case-sensitive names:
+
+| Property | Meaning | Example |
+|---|---|---|
+| `strobeEvery` | Seconds from the start of one flash cycle to the next | `1.0` |
+| `strobeLength` | Seconds the light stays on in each cycle | `0.1` |
+
+Use positive values with `strobeLength < strobeEvery`. For a steady light, omit both properties. A missing or zero `strobeEvery` is treated as steady. When `strobeEvery` is present and nonzero, a missing or zero `strobeLength` falls back to **0.1 seconds** on import. Store numbers, not strings such as `"1 second"`.
+
+The preferred location is the **Light data**, not its mesh lens, collection, material, or scene. In Python, this means `lamp.data["strobeEvery"]`, not `lens["strobeEvery"]`. With **Custom Properties** enabled during export, Blender writes Light-data properties into `KHR_lights_punctual.lights[].extras`; Three.js copies them into the imported light's `userData`, where Sitrec reads them. Properties on the light *object* can also work when that exported node is the light itself—the built-in 737 uses node extras—but Light-data properties avoid depending on whether the exporter inserts a wrapper node.
+
+Sitrec generates `strobeOffset` from a hash of the complete light node ID, giving each flashing light a repeatable phase between 0 and approximately 5 seconds. **A Blender custom property named `strobeOffset` is not used by the current importer.** Adjust **Strobe Offset (s)** in Sitrec to align or stagger flashes. Equal periods do not imply synchronized flashes. Changing an object/light name can change its initial phase.
+
+Flashing runs against simulation time (`par.time`), not Blender keyframes or wall-clock time. No animation export is required. During playback, Sitrec has a fallback to keep very short flashes from disappearing between sampled frames. Consequently, an extremely short flash can occupy one displayed frame; the long-exposure renderer instead integrates its actual duty cycle between samples. The present model supports one rectangular on-window per period, not a double-flash pattern.
+
+#### Power and exporter settings
+
+The working PA-28 reference uses **10 W** for its steady red/green position lights and **50 W** for white strobes, with `strobeEvery = 1.0` and `strobeLength = 0.01`. These are useful established Sitrec settings, not measured lamp specifications. The built-in 737 provides another convention: about **10 W** for position lights and white strobes (2.0 s period, 0.1 s flash), and **20 W** for its red belly beacon (1.0 s period, 0.1 s flash).
+
+For a straightforward Blender 5.2 light, use constant color and Power, **Normalize enabled**, **Exposure 0**, and no custom light shader node network. Export with the glTF lighting mode **Standard** (`export_import_convert_lighting_mode='SPEC'`). The standard point/spot conversion is:
+
+`glTF intensity = Blender Power × 683 / (4π)`
+
+| Blender Power | Exported intensity, approximately |
+|---|---:|
+| 10 W | 543.514 |
+| 20 W | 1087.028 |
+| 50 W | 2717.571 |
+
+Different exporter lighting modes, Exposure, non-normalized lights, and light shader nodes can change this conversion. Check the exported value instead of assuming Blender's Power number is Sitrec's Intensity number. Blender's light radius is also not Sitrec's **Radius** control: the latter controls the solid core of the glow.
+
+In **File → Export → glTF 2.0**, enable:
+
+- **Punctual Lights** (`export_lights=True`), which writes `KHR_lights_punctual`.
+- **Custom Properties** (`export_extras=True`), which preserves flash timing.
+- **Selected Objects** (`use_selection=True`), with the aircraft meshes **and** operational lights selected.
+- **Active Scene** (`use_active_scene=True`), especially when the Blender file contains multiple aircraft scenes. Selection alone can include selected objects from other scenes.
+- **+Y Up** (`export_yup=True`) and the Standard lighting mode above.
+
+Exclude studio lights, cameras, ground planes, and other presentation objects from the selection. Hiding them in the viewport is not a reliable export filter. In particular, do not export a studio Point or Sun light under an arbitrary name: Sitrec would treat it as part of the model's light system.
+
+This minimal Python example assumes the current scene is already in meters with the documented axes. The coordinates are illustrative; move the lamps to the actual lenses before exporting:
+
+```python
+import bpy
+
+# Select the aircraft's exterior meshes before running this example.
+aircraft_meshes = [obj for obj in bpy.context.selected_objects if obj.type == 'MESH']
+if not aircraft_meshes:
+    raise RuntimeError('Select the aircraft exterior meshes first')
+
+def aircraft_light(name, position, color, watts=10.0, every=None, length=0.1):
+    data = bpy.data.lights.new(name=name, type='POINT')
+    data.color = color
+    data.energy = watts
+    data.normalize = True
+    data.exposure = 0.0
+    if every is not None:
+        data['strobeEvery'] = float(every)
+        data['strobeLength'] = float(length)
+    obj = bpy.data.objects.new(name, data)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.location = position
+    return obj
+
+nav_left = aircraft_light('Left_Position_Red', (5.4, 0.2, 0.15), (1, 0, 0))
+nav_right = aircraft_light('Right_Position_Green', (-5.4, 0.2, 0.15), (0, 1, 0))
+nav_tail = aircraft_light('Tail_Position_White', (0, 4.95, 0), (1, 1, 1))
+strobe_left = aircraft_light('Left_Strobe_White', (5.4, 0.3, 0.15),
+                             (1, 1, 1), watts=50, every=1.0, length=0.01)
+strobe_right = aircraft_light('Right_Strobe_White', (-5.4, 0.3, 0.15),
+                              (1, 1, 1), watts=50, every=1.0, length=0.01)
+beacon = aircraft_light('Beacon_Tail_Red', (0, 4.4, 1.11),
+                         (1, 0, 0), watts=20, every=1.0, length=0.1)
+
+lamps = [nav_left, nav_right, nav_tail, strobe_left, strobe_right, beacon]
+bpy.ops.object.select_all(action='DESELECT')
+for obj in aircraft_meshes + lamps:
+    obj.select_set(True)
+bpy.ops.export_scene.gltf(
+    filepath='/absolute/output/path/aircraft~L7.32m~.glb',
+    export_format='GLB',
+    use_selection=True,
+    use_active_scene=True,
+    export_yup=True,
+    export_lights=True,
+    export_extras=True,
+    export_import_convert_lighting_mode='SPEC',
+    export_cameras=False,
+    export_animations=False,
+)
+```
+
+#### What Sitrec does with the lights
+
+`CNode3DObject.extractLightsFromModel()` discovers imported Three.js lights, initially disables their illumination, and makes an **Objects → [model] → Lights** folder. Each light gets its own `CNode3DLight`, a camera-facing glow, and controls:
+
+| Control | Effect |
+|---|---|
+| Light Visible | Enables the glow and permits illumination; defaults on |
+| Light Illuminates | Allows the actual light to illuminate scene surfaces; defaults off |
+| Intensity | Imported glTF intensity; also changes the glow's base size (`intensity / 100`) |
+| Color | Changes both the light and its glow |
+| Radius | Changes the glow's bright central core, not a physical lamp radius |
+| Strobe Every / Length / Offset (s) | Timing controls, present only when flashing was enabled on import |
+
+The live glow faces each view's camera, grows with viewing distance/FOV to remain visible, and is reduced by daylight. It is a display aid, not a physically exact inverse-square lamp image. A point light is omnidirectional; the code does not apply the red/green/aft angular sectors of a real navigation-light assembly. Do not describe a colored point-light layout as a verified angular-visibility simulation.
+
+The names `Sky_Dome`, `Light`, `Moon_Light`, `Lensflare_Source`, and `Sun_light` are explicitly ignored. This is a short, case-sensitive list, not a general studio-light detector. Avoid these names for operational lamps and exclude studio lighting from the GLB altogether. Name substrings such as "strobe" or "beacon" do **not** enable flashing; only the custom properties do that.
+
+With **HDR Point Sources** enabled, [Long Exposure](LongExposure.md) replaces the live glows with photometric point sources. The current conversion is `effective candela = imported intensity × 0.2 × Light Brightness`, followed by inverse-square falloff and atmospheric extinction. It preserves the light color and integrates flash duty cycles, producing dashed strobe trails. `Light Visible` still gates the source; `Light Illuminates` need not be on for it to appear in the exposure.
+
+#### Verification before delivering a model
+
+1. Inspect the saved `.blend`: count operational lights, check left/right colors from the pilot's perspective, confirm final coordinates, and read flash properties from each Light data block. Save the file with the lights included.
+2. Parse the **exported GLB**. Confirm `extensionsUsed` contains `KHR_lights_punctual`; check every light's type, color, intensity and extras; confirm its node has the intended translated position. Ensure there are no studio lights or extra aircraft scenes. Do not infer success from the Blender preview.
+3. Load it with Three.js `GLTFLoader`, the same loader family Sitrec uses. Verify the resulting light objects have numeric `userData.strobeEvery` and `userData.strobeLength`, and that local positions already match model-space positions. A property on a parent Group is not sufficient.
+4. Drag the GLB into **Model Inspector** or a new custom sitch. Open **Lights**, verify the expected names, inspect from both sides and behind, and play at dusk/night so daylight suppression does not hide the result. Toggle an individual light to check it is attached to the correct lens; check both views and change Model Length to verify the lights stay attached.
+5. Check at least one flashing light at an on-time and an off-time. If synchrony matters, set matching Strobe Offset values in Sitrec and save the sitch. For long-exposure work, verify steady colored trails and dashed white/red flashes with HDR Point Sources enabled.
+
+Common failures are missing Punctual Lights, missing Custom Properties, selecting only the joined mesh, placing timing properties on a lens mesh, reversed port/starboard colors, a lamp named `Light`, nested transforms, and exporting a preview light by accident.
+
+#### Reference files and implementation
+
+The inspected `PA28-181 Fixed textures.blend` contains only a default Point light named `Light`, which Sitrec ignores. The adjacent **`PA28-181 No interior.blend`** contains the working red/green and strobe setup described above. Its adjacent `PA28-181 No interior.glb` has no punctual lights, while the repository's **`data/models/PA28.glb`** contains five: two position lights, two strobes, and a landing spotlight. These files are different export states; always inspect the actual delivered GLB. The source `.blend` also contains a separate front landing Point light that is absent from that built-in GLB.
+
+For agents checking or extending the pipeline, read the current implementation rather than assuming all fields in Blender are supported:
+
+- [`CNode3DObject.js`](https://github.com/MickWest/Sitrec2/blob/main/src/nodes/CNode3DObject.js): `lightNamesToIgnore` and `extractLightsFromModel()`.
+- [`CNode3DLight.js`](https://github.com/MickWest/Sitrec2/blob/main/src/nodes/CNode3DLight.js): custom-property handling, phase generation, controls, flashing, and camera-facing glow placement/scaling.
+- [`LongExposure.js`](https://github.com/MickWest/Sitrec2/blob/main/src/LongExposure.js): `LIGHT_CANDELA_PER_INTENSITY`, `strobeOnFraction()`, and model-light integration.
+- The installed Three.js `GLTFLoader.js`: `GLTFLightsExtension._loadLight()` and `assignExtrasToUserData()`.
+- The installed Blender glTF exporter's `blender/exp/lights.py`: property export and power conversion. Exporter behavior described here was checked against Blender 5.2.1 LTS.
+
 ### PLY Files
 
 PLY files don't go through the Blender export pipeline. They are typically produced by:
