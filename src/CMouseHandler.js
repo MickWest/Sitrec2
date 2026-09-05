@@ -1,4 +1,6 @@
 import {isKeyHeld} from "./KeyBoardHandler";
+import {getInteractionRouter, INTERACTION} from "./InteractionRouter";
+import {isViewDisplayed, mouseInViewOnly} from "./ViewUtils";
 
 // The basic functionality of a mouse handler attached to a view
 // stores last mouse position, delta, etc
@@ -22,15 +24,42 @@ export class CMouseHandler {
         this.isLongPressTriggered = false;
         this.activePointers = new Set(); // Track active pointer IDs for multi-touch detection
 
-        this.view.canvas.addEventListener('wheel', e => this.handleMouseWheel(e));
-        this.view.canvas.addEventListener('pointermove', e => this.handleMouseMove(e));
-        this.view.canvas.addEventListener('pointerdown', e => this.handleMouseDown(e));
-        this.view.canvas.addEventListener('pointerup', e => this.handleMouseUp(e));
-        this.view.canvas.addEventListener('pointercancel', e => this.handlePointerCancel(e));
-        this.view.canvas.addEventListener('lostpointercapture', e => this.handlePointerCancel(e));
+        const surface = e => mouseInViewOnly(view, e.clientX, e.clientY)
+            ? {kind: INTERACTION.DRAG, zIndex: view.zIndex ?? 0} : null;
+        this.unregisterInteraction = getInteractionRouter(view.canvas.ownerDocument).register({
+            id: `video:${view.id}`, model: view, navigation: true, priority: 0,
+            enabled: () => isViewDisplayed(view) && !(view.dragKey && isKeyHeld(view.dragKey)),
+            valid: () => isViewDisplayed(view),
+            hitTest: surface, hitSurface: surface, capture: () => view.canvas,
+            begin: e => this.handleMouseDown(e), move: e => this.handleMouseMove(e),
+            end: e => this.handleMouseUp(e), cancel: e => this.handlePointerCancel(e),
+            beginTouches: e => { this.touchPair = this.touchGeometry(e); },
+            moveTouches: e => this.handleTouches(e),
+            endTouches: () => { this.touchPair = null; },
+            wheel: e => this.handleMouseWheel(e), contextMenu: e => this.handleContextMenu(e),
+            hover: e => { if (e) this.handleMouseMove(e); },
+        });
+        view.canvas.style.touchAction = "none";
         this.view.canvas.addEventListener('dblclick', e => this.handleMouseDblClick(e));
-        this.view.canvas.addEventListener('contextmenu', e => this.handleContextMenu(e));
         this.view.canvas.addEventListener('mouseleave', e => this.handleMouseLeave(e));
+    }
+
+    touchGeometry(e) {
+        if (e.touches.length !== 2) return null;
+        const [a, b] = e.touches;
+        return {clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2,
+            distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)};
+    }
+
+    handleTouches(e) {
+        const next = this.touchGeometry(e), previous = this.touchPair;
+        this.touchPair = next;
+        if (!next || !previous) return;
+        this.newPosition(previous, true);
+        this.newPosition(next);
+        this.handlers.drag?.(e);
+        this.newPosition(next, true);
+        if (previous.distance > 0 && next.distance > 0) this.handlers.pinch?.(next.distance / previous.distance);
     }
 
     newPosition(e, anchor) {
@@ -107,7 +136,6 @@ export class CMouseHandler {
             return;
         }
 
-        this.view.canvas.setPointerCapture(e.pointerId)
 
         // Track pointer for multi-touch detection
         this.activePointers.add(e.pointerId);
@@ -125,47 +153,6 @@ export class CMouseHandler {
             this.clearLongPressTimer();
         }
         
-        // Start long press timer for single-finger touch events only (not for mouse right-click)
-        // pointerType will be 'touch' for touch events, 'mouse' for mouse events
-        if (e.pointerType === 'touch' && e.button === 0 && this.activePointers.size === 1) {
-            this.longPressStartX = e.clientX;
-            this.longPressStartY = e.clientY;
-            this.longPressEvent = e;
-            this.isLongPressTriggered = false;
-            
-            this.longPressTimer = setTimeout(() => {
-                this.isLongPressTriggered = true;
-                
-                // Create synthetic right-click event for context menu
-                const syntheticEvent = new PointerEvent('contextmenu', {
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: this.longPressStartX,
-                    clientY: this.longPressStartY,
-                    pointerType: 'touch',
-                    button: 2
-                });
-                
-                // Add custom properties
-                Object.defineProperty(syntheticEvent, 'isSynthetic', { value: true });
-                Object.defineProperty(syntheticEvent, 'originalEvent', { value: e });
-                
-                this.handleContextMenu(syntheticEvent);
-                
-                // Clean up state since context menu interrupts normal pointer flow
-                this.activePointers.clear();
-                this.dragging = false;
-                if (e.pointerId !== undefined) {
-                    this.view.canvas.releasePointerCapture(e.pointerId);
-                }
-                
-                // Vibrate for tactile feedback
-                if (navigator.vibrate) {
-                    navigator.vibrate(50);
-                }
-            }, this.longPressDuration);
-        }
-        
         if (this.handlers.down) this.handlers.down(e)
 
     }
@@ -174,7 +161,6 @@ export class CMouseHandler {
 //        e.preventDefault();
         const wasDragging = this.dragging;
         this.dragging = false;
-        this.view.canvas.releasePointerCapture(e.pointerId)
 
         // Remove pointer from active set
         this.activePointers.delete(e.pointerId);
@@ -185,17 +171,7 @@ export class CMouseHandler {
         this.newPosition(e)
         this.dragging = false;
 
-        // Detect right-click release without drag → context menu
-        if (e.button === 2 && this._contextMenuDownPos) {
-            const dx = e.clientX - this._contextMenuDownPos.x;
-            const dy = e.clientY - this._contextMenuDownPos.y;
-            if (Math.sqrt(dx * dx + dy * dy) <= 5) {
-                if (this.handlers.contextMenu) {
-                    this.handlers.contextMenu(e);
-                }
-            }
-            this._contextMenuDownPos = null;
-        }
+        this._contextMenuDownPos = null;
 
         // Don't trigger up handler if long press was triggered
         if (wasDragging && !this.isLongPressTriggered) {
@@ -211,9 +187,6 @@ export class CMouseHandler {
         // Handle pointer interruptions (e.g., browser gestures, context menus)
         const wasDragging = this.dragging;
         this.dragging = false;
-        if (this.view.canvas.hasPointerCapture?.(e.pointerId)) {
-            this.view.canvas.releasePointerCapture(e.pointerId);
-        }
         this.activePointers.delete(e.pointerId);
         this.clearLongPressTimer();
         this.isLongPressTriggered = false;
@@ -250,6 +223,11 @@ export class CMouseHandler {
             clearTimeout(this.longPressTimer);
             this.longPressTimer = null;
         }
+    }
+
+    dispose() {
+        this.unregisterInteraction?.();
+        this.clearLongPressTimer();
     }
 
 

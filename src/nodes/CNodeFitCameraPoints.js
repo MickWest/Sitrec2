@@ -1,3 +1,4 @@
+import {getInteractionRouter} from "../InteractionRouter";
 // "Fit Camera to Points" — recover an unknown camera from landmarks the analyst can identify.
 //
 // The problem: a redacted clip arrives with the platform position and the field of view stripped
@@ -223,6 +224,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 this.beginUndo();
             },
             onEndEdit: (description) => this.endUndo(description),
+            onRollbackEdit: () => this.onMouseRollback(),
         });
 
         this.sightLines = new FitPointSightLines3D(() => this.rayDisplay());
@@ -606,43 +608,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     // ---------- enable / disable ----------
 
     setEnabled(on) {
+        if (!on) getInteractionRouter()?.cancelOwner(this);
         this.enabled = on;
         this.visible = on;
         this.markers.setEnabled(on);
         this.sightLines.setEnabled(on);
         this.cancelGesture();
-
-        // Only listened for while the feature is on, so a disabled fit really does cost nothing.
-        if (on && !this._cancelListener) {
-            this._cancelListener = (e) => this.onMouseCancel(e);
-            document.addEventListener("pointercancel", this._cancelListener);
-            document.addEventListener("lostpointercapture", this._cancelListener);
-            window.addEventListener("blur", this._cancelListener);
-            // The press on empty video returns false from onMouseDown so the video keeps its
-            // pan, and mouseMoveView delivers onMouseDrag and onMouseUp only to the view that
-            // CLAIMED the press. So both halves of the gesture have to be watched directly here,
-            // or a click could never add a point at all.
-            //
-            // CAPTURE phase for the release: finishPendingAdd asks the video view whether an
-            // overlay is mid-edit, and one of those answers — _isOverlayDragging — reads the
-            // tracking overlay's `dragging` flags, which its own onMouseUp clears. That runs
-            // from onDocumentMouseUp, a bubble-phase pointerup registered at startup and so
-            // ahead of this one. In the bubble phase the flags would already be cleared and a
-            // real keyframe drag would read as an ordinary click; capture runs first.
-            this._moveListener = (e) => this.trackPendingAdd(e);
-            this._upListener = (e) => this.finishPendingAdd(e);
-            document.addEventListener("pointermove", this._moveListener);
-            document.addEventListener("pointerup", this._upListener, true);
-        } else if (!on && this._cancelListener) {
-            document.removeEventListener("pointercancel", this._cancelListener);
-            document.removeEventListener("lostpointercapture", this._cancelListener);
-            window.removeEventListener("blur", this._cancelListener);
-            document.removeEventListener("pointermove", this._moveListener);
-            document.removeEventListener("pointerup", this._upListener, true);
-            this._cancelListener = null;
-            this._moveListener = null;
-            this._upListener = null;
-        }
 
         if (on) {
             // Adopt the current frame the first time points are placed; after that the points
@@ -845,6 +816,13 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         // One at a time. A second begin without an end means a gesture was abandoned, and the
         // newer edit is the one the user is actually performing.
         this._undoBefore = this.captureState();
+    }
+
+    onMouseRollback() {
+        const before = this._undoBefore;
+        this.cancelGesture();
+        if (before) this.restoreState(before);
+        setRenderOne(true);
     }
 
     endUndo(description) {
@@ -2404,6 +2382,18 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this._undoBefore = null;
     }
 
+    isInteractionEnabled() { return this.enabled; }
+
+    getInteractionIntent(e, mouseX, mouseY) {
+        if (!this.enabled || !this.hasVideoGeometry()) return null;
+        const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
+        const hit = this.pointNear(cx, cy);
+        if (e.button === 2) return hit ? {kind: "click", priority: 75} : null;
+        if (e.button !== 0) return null;
+        if (hit) return {kind: this.onCorrectFrame() ? "drag" : "click", priority: 75, handleId: hit.id};
+        return this.onCorrectFrame() && e.isPrimary !== false ? {kind: "pending", priority: 20} : null;
+    }
+
     onMouseDown(e, mouseX, mouseY) {
         // A new press supersedes whatever the last one left behind, however it ended.
         this.cancelGesture();
@@ -2416,7 +2406,6 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 // Claim the click so the video view does not also open its "Video Adjustments"
                 // menu on top of the deletion. A right-click on empty video is NOT claimed, so
                 // that menu still works normally while fitting.
-                claimRightClick();
                 this.removePoint(hit.id);
                 return true;
             }
@@ -2431,7 +2420,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             // raises a dialog just for panning around off-keyframe.
             if (!this.onCorrectFrame()) {
                 this.offerNearestKeyframe("move them");
-                return false;
+                return true;
             }
             this.draggingId = hit.id;
             // Grabbing is not moving: a bare click on a marker states nothing about the
@@ -2450,21 +2439,8 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             return false;
         }
 
-        // Empty video. This press is either a CLICK, which adds a point, or the start of a PAN,
-        // and there is no way to tell which until the pointer either moves or does not. So claim
-        // nothing yet and decide on release.
-        //
-        // Adding on press instead was wrong in a way worth recording: it made every press add a
-        // point AND claim the drag, so panning the video became impossible for as long as Fit was
-        // enabled, and every attempt to pan left an unwanted control point behind. Placing points
-        // accurately is mostly a matter of panning and zooming around to find the landmark, so
-        // that is precisely the wrong thing to take away.
-        //
-        // Only a PRIMARY pointer arms one, and it remembers which pointer it belongs to. A
-        // second finger arriving mid-press has already voided the pending add through the
-        // cancelGesture above, and not re-arming here means it stays voided: during a pinch,
-        // neither finger's release may drop a point. Same rule the Star Tracker's click-toggle
-        // uses. A mouse is always primary, so none of this changes on the desktop.
+        // The router owns this pending click and hands it to video navigation
+        // once movement exceeds the shared click threshold.
         if (e.isPrimary !== false) this.pendingAdd = {cx, cy, pointerId: e.pointerId};
         return false;
     }
@@ -2550,13 +2526,6 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (!this.enabled || !this.hasVideoGeometry()) return;
         if (e && e.button !== undefined && e.button !== 0) return;
 
-        // The video view's own gates for "left-click belongs to an overlay, not to me" — the
-        // single place that already answers this, rather than a second opinion that can drift.
-        const ov = this.overlayView;
-        if (ov?._isMaskEditing?.() || ov?._isAnnotateEditing?.() || ov?._isOverlayDragging?.()) {
-            return;
-        }
-
         const [vx, vy] = this.overlayView.canvasToVideoCoordsOriginal(pending.cx, pending.cy);
         this.withUndo("Add camera fit point", () => {
             this.addPointAtVideo(vx, vy);
@@ -2637,7 +2606,8 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             }
 
             const label = r && onFrame ? `${i + 1}  ${r.distance.toFixed(1)}px` : `${i + 1}`;
-            drawFitHandle(ctx, cx, cy, p.color, label, alpha);
+            drawFitHandle(ctx, cx, cy, p.color, label, alpha,
+                this.draggingId === p.id ? "dragging" : this.interactionHover === p.id ? "hover" : "idle");
         }
     }
 }

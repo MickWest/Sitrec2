@@ -1,3 +1,4 @@
+import {HANDLE_STYLE} from "./HandleStyle";
 import {
     CircleGeometry,
     ConeGeometry,
@@ -15,13 +16,15 @@ import {
 import * as LAYER from "./LayerMasks";
 import {getLocalUpVector} from "./SphericalMath";
 import {getInteractiveViewAt, isViewDisplayed, mouseToNDC, setRaycasterFromView} from "./ViewUtils";
+import {registerEditorInteraction} from "./EditorInteraction";
+import {getInteractionRouter} from "./InteractionRouter";
 import {adjustHeightAboveGround} from "./threeExt";
 
 // Screen size the handles are drawn at, in pixels (updateHandleScales applies these).
 // createArrowGeometry needs the arrow one to express its hit padding in pixels, so both
 // live out here rather than inside that method.
-const DISC_PIXEL_SIZE = 40;
-const ARROW_PIXEL_SIZE = 30;
+const DISC_PIXEL_SIZE = HANDLE_STYLE.moveRadius;
+const ARROW_PIXEL_SIZE = HANDLE_STYLE.altitudeLength;
 
 // How far past the drawn arrow the invisible pick region reaches, in screen pixels.
 const ARROW_HIT_PADDING_PX = 3;
@@ -116,19 +119,24 @@ export class PointEditorWidget extends EventDispatcher {
         
         this.createHandles();
         
-        this.boundPointerMove = (e) => this.onPointerMove(e);
-        this.boundPointerDown = (e) => this.onPointerDown(e);
-        this.boundPointerUp = (e) => this.onPointerUp(e);
-        
-        document.addEventListener('pointermove', this.boundPointerMove);
-        document.addEventListener('pointerdown', this.boundPointerDown);
-        document.addEventListener('pointerup', this.boundPointerUp);
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            id: `point-widget:${this.group.uuid}`,
+            enabled: () => !!this.object && this.group.visible,
+            pick: e => {
+                if (!this.setupRaycasterForEvent(e)) return null;
+                const objects = [this.handles.disc];
+                if (!this.altitudeLocked) objects.push(this.handles.arrowUp, this.handles.arrowDown);
+                const hit = this.raycaster.intersectObjects(objects, true)[0];
+                return hit ? {distance: hit.distance, priority: 70, handle: hit.object} : null;
+            },
+            rollback: e => this.rollbackDrag(e),
+        });
     }
     
     createHandles() {
         const discGeometry = new CircleGeometry(1, 32);
         const discMaterial = new MeshBasicMaterial({
-            color: 0x00ff00,
+            color: HANDLE_STYLE.move,
             transparent: true,
             opacity: 0.6,
             side: DoubleSide,
@@ -138,11 +146,12 @@ export class PointEditorWidget extends EventDispatcher {
         
         this.handles.disc = new Mesh(discGeometry, discMaterial);
         this.handles.disc.userData.type = 'horizontal';
+        this.handles.disc.userData.handleRole = 'move';
         this.handles.disc.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.group.add(this.handles.disc);
         
         const arrowMaterial = new MeshBasicMaterial({
-            color: 0xff0000,
+            color: HANDLE_STYLE.altitude,
             transparent: true,
             opacity: 0.6,
             depthTest: true,
@@ -157,6 +166,7 @@ export class PointEditorWidget extends EventDispatcher {
                 child.material = arrowMaterial;
                 child.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 child.userData.type = 'vertical_up';
+                child.userData.handleRole = 'altitude';
             }
         });
         this.group.add(this.handles.arrowUp);
@@ -169,6 +179,7 @@ export class PointEditorWidget extends EventDispatcher {
                 child.material = arrowMaterial;
                 child.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 child.userData.type = 'vertical_down';
+                child.userData.handleRole = 'altitude';
             }
         });
         this.group.add(this.handles.arrowDown);
@@ -176,6 +187,7 @@ export class PointEditorWidget extends EventDispatcher {
     
     attach(object) {
         if (this.object === object) return;
+        getInteractionRouter()?.cancelOwner(this);
         
         if (this.object) {
             this.object.visible = true;
@@ -192,6 +204,7 @@ export class PointEditorWidget extends EventDispatcher {
     }
     
     detach() {
+        getInteractionRouter()?.cancelOwner(this);
         const wasDragging = this.isDragging;
         if (this.object) {
             this.object.visible = true;
@@ -353,6 +366,7 @@ export class PointEditorWidget extends EventDispatcher {
                 this.raycaster.ray.origin,
                 this.raycaster.ray.direction
             );
+            if (!closest) { this.onPointerUp(event); return false; }
             this.startClosestPoint.copy(closest);
         }
         
@@ -374,6 +388,7 @@ export class PointEditorWidget extends EventDispatcher {
         const ew = w.dot(rayDir);
         
         const denom = b * c - a * a;
+        if (Math.abs(denom) < 1e-10) return null;
         const s = (dw * c - ew * a) / denom;
         
         return new Vector3().copy(linePoint).addScaledVector(lineDir, s);
@@ -439,6 +454,7 @@ export class PointEditorWidget extends EventDispatcher {
             this.raycaster.ray.origin,
             this.raycaster.ray.direction
         );
+        if (!newClosestPoint) return;
         
         const offset = new Vector3().subVectors(newClosestPoint, this.startClosestPoint);
         
@@ -453,6 +469,16 @@ export class PointEditorWidget extends EventDispatcher {
         this.dispatchEvent({ type: 'objectChange' });
     }
     
+    rollbackDrag(event) {
+        if (this.object && this.isDragging) {
+            this.object.position.copy(this.dragStartWorld);
+            this.group.position.copy(this.dragStartWorld);
+            this.rollbackEdit?.();
+            this.dispatchEvent({type: 'change'});
+        }
+        this.onPointerUp(event);
+    }
+
     onPointerUp(event) {
         const wasDragging = this.isDragging;
         
@@ -489,9 +515,7 @@ export class PointEditorWidget extends EventDispatcher {
     }
     
     dispose() {
-        document.removeEventListener('pointermove', this.boundPointerMove);
-        document.removeEventListener('pointerdown', this.boundPointerDown);
-        document.removeEventListener('pointerup', this.boundPointerUp);
+        this.unregisterInteraction?.();
         
         if (this.handles.disc) {
             this.handles.disc.geometry.dispose();

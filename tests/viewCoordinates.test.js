@@ -181,3 +181,14 @@ test("a point widget picks in a letterboxed look view and keeps that camera acro
         widget.dispose();
     }
 });
+
+
+test("an altitude drag ignores a ray parallel to its movement axis", () => {
+    const widget = Object.create(PointEditorWidget.prototype);
+    widget.dragStartWorld = new Vector3(6370000, 0, 0);
+    widget.dragStartLocalUp = new Vector3(1, 0, 0);
+    widget.raycaster = {ray: {origin: new Vector3(6371000, 0, 0), direction: new Vector3(-1, 0, 0)}};
+    widget.object = {position: widget.dragStartWorld.clone()};
+    widget.handleVerticalDrag();
+    expect(widget.object.position.toArray()).toEqual([6370000, 0, 0]);
+});

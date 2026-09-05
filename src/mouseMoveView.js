@@ -5,17 +5,15 @@
 import {ViewMan} from "./CViewManager";
 import {mouseInViewOnly, mouseToNDC, viewToNDC} from "./ViewUtils";
 import {setRenderOne} from "./Globals";
+import {getInteractionRouter} from "./InteractionRouter";
+import {installViewInteractions} from "./ViewInteraction";
 
-let mouseDragView
-let mouseDown = false
-let mousePointerId;
-let mouseButton;
+let removeViewInteractions;
+function router() {
+    if (!removeViewInteractions) removeViewInteractions = installViewInteractions();
+    return getInteractionRouter();
+}
 
-// Deliberately NOT exposed: mouseDragView is not "the view that claimed the press". The
-// dispatcher below sets it for any handler that did not return an explicit false, and most fall
-// off the end returning undefined — CNodeTrackingOverlay does so on every ordinary click. An
-// overlay wanting to know whether a press belongs to somebody else must ask that overlay
-// directly (see CNodeVideoView._isMaskEditing / _isAnnotateEditing / _isOverlayDragging).
 export const DRAG = {
     NONE: 0,
     PAN: 1,
@@ -23,9 +21,6 @@ export const DRAG = {
     ZOOM: 3,
     MOVEHANDLE: 4,
 }
-let dragMode = DRAG.NONE;
-let mouseLastX = 0;
-let mouseLastY = 0;
 // Current mouse position, REALLY needs encapsulating....
 let mouseX = 0;
 let mouseY = 0;
@@ -67,19 +62,19 @@ export function getCursorPositionFromTopView() {
 
 
 
+let handlersInstalled = false;
 export function SetupMouseHandler() {
-    document.addEventListener( 'pointermove', onDocumentMouseMove, false );
-    document.addEventListener( 'pointerdown', onDocumentMouseDown, false );
-    document.addEventListener( 'pointerup', onDocumentMouseUp, false );
-    document.addEventListener('pointercancel', onDocumentMouseCancel, true);
-    document.addEventListener('lostpointercapture', onDocumentMouseCancel, true);
-    window.addEventListener('blur', onDocumentMouseCancel);
+    if (handlersInstalled) return;
+    handlersInstalled = true;
+    router();
+    const remember = e => { mouseX = e.clientX; mouseY = e.clientY; };
+    document.addEventListener('pointermove', remember, true);
+    document.addEventListener('pointerdown', remember, true);
     // CAPTURE phase: a hover-revealed CUIBar stops 'dblclick' in the bubble phase (so header
     // clicks don't fullscreen-via-content), and the video canvas has its own bubble dblclick
     // (pan/zoom reset). Capturing at the document lets the header-strip handler run first and
     // swallow the event so neither of those fires on a header double-click.
     document.addEventListener( 'dblclick', onDocumentDoubleClick, true );
-    document.addEventListener( 'wheel', onDocumentWheel, false );
 
     // Initial press of a cursor-consuming key needs an immediate cursor
     // refresh — onMouseMove only raycasts while one of these keys is already
@@ -106,175 +101,28 @@ export function SetupMouseHandler() {
 }
 
 export function onDocumentWheel(event) {
-    // console.log("onDocumentWheel " + event.deltaX + "," + event.deltaY)
-    mouseX = (event.clientX);
-    mouseY = (event.clientY);
-
-    if (!mouseDragView && isTopMenuElementAt(mouseX, mouseY)) return;
-
-    // if we started dragging in a view, then send moves only to that
-    if (mouseDragView) {
-        if (mouseDragView.onMouseWheel) {
-            mouseDragView.onMouseWheel(event, mouseX, mouseY, event.deltaX, event.deltaY)
-        } else {
-            console.warn("No onMouseWheel handler for " + mouseDragView.id)
-        }
-    } else {
-        ViewMan.iterateVisibleIncludingOverlays((name, view) => {
-            if (mouseInViewOnly(view, mouseX, mouseY) && view.onMouseWheel !== undefined) {
-                view.onMouseWheel(event, mouseX, mouseY, event.deltaX, event.deltaY)
-            }
-        })
-    }
-
+    mouseX = event.clientX; mouseY = event.clientY;
+    return router().wheel(event);
 }
 
-//
 export function onDocumentMouseDown(event) {
-
-    if (!mouseDown) {
-        mouseX = (event.clientX);
-        mouseY = (event.clientY);
-        mouseLastX = mouseX;
-        mouseLastY = mouseY;
-        mousePointerId = event.pointerId;
-        mouseButton = event.button;
-
-        if (isTopMenuElementAt(mouseX, mouseY)) {
-            mouseDragView = null;
-            setRenderOne(true);
-            return;
-        }
-
-        const vm = ViewMan
-
-//        console.log("Mouse Down, checking exclusive")
-
-        vm.iterateVisibleIncludingOverlays((name, view) => {
-//            console.log("onDocumentMouseDown checking" + view.id)
-
-            if (mouseInViewOnly(view, mouseX, mouseY, false)) {
-  //              console.log("onDocumentMouseDown has mouseInViewOnly true for" + view.id)
-                if (view.onMouseDown !== undefined) {
-                  //  console.log("Calling onMouseDown for" + view.id)
-                    // Every view under the cursor gets onMouseDown and the LAST one wins
-                    // mouseDragView, because mouseInViewOnly only rejects a view when a
-                    // HIGHER-z view with an onMouseDown covers the point — overlays sharing
-                    // a z-index (all the video overlays sit at z=3) never exclude each other.
-                    //
-                    // So a handler that DECLINES the click by returning false was still
-                    // being handed the drag, stealing it from the view that actually took
-                    // it. That is how dragging a manual-tracking keyframe broke: the
-                    // trackingOverlay started the drag (and jumped to the keyframe's frame,
-                    // which is why it looked like a seek), then annotateOverlay — not in
-                    // editing mode, returning false — overwrote mouseDragView, so the
-                    // mousemove never reached the overlay and the point never moved.
-                    //
-                    // Treat an explicit false as "not mine". Anything else (true, or the
-                    // undefined that most handlers return) keeps the previous behaviour,
-                    // so this only changes views that already opted out on purpose.
-                    if (view.onMouseDown(event, mouseX, mouseY) !== false) {
-                        mouseDragView = view;
-                    }
-                } else {
-                   // console.log("No callback onMouseDown for" + view.id)
-                }
-
-
-            }
-        })
-    }
-
-    // click forces update
-    setRenderOne(true);
-
-    mouseDown = true;
+    mouseX = event.clientX; mouseY = event.clientY;
+    return router().down(event);
 }
 
 export function onDocumentMouseMove(event) {
-    if (mouseDown && event.pointerId !== mousePointerId) return;
-    // A release outside the document may never deliver pointerup here.
-    if (mouseDown && event.buttons === 0) {
-        onDocumentMouseCancel(event);
-    }
-
-    mouseX = (event.clientX);
-    mouseY = (event.clientY);
-
-    if (!mouseDragView && isTopMenuElementAt(mouseX, mouseY)) {
-        mouseLastX = mouseX;
-        mouseLastY = mouseY;
-        return;
-    }
-
-    // console.log("onDocumentMouseMove " + mouseX + "," + mouseY)
-
-
-    // if we started dragging in a view, then send moves only to that
-    if (mouseDragView) {
-//         console.log("Mouse Dragging " + mouseDragView.id)
-        if (mouseDragView.onMouseDrag) {
-            // console.log("Mouse Dragging " + mouseDragView.id)
-            mouseDragView.onMouseDrag(event, mouseX, mouseY, mouseX - mouseLastX, mouseY - mouseLastY)
-        } else {
-//            console.log("Mouse Unhandled Dragging " + mouseDragView.id)
-            mouseDragView.onMouseMove?.(event, mouseX, mouseY, mouseX - mouseLastX, mouseY - mouseLastY)
-        }
-    } else {
-        // otherwise, send to the view we are inside
-        ViewMan.iterateVisibleIncludingOverlays((name, view) => {
-
-            if (mouseInViewOnly(view, mouseX, mouseY) && view.onMouseMove !== undefined) {
-                // console.log("Mouse Move (no drag) in view "+view.id)
-                view.onMouseMove(event, mouseX, mouseY, mouseX-mouseLastX, mouseY-mouseLastY)
-            }
-        })
-
-    }
-
-    // Mouse dragging is likely to need rendering update
-    if (mouseDown)
-        setRenderOne(true);
-
-    mouseLastX = mouseX;
-    mouseLastY = mouseY;
-
+    mouseX = event.clientX; mouseY = event.clientY;
+    return router().move(event);
 }
 
 export function onDocumentMouseUp(event) {
-    if (mouseDown && (event.pointerId !== mousePointerId || event.button !== mouseButton)) return;
-    finishDocumentDrag(event, false);
+    mouseX = event.clientX; mouseY = event.clientY;
+    return router().up(event);
 }
 
 export function onDocumentMouseCancel(event) {
-    if (event.type !== 'blur' && event.pointerId !== mousePointerId) return;
-    finishDocumentDrag(event, true);
-}
-
-function finishDocumentDrag(event, cancelled) {
-    const view = mouseDragView;
-    const x = cancelled ? mouseX : event.clientX;
-    const y = cancelled ? mouseY : event.clientY;
-    const dx = x - mouseLastX, dy = y - mouseLastY;
-    // Clear ownership before callbacks: releasing capture or disposing an editor
-    // can synchronously send another termination event.
-    mouseDragView = null;
-    mouseDown = false;
-    mousePointerId = undefined;
-    mouseButton = undefined;
-    dragMode = DRAG.NONE;
-    mouseX = mouseLastX = x;
-    mouseY = mouseLastY = y;
-    if (!view) return;
-    if (!cancelled && (dx !== 0 || dy !== 0)) {
-        // Editors normally mutate on move, so deliver the release's last delta
-        // before their undo snapshot is finalized.
-        (view.onMouseDrag ?? view.onMouseMove)?.call(view, event, x, y, dx, dy);
-    }
-    // Until editors have a dedicated cancellation policy, finish the visible
-    // edit through their normal up path so its undo bookkeeping is preserved.
-    (cancelled ? view.onMouseCancel ?? view.onMouseUp : view.onMouseUp)?.call(view, event, x, y);
-    setRenderOne(true);
+    if (event.type === 'blur') return router().finish(event, 'interrupted');
+    return router().cancelPointer(event);
 }
 
 // Double-clicking a view's HEADER STRIP (its UIBar) toggles fullscreen — the same action as

@@ -1,3 +1,4 @@
+import {getInteractionRouter} from "../InteractionRouter";
 ///////////////////////////////////////////////////////////////////////////////
 // CNodeView is the base class of all the views (2D, text, 3D, and maybe more)
 // it has a div, which can be resized with our modern drag/resize utilities
@@ -617,6 +618,9 @@ class CNodeView extends CNode {
     }
 
     dispose() {
+        getInteractionRouter(this.div?.ownerDocument)?.cancelOwner(this);
+        this.mouse?.dispose?.();
+        this.controls?.dispose?.();
         console.log("Disposing CNodeView: "+this.id)
         const sidebar = this.dockedSidebar ? this.getDockSidebar(this.dockedSidebar) : null;
 

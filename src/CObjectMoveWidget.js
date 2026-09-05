@@ -1,3 +1,5 @@
+import {acquireControlLease} from "./InteractionRouter";
+import {editingControls} from "./EditorInteraction";
 // Dragging a 3D object around, instead of typing numbers into whatever track drives it.
 //
 // An object never owns its position. A CNodeControllerTrackPosition copies one out of a
@@ -480,6 +482,7 @@ class CObjectMoveWidget {
 
             this.widget.addEventListener("change", () => setRenderOne());
             this.widget.addEventListener("objectChange", () => this.onWidgetMoved());
+            this.widget.rollbackEdit = () => this.rollbackDrag();
             this.widget.addEventListener("dragging-changed", (event) => this.onDraggingChanged(event));
         }
 
@@ -614,20 +617,8 @@ class CObjectMoveWidget {
         if (suppress === this.cameraSuppressed) return;
         this.cameraSuppressed = suppress;
 
-        if (suppress) {
-            this.savedControlsEnabled = new Map();
-            ViewMan.iterate((id, view) => {
-                if (!view || !view.controls) return;
-                this.savedControlsEnabled.set(view.controls, view.controls.enabled);
-                view.controls.enabled = false;
-            });
-            return;
-        }
-
-        for (const [controls, enabled] of this.savedControlsEnabled ?? []) {
-            controls.enabled = enabled;
-        }
-        this.savedControlsEnabled = null;
+        if (suppress) this.releaseCamera = acquireControlLease(editingControls());
+        else { this.releaseCamera?.(); this.releaseCamera = null; }
     }
 
     /** Follow the object, which the controllers re-place every frame. */
@@ -746,6 +737,22 @@ class CObjectMoveWidget {
         }
 
         positionNode.setLLA(lla.x, lla.y, altitude);
+    }
+
+    rollbackDrag() {
+        if (this.dragPrepared) {
+            if (this.target.kind === "fixed") this.target.node.setLLA(...this.dragStartLLA);
+            else {
+                const editor = this.target.node.splineEditor;
+                if (this.insertedFrame !== null) {
+                    const index = editor.frameNumbers.indexOf(this.insertedFrame);
+                    if (index >= 0) editor.removePointByIndex(index);
+                } else if (this.undoStateBefore) editor.restoreState(this.undoStateBefore);
+            }
+        }
+        this.dragPrepared = false;
+        this.endDrag();
+        this.syncToObject();
     }
 
     endDrag() {

@@ -12,6 +12,7 @@ import {getHUDColor} from "../HUDColor";
 import {viewControlLabel, viewMenuKey} from "../ViewUIBarMenus";
 import {renderedRect, withDisplayedCamera} from "../ViewUtils";
 import {fisheyeProjectVector, isFisheyeCamera} from "../FisheyeProjection";
+import {labelPixelOffset} from "../LabelOffsets";
 
 // World-space Vector3 → NDC through whatever projection the view is actually
 // rendering: the fisheye twin when the fisheye applies to this camera,
@@ -572,8 +573,9 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             // saved sitches, so they are taken as they have always behaved rather than
             // reinterpreted — correcting the factor here would move every existing label.
             if (label.offset) {
-                x += 0.5 * label.offset.x;
-                y -= 0.5 * label.offset.y;
+                const offset = labelPixelOffset(label);
+                x += offset.x;
+                y -= offset.y;
             }
 
             if (textAlign === 'left') {

@@ -18,6 +18,7 @@ import {CNode3DGroup} from "./CNode3DGroup";
 import {par} from "../par";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
+import {labelPixelOffset} from "../LabelOffsets";
 
 import {assert} from "../assert";
 import {V2, V3} from "../threeUtils";
@@ -679,8 +680,13 @@ export class CNodeFeatureMarker extends CNodeLabel3D {
         this.textPosition.copy(this.featurePosition);
     }
     
+    labelPosition(view) {
+        const offset = labelPixelOffset(this);
+        return view.offsetScreenPixels(this.featurePosition, offset.x, offset.y);
+    }
+
     preRender(view) {
-        const topPosition = view.offsetScreenPixels(this.featurePosition.clone(), 0, this.arrowLength);
+        const topPosition = this.labelPosition(view);
         DebugArrowAB(this.id + "_arrow", topPosition, this.featurePosition, this.arrowColor, true, this.group, 20, this.groupNode.group.layers.mask);
     }
     

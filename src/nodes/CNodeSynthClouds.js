@@ -1,3 +1,7 @@
+import {createDragHandle} from "../HandleGeometry";
+import {HANDLE_STYLE} from "../HandleStyle";
+import {registerEditorInteraction} from "../EditorInteraction";
+import {getInteractionRouter} from "../InteractionRouter";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {showConfirm} from "../showError";
 import {
@@ -122,7 +126,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         this.moveHandle = null;
         
         this.raycaster = new Raycaster();
-        this.raycaster.layers.mask = LAYER.MASK_HELPERS;
+        this.raycaster.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         
         this.buildCloudMesh();
         this.setupEventListeners();
@@ -535,13 +539,12 @@ export class CNodeSynthClouds extends CNode3DGroup {
     }
     
     setupEventListeners() {
-        this.onPointerDownBound = this.onPointerDown.bind(this);
-        this.onPointerMoveBound = this.onPointerMove.bind(this);
-        this.onPointerUpBound = this.onPointerUp.bind(this);
-        
-        document.addEventListener('pointerdown', this.onPointerDownBound);
-        document.addEventListener('pointermove', this.onPointerMoveBound);
-        document.addEventListener('pointerup', this.onPointerUpBound);
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            pick: e => {
+                const handle = this.getHandleAtMouse(e.clientX, e.clientY);
+                return handle ? {handle: this[handle + "Handle"]} : null;
+            },
+        });
     }
     
     onPointerDown(event) {
@@ -557,9 +560,10 @@ export class CNodeSynthClouds extends CNode3DGroup {
             target = target.parentElement;
         }
         
-        const view = ViewMan.get("mainView");
+        const view = (this.isDragging ? this.activeView : getInteractiveViewAt(event.clientX, event.clientY));
         if (!view) return;
         if (!mouseInRenderedView(view, event.clientX, event.clientY)) return;
+        this.activeView = view;
         
         const handle = this.getHandleAtMouse(event.clientX, event.clientY);
         if (handle) {
@@ -599,12 +603,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             this.isDragging = true;
             this.draggingHandle = handle;
             this.dragPlane = plane;
-            
-            // Disable camera controls while dragging
-            if (view.controls) {
-                view.controls.enabled = false;
-            }
-            
+
             event.stopPropagation();
             event.preventDefault();
         }
@@ -614,7 +613,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         if (!this.editMode) return;
         
         if (this.isDragging && this.draggingHandle) {
-            const view = ViewMan.get("mainView");
+            const view = (this.isDragging ? this.activeView : getInteractiveViewAt(event.clientX, event.clientY));
             if (!view) return;
 
             setRaycasterFromView(this.raycaster, view, event.clientX, event.clientY);
@@ -704,18 +703,14 @@ export class CNodeSynthClouds extends CNode3DGroup {
             this.isDragging = false;
             this.draggingHandle = null;
             
-            // Re-enable camera controls
-            const view = ViewMan.get("mainView");
-            if (view && view.controls) {
-                view.controls.enabled = true;
-            }
+            this.activeView = null;
             
             CustomManager.saveGlobalSettings();
         }
     }
     
     getHandleAtMouse(mouseX, mouseY) {
-        const view = getInteractiveViewAt(mouseX, mouseY, ["mainView"]);
+        const view = getInteractiveViewAt(mouseX, mouseY);
         if (!view) return null;
         this.updateHandleScales(view);
         this.group.updateMatrixWorld(true);
@@ -743,15 +738,15 @@ export class CNodeSynthClouds extends CNode3DGroup {
     
     updateHandleColors() {
         if (this.altitudeHandle) {
-            const color = this.hoveredHandle === 'altitude' ? 0x00ff00 : 0xffff00;
+            const color = this.hoveredHandle === 'altitude' ? HANDLE_STYLE.hover : HANDLE_STYLE.altitude;
             this.altitudeHandle.material.color.setHex(color);
         }
         if (this.radiusHandle) {
-            const color = this.hoveredHandle === 'radius' ? 0x00ff00 : 0x00ffff;
+            const color = this.hoveredHandle === 'radius' ? HANDLE_STYLE.hover : HANDLE_STYLE.resize;
             this.radiusHandle.material.color.setHex(color);
         }
         if (this.moveHandle) {
-            const color = this.hoveredHandle === 'move' ? 0x00ff00 : 0xff8800;
+            const color = this.hoveredHandle === 'move' ? HANDLE_STYLE.hover : HANDLE_STYLE.move;
             this.moveHandle.material.color.setHex(color);
         }
     }
@@ -765,28 +760,21 @@ export class CNodeSynthClouds extends CNode3DGroup {
         const localUp = getLocalUpVector(centerECEF);
         const east = new Vector3(1, 0, 0).cross(localUp).normalize();
         
-        // Use fixed 3m radius geometry (same as buildings) - scaled dynamically in updateHandleScales
-        const handleGeometry = new SphereGeometry(3, 16, 16);
-        
-        const altitudeMaterial = new MeshBasicMaterial({color: 0xffff00, depthTest: false, transparent: true, opacity: 0.8});
-        this.altitudeHandle = new Mesh(handleGeometry.clone(), altitudeMaterial);
-        this.altitudeHandle.position.set(0, 0, 0);
-        this.altitudeHandle.layers.mask = LAYER.MASK_HELPERS;
+        this.altitudeHandle = createDragHandle("altitude", {depthTest: false});
+        this.altitudeHandle.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), localUp);
+        this.altitudeHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.group.add(this.altitudeHandle);
-        
-        const radiusMaterial = new MeshBasicMaterial({color: 0x00ffff, depthTest: false, transparent: true, opacity: 0.8});
-        this.radiusHandle = new Mesh(handleGeometry.clone(), radiusMaterial);
+
+        this.radiusHandle = createDragHandle("resize", {depthTest: false});
         this.radiusHandle.position.copy(east.clone().multiplyScalar(this.radius));
-        this.radiusHandle.layers.mask = LAYER.MASK_HELPERS;
+        this.radiusHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.group.add(this.radiusHandle);
-        
-        const moveMaterial = new MeshBasicMaterial({color: 0xff8800, depthTest: false, transparent: true, opacity: 0.8});
-        this.moveHandle = new Mesh(handleGeometry.clone(), moveMaterial);
+
+        this.moveHandle = createDragHandle("move", {depthTest: false});
+        this.moveHandle.quaternion.setFromUnitVectors(new Vector3(0, 0, 1), localUp);
         this.moveHandle.position.copy(east.clone().multiplyScalar(-this.radius * 0.5));
-        this.moveHandle.layers.mask = LAYER.MASK_HELPERS;
+        this.moveHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.group.add(this.moveHandle);
-        
-        handleGeometry.dispose(); // Dispose the template
     }
     
     /**
@@ -799,7 +787,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             return;
         }
         
-        const handlePixelSize = 20; // Target size in screen pixels
+        const handlePixelSize = HANDLE_STYLE.pointRadius; // Target size in screen pixels
         const worldPos = new Vector3();
         
         const handles = [this.altitudeHandle, this.radiusHandle, this.moveHandle];
@@ -834,6 +822,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
     }
     
     setEditMode(enabled) {
+        if (!enabled) getInteractionRouter()?.cancelOwner(this);
         if (this.editMode === enabled) return;
         
         this.editMode = enabled;
@@ -1168,9 +1157,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
     }
     
     dispose() {
-        document.removeEventListener('pointerdown', this.onPointerDownBound);
-        document.removeEventListener('pointermove', this.onPointerMoveBound);
-        document.removeEventListener('pointerup', this.onPointerUpBound);
+        this.unregisterInteraction?.();
         
         this.removeControlHandles();
         

@@ -1,3 +1,4 @@
+import {registerEditorInteraction} from "../EditorInteraction";
 /**
  * Pointer / event-handling methods for CNodeSynthBuilding.
  *
@@ -13,7 +14,7 @@
  */
 
 import {Plane, Vector3} from "three";
-import {CustomManager, Globals, NodeMan, setRenderOne, UndoManager} from "../Globals";
+import {CustomManager, Globals, NodeMan, setRenderOne, Synth3DManager, UndoManager} from "../Globals";
 import {getLocalUpVector} from "../SphericalMath";
 import {getVisiblePointBelow} from "../threeExt";
 import {EventManager} from "../CEventManager";
@@ -45,14 +46,45 @@ export const eventMethods = {
     },
 
     setupEventListeners() {
-        this.onPointerDownBound = (e) => this.onPointerDown(e);
-        this.onPointerMoveBound = (e) => this.onPointerMove(e);
-        this.onPointerUpBound = (e) => this.onPointerUp(e);
-        
-        document.addEventListener('pointerdown', this.onPointerDownBound);
-        document.addEventListener('pointermove', this.onPointerMoveBound);
-        document.addEventListener('pointerup', this.onPointerUpBound);
-        
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            pick: e => {
+                if (!this.setupRaycasterForEvent(e)) return null;
+                const handles = [...this.controlPoints, ...this.rotationHandles,
+                    this.roofCenterHandle, this.rooflineHandle].filter(Boolean);
+                const hit = this.raycaster.intersectObjects(handles, false)[0];
+                if (hit) return {distance: hit.distance, handle: hit.object};
+                const mask = this.raycaster.layers.mask;
+                this.raycaster.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
+                const body = this.solidMesh && this.raycaster.intersectObject(this.solidMesh, false)[0];
+                this.raycaster.layers.mask = mask;
+                return body ? {distance: body.distance, priority: 40} : null;
+            },
+            rollback: e => {
+                if (this.duplicationSource) {
+                    const source = this.duplicationSource;
+                    this.duplicationSource = null;
+                    this.stateBeforeDrag = null;
+                    this.isDragging = this.isRotating = false;
+                    Synth3DManager.removeBuilding(this.buildingID);
+                    source.setEditMode(true);
+                } else {
+                    const before = this.stateBeforeDrag;
+                    this.stateBeforeDrag = null;
+                    if (before) this.restoreState(before);
+                    this.isRotating = false;
+                    this.onPointerUp(e);
+                }
+            },
+            redirect: e => {
+                if (!e.altKey) return null;
+                const copy = this.duplicate(false);
+                if (copy) copy.duplicationSource = this;
+                copy?.setEditMode(true);
+                copy?.group.updateMatrixWorld(true);
+                return copy;
+            },
+        });
+
         // EITHER ground a building can stand on can move underneath it, and the
         // answer to both is the same: put the building back on it.
         //  - "elevationChanged" is the elevation map (flat-elevation toggle,
@@ -219,7 +251,7 @@ export const eventMethods = {
         // setupRaycasterForEvent has already scaled the sphere for the active
         // view. Use that radius so rotation starts outside the visible handle.
         const handle = this.controlPoints.find(point => point.userData.vertexIndex === cornerVertexIndex);
-        const handleRadius = handle ? handle.geometry.parameters.radius * handle.scale.x : 3;
+        const handleRadius = handle ? (handle.userData.handleRadius ?? handle.geometry.parameters.radius) * handle.scale.x : 3;
         if (projectedDistance <= handleRadius) return false;
         
         // Additional check: only detect rotation if clicking on the "outward" side
@@ -304,28 +336,6 @@ export const eventMethods = {
         // Capture state before any drag operation begins (for undo/redo)
         this.stateBeforeDrag = this.captureState();
         
-        // Check for Alt/Option key - if pressed, duplicate the building and switch to editing the copy
-        // Only duplicate if we haven't already done so for this event (prevent infinite recursion)
-        if (event.altKey && !event._duplicatedBuilding) {
-            const duplicate = this.duplicate();
-            if (duplicate) {
-                // Enter edit mode on the duplicate
-                duplicate.setEditMode(true);
-
-                // Force update of world matrices so raycasting works immediately
-                // (normally matrices are updated during the render loop, but we need them now)
-                duplicate.group.updateMatrixWorld(true);
-
-                // Mark the event as having triggered duplication to prevent recursion
-                event._duplicatedBuilding = true;
-
-                // Continue with the drag/rotate logic on the duplicate
-                // by re-triggering the event handling on the duplicate
-                duplicate.onPointerDown(event);
-            }
-            return;
-        }
-        
         // Check intersection with actual handles (control points + roof center handle + roofline handle)
         const allHandles = [...this.controlPoints];
         if (this.roofCenterHandle) {
@@ -394,12 +404,7 @@ export const eventMethods = {
             // Store the initial intersection point
             this.dragInitialIntersection = new Vector3();
             this.raycaster.ray.intersectPlane(plane, this.dragInitialIntersection);
-            
-            // Disable camera controls while dragging
-            if (view.controls) {
-                view.controls.enabled = false;
-            }
-            
+
             event.stopPropagation();
             event.preventDefault();
             return; // Don't check rotation rings
@@ -443,12 +448,7 @@ export const eventMethods = {
                         );
                         
                         document.body.style.cursor = 'grabbing';
-                        
-                        // Disable camera controls while rotating
-                        if (view.controls) {
-                            view.controls.enabled = false;
-                        }
-                        
+
                         event.stopPropagation();
                         event.preventDefault();
                         return; // Don't check building mesh
@@ -478,12 +478,7 @@ export const eventMethods = {
                 this.dragStartPoint = meshIntersects[0].point.clone();
                 
                 document.body.style.cursor = 'move';
-                
-                // Disable camera controls while translating
-                if (view.controls) {
-                    view.controls.enabled = false;
-                }
-                
+
                 event.stopPropagation();
                 event.preventDefault();
             }
@@ -964,13 +959,9 @@ export const eventMethods = {
      */
     onPointerUp(event) {
         if (this.isDragging || this.isRotating) {
-            const view = this.activeView;
-            if (view && view.controls) {
-                view.controls.enabled = true;
-            }
             
             // Create undo action if we have a state before drag and UndoManager is available
-            if (this.stateBeforeDrag && UndoManager) {
+            if (!this.duplicationSource && this.stateBeforeDrag && UndoManager) {
                 const stateAfterDrag = this.captureState();
                 const stateBefore = this.stateBeforeDrag;
                 
@@ -998,6 +989,18 @@ export const eventMethods = {
             this.stateBeforeDrag = null;
         }
         
+        if (this.duplicationSource) {
+            const state = this.serialize();
+            let id = this.buildingID;
+            const name = this.duplicationSource.name;
+            this.duplicationSource = null;
+            UndoManager?.add({
+                description: `Duplicate building "${name}"`,
+                undo: () => Synth3DManager.removeBuilding(id),
+                redo: () => { id = Synth3DManager.addBuilding(state).buildingID; },
+            });
+        }
+
         // If rotation just ended, save the absolute rotation angle to settings
         if (this.isRotating) {
             // Normalize rotation to 0-2π range

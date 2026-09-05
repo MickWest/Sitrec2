@@ -471,9 +471,6 @@ export function scaleBuildingHandles(view) {
         }
     }
     
-    // Clouds and overlays still edit in the main view only.
-    if (view.id !== "mainView") return;
-
     // Iterate over all synthetic clouds and update their handle scales
     if (Synth3DManager && Synth3DManager.cloudsList) {
         for (const cloudsId in Synth3DManager.cloudsList) {
@@ -1357,4 +1354,3 @@ export function testColorCube(color, position, size, scene) {
 
 
 }
-

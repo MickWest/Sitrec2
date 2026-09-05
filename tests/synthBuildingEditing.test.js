@@ -1,6 +1,8 @@
 /** @jest-environment jsdom */
+import {createDragHandle} from "../src/HandleGeometry";
+import {getInteractionRouter} from "../src/InteractionRouter";
 
-import {beforeEach, expect, jest, test} from "@jest/globals";
+import {afterEach, beforeEach, expect, jest, test} from "@jest/globals";
 import {BoxGeometry, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Raycaster, SphereGeometry, Vector2, Vector3} from "three";
 import {CNodeSynthBuilding} from "../src/nodes/CNodeSynthBuilding";
 import {CNodeSynthClouds} from "../src/nodes/CNodeSynthClouds";
@@ -16,10 +18,10 @@ jest.mock("../src/SphericalMath", () => ({getLocalUpVector: () => new (require("
 jest.mock("../src/LLA-ECEF-ENU", () => ({}));
 jest.mock("../src/Globals", () => ({Globals: {settings: {}}, CustomManager: {saveGlobalSettings: jest.fn()}, setRenderOne: jest.fn()}));
 jest.mock("../src/threeExt", () => ({getVisiblePointBelow: p => p.clone().setY(0)}));
-jest.mock("../src/CEventManager", () => ({}));
+jest.mock("../src/CEventManager", () => ({EventManager: {addEventListener: jest.fn()}}));
 jest.mock("../src/PageStructure", () => ({}));
 jest.mock("../src/i18n", () => ({}));
-jest.mock("../src/CViewManager", () => ({ViewMan: {get: jest.fn(), iterateVisibleIncludingOverlays: jest.fn()}}));
+jest.mock("../src/CViewManager", () => ({ViewMan: {get: jest.fn(), iterate: jest.fn(), iterateVisibleIncludingOverlays: jest.fn()}}));
 jest.mock("../src/mouseMoveView", () => ({
     screenToNDC: (view, x, y) => new (require("three").Vector2)(
         (x - view.leftPx) / view.widthPx * 2 - 1,
@@ -76,7 +78,7 @@ function pointerAt(view, position) {
     return {
         clientX: view.leftPx + (p.x + 1) * view.widthPx / 2,
         clientY: view.topPx + (1 - p.y) * view.heightPx / 2,
-        button: 0, target: document.body,
+        button: 0, buttons: 1, pointerId: 1, target: document.body,
         stopPropagation: jest.fn(), preventDefault: jest.fn(),
     };
 }
@@ -89,8 +91,13 @@ beforeEach(() => {
     ViewMan.iterateVisibleIncludingOverlays.mockImplementation(callback => {
         for (const view of [main, look]) if (view.visible) callback(view.id, view);
     });
+    ViewMan.iterate.mockImplementation(callback => {
+        for (const view of [main, look]) callback(view.id, view);
+    });
     building = makeBuilding();
+    building.setupEventListeners();
 });
+afterEach(() => getInteractionRouter(document).dispose());
 
 test("editing handles are visible to both cameras", () => {
     expect(building.controlPoints).toHaveLength(6);
@@ -100,11 +107,13 @@ test("editing handles are visible to both cameras", () => {
     }
 });
 
-test.each(["cloud", "overlay", "flood"])("%s picks the displayed handle after zoom and rejects a hidden main view", family => {
-    main.visible = true;
-    main.displayedZoom = 3;
+test.each(["cloud", "overlay", "flood"].flatMap(family => ["mainView", "lookView"].map(view => [family, view])))
+("%s picks its shared handle after zoom in %s and rejects a hidden view", (family, viewId) => {
+    const view = viewId === "mainView" ? main : look;
+    view.visible = true;
+    view.displayedZoom = 3;
     const radius = family === "flood" ? 1 : 3;
-    const handle = new Mesh(new SphereGeometry(radius), new MeshBasicMaterial());
+    const handle = createDragHandle(family === "cloud" ? "move" : "resize", {radius});
     handle.position.set(18, 5, 0);
     const group = new Group();
     group.add(handle);
@@ -117,28 +126,28 @@ test.each(["cloud", "overlay", "flood"])("%s picks the displayed handle after zo
     } else {
         host = Object.assign(Object.create(CNodeFloodSim.prototype), shared, {cornerHandles: [handle], method: "HeightMap"});
     }
-    const at = pointerAt(main, handle.position);
+    const at = pointerAt(view, handle.position);
     const hit = host.getHandleAtMouse(at.clientX, at.clientY);
     if (family === "cloud") expect(hit).toBe("move");
     else if (family === "overlay") expect(hit).toMatchObject({type: "corner", index: 0});
     else expect(hit).toBe(0);
-    expect(handle.scale.x * radius / worldUnitsPerPixel(main, handle.position)).toBeCloseTo(20, 8);
-    expect(main.camera.zoom).toBe(1);
-    main._effectivelyVisible = false;
+    expect(handle.scale.x * radius / worldUnitsPerPixel(view, handle.position)).toBeCloseTo(9, 8);
+    expect(view.camera.zoom).toBe(1);
+    view._effectivelyVisible = false;
     expect(host.getHandleAtMouse(at.clientX, at.clientY)).toBe(family === "flood" ? -1 : null);
 });
 
 test.each([1, 3])("look-only layout picks the displayed roof handle at zoom %s", zoom => {
     look.displayedZoom = zoom;
     const event = pointerAt(look, building.roofCenterHandle.position);
-    building.onPointerDown(event);
+    getInteractionRouter(document).down(event);
     expect(building.isDragging).toBe(true);
     expect(building.draggingPoint).toBe(building.roofCenterHandle);
     expect(building.activeView).toBe(look);
     expect(look.controls.enabled).toBe(false);
-    expect(main.controls.enabled).toBe(true);
+    expect(main.controls.enabled).toBe(false);
     expect(look.camera.zoom).toBe(1);
-    building.onPointerUp(event);
+    getInteractionRouter(document).up(event);
     expect(building.isDragging).toBe(false);
     expect(look.controls.enabled).toBe(true);
 });
@@ -158,14 +167,14 @@ test("a maximized look view ignores the main view's stale visible flag and bound
     main.visible = true;
     main.leftPx = look.leftPx;
     main.div = {getBoundingClientRect: () => ({width: 0, height: 0})};
-    building.onPointerDown(pointerAt(look, building.roofCenterHandle.position));
+    getInteractionRouter(document).down(pointerAt(look, building.roofCenterHandle.position));
     expect(building.isDragging).toBe(true);
     expect(building.activeView).toBe(look);
 });
 
 test("drag ray stays in the starting view when the pointer crosses another pane", () => {
     main.visible = true;
-    building.onPointerDown(pointerAt(look, building.roofCenterHandle.position));
+    getInteractionRouter(document).down(pointerAt(look, building.roofCenterHandle.position));
     const event = {clientX: 400, clientY: 300};
     expect(building.setupRaycasterForEvent(event)).toBe(look);
     const expected = new Raycaster();
@@ -183,7 +192,7 @@ test("handle size stays constant through displayed zoom and pane resizing", () =
         look.displayedZoom = zoom;
         look.heightPx = height;
         building.updateHandleScales(look);
-        expect(radiusInPixels()).toBeCloseTo(20, 8);
+        expect(radiusInPixels()).toBeCloseTo(9, 8);
     }
 });
 
@@ -197,7 +206,7 @@ test("rotation region uses the handle size of the active view", () => {
 });
 
 test("a click outside either view does not start editing", () => {
-    building.onPointerDown({clientX: 850, clientY: 0, button: 0, target: document.body});
+    getInteractionRouter(document).down({clientX: 850, clientY: 0, button: 0, buttons: 1, pointerId: 1, target: document.body});
     expect(building.isDragging).toBe(false);
     expect(look.controls.enabled).toBe(true);
 });
@@ -206,21 +215,21 @@ test.each(["mainView", "lookView"])("roof and footprint resize in %s", id => {
     const view = id === "mainView" ? main : look;
     view.visible = true;
     const roof = pointerAt(view, building.roofCenterHandle.position);
-    building.onPointerDown(roof);
-    building.onPointerMove({...roof, clientY: roof.clientY - 20});
+    getInteractionRouter(document).down(roof);
+    getInteractionRouter(document).move({...roof, clientY: roof.clientY - 20});
     expect(building.vertices[4].position.y).toBeGreaterThan(10);
     expect(building.vertices[0].position.y).toBe(0);
-    building.onPointerUp(roof);
+    getInteractionRouter(document).up(roof);
 
     const corner = pointerAt(view, building.controlPoints[2].position);
     const original = building.vertices[2].position.clone();
     const opposite = building.vertices[0].position.clone();
-    building.onPointerDown(corner);
+    getInteractionRouter(document).down(corner);
     expect(building.draggingVertexIndex).toBe(2);
-    building.onPointerMove({...corner, clientX: corner.clientX + 20});
+    getInteractionRouter(document).move({...corner, clientX: corner.clientX + 20});
     expect(building.vertices[2].position.distanceTo(original)).toBeGreaterThan(1);
     expect(building.vertices[0].position.distanceTo(opposite)).toBeLessThan(1e-10);
-    building.onPointerUp(corner);
+    getInteractionRouter(document).up(corner);
     expect(view.controls.enabled).toBe(true);
 });
 
@@ -233,26 +242,41 @@ test.each(["mainView", "lookView"])("whole-building translation and rotation in 
     building.group.add(building.solidMesh);
     const body = pointerAt(view, new Vector3(0, 5, 15));
     const before = building.vertices.map(v => v.position.clone());
-    building.onPointerDown(body);
+    getInteractionRouter(document).down(body);
     expect(building.draggingPoint.userData.isBuildingMesh).toBe(true);
-    building.onPointerMove({...body, clientX: body.clientX + 20});
+    getInteractionRouter(document).move({...body, clientX: body.clientX + 20});
     const displacement = building.vertices[0].position.clone().sub(before[0]);
     expect(displacement.length()).toBeGreaterThan(1);
     building.vertices.forEach((v, i) => expect(v.position.clone().sub(before[i]).distanceTo(displacement)).toBeLessThan(1e-10));
-    building.onPointerUp(body);
+    getInteractionRouter(document).up(body);
 
     building.updateHandleScales(view);
     const corner = building.vertices[2].position;
     const outward = corner.clone().sub(building.buildingCentroid).normalize();
     const radius = building.controlPoints[2].scale.x * 3;
-    const rotation = pointerAt(view, corner.clone().addScaledVector(outward, radius * 2));
-    building.onPointerDown(rotation);
+    const rotation = pointerAt(view, corner.clone().addScaledVector(outward, radius * 3));
+    getInteractionRouter(document).down(rotation);
     expect(building.isRotating).toBe(true);
     const width = building.vertices[0].position.distanceTo(building.vertices[1].position);
     const cornerBeforeRotation = building.vertices[0].position.clone();
-    building.onPointerMove({...rotation, clientX: rotation.clientX + 20});
+    getInteractionRouter(document).move({...rotation, clientX: rotation.clientX + 20});
     expect(building.vertices[0].position.distanceTo(cornerBeforeRotation)).toBeGreaterThan(0.1);
     expect(building.vertices[0].position.distanceTo(building.vertices[1].position)).toBeCloseTo(width, 8);
-    building.onPointerUp(rotation);
+    getInteractionRouter(document).up(rotation);
     expect(view.controls.enabled).toBe(true);
+});
+
+
+test("rotation ring picking includes the center while keeping its visible geometry", () => {
+    main.visible = true;
+    const handle = createDragHandle("rotate");
+    const host = Object.assign({}, groundOverlayEvents, {group: new Group(), raycaster: new Raycaster(),
+        editMode: true, cornerHandles: [], lockPointHandles: [], rotationHandle: handle});
+    host.group.add(handle);
+    const drawing = handle.geometry;
+    const at = pointerAt(main, handle.position);
+    expect(host.getHandleAtMouse(at.clientX, at.clientY)).toMatchObject({type: "rotation"});
+    expect(handle.geometry).toBe(drawing);
+    handle.geometry.dispose();
+    handle.material.dispose();
 });

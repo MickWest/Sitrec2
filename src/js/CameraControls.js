@@ -23,7 +23,8 @@ import {intersectSphere2, V3} from "../threeUtils";
 import {getCursorPositionFromTopView, getTopViewWithCursor, onDocumentMouseMove} from "../mouseMoveView";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {isLocal} from "../configUtils"
-import {mouseToNDC, mouseToView, mouseInRenderedView, setRaycasterFromView, viewToNDC, withDisplayedCamera} from "../ViewUtils";
+import {getInteractionRouter, INTERACTION} from "../InteractionRouter";
+import {isViewDisplayed, mouseToNDC, mouseToView, mouseInRenderedView, setRaycasterFromView, viewToNDC, withDisplayedCamera} from "../ViewUtils";
 import {raycastLocalGround} from "../raycastGround";
 import {CNodeMeasureAB} from "../nodes/CNodeLabels3D";
 import {CNodePositionXYZ} from "../nodes/CNodePositionLLA";
@@ -133,15 +134,37 @@ class CameraMapControls {
 		this.isLongPressTriggered = false;
 		this.activePointers = new Set(); // Track active pointer IDs for multi-touch detection
 
-		this.canvas.addEventListener('contextmenu', e => this.onContextMenu(e));
-		this.canvas.addEventListener('pointerdown', e => this.handleMouseDown(e));
-		this.canvas.addEventListener('pointerup', e => this.handleMouseUp(e));
-		this.canvas.addEventListener('pointercancel', e => this.handlePointerCancel(e));
-		this.canvas.addEventListener('pointermove', e => this.handleMouseMove(e));
-		this.canvas.addEventListener('wheel', e => this.handleMouseWheel(e));
-		this.canvas.addEventListener('touchstart', e => this.handleTouchStart(e), { passive: false });
-		this.canvas.addEventListener('touchmove', e => this.handleTouchMove(e), { passive: false });
-		this.canvas.addEventListener('touchend', e => this.handleTouchEnd(e), { passive: false });
+        const surface = e => mouseInRenderedView(this.view, e.clientX, e.clientY)
+            ? {kind: INTERACTION.DRAG, zIndex: this.view.zIndex ?? 0} : null;
+        this.unregisterInteraction = getInteractionRouter(this.canvas.ownerDocument).register({
+            id: `camera:${this.view.id}`, model: this.view, navigation: true, priority: 0,
+            enabled: () => !isViewDragging && isViewDisplayed(this.view),
+            valid: () => isViewDisplayed(this.view), hitTest: surface, hitSurface: surface,
+            capture: () => this.canvas,
+            begin: e => {
+                if (e.resumed) this.lastTapTime = 0;
+                this.view.onMouseDown?.(e, e.clientX, e.clientY);
+                this.handleMouseDown(e);
+            },
+            move: e => this.handleMouseMove(e),
+            end: (e, gesture) => {
+                this.handleMouseUp(e, gesture.click);
+                if (gesture.click) this.view.onMouseUp?.(e, e.clientX, e.clientY);
+                else this.view.onMouseCancel?.(e);
+            },
+            cancel: e => { this.handlePointerCancel(e); this.view.onMouseCancel?.(e); },
+            beginTouches: e => this.handleTouchStart(e),
+            moveTouches: e => this.handleTouchMove(e),
+            endTouches: e => this.handleTouchEnd(e),
+            wheel: e => this.handleMouseWheel(e),
+            contextMenu: e => this.view.onContextMenu?.(e, e.clientX, e.clientY),
+            hover: e => {
+                if (!e) return;
+                this.view.onMouseMove?.(e, e.clientX, e.clientY);
+                this.handleMouseMove(e);
+            },
+        });
+        this.canvas.style.touchAction = "none";
 
 		// Prevent iOS long-press selection menu
 		this.canvas.addEventListener('selectstart', e => e.preventDefault(), { passive: false });
@@ -602,22 +625,13 @@ class CameraMapControls {
 			return; // Can't update target without view/raycaster
 		}
 
-		// Convert client coordinates to view-relative coordinates
-		const viewX = clientX - this.view.leftPx;
-		const viewY = clientY - this.view.topPx;
-
-		// Convert to normalized device coordinates (-1 to +1)
-		// Y is inverted for Three.js coordinate system
-		const mouseRay = new Vector2();
-		mouseRay.x = (viewX / this.view.widthPx) * 2 - 1;
-		mouseRay.y = -(viewY / this.view.heightPx) * 2 + 1;
-
-		// Set up raycaster from camera
-		this.view.raycaster.setFromCamera(mouseRay, this.camera);
+		// Touch centroids use the same displayed projection and canvas bounds as
+		// mouse picking, including sidebars, letterboxing and camera adjustments.
+		if (!setRaycasterFromView(this.view.raycaster, this.view, clientX, clientY)) return;
 
 		// Pass the camera so raycastLocalGround also considers Google 3D-tile
 		// buildings (touch pivot lands on rooftops, matching the mouse path).
-		const hit = raycastLocalGround(this.view.raycaster, this.camera);
+		const hit = withDisplayedCamera(this.view, camera => raycastLocalGround(this.view.raycaster, camera));
 		if (hit) {
 			this.target = hit.point;
 			this.targetIsTerrain = hit.isTerrain;
@@ -817,55 +831,11 @@ class CameraMapControls {
 			this.isLongPressTriggered = false;
 		}
 
-		// Start long press timer for single-finger touch events only (not for mouse right-click)
-		if (event.pointerType === 'touch' && event.button === 0 && this.activePointers.size === 1) {
-			this.longPressStartX = event.clientX;
-			this.longPressStartY = event.clientY;
-			this.longPressEvent = event;
-			this.isLongPressTriggered = false;
-
-			this.longPressTimer = setTimeout(() => {
-				this.isLongPressTriggered = true;
-
-				// Create synthetic context menu event
-				const syntheticEvent = new PointerEvent('contextmenu', {
-					bubbles: true,
-					cancelable: true,
-					clientX: this.longPressStartX,
-					clientY: this.longPressStartY,
-					pointerType: 'touch',
-					button: 2
-				});
-
-				// Add custom properties
-				Object.defineProperty(syntheticEvent, 'isSynthetic', { value: true });
-				Object.defineProperty(syntheticEvent, 'originalEvent', { value: event });
-
-				// Call the view's context menu handler directly (same as handleMouseUp does)
-				if (this.view && this.view.onContextMenu) {
-					this.view.onContextMenu(syntheticEvent, this.longPressStartX, this.longPressStartY);
-				}
-
-				// Clean up state since context menu interrupts normal pointer flow
-				this.activePointers.clear();
-				this.state = STATE.NONE;
-				if (event.pointerId !== undefined) {
-					this.canvas.releasePointerCapture(event.pointerId);
-				}
-
-				// Vibrate for tactile feedback
-				if (navigator.vibrate) {
-					navigator.vibrate(50);
-				}
-			}, this.longPressDuration);
-		}
-
 		this.updateStateFromEvent(event)
 		this.lastStartHitSphere = true;
 		this.lastEndHitSphere = true;
 		const [x, y] = mouseToView(this.view, event.clientX, event.clientY)
 		this.mouseStart.set(x, y);
-		this.canvas.setPointerCapture(event.pointerId)
 		setRenderOne(true);
 		if (this.view.showCursor) {
 			this.view.cursorSprite.visible = true;
@@ -890,7 +860,7 @@ class CameraMapControls {
 
 
 
-	handleMouseUp(event) {
+	handleMouseUp(event, allowTap = true) {
 
 		// Remove pointer from active set
 		this.activePointers.delete(event.pointerId);
@@ -906,7 +876,7 @@ class CameraMapControls {
 
 		// Check for tap gesture (left button, minimal movement) before handling context menu
 		// Don't trigger if long press was triggered
-		if (event.button === 0 && this.state === STATE.NONE && !this.isLongPressTriggered) {
+		if (allowTap && event.button === 0 && this.state === STATE.NONE && !this.isLongPressTriggered) {
 			// It was a tap gesture - check for double-tap zoom, UNLESS the tap landed on the
 			// view's header strip (the UIBar). Double-clicking the header toggles fullscreen
 			// (handled at the document level, onDocumentDoubleClick) and must NOT zoom/recenter
@@ -922,30 +892,11 @@ class CameraMapControls {
 			this.isLongPressTriggered = false;
 		}
 
-		// Check if this was a right-click release without dragging
-		if (event.button === 2 && this.contextMenuDownPos) {
-			const dx = event.clientX - this.contextMenuDownPos.x;
-			const dy = event.clientY - this.contextMenuDownPos.y;
-			const distance = Math.sqrt(dx * dx + dy * dy);
-
-			// If mouse didn't move much, show the context menu
-			if (distance <= this.contextMenuDragThreshold) {
-				// Prevent default context menu and stop propagation
-				event.preventDefault();
-				event.stopPropagation();
-
-				if (this.view && this.view.onContextMenu) {
-					this.view.onContextMenu(event, event.clientX, event.clientY);
-				}
-			}
-		}
-
 		// Reset context menu tracking
 		this.contextMenuDownPos = null;
 
 		this.state = STATE.NONE
 		if (!this.enabled) return;
-		this.canvas.releasePointerCapture(event.pointerId)
 
 		// dump a camera location to the console
 		var p = this.camera.position.clone()
@@ -967,9 +918,15 @@ class CameraMapControls {
 
 	}
 
+    dispose() {
+        this.unregisterInteraction?.();
+        this.clearLongPressTimer();
+    }
+
 	handlePointerCancel(event) {
 		// Handle pointer interruptions (e.g., browser gestures, context menus)
-		this.canvas.releasePointerCapture(event.pointerId);
+        if (this.view.cursorSprite) this.view.cursorSprite.visible = false;
+		this.contextMenuDownPos = null;
 		this.activePointers.delete(event.pointerId);
 		this.clearLongPressTimer();
 		this.state = STATE.NONE;

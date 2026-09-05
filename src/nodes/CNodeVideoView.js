@@ -72,7 +72,6 @@ import {CNodeVideoHistogramView} from "./CNodeVideoHistogramView";
 import {CNodeVideoCurvesView} from "./CNodeVideoCurvesView";
 import {CNodeVideoLevelsView} from "./CNodeVideoLevelsView";
 import {CNodeAudioSpectrumView} from "./CNodeAudioSpectrumView";
-import {rightClickWasClaimed} from "../ViewUtils";
 import {viewMenuKey} from "../ViewUIBarMenus";
 
 // Re-export for external consumers (e.g. CMotionAnalysis).
@@ -1177,6 +1176,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             scale = 1 / scale
         }
 
+        this.zoomAtMouse(scale);
+    }
+
+    zoomAtMouse(scale) {
         if (this.in.zoom !== undefined) {
             const oldZoom = this.in.zoom.v0 / 100;
             const newZoom = oldZoom * scale; // scale < 1 = scroll down = zoom out
@@ -1271,45 +1274,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 this.canvas.style.cursor = overControl ? 'grab' : '';
             },
 
-            wheel: (e) => {
-                // When zoom input exists, zoom is handled by onMouseWheel (document-level)
-                // which does zoom-around-cursor with panOffset.
-                // When no zoom input, use pos-based zoom.
-                if (this.in.zoom === undefined) {
-                    var scale = 0.90;
-                    if (e.deltaY > 0) {
-                    } else {
-                        scale = 1 / scale
-                    }
-                    this.zoomView(scale)
-                }
-                // Anchor position is already stored by CMouseHandler.newPosition
-            },
+            wheel: (e) => this.onMouseWheel(e),
+            pinch: scale => { this.zoomAtMouse(scale); setRenderOne(true); },
 
             drag: (e) => {
-                // Don't pan if a tracking overlay control point is being dragged
-                if (this._isOverlayDragging()) {
-                    this.canvas.style.cursor = 'grabbing';
-                    return;
-                }
-
-                // Same for a camera-fit control point.
-                if (this._isFitPointDragging()) {
-                    this.canvas.style.cursor = 'grabbing';
-                    return;
-                }
-
-                // Don't pan while painting the motion-analysis mask — left-drag paints instead
-                if (this._isMaskEditing()) {
-                    return;
-                }
-
-                // Don't pan while the annotate overlay is editing — left-drag is for drawing /
-                // selecting / moving / resizing annotation strokes, not for panning the video.
-                if (this._isAnnotateEditing()) {
-                    return;
-                }
-
                 if (this.in.zoom !== undefined) {
                     // Pan via panOffset when using videoZoom
                     this.getSourceAndDestCoords();
@@ -1371,10 +1339,6 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             },
 
             contextMenu: (e) => {
-                // An overlay on this view may have already used the right-click for its own
-                // purpose (deleting a camera-fit control point, say). It cannot cancel this
-                // event — different element, separate DOM event — so it leaves a claim instead.
-                if (rightClickWasClaimed()) return;
                 // Show Video Adjustments as a context menu at click position
                 if (!Globals.menuBar || !guiMenus.video || !CustomManager) return;
                 const adjFolder = guiMenus.video.folders.find(

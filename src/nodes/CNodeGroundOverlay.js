@@ -1,3 +1,6 @@
+import {createDragHandle} from "../HandleGeometry";
+import {registerEditorInteraction} from "../EditorInteraction";
+import {getInteractionRouter} from "../InteractionRouter";
 /**
  * Module: ground overlay node.
  *
@@ -94,7 +97,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         this.highlightBorderMaterial = null;
         
         this.raycaster = new Raycaster();
-        this.raycaster.layers.mask = LAYER.MASK_HELPERS;
+        this.raycaster.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         
         this.createMaterial();
         this.loadTexture();  // Creates default texture if no imageURL
@@ -950,9 +953,9 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             const groundPos = getPointBelow(pos);
             const adjustedPos = pointAbove(groundPos, 5);
 
-            const handle = new Mesh(handleGeometry.clone(), this.createHandleMaterial(0xffff00));
+            const handle = createDragHandle("resize");
             handle.position.copy(adjustedPos).sub(groupPos);
-            handle.layers.mask = LAYER.MASK_HELPERS;
+            handle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
             handle.userData.cornerIndex = index;
             handle.userData.handleType = 'corner';
             this.group.add(handle);
@@ -978,9 +981,10 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         const rotHandlePos = centerECEF.clone().add(toNorthMid.multiplyScalar(0.9));
         const adjustedRotHandle = pointAbove(getPointBelow(rotHandlePos), 5);
 
-        this.rotationHandle = new Mesh(handleGeometry.clone(), this.createHandleMaterial(0x00ffff));
+        this.rotationHandle = createDragHandle("rotate");
         this.rotationHandle.position.copy(adjustedRotHandle).sub(groupPos);
-        this.rotationHandle.layers.mask = LAYER.MASK_HELPERS;
+        this.rotationHandle.quaternion.setFromUnitVectors(new Vector3(0, 0, 1), getLocalUpVector(adjustedRotHandle));
+        this.rotationHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.rotationHandle.userData.handleType = 'rotation';
         this.group.add(this.rotationHandle);
 
@@ -1028,7 +1032,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             
             const handle = new Mesh(handleGeometry.clone(), this.createHandleMaterial(0xff00ff));
             handle.position.copy(adjustedPos).sub(groupPos);
-            handle.layers.mask = LAYER.MASK_HELPERS;
+            handle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
             handle.userData.handleType = 'lockPoint';
             handle.userData.lockPointIndex = index;
             this.group.add(handle);
@@ -1039,6 +1043,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
     }
     
     setEditMode(enable) {
+        if (!enable) getInteractionRouter()?.cancelOwner(this);
         if (this.editMode === enable) return;
         
         this.editMode = enable;
@@ -1071,17 +1076,16 @@ export class CNodeGroundOverlay extends CNode3DGroup {
     }
     
     setupEventListeners() {
-        this.onPointerDownBound = this.onPointerDown.bind(this);
-        this.onPointerMoveBound = this.onPointerMove.bind(this);
-        this.onPointerUpBound = this.onPointerUp.bind(this);
-        this.onContextMenuBound = this.onContextMenu.bind(this);
-        
-        document.addEventListener('pointerdown', this.onPointerDownBound);
-        document.addEventListener('pointermove', this.onPointerMoveBound);
-        document.addEventListener('pointerup', this.onPointerUpBound);
-        // Use capture phase to run before the global context menu blocker in index.js
-        document.addEventListener('contextmenu', this.onContextMenuBound, { capture: true });
-        
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            pick: e => {
+                const handle = this.getHandleAtMouse(e.clientX, e.clientY);
+                if (handle) return {handle: handle.mesh};
+                const body = this.getOverlayAtMouse(e.clientX, e.clientY);
+                return body ? {priority: 40, distance: body.distance} : null;
+            },
+            contextMenu: e => this.onContextMenu(e),
+        });
+
         // While the overlay is hidden we skip every per-tile event response
         // and just mark _overlayDirty. show(true) does a full buildMesh().
         // Without this, dragging a target with X held thrashes through
@@ -1599,10 +1603,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
     }
     
     dispose() {
-        document.removeEventListener('pointerdown', this.onPointerDownBound);
-        document.removeEventListener('pointermove', this.onPointerMoveBound);
-        document.removeEventListener('pointerup', this.onPointerUpBound);
-        document.removeEventListener('contextmenu', this.onContextMenuBound, { capture: true });
+        this.unregisterInteraction?.();
 
         EventManager.removeEventListener("tileVisibilityChanged", this.onTileVisibilityChangedBound);
         EventManager.removeEventListener("tileChanged", this.onTileChangedBound);

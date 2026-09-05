@@ -1,3 +1,6 @@
+import {createDragHandle} from "../HandleGeometry";
+import {HANDLE_STYLE} from "../HandleStyle";
+import {getInteractionRouter} from "../InteractionRouter";
 // Synthetic 3D Building/Object Node
 // Uses a mesh-based data structure (vertices, edges, faces) for extensibility
 // to arbitrary 3D geometry editing (like SketchUp/Blender)
@@ -6,7 +9,7 @@ import {CNode3DGroup} from "./CNode3DGroup";
 import {showConfirm} from "../showError";
 import {
     BufferGeometry,
-    CircleGeometry,
+    RingGeometry,
     Color,
     DoubleSide,
     Float32BufferAttribute,
@@ -1131,21 +1134,20 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         });
         this.rotationHandles = [];
         
-        const geometry = new SphereGeometry(3, 16, 16);  // 3m radius
-        const rotationDiscGeometry = new CircleGeometry(6, 32);  // 6m radius flat disc
+        // Calculate and store the building centroid at ground level (for rotation)
+        const bottomVertices = this.vertices.filter(v => v.type === 'bottom');
+        if (bottomVertices.length > 0) {
+            this.buildingCentroid = new Vector3();
+            bottomVertices.forEach(v => this.buildingCentroid.add(v.position));
+            this.buildingCentroid.divideScalar(bottomVertices.length);
+        }
+
+        const rotationDiscGeometry = new RingGeometry(4.8, 6, 32);  // 6m radius flat disc
         
-        // Create yellow handles for bottom vertices + invisible rotation discs
+        // Corner resize grips and outward-facing rotation arcs
         this.vertices.forEach((vertex, idx) => {
             if (vertex.type === 'bottom') {
-                // Visible yellow handle
-                const material = new MeshLambertMaterial({
-                    color: 0xffff00,
-                    transparent: true,
-                    opacity: 0.9,
-                    depthTest: true
-                });
-                
-                const sphere = new Mesh(geometry, material);
+                const sphere = createDragHandle("resize");
                 sphere.position.copy(vertex.position);
                 sphere.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 sphere.userData.vertexIndex = idx;
@@ -1163,11 +1165,11 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                 const toNext = nextVertex.position.clone().sub(vertex.position);
                 const planeNormal = new Vector3().crossVectors(toPrev, toNext).normalize();
                 
-                // Invisible rotation disc around this corner
+                // Visible rotation arc around this corner
                 const rotationMaterial = new MeshBasicMaterial({
-                    color: 0xff0000,
+                    color: HANDLE_STYLE.rotate,
                     transparent: true,
-                    opacity: 0.0,  // Completely invisible
+                    opacity: 0.6,
                     depthTest: true,
                     side: DoubleSide  // Detect from both sides of the disc
                 });
@@ -1177,9 +1179,14 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                 
                 // Orient the disc to align with the plane normal
                 rotationDisc.lookAt(vertex.position.clone().add(planeNormal));
+                const outward = vertex.position.clone().sub(this.buildingCentroid)
+                    .applyQuaternion(rotationDisc.quaternion.clone().invert());
+                rotationDisc.geometry = new RingGeometry(4.8, 6, 32, 1,
+                    Math.atan2(outward.y, outward.x) - Math.PI / 4, Math.PI / 2);
                 
                 rotationDisc.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 rotationDisc.userData.isRotationHandle = true;
+                rotationDisc.userData.handleRole = "rotate";
                 rotationDisc.userData.cornerVertexIndex = idx;  // Link to corner vertex
                 
                 this.group.add(rotationDisc);
@@ -1187,7 +1194,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             }
         });
         
-        // Create one grey handle at the center of the roofline
+        rotationDiscGeometry.dispose();
+
+        // Vertical grip for the roof center height
         const rooflineVertices = this.vertices.filter(v => v.type === 'roofline');
         if (rooflineVertices.length >= 2) {
             // Calculate the center of the roofline (midpoint between roof1 and roof2)
@@ -1197,15 +1206,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             if (roof1 && roof2 && roof1.type === 'roofline' && roof2.type === 'roofline') {
                 const roofCenter = roof1.position.clone().add(roof2.position).multiplyScalar(0.5);
                 
-                const roofMaterial = new MeshLambertMaterial({
-                    color: 0x888888,  // Grey
-                    transparent: true,
-                    opacity: 0.9,
-                    depthTest: true
-                });
-                
-                this.roofCenterHandle = new Mesh(geometry, roofMaterial);
+                this.roofCenterHandle = createDragHandle("altitude");
                 this.roofCenterHandle.position.copy(roofCenter);
+                this.roofCenterHandle.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), getLocalUpVector(roofCenter));
                 this.roofCenterHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 this.roofCenterHandle.userData.isRoofCenter = true;
                 
@@ -1214,21 +1217,15 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             }
         }
         
-        // Create cyan handle for roofline (roof1)
+        // Vertical grip for the roofline (roof1)
         // rooflineVertices already declared above, reuse it
         if (rooflineVertices.length > 0) {
             // Use roof1 position (vertex 8)
             const roof1 = this.vertices[8];
             if (roof1 && roof1.type === 'roofline') {
-                const rooflineMaterial = new MeshLambertMaterial({
-                    color: 0x00ffff,  // Cyan
-                    transparent: true,
-                    opacity: 0.9,
-                    depthTest: true
-                });
-                
-                this.rooflineHandle = new Mesh(geometry, rooflineMaterial);
+                this.rooflineHandle = createDragHandle("altitude");
                 this.rooflineHandle.position.copy(roof1.position);
+                this.rooflineHandle.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), getLocalUpVector(this.rooflineHandle.position));
                 this.rooflineHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 this.rooflineHandle.userData.isRoofline = true;
                 this.rooflineHandle.userData.vertexIndex = 8;
@@ -1238,13 +1235,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             }
         }
         
-        // Calculate and store the building centroid at ground level (for rotation)
-        const bottomVertices = this.vertices.filter(v => v.type === 'bottom');
-        if (bottomVertices.length > 0) {
-            this.buildingCentroid = new Vector3();
-            bottomVertices.forEach(v => this.buildingCentroid.add(v.position));
-            this.buildingCentroid.divideScalar(bottomVertices.length);
-        }
+
     }
     
     /**
@@ -1259,11 +1250,11 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         withDisplayedCamera(view, () => {
             const scaleHandle = (handle, pixels) => {
                 const radius = worldUnitsPerPixel(view, handle.getWorldPosition(new Vector3())) * pixels;
-                handle.scale.setScalar(radius / handle.geometry.parameters.radius);
+                handle.scale.setScalar(radius / (handle.userData.handleRadius ?? handle.geometry.parameters.radius ?? handle.geometry.parameters.outerRadius));
             };
             // Roof handles are included in controlPoints.
-            this.controlPoints.forEach(handle => scaleHandle(handle, 20));
-            this.rotationHandles.forEach(handle => scaleHandle(handle, 60));
+            this.controlPoints.forEach(handle => scaleHandle(handle, HANDLE_STYLE.pointRadius));
+            this.rotationHandles.forEach(handle => scaleHandle(handle, HANDLE_STYLE.rotationRadius));
         });
     }
     
@@ -1271,6 +1262,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
      * Set edit mode on/off
      */
     setEditMode(enable) {
+        if (!enable) getInteractionRouter()?.cancelOwner(this);
         if (this.editMode === enable) return;
 
         this.editMode = enable;
@@ -1562,7 +1554,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
      * Duplicate this building and return the copy
      * @returns {CNodeSynthBuilding} The duplicated building
      */
-    duplicate() {
+    duplicate(recordUndo = true) {
         // Serialize the current building
         const serialized = this.serialize();
         
@@ -1593,7 +1585,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         const duplicate = Synth3DManager.addBuilding(buildingData);
         
         // Add undo action for duplication
-        if (UndoManager && duplicate) {
+        if (recordUndo && UndoManager && duplicate) {
             const duplicateID = duplicate.buildingID;
             
             UndoManager.add({
@@ -1761,11 +1753,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
      * Dispose of resources
      */
     dispose() {
+        this.unregisterInteraction?.();
         const hadCaster = this.solidMesh?.castShadow === true;
         // Remove event listeners
-        document.removeEventListener('pointerdown', this.onPointerDownBound);
-        document.removeEventListener('pointermove', this.onPointerMoveBound);
-        document.removeEventListener('pointerup', this.onPointerUpBound);
         
         // Remove control points
         this.controlPoints.forEach(cp => {

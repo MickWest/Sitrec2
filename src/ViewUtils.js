@@ -174,6 +174,9 @@ export function mouseInViewOnly(view, x, y, debug = false) {
     
     ViewMan.iterateVisibleIncludingOverlays((key, otherView) => {
         if (otherView === view) return;
+        // Overlays compete with their host through InteractionRouter's intent
+        // probes; their transparent canvas is not a separate occluding pane.
+        if (otherView.overlayView === view || otherView.host === view) return;
         
         const otherZ = otherView.zIndex || 0;
         if (otherZ > viewZ && mouseInView(otherView, x, y)) {
