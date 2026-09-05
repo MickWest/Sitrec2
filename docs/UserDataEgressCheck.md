@@ -27,11 +27,17 @@ Every destination Sitrec is designed to call has an entry. Each entry states the
 | `user-file` | a file the user explicitly chose to upload or share |
 | `user-audio` | microphone audio, for the voice feature |
 | `usage-stats` | control names and counts, no content |
+| `audit-metadata` | security-event and correlation fields, server/script/method, transport-peer address, numeric account identities and resource/subject hashes; excludes raw names, URLs, coordinates, credentials and request content |
 | `video-frame` | a frame of the user's video |
 | `menu-summary` | a summary of the current menu state, sent with a chat message |
 | `session-data` | whatever the AI assistant reads through its tool calls: positions, times, identifiers, notes, file names, the serialized situation |
 
 The same file lists Sitrec's own server endpoints (`uilog.php`, `rehost.php` and so on) with the same fields. The file is the public statement of where Sitrec sends data and how much. Anyone can read it, and every change to it is in the git history.
+
+Server-internal includes also have entries when they handle an egress route. The
+`audit.php` entry describes a local logging sink, not a browser-callable API. Its
+`audit-metadata` class is deliberately separate from ordinary identifiers or usage
+statistics; adding it does not expand any other destination's allowed data classes.
 
 ## Where Sitrec sends data today
 
@@ -82,6 +88,24 @@ Summary, for the default configuration of each:
 | Assistant, masking, street-level imagery | available | off | no | no |
 | Saves and share links | cloud storage | operator's server | browser only | browser only |
 | Keyed providers and 3D buildings | available | off until keyed | no | no |
+
+### Automatic audit records
+
+Certificate authentication mode always enables audit logging; other modes
+require `AUDIT_LOG_ENABLED`. Authentication outcomes and instrumented API attempts
+and completions, including reads and refusals, write the declared audit metadata
+to PHP's configured error logger or local `AUTHPRIV` syslog. In the published
+container, PHP uses the container error stream. No raw user content or coordinates
+are included, but account IDs, peer addresses and resource hashes remain protected
+operational data: low-entropy resource names can be guessed and hashed.
+
+This is a new, intentional persistent record introduced with the audit feature.
+The inventory approves the described local sinks and fields, not arbitrary remote
+collectors. Before forwarding through PHP, syslog, a container log driver or a log
+agent, the operator must separately review the concrete collector destination,
+the same or a smaller field set, access roles and retention. The app neither
+opens a collector connection nor verifies that downstream configuration. See
+[Server audit logging](dev/AuditLogging.md) for exact fields and coverage.
 
 ### What each feature sends when you use it
 

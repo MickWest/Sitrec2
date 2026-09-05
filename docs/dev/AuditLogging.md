@@ -24,6 +24,16 @@ audit file under the webroot, uploads directory or cache. The operator must also
 keep the **PHP error logger's own destination** outside those locations. The
 container entrypoint forwards these settings into the server environment.
 
+The public egress contract is the `audit.php` entry in
+`scripts/egress-allowlist.json`, using the narrow `audit-metadata` data class. It
+records the automatic authentication/API triggers and the local destinations
+above. It does not authorize an unspecified remote collector. Before configuring
+PHP, syslog, a container log driver or another agent to forward these records,
+review the concrete destination, the same or a smaller field set, reader roles
+and retention in the site's own inventory. Protect hashes and account/peer
+identifiers as operational data; hashing does not make them anonymous. The
+application does not enforce or verify downstream forwarding configuration.
+
 Existing installations must merge the certificate resolver's audit call from
 `config/config.php.example` into their locally maintained `config.php`; replacing
 application files does not overwrite that local configuration. The current

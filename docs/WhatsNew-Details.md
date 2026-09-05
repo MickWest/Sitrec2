@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.152.1 (2026-09-04)
+
+### Security
+
+- **Complete the audit logging egress contract** (`scripts/egress-allowlist.json`, `scripts/security-scan-egress.mjs`, `scripts/egress-review-prompt.md`). The inventory adds the missing `audit.php` entry under a separate `audit-metadata` class, documenting its existing automatic certificate-mode auditing, opt-in auditing in other modes, retained account/peer identifiers and resource/subject hashes, and delivery through PHP's error logger or local syslog. `docs/UserDataEgressCheck.md` and `docs/dev/AuditLogging.md` clarify that these identifiers remain protected operational data and require a separate site review of the collector destination, fields, reader roles and retention before downstream forwarding. The deterministic scanner now lists PHP `syslog()` calls alongside `error_log()` on added lines. Audit runtime behavior, other destinations' contracts and position checks remain unchanged.
+
 ## Version 2.152.0 (2026-09-04)
 
 ### New Features

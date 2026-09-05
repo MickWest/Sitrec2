@@ -117,6 +117,27 @@ describe('security-scan-egress: server endpoints', () => {
         expect(r.verdict).toBe('CLEAR');
     });
 
+    test('the audit contract retains both local sinks without approving remote collectors or raw positions', () => {
+        const local = scan(diffFor('sitrecServer/audit.php', [
+            '<?php', 'error_log($line);', 'syslog(LOG_INFO, $line);',
+        ], {isNew: true}));
+        expect(local.verdict).toBe('CLEAR');
+        expect(local.newServerFiles).toEqual([]);
+        expect(local.sinks.filter(s => s.kind === 'log')).toHaveLength(2);
+
+        const remote = scan(diffFor('sitrecServer/audit.php', [
+            '<?php', 'file_get_contents("https://collector.example-not-ignored.net/ingest");',
+        ]));
+        expect(remote.verdict).toBe('ATTENTION');
+        expect(remote.unknownHosts.map(h => h.host)).toContain('collector.example-not-ignored.net');
+
+        const position = scan(diffFor('src/Foo.js', [
+            'fetch(SITREC_SERVER + "audit.php?lat=" + lat + "&lon=" + lon);',
+        ]));
+        expect(position.verdict).toBe('ATTENTION');
+        expect(position.overBudget[0]).toMatchObject({destination: 'audit.php', mayReceive: ['audit-metadata']});
+    });
+
     test('loopback addresses are never destinations', () => {
         const r = scan(diffFor('src/Foo.js', ['    fetch(`http://127.0.0.1:${port}/probe`);']));
         expect(r.unknownHosts).toEqual([]);

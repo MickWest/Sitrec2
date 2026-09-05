@@ -7,8 +7,8 @@
     "The LLM review applies the same contracts to what a regex cannot see (request bodies).",
     "",
     "mayReceive uses a fixed vocabulary, least to most revealing: none, time, coarse-area,",
-    "precise-position, identifier, user-text, user-file, user-audio, usage-stats, video-frame,",
-    "menu-summary. See scripts/security-scan-egress.mjs for the definitions and",
+    "precise-position, identifier, user-text, user-file, user-audio, usage-stats, audit-metadata,",
+    "video-frame, menu-summary, session-data. See scripts/security-scan-egress.mjs for the definitions and",
     "docs/UserDataEgressCheck.md for how to add an entry. Add one only with an honest statement",
     "of what the destination receives; the entry is the public contract."
   ],
@@ -559,6 +559,12 @@
     {"endpoint": "requestScheme.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "user.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "auth_cert.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {
+      "endpoint": "audit.php",
+      "purpose": "server-internal audit writer, not a browser API. Retains UTC time, random request ID, server/script/method, transport-peer address, original/effective numeric account IDs, fixed event/outcome/reason/status and SHA-256 resource/subject identifiers in the site's PHP error logger (container error stream by default) or local AUTHPRIV syslog. Hashes are correlatable and guessable for low-entropy inputs, not anonymous. No raw filenames, share URLs, coordinates, request bodies or credentials are retained. No application network destination is accepted. This contract covers those local sinks only: any downstream collector, including configured PHP or system-log forwarding, needs a separate site review naming its concrete destination, the same or a smaller field set, reader roles and retention before forwarding is enabled; this is not a wildcard approval for remote collectors.",
+      "trigger": "authentication outcomes and attempted/completed instrumented API requests, including reads and refusals, automatically when AUTH_MODE=cert or when the operator explicitly enables AUDIT_LOG_ENABLED in another mode; otherwise disabled. No per-request user action is required for these security records.",
+      "mayReceive": ["audit-metadata"]
+    },
     {"endpoint": "object_helpers.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "s3_client.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "gpData.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},

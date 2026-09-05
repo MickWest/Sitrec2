@@ -104,7 +104,7 @@ const PHP_SINKS = [
     ['redirect',          /\bheader\s*\(\s*['"]Location/i],
     ['object storage',    /\b(S3Client|putObject|createPresignedRequest|getCommand)\b/],
     ['process',           /\b(exec|shell_exec|passthru|system|proc_open|popen)\s*\(/],
-    ['log',               /\berror_log\s*\(/],
+    ['log',               /\b(error_log|syslog)\s*\(/],
     ['file write',        /\b(file_put_contents|fwrite|move_uploaded_file|copy|rename)\s*\(/],
 ];
 const HTML_SINKS = [
@@ -188,6 +188,8 @@ export const DATA_CLASSES = [
     'user-file',        // a file the user explicitly chose to upload or share
     'user-audio',       // microphone audio, for the voice feature
     'usage-stats',      // control names and counts, no content
+    'audit-metadata',   // event/correlation metadata, account and peer identifiers,
+                        // and resource/subject hashes; no raw user content or positions
     'video-frame',      // a frame of the user's video
     'menu-summary',     // a summary of the current menu state, sent with a chat message
     'session-data',     // whatever the AI assistant reads through its tool calls: positions,

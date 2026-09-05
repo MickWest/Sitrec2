@@ -14,6 +14,13 @@ Inputs, relative to the repository root. Read all three before anything else.
 
 You may open any file in the repository for context. Do not modify files, do not run commands that change the repository, and do not access the network.
 
+The fixed vocabulary also includes `audit-metadata`: UTC and event/correlation fields,
+server/script/method, transport-peer address, numeric account identities, and hashed
+resource/subject identifiers. It excludes raw names, URLs, coordinates, credentials
+and request content. Hashes can be correlated or guessed from low-entropy inputs;
+this class does not mean anonymous data. A local logging contract does not approve
+an arbitrary remote collector or a broader field set.
+
 The rule you are applying. A request to a listed destination is expected. It is a finding when a change:
 
 1. sends anything to a destination that has no entry in the allow-list, including a destination decided at run time;

@@ -3,6 +3,8 @@
  * Structured security events. No request bodies, URLs, filenames or credentials.
  * The operator owns collection, access control and retention outside the webroot.
  * See docs/dev/AuditLogging.md for the event inventory and delivery limitations.
+ * The audit.php egress contract covers local logger delivery only; any downstream
+ * forwarding requires a site-reviewed collector, field set, access and retention.
  */
 function sitrecAuditEnabled(): bool
 {
