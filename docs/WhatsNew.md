@@ -9,6 +9,44 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.153.0 (2026-09-05)
+
+### New Features
+
+- **Edit buildings in the look view**: building handles now appear in both 3D views, so a building can be moved, resized, rotated and have its roof adjusted from the look view as well as the main view, at the right size and with the right grab targets whatever the zoom.
+- **Editing by touch, everywhere**: the curve editors, video overlays, brushes, instruments, timelines, 3D handles and view seams all accept touch as well as mouse, with larger finger targets that keep the point where you grabbed it, and touch-and-hold opens the menu that a right-click would.
+- **Escape cancels an edit**: pressing Escape during a drag puts everything back the way it was before you started, and an edit that is interrupted — by switching windows, resizing, or a touch being taken over — keeps its latest result as a single undo step instead of leaving the tool stuck mid-drag.
+- **Mouse, touch and pen controls** (Help → *Mouse, touch and pen controls*): a complete gesture reference for every tool, in twenty groups. With the keyboard-shortcut overlay open, hovering a tool also lists its own controls.
+- **Drag a balloon to move its launch point**: a generated balloon track can now be dragged like any other object — grab it at any point in its flight and the launch position moves and the whole path is regenerated.
+- **Sitrec Focused** (Settings → *Sitrec Focused*, or the Assistant window's header menu): on by default; switch it off to talk about anything with a model on your own key or your own endpoint, including by voice. Sitrec's own models stay on Sitrec topics either way, and switching it off shows a note that your provider still charges for every request.
+- **Angle Smooth Window (frames)** (Contents → the track): imported tracks that record camera and platform angles now have their own smoothing control for those angles, separate from position smoothing, saved with the sitch and adjustable down to zero.
+- **Filtering and interpolation summary** (Traverse → *Analyze Traverse Methods...*): a panel at the top of the results gallery, and a section of the downloaded report, listing every filter and interpolation step that was active when you pressed Analyze, each with how long a span of time it really covers.
+
+### Improvements
+
+- **Much faster bulk analysis** (File → File Analysis → *BOTBench...*): a folder is now analysed on several processor cores at once, with a worker count shown in the status line. A measured 16-file set fell from 103.9 seconds to under ten, and the results are unchanged.
+- Your chosen smoothing method is now saved with the sitch, instead of reverting to the default the next time you load it.
+- The traverse line, the object on it, the distance graph and the exported track now all use the same final smoothed result, so what you see is what you measure and what you export. An applied exact analysis result is no longer smoothed again on top.
+- The browser tab now reads *Sitrec* for a new sitch and the sitch's own name once it is saved or loaded.
+- Zooming with a wheel or trackpad in the 3D views is now proportional to how far you scroll, rather than one fixed step per notch.
+- The altitude arrows on a move handle now always change altitude, and where an arrow shaft crosses the flat disc the disc wins for sideways movement.
+- Dragging a point on a video tone curve keeps it where you grabbed it instead of jumping it under the pointer, and those edits can now be undone.
+- The traverse report no longer describes the range profile as a bound no real object can beat; it now says what the figure does and does not establish.
+
+### Bug Fixes
+
+- Fixed tracking wobble slowly rolling the camera while paused, and carrying that wrong roll over when the camera heading was switched to Manual.
+- Fixed right-clicking a point on a Bezier curve editor deleting it and immediately adding another in its place.
+- Fixed an object hidden for one view's picture stealing the mouse-over from the one you can see, leaving that one faded with no move handle.
+- Fixed a middle-drag or right-drag over a video overlay, a curve editor or a 3D handle starting an edit instead of moving the view.
+- Fixed a fast drag ending slightly short of where the pointer actually was.
+- Fixed clicks and picks landing in the black bars beside a letterboxed view, and picking being slightly off near the edges of a resized pane.
+- Fixed Delete and Backspace removing a video tone-curve point while you were typing in a text box.
+
+### Security
+
+- SitrecBridge (1.0.64) now accepts its popup controls only from the extension's own popup, not from a page it is attached to.
+
 ## Version 2.152.0 (2026-09-04)
 
 ### New Features
