@@ -1206,6 +1206,7 @@ export function summarizeMetrics(m) {
 // different (n, K) pairs: full-resolution and downsampled datasets, and the
 // smoothing pass with its own K.
 const _bsplineCache = new Map();
+const _speedBasisCache = new WeakMap();
 const PLAUSIBLE_WORKSPACE = Symbol("plausible workspace");
 const BSPLINE_CACHE_MAX = 8;
 
@@ -1233,6 +1234,24 @@ export function bsplineBasis(n, K) {
     }
     _bsplineCache.set(key, B);
     return B;
+}
+
+// Consecutive speed rows always visit the first frame's four columns, then
+// any new columns from the next frame. Cache this symbolic layout with the
+// immutable basis; it contains no observations or iteration-dependent values.
+function speedBasis(B) {
+    let rows = _speedBasisCache.get(B);
+    if (rows) return rows;
+    rows = [];
+    for (let f = 0; f < B.length - 1; f++) {
+        const [a, wa] = B[f], [b, wb] = B[f + 1];
+        const offset = Math.min(4, b - a);
+        const cols = [a, a + 1, a + 2, a + 3];
+        for (let q = 4 - offset; q < 4; q++) cols.push(b + q);
+        rows.push({cols, offset, previous: wa.map(w => -1 * w), next: wb});
+    }
+    _speedBasisCache.set(B, rows);
+    return rows;
 }
 
 /**
@@ -1286,6 +1305,8 @@ export function traversePlausible(dataset, startDist, options = {}) {
     const floorW = new Float64Array(n);
 
     const B = bsplineBasis(n, K);
+    const speedRows = vTarget !== null ? speedBasis(B) : null;
+    const speedWeights = new Float64Array(8);
     const accelScale = fps * fps / G_ACCEL / (hA * hA);
     const lam = new Float64Array(n).fill(startDist);
     let c = null;
@@ -1402,34 +1423,41 @@ export function traversePlausible(dataset, startDist, options = {}) {
                 const al = Math.hypot(a0, a1, a2) || 1;
                 const u0 = a0 / al, u1 = a1 / al, u2 = a2 / al;
                 let constTerm = -(u0 * W[f * 3] + u1 * W[f * 3 + 1] + u2 * W[f * 3 + 2]) - vTarget / fps;
-                let touched = 0;
-                for (let i = 0; i < 2; i++) {
-                    const fr = f + i, sign = i === 0 ? -1 : 1;
-                    constTerm += sign * S[fr * 3] * u0;
-                    constTerm += sign * S[fr * 3 + 1] * u1;
-                    constTerm += sign * S[fr * 3 + 2] * u2;
-                    const [seg, w] = B[fr];
-                    const dDotU = D[fr * 3] * u0 + D[fr * 3 + 1] * u1 + D[fr * 3 + 2] * u2;
-                    for (let q = 0; q < 4; q++) {
-                        const k = seg + q;
-                        if (!scratchSeen[k]) {
-                            scratchSeen[k] = 1;
-                            scratchIdx[touched++] = k;
-                            scratchVal[k] = 0;
-                        }
-                        scratchVal[k] = (scratchVal[k] || 0) + sign * w[q] * dDotU;
-                    }
+                const b = f * 3, next = b + 3;
+                constTerm += -1 * S[b] * u0;
+                constTerm += -1 * S[b + 1] * u1;
+                constTerm += -1 * S[b + 2] * u2;
+                constTerm += S[next] * u0;
+                constTerm += S[next + 1] * u1;
+                constTerm += S[next + 2] * u2;
+                const dot0 = D[b] * u0 + D[b + 1] * u1 + D[b + 2] * u2;
+                const dot1 = D[next] * u0 + D[next + 1] * u1 + D[next + 2] * u2;
+                const row = speedRows[f];
+                const {cols, offset, previous, next: nextWeights} = row;
+                // Keep the original zero-add and falsy reset, including signed
+                // zero, and combine overlapping columns in first-touch order.
+                for (let q = 0; q < 4; q++) speedWeights[q] = 0 + previous[q] * dot0;
+                for (let q = 4; q < cols.length; q++) speedWeights[q] = 0;
+                for (let q = 0; q < 4; q++) {
+                    const k = offset + q;
+                    speedWeights[k] = (speedWeights[k] || 0) + nextWeights[q] * dot1;
                 }
+                for (let q = 0; q < cols.length; q++) speedWeights[q] *= wv;
                 const cTerm = constTerm * wv;
-                for (let a = 0; a < touched; a++) {
-                    const ca = scratchIdx[a], wa = scratchVal[ca] * wv;
+                for (let a = 0; a < cols.length; a++) {
+                    const ca = cols[a], wa = speedWeights[a];
                     rhs[ca] -= wa * cTerm;
-                    for (let b = 0; b < touched; b++) {
-                        const cb = scratchIdx[b];
-                        A[ca][cb] += wa * (scratchVal[cb] * wv);
+                    const Aa = A[ca];
+                    Aa[ca] += wa * wa;
+                    // Only this row's products are symmetric. Add to each
+                    // existing entry separately: weighted anchor/floor rows
+                    // can leave the accumulated matrix slightly asymmetric.
+                    for (let b = a + 1; b < cols.length; b++) {
+                        const cb = cols[b], product = wa * speedWeights[b];
+                        Aa[cb] += product;
+                        A[cb][ca] += product;
                     }
                 }
-                for (let a = 0; a < touched; a++) scratchSeen[scratchIdx[a]] = 0;
             }
         } else {
             // tiny velocity ridge to regularize the near-degenerate smooth modes
@@ -1851,6 +1879,9 @@ export function fitPlausibleBestRange(dataset, options = {}) {
         smoothOutput: true,
         smoothSpacingSec: 4,
         rangeFloor: true,
+        // This search is synchronous; all its ranges share the observation
+        // prefix. traversePlausible refreshes it when the final K changes.
+        [PLAUSIBLE_WORKSPACE]: {},
     };
     const mk = (vt, K, iters) => ({...common, vTarget: vt, vSigma, K, iters});
     const searchK = options.searchK ?? 15, searchIters = options.searchIters ?? 3;
@@ -2291,7 +2322,7 @@ function cumulativeWind(dataset) {
 // Fast optimizer cost: integrate the model block-by-block over `costFrames`
 // (midpoint heading per block — 2nd order, more accurate than the full-res
 // forward Euler, and O(costFrames) instead of O(n)). cumW is cumulativeWind().
-function aircraftCostErrDeg(dataset, params, costFrames, cumW) {
+function aircraftCostErrDeg(dataset, params, costFrames, cumW, incumbent, errSigma, scoreError) {
     const {S, D, fps} = dataset;
     const [R0, h0, V, w0, wd, climb] = params;
     let px = S[0] + D[0] * R0, py = S[1] + D[1] * R0, pz = S[2] + D[2] * R0;
@@ -2321,6 +2352,14 @@ function aircraftCostErrDeg(dataset, params, costFrames, cumW) {
         const dot = Math.min(1, Math.max(-1, rx * D[b] + ry * D[b + 1] + rz * D[b + 2]));
         sum += Math.acos(dot);
         count++;
+        // Each remaining angular error and every aircraft prior is nonnegative.
+        // Divide the partial sum by the FINAL count, in the original arithmetic
+        // order, to bound the eventual cost from below. Never rearrange this as
+        // a precomputed threshold: rounding at a tie could reject a winner.
+        // The near-sensor sentinel above can return 1e9, so only prune against
+        // incumbents below it. Invalid/nonpositive scales take the full path.
+        if ((ci & 7) === 0 && incumbent < 1e9 && errSigma > 0
+            && scoreError(sum / costFrames.length * 180 / Math.PI, params) > incumbent) return Infinity;
     }
     return sum / count * 180 / Math.PI;
 }
@@ -2342,6 +2381,8 @@ function aircraftCostErrDeg(dataset, params, costFrames, cumW) {
  *   runs, pop, gens      DE effort (defaults 3, 60, 150)
  *   progress(frac)       awaited on a wall-clock budget between evaluations
  *   shouldCancel()       checked between optimizer evaluations
+ *   boundedCost          skip provably losing evaluations (default true);
+ *                        false runs the full objective for comparison
  *
  * Returns {params: {startDist, heading, tas, turnRate, turnAccel, climb},
  *          cost, errDeg, track, metrics, runs: [per-run summaries]}
@@ -2357,6 +2398,7 @@ export async function fitAircraft(dataset, options = {}) {
     const nRuns = options.runs ?? 3;
     const pop = options.pop ?? 60;
     const gens = options.gens ?? 150;
+    const boundedCost = options.boundedCost ?? true;
     const T = Math.max(0, dataset.n - 1) / dataset.fps;
 
     // Strided cost integration (block midpoint) keeps the many DE/polish
@@ -2378,9 +2420,7 @@ export async function fitAircraft(dataset, options = {}) {
     const gpS0 = [dataset.S[0], dataset.S[1], dataset.S[2]];   // frame-0 ray
     const gpD0 = [dataset.D[0], dataset.D[1], dataset.D[2]];
 
-    const cost = (p) => {
-        const e = aircraftCostErrDeg(dataset, p, costFrames, cumW);
-        if (e > 1e8) return e;
+    const scoreError = (e, p) => {
         const wEnd = p[3] + p[4] * T;
         let c = (
             e / errSigma +
@@ -2404,6 +2444,16 @@ export async function fitAircraft(dataset, options = {}) {
             }
         }
         return Number.isFinite(c) ? c : Infinity;
+    };
+
+    const cost = (p, incumbent = Infinity) => {
+        // Score zero error in the SAME addition order as the final objective.
+        // This is a lower bound even at floating-point ties; subtracting a
+        // separately summed prior from the incumbent would not be equivalent.
+        if (incumbent < 1e9 && errSigma > 0 && scoreError(0, p) > incumbent) return Infinity;
+        const e = aircraftCostErrDeg(dataset, p, costFrames, cumW, incumbent, errSigma, scoreError);
+        if (e > 1e8) return e;
+        return scoreError(e, p);
     };
 
     // Generic horizontal-speed floor. It is intentionally low enough to keep
@@ -2437,6 +2487,7 @@ export async function fitAircraft(dataset, options = {}) {
         };
         const de = await differentialEvolution(cost, lo, hi, {
             pop: popN, gens: gensN,
+            boundedCost,
             // Deterministic per-run seed: identical inputs give identical
             // fits (run-to-run variance was user-visible); distinct seeds per
             // run preserve the independent-restart diversity.
@@ -2453,7 +2504,7 @@ export async function fitAircraft(dataset, options = {}) {
         stageEvaluations = 0;
         const pol = await patternSearchPolish(
             cost, de.params, [200, 0.5, 2, 0.02, 0.002, 0.5],
-            {lo, hi, onEvaluation: optimizerPulse});
+            {lo, hi, onEvaluation: optimizerPulse, boundedCost});
         if (pol.cancelled || (options.shouldCancel && options.shouldCancel())) {
             throw new Error("cancelled");
         }

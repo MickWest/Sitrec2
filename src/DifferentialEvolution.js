@@ -43,6 +43,9 @@ export function mulberry32(seed) {
  *   onGeneration - optional callback (gen, bestCost) called after each generation;
  *                  if it returns a promise it is awaited (lets the UI breathe),
  *                  and if it resolves/returns false the search stops early.
+ *   boundedCost - opt in to costFn(params, incumbentCost). It may return
+ *                 Infinity once a proven lower bound EXCEEDS the incumbent;
+ *                 every competitive cost must still be evaluated exactly.
  * @returns {{params: number[], cost: number}} best individual found
  *   (async — always returns a Promise)
  */
@@ -69,9 +72,9 @@ export async function differentialEvolution(costFn, lo, hi, options = {}) {
     let generations = 0;
     let cancelled = false;
     let evaluations = 0;
-    const evaluate = (x) => {
+    const evaluate = (x, incumbent = Infinity) => {
         evaluations++;
-        const value = costFn(x);
+        const value = options.boundedCost ? costFn(x, incumbent) : costFn(x);
         return Number.isFinite(value) ? value : Infinity;
     };
     const afterEvaluation = async (payload) => {
@@ -113,7 +116,7 @@ export async function differentialEvolution(costFn, lo, hi, options = {}) {
                     trial[d] = v;
                 }
             }
-            const tc = evaluate(trial);
+            const tc = evaluate(trial, costs[i]);
             if (tc <= costs[i]) { P[i] = trial; costs[i] = tc; }
             if (!(await afterEvaluation({phase: "generation", generation: g,
                 individual: i, evaluations}))) {
@@ -155,6 +158,7 @@ export async function differentialEvolution(costFn, lo, hi, options = {}) {
  * @param {number[]} x0 - starting point
  * @param {number[]} scales - per-parameter initial step size
  * @param {object} options - {maxIter (default 300), minStep (default 1e-4), lo, hi}
+ *   boundedCost has the same opt-in contract as differentialEvolution.
  * @returns {{params: number[], cost: number}}
  */
 export async function patternSearchPolish(costFn, x0, scales, options = {}) {
@@ -165,9 +169,9 @@ export async function patternSearchPolish(costFn, x0, scales, options = {}) {
     if (lo && hi) x = clampVec(x, lo, hi);
     let evaluations = 0;
     let cancelled = false;
-    const evaluate = (value) => {
+    const evaluate = (value, incumbent = Infinity) => {
         evaluations++;
-        const cost = costFn(value);
+        const cost = options.boundedCost ? costFn(value, incumbent) : costFn(value);
         return Number.isFinite(cost) ? cost : Infinity;
     };
     const afterEvaluation = async (payload) => {
@@ -193,7 +197,7 @@ export async function patternSearchPolish(costFn, x0, scales, options = {}) {
                 y[d] += scales[d] * s;
                 if (lo && y[d] < lo[d]) continue;
                 if (hi && y[d] > hi[d]) continue;
-                const cy = evaluate(y);
+                const cy = evaluate(y, c);
                 if (cy < c) { x = y; c = cy; improved = true; }
                 if (!(await afterEvaluation({phase: "iteration", iteration: it,
                     dimension: d, evaluations}))) {

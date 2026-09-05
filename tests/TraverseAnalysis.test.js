@@ -39,6 +39,30 @@ import {
 } from "../src/TraverseAnalysis";
 import {patternSearchPolish} from "../src/DifferentialEvolution";
 
+describe("aircraft objective bounds", () => {
+    test.each([
+        {},
+        {costStride: 7, groundPrior: {startZ: 3000, endZ: 3100, sigma: 40}},
+        {errSigma: -0.02},
+        {errSigma: 1e-10},
+        {rangeMin: 0.1, rangeMax: 0.1},
+    ])("matches the full objective exactly for %j", async options => {
+        const {dataset} = makeDataset({n: 90, fps: 10});
+        const effort = {runs: 1, pop: 10, gens: 15, ...options};
+        const full = await fitAircraft(dataset, {...effort, boundedCost: false});
+        const bounded = await fitAircraft(dataset, effort);
+        expect(bounded).toEqual(full);
+    });
+
+    test("an unusable error scale still rejects the fit", async () => {
+        const {dataset} = makeDataset({n: 90, fps: 10});
+        for (const boundedCost of [false, true]) {
+            await expect(fitAircraft(dataset, {runs: 1, pop: 10, gens: 15,
+                errSigma: 0, boundedCost})).rejects.toThrow("fixed-wing optimizer produced no finite solution");
+        }
+    });
+});
+
 // Build a synthetic dataset: sensor on a turning path, CV target, constant wind.
 function makeDataset({
     n = 600,
