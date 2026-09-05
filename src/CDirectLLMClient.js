@@ -481,7 +481,7 @@ export function convertToolsForAnthropic(tools) {
 // ~100 KB prompt cacheable at all is keeping the parts that never change ahead of the
 // parts that do:
 //
-//   static    base prose + the help-doc index. Identical for every user on a build.
+//   static    base prose + the help-doc index. Stable for each topic-scope setting.
 //   menu      the menu appendix. Per-sitch, but getMenuSummary() reports structure and not
 //             values, so it holds for a whole session unless a menu appears/disappears.
 //   volatile  the simulation clock — the playhead, so it changes almost every message.
@@ -489,11 +489,14 @@ export function convertToolsForAnthropic(tools) {
 // simDateTime used to sit on line 8 of the base prose, inside the cached block, so the
 // prefix never repeated: every call paid the 1.25x cache WRITE and never collected a 0.1x
 // read, which is strictly worse than not caching. This assembly mirrors chatbot.php's.
-export function buildSystemPromptParts({ simDateTime, menuSummary, availableDocs }) {
+export function buildSystemPromptParts({ simDateTime, menuSummary, availableDocs, sitrecFocused = true }) {
     // The real wall-clock time is deliberately NOT injected — the AI fetches it on demand
     // via getCurrentDateTime, precisely so it cannot churn the prefix. The simulation clock
     // now gets the same treatment by position rather than by omission.
-    let staticPart = section('base');
+    // Only an explicit opt-out removes the topic restriction. Server-provided models
+    // always use scopeSitrec; this option belongs to the browser's own-key routes.
+    let staticPart = fill(section('base'), 'topicScope',
+        section(sitrecFocused === false ? 'scopeGeneral' : 'scopeSitrec'));
 
     // Help docs appendix. Build-constant, so it belongs in the cached block.
     if (availableDocs && Object.keys(availableDocs).length > 0) {

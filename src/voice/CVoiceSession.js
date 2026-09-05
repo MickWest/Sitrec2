@@ -375,7 +375,7 @@ export class CVoiceSession {
     refreshTools() {
         if (!this.dc || this.dc.readyState !== 'open') return;
 
-        const {sitrecDoc, simDateTime, menuSummary, availableDocs} = this.options.getContext();
+        const {sitrecDoc, simDateTime, menuSummary, availableDocs, sitrecFocused} = this.options.getContext();
         const toolSet = buildToolSet(sitrecDoc, menuSummary);
         this.specialistTools = toolSet.specialistTools;
         // Specialist tools already enabled in this session are kept: a rebuild would
@@ -390,6 +390,7 @@ export class CVoiceSession {
             simDateTime,
             menuSummary,
             availableDocs,
+            sitrecFocused,
         });
 
         this._send({

@@ -149,6 +149,13 @@ Two consequences worth knowing:
 - Some providers do not permit direct browser access at all, which is why not every service
   can be used this way.
 
+**Sitrec Focused** (Settings or the Assistant header menu) defaults to on. Switch it off to
+allow general conversation with your own-key models or custom endpoint, including voice.
+This changes the topic instructions, not billing: requests still include Sitrec context and
+recent chat history. Longer conversations and replies can increase your API costs. Turning
+it off shows a cost notice; provider spending caps or budget alerts remain the billing
+protection. Sitrec-provided models keep their existing topic restriction.
+
 ### Which models you get
 
 **Every model your key can reach**, not a shortlist Sitrec chose. When you save a key,

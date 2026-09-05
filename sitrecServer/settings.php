@@ -142,6 +142,10 @@ function sanitizeSettings($settings) {
         $sanitized['enableOldAIModels'] = $settings['enableOldAIModels'];
     }
 
+    if (isset($settings['byokSitrecFocused']) && is_bool($settings['byokSitrecFocused'])) {
+        $sanitized['byokSitrecFocused'] = $settings['byokSitrecFocused'];
+    }
+
     if (isset($settings['voiceModel'])) {
         $voiceModel = strval($settings['voiceModel']);
         // A bare model id, or empty for "use the default". No provider prefix: unlike

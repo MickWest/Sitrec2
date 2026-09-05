@@ -17,8 +17,27 @@ jest.mock('../src/IndexedDBManager', () => {
     };
 });
 
-import { toRealtimeTools, usageFromResponse, VOICE_MODEL } from '../src/voice/CVoiceSession';
+import { CVoiceSession, toRealtimeTools, usageFromResponse, VOICE_MODEL } from '../src/voice/CVoiceSession';
 import { estimateCostUSD, emptyUsage, addUsage } from '../src/BYOKUsage';
+
+describe('voice topic scope', () => {
+    test('updates the active session instructions when the focus preference changes', () => {
+        const context = {sitrecDoc: {}, menuSummary: {}, availableDocs: {}, simDateTime: '2026-09-05'};
+        const session = new CVoiceSession({getContext: () => context});
+        const sent = [];
+        session.dc = {readyState: 'open', send: message => sent.push(JSON.parse(message))};
+        session.refreshTools();
+        expect(sent[0].session.instructions).toContain('Do not discuss anything unrelated to Sitrec');
+        context.sitrecFocused = false;
+        session.refreshTools();
+        expect(sent[1].session.instructions).toContain('You can discuss any topic');
+        expect(sent[1].session.instructions).not.toContain('Do not discuss anything unrelated to Sitrec');
+        expect(sent[1].session.tools).toEqual(sent[0].session.tools);
+        context.sitrecFocused = true;
+        session.refreshTools();
+        expect(sent[2].session.instructions).toBe(sent[0].session.instructions);
+    });
+});
 
 describe('toRealtimeTools', () => {
     const chatTool = {

@@ -65,7 +65,7 @@ import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
-import {showError, showConfirm} from "./showError";
+import {showError, showConfirm, showChoice} from "./showError";
 import {
     hasAnyKey as byokHasAnyKey, hasCachedKey, isProviderConfigured, primeKeyCache,
 } from "./BYOKKeyStore";
@@ -632,6 +632,22 @@ export class CCustomManager {
             //
             // The mirror stays in sync with this dropdown — value, option list, and onChange.
             registerMirrorSource("chatModel", this.chatModelController);
+
+            const focusController = settingsFolder.add(Globals.settings, "byokSitrecFocused")
+                .name(t("custom.settings.byokSitrecFocused.label"))
+                .tooltip(t("custom.settings.byokSitrecFocused.tooltip"))
+                .onChange((focused) => {
+                    this.saveGlobalSettings(true);
+                    NodeMan.get("chatView", false)?.voiceSession?.refreshTools();
+                    if (!focused) {
+                        showChoice(t("custom.settings.byokSitrecFocused.costWarning"), {
+                            title: t("custom.settings.byokSitrecFocused.costTitle"),
+                            options: [{label: "OK", value: true, primary: true}],
+                        });
+                    }
+                })
+                .listen();
+            registerMirrorSource("byokSitrecFocused", focusController);
 
             // The spoken assistant's model. A separate control from AI Model because it is a
             // separate API: OpenAI's realtime models serve /v1/realtime over WebRTC and cannot

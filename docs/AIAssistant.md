@@ -135,6 +135,18 @@ multi-step requests: it is likelier to do the first half of a two-part instructi
 wrong control, or to say it has done something it has not. If a request keeps going wrong, try
 it on a larger model before concluding Sitrec cannot do it.
 
+**Sitrec Focused** is on by default, in Settings and the Assistant header menu. For models
+using **your own API key or custom endpoint**, turn it off to discuss any topic. It also
+applies to the spoken assistant and updates an active voice session immediately. Sitrec's
+own models always retain their Sitrec topic restriction. The preference is saved with your
+settings, and changing it takes effect on the next typed request.
+
+Turning focus off shows an **API usage costs** notice. General conversations still send the
+Sitrec instructions and recent chat history, and longer conversations or replies can use
+more tokens. Your provider's charges apply. Review usage and local limits in
+**Settings → API Keys…**, and set spending caps or budget alerts with the provider;
+Sitrec's local limits are not provider billing controls. See [Your API Keys](APIKeys.md).
+
 ## The header bar
 
 The Assistant window's header shows the name of the model that is currently answering. It is

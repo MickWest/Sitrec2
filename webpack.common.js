@@ -98,6 +98,19 @@ function getWorktreeName() {
     return null;
 }
 
+function getBuildBranch() {
+    try {
+        return child_process.execFileSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+            cwd: __dirname,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+    } catch (e) {
+        // Detached release builds and source archives have no branch name.
+        return '';
+    }
+}
+
 // Return the short abbreviation of the build machine's local time zone for the
 // given instant (e.g. "PST"/"PDT", "UTC", "EDT"). The hours/minutes elsewhere are
 // produced with Date.getHours()/getMinutes(), which are also in local time, so the
@@ -141,6 +154,7 @@ function getFormattedLocalDateTime() {
 
 
 const buildVersionString = getFormattedLocalDateTime();
+const buildBranch = getBuildBranch();
 console.log(buildVersionString);
 
 module.exports = (env = {}) => ({
@@ -213,7 +227,7 @@ module.exports = (env = {}) => ({
         }),
         new MiniCssExtractPlugin(),
         new HtmlWebpackPlugin({
-            title: "Sitrec - Metabunk's Situation Recreation Tool",
+            title: buildBranch && buildBranch !== 'main' ? `${buildBranch}: Sitrec` : 'Sitrec',
             meta: {
                 // ── Content-Security-Policy (partial, deliberately) ──────────────────
                 // Only the directives that are genuinely safe for Sitrec are enforced.
@@ -412,6 +426,7 @@ ${bodyContent}
         new webpack.DefinePlugin({
             'process.env.BUILD_VERSION_STRING': JSON.stringify(buildVersionString),
             'process.env.BUILD_VERSION_NUMBER': JSON.stringify(getVersionNumber()),
+            'process.env.BUILD_BRANCH': JSON.stringify(buildBranch),
             'process.env.DOCKER_BUILD': JSON.stringify(process.env.DOCKER_BUILD === 'true'),
             'CAN_REQUIRE_CONTEXT': JSON.stringify(true),
             'INCLUDE_IWER_EMULATOR': JSON.stringify(env.includeIWER !== false),

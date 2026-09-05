@@ -1361,7 +1361,7 @@ export class VideoExportManager {
     async exportWindowVideo() {
         const { GlobalDateTimeNode, NodeMan, Sit, setRenderOne, guiMenus } = await import("./Globals");
         const { par } = await import("./par");
-        const { drawVideoWatermark } = await import("./utils");
+        const { drawVideoWatermark, getDocumentTitle } = await import("./utils");
         const { drawAttributionOnCanvas } = await import("./AttributionOverlay");
 
         if (this.renderVideoFolder) {
@@ -1547,16 +1547,16 @@ export class VideoExportManager {
                 await exporter.addFrame(captureCanvas, frame);
 
                 if (i % 10 === 0) {
-                    document.title = `Recording ${i + 1}/${plan.totalFrames} [Enter=save, Esc=abort]`;
+                    document.title = getDocumentTitle(`Recording ${i + 1}/${plan.totalFrames} [Enter=save, Esc=abort]`);
                     await new Promise(r => setTimeout(r, 0));
                 }
             }
 
             if (!abortExport) {
-                document.title = 'Finalizing video...';
+                document.title = getDocumentTitle('Finalizing video...');
                 const blob = await exporter.finalize(
                     null,
-                    (status) => { document.title = status; }
+                    (status) => { document.title = getDocumentTitle(status); }
                 );
 
                 const { getExportPrefix } = await import("./utils");

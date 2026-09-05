@@ -43,7 +43,7 @@ describe('sanitizeSettings', () => {
 
     test('all boolean settings accept only JSON booleans', () => {
         const keys = [
-            'enableOldAIModels', 'centerSidebar', 'showAttribution', 'showFilename',
+            'enableOldAIModels', 'byokSitrecFocused', 'centerSidebar', 'showAttribution', 'showFilename',
             'startupLocation', 'startupBuildings',
         ];
         for (const key of keys) {

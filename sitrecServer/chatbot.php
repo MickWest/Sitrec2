@@ -896,7 +896,9 @@ if (!empty($menuSummary)) {
 // which with cache_control set costs 1.25x rather than the 0.1x a hit would cost.
 // Mirror any change here in src/CDirectLLMClient.js buildSystemPromptParts().
 // ─────────────────────────────────────────────────────────────────────────────────────
-$systemStatic = promptSection('base');
+// Sitrec-provided models always retain the topic restriction. The browser's
+// own-key/custom-endpoint preference cannot change this server-side prompt.
+$systemStatic = str_replace('{{topicScope}}', promptSection('scopeSitrec'), promptSection('base'));
 
 if (!empty($availableDocs)) {
     $systemStatic .= "\n\n" . promptSection('docsHeader') . "\n";

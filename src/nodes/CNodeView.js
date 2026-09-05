@@ -15,6 +15,7 @@ import {CUIBar, hudClipPath} from "../CUIBar";
 import {FRIENDLY_VIEW_NAMES, populateViewUIBarMenu} from "../ViewUIBarMenus";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {par} from "../par";
+import {getDocumentTitle} from "../utils";
 import {
     getCenterSidebarAdjustment,
     getLeftSidebar,
@@ -1653,7 +1654,7 @@ class CNodeView extends CNode {
         const win = window.open("", "sitrec_view_" + this.id, `popup,width=${w},height=${h}`);
         if (!win) { alert("Popup blocked — please allow popups for this site, then try again."); return; }
         this._poppedWindow = win;
-        try { win.document.title = "Sitrec — " + friendlyViewName(this.in, this.id); } catch (e) { /* cross-doc */ }
+        try { win.document.title = getDocumentTitle("Sitrec — " + friendlyViewName(this.in, this.id)); } catch (e) { /* cross-doc */ }
         // --sitrec-header-h:0 → content positioned below the (now absent) header fills the window.
         win.document.body.style.cssText = "margin:0; height:100vh; overflow:hidden;"
             + "background:var(--sitrec-bg-app,#1a1a1a); color:var(--sitrec-text,#ebebeb); --sitrec-header-h:0px;";

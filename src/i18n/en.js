@@ -976,6 +976,19 @@ const en = {
             msaaSamples: { label: "Antialiasing (MSAA)", tooltip: "Multisample antialiasing on the 3D viewport. Off = fastest, removes the multisample resolve pass. Higher = smoother edges but slower." },
             performancePreset: { label: "Performance Preset", tooltip: "One-click performance presets. Quality = native res + 4x MSAA. Fast/Potato cut render scale, MSAA, terrain detail and fps cap for low-spec laptops. Switches to Custom when you tweak any sub-setting." },
             aiModel: { label: "AI Model", tooltip: "Select the AI model for the chat assistant" },
+            byokSitrecFocused: {
+                label: "Sitrec Focused",
+                tooltip: "For models using your own API key or custom endpoint, including voice. "
+                    + "On: keep chat to Sitrec and related topics. Off: discuss any topic. "
+                    + "Your provider's API charges still apply; longer chats can cost more. "
+                    + "Sitrec-provided models always stay focused on Sitrec.",
+                costTitle: "API usage costs",
+                costWarning: "Replies still use your API key or custom endpoint. Your provider may charge "
+                    + "for every request, including the Sitrec instructions and chat history sent with it. "
+                    + "Longer conversations and replies can increase costs.\n\n"
+                    + "Review usage and set local limits in Settings → API Keys. "
+                    + "Set spending caps or budget alerts with your provider for billing protection.",
+            },
             voiceModel: {
                 label: "Voice Model",
                 tooltip: "Which OpenAI realtime model the spoken assistant uses. Needs your "

@@ -231,6 +231,7 @@ class CNodeViewChat extends CNodeViewText {
                 // Mirror the Settings "AI Model" dropdown here so the model can be switched
                 // straight from the Assistant header; it stays in sync with Settings.
                 mirrorMenuItem('chatModel', m, {name: 'AI Model'});
+                mirrorMenuItem('byokSitrecFocused', m, {name: t("custom.settings.byokSitrecFocused.label")});
                 // ...and the spoken one, for the same reason and more so: the microphone
                 // that uses it is two icons away in this very header.
                 mirrorMenuItem('voiceModel', m, {name: 'Voice Model'});
@@ -334,6 +335,7 @@ class CNodeViewChat extends CNodeViewText {
                     sitrecDoc: sitrecAPI.getLLMDocumentation(),
                     menuSummary: sitrecAPI.getMenuSummary(),
                     availableDocs: getChatAvailableDocs(),
+                    sitrecFocused: Globals.settings.byokSitrecFocused,
                     simDateTime: GlobalDateTimeNode.dateNow
                         ? GlobalDateTimeNode.dateNow.toISOString() : null,
                 }),
@@ -1152,6 +1154,7 @@ class CNodeViewChat extends CNodeViewText {
                     simDateTime: simDate,
                     menuSummary,
                     availableDocs,
+                    sitrecFocused: Globals.settings.byokSitrecFocused,
                 }),
                 history: priorHistory.slice(-10),
                 userText: text,

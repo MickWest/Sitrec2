@@ -36,7 +36,7 @@ import {getShortURL} from "./urlUtils";
 import {REMOVED_NODE_IDS} from "./RemovedNodes";
 import {CNode3DObject, ModelAliases} from "./nodes/CNode3DObject";
 import {UpdateHUD} from "./JetStuff";
-import {degrees, getDateTimeFilename} from "./utils";
+import {degrees, getDateTimeFilename, updateDocumentTitle} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {LayoutMan} from "./CLayoutManager";
 import {EventManager} from "./CEventManager";
@@ -1757,6 +1757,7 @@ export const serializeMethods = {
                 Sit[key] = sitchData.Sit[key];
             }
         }
+        updateDocumentTitle();
 
         // Restore video state for modded sitches.
         // Custom sitches handle this during SituationSetup (pendingVideoRestore is already set).

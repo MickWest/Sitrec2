@@ -119,6 +119,10 @@ export function sanitizeSettings(settings) {
         sanitized.enableOldAIModels = settings.enableOldAIModels;
     }
 
+    if (settings.byokSitrecFocused !== undefined && typeof settings.byokSitrecFocused === "boolean") {
+        sanitized.byokSitrecFocused = settings.byokSitrecFocused;
+    }
+
     if (settings.voiceModel !== undefined) {
         const voiceModel = String(settings.voiceModel);
         // A bare model id, or empty for "use the default". No provider prefix: unlike
@@ -399,6 +403,7 @@ export async function initializeSettings() {
             lastBuildingRotation: 0, // Last building rotation in radians (persists across sessions)
             chatModel: "", // AI chat model in "provider:model" format (empty = use first available)
             enableOldAIModels: false, // Offer superseded model generations in the AI Model list
+            byokSitrecFocused: true, // Keep own-key and custom-endpoint chat on Sitrec topics
             voiceModel: "", // Spoken assistant's realtime model (empty = the built-in default)
             centerSidebar: false, // Enable center sidebar between split views
             showAttribution: true, // Show map/elevation data source attribution overlay

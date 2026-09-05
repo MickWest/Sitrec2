@@ -1149,10 +1149,17 @@ export class ExportProgressWidget {
     }
 }
 
+export function getDocumentTitle(title) {
+    if (title === undefined) {
+        const isDefaultSitch = !Sit || Sit.name === "empty" || Sit.name === "custom";
+        title = Sit?.sitchName || (isDefaultSitch ? "Sitrec" : Sit.menuName || Sit.name);
+    }
+    const branch = process.env.BUILD_BRANCH;
+    return branch && branch !== "main" ? `${branch}: ${title}` : title;
+}
+
 export function updateDocumentTitle() {
-    const newTitle = Sit.name === "empty"
-        ? "Sitrec"
-        : "Sitrec: " + (Sit.sitchName || Sit.menuName || Sit.name);
+    const newTitle = getDocumentTitle();
     if (document.title !== newTitle) {
         document.title = newTitle;
     }

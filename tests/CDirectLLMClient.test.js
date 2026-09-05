@@ -125,6 +125,38 @@ describe('convertToolsForAnthropic', () => {
 });
 
 describe('buildSystemPrompt', () => {
+    const focusedScope = 'Do not discuss anything unrelated to Sitrec, including people, events, or politics. But you can talk about Mick West.';
+    const generalScope = "You can discuss any topic the user asks about, including topics unrelated to Sitrec. Do not refuse or redirect a request merely because it is unrelated to Sitrec. Use the Sitrec tools when the user's request involves the app; otherwise, answer normally without tying the topic back to Sitrec.";
+
+    test('keeps existing topic restrictions unless explicitly switched off', () => {
+        const args = {simDateTime: '2026-09-05T12:00:00Z', menuSummary: {}, availableDocs: {}};
+        const defaultPrompt = buildSystemPrompt(args);
+        expect(defaultPrompt).toContain(focusedScope);
+        for (const sitrecFocused of [true, undefined, null, 'false', 0]) {
+            expect(buildSystemPrompt({...args, sitrecFocused})).toBe(defaultPrompt);
+        }
+        expect(buildSystemPrompt({...args, sitrecFocused: false}))
+            .toBe(defaultPrompt.replace(focusedScope, generalScope));
+    });
+
+    test('general-topic mode preserves app instructions, tools context, and cache boundaries', () => {
+        const args = {
+            simDateTime: '2026-09-05T12:00:00Z',
+            menuSummary: {view: ['FOV']},
+            availableDocs: {WhatsNew: 'Recent changes'},
+        };
+        const focused = buildSystemPromptParts(args);
+        const general = buildSystemPromptParts({...args, sitrecFocused: false});
+        expect(general.staticPart).toContain(generalScope);
+        expect(general.staticPart).not.toContain(focusedScope);
+        expect(general.staticPart).toContain('UNTRUSTED CONTENT (CRITICAL)');
+        expect(general.staticPart).toContain('CAMERA POINTING vs LOCKING');
+        expect(general.staticPart).toContain('AVAILABLE HELP DOCUMENTATION');
+        expect(general.menuPart).toBe(focused.menuPart);
+        expect(general.volatilePart).toBe(focused.volatilePart);
+        expect(buildSystemPrompt({...args, sitrecFocused: false})).not.toMatch(/@@SECTION|\{\{/);
+    });
+
     test('omits the real wall-clock time (keeps the prefix cacheable) but keeps simDateTime', () => {
         const prompt = buildSystemPrompt({
             simDateTime: '2004-11-14T20:30:00Z',
@@ -864,6 +896,35 @@ describe('chat (OpenRouter BYOK)', () => {
 
         expect(executeCall).not.toHaveBeenCalled();
         expect(result.text).toMatch(/cut off/);
+    });
+});
+
+describe('topic scope on direct provider requests', () => {
+    test.each([
+        ['byok-anthropic', undefined],
+        ['byok-openai', undefined],
+        ['byok-openrouter', undefined],
+        ['byok-custom', {url: 'https://endpoint.example/v1', format: 'openai'}],
+        ['byok-custom', {url: 'https://endpoint.example/v1', format: 'anthropic'}],
+    ])('%s %j sends the selected topic scope', async (provider, endpoint) => {
+        for (const sitrecFocused of [true, false]) {
+            mockFetchSequence([{body: {
+                content: [{type: 'text', text: 'OK'}], stop_reason: 'end_turn',
+                choices: [{message: {role: 'assistant', content: 'OK'}, finish_reason: 'stop'}],
+            }}]);
+            const args = {simDateTime: '2026-09-05', menuSummary: {}, availableDocs: {}, sitrecFocused};
+            const result = await chat({
+                apiKey: 'test-key', provider, endpoint, model: 'test-model',
+                systemParts: buildSystemPromptParts(args), history: [], userText: 'Hello',
+                tools: [], executeCall: jest.fn(),
+            });
+            expect(result.text).toBe('OK');
+            const body = JSON.parse(fetch.mock.calls[0][1].body);
+            const prompt = Array.isArray(body.system)
+                ? body.system.map(block => block.text).join('')
+                : body.messages.find(message => message.role === 'system').content;
+            expect(prompt).toBe(buildSystemPrompt(args));
+        }
     });
 });
 
