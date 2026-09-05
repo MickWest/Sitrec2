@@ -6,19 +6,22 @@
  * copies the Chrome extension, Local Compute worker, and runtime files, then
  * creates SitrecBridge.zip.
  *
- * Usage:  node build-dist.mjs
- * Output: dist/SitrecBridge.zip
+ * Usage:  node build-dist.mjs [--dev]
+ * Output: dist/SitrecBridge.zip or dist/SitrecBridgeDev.zip
  */
 
 import * as esbuild from "esbuild";
-import {cpSync, existsSync, mkdirSync, rmSync} from "fs";
-import {execSync} from "child_process";
+import {chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync} from "fs";
+import {execFileSync} from "child_process";
+import {buildExtension} from "./build-extension.mjs";
 import {dirname, join} from "path";
 import {fileURLToPath} from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const DIST = join(__dirname, "dist", "SitrecBridge");
+const dev = process.argv.includes("--dev");
+const name = dev ? "SitrecBridgeDev" : "SitrecBridge";
+const DIST = join(__dirname, "dist", name);
 
 function isPythonCachePath(path) {
     return /(^|[/\\])__pycache__([/\\]|$)|\.pyc$/i.test(path);
@@ -54,6 +57,10 @@ if (result.errors.length > 0) {
 // 3. Copy runtime files the server reads via readFileSync(__dirname, ...)
 cpSync(join(__dirname, "sitrec-mcp-guide.md"), join(DIST, "sitrec-mcp-guide.md"));
 cpSync(join(__dirname, "README.md"), join(DIST, "README.md"));
+cpSync(join(__dirname, "README-dev.md"), join(DIST, "README-dev.md"));
+if (dev) {
+    writeFileSync(join(DIST, "dev-mode.json"), "{\"development\":true}\n");
+}
 cpSync(join(__dirname, "local-compute"), join(DIST, "local-compute"), {
     recursive: true,
     filter: (src) => !isPythonCachePath(src),
@@ -62,16 +69,16 @@ cpSync(join(__dirname, "local-compute"), join(DIST, "local-compute"), {
 // 3b. Copy launcher scripts (needed for Claude Desktop which doesn't inherit shell PATH)
 cpSync(join(__dirname, "run.sh"), join(DIST, "run.sh"));
 cpSync(join(__dirname, "run.bat"), join(DIST, "run.bat"));
-execSync(`chmod +x "${join(DIST, "run.sh")}"`);
+chmodSync(join(DIST, "run.sh"), 0o755);
 
 // 4. Copy the Chrome extension
-cpSync(join(__dirname, "extension"), join(DIST, "extension"), {recursive: true});
+buildExtension(join(__dirname, "extension"), join(DIST, "extension"), dev);
 
 // 5. Create zip
-const zipPath = join(__dirname, "dist", "SitrecBridge.zip");
+const zipPath = join(__dirname, "dist", `${name}.zip`);
 if (existsSync(zipPath)) rmSync(zipPath);
 try {
-    execSync(`cd "${join(__dirname, "dist")}" && zip -r SitrecBridge.zip SitrecBridge/`, {stdio: "inherit"});
+    execFileSync("zip", ["-qr", `${name}.zip`, `${name}/`], {cwd: join(__dirname, "dist"), stdio: "inherit"});
     console.log(`\nDone: ${zipPath}`);
 } catch (e) {
     console.error("\nzip command failed — the dist directory is still available at:");

@@ -1,5 +1,8 @@
 # SitrecBridge
 
+For browser-wide development controls, full-page and screen/window screenshots,
+see the separate [SitrecBridge Dev build](README-dev.md).
+
 An MCP (Model Context Protocol) server that bridges AI assistants to a running
 Sitrec instance via a Chrome extension.
 

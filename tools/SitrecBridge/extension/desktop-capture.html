@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SitrecBridge Dev — Screen capture</title>
+  <style>
+    body {font: 16px system-ui; color: #eee; background: #202124; margin: 48px auto; max-width: 620px; padding: 24px;}
+    h1 {font-size: 24px;} button {font: inherit; padding: 10px 16px; margin: 8px 8px 8px 0; cursor: pointer;}
+    #status {padding: 16px; background: #333; border-radius: 8px;} p {line-height: 1.6;}
+  </style>
+</head>
+<body>
+  <h1>SitrecBridge Dev — Screen capture</h1>
+  <p>Choose a screen or window to let your connected development assistant take screenshots.
+    Sharing stays active so it can take further screenshots without another picker.</p>
+  <button id="start">Choose screen or window</button><button id="stop" disabled>Stop sharing</button>
+  <p id="status" role="status">No screen shared.</p>
+  <p>Keep this tab open while sharing. You can switch back to your work.
+    Closing this tab or using Chrome’s Stop sharing control ends capture.</p>
+  <video id="video" muted playsinline hidden></video>
+  <script type="module" src="desktop-capture.js"></script>
+</body>
+</html>

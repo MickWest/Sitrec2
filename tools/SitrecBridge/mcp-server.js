@@ -31,7 +31,7 @@ import {
     ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import {WebSocket, WebSocketServer} from "ws";
-import {readFileSync} from "fs";
+import {existsSync, readFileSync} from "fs";
 import {spawn} from "child_process";
 import {randomBytes} from "crypto";
 import {fileURLToPath} from "url";
@@ -48,10 +48,13 @@ import {
     shouldReleasePort,
 } from "./lifecycle.js";
 import {normalizeTabArgs} from "./tab-target.js";
+import {DEV_TOOLS} from "./dev-tools.js";
 import * as diag from "./diagnostics.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const DEV_MODE = process.argv.includes("--dev") || process.env.SITREC_BRIDGE_DEV === "1"
+    || existsSync(join(__dirname, "dev-mode.json"));
 
 const WS_PORT = parseInt(process.env.SITREC_BRIDGE_PORT || "9780", 10);
 const WS_HOST = process.env.SITREC_BRIDGE_HOST || "127.0.0.1"; // Localhost only — avoids macOS firewall EPERM on 0.0.0.0; override with 0.0.0.0 in Docker
@@ -1313,6 +1316,7 @@ const TAB_PROPERTY = {
 
 
 const TOOLS = [
+    ...(DEV_MODE ? DEV_TOOLS : []),
     {
         name: "sitrec_status",
         description:
@@ -1622,6 +1626,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: rawArgs } = request.params;
 
+    if (name.startsWith("browser_") && (!DEV_MODE || !DEV_TOOLS.some(tool => tool.name === name))) {
+        return {content: [{type: "text", text: "Browser tools require the SitrecBridge Dev server (--dev) and extension."}], isError: true};
+    }
+
     let args;
     try {
         args = normalizeTabArgs(rawArgs);
@@ -1802,7 +1810,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         // Image responses: save to temp file AND return inline for Claude to see
-        const isImageResult = (name === "sitrec_screenshot" || name === "sitrec_get_video_frame")
+        const isImageResult = (name === "sitrec_screenshot" || name === "sitrec_get_video_frame"
+            || name === "browser_screenshot" || name === "browser_desktop_capture")
             && response.result?.imageData;
         if (isImageResult) {
             const mimeType = response.result.mimeType || "image/jpeg";
