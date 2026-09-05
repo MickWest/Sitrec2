@@ -47,6 +47,7 @@ import {FeatureManager} from "./CFeatureManager";
 import {CustomGraphManager} from "./CCustomGraphManager";
 import {restoreStreetViewPanoFromMod} from "./StreetViewPanoUI";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
+import {isVideoRestoredByStreaming} from "./VideoStreaming";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
 import {showError} from "./showError";
@@ -1044,6 +1045,10 @@ export const serializeMethods = {
             Globals.dontAutoZoom = true;
 
             for (let id in sitchData.loadedFiles) {
+                // The video restore owns these bytes and retains its stable source
+                // reference. Loading them again as generic assets would hold this
+                // Promise.all until EOF and defeat progressive playback.
+                if (isVideoRestoredByStreaming(sitchData.loadedFiles[id], sitchData)) continue;
                 const sidecarMeta = sitchData.loadedFilesMetadata?.[id];
                 const sidecarURL = sidecarMeta?.pesSidecarURL;
                 // For TS-extracted substreams: fetch the .pts.json sidecar in

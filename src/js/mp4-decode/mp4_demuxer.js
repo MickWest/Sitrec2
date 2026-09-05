@@ -221,7 +221,7 @@ export class MP4Source {
   start(track, onChunk) {
     this._onChunk = onChunk;
     this.videoTrackId = track.id;
-    this.file.setExtractionOptions(track.id);
+    this.file.setExtractionOptions(track.id, null, {nbSamples: this.extractionBatchSize || 1000});
     if (!this._extractionStarted) {
       // Set flag before file.start() because start() can call onSamples
       // synchronously. If the callback throws, the flag must already be
@@ -238,12 +238,12 @@ export class MP4Source {
     
     console.log("MP4Source.startWithAudio: videoTrack.id=", videoTrack.id);
     
-    this.file.setExtractionOptions(videoTrack.id);
+    this.file.setExtractionOptions(videoTrack.id, null, {nbSamples: this.extractionBatchSize || 1000});
     
     if (audioTrack) {
       this.audioTrackId = audioTrack.id;
       console.log("MP4Source.startWithAudio: audioTrack.id=", audioTrack.id, "setting extraction options");
-      this.file.setExtractionOptions(audioTrack.id);
+      this.file.setExtractionOptions(audioTrack.id, null, {nbSamples: this.extractionBatchSize || 1000});
     } else {
       console.warn("MP4Source.startWithAudio: no audioTrack provided");
     }
@@ -373,6 +373,10 @@ export class MP4Source {
   onExtractionComplete(callback, timeoutMs = 30000) {
     this._extractionCompleteCallback = callback;
     this._extractionStartTime = Date.now();
+    if (this.progressive) {
+      this._checkExtractionComplete();
+      return;
+    }
     
     // Set a timeout to force completion even if not all samples arrive
     // This prevents stuck loading under high resource usage

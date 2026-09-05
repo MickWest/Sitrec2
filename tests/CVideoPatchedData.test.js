@@ -193,6 +193,66 @@ describe('CVideoPatchedData mapping algorithm', () => {
         expect(CVideoPatchedData.shouldWrap(fakeSource(pts), fps)).toBe(false);
     });
 
+    test('an incomplete streamed GOP must not trigger a full-timeline repair', () => {
+        const source = fakeSource([0, 33333, 133333]);
+        source.frames = 100;
+        source.downloadFinished = false;
+        expect(CVideoPatchedData.shouldWrap(source, 30)).toBe(false);
+        // Once the real complete timestamps exist, genuine gaps still patch.
+        source.framePTSus = makePTS(30, 100, [{at: 50, count: 5}]);
+        source.downloadFinished = true;
+        expect(CVideoPatchedData.shouldWrap(source, 30)).toBe(true);
+    });
+
+    test('complete metadata repairs a streaming timeline before media EOF with the same mapping as a full load', () => {
+        const timestamps = makePTS(30, 100, [{at: 49, count: 1}]);
+        const complete = new CVideoPatchedData(fakeSource(timestamps), {fps: 30});
+        const source = {...fakeSource(timestamps.slice(0, 10)), frames: timestamps.length,
+            completeFramePTSus: timestamps, downloadFinished: false};
+        expect(CVideoPatchedData.shouldWrap(source, 30)).toBe(true);
+        const streaming = new CVideoPatchedData(source, {fps: 30});
+        expect(streaming.map).toEqual(complete.map);
+        expect(streaming.framePTSus).toEqual(complete.framePTSus);
+        expect(streaming.getPatchStats()).toEqual(complete.getPatchStats());
+        expect(streaming.downloadFinished).toBe(false);
+    });
+
+    test('complete metadata avoids false gaps in partially extracted B frames', () => {
+        const source = {...fakeSource([0, 33333, 133333]), frames: 100,
+            completeFramePTSus: makePTS(30, 100), downloadFinished: false};
+        expect(CVideoPatchedData.shouldWrap(source, 30)).toBe(false);
+    });
+
+    test('incomplete timestamp tables cannot construct an unbounded repair map', () => {
+        const source = {...fakeSource([0, 33333, 133333]), frames: 100, downloadFinished: false};
+        expect(() => new CVideoPatchedData(source, {fps: 30})).toThrow('complete frame timestamps');
+        source.completeFramePTSus = [0, 33333];
+        expect(CVideoPatchedData.shouldWrap(source, 30)).toBe(false);
+    });
+
+    test('streaming progress and frame blocking follow held slots and preserve audio time', () => {
+        const timestamps = makePTS(30, 50, [{at: 19, count: 3}]);
+        const source = {...fakeSource(timestamps), completeFramePTSus: timestamps,
+            bufferedFrames: 20, downloadFinished: false, originalFps: 30, loaded: true,
+            streamByteSource: {received: 200, total: 500, status: 'downloading'},
+            audioHandler: {}, retryDownload: jest.fn()};
+        source.isStreamFrameReady = jest.fn(frame => frame < source.bufferedFrames);
+        const wrapper = new CVideoPatchedData(source, {fps: 30});
+        expect(wrapper.bufferedFrames).toBe(23);
+        expect(wrapper.isStreamFrameReady(22)).toBe(true);
+        expect(source.isStreamFrameReady).toHaveBeenLastCalledWith(19, 22);
+        expect(wrapper.isStreamFrameReady(23)).toBe(false);
+        expect(source.isStreamFrameReady).toHaveBeenLastCalledWith(20, 23);
+        expect(wrapper.streamByteSource).toBe(source.streamByteSource);
+        expect(wrapper.audioHandler).toBe(source.audioHandler);
+        wrapper.retryDownload();
+        expect(source.retryDownload).toHaveBeenCalledTimes(1);
+        source.bufferedFrames = source.frames;
+        source.downloadFinished = true;
+        expect(wrapper.bufferedFrames).toBe(50);
+        expect(wrapper.downloadFinished).toBe(true);
+    });
+
     test('round-trip sourceToVirtual(virtualToSource(V)) == canonical V', () => {
         const fps = 30;
         const pts = makePTS(fps, 80, [{at: 30, count: 4}, {at: 60, count: 2}]);

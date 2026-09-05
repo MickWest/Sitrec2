@@ -162,6 +162,7 @@ export class CAudioMp4Data {
             timestamp: audioData.timestamp,
             duration: duration
         });
+        this.streamAudio?.append(audioData);
     }
 
     decodeAudioSamples(samples, demuxer) {
@@ -183,8 +184,8 @@ export class CAudioMp4Data {
         for (const sample of samples) {
             const chunk = new EncodedAudioChunk({
                 type: sample.is_sync ? "key" : "delta",
-                timestamp: sample.cts,
-                duration: sample.duration,
+                timestamp: this.streamAudio && sample.timescale ? Math.round(sample.cts * 1e6 / sample.timescale) : sample.cts,
+                duration: this.streamAudio && sample.timescale ? Math.round(sample.duration * 1e6 / sample.timescale) : sample.duration,
                 data: sample.data
             });
 
@@ -239,7 +240,11 @@ export class CAudioMp4Data {
      * @param {number} startFrame - Current video frame number
      * @param {number} fps - Video frame rate for timing calculations
      */
-    play(startFrame, fps) {
+    play(startFrame, fps, speed = 1) {
+        if (this.streamAudio) {
+            this.streamAudio.play(startFrame, fps, speed);
+            return;
+        }
         if (!this.isInitialized || !this.audioContext) {
 //            console.warn("Audio not initialized or no context");
             return;
@@ -317,6 +322,7 @@ export class CAudioMp4Data {
      * @param {boolean} immediate - If true, stop immediately (for restarts). If false, apply 5ms fade-out (for pause/stop)
      */
     stopAudioSource(immediate = false) {
+        this.streamAudio?.pause();
         if (this._playbackRetryTimeout) {
             clearTimeout(this._playbackRetryTimeout);
             this._playbackRetryTimeout = null;
@@ -673,6 +679,8 @@ export class CAudioMp4Data {
         
         // Clear all audio data
         this.audioBuffer = null;
+        this.streamAudio?.dispose();
+        for (const item of this.decodedAudioData) item.data.close();
         this.decodedAudioData = [];
         this.isInitialized = false;
         this.isPlaying = false;

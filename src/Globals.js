@@ -462,9 +462,9 @@ export function unregisterFrameBlocker(id) {
     frameAdvanceBlockers.delete(id);
 }
 
-export function isFrameAdvanceBlocked(currentFrame, nextFrame) {
+export function isFrameAdvanceBlocked(currentFrame, nextFrame, playbackTarget = nextFrame) {
     for (const [id, blocker] of frameAdvanceBlockers) {
-        const result = blocker.check(currentFrame, nextFrame);
+        const result = blocker.check(currentFrame, nextFrame, playbackTarget);
         if (result) {
             if (blocker.onBlocked) {
                 blocker.onBlocked(currentFrame, nextFrame);

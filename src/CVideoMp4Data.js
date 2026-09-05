@@ -750,7 +750,7 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
 }
 
 
-function getRotationAngleFromVideoMatrix(matrix) {
+export function getRotationAngleFromVideoMatrix(matrix) {
     // Extract matrix elements and normalize by dividing by 65536
     const a = matrix[0] / 65536;
     const b = matrix[1] / 65536;

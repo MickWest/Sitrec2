@@ -20,13 +20,16 @@ export class CVideoPatchedData extends CVideoData {
     constructor(source, options = {}) {
         const fps = options.fps;
         assert(fps && fps > 0, "CVideoPatchedData: fps required");
-        assert(source && source.framePTSus && source.framePTSus.length > 0,
-            "CVideoPatchedData: source must have framePTSus[]");
+        const timestamps = CVideoPatchedData.getSourceTimestamps(source);
+        assert(timestamps && timestamps.length >= source.frames && timestamps.length > 0,
+            "CVideoPatchedData: source must have complete frame timestamps");
 
         const frameDuration_us = 1e6 / fps;
         const halfStep = frameDuration_us / 2;
-        const T0 = source.framePTSus[0];
-        const TN = source.framePTSus[source.frames - 1];
+        const T0 = timestamps[0];
+        const TN = timestamps[source.frames - 1];
+        assert(Number.isFinite(T0) && Number.isFinite(TN) && TN >= T0,
+            "CVideoPatchedData: invalid timeline bounds");
 
         const map = [];
         const virtualPTSus = [];
@@ -35,7 +38,7 @@ export class CVideoPatchedData extends CVideoData {
             const targetPTS = T0 + V * frameDuration_us;
             if (targetPTS > TN + halfStep) break;
             while (S + 1 < source.frames &&
-                   source.framePTSus[S + 1] <= targetPTS + halfStep) {
+                   timestamps[S + 1] <= targetPTS + halfStep) {
                 S++;
             }
             map.push(S);
@@ -51,6 +54,7 @@ export class CVideoPatchedData extends CVideoData {
             id: source.id + "_patched",
             frames: virtualFrames,
             videoSpeed: 1,
+            ownsTimeline: source.ownsTimeline,
         });
 
         this.source = source;
@@ -95,6 +99,30 @@ export class CVideoPatchedData extends CVideoData {
     set videoDroppedData(v) { if (this.source) this.source.videoDroppedData = v; }
     get videoDroppedURL() { return this.source ? this.source.videoDroppedURL : undefined; }
     set videoDroppedURL(v) { if (this.source) this.source.videoDroppedURL = v; }
+
+    // Preserve the streaming lifecycle through the virtual timeline. The byte
+    // transport is separate from `source`, which is the wrapped video here.
+    get streamByteSource() { return this.source?.streamByteSource; }
+    get downloadFinished() { return this.source?.downloadFinished; }
+    get streamError() { return this.source?.streamError; }
+    get loaded() { return this.source?.loaded; }
+    get filename() { return this.source?.filename; }
+    get sourceRef() { return this.source?.sourceRef; }
+    get audioHandler() { return this.source?.audioHandler; }
+    get bufferedFrames() {
+        const count = this.source?.bufferedFrames;
+        if (count === undefined || count >= this.source.frames) return this.frames;
+        // Include held slots backed by the last available source frame.
+        return this.firstVForS?.[count] ?? 0;
+    }
+
+    isStreamFrameReady(frame) {
+        if (!this.source?.isStreamFrameReady) return true;
+        const audioFrame = frame * (this.source.originalFps || this.fps) / this.fps;
+        return this.source.isStreamFrameReady(this.virtualToSource(frame), audioFrame);
+    }
+
+    retryDownload() { this.source?.retryDownload(); }
 
     // Source <-> virtual frame translation. Persisted frame numbers (saved
     // keyframes, URL ?frame=, MCP set_frame) are source-indexed; runtime
@@ -300,13 +328,22 @@ export class CVideoPatchedData extends CVideoData {
     // source has real per-frame PTS AND there's at least one interval ≥ 1.9 ×
     // nominal frame duration (a genuine dropped-frame burst — diagnostic
     // 1.5× threshold is too tight for an action gate, see review item 5.1).
+    static getSourceTimestamps(source) {
+        if (source?.completeFramePTSus && source.completeFramePTSus.length === source.frames) return source.completeFramePTSus;
+        // An unfinished GOP can appear to have gaps. Only an explicit complete
+        // metadata table is safe to use before all media bytes have arrived.
+        if (source?.downloadFinished === false) return null;
+        return source?.framePTSus;
+    }
+
     static shouldWrap(source, fps) {
         if (!source || !source.hasRealFramePTS || !source.hasRealFramePTS()) return false;
-        if (!source.framePTSus || source.framePTSus.length < 2) return false;
+        const timestamps = CVideoPatchedData.getSourceTimestamps(source);
+        if (!timestamps || timestamps.length < 2) return false;
         const frameDuration_us = 1e6 / fps;
         const threshold = 1.9 * frameDuration_us;
-        for (let i = 1; i < source.framePTSus.length; i++) {
-            const d = source.framePTSus[i] - source.framePTSus[i - 1];
+        for (let i = 1; i < timestamps.length; i++) {
+            const d = timestamps[i] - timestamps[i - 1];
             if (d >= threshold) return true;
         }
         return false;

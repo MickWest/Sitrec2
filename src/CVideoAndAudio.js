@@ -48,6 +48,7 @@ export class CVideoAndAudio extends CVideoData {
      * @returns {boolean} True if audio is ready
      */
     isAudioReady() {
+        if (this.audioHandler?.streamAudio) return true;
         return this.audioHandler && 
                this.audioHandler._bufferCreatedSuccessfully && 
                this.audioHandler.audioBuffer;

@@ -306,7 +306,7 @@ export class H264Decoder {
      * it (or on length mismatch) we fall back to synthetic uniform i × frameDuration
      * timestamps, which are wrong for any stream that lost frames mid-recording.
      */
-    static createEncodedVideoChunks(nalUnits, fps, pesPtsUs = null) {
+    static createEncodedVideoChunks(nalUnits, fps, pesPtsUs = null, frameOffset = 0) {
         const chunks = [];
         const frameDuration = 1000000 / fps; // Duration in microseconds
 
@@ -332,7 +332,7 @@ export class H264Decoder {
             // Create aggregated frame data
             const frameData = this.createAggregatedFrame(frame.nalUnits);
 
-            const presentationTimestamp = useRealPTS ? pesPtsUs[i] : (i * frameDuration);
+            const presentationTimestamp = useRealPTS ? pesPtsUs[i] : ((i + frameOffset) * frameDuration);
 
             chunks.push(new EncodedVideoChunk({
                 type: frame.type,

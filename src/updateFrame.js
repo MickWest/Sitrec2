@@ -108,8 +108,12 @@ export function updateFrame(elapsed) {
             nextFrame = par.pingPong ? A : B;
         }
         
-        // Check if any blockers prevent advancing to the next frame
-        if (isFrameAdvanceBlocked(Math.floor(par.frame), nextFrame)) {
+        // Streaming also checks the actual target, which can be several frames
+        // away at high playback speed or after a slow render.
+        let playbackTarget = singleFrameMode ? nextFrame : par.frame + advance;
+        if (playbackTarget > B) playbackTarget = par.pingPong ? B : A;
+        if (playbackTarget < A) playbackTarget = par.pingPong ? A : B;
+        if (isFrameAdvanceBlocked(Math.floor(par.frame), nextFrame, Math.floor(playbackTarget))) {
             // Stay on current frame, request another render to check again
             setRenderOne(true);
         } else {

@@ -76,7 +76,7 @@ function isStallTimeout(err) {
 // body inactivity timeout. Returns { response, buffer } — `response` carries the
 // real status/headers (body already consumed), `buffer` is the bytes.
 // Throws a TimeoutError (name) on stall; propagates the caller's AbortError.
-async function fetchBufferWithStall(url, init, callerSignal) {
+export async function fetchBufferWithStall(url, init, callerSignal) {
     if (Globals.regression) {
         // Deterministic CI must not depend on wall-clock timers (they'd add flakes).
         const response = await fetch(url, { ...init, signal: callerSignal });

@@ -34,11 +34,13 @@ import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
 import {showChoice, showConfirm} from "../showError";
 import {par} from "../par";
 import {quickToggle} from "../KeyBoardHandler";
-import {CustomManager, FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit, SitchMan} from "../Globals";
+import {CustomManager, FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, registerFrameBlocker, unregisterFrameBlocker, setRenderOne, Sit, SitchMan} from "../Globals";
 import {CMouseHandler} from "../CMouseHandler";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CVideoMp4Data} from "../CVideoMp4Data";
 import {CVideoH264Data} from "../CVideoH264Data";
+import {CVideoStreamData} from "../CVideoStreamData";
+import {canStreamVideo, isVideoBuffering, registerBufferingView, unregisterBufferingView} from "../VideoStreaming";
 import {CVideoAudioOnly} from "../CVideoAudioOnly";
 import {CVideoImageData} from "../CVideoImageData";
 import {CVideoPatchedData} from "../CVideoPatchedData";
@@ -131,6 +133,10 @@ function decodeImageFromBytes(bytes, fileName) {
 export class CNodeVideoView extends CNodeViewCanvas2D {
     constructor(v) {
         super(v);
+        registerBufferingView(this);
+        registerFrameBlocker(`video-stream-${this.id}`, {
+            check: (current, next, playbackTarget = next) => this.blockForStream(current, playbackTarget),
+        });
         // this.canvas.addEventListener( 'wheel', e => this.handleMouseWheel(e) );
 
         // these no longer work with the new rendering pipeline
@@ -683,7 +689,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             // the upload-path fallback kicks in. Routing by extension here
             // avoids that wasted attempt.
             const ext = (getFileExtension(fileName) || "").toLowerCase();
-            if (ext === "h264" || ext === "dad") {
+            if (!clearFrames && canStreamVideo(storedRef || fileName, Sit)) {
+                this.videoData = new CVideoStreamData({id: videoDataId, file: fileName,
+                    sourceRef: storedRef || fileName, streamFrames: Sit.frames, viewId: this.id,
+                    videoSpeed: this.videoSpeed, ownsTimeline: this.ownsTimeline},
+                    this.loadedCallback.bind(this), this.errorCallback.bind(this));
+            } else if (ext === "h264" || ext === "dad") {
                 console.log(`[VideoNew] Using CVideoH264Data for video[${videoIndex}]`);
                 this.videoData = new CVideoH264Data({ id: videoDataId, file: fileName, videoSpeed: this.videoSpeed, ownsTimeline: this.ownsTimeline },
                     this.loadedCallback.bind(this), this.errorCallback.bind(this));
@@ -1930,7 +1941,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             return;
         }
 
-        const isPlaying = !par.paused;
+        const isPlaying = !par.paused && par.direction > 0 && !isVideoBuffering();
         const frameChanged = Math.abs(frame - this.lastAudioSyncFrame) > 0.5;
 
         if (frameChanged || isPlaying !== this.wasPlayingLastFrame) {
@@ -1938,7 +1949,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.wasPlayingLastFrame = isPlaying;
 
             if (isPlaying) {
-                this.videoData.audioHandler.play(Math.floor(frame), Sit.fps);
+                this.videoData.audioHandler.play(Math.floor(frame), Sit.fps, par.playbackSpeed ?? 1);
             } else {
                 this.videoData.audioHandler.pause();
             }
@@ -1950,6 +1961,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
      * Critical for stopping audio playback when switching views
      */
     dispose() {
+        unregisterFrameBlocker(`video-stream-${this.id}`);
+        unregisterBufferingView(this);
+        this._streamRetryButton?.remove();
         // Dispose of all video data including audio
         this.disposeAllVideos();
         this.disposeELAWorker();
@@ -2375,6 +2389,112 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         return this.videoData.isFrameLoaded(frame);
     }
 
+    streamFrame(frame) {
+        return this.lockToInFrame ? Math.max(0, frame - (Sit.aFrame ?? 0)) : frame;
+    }
+
+    blockForStream(current, target) {
+        this._blockedStreamTarget = null;
+        const video = this.videoData;
+        if (!this.visible || !video?.isStreamFrameReady) return false;
+        const missing = !video.isStreamFrameReady(this.streamFrame(current)) ? current
+            : !video.isStreamFrameReady(this.streamFrame(target)) ? target : null;
+        if (missing === null) return false;
+        this._blockedStreamTarget = {current, target: missing};
+        return true;
+    }
+
+    getStreamBufferingTarget() {
+        const video = this.videoData;
+        if (!this.visible || !video?.isStreamFrameReady) return null;
+        const current = Math.floor(par.frame);
+        if (!video.isStreamFrameReady(this.streamFrame(current))) return this.streamFrame(current);
+        const blocked = this._blockedStreamTarget;
+        if (!par.paused && blocked?.current === current && !video.isStreamFrameReady(this.streamFrame(blocked.target))) {
+            return this.streamFrame(blocked.target);
+        }
+        return null;
+    }
+
+    retryStreamDownload() {
+        const video = this.videoData;
+        const source = video.streamByteSource;
+        if (video.loaded && source.status === 'failed' && source.canResume) {
+            video.retryDownload();
+            return;
+        }
+        // Replace a failed parser/decoder in its existing slot, preserving the
+        // user's seek and pause state across the normal newVideo callbacks.
+        const index = this.videos.findIndex(entry => entry.videoData === video);
+        if (index >= 0) this.videos[index].videoData = null;
+        const frame = par.frame, paused = par.paused;
+        this.newVideo(video.filename, false, video.sourceRef, index >= 0 ? index : undefined);
+        if (index >= 0) this.videos[index].videoData = this.videoData;
+        par.frame = frame;
+        par.paused = paused;
+        this.videoData.loadedCallback = data => {
+            const current = par.frame, isPaused = par.paused;
+            this.loadedCallback(data);
+            par.frame = current;
+            par.paused = isPaused;
+        };
+    }
+
+    drawStreamBuffering(frame) {
+        const video = this.videoData;
+        const source = video?.streamByteSource;
+        const target = this.getStreamBufferingTarget();
+        if (this._streamRetryButton) this._streamRetryButton.style.display = 'none';
+        if (!source || video.downloadFinished || (target === null && !video.streamError)) return;
+        // Decoding cached/downloaded frames is ordinary scrubbing, not a
+        // network wait. Only cover the video when more source bytes are needed.
+        if (!video.streamError && (source.status === 'complete' ||
+            Math.floor(target / video.videoSpeed) < video.bufferedFrames)) return;
+        const time = f => {
+            const seconds = Math.floor(f / (Sit.fps || 30));
+            return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+        };
+        const text = video.streamError ? 'Video download interrupted' : `Buffering for ${time(target ?? frame)}`;
+        const progress = source.total ? Math.min(1, source.received / source.total) : null;
+        const detail = video.streamError ||
+            `${progress === null ? (source.received / 1048576).toFixed(1) + ' MB' : Math.floor(progress * 100) + '%'} downloaded · playable through ${time(video.bufferedFrames * video.videoSpeed)}`;
+        const ctx = this.ctx;
+        const width = Math.max(1, Math.min(390, this.widthPx - 24));
+        const x = (this.widthPx - width) / 2;
+        const y = Math.max(4, (this.heightPx - 100) / 2);
+        ctx.save();
+        ctx.filter = 'none';
+        ctx.fillStyle = 'rgba(12, 18, 27, 0.9)';
+        ctx.fillRect(x, y, width, 100);
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.font = '16px sans-serif';
+        ctx.fillText(text, this.widthPx / 2, y + 26, width - 20);
+        ctx.font = '12px sans-serif';
+        ctx.fillText(detail, this.widthPx / 2, y + 49, width - 20);
+        ctx.fillStyle = '#344253';
+        ctx.fillRect(x + 12, y + 64, width - 24, 7);
+        ctx.fillStyle = video.streamError ? '#e49a54' : '#56b9ff';
+        ctx.fillRect(x + 12, y + 64, (width - 24) * (progress ?? 0.2), 7);
+        if (source.status === 'retrying') ctx.fillText('Retrying download…', this.widthPx / 2, y + 90, width - 20);
+        ctx.restore();
+        if (video.streamError) {
+            if (!this._streamRetryButton) {
+                const button = document.createElement('button');
+                button.textContent = 'Retry video download';
+                button.style.cssText = 'position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:30;pointer-events:auto;padding:6px 12px;';
+                button.onclick = event => {
+                    event.stopPropagation();
+                    this.retryStreamDownload();
+                    setRenderOne(true);
+                };
+                this.div.appendChild(button);
+                this._streamRetryButton = button;
+            }
+            this._streamRetryButton.style.display = 'block';
+        }
+    }
+
     renderCanvas(frame = 0) {
         // An overlay with NO video is documented to act as a black screen, so that Vid Overlay
         // Trans still does something before a video is loaded (see the slider's tooltip in
@@ -2392,7 +2512,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (!this.visible) return;
 
         // if no video file, this is just a drop target for now
-        if (!this.videoData) return;
+        if (!this.videoData) {
+            if (this._streamRetryButton) this._streamRetryButton.style.display = 'none';
+            return;
+        }
 
         // "Lock to in frame": play this video relative to the in point (Sit.aFrame)
         // so its first frame appears when the global playhead reaches the in frame.
@@ -2402,7 +2525,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
 
         // While loading, don't render video - the loading message is shown via overlay
-        if (this.videoLoadPending) return;
+        if (this.videoLoadPending) {
+            this.drawStreamBuffering(frame);
+            return;
+        }
 
         this.syncAudioWithVideo(frame);
 
@@ -2543,6 +2669,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.applyColorKeyFromUnderlyingView();
 
         this.drawCrosshairIfKeyHeld();
+        this.drawStreamBuffering(frame);
     }
 
 
