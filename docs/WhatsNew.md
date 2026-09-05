@@ -9,6 +9,51 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.152.0 (2026-09-04)
+
+### New Features
+
+- **Candidate criteria** (Traverse → *Analyze Traverse Methods...*): each gallery tile gains nine lettered, coloured squares with hover explanations; grey means a check is unavailable or inconclusive.
+
+### Improvements
+
+- **Traverse ranking** (Traverse → *Analyze Traverse Methods...*): candidates that reproduce the observing platform's manoeuvres receive a lower rating, and fit grades account for the clip's own reference fit.
+- **Ranking help** (the analysis gallery → *How ranking works*): opens an explanation of the ranking, also linked from downloaded reports.
+- **Clearer comparison tracks** (the analysis gallery → *Open Consistent*): tracks opened from the analysis use thicker lines to make nearby alternatives easier to distinguish.
+
+### Bug Fixes
+
+- Fixed non-physical tracks from manually configured traverse methods occupying gallery tiles.
+- Fixed controls losing synchronisation after a floating menu is closed and reopened.
+- Fixed malformed saved settings turning switches on unexpectedly.
+- Fixed tracks built from on-screen data placing a zero sea-level altitude at the wrong height.
+- Fixed server saves and deletions sometimes reporting success after storage failures.
+- Fixed deleting one saved version also deleting similarly named versions.
+- Fixed shortened-link creation failing or returning a link that was not saved.
+- Fixed the supplied AWS deployment example selecting nonexistent terrain sources.
+
+### Security
+
+- **Server audit logging** (self-hosted servers): adds structured records for certificate authentication and key server operations, with collection and retention configured by the operator.
+- New saved sitch links, short links and fallback upload names use stronger random identifiers; existing links remain valid.
+- Stronger upload checks reject malformed requests before storage operations, and upload diagnostics expose fewer file and link details.
+- Browser protections block changes to the app's base address and reduce referrer disclosure; the restricted app page suppresses referrers entirely.
+- Custom container builds can select a compatible runtime base and omit unused weather-decoding dependencies; the published image keeps its existing defaults.
+
+## Version 2.151.4 (2026-09-04)
+
+### Security
+
+- **Signed release tags** (the project's GitHub Releases page): release versions now carry a verifiable signature binding the version name to its source revision.
+- Release automation uses fixed revisions of its external build tools to prevent their tags changing the code used for a release.
+- Operators who used the older container-review instructions should rerun the review using the corrected command in *Installing Hardened Sitrec on AWS*.
+
+## Version 2.151.2 (2026-09-04)
+
+### Security
+
+- Fixed release security reports and software inventories failing to appear on the project's GitHub Releases page.
+
 ## Version 2.151.0 (2026-09-04)
 
 ### New Features
