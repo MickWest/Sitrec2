@@ -1,3 +1,4 @@
+import {showInteractionHelp} from "./InteractionHelp";
 // GUI controls for the Jet sitches like Gimbal and GoFast
 
 import {guiJetTweaks, guiMenus, guiPhysics, guiShowHide, guiTweaks, infoDiv, NodeMan, Sit} from "./Globals";
@@ -126,6 +127,8 @@ export function SetupJetGUI() {
     toggler('g', guiShowHide.add(par, 'showChart').listen().name(t("jet.controls.showGraph")).onChange(value => {
         ViewMan.get("chart").setVisible(value);
     }))
+    guiMenus.help.add({showInteractionHelp}, "showInteractionHelp").name("Mouse, touch and pen controls");
+
     toggler('k', guiShowHide.add(par, 'showKeyboardShortcuts').listen().name(t("jet.controls.showKeyboardShortcuts")).onChange(value => {
         if (value) {
             infoDiv.style.display = 'block';

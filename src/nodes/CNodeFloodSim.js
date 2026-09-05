@@ -1,5 +1,3 @@
-import {createDragHandle} from "../HandleGeometry";
-import {HANDLE_STYLE} from "../HandleStyle";
 import {registerEditorInteraction} from "../EditorInteraction";
 // CNodeFloodSim.js - Flood simulator using Position Based Fluids (PBF)
 //
@@ -1498,7 +1496,9 @@ export class CNodeFloodSim extends CNode3DGroup {
 
         this.cornerHandles = [];
         for (let c = 0; c < 4; c++) {
-            const handle = createDragHandle("resize", {radius: 1});
+            const handle = new Mesh(new SphereGeometry(1, 8, 8),
+                new MeshBasicMaterial({color: 0xffff00, transparent: true, opacity: 0.8}));
+            handle.userData.handleRole = "resize";
             handle.frustumCulled = false;
             this.cornerHandles.push(handle);
             this.group.add(handle);
@@ -1609,7 +1609,7 @@ export class CNodeFloodSim extends CNode3DGroup {
         withDisplayedCamera(view, () => {
             for (const handle of this.cornerHandles) {
                 const position = handle.getWorldPosition(new Vector3());
-                handle.scale.setScalar(view.pixelsToMeters(position, HANDLE_STYLE.pointRadius));
+                handle.scale.setScalar(view.pixelsToMeters(position, 20));
             }
         });
     }

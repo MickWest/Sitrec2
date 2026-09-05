@@ -1,5 +1,7 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {pointerHitRadius} from "../HandleStyle";
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
-import {setRenderOne} from "../Globals";
+import {setRenderOne, UndoManager} from "../Globals";
 
 const CURVE_SIZE = 256;
 const HIT_RADIUS = 18;
@@ -36,10 +38,8 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
         this.div.style.boxShadow = "0 2px 8px rgba(0,0,0,0.45)";
         this.canvas.style.pointerEvents = "none";
         this.div.tabIndex = 0;
-        this.div.addEventListener("pointerdown", this.handlePointerDown, true);
-        document.addEventListener("pointermove", this.handlePointerMove);
-        document.addEventListener("pointerup", this.handlePointerUp);
-        document.addEventListener("keydown", this.handleKeyDown);
+        this.installInteraction();
+        this.div.addEventListener("keydown", this.handleKeyDown);
         this.updateCurveLUT();
         if (this.pendingSerializedPoints) {
             this.applySerializedPoints(this.pendingSerializedPoints);
@@ -48,12 +48,25 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
     }
 
     dispose() {
-        this.div?.removeEventListener("pointerdown", this.handlePointerDown, true);
-        document.removeEventListener("pointermove", this.handlePointerMove);
-        document.removeEventListener("pointerup", this.handlePointerUp);
-        document.removeEventListener("keydown", this.handleKeyDown);
+        this.unregisterInteraction?.();
+        this.div.removeEventListener("keydown", this.handleKeyDown);
         this.curveLUT = null;
         super.dispose();
+    }
+
+    installInteraction() {
+        this.unregisterInteraction = registerSurfaceInteraction(this.div, {
+            profile: "adjustments",
+            model: this, view: this, enabled: () => this.visible && !!this.graphRect,
+            hitTest: e => {
+                const p = this.eventToLocalPoint(e);
+                return this.rectContainsPoint(this.resetButtonRect, p.x, p.y) || this.rectContainsPoint(this.graphRect, p.x, p.y)
+                    || this.findPointAt(p.x, p.y, pointerHitRadius(e, HIT_RADIUS)) !== -1 ? {} : null;
+            },
+            begin: e => this.handlePointerDown(e), move: e => this.handlePointerMove(e),
+            end: () => this.handlePointerUp(), snapshot: () => this.points.map(p => ({...p})),
+            restore: state => this.restorePoints(state), undo: "Edit video curve",
+        });
     }
 
     modSerialize() {
@@ -214,10 +227,13 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
             event.stopImmediatePropagation();
             return;
         }
-        const pointIndex = this.findPointAt(local.x, local.y);
+        this.grabOffset = {x: 0, y: 0};
+        const pointIndex = this.findPointAt(local.x, local.y, pointerHitRadius(event, HIT_RADIUS));
         if (pointIndex !== -1) {
             this.selectedPointIndex = pointIndex;
             this.draggingPointIndex = pointIndex;
+            const point = this.graphToLocal(this.points[pointIndex]);
+            this.grabOffset = {x: local.x - point.x, y: local.y - point.y};
         } else if (this.rectContainsPoint(this.graphRect, local.x, local.y) && this.isNearCurve(local.x, local.y)) {
             const graphPoint = this.localToGraph(local.x, local.y);
             const newPoint = {
@@ -244,7 +260,7 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
     handlePointerMove = (event) => {
         if (this.draggingPointIndex === -1) return;
         const local = this.eventToLocalPoint(event);
-        this.setPointFromLocal(this.draggingPointIndex, local.x, local.y);
+        this.setPointFromLocal(this.draggingPointIndex, local.x - (this.grabOffset?.x ?? 0), local.y - (this.grabOffset?.y ?? 0));
         event.preventDefault();
         event.stopPropagation();
         this.markCurveChanged();
@@ -254,16 +270,26 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
         this.draggingPointIndex = -1;
     };
 
+    restorePoints(state) {
+        this.points = state.map(p => ({...p}));
+        this.selectedPointIndex = this.draggingPointIndex = -1;
+        this.markCurveChanged();
+    }
+
     handleKeyDown = (event) => {
         if (!this.visible || this.selectedPointIndex === -1) return;
+        if (this.draggingPointIndex !== -1 || event.target?.closest?.("input,textarea,[contenteditable=true]")) return;
         if (event.key !== "Delete" && event.key !== "Backspace") return;
         if (this.isEndpointIndex(this.selectedPointIndex)) return;
 
+        const before = this.points.map(p => ({...p}));
         this.points.splice(this.selectedPointIndex, 1);
         this.selectedPointIndex = -1;
         this.draggingPointIndex = -1;
         event.preventDefault();
         this.markCurveChanged();
+        const after = this.points.map(p => ({...p}));
+        UndoManager.add({description: "Delete curve point", undo: () => this.restorePoints(before), redo: () => this.restorePoints(after)});
     };
 
     eventToLocalPoint(event) {
@@ -294,12 +320,12 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
         };
     }
 
-    findPointAt(x, y) {
+    findPointAt(x, y, radius = HIT_RADIUS) {
         for (let i = this.points.length - 1; i >= 0; i--) {
             const local = this.graphToLocal(this.points[i]);
             const dx = local.x - x;
             const dy = local.y - y;
-            if (Math.sqrt(dx * dx + dy * dy) <= HIT_RADIUS) return i;
+            if (Math.sqrt(dx * dx + dy * dy) <= radius) return i;
         }
         return -1;
     }

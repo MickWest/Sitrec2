@@ -1,3 +1,4 @@
+import {showInteractionHelp} from "./InteractionHelp";
 /**
  * CCustomManager.setup() — main sitch setup pipeline.
  *
@@ -1482,6 +1483,8 @@ export const setupMethods = {
         // The Gimbal Analysis menu now lives under Physics → Scenarios →
         // Gimbal Analysis and is populated lazily by the ScenarioManager
         // (populateGimbalAnalysisMenu below) when Scenarios is first opened.
+
+        guiMenus.help.add({showInteractionHelp}, "showInteractionHelp").name("Mouse, touch and pen controls");
 
         toggler('k', guiMenus.help.add(par, 'showKeyboardShortcuts').listen().name(t("custom.showHide.keyboardShortcuts.label")).onChange(value => {
             if (value) {

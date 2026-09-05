@@ -1,3 +1,4 @@
+import {HANDLE_STYLE} from "./HandleStyle";
 import {Vector2} from "three";
 import {clockwiseXY, makeBRight} from "./utils";
 import {mouseToCanvas} from "./ViewUtils";
@@ -60,11 +61,10 @@ class CDraggablePoint extends CDraggable{
 
     render(ctx, mouse) {
     //    if (this.near(mouse)) {
-            ctx.strokeStyle = this.color
-            ctx.beginPath()
-            ctx.arc(this.point.x, this.point.y, this.radius/2, 0, Math.PI * 2)
-            ctx.stroke()
-    //    }
+            ctx.strokeStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.point.x, this.point.y, 5, 0, Math.PI * 2);
+            ctx.stroke();
     }
 }
 
@@ -100,13 +100,24 @@ export class CRegionSelector {
         this.useSkew = false;
         this.centerLine = false;
 
-        const dragRadius = 8;
+        const dragRadius = 10;
 
         this.dragpoints = []
-        this.dragpoints.push(new CDraggablePoint(this.rect[0],10,'#FF0000'))
-        this.dragpoints.push(new CDraggablePoint(this.rect[1],10,'#00FF00'))
-        this.dragpoints.push(new CDraggablePoint(this.rect[2],10,'#0000FF'))
-        this.dragpoints.push(new CDraggablePoint(this.rect[3],10,'#FFFF00'))
+        this.dragpoints.push(new CDraggablePoint(this.rect[0], dragRadius, "#FF0000"))
+        this.dragpoints.push(new CDraggablePoint(this.rect[1], dragRadius, "#00FF00"))
+        this.dragpoints.push(new CDraggablePoint(this.rect[2], dragRadius, "#0000FF"))
+        this.dragpoints.push(new CDraggablePoint(this.rect[3], dragRadius, "#FFFF00"))
+    }
+
+    captureState() {
+        return {active: this.active, rect: this.rect.map(p => p.toArray()), center: this.center.toArray()};
+    }
+
+    restoreState(state) {
+        this.active = state.active;
+        this.rect.forEach((p, i) => p.fromArray(state.rect[i]));
+        this.center.fromArray(state.center);
+        this.dragMode = DRAG_NONE;
     }
 
     dumpCorner(c) {
@@ -125,6 +136,8 @@ export class CRegionSelector {
         const p = new Vector2(x,y)
 
         this.dragStart.set(x,y)
+        this.pointGrabOffset = new Vector2();
+        this.dragpoints.forEach(p => p.radius = e.pointerType === "touch" ? HANDLE_STYLE.touchRadius : 10);
 
         for (var q = 0; q < 4; q++) {
             this.rectStart[q].copy(this.rect[q])
@@ -151,6 +164,7 @@ export class CRegionSelector {
                 if (this.dragpoints[d].near(p)) {
                     this.dragMode = DRAG_POINT
                     this.dragIndex = d
+                    this.pointGrabOffset.copy(p).sub(this.dragpoints[d].point)
                 }
             }
         }
@@ -227,13 +241,14 @@ export class CRegionSelector {
                     var dl1 = left.point.clone().sub(drag.point).normalize()
                     var dr1 = right.point.clone().sub(drag.point).normalize()
 
-                    var dd = p.clone().sub(drag.point) // dd is the amount the point has moved.
+                    const target = p.clone().sub(this.pointGrabOffset);
+                    var dd = target.clone().sub(drag.point) // dd is the amount the point has moved.
                     var dd1 = dd.clone().normalize()
 
                     left.point.add(dr1.clone().multiplyScalar(dr1.dot(dd)))
                     right.point.add(dl1.clone().multiplyScalar(dl1.dot(dd)))
 
-                    drag.point.copy(p)
+                    drag.point.copy(target)
                 }
                 else {
                     const otherIndex = [1,0,3,2]
@@ -297,7 +312,7 @@ export class CRegionSelector {
     onMouseUp(view, e,mouseX,mouseY) {
         const [x,y] = mouseToCanvas(view, mouseX, mouseY)
         this.dragMode = DRAG_NONE
-        this.lastMouse.set(mouseX,y)
+        this.lastMouse.set(x,y)
 
 
 

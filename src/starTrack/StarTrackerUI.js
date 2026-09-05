@@ -1,3 +1,4 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
 // Star Tracker: the app-facing layer over the pure Star Track pipeline.
 //
 // Everything the analysis actually does lives in StarDetect / StarMatch / StarSolve, which are
@@ -6,7 +7,7 @@
 //
 // The menu lives under Video, alongside the other motion-analysis tools.
 
-import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, Sit, setRenderOne} from "../Globals";
+import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, Sit, setRenderOne, UndoManager} from "../Globals";
 import {getStarDirectionECEF} from "../CelestialMath";
 import {CNodeController} from "../nodes/CNodeController";
 import {CNodeArray} from "../nodes/CNodeArray";
@@ -2716,11 +2717,15 @@ function starHitsAt(px, py) {
 function toggleStarsEnabled(indices) {
     if (!result || !indices.length) return;
     if (!result.disabledStars) result.disabledStars = new Set();
+    const editedResult = result, before = [...result.disabledStars];
     const disableAll = indices.some((ix) => !result.disabledStars.has(ix));
     for (const ix of indices) {
         if (disableAll) result.disabledStars.add(ix);
         else result.disabledStars.delete(ix);
     }
+    const after = [...result.disabledStars];
+    const restore = state => { editedResult.disabledStars = new Set(state); setRenderOne(); };
+    UndoManager.add({description: "Toggle star selection", undo: () => restore(before), redo: () => restore(after)});
     setRenderOne();
 }
 
@@ -2737,43 +2742,20 @@ function ensureOverlay() {
         overlayCtx = overlay.getContext("2d");
     }
 
-    // Clicking inside a star circle toggles that star. The overlay itself stays
-    // pointer-transparent so the view's own drag/zoom handling is untouched; instead the DIV is
-    // listened to in the capture phase, and a toggle fires only for a stationary click (a press
-    // that moved is a drag, whatever it landed on). Marked on the div because the div IS the
-    // per-sitch object - a new sitch builds a new one, which then needs its own hook.
-    if (!view.div._starTrackClickHooked) {
-        view.div._starTrackClickHooked = true;
-        // A toggle needs a genuine primary-button click: same pointer down and up, never
-        // cancelled, and never having strayed - a drag that RETURNS to its origin is still a
-        // drag. Right-clicks (context menu) and multi-touch gestures must not toggle.
-        let down = null;
-        view.div.addEventListener("pointerdown", (e) => {
-            // Every touch contact reports button 0, so "primary button" alone does not mean
-            // "single pointer": a second finger arriving mid-press is a pinch, and it VOIDS the
-            // pending click rather than replacing it - neither finger's release may toggle.
-            // Only a primary pointer arms a new click, so the void cannot be re-armed by
-            // further fingers of the same gesture.
-            down = (e.isPrimary && e.button === 0 && down === null)
-                ? {id: e.pointerId, x: e.clientX, y: e.clientY, moved: false}
-                : null;
-        }, true);
-        view.div.addEventListener("pointermove", (e) => {
-            if (down && e.pointerId === down.id
-                && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) {
-                down.moved = true;
-            }
-        }, true);
-        view.div.addEventListener("pointercancel", () => { down = null; }, true);
-        view.div.addEventListener("pointerup", (e) => {
-            const d = down;
-            down = null;
-            if (!d || d.moved || e.pointerId !== d.id || !result || !overlay) return;
-            if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+    if (!view._starTrackInteraction) {
+        const hits = e => {
             const rect = overlay.getBoundingClientRect();
-            toggleStarsEnabled(
-                starHitsAt(e.clientX - rect.left, e.clientY - rect.top).map((h) => h.index));
-        }, true);
+            return starHitsAt(e.clientX - rect.left, e.clientY - rect.top).map(h => h.index);
+        };
+        let clicked = [];
+        view._starTrackInteraction = registerSurfaceInteraction(view.canvas, {
+            model: view, view, content: false, profile: "stars",
+            enabled: () => !!result && !!overlay && overlay.parentNode === view.div,
+            intent: {kind: "pending", priority: 30},
+            hitTest: e => hits(e).length ? {} : null,
+            begin: e => { clicked = hits(e); },
+            click: () => toggleStarsEnabled(clicked),
+        });
     }
 
     // Redraw after the view has painted the frame, so the circles land on the frame they describe.

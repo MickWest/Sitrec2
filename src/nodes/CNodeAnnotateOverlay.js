@@ -68,6 +68,7 @@ const IMAGE_CACHE = new Map(); // dataURL -> HTMLImageElement
 export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
     constructor(v) {
         super(v);
+        this.interactionProfile = "annotation";
         assert(this.overlayView instanceof CNodeVideoView,
             "CNodeAnnotateOverlay: overlayView must be a CNodeVideoView");
 

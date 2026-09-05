@@ -82,6 +82,7 @@ test("resizing stops after pointer cancellation and disposal", () => {
     document.body.appendChild(element);
     makeResizable(element, {handles: "e"});
     const handle = element._resizeHandles.e;
+    handle.getBoundingClientRect = () => ({left: 195, top: 0, width: 10, height: 200});
     handle.dispatchEvent(event("pointerdown", 200, 100));
     document.dispatchEvent(event("pointermove", 210, 100));
     document.dispatchEvent(event("pointercancel", 210, 100));
@@ -178,6 +179,7 @@ test("resize applies release coordinates and ends exactly once", () => {
     document.body.appendChild(element);
     const end = jest.fn();
     makeResizable(element, {handles: "e", onResizeEnd: end});
+    element._resizeHandles.e.getBoundingClientRect = () => ({left: 195, top: 0, width: 10, height: 200});
     element._resizeHandles.e.dispatchEvent(event("pointerdown", 200, 100));
     document.dispatchEvent(event("pointerup", 250, 100));
     removeResizable(element);

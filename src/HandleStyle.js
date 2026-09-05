@@ -1,12 +1,33 @@
 import {interactionEvent} from "./InteractionRouter";
 
-// CSS pixels throughout. Geometry uses these radii, not a device-pixel ratio.
+// Shared feedback and touch padding. Tools retain their established shapes,
+// identity colors and mouse targets; sizes are in CSS pixels.
 export const HANDLE_STYLE = Object.freeze({
-    pointRadius: 9, moveRadius: 16, altitudeLength: 24, rotationRadius: 30,
-    mouseRadius: 14, touchRadius: 24,
-    move: 0x00ff80, altitude: 0xffcc00, resize: 0x00ffff, rotate: 0xff8800,
+    pointRadius: 9, touchRadius: 24,
     hover: 0xffffff, dragging: 0xffff00, unavailableOpacity: 0.3,
 });
+
+// Preserve each tool's established mouse target; touch expansion is decided
+// during probing, before a gesture begins, and never depends on prior input.
+export const pointerHitRadius = (event, mouseRadius) => event?.pointerType === "touch"
+    ? Math.max(mouseRadius, HANDLE_STYLE.touchRadius) : mouseRadius;
+
+export function handleCursor(role, dragging = false) {
+    if (role === "axis" || role === "altitude") return "ns-resize";
+    if (role === "resize") return "nwse-resize";
+    if (role === "rotate") return "crosshair";
+    return dragging ? "grabbing" : "grab";
+}
+
+export function drawHandleHalo(ctx, x, y, radius, state) {
+    if (!["hover", "selected", "dragging"].includes(state)) return;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, radius + 3, 0, Math.PI * 2);
+    ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.stroke();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = state === "dragging" ? "#ffff00" : "#ffffff";
+    ctx.stroke(); ctx.restore();
+}
 
 // Expand the pick target without expanding the drawing. Keep the same offset
 // throughout the drag so a finger grabbing the padding never snaps the object.

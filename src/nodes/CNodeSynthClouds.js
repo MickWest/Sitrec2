@@ -1,5 +1,3 @@
-import {createDragHandle} from "../HandleGeometry";
-import {HANDLE_STYLE} from "../HandleStyle";
 import {registerEditorInteraction} from "../EditorInteraction";
 import {getInteractionRouter} from "../InteractionRouter";
 import {CNode3DGroup} from "./CNode3DGroup";
@@ -738,15 +736,15 @@ export class CNodeSynthClouds extends CNode3DGroup {
     
     updateHandleColors() {
         if (this.altitudeHandle) {
-            const color = this.hoveredHandle === 'altitude' ? HANDLE_STYLE.hover : HANDLE_STYLE.altitude;
+            const color = this.hoveredHandle === 'altitude' ? 0x00ff00 : 0xffff00;
             this.altitudeHandle.material.color.setHex(color);
         }
         if (this.radiusHandle) {
-            const color = this.hoveredHandle === 'radius' ? HANDLE_STYLE.hover : HANDLE_STYLE.resize;
+            const color = this.hoveredHandle === 'radius' ? 0x00ff00 : 0x00ffff;
             this.radiusHandle.material.color.setHex(color);
         }
         if (this.moveHandle) {
-            const color = this.hoveredHandle === 'move' ? HANDLE_STYLE.hover : HANDLE_STYLE.move;
+            const color = this.hoveredHandle === 'move' ? 0x00ff00 : 0xff8800;
             this.moveHandle.material.color.setHex(color);
         }
     }
@@ -760,21 +758,31 @@ export class CNodeSynthClouds extends CNode3DGroup {
         const localUp = getLocalUpVector(centerECEF);
         const east = new Vector3(1, 0, 0).cross(localUp).normalize();
         
-        this.altitudeHandle = createDragHandle("altitude", {depthTest: false});
-        this.altitudeHandle.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), localUp);
+        // Use fixed 3m radius geometry (same as buildings) - scaled dynamically in updateHandleScales
+        const handleGeometry = new SphereGeometry(3, 16, 16);
+
+        const altitudeMaterial = new MeshBasicMaterial({color: 0xffff00, depthTest: false, transparent: true, opacity: 0.8});
+        this.altitudeHandle = new Mesh(handleGeometry.clone(), altitudeMaterial);
+        this.altitudeHandle.position.set(0, 0, 0);
         this.altitudeHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
+        this.altitudeHandle.userData.handleRole = 'altitude';
         this.group.add(this.altitudeHandle);
 
-        this.radiusHandle = createDragHandle("resize", {depthTest: false});
+        const radiusMaterial = new MeshBasicMaterial({color: 0x00ffff, depthTest: false, transparent: true, opacity: 0.8});
+        this.radiusHandle = new Mesh(handleGeometry.clone(), radiusMaterial);
         this.radiusHandle.position.copy(east.clone().multiplyScalar(this.radius));
         this.radiusHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
+        this.radiusHandle.userData.handleRole = 'resize';
         this.group.add(this.radiusHandle);
 
-        this.moveHandle = createDragHandle("move", {depthTest: false});
-        this.moveHandle.quaternion.setFromUnitVectors(new Vector3(0, 0, 1), localUp);
+        const moveMaterial = new MeshBasicMaterial({color: 0xff8800, depthTest: false, transparent: true, opacity: 0.8});
+        this.moveHandle = new Mesh(handleGeometry.clone(), moveMaterial);
         this.moveHandle.position.copy(east.clone().multiplyScalar(-this.radius * 0.5));
         this.moveHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
+        this.moveHandle.userData.handleRole = 'move';
         this.group.add(this.moveHandle);
+
+        handleGeometry.dispose(); // Dispose the template
     }
     
     /**
@@ -787,7 +795,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             return;
         }
         
-        const handlePixelSize = HANDLE_STYLE.pointRadius; // Target size in screen pixels
+        const handlePixelSize = 20; // Target size in screen pixels
         const worldPos = new Vector3();
         
         const handles = [this.altitudeHandle, this.radiusHandle, this.moveHandle];

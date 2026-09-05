@@ -44,6 +44,7 @@ export const SAVED_MASK_MAX_WIDTH = 1024;
 export class CNodeMaskOverlay extends CNodeActiveOverlay {
     constructor(v) {
         super(v);
+        this.interactionProfile = "mask";
         
         this.separateVisibility = true;
         

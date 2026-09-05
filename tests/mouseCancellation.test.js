@@ -70,18 +70,24 @@ test("canceled traffic selection clears the click without promoting it", () => {
     expect(view._completeTrafficClick).not.toHaveBeenCalled();
 });
 
-test("canceling the compass prevents both a short click and a pending long press", () => {
+test("canceling the compass session prevents its click and pending long press", () => {
+    const {getInteractionRouter} = require("../src/InteractionRouter");
     jest.useFakeTimers();
+    const canvas = document.createElement("canvas"); document.body.appendChild(canvas);
+    canvas.getBoundingClientRect = () => ({width: 100, height: 100});
+    const compass = {canvas, activateCompass: jest.fn(), toggleARMode: jest.fn(), in: {relativeTo: {id: "lookView"}}};
+    CNodeCompassUI.prototype.installInteraction.call(compass);
+    const router = getInteractionRouter();
+    const event = {pointerType: "touch", pointerId: 1, button: 0, buttons: 1, clientX: 10, clientY: 10,
+        target: canvas, preventDefault() {}, stopImmediatePropagation() {}};
     try {
-        const activate = jest.fn();
-        const compass = {longPressTimer: setTimeout(activate, 800), isLongPress: false};
-        Globals.showCompassElevation = false;
-        CNodeCompassUI.prototype.onMouseCancel.call(compass);
-        jest.runAllTimers();
-        expect(activate).not.toHaveBeenCalled();
-        expect(Globals.showCompassElevation).toBe(false);
-        expect(compass.longPressTimer).toBeNull();
+        router.down(event);
+        router.cancelPointer(event);
+        jest.advanceTimersByTime(1000);
+        router.up({...event, buttons: 0});
+        expect(compass.activateCompass).not.toHaveBeenCalled();
+        expect(compass.toggleARMode).not.toHaveBeenCalled();
     } finally {
-        jest.useRealTimers();
+        compass.unregisterCompassInteraction(); router.dispose(); canvas.remove(); jest.useRealTimers();
     }
 });

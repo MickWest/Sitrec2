@@ -1,3 +1,6 @@
+import {commandModifier} from "../GestureActions";
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {HANDLE_STYLE} from "../HandleStyle";
 import {CNodeTrack} from "./CNodeTrack";
 import {EventManager} from "../CEventManager";
 import {NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
@@ -40,6 +43,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         this.lastMouseY = 0;
         this.stateBeforeDrag = null;
         this.dragStartPoint = null;
+        this.dragPointerStart = null;
         this.dragStartLineP1 = null;
         this.dragStartLineP2 = null;
         this.lockAxis = null;
@@ -78,14 +82,27 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
     }
     
     setupMouseHandlers() {
-        this.canvas.addEventListener('pointerdown', (e) => this.onMouseDown(e));
-        this.canvas.addEventListener('pointermove', (e) => this.onMouseMove(e));
-        this.canvas.addEventListener('pointerup', (e) => this.onMouseUp(e));
-        
-        this.documentMoveHandler = (e) => this.onMouseMove(e);
-        this.documentUpHandler = (e) => this.onMouseUp(e);
+        this.unregisterInteraction = registerSurfaceInteraction(this.canvas, {
+            model: this, view: this, profile: "curve",
+            hitTest: e => this.isMenuInteraction(e) ? null : {},
+            begin: e => { this.interactionRadius = e.pointerType === "touch" ? HANDLE_STYLE.touchRadius : 8; this.onMouseDown(e); }, move: e => this.onMouseMove(e),
+            hover: e => { if (e) this.onMouseMove(e); },
+            snapshot: () => ({points: this.captureState(), frame: par.frame, a: Sit.aFrame, b: Sit.bFrame,
+                left: this.div.style.left, top: this.div.style.top}),
+            restore: state => {
+                this.stateBeforeDrag = null;
+                this.limitsBeforeDrag = null;
+                this.restoreState(state.points);
+                Sit.aFrame = state.a; Sit.bFrame = state.b;
+                const slider = NodeMan.get("frameSlider", false) || NodeMan.get("FrameSlider", false);
+                if (slider) slider.setFrame(state.frame); else par.frame = state.frame;
+                this.div.style.left = state.left; this.div.style.top = state.top;
+                EventManager.dispatchEvent("abFrameChanged");
+            },
+            end: e => this.onMouseUp(e),
+        });
     }
-    
+
     addMenuItems() {
         const snapSettings = {
             defaultSnap: this.defaultSnap
@@ -158,7 +175,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
     }
     
     findPointAt(screenX, screenY) {
-        const threshold = 8;
+        const threshold = this.interactionRadius ?? 8;
         for (let i = 0; i < this.points.length; i++) {
             const screen = this.graphToScreen(this.points[i].x, this.points[i].y);
             const dx = screenX - screen.x;
@@ -171,7 +188,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
     }
     
     findLineAt(screenX, screenY) {
-        const threshold = 8;
+        const threshold = this.interactionRadius ?? 8;
         for (let i = 0; i < this.points.length - 1; i++) {
             const p1 = this.graphToScreen(this.points[i].x, this.points[i].y);
             const p2 = this.graphToScreen(this.points[i + 1].x, this.points[i + 1].y);
@@ -201,7 +218,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
     }
     
     isNearFrame(screenX, screenY, frameX) {
-        const threshold = 8;
+        const threshold = this.interactionRadius ?? 8;
         const margin = 60;
         
         if (frameX === undefined || frameX < this.minX || frameX > this.maxX) return false;
@@ -253,8 +270,9 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         e.stopPropagation();
         this.isDragging = true;
         this[frameType] = true;
-        document.addEventListener('pointermove', this.documentMoveHandler);
-        document.addEventListener('pointerup', this.documentUpHandler);
+        if (frameType === "isDraggingAFrame" || frameType === "isDraggingBFrame") {
+            this.limitsBeforeDrag = {a: Sit.aFrame, b: Sit.bFrame};
+        }
     }
     
     onMouseDown(e) {
@@ -277,20 +295,8 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
                 if (this.onChange) {
                     this.onChange();
                 }
-                const stateAfter = this.captureState();
-                if (UndoManager) {
-                    const stateBefore = this.stateBeforeDrag;
-                    UndoManager.add({
-                        undo: () => {
-                            this.restoreState(stateBefore);
-                        },
-                        redo: () => {
-                            this.restoreState(stateAfter);
-                        },
-                        description: "Delete curve point"
-                    });
-                }
-                this.stateBeforeDrag = null;
+                this.draggedPointIndex = null;
+                this.isDragging = true;
                 setRenderOne(true);
                 return;
             }
@@ -302,14 +308,13 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
                 x: this.points[this.draggedPointIndex].x,
                 y: this.points[this.draggedPointIndex].y
             };
+            this.dragPointerStart = this.screenToGraph(e.clientX, e.clientY);
             this.lockAxis = null;
             this.isDragging = true;
-            document.addEventListener('pointermove', this.documentMoveHandler);
-            document.addEventListener('pointerup', this.documentUpHandler);
             return;
         }
         
-        if (e.ctrlKey && this.isInsideGraphArea(x, y)) {
+        if (commandModifier(e) && this.isInsideGraphArea(x, y)) {
             e.preventDefault();
             e.stopPropagation();
             this.stateBeforeDrag = this.captureState();
@@ -330,8 +335,6 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
             this.dragStartPoint = {x: newPoint.x, y: newPoint.y};
             this.lockAxis = null;
             this.isDragging = true;
-            document.addEventListener('pointermove', this.documentMoveHandler);
-            document.addEventListener('pointerup', this.documentUpHandler);
             setRenderOne(true);
             return;
         }
@@ -384,8 +387,6 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
             this.isDraggingLine = true;
             this.lastMouseX = e.clientX;
             this.lastMouseY = e.clientY;
-            document.addEventListener('pointermove', this.documentMoveHandler);
-            document.addEventListener('pointerup', this.documentUpHandler);
             return;
         }
         
@@ -434,8 +435,6 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
             this.isDraggingWindow = true;
             this.lastMouseX = e.clientX;
             this.lastMouseY = e.clientY;
-            document.addEventListener('pointermove', this.documentMoveHandler);
-            document.addEventListener('pointerup', this.documentUpHandler);
         }
     }
     
@@ -563,6 +562,10 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
             this.canvas.style.cursor = 'grabbing';
             
             const graph = this.screenToGraph(e.clientX, e.clientY);
+            if (this.dragPointerStart && this.dragStartPoint) {
+                graph.x += this.dragStartPoint.x - this.dragPointerStart.x;
+                graph.y += this.dragStartPoint.y - this.dragPointerStart.y;
+            }
             let newX = Math.max(this.minX, Math.min(this.maxX, graph.x));
             let newY = Math.max(this.minY, Math.min(this.maxY, graph.y));
             
@@ -689,8 +692,6 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
             
             this.stateBeforeDrag = null;
             
-            document.removeEventListener('pointermove', this.documentMoveHandler);
-            document.removeEventListener('pointerup', this.documentUpHandler);
         }
         
         this.isDragging = false;
@@ -702,6 +703,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         this.isDraggingAFrame = false;
         this.isDraggingBFrame = false;
         this.dragStartPoint = null;
+        this.dragPointerStart = null;
         this.dragStartLineP1 = null;
         this.dragStartLineP2 = null;
         this.lockAxis = null;
@@ -709,6 +711,15 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         this.snapToX = null;
 
         if (wasAOrB) {
+            const before = this.limitsBeforeDrag, after = {a: Sit.aFrame, b: Sit.bFrame};
+            this.limitsBeforeDrag = null;
+            const restore = state => {
+                Sit.aFrame = state.a; Sit.bFrame = state.b;
+                EventManager.dispatchEvent("abFrameChanged"); setRenderOne(true);
+            };
+            if (before && (before.a !== after.a || before.b !== after.b)) UndoManager?.add({
+                description: "Change playback limits", undo: () => restore(before), redo: () => restore(after),
+            });
             EventManager.dispatchEvent("abFrameChanged");
         }
 
@@ -993,14 +1004,6 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
         this.isFrameX = true;
     }
 
-    setupMouseHandlers() {
-        this.canvas.addEventListener('pointerdown', (e) => this.onMouseDown(e));
-        this.canvas.addEventListener('pointermove', (e) => this.onMouseMove(e));
-        this.canvas.addEventListener('pointerup', (e) => this.onMouseUp(e));
-        this.documentMoveHandler = (e) => this.onMouseMove(e);
-        this.documentUpHandler = (e) => this.onMouseUp(e);
-    }
-
     addMenuItems() {
     }
 
@@ -1116,12 +1119,11 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
         if (crosshair) {
-            const threshold = 8;
+            const threshold = this.interactionRadius ?? 8;
             const nearV = Math.abs(mx - crosshair.x) < threshold;
             const nearH = Math.abs(my - crosshair.y) < threshold;
             if (nearH || nearV) {
                 this._draggingAxis = nearH ? 'h' : 'v';
-                this.canvas.setPointerCapture(e.pointerId);
                 e.stopPropagation();
                 e.preventDefault();
                 return;
@@ -1136,8 +1138,6 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
             this.isDraggingWindow = true;
             this.lastMouseX = e.clientX;
             this.lastMouseY = e.clientY;
-            document.addEventListener('pointermove', this.documentMoveHandler);
-            document.addEventListener('pointerup', this.documentUpHandler);
         }
     }
 
@@ -1157,7 +1157,6 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
     onMouseUp(e) {
         if (this._draggingAxis) {
             this._draggingAxis = null;
-            this.canvas.releasePointerCapture(e.pointerId);
             e.stopPropagation();
             e.preventDefault();
             return;

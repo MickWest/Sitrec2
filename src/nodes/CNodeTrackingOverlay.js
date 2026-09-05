@@ -1,3 +1,4 @@
+import {commandModifier} from "../GestureActions";
 import {undoManager} from "../UndoManager";
 // Manual Tracking - A tracking view that overlays the video and shows manual tracking data
 // User manually places keyframes to track objects
@@ -98,6 +99,7 @@ export class CDraggableItem {
 export class CDraggableCircle extends CDraggableItem {
      constructor(v) {
         super(v);
+        this.interactionProfile = "tracking";
         this.radius = v.radius ?? 5;
     }
 
@@ -1660,7 +1662,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
     getInteractionIntent(e, mouseX, mouseY) {
         if (!this.hasVideoGeometry() || this.showTracking === false || e.button !== 0) return null;
-        if (e.ctrlKey) return {kind: "click", priority: 70};
+        if (commandModifier(e)) return {kind: "click", priority: 70};
         return super.getInteractionIntent(e, mouseX, mouseY);
     }
 
@@ -1673,7 +1675,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         // if we clicked on a draggable item, then we return true
         // we don't need to check this
         this._trackingBefore = this.captureTrackingEdit();
-        if (!e.ctrlKey && super.onMouseDown(e, mouseX, mouseY)) {
+        if (!commandModifier(e) && super.onMouseDown(e, mouseX, mouseY)) {
             // this means we clicked on a draggable item
             // check to see if the alt key is down
             // if so, we remove the item from the lists
@@ -1705,7 +1707,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
             }
 
 
-           // if (!e.ctrlKey)
+           // if (!commandModifier(e))
            //     return true;
         }
 
@@ -1713,7 +1715,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
         const [vX, vY] = this.overlayView.canvasToVideoCoordsOriginal(x, y);
 
-         if (e.ctrlKey) {
+         if (commandModifier(e)) {
             // control key means we add a new one at this frame
              // we disable the default action
                 e.preventDefault();

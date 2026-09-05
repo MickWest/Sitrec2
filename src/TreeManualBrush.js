@@ -1,3 +1,4 @@
+import {registerEditorInteraction} from "./EditorInteraction";
 // TreeManualBrush.js
 //
 // Manual-edit brush for the "Tree Removal" feature. When the Tree Removal
@@ -5,12 +6,9 @@
 // Photorealistic 3D tiles paints the current Tree Action (snap / delete) onto
 // the geometry under the brush instead of relying on the automatic analysis.
 //
-// The interaction is owned here rather than in the per-view 3D mouse code: we
-// install document-level pointer listeners in the CAPTURE phase so that, when a
-// stroke begins on a tile hit, we can stopPropagation() and pre-empt the view's
-// own camera-drag handlers (which run in the bubble phase). When Manual Edit is
-// off — or the press isn't over a tile hit — we do nothing and let the normal
-// camera controls run, so the user can still orbit by dragging empty space.
+// The router grants an active brush one gesture before camera navigation.
+// A stroke can begin over sky and reach geometry later; its originating view
+// stays fixed. Middle/right navigation remains available between strokes.
 //
 // HOVER PREVIEW. While hovering (not yet painting) the brush shows a live
 // "ghost" of the geometry it would affect — those triangles are temporarily
@@ -79,17 +77,21 @@ export class TreeManualBrush {
         this.wireMesh.raycast = () => {};
         GlobalScene.add(this.wireMesh);
 
-        this._onPointerDown = (e) => this.onPointerDown(e);
-        this._onPointerMove = (e) => this.onPointerMove(e);
-        this._onPointerUp = (e) => this.onPointerUp(e);
-        // Hide the preview as soon as the window loses focus (e.g. alt-tab) — a
-        // stale ghost sitting in an unfocused window is just noise. End any
-        // in-progress stroke too so its undo entry is still recorded.
-        this._onBlur = () => { this._endStroke(); this.hidePreview(); };
-        document.addEventListener("pointerdown", this._onPointerDown, true);
-        document.addEventListener("pointermove", this._onPointerMove, true);
-        document.addEventListener("pointerup", this._onPointerUp, true);
-        window.addEventListener("blur", this._onBlur);
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            profile: "brush",
+            id: "brush:TreeManualBrush", enabled: () => this.active,
+            pick: e => e.target?.tagName === "CANVAS" ? {priority: 80} : null,
+            begin: e => { this._anchorBefore = this._lastPaintPoint?.clone(); this.onPointerDown(e); },
+            end: e => { this.onPointerUp(e); this.activeView = null; },
+            leave: () => { this.overCanvas = false; this.hidePreview(); },
+            rollback: e => {
+                const before = this._strokeBefore;
+                this._strokeBefore = null;
+                if (before) this.buildingsNode.restoreDabsState(before);
+                this._lastPaintPoint = this._anchorBefore;
+                this.onPointerUp(e); this.activeView = null; this.hidePreview();
+            },
+        });
     }
 
     // Active only while the Manual Edit checkbox is on.
@@ -125,7 +127,7 @@ export class TreeManualBrush {
     //     unproject with it and restore immediately. For the main view this is just
     //     the ordinary projection, so it's correct there too.
     pick(screenX, screenY) {
-        const view = getInteractiveViewAt(screenX, screenY, BRUSH_VIEW_IDS);
+        const view = this.painting && this.activeView ? this.activeView : getInteractiveViewAt(screenX, screenY, BRUSH_VIEW_IDS);
         if (!view) return null;
         const group = this.buildingsNode.getViewRendererGroup(view.id);
         if (!group) return null;
@@ -299,10 +301,7 @@ export class TreeManualBrush {
     }
 
     dispose() {
-        document.removeEventListener("pointerdown", this._onPointerDown, true);
-        document.removeEventListener("pointermove", this._onPointerMove, true);
-        document.removeEventListener("pointerup", this._onPointerUp, true);
-        window.removeEventListener("blur", this._onBlur);
+        this.unregisterInteraction?.();
         this._clearGhost();
         if (this.wireMesh) {
             GlobalScene.remove(this.wireMesh);

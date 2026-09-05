@@ -1,3 +1,5 @@
+import {gestureHelp, GESTURE_PROFILES} from "./GestureActions";
+import {getInteractionRouter} from "./InteractionRouter";
 // A variety of functions related to the jet and the atflir pod orientation, and glare
 // so mostly related to Gimbal, GoFast, FLIR1 and Aguadilla
 
@@ -313,6 +315,14 @@ export function UpdateHUD(text="") {
         // Object.keys(toggles).forEach(function (key) {
         //     keyInfo += toggles[key]._name + "<br>"
         // })
+    }
+
+    if (par.showKeyboardShortcuts) {
+        const router = getInteractionRouter();
+        const profile = (router.session?.owner ?? router.hovered)?.profile;
+        if (GESTURE_PROFILES[profile]) {
+            keyInfo += `<br><b>${GESTURE_PROFILES[profile].label}</b><br>${gestureHelp(profile).replaceAll(" • ", "<br>")}`;
+        }
     }
 
     if (debugText !== "")

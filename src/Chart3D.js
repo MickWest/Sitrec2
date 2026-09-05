@@ -1,3 +1,4 @@
+import {registerSurfaceInteraction} from "./SurfaceInteraction";
 // Lightweight interactive 3D data cube for the traverse gallery.
 //
 // Renders a rotatable 3D volume (a box with three labelled axes and grids on the
@@ -245,6 +246,7 @@ export class Chart3D {
     }
 
     dispose() {
+        this.unregisterInteraction?.();
         this.group.remove(this);
         this.canvas.replaceWith(this.canvas.cloneNode(false));  // drop listeners
     }
@@ -280,7 +282,6 @@ export class Chart3D {
             dragging = true;
             startVec = trackballVec(e);
             startMatrix = this.group.orientationFor(this).slice();
-            c.setPointerCapture && c.setPointerCapture(e.pointerId);
             c.style.cursor = "grabbing";
             e.preventDefault(); e.stopPropagation();
         };
@@ -298,10 +299,12 @@ export class Chart3D {
             c.style.cursor = "grab";
             e && e.stopPropagation();
         };
-        c.addEventListener("pointerdown", down);
-        c.addEventListener("pointermove", move);
-        c.addEventListener("pointerup", up);
-        c.addEventListener("pointercancel", up);
+        this.unregisterInteraction = registerSurfaceInteraction(c, {
+            profile: "chart",
+            model: this, begin: down, move, end: up, navigation: true,
+            snapshot: () => this.group.orientationFor(this).slice(),
+            restore: state => this.group.orientationFromDrag(state, this),
+        });
         c.style.touchAction = "none";
         c.style.cursor = "grab";
     }

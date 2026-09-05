@@ -1,3 +1,4 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CRegionSelector} from "../CRegionSelector";
 import {CNodeCurveEditor} from "./CNodeCurveEdit";
@@ -131,6 +132,17 @@ export class CNodeImageAnalysis extends CNodeImageView {
         this.columns = Array(1000).fill(0)
 
         this.region = new CRegionSelector();
+        this.unregisterRegionInteraction = registerSurfaceInteraction(this.canvas, {
+            profile: "adjustments",
+            view: this, model: this,
+            begin: e => this.onMouseDown(e, e.clientX, e.clientY),
+            move: e => this.onMouseDrag(e, e.clientX, e.clientY),
+            hover: e => { if (e) this.onMouseMove(e, e.clientX, e.clientY); },
+            end: e => this.onMouseUp(e, e.clientX, e.clientY),
+            snapshot: () => this.region.captureState(),
+            restore: state => { this.region.restoreState(state); this.recalculate(); },
+            undo: "Edit analysis region",
+        });
         this.region.useSkew = false;
         this.region.centerLine = true;
         gui.add(this.region,"useSkew")

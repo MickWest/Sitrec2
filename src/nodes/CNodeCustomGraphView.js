@@ -213,7 +213,6 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
             if (this._insidePlot(mx, my)) {
                 this._scrubbing = true;
                 this.canvas.style.cursor = 'ew-resize';
-                try { this.canvas.setPointerCapture(e.pointerId); } catch (_) {}
                 this._scrubToEvent(e);
                 e.stopPropagation(); e.preventDefault();
                 return;
@@ -414,7 +413,6 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
         if (this._scrubbing) {
             this._scrubbing = false;
             this.canvas.style.cursor = 'default';
-            try { this.canvas.releasePointerCapture(e.pointerId); } catch (_) {}
             e.stopPropagation(); e.preventDefault();
             return;
         }

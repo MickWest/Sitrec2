@@ -101,6 +101,7 @@ const UNIT_SCALE = new Vector3(1, 1, 1);
 export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     constructor(v) {
         super(v);
+        this.interactionProfile = "fit";
         assert(this.overlayView instanceof CNodeVideoView,
             "CNodeFitCameraPoints: overlayView must be a CNodeVideoView");
 

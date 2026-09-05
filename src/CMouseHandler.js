@@ -14,20 +14,10 @@ export class CMouseHandler {
         this.dy = 0;
         this.dragging = false;
 
-        // Long press support for mobile context menu
-        this.longPressTimer = null;
-        this.longPressDuration = 500; // 500ms
-        this.longPressThreshold = 10; // 10px movement threshold
-        this.longPressStartX = 0;
-        this.longPressStartY = 0;
-        this.longPressEvent = null;
-        this.isLongPressTriggered = false;
-        this.activePointers = new Set(); // Track active pointer IDs for multi-touch detection
-
         const surface = e => mouseInViewOnly(view, e.clientX, e.clientY)
             ? {kind: INTERACTION.DRAG, zIndex: view.zIndex ?? 0} : null;
         this.unregisterInteraction = getInteractionRouter(view.canvas.ownerDocument).register({
-            id: `video:${view.id}`, model: view, navigation: true, priority: 0,
+            id: `video:${view.id}`, model: view, profile: "video", navigation: true, priority: 0,
             enabled: () => isViewDisplayed(view) && !(view.dragKey && isKeyHeld(view.dragKey)),
             valid: () => isViewDisplayed(view),
             hitTest: surface, hitSurface: surface, capture: () => view.canvas,
@@ -40,8 +30,8 @@ export class CMouseHandler {
             hover: e => { if (e) this.handleMouseMove(e); },
         });
         view.canvas.style.touchAction = "none";
-        this.view.canvas.addEventListener('dblclick', e => this.handleMouseDblClick(e));
-        this.view.canvas.addEventListener('mouseleave', e => this.handleMouseLeave(e));
+        this.onDoubleClick = e => this.handleMouseDblClick(e);
+        this.view.canvas.addEventListener('dblclick', this.onDoubleClick);
     }
 
     touchGeometry(e) {
@@ -76,12 +66,6 @@ export class CMouseHandler {
         }
     }
 
-    handleMouseLeave(e) {
-        // does not seem like it makes a diference
-        //       e.preventDefault();
-
-    }
-
     handleMouseWheel(e) {
         e.preventDefault();
         this.newPosition(e, true)
@@ -93,16 +77,6 @@ export class CMouseHandler {
 //        console.log("Move, dragging = "+this.dragging)
 //        e.preventDefault();
         this.newPosition(e)
-
-        // Check if movement exceeds long press threshold
-        if (this.longPressTimer) {
-            const deltaX = Math.abs(e.clientX - this.longPressStartX);
-            const deltaY = Math.abs(e.clientY - this.longPressStartY);
-            
-            if (deltaX > this.longPressThreshold || deltaY > this.longPressThreshold) {
-                this.clearLongPressTimer();
-            }
-        }
 
         if (this.dragging) {
             if (e.buttons === 1) {
@@ -137,22 +111,9 @@ export class CMouseHandler {
         }
 
 
-        // Track pointer for multi-touch detection
-        this.activePointers.add(e.pointerId);
-
-        this.newPosition(e, true)
+        this.newPosition(e, true);
         this.dragging = true;
 
-        // Track right-click down position for context menu detection
-        if (e.button === 2) {
-            this._contextMenuDownPos = { x: e.clientX, y: e.clientY };
-        }
-
-        // Cancel long press if a second finger touches down
-        if (this.activePointers.size > 1 && this.longPressTimer) {
-            this.clearLongPressTimer();
-        }
-        
         if (this.handlers.down) this.handlers.down(e)
 
     }
@@ -162,35 +123,14 @@ export class CMouseHandler {
         const wasDragging = this.dragging;
         this.dragging = false;
 
-        // Remove pointer from active set
-        this.activePointers.delete(e.pointerId);
-
-        // Clear long press timer
-        this.clearLongPressTimer();
-
-        this.newPosition(e)
-        this.dragging = false;
-
-        this._contextMenuDownPos = null;
-
-        // Don't trigger up handler if long press was triggered
-        if (wasDragging && !this.isLongPressTriggered) {
-            if (this.handlers.up) this.handlers.up(e)
-        } else {
-            // Reset flag
-            this.isLongPressTriggered = false;
-        }
-
+        this.newPosition(e);
+        if (wasDragging) this.handlers.up?.(e);
     }
 
     handlePointerCancel(e) {
         // Handle pointer interruptions (e.g., browser gestures, context menus)
         const wasDragging = this.dragging;
         this.dragging = false;
-        this.activePointers.delete(e.pointerId);
-        this.clearLongPressTimer();
-        this.isLongPressTriggered = false;
-        this._contextMenuDownPos = null;
         if (wasDragging) (this.handlers.cancel ?? this.handlers.up)?.(e);
     }
 
@@ -218,16 +158,9 @@ export class CMouseHandler {
 
     }
 
-    clearLongPressTimer() {
-        if (this.longPressTimer) {
-            clearTimeout(this.longPressTimer);
-            this.longPressTimer = null;
-        }
-    }
-
     dispose() {
         this.unregisterInteraction?.();
-        this.clearLongPressTimer();
+        this.view.canvas.removeEventListener("dblclick", this.onDoubleClick);
     }
 
 

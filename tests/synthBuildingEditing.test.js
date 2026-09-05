@@ -1,5 +1,5 @@
 /** @jest-environment jsdom */
-import {createDragHandle} from "../src/HandleGeometry";
+import {setDragHandleState} from "../src/HandleGeometry";
 import {getInteractionRouter} from "../src/InteractionRouter";
 
 import {afterEach, beforeEach, expect, jest, test} from "@jest/globals";
@@ -15,7 +15,7 @@ import {withDisplayedCamera, worldUnitsPerPixel} from "../src/ViewUtils";
 jest.mock("../src/nodes/CNode3DGroup", () => ({CNode3DGroup: class {}}));
 jest.mock("../src/showError", () => ({}));
 jest.mock("../src/SphericalMath", () => ({getLocalUpVector: () => new (require("three").Vector3)(0, 1, 0)}));
-jest.mock("../src/LLA-ECEF-ENU", () => ({}));
+jest.mock("../src/LLA-ECEF-ENU", () => ({LLAToECEF: (lat, lon, alt) => new (require("three").Vector3)(lon, alt, lat)}));
 jest.mock("../src/Globals", () => ({Globals: {settings: {}}, CustomManager: {saveGlobalSettings: jest.fn()}, setRenderOne: jest.fn()}));
 jest.mock("../src/threeExt", () => ({getVisiblePointBelow: p => p.clone().setY(0)}));
 jest.mock("../src/CEventManager", () => ({EventManager: {addEventListener: jest.fn()}}));
@@ -113,7 +113,7 @@ test.each(["cloud", "overlay", "flood"].flatMap(family => ["mainView", "lookView
     view.visible = true;
     view.displayedZoom = 3;
     const radius = family === "flood" ? 1 : 3;
-    const handle = createDragHandle(family === "cloud" ? "move" : "resize", {radius});
+    const handle = new Mesh(new SphereGeometry(radius, 16, 16), new MeshBasicMaterial());
     handle.position.set(18, 5, 0);
     const group = new Group();
     group.add(handle);
@@ -131,7 +131,7 @@ test.each(["cloud", "overlay", "flood"].flatMap(family => ["mainView", "lookView
     if (family === "cloud") expect(hit).toBe("move");
     else if (family === "overlay") expect(hit).toMatchObject({type: "corner", index: 0});
     else expect(hit).toBe(0);
-    expect(handle.scale.x * radius / worldUnitsPerPixel(view, handle.position)).toBeCloseTo(9, 8);
+    expect(handle.scale.x * radius / worldUnitsPerPixel(view, handle.position)).toBeCloseTo(20, 8);
     expect(view.camera.zoom).toBe(1);
     view._effectivelyVisible = false;
     expect(host.getHandleAtMouse(at.clientX, at.clientY)).toBe(family === "flood" ? -1 : null);
@@ -192,7 +192,7 @@ test("handle size stays constant through displayed zoom and pane resizing", () =
         look.displayedZoom = zoom;
         look.heightPx = height;
         building.updateHandleScales(look);
-        expect(radiusInPixels()).toBeCloseTo(9, 8);
+        expect(radiusInPixels()).toBeCloseTo(20, 8);
     }
 });
 
@@ -254,7 +254,7 @@ test.each(["mainView", "lookView"])("whole-building translation and rotation in 
     const corner = building.vertices[2].position;
     const outward = corner.clone().sub(building.buildingCentroid).normalize();
     const radius = building.controlPoints[2].scale.x * 3;
-    const rotation = pointerAt(view, corner.clone().addScaledVector(outward, radius * 3));
+    const rotation = pointerAt(view, corner.clone().addScaledVector(outward, radius * 2));
     getInteractionRouter(document).down(rotation);
     expect(building.isRotating).toBe(true);
     const width = building.vertices[0].position.distanceTo(building.vertices[1].position);
@@ -267,16 +267,38 @@ test.each(["mainView", "lookView"])("whole-building translation and rotation in 
 });
 
 
-test("rotation ring picking includes the center while keeping its visible geometry", () => {
-    main.visible = true;
-    const handle = createDragHandle("rotate");
-    const host = Object.assign({}, groundOverlayEvents, {group: new Group(), raycaster: new Raycaster(),
-        editMode: true, cornerHandles: [], lockPointHandles: [], rotationHandle: handle});
-    host.group.add(handle);
-    const drawing = handle.geometry;
-    const at = pointerAt(main, handle.position);
-    expect(host.getHandleAtMouse(at.clientX, at.clientY)).toMatchObject({type: "rotation"});
-    expect(handle.geometry).toBe(drawing);
-    handle.geometry.dispose();
-    handle.material.dispose();
+test.each([22, 45])("building rotation preserves the old outward grab at %s pixels", pixels => {
+    building.updateHandleScales(look);
+    const corner = building.vertices[2].position;
+    const outward = corner.clone().sub(building.buildingCentroid).normalize();
+    const point = corner.clone().addScaledVector(outward, worldUnitsPerPixel(look, corner) * pixels);
+    getInteractionRouter(document).down(pointerAt(look, point));
+    expect(building.isRotating).toBe(true);
+    expect(building.rotationHandles[2].material.opacity).toBe(0);
+});
+
+test("the cloud move sphere remains pickable near its center at a shallow view angle", () => {
+    const cloud = Object.assign(Object.create(CNodeSynthClouds.prototype), {
+        editMode: true, group: new Group(), raycaster: new Raycaster(),
+        centerLat: 0, centerLon: 0, altitude: 0, radius: 100,
+    });
+    cloud.raycaster.layers.mask = MASK_HELPERS;
+    cloud.createControlHandles();
+    const position = cloud.moveHandle.position;
+    look.camera.position.copy(position).add(new Vector3(0, 100 * Math.sin(Math.PI / 36), 100 * Math.cos(Math.PI / 36)));
+    look.camera.lookAt(position); look.camera.updateMatrixWorld(true);
+    const at = pointerAt(look, position);
+    expect(cloud.getHandleAtMouse(at.clientX, at.clientY - 2)).toBe("move");
+    cloud.removeControlHandles();
+});
+
+test("height grips retain their distinct identity after shared hover and drag feedback", () => {
+    for (const [handle, color] of [[building.roofCenterHandle, 0x888888], [building.rooflineHandle, 0x00ffff]]) {
+        const opacity = handle.material.opacity;
+        setDragHandleState(handle, "hover");
+        setDragHandleState(handle, "dragging");
+        setDragHandleState(handle);
+        expect(handle.material.color.getHex()).toBe(color);
+        expect(handle.material.opacity).toBe(opacity);
+    }
 });

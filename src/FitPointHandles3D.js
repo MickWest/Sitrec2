@@ -61,6 +61,7 @@ function behindQuad(occluder, eye, world) {
  * One overlay per 3D view: draws that view's control points and owns dragging in it.
  */
 class CFitHandleOverlay extends CTerrainHandleOverlay {
+    interactionProfile = "fit";
     /** Canvas position of every point in this view, as [{id, color, index, cx, cy}]. */
     projected() {
         return this.projectPoints(this.owner.getPoints());

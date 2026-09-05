@@ -11,7 +11,7 @@ export function viewInteractionAdapter(view) {
     let offset;
     const adjusted = e => offset ? interactionEvent(e, {clientX: e.clientX + offset.x, clientY: e.clientY + offset.y}) : e;
     const adapter = {
-        id: `view:${view.id}`, model: view,
+        id: `view:${view.id}`, model: view, profile: view.interactionProfile,
         enabled: () => isViewDisplayed(view) && view.isInteractionEnabled?.() !== false,
         valid: () => isViewDisplayed(view),
         hitTest: e => {
@@ -64,6 +64,7 @@ export function installViewInteractions(doc = document) {
     return router.addProvider(() => {
         const result = [];
         ViewMan.iterateVisibleIncludingOverlays((id, view) => {
+            if (view._contentInteractions?.size || view.canvas?.ownerDocument && view.canvas.ownerDocument !== doc) return;
             if (view.onMouseDown || view.onMouseWheel) result.push(viewInteractionAdapter(view));
         });
         return result;

@@ -11,6 +11,7 @@ import {editingControls} from "./EditorInteraction";
 //     inserting one first when the frame falls between two existing points
 //   - a fixed position (CNodePositionLLA — the camera, the target): edit its single
 //     lat/lon/alt, which also refreshes its GUI boxes
+//   - a generated balloon track: edit its launch position and regenerate its path
 //   - anything else (ADS-B, KML, MISB, satellites): read-only data, so no widget at all
 //
 // The widget itself is the same PointEditorWidget the spline editor puts on its control
@@ -74,10 +75,20 @@ function resolveMoveTarget(objectNode) {
         return {kind: "spline", node: root};
     }
 
+    // Generated tracks can expose the position that drives their generator.
+    // Editing that source keeps their physics and serialization intact.
+    const position = root.getPositionEditTarget?.();
+    if (position) return {kind: "fixed", node: root, position};
+
     // A fixed lat/lon/alt. Recognised by behaviour rather than by class so the
     // camera's and target's position nodes, and any future kin, all qualify.
     if (typeof root.setLLA === "function" && root._LLA !== undefined && root.ecef !== undefined) {
-        return {kind: "fixed", node: root};
+        return {kind: "fixed", node: root, position: {
+            getLLA: () => root._LLA.slice(),
+            getECEF: () => root.ecef.clone(),
+            setLLA: (lat, lon, alt) => root.setLLA(lat, lon, alt),
+            get agl() { return root.agl; },
+        }};
     }
 
     return null;
@@ -269,6 +280,7 @@ class CObjectMoveWidget {
 
         for (const node of this.objects()) {
             if (node.visible === false || !node.group) continue;
+            if (view._renderHiddenNodeIDs?.has(node.id)) continue;
             const position = node.group.position;
             if (!Number.isFinite(position.x)) continue;
 
@@ -276,6 +288,7 @@ class CObjectMoveWidget {
             const distance = this.cursorDistancePx(view, position);
             if (distance >= bestDistance) continue;
             if (distance > this.hoverRadiusPx(view, position, node)) continue;
+            if (!this.isObjectShownInView(node, view)) continue;
 
             const target = this.movableTarget(node);
             if (!target) continue;
@@ -285,6 +298,22 @@ class CObjectMoveWidget {
         }
 
         return best;
+    }
+
+    // Custom views can hide a duplicate target only for the render, then
+    // restore .visible afterwards. Match that per-view exclusion as well as
+    // ordinary visibility and layers so hidden objects cannot steal the fade.
+    isObjectShownInView(node, view) {
+        if (node.visible === false || !node.group || view._renderHiddenNodeIDs?.has(node.id)) return false;
+        for (let object = node.group; object; object = object.parent) {
+            if (!object.visible) return false;
+        }
+        let shown = false;
+        node.group.traverseVisible(object => {
+            if ((object.isMesh || object.isLine || object.isPoints || object.isSprite)
+                && object.layers.test(view.camera.layers)) shown = true;
+        });
+        return shown;
     }
 
     /** The displayed editing view under the cursor. */
@@ -326,7 +355,7 @@ class CObjectMoveWidget {
         }
 
         const view = this.viewUnderCursor();
-        if (!view) {
+        if (!view || !this.isObjectShownInView(this.node, view)) {
             this.hover = false;
             return;
         }
@@ -680,9 +709,9 @@ class CObjectMoveWidget {
     /** Resolve what this drag edits, creating a control point if the frame has none. */
     prepareDrag() {
         if (this.target.kind === "fixed") {
-            const positionNode = this.target.node;
-            this.dragBaseECEF = positionNode.ecef.clone();
-            this.dragStartLLA = positionNode._LLA.slice();
+            const position = this.target.position;
+            this.dragBaseECEF = position.getECEF();
+            this.dragStartLLA = position.getLLA();
             return true;
         }
 
@@ -721,12 +750,12 @@ class CObjectMoveWidget {
     }
 
     applyFixedDrag(delta) {
-        const positionNode = this.target.node;
+        const position = this.target.position;
         const newBase = this.dragBaseECEF.clone().add(delta);
         const lla = ECEFToLLAVD_radii(newBase);
 
         let altitude;
-        if (positionNode.agl) {
+        if (position.agl) {
             // In AGL mode _LLA[2] is a height above the ground, not a datum altitude, so
             // only the part of the drag along local up may change it — sliding sideways
             // over a slope keeps the same clearance.
@@ -736,12 +765,12 @@ class CObjectMoveWidget {
             altitude = lla.z - meanSeaLevelOffset(lla.x, lla.y);
         }
 
-        positionNode.setLLA(lla.x, lla.y, altitude);
+        position.setLLA(lla.x, lla.y, altitude);
     }
 
     rollbackDrag() {
         if (this.dragPrepared) {
-            if (this.target.kind === "fixed") this.target.node.setLLA(...this.dragStartLLA);
+            if (this.target.kind === "fixed") this.target.position.setLLA(...this.dragStartLLA);
             else {
                 const editor = this.target.node.splineEditor;
                 if (this.insertedFrame !== null) {
@@ -769,14 +798,14 @@ class CObjectMoveWidget {
 
     recordUndo() {
         if (this.target.kind === "fixed") {
-            const positionNode = this.target.node;
+            const {position, node} = this.target;
             const before = this.dragStartLLA.slice();
-            const after = positionNode._LLA.slice();
+            const after = position.getLLA();
             if (before.every((value, i) => value === after[i])) return;
             UndoManager.add({
-                description: "Move " + (this.node?.id ?? positionNode.id),
-                undo: () => positionNode.setLLA(before[0], before[1], before[2]),
-                redo: () => positionNode.setLLA(after[0], after[1], after[2]),
+                description: "Move " + (this.node?.id ?? node.id),
+                undo: () => position.setLLA(...before),
+                redo: () => position.setLLA(...after),
             });
             return;
         }

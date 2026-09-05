@@ -1,4 +1,3 @@
-import {HANDLE_STYLE} from "./HandleStyle";
 import {
     CircleGeometry,
     ConeGeometry,
@@ -23,8 +22,10 @@ import {adjustHeightAboveGround} from "./threeExt";
 // Screen size the handles are drawn at, in pixels (updateHandleScales applies these).
 // createArrowGeometry needs the arrow one to express its hit padding in pixels, so both
 // live out here rather than inside that method.
-const DISC_PIXEL_SIZE = HANDLE_STYLE.moveRadius;
-const ARROW_PIXEL_SIZE = HANDLE_STYLE.altitudeLength;
+// Preserve the established object/track widget proportions. These broad move
+// and altitude grips serve a different purpose from compact corner handles.
+const DISC_PIXEL_SIZE = 40;
+const ARROW_PIXEL_SIZE = 30;
 
 // How far past the drawn arrow the invisible pick region reaches, in screen pixels.
 const ARROW_HIT_PADDING_PX = 3;
@@ -46,6 +47,8 @@ function createArrowGeometry() {
     
     shaftMesh.position.y = shaftCenterY;
     headMesh.position.y = headCenterY;
+    shaftMesh.userData.arrowPart = 'shaft';
+    headMesh.userData.arrowPart = 'head';
     
     group.add(shaftMesh);
     group.add(headMesh);
@@ -71,14 +74,18 @@ function createArrowGeometry() {
     const hitTop = headCenterY + headHeight / 2 + padAlong;
     const hitRadius = headRadius + padAcross;
 
-    const hitMesh = new Mesh(
-        new CylinderGeometry(hitRadius, hitRadius, hitTop - hitBottom, 8)
-    );
-    hitMesh.position.y = (hitTop + hitBottom) / 2;
-    // Never drawn, still picked: Three.js's Raycaster does not test .visible. (The same
-    // property is what lets a control point be deleted while the widget hides its cube.)
-    hitMesh.visible = false;
-    group.add(hitMesh);
+    // Separate head and shaft picks so the disc can win over an overlapping
+    // shaft while an arrowhead remains a vertical grip, regardless of depth.
+    const headBottom = headCenterY - headHeight / 2 - padAlong;
+    for (const [part, bottom, top] of [['shaft', hitBottom, headBottom], ['head', headBottom, hitTop]]) {
+        const hitMesh = new Mesh(new CylinderGeometry(hitRadius, hitRadius, top - bottom, 8));
+        hitMesh.position.y = (top + bottom) / 2;
+        hitMesh.userData.arrowPart = part;
+        hitMesh.userData.isPickPadding = true;
+        // Three.js raycasting includes invisible meshes.
+        hitMesh.visible = false;
+        group.add(hitMesh);
+    }
 
     return group;
 }
@@ -124,9 +131,7 @@ export class PointEditorWidget extends EventDispatcher {
             enabled: () => !!this.object && this.group.visible,
             pick: e => {
                 if (!this.setupRaycasterForEvent(e)) return null;
-                const objects = [this.handles.disc];
-                if (!this.altitudeLocked) objects.push(this.handles.arrowUp, this.handles.arrowDown);
-                const hit = this.raycaster.intersectObjects(objects, true)[0];
+                const hit = this.pickHandle();
                 return hit ? {distance: hit.distance, priority: 70, handle: hit.object} : null;
             },
             rollback: e => this.rollbackDrag(e),
@@ -136,7 +141,7 @@ export class PointEditorWidget extends EventDispatcher {
     createHandles() {
         const discGeometry = new CircleGeometry(1, 32);
         const discMaterial = new MeshBasicMaterial({
-            color: HANDLE_STYLE.move,
+            color: 0x00ff00,
             transparent: true,
             opacity: 0.6,
             side: DoubleSide,
@@ -151,7 +156,7 @@ export class PointEditorWidget extends EventDispatcher {
         this.group.add(this.handles.disc);
         
         const arrowMaterial = new MeshBasicMaterial({
-            color: HANDLE_STYLE.altitude,
+            color: 0xff0000,
             transparent: true,
             opacity: 0.6,
             depthTest: true,
@@ -294,6 +299,19 @@ export class PointEditorWidget extends EventDispatcher {
 
         return true;
     }
+
+    pickHandle() {
+        const objects = [this.handles.disc];
+        if (!this.altitudeLocked) objects.push(this.handles.arrowUp, this.handles.arrowDown);
+        const hits = this.raycaster.intersectObjects(objects, true);
+        // Resolve screen overlap by operation, not by which mesh is nearer.
+        // Hover and pointer-down share this ordering, including touch padding.
+        // Padding helps grab an exposed arrow, but must not steal the disc's
+        // center at steep camera angles when only the enlarged head volume overlaps.
+        return hits.find(hit => hit.object.userData.arrowPart === 'head' && !hit.object.userData.isPickPadding)
+            ?? hits.find(hit => hit.object === this.handles.disc)
+            ?? hits[0];
+    }
     
     onPointerDown(event) {
         if (!this.object || !this.setupRaycasterForEvent(event)) {
@@ -314,18 +332,10 @@ export class PointEditorWidget extends EventDispatcher {
             return;
         }
 
-        const objectsToTest = [this.handles.disc];
-        if (!this.altitudeLocked) {
-            objectsToTest.push(this.handles.arrowUp, this.handles.arrowDown);
-        }
-        
-        const intersects = this.raycaster.intersectObjects(objectsToTest, true);
-        
-        if (intersects.length === 0) {
-            return;
-        }
-        
-        const intersected = intersects[0].object;
+        const hit = this.pickHandle();
+        if (!hit) return;
+
+        const intersected = hit.object;
         let dragType = intersected.userData.type;
         
         if (!dragType && intersected.parent) {

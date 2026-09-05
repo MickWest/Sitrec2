@@ -1,3 +1,4 @@
+import {registerSurfaceInteraction} from "./SurfaceInteraction";
 // Adjacency-based shared-edge layout (Strategy C — replaces the old guillotine split-tree).
 //
 // Views are FREE rectangles (their existing fractional left/top/width/height). There is no
@@ -41,7 +42,7 @@ class CLayoutManager {
     // Rebuild the seam set from the current view pixel rects, then sync the grab-strip DOM.
     // Cheap: skips entirely when no rect moved (signature match).
     updateSeams() {
-        if (typeof document === "undefined") return;
+        if (typeof document === "undefined" || this._activeSeam) return;
         const rects = this._collectRects();
         const sig = this._signature(rects);
         if (sig === this._sig) return;
@@ -166,7 +167,9 @@ class CLayoutManager {
             this._seamEls.push(el);
         }
         while (this._seamEls.length > this._seams.length) {
-            this._seamEls.pop().remove();
+            const removed = this._seamEls.pop();
+            removed._unregisterInteraction?.();
+            removed.remove();
         }
 
         const grab = GRAB_PX;
@@ -222,7 +225,17 @@ class CLayoutManager {
         el.addEventListener("pointerleave", () => {
             if (!el._dragging) line.style.background = "var(--sitrec-border-area, rgba(255,255,255,0.18))";
         });
-        el.addEventListener("pointerdown", (e) => this._onSeamPointerDown(e, index));
+        el._unregisterInteraction = registerSurfaceInteraction(el, {
+            model: this, id: `layout:seam:${index}`, intent: {priority: 110, zIndex: 55},
+            begin: e => this._onSeamPointerDown(e, index),
+            move: e => this._activeSeam?.move(e),
+            valid: () => this._activeSeam?.valid() !== false,
+            end: () => { const active = this._activeSeam; this._activeSeam = null; active?.end(); this.updateSeams(); },
+            rollback: () => {
+                const active = this._activeSeam; this._activeSeam = null;
+                active?.restore(); active?.end(); this.updateSeams();
+            },
+        });
         return el;
     }
 
@@ -297,13 +310,9 @@ class CLayoutManager {
         };
         const onUp = () => {
             if (el) { el._dragging = false; if (el._line) el._line.style.background = "var(--sitrec-border-area, rgba(255,255,255,0.18))"; }
-            document.removeEventListener("pointermove", onMove);
-            document.removeEventListener("pointerup", onUp);
-            document.removeEventListener("pointercancel", onUp);
         };
-        document.addEventListener("pointermove", onMove);
-        document.addEventListener("pointerup", onUp);
-        document.addEventListener("pointercancel", onUp);
+        this._activeSeam = {move: onMove, end: onUp, restore: () => this._applySeam(before, after, 0, isV),
+            valid: () => [...before, ...after].every(({v}) => v.visible && !v.windowed && ViewMan.get(v.id, false) === v)};
     }
 
     // --- View ▸ Reset Layout: snap the open views back into a clean default grid ---

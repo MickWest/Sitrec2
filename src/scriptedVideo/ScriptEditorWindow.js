@@ -1,3 +1,6 @@
+import {UndoManager} from "../Globals";
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {wheelPixels, WheelStepAccumulator} from "../GestureActions";
 // ScriptEditorWindow.js — the Scripted Video script editor UI.
 //
 // A floating draggable/resizable in-page panel (toolbar + textarea + status +
@@ -184,10 +187,19 @@ export class CScriptEditorWindow extends CNodeView {
         ta.addEventListener("keyup", (e) => { if (NAV_KEYS.has(e.key)) sv._scrubToCursorLine(); this._renderBackdrop(); });
         ta.addEventListener("scroll", () => { backdrop.scrollTop = ta.scrollTop; backdrop.scrollLeft = ta.scrollLeft; });
         ta.addEventListener("mousemove", (e) => this._onEditorHover(e));
-        ta.addEventListener("mousedown", (e) => this._onEditorMouseDown(e));
         ta.addEventListener("mouseleave", () => { if (sv._hoverNum || sv._hoverSeg) { sv._hoverNum = null; sv._hoverSeg = null; ta.style.cursor = ""; this._renderBackdrop(); sv.timeline.draw(); } });
-        ta.addEventListener("wheel", (e) => this._onEditorWheel(e), { passive: false });
         this.textarea = ta;
+        this._numberWheel = new WheelStepAccumulator();
+        this.unregisterNumberInteraction = registerSurfaceInteraction(ta, {
+            model: this, view: this, content: false, nativeControl: true, touchAction: "auto",
+            hitTest: e => { const number = this._numberAtPointer(e); return number ? {number} : null; },
+            hitSurface: e => wheelPixels(e) !== 0 && !!this._numberAtPointer(e),
+            begin: (e, hit) => { sv._hoverNum = hit.number; this._onEditorMouseDown(e); },
+            move: e => this._numberMove?.(e),
+            end: (e, reason) => { this._numberEnd?.(reason); this._numberMove = this._numberEnd = null; },
+            snapshot: () => this.captureEdit(), restore: state => this.restoreEdit(state),
+            undo: "Edit script number", wheel: e => this._onEditorWheel(e),
+        });
 
         editWrap.appendChild(backdrop);
         editWrap.appendChild(ta);
@@ -203,7 +215,7 @@ export class CScriptEditorWindow extends CNodeView {
 
         const tl = document.createElement("canvas");
         tl.style.cssText = "display:block; width:calc(100% - 16px); height:60px; margin:0 8px 10px; border:1px solid #333; border-radius:4px; flex:0 0 auto;";
-        sv.timeline.attach(tl);
+        sv.timeline.attach(tl, this);
         sv.timeline.editorCanvas = tl;
 
         content.appendChild(toolbar);
@@ -282,6 +294,17 @@ export class CScriptEditorWindow extends CNodeView {
         b.style.font = "11px sans-serif";
         if (title) b.title = title;
         return b;
+    }
+
+    captureEdit() {
+        return {tab: this.sv.tabs[this.sv.activeTab], text: this.sv.getScriptText()};
+    }
+
+    restoreEdit(state) {
+        const index = this.sv.tabs.indexOf(state.tab);
+        if (index === -1) return Promise.resolve();
+        this.sv.selectTab(index);
+        return this._setText(state.text);
     }
 
     _setText(nextText, caretRow = null, caretCol = null) {
@@ -791,9 +814,7 @@ export class CScriptEditorWindow extends CNodeView {
         return best;
     }
 
-    _onEditorHover(e) {
-        if (this._numDragging) return;   // keep the dragged number hovered
-        const sv = this.sv;
+    _numberAtPointer(e) {
         const ta = this.textarea;
         const {cw, lh, padL, padT} = this._charMetrics();
         const rect = ta.getBoundingClientRect();
@@ -802,7 +823,13 @@ export class CScriptEditorWindow extends CNodeView {
         const row = Math.floor(y / lh);
         const col = Math.floor(x / cw);
         // accept the mouse up to 2 chars on either side of a control number
-        const found = (y < 0) ? null : this._editableNumberAt(row, col, 2);
+        return (y < 0) ? null : this._editableNumberAt(row, col, 2);
+    }
+
+    _onEditorHover(e) {
+        if (this._numDragging) return;
+        const sv = this.sv, ta = this.textarea;
+        const found = this._numberAtPointer(e);
         const a = sv._hoverNum;
         const same = (!a && !found) || (a && found && a.line === found.line && a.start === found.start && a.end === found.end);
         ta.style.cursor = found ? "ns-resize" : "";
@@ -863,15 +890,12 @@ export class CScriptEditorWindow extends CNodeView {
                 });
             }
         };
-        const up = () => {
-            document.removeEventListener("pointermove", move);
-            document.removeEventListener("pointerup", up);
+        this._numberMove = move;
+        this._numberEnd = reason => {
             this._numDragging = false;
-            if (dragged) this._suppressClick = true;
+            if (dragged || reason !== "released") this._suppressClick = true;
             else this._placeCaretAt(e);
         };
-        document.addEventListener("pointermove", move);
-        document.addEventListener("pointerup", up);
     }
 
     // place the caret at the character under a mouse event (used because the
@@ -893,10 +917,11 @@ export class CScriptEditorWindow extends CNodeView {
 
     _onEditorWheel(e) {
         const sv = this.sv;
-        if (!sv._hoverNum) return;            // not over a control number → normal scroll
+        const h = this._numberAtPointer(e);
+        if (!h) return;
+        sv._hoverNum = h;
         e.preventDefault();
-        const h = sv._hoverNum;
-        const res = this.adjustNumberToken(h.line, {start: h.start, end: h.end}, e.deltaY, e.shiftKey, this._minValForField(h.field));
+        const res = this.adjustNumberTokenWheel(h.line, {start: h.start, end: h.end}, e, this._minValForField(h.field));
         if (!res) return;
         h.start = res.start; h.end = res.end; h.text = res.text;
         // the re-parse is async (JS scheduling run) — re-resolve against the new model
@@ -907,6 +932,23 @@ export class CScriptEditorWindow extends CNodeView {
             sv.timeline.draw();
             if (sv._previewing) sv._scrubTo(sv._currentT);
         });
+    }
+
+    adjustNumberTokenWheel(row, span, event, minVal = 0) {
+        this._numberWheel ??= new WheelStepAccumulator();
+        const steps = this._numberWheel.take(event, `${row}:${span.start}:${!!event.shiftKey}`);
+        if (!steps) return null;
+        const before = this.captureEdit();
+        let result = null;
+        for (let i = 0; i < Math.abs(steps); i++) {
+            result = this.adjustNumberToken(row, span, -Math.sign(steps), event.shiftKey, minVal);
+            if (!result) break;
+            span = result;
+        }
+        const after = this.captureEdit();
+        if (before.text !== after.text) UndoManager.add({description: "Adjust script number",
+            undo: () => this.restoreEdit(before), redo: () => this.restoreEdit(after)});
+        return result;
     }
 
     // Increment/decrement the number token at lines[row][span.start..span.end] by a
@@ -925,8 +967,7 @@ export class CScriptEditorWindow extends CNodeView {
         const hasDot = cur.includes(".");
         let step = hasDot ? 0.1 : 1;
         if (shiftKey) step *= 10;
-        // Scroll UP increases. macOS "natural scrolling" (the common case here)
-        // reports an upward scroll/swipe as deltaY > 0, so positive = increment.
+        if (!deltaY) return null;
         const dir = deltaY > 0 ? 1 : -1;
         let val = parseFloat(cur) + dir * step;
         if (!isFinite(val)) return null;

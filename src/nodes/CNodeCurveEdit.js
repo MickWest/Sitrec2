@@ -17,6 +17,7 @@ export class CNodeCurveEditorView extends CNodeViewCanvas2D {
         v.menuName = v.menuName ?? v.editorConfig.yLabel
         super(v);
         this.isGraphView = true;
+        v.editorConfig.view = this;
         v.editorConfig.canvas = this.canvas
         v.editorConfig.devicePixelRatio = this.devicePixelRatio
         this.addInputs(v.displayInputs)

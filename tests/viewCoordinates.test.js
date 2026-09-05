@@ -192,3 +192,53 @@ test("an altitude drag ignores a ray parallel to its movement axis", () => {
     widget.handleVerticalDrag();
     expect(widget.object.position.toArray()).toEqual([6370000, 0, 0]);
 });
+
+test.each([
+    [10, 0, "horizontal", "disc over shaft"],
+    [10, 9, "vertical", "exposed shaft"],
+    [10, 27, "vertical", "upper arrowhead"],
+    [10, -27, "vertical", "lower arrowhead"],
+    [60, 0, "horizontal", "disc center under arrowhead padding"],
+    [60, 27, "vertical", "upper arrowhead overlapping disc"],
+    [60, -27, "vertical", "lower arrowhead behind disc"],
+])("point widget at %s degrees picks %s as %s (%s)", (angle, height, mode) => {
+    const camera = new OrthographicCamera(-100, 100, 100, -100, .1, 2000);
+    camera.position.set(0, 1000 * Math.sin(angle * Math.PI / 180), 1000 * Math.cos(angle * Math.PI / 180));
+    camera.lookAt(0, 0, 0); camera.updateMatrixWorld(true);
+    const rect = {left: 0, top: 0, width: 200, height: 200};
+    const view = {id: "mainView", camera, visible: true, leftPx: 0, topPx: 0, widthPx: 200, heightPx: 200,
+        div: {getBoundingClientRect: () => rect}, canvas: {getBoundingClientRect: () => rect},
+        pixelsToMeters: (_position, pixels) => pixels};
+    ViewMan.get.mockImplementation(id => id === "mainView" ? view : undefined);
+    const widget = new PointEditorWidget(camera);
+    widget.attach(new Object3D());
+    const [x, y] = viewToClient(view, ...projectWorldToView(view, new Vector3(0, height, 0)));
+    try {
+        for (const pointerType of ["mouse", "touch"]) {
+            const event = {button: 0, pointerType, clientX: x, clientY: y, preventDefault() {}};
+            const hit = widget.unregisterInteraction.adapter.hitTest(event);
+            expect(hit.handle.userData.type.startsWith(mode)).toBe(true);
+            // Prove the overlap exists in the real geometry, including a shaft
+            // that is closer to the camera than the disc at the center.
+            const discHits = widget.raycaster.intersectObject(widget.handles.disc);
+            if (angle === 60 || height === 0) expect(discHits.length).toBeGreaterThan(0);
+            if (height === 0) {
+                const nearest = widget.raycaster.intersectObjects([widget.handles.arrowUp, widget.handles.arrowDown], true)[0];
+                expect(nearest.distance).toBeLessThan(discHits[0].distance);
+            }
+            widget.onPointerDown(event);
+            expect(widget.activeDragMode).toBe(mode);
+            widget.onPointerMove({...event, clientX: x + 8, clientY: y - 8});
+            if (mode === "horizontal") {
+                expect(widget.object.position.y).toBeCloseTo(0);
+                expect(widget.object.position.x).toBeGreaterThan(0);
+            } else {
+                expect(widget.object.position.x).toBeCloseTo(0);
+                expect(widget.object.position.z).toBeCloseTo(0);
+                expect(widget.object.position.y).toBeGreaterThan(0);
+            }
+            widget.rollbackDrag(event);
+            expect(widget.object.position.length()).toBeCloseTo(0);
+        }
+    } finally { widget.dispose(); }
+});

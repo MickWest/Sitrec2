@@ -1,7 +1,7 @@
 // One mutation owner per gesture. Adapters probe without changing model data,
 // then expose begin/move/end/cancel and an optional rollback operation.
 export const INTERACTION = Object.freeze({PASS: "pass", CLICK: "click", PENDING: "pending", DRAG: "drag"});
-export const INTERACTION_PRIORITY = Object.freeze({TOOL: 80, HANDLE: 60, OBJECT: 40, PENDING: 20, NAVIGATION: 0});
+export const INTERACTION_PRIORITY = Object.freeze({LAYOUT: 100, TOOL: 80, HANDLE: 60, OBJECT: 40, PENDING: 20, NAVIGATION: 0});
 export const CLICK_SLOP_PX = 5;
 
 const leases = new WeakMap();
@@ -38,7 +38,7 @@ export function acquireControlLease(controls) {
 }
 
 function nativeTarget(e) {
-    return e.target?.closest?.("input,textarea,select,button,a,[contenteditable=true],#menuBar,.lil-gui,.view-uibar,.resize-handle,[data-interaction-native]");
+    return e.target?.closest?.("input,textarea,select,button,a,dialog,[contenteditable=true],#menuBar,.lil-gui,.view-uibar,.resize-handle,[data-interaction-native]");
 }
 
 export class InteractionRouter {
@@ -64,6 +64,11 @@ export class InteractionRouter {
         listen(this.document, "pointercancel", e => this.cancelPointer(e), true);
         listen(this.document, "lostpointercapture", e => this.cancelPointer(e), true);
         listen(this.document, "wheel", e => this.wheel(e), {passive: false});
+        // Floating panels stop wheel bubbling at their UI boundary. Registered
+        // canvas tools inside them still receive one wheel action.
+        listen(this.document, "wheel", e => {
+            if (this.candidates(e, "wheel").some(c => c.surface)) this.wheel(e);
+        }, {capture: true, passive: false});
         listen(this.document, "contextmenu", e => this.contextMenu(e));
         listen(this.document.defaultView, "blur", e => this.finish(e, "interrupted"));
         listen(this.document.defaultView, "resize", e => this.finish(e, "interrupted"));
@@ -91,6 +96,21 @@ export class InteractionRouter {
         const provider = () => [adapter];
         adapter.provider = provider;
         return this.addProvider(provider);
+    }
+
+    updateCursor(owner, event, dragging = false) {
+        this.clearCursor();
+        const cursor = typeof owner?.cursor === "function" ? owner.cursor(event, owner, dragging) : owner?.cursor;
+        const target = event?.target;
+        if (!cursor || !target?.style) return;
+        this.cursor = {target, previous: target.style.cursor, value: cursor};
+        target.style.cursor = cursor;
+    }
+
+    clearCursor() {
+        const c = this.cursor;
+        if (c && c.target.style.cursor === c.value) c.target.style.cursor = c.previous;
+        this.cursor = null;
     }
 
     candidates(e, action = "pointer") {
@@ -123,10 +143,13 @@ export class InteractionRouter {
             return;
         }
         this.lastContextGesture = null;
-        if (nativeTarget(e) || e.defaultPrevented || e.button > 2) return;
-        const candidates = this.candidates(e);
+        if (e.defaultPrevented || e.button > 2) return;
+        const candidates = this.candidates(e).filter(c => !nativeTarget(e) || c.allowNative);
         for (let i = 0; i < candidates.length; i++) {
             let owner = candidates[i];
+            this.hovered?.hover?.(null);
+            this.hovered = null;
+            this.clearCursor();
             // A selected duplication command can replace its target before a
             // session starts; all subsequent events belong to the copy.
             if (owner.redirect) owner = owner.redirect(e, owner) ?? owner;
@@ -146,6 +169,7 @@ export class InteractionRouter {
                     this.session = null;
                     continue;
                 }
+                this.updateCursor(owner, e, true);
                 const capture = owner.capture?.() ?? e.target;
                 if (capture?.setPointerCapture && e.pointerId !== undefined) {
                     try { capture.setPointerCapture(e.pointerId); session.capture = capture; session.capturedIds.add(e.pointerId); } catch (_) { /* document listeners remain active */ }
@@ -177,6 +201,7 @@ export class InteractionRouter {
         if (e.pointerType !== "touch" || !s.touches.size || s.touches.has(e.pointerId) || nativeTarget(e)) return;
         if (!s.owner.hitSurface?.(e) && !s.fallback?.hitSurface?.(e)) return;
         clearTimeout(s.longPress);
+        if (s.owner.kind === INTERACTION.CLICK) s.maxTravel = Infinity;
         if (s.owner.kind === INTERACTION.PENDING) {
             if (!s.fallback?.beginTouches) { this.finish(s.last, "interrupted"); return; }
             s.owner.cancel?.(s.last, "superseded");
@@ -212,11 +237,11 @@ export class InteractionRouter {
     move(e) {
         const s = this.session;
         if (!s) {
-            if (nativeTarget(e)) return;
-            const hit = this.candidates(interactionEvent(e, {button: 0}))[0];
+            const hit = this.candidates(interactionEvent(e, {button: 0})).find(c => !nativeTarget(e) || c.allowNative);
             if (this.hovered?.adapter !== hit?.adapter) this.hovered?.hover?.(null);
             this.hovered = hit;
             hit?.hover?.(e, hit);
+            this.updateCursor(hit, e);
             return;
         }
         if (s.multi) {
@@ -333,6 +358,7 @@ export class InteractionRouter {
             s.release();
             this.releaseCapture(s);
             s.owner.hover?.(null);
+            this.clearCursor();
         }
     }
 
@@ -345,18 +371,24 @@ export class InteractionRouter {
         if (s && (s.owner.provider === owner || s.owner.adapter === owner || s.owner.model === owner
             || s.owner.view === owner || s.owner.model?.overlayView === owner || s.owner.model?.host === owner
             || s.owner.relatedModels?.includes(owner))) this.finish(s.start, reason);
+        const h = this.hovered;
+        if (h && (h.provider === owner || h.adapter === owner || h.model === owner || h.view === owner)) {
+            h.hover?.(null);
+            this.hovered = null;
+            this.clearCursor();
+        }
     }
 
     wheel(e) {
-        if (nativeTarget(e) || e.defaultPrevented) return;
+        if (e.defaultPrevented) return;
         // Authoring locks navigation until completion; a navigation session may wheel.
         if (this.session && !this.session.navigation) { this.consume(e); return; }
-        const owner = this.session?.owner ?? this.candidates(e, "wheel")[0];
+        const owner = this.session?.owner ?? this.candidates(e, "wheel").find(c => !nativeTarget(e) || c.allowNative);
         if (owner?.wheel) { owner.wheel(e); this.consume(e); }
     }
 
     contextMenu(e) {
-        if (nativeTarget(e)) return;
+        if (nativeTarget(e) && !this.candidates(e, "contextMenu").some(c => c.allowNative)) return;
         if (this.session || (e.button === 2 && this.lastContextGesture?.target === e.target)) {
             this.consume(e);
             return;
@@ -367,6 +399,9 @@ export class InteractionRouter {
 
     dispose() {
         this.finish(this.session?.start, "interrupted");
+        this.hovered?.hover?.(null);
+        this.hovered = null;
+        this.clearCursor();
         this.listeners.splice(0).forEach(remove => remove());
         this.providers.clear();
     }

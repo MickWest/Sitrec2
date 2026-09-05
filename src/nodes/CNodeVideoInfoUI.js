@@ -1,3 +1,5 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {mouseInViewOnly} from "../ViewUtils";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CustomManager, GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
@@ -102,28 +104,35 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
 
-        this.boundHandleMouseDown = (e) => this.handleMouseDown(e);
-        this.boundHandleMouseMove = (e) => this.handleMouseMove(e);
-        this.boundHandleMouseUp = (e) => this.handleMouseUp(e);
-        this.boundHandlePointerDown = (e) => this.handlePointerDown(e);
+        const hit = e => {
+            const r = this.canvas.getBoundingClientRect();
+            return this.getElementAtPosition(e.clientX - r.left, e.clientY - r.top);
+        };
+        this.unregisterInteraction = registerSurfaceInteraction(this.canvas, {
+            profile: "labels",
+            view: this, model: this,
+            enabled: () => this.isVideoReady() && this.shouldBeVisible(),
+            contains: e => e.target?.tagName === "CANVAS" && mouseInViewOnly(this, e.clientX, e.clientY),
+            hitTest: e => hit(e) ? {priority: 60} : null, hitSurface: hit,
+            begin: e => this.handleMouseDown(e), move: e => this.handleMouseMove(e),
+            hover: e => { if (e) this.handleMouseMove(e); },
+            end: e => this.handleMouseUp(e), click: e => this.handleClick(e),
+            contextMenu: e => { const id = hit(e); if (this.isOSDDataSeriesElement(id)) this.showOSDDataSeriesContextMenu(id, e.clientX, e.clientY); },
+            snapshot: () => [...this.getAllItemIds(), ...Object.keys(this._osdDataSeriesBboxes ?? {})].map(id => {
+                const pos = this.getElementPos(id);
+                return pos ? {id, x: pos.track ? pos.track.x : this[pos[0]], y: pos.track ? pos.track.y : this[pos[1]]} : null;
+            }).filter(Boolean),
+            restore: state => {
+                for (const item of state) {
+                    const pos = this.getElementPos(item.id);
+                    if (pos?.track) { pos.track.x = item.x; pos.track.y = item.y; }
+                    else if (pos) { this[pos[0]] = item.x; this[pos[1]] = item.y; }
+                }
+                setRenderOne(true);
+            },
+            undo: "Move video information",
+        });
 
-        document.addEventListener('mousemove', this.boundHandleMouseMove);
-        document.addEventListener('mouseup', this.boundHandleMouseUp);
-        this.canvas.addEventListener('mousedown', this.boundHandleMouseDown);
-        // Intercept pointerdown so the underlying 3D view (e.g. the look view)
-        // doesn't also start a camera orbit when we grab an info element — see
-        // handlePointerDown for the full explanation.
-        this.canvas.addEventListener('pointerdown', this.boundHandlePointerDown);
-        
-        this.boundHandleClick = (e) => this.handleClick(e);
-        this.canvas.addEventListener('click', this.boundHandleClick);
-
-        this.boundHandleDblClick = (e) => this.handleDblClick(e);
-        this.canvas.addEventListener('dblclick', this.boundHandleDblClick);
-
-        this.boundHandleContextMenu = (e) => this.handleContextMenu(e);
-        this.canvas.addEventListener('contextmenu', this.boundHandleContextMenu);
-        
         this._osdDataSeriesBboxes = {};
 
         this.updateVisibility();
@@ -332,31 +341,6 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
             return controller.tracks[trackIndex];
         }
         return null;
-    }
-
-    // The look view (and any CNodeView3D) starts its camera orbit/pan from a
-    // DOCUMENT-level 'pointerdown' listener (mouseMoveView.js SetupMouseHandler).
-    // Our label drag uses a 'mousedown' listener on this overlay's own canvas, so
-    // the stopPropagation() in handleMouseDown can never reach that camera handler
-    // — 'mousedown' and 'pointerdown' are independent event dispatches. The
-    // mouseInViewOnly() exclusivity (zIndex + onMouseDown) doesn't help either,
-    // since these overlay views set neither. So we intercept 'pointerdown' on our
-    // canvas: because the canvas is a descendant of document, this fires at the
-    // target phase BEFORE the document's bubble-phase listener, and a
-    // stopPropagation() here prevents the underlying view from ever becoming the
-    // drag view. We only claim the event when the press is actually on a draggable
-    // info element, so the rest of the view is still free to orbit/pan.
-    handlePointerDown(e) {
-        if (e.button !== 0) return;
-        if (!this.isVideoReady() || !this.shouldBeVisible()) return;
-
-        const canvasRect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - canvasRect.left;
-        const y = e.clientY - canvasRect.top;
-
-        if (this.getElementAtPosition(x, y)) {
-            e.stopPropagation();
-        }
     }
 
     handleMouseDown(e) {
@@ -944,24 +928,10 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
     }
 
     dispose() {
+        this.unregisterInteraction?.();
         if (this._cursorBlinkTimer) {
             clearInterval(this._cursorBlinkTimer);
             this._cursorBlinkTimer = null;
-        }
-        if (this.boundHandleMouseMove) {
-            document.removeEventListener('mousemove', this.boundHandleMouseMove);
-        }
-        if (this.boundHandleMouseUp) {
-            document.removeEventListener('mouseup', this.boundHandleMouseUp);
-        }
-        if (this.canvas && this.boundHandleMouseDown) {
-            this.canvas.removeEventListener('mousedown', this.boundHandleMouseDown);
-        }
-        if (this.canvas && this.boundHandlePointerDown) {
-            this.canvas.removeEventListener('pointerdown', this.boundHandlePointerDown);
-        }
-        if (this.canvas && this.boundHandleClick) {
-            this.canvas.removeEventListener('click', this.boundHandleClick);
         }
         super.dispose();
     }

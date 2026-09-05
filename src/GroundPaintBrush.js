@@ -1,3 +1,4 @@
+import {registerEditorInteraction} from "./EditorInteraction";
 // GroundPaintBrush.js
 //
 // Pointer handling for "Paint On Ground" — the texture-space sibling of
@@ -6,19 +7,8 @@
 // TEXTURES under the brush; holding Option/Alt erases back to the original
 // imagery.
 //
-// Structured exactly like TreeManualBrush and for the same reasons:
-//   • Document-level listeners in the CAPTURE phase, so a stroke that starts on a
-//     render canvas can stopPropagation() and pre-empt the view's own camera-drag
-//     handlers (which run in the bubble phase). Camera navigation stays on the
-//     middle / right buttons, which we never intercept.
-//   • Mouse coordinates tracked HERE (_sx/_sy), not read from the global
-//     getMousePosition(): while painting we stopPropagation(), so that global goes
-//     stale and a stale position can re-pick in the OTHER view (different camera →
-//     large offset).
-//   • The ray is built from the DISPLAYED projection via
-//     prepareCameraForLOD/restoreCameraAfterLOD, because the look view renders a
-//     wider frustum to an offscreen target and shows a magnified central crop, so
-//     the live camera projection is ~2x too wide for picking.
+// The interaction router selects the brush before navigation and retains the
+// originating view for the whole stroke. The brush supplies surface geometry.
 //
 // The pick itself goes through raycastLocalGround(), so it lands on whichever
 // surface is actually in front: the Google Photorealistic 3D tiles when they are
@@ -99,16 +89,21 @@ export class GroundPaintBrush {
         this.ringMesh.raycast = () => {};
         GlobalScene.add(this.ringMesh);
 
-        this._onPointerDown = (e) => this.onPointerDown(e);
-        this._onPointerMove = (e) => this.onPointerMove(e);
-        this._onPointerUp = (e) => this.onPointerUp(e);
-        // End any in-progress stroke on blur so its undo entry is still recorded,
-        // and drop the cursor ring (a ring sitting in an unfocused window is noise).
-        this._onBlur = () => { this._endStroke(); this.hidePreview(); };
-        document.addEventListener("pointerdown", this._onPointerDown, true);
-        document.addEventListener("pointermove", this._onPointerMove, true);
-        document.addEventListener("pointerup", this._onPointerUp, true);
-        window.addEventListener("blur", this._onBlur);
+        this.unregisterInteraction = registerEditorInteraction(this, {
+            profile: "brush",
+            id: "brush:GroundPaintBrush", enabled: () => this.active,
+            pick: e => e.target?.tagName === "CANVAS" ? {priority: 80} : null,
+            begin: e => { this._anchorBefore = this._lastPaintPoint?.clone(); this.onPointerDown(e); },
+            end: e => { this.onPointerUp(e); this.activeView = null; },
+            leave: () => { this.overCanvas = false; this.hidePreview(); },
+            rollback: e => {
+                const before = this._strokeBefore;
+                this._strokeBefore = null;
+                if (before) this.painter.restoreDabsState(before);
+                this._lastPaintPoint = this._anchorBefore;
+                this.onPointerUp(e); this.activeView = null; this.hidePreview();
+            },
+        });
     }
 
     // Active only while the "Paint Mode" checkbox is on.
@@ -120,7 +115,7 @@ export class GroundPaintBrush {
     // under the cursor. Returns a world-space Vector3 or null. See the file header
     // for why the projection is bracketed with prepareCameraForLOD.
     pick(screenX, screenY) {
-        const view = getInteractiveViewAt(screenX, screenY, BRUSH_VIEW_IDS);
+        const view = this.painting && this.activeView ? this.activeView : getInteractiveViewAt(screenX, screenY, BRUSH_VIEW_IDS);
         if (!view) return null;
         const cam = view.camera;
         if (!setRaycasterFromView(this.raycaster, view, screenX, screenY)) return null;
@@ -289,10 +284,7 @@ export class GroundPaintBrush {
     }
 
     dispose() {
-        document.removeEventListener("pointerdown", this._onPointerDown, true);
-        document.removeEventListener("pointermove", this._onPointerMove, true);
-        document.removeEventListener("pointerup", this._onPointerUp, true);
-        window.removeEventListener("blur", this._onBlur);
+        this.unregisterInteraction?.();
         if (this.ringMesh) {
             GlobalScene.remove(this.ringMesh);
             this.ringMesh.geometry.dispose();

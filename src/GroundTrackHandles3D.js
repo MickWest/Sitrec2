@@ -41,6 +41,7 @@ const CURSOR_COLOR = "#FFFF00";
  * One overlay per 3D view: draws that view's ground track and owns editing in it.
  */
 class CGroundTrackOverlay extends CTerrainHandleOverlay {
+    interactionProfile = "groundTrack";
     /** Canvas position of every keyframe in this view, as [{frame, index, cx, cy}]. */
     projected() {
         return this.projectPoints(this.owner.getKeyframes());

@@ -1,4 +1,3 @@
-import {createDragHandle} from "../HandleGeometry";
 import {registerEditorInteraction} from "../EditorInteraction";
 import {getInteractionRouter} from "../InteractionRouter";
 /**
@@ -953,11 +952,12 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             const groundPos = getPointBelow(pos);
             const adjustedPos = pointAbove(groundPos, 5);
 
-            const handle = createDragHandle("resize");
+            const handle = new Mesh(handleGeometry.clone(), this.createHandleMaterial(0xffff00));
             handle.position.copy(adjustedPos).sub(groupPos);
             handle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
             handle.userData.cornerIndex = index;
             handle.userData.handleType = 'corner';
+            handle.userData.handleRole = 'resize';
             this.group.add(handle);
             this.cornerHandles.push(handle);
         });
@@ -981,11 +981,11 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         const rotHandlePos = centerECEF.clone().add(toNorthMid.multiplyScalar(0.9));
         const adjustedRotHandle = pointAbove(getPointBelow(rotHandlePos), 5);
 
-        this.rotationHandle = createDragHandle("rotate");
+        this.rotationHandle = new Mesh(handleGeometry.clone(), this.createHandleMaterial(0x00ffff));
         this.rotationHandle.position.copy(adjustedRotHandle).sub(groupPos);
-        this.rotationHandle.quaternion.setFromUnitVectors(new Vector3(0, 0, 1), getLocalUpVector(adjustedRotHandle));
         this.rotationHandle.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.rotationHandle.userData.handleType = 'rotation';
+        this.rotationHandle.userData.handleRole = 'rotate';
         this.group.add(this.rotationHandle);
 
         handleGeometry.dispose();

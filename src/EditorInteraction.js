@@ -2,7 +2,7 @@ import {ViewMan} from "./CViewManager";
 import {getInteractiveViewAt, isViewDisplayed} from "./ViewUtils";
 import {getInteractionRouter, INTERACTION, interactionEvent} from "./InteractionRouter";
 import {setRenderOne} from "./Globals";
-import {paddedHandlePick} from "./HandleStyle";
+import {handleCursor, paddedHandlePick} from "./HandleStyle";
 import {setDragHandleState} from "./HandleGeometry";
 
 export function editingControls() {
@@ -31,8 +31,9 @@ export function registerEditorInteraction(model, options) {
         finally { feedback(null); setRenderOne(true); }
     };
     const adapter = {
-        id: options.id ?? `editor:${model.id}`, model,
+        id: options.id ?? `editor:${model.id}`, model, profile: options.profile ?? "handles",
         relatedModels: options.relatedModels,
+        cursor: (e, hit, dragging) => handleCursor((hit.handle ?? activeHandle())?.userData?.handleRole, dragging),
         enabled: options.enabled ?? (() => model.editMode && model.visible !== false),
         valid: () => isViewDisplayed(view),
         hitTest: e => {

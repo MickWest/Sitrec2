@@ -1,3 +1,5 @@
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {mouseInViewOnly} from "../ViewUtils";
 // The compass UI displays the compass rose and the heading
 // base on an input camera node
 
@@ -119,22 +121,17 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         this.addGridText(1, 29, "00:03:59", grey, 'left');
         this.addGridText(30, 28, "ELRF", grey, 'center');
 
-        // Dynamic pointer-events approach:
-        // - Default: pointer-events: none (events pass through to 3D view)
-        // - When mouse is over a clickable text element: pointer-events: auto
-        // This allows all events (mousedown, mousemove, wheel) to naturally pass
-        // through to the 3D view when not over text, while still capturing clicks on text.
-
-        // Start with pointer-events disabled (parent's ignoreMouseEvents already did this)
         this.canvas.style.pointerEvents = 'none';
-
-        // Track mouse position to toggle pointer-events dynamically
-        this.boundHandleDocumentMouseMove = (e) => this.handleDocumentMouseMove(e);
-        document.addEventListener('mousemove', this.boundHandleDocumentMouseMove);
-
-        // Handle clicks when pointer-events is enabled (i.e., when over text)
-        this.boundHandleMouseDown = (e) => this.handleMouseDown(e);
-        this.canvas.addEventListener('mousedown', this.boundHandleMouseDown);
+        this.unregisterButtonInteraction = registerSurfaceInteraction(this.canvas, {
+            model: this, view: this, profile: "buttons", intent: {kind: "click", priority: 85},
+            contains: e => (e.target === this.div || e.target?.tagName === "CANVAS") && mouseInViewOnly(this, e.clientX, e.clientY),
+            hitTest: e => {
+                const r = this.canvas.getBoundingClientRect();
+                return this.getClickedTextElement(e.clientX - r.left, e.clientY - r.top) ? {} : null;
+            },
+            click: e => this.handleMouseDown(e),
+            cursor: "pointer",
+        });
 
         // Prevent double-click from propagating through to 3D view
         this.boundHandleDblClick = (e) => this.handleDblClick(e);
@@ -158,33 +155,6 @@ export class   CNodeMQ9UI extends CNodeViewUI {
             }
         }
         return null;
-    }
-
-    handleDocumentMouseMove(e) {
-        // Check if mouse is within our canvas bounds
-        const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        // Check if mouse is inside canvas bounds
-        if (x < 0 || x > rect.width || y < 0 || y > rect.height) {
-            // Mouse is outside canvas - disable pointer events
-            this.canvas.style.pointerEvents = 'none';
-            return;
-        }
-
-        // Check if mouse is over a clickable text element
-        const overText = this.getClickedTextElement(x, y);
-
-        if (overText) {
-            // Over a clickable text element - enable pointer events to capture clicks
-            this.canvas.style.pointerEvents = 'auto';
-            this.canvas.style.cursor = 'pointer';
-        } else {
-            // Not over text - disable pointer events so they pass through to 3D view
-            this.canvas.style.pointerEvents = 'none';
-            this.canvas.style.cursor = '';
-        }
     }
 
     handleMouseDown(e) {
@@ -705,12 +675,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
     dispose() {
         // Clean up event listeners
-        if (this.boundHandleDocumentMouseMove) {
-            document.removeEventListener('mousemove', this.boundHandleDocumentMouseMove);
-        }
-        if (this.canvas && this.boundHandleMouseDown) {
-            this.canvas.removeEventListener('mousedown', this.boundHandleMouseDown);
-        }
+        this.unregisterButtonInteraction?.();
         if (this.canvas && this.boundHandleDblClick) {
             this.canvas.removeEventListener('dblclick', this.boundHandleDblClick);
         }

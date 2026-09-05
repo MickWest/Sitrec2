@@ -1,4 +1,3 @@
-import {HANDLE_STYLE} from "../HandleStyle";
 /**
  * Pointer event + corner/lock-point solver methods for CNodeGroundOverlay.
  *
@@ -1005,7 +1004,7 @@ export const eventMethods = {
     updateHandleScales(view) {
         if (!this.editMode || !view || !view.pixelsToMeters) return;
         
-        const handlePixelSize = HANDLE_STYLE.pointRadius;
+        const handlePixelSize = 20;
         const worldPos = new Vector3();
         
         this.cornerHandles.forEach(handle => {

@@ -1,4 +1,4 @@
-import {HANDLE_STYLE} from "./HandleStyle";
+import {HANDLE_STYLE, drawHandleHalo} from "./HandleStyle";
 // The look of a camera-fit control point: a circle with a crosshair through it.
 //
 // Shared, because the same handle is drawn in three places — on the video, and on each 3D view —
@@ -16,7 +16,7 @@ export const POINT_COLORS = [
 export const HANDLE_RADIUS = HANDLE_STYLE.pointRadius;
 
 /** Click within this many canvas pixels of a handle to grab it. */
-export const GRAB_RADIUS = HANDLE_STYLE.mouseRadius;
+export const GRAB_RADIUS = 12;
 
 /**
  * Opacity of a handle whose keyframe is not the frame on screen.
@@ -41,13 +41,7 @@ export function drawFitHandle(ctx, cx, cy, color, label, alpha = 1, state = "idl
 
     // An outer ring indicates interaction without replacing a point's identity
     // color or its off-keyframe opacity.
-    if (state === "hover" || state === "dragging") {
-        ctx.beginPath();
-        ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = state === "hover" ? "#ffffff" : "#ffff00";
-        ctx.stroke();
-    }
+    drawHandleHalo(ctx, cx, cy, r, state);
 
     const path = () => {
         ctx.beginPath();

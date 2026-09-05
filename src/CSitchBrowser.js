@@ -375,6 +375,7 @@ export class CSitchBrowser {
         Globals.menuBar?.hideNonBarMenus();
 
         const overlay = document.createElement("div");
+        overlay.dataset.interactionNative = "true";
         this.overlay = overlay;
         // Position below the menu bar so it stays accessible
         const menuBarEl = document.getElementById("menuBarBlackBar");

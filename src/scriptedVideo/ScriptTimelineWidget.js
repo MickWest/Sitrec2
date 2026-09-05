@@ -1,3 +1,5 @@
+import {commandModifier, wheelPixels, wheelZoomFactor} from "../GestureActions";
+import {registerSurfaceInteraction} from "../SurfaceInteraction";
 // ScriptTimelineWidget.js — the Scripted Video timeline canvas widget.
 //
 // Draws the labelled event blocks / view cuts / playhead onto one or two canvases
@@ -212,14 +214,37 @@ export class CScriptTimelineWidget {
         return clamp(this.tlOffset + frac * span, 0, this.sv.totalDuration);
     }
 
-    // attach mousedown (scrub or scrollbar-pan) + wheel-to-scroll handlers
-    attach(c) {
+    // A canvas has one owner for scrub, event editing and scrollbar movement.
+    attach(c, view) {
+        c._timelineDispose?.();
         c.style.cursor = "ew-resize";
         c.title = "Drag to scrub (top strip or the playhead) • ⌘/Ctrl-wheel to zoom • wheel to pan";
-        c.addEventListener("mousedown", (ev) => this._onTimelineMouseDown(c, ev));
-        c.addEventListener("wheel", (ev) => this._onTimelineWheel(c, ev), { passive: false });
-        c.addEventListener("mousemove", (ev) => this._updateTimelineHover(c, ev.clientX, ev.clientY));
-        c.addEventListener("mouseleave", () => this._onTimelineLeave(c));
+        const leave = () => this._onTimelineLeave(c);
+        c.addEventListener("pointerleave", leave);
+        const unregister = registerSurfaceInteraction(c, {
+            profile: "timeline",
+            model: this, view, id: `timeline:${c === this.bottomCanvas ? "bottom" : "editor"}`,
+            begin: e => {
+                this._gestureMove = this._gestureEnd = null;
+                this._navigationBefore = {time: this.sv._currentT, offset: this.tlOffset};
+                this._onTimelineMouseDown(c, e);
+            },
+            move: e => this._gestureMove?.(e),
+            end: (e, reason) => {
+                this._gestureEnd?.(e);
+                this._gestureMove = this._gestureEnd = null;
+                if (reason === "rollback") {
+                    this.tlOffset = this._navigationBefore.offset;
+                    this.sv._scrubTo(this._navigationBefore.time);
+                }
+            },
+            hover: e => { if (e) this._updateTimelineHover(c, e.clientX, e.clientY); else leave(); },
+            wheel: e => this._onTimelineWheel(c, e),
+            snapshot: () => this.sv.editor.captureEdit(),
+            restore: state => { this.sv.editor.restoreEdit(state).then(() => this.draw()); },
+            undo: "Edit timeline event",
+        });
+        c._timelineDispose = () => { unregister(); c.removeEventListener("pointerleave", leave); };
     }
 
     // Hovering a timeline segment highlights it + its duration number in the editor,
@@ -295,11 +320,11 @@ export class CScriptTimelineWidget {
         ev.preventDefault();
         this._editDragging = true;
         c.style.cursor = "ew-resize";
-        const doc = c.ownerDocument || document;
         const row = seg.line - 1;
         let span = {...seg.spans.dur};
+        const startTime = this._timeAtX(c, ev.clientX), startDuration = seg.dur;
         const apply = (e) => {
-            const dur = Math.max(0.1, this._timeAtX(c, e.clientX) - seg.start);
+            const dur = Math.max(0.1, startDuration + this._timeAtX(c, e.clientX) - startTime);
             const nextSpan = this.sv.editor.setNumberToken(row, span, dur, 0.1);
             if (nextSpan) span = nextSpan;
             this.draw();
@@ -308,19 +333,15 @@ export class CScriptTimelineWidget {
         apply(ev);
         const up = (e) => {
             this._editDragging = false;
-            doc.removeEventListener("mousemove", apply, true);
-            doc.removeEventListener("mouseup", up, true);
             if (e) this._updateTimelineHover(c, e.clientX, e.clientY);
         };
-        doc.addEventListener("mousemove", apply, true);
-        doc.addEventListener("mouseup", up, true);
+        this._gestureMove = apply; this._gestureEnd = up;
     }
 
     _beginOffsetDrag(c, ev, seg) {
         ev.preventDefault();
         this._editDragging = true;
         c.style.cursor = "grabbing";
-        const doc = c.ownerDocument || document;
         const row = seg.line - 1;
         let span = seg.offSpan ? {...seg.offSpan} : this.sv.editor.ensureOffsetToken(row);
         if (!span) { this._editDragging = false; return; }
@@ -338,17 +359,12 @@ export class CScriptTimelineWidget {
         apply(ev);
         const up = (e) => {
             this._editDragging = false;
-            doc.removeEventListener("mousemove", apply, true);
-            doc.removeEventListener("mouseup", up, true);
             if (e) this._updateTimelineHover(c, e.clientX, e.clientY);
         };
-        doc.addEventListener("mousemove", apply, true);
-        doc.addEventListener("mouseup", up, true);
+        this._gestureMove = apply; this._gestureEnd = up;
     }
 
-    // NOTE: listeners are added in the CAPTURE phase because the in-page panel calls
-    // blockViewEvents() which stopPropagation()s mouseup in the bubble phase — without
-    // capture the mouseup never reaches the document and the drag never ends.
+    // The surface adapter routes scrub movement through its document session.
     _beginTimelineDrag(c, ev) {
         ev.preventDefault();
         const sv = this.sv;
@@ -358,27 +374,22 @@ export class CScriptTimelineWidget {
         this._dragCanvas = c;
         const scrubAt = (e) => {
             const cc = this._dragCanvas; if (!cc) return;
-            sv._scrubTo(this._snapTime(cc, this._timeAtX(cc, e.clientX), e.metaKey || e.ctrlKey));
+            sv._scrubTo(this._snapTime(cc, this._timeAtX(cc, e.clientX), commandModifier(e)));
         };
         scrubAt(ev);
-        const doc = c.ownerDocument || document;   // may live in a popped-out window
         const move = (e) => scrubAt(e);
         const up = (e) => {
             this._tlDragging = false; this._dragCanvas = null;
-            doc.removeEventListener("mousemove", move, true);
-            doc.removeEventListener("mouseup", up, true);
             // re-evaluate hover at the release point (clears a stale highlight if the
             // drag ended off a bar / off the canvas)
             if (e) this._updateTimelineHover(c, e.clientX, e.clientY);
         };
-        doc.addEventListener("mousemove", move, true);
-        doc.addEventListener("mouseup", up, true);
+        this._gestureMove = move; this._gestureEnd = up;
     }
 
     _beginScrollDrag(c, ev) {
         ev.preventDefault();
         if (this.sv.totalDuration <= 0) return;
-        const doc = c.ownerDocument || document;
         const pan = (e) => {
             const r = c.getBoundingClientRect();
             const fx = clamp((e.clientX - r.left) / r.width, 0, 1);
@@ -388,17 +399,14 @@ export class CScriptTimelineWidget {
         };
         pan(ev);
         const up = () => {
-            doc.removeEventListener("mousemove", pan, true);
-            doc.removeEventListener("mouseup", up, true);
         };
-        doc.addEventListener("mousemove", pan, true);
-        doc.addEventListener("mouseup", up, true);
+        this._gestureMove = pan; this._gestureEnd = up;
     }
 
     // Cmd/Ctrl + '=' / '-' zoom the timeline (and suppress the browser's own zoom).
     attachKeyZoom(win) {
         const handler = (e) => {
-            if (!(e.metaKey || e.ctrlKey)) return;
+            if (!(commandModifier(e))) return;
             const sv = this.sv;
             const editorOpen = sv.editor.isOpen() || sv._previewing;
             if (!editorOpen) return;
@@ -419,18 +427,18 @@ export class CScriptTimelineWidget {
         if (sv.totalDuration <= 0) return;
         // Cmd/Ctrl + wheel → zoom centered on the cursor's time (matches the
         // Cmd/Ctrl +/-/0 keys). Takes priority over duration-edit/pan.
-        if (ev.metaKey || ev.ctrlKey) {
+        if (commandModifier(ev)) {
             ev.preventDefault();
-            // scroll up = zoom in. macOS natural scrolling reports up as deltaY > 0.
-            const factor = (ev.deltaY > 0 ? 1.5 : 1 / 1.5);
+            const factor = wheelZoomFactor(ev, "timeline");
+            if (factor === 1) return;
             this._zoomTimelineAt(factor, this._timeAtX(c, ev.clientX));
             return;
         }
         // over a segment → the wheel edits that segment's duration (like the editor)
         const seg = this._segAtTimeline(c, ev.clientX, ev.clientY);
-        if (seg && seg.spans && seg.spans.dur) {
+        if (seg && seg.spans && seg.spans.dur && wheelPixels(ev) !== 0) {
             ev.preventDefault();
-            sv.editor.adjustNumberToken(seg.line - 1, seg.spans.dur, ev.deltaY, ev.shiftKey, 0.1);
+            sv.editor.adjustNumberTokenWheel(seg.line - 1, seg.spans.dur, ev, 0.1);
             // events are rebuilt by the (async) doParse(); re-resolve the hovered
             // segment + number once the new model has committed
             (sv.editor._parsePromise || Promise.resolve()).then(() => {
@@ -446,7 +454,7 @@ export class CScriptTimelineWidget {
         // otherwise pan the visible window
         ev.preventDefault();
         const span = sv.totalDuration / this.tlZoom;
-        const d = (Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY);
+        const d = wheelPixels(ev, {dominant: true});
         this.tlOffset = clamp(this.tlOffset + d * span / (c.clientWidth || 300),
             0, Math.max(0, sv.totalDuration - span));
         this.draw();
@@ -498,6 +506,7 @@ export class CScriptTimelineWidget {
     }
 
     hideBottomStrip() {
+        this.bottomCanvas?._timelineDispose?.();
         if (this.bottomCanvas && this.bottomCanvas.parentNode) {
             this.bottomCanvas.parentNode.removeChild(this.bottomCanvas);
         }
