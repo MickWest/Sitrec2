@@ -37,6 +37,8 @@ export class CNodeLOSMotionTrack extends CNodeLOS {
         // from this we will later create heading vectors
         this.xValues = ExpandKeyframes(this.csv, this.frames, v.frameCol, v.xCol)
         this.yValues = ExpandKeyframes(this.csv, this.frames, v.frameCol, v.yCol)
+        this.smoothingKind = "motion";
+        this.smooth = v.window ?? 0;
         if (v.window > 1) {
             this.xValues = RollingAverage(this.xValues, v.window)
             this.yValues = RollingAverage(this.yValues, v.window)
@@ -94,4 +96,3 @@ export class CNodeLOSMotionTrack extends CNodeLOS {
     }
 
 }
-

@@ -117,6 +117,8 @@ import {
 } from "./GimbalCustomSetup";
 import {Color, Vector3} from "three";
 
+import {connectTraverseOutput} from "./TraverseOutput";
+
 export const setupMethods = {
     async setup() {
 
@@ -135,6 +137,7 @@ export const setupMethods = {
 
         // Backfill newer camera smoothing controls for legacy custom sitches.
         this.upgradeCameraSmoothingControls();
+        connectTraverseOutput(NodeMan);
 
         // Add the runtime "Camera Heading" options to the CameraLOSController switch.
         // The switch's static def (SitCustom.js) only carries the two always-built

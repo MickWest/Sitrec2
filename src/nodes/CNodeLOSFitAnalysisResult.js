@@ -15,6 +15,7 @@ import {showError} from "../showError";
 export class CNodeLOSFitAnalysisResult extends CNodeTrack {
     constructor(v) {
         super(v);
+        this.isAnalysisSnapshot = true;
         this.requireInputs(["LOS"]);
         this.frames = this.in.LOS.frames;
         this.array = [];

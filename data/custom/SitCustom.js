@@ -711,7 +711,8 @@ sitch = {
     //     gui: "color"
     // },
 
-    // display the traverse track (Track)
+    // Setup connects this to the final traverseSmoothedTrack once it exists,
+    // including when restoring an older saved graph.
     traverseDisplayTrack: {
         kind: "DisplayTrack",
         track: "LOSTraverseSelectTrack",
@@ -732,6 +733,7 @@ sitch = {
             end: 1000,
             step: 1,
             desc: "Traverse Smooth Window",
+            tooltip: "Filter the traverse positions used by its line, object, measurements, and export. 0 disables filtering. Exact analysis snapshots always bypass this filter.",
             gui: "traverse"
         },
     },

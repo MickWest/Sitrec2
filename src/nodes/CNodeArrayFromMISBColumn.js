@@ -23,7 +23,10 @@ export class CNodeArrayFromMISBColumn extends CNodeEmptyArray {
             columnIndex = MISB[columnIndex];
         }
         this.columnIndex = columnIndex;
-        this.smooth = v.smooth;
+        this.smoothingKind = "column";
+        this.smooth = typeof v.smooth === "number" ? v.smooth : 0;
+        // A shared GUI node lets all six attitude columns change together.
+        if (v.smooth !== undefined && typeof v.smooth !== "number") this.input("smooth");
         this.degrees = v.degrees;
         this.recalculate();
     }
@@ -51,11 +54,12 @@ export class CNodeArrayFromMISBColumn extends CNodeEmptyArray {
         // the long way round — 359 degrees of sweep in place of a fraction of one.
         this.array = ExpandMISBKeyframes(inputArray, this.columnIndex, this.degrees);
 
-        if (this.smooth !== 0) {
+        const smooth = this.in.smooth ? this.in.smooth.v0 : this.smooth;
+        if (smooth > 0) {
             if (this.degrees)
-                this.array = RollingAverageDegrees(this.array, this.smooth);
+                this.array = RollingAverageDegrees(this.array, smooth);
             else
-                this.array = RollingAverage(this.array, this.smooth);
+                this.array = RollingAverage(this.array, smooth);
         }
     }
 }

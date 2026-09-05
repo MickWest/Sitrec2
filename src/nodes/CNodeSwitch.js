@@ -201,7 +201,7 @@ class CNodeSwitch extends CNode {
     }
 
     exportTrackCSV(inspect = false) {
-        const choiceNode = this.inputs[this.choice];
+        const choiceNode = this.exportTrackSource ?? this.inputs[this.choice];
         if (choiceNode.exportTrackCSV !== undefined) {
             return choiceNode.exportTrackCSV(inspect)
         } else {
@@ -212,7 +212,7 @@ class CNodeSwitch extends CNode {
     }
 
     exportTrackKML(inspect = false) {
-        const choiceNode = this.inputs[this.choice];
+        const choiceNode = this.exportTrackSource ?? this.inputs[this.choice];
         if (choiceNode.exportTrackKML !== undefined) {
             return choiceNode.exportTrackKML(inspect)
         } else {

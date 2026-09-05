@@ -345,6 +345,23 @@ report is built on demand. **Use exact result** installs the analyzed
 trajectory as a frozen Analysis Snapshot; it does not silently rewrite the
 speed/range assumptions used by the next run.
 
+Expand **Filtering and interpolation** at the top of the gallery to see every
+filter on the selected input paths, the filters used by the candidate fits and
+metrics, and the live traverse output filter. The same summary appears in the
+full report. It records the settings when Analyze ran, with effective durations
+in seconds, including simulation speed, repeated passes and shorter end windows.
+Spline and Kalman stages show their control spacing or full fitting interval
+where there is no fixed averaging window.
+
+Imported tracks with recorded sensor angles have an **Angle Smooth Window
+(frames)** control in their Contents folder. This filters the platform and sensor
+angles before constructing sightlines, independently of position smoothing;
+set it to zero to disable it. Existing source defaults are retained. Position
+smoothing methods and angle windows are saved with the sitch. A zero position
+window does not disable spline interpolation; choose **none** for that stage.
+Exact analysis snapshots bypass the live traverse position filter, and the
+displayed line, object, distance graph and traverse exports use the same output.
+
 The analyzed window can be narrower than the A-B range. A track holds its last
 sample past the end of its data, and a frozen sensor on a frozen ray is not an
 observation, so held frames at either end of the window are dropped and the
