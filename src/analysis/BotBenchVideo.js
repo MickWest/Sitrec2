@@ -42,6 +42,7 @@ export async function prepare(plan) {
     wobbleParams.correctionSpeed = plan.recenterSpeed ?? wobbleParams.correctionSpeed * (plan.recenterSpeedScale ?? 1);
     const wobble = generateWobbleOffsets(wobbleParams, plan.frames, plan.fps);
     const cameraNode = NodeMan.get("lookCamera"), view = NodeMan.get("lookView"), hud = NodeMan.get("MQ9UI");
+    if (!await hud.fontReady) throw new Error("MQ9 HUD font must load before recording");
     cameraNode.freeLook = true;
     const camera = cameraNode.camera;
     NodeMan.get("fovSwitch").selectOption("userFOV");

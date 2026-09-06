@@ -1486,8 +1486,8 @@ export class CGuiMenuBar {
     // creates a gui, adds it into the next menu slot
     // and returns it.
     // called addFolder to maintain compatibility with a single gui system under dat.gui
-    addFolder(title) {
-        const newGUI = new GUI({ container: this.divs[this.nextSlot], autoPlace: false });
+    addFolder(title, options = {}) {
+        const newGUI = new GUI({ ...options, container: this.divs[this.nextSlot], autoPlace: false });
         //newGUI.title(title);
         newGUI.$title.innerHTML = title;
 

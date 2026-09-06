@@ -26,6 +26,7 @@ import {airframeHeadingFromVelocity} from "../AirframeHeading";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getHUDColor} from "../HUDColor";
 import {formatDMS} from "../CoordinateFormat";
+import {WESCAM_FONT, drawHUDText} from "../HUDFonts";
 
 // "33:53:05N" — degrees:minutes:seconds to the whole second, truncated rather
 // than rounded as the real display does.
@@ -324,8 +325,8 @@ export class CNodeWescamMXUI extends CNodeViewUI {
         const dimHUDColor = getHUDColor(0.55);
         const charWidth = boxW / this.gridCols;
         const charHeight = boxH / this.gridRows;
-        // 1.6 * charWidth is the largest font whose monospace advance still fits
-        // a cell, so compressed columns shrink the text instead of overlapping.
+        // The grid anchors text blocks; the proportional face supplies spacing
+        // within them. Limit the size on narrow views to keep blocks apart.
         const fontSize = Math.floor(Math.min(charHeight * 0.9, charWidth * 1.6));
         // Row pitch follows the font, so a shrunk font gives tight blocks rather
         // than sparse ones. At 16:9 this is exactly charHeight.
@@ -340,7 +341,7 @@ export class CNodeWescamMXUI extends CNodeViewUI {
             ? boxY + topMargin + (row - 1) * rowStep
             : boxY + boxH - (this.gridRows - row + 1) * rowStep;
 
-        c.font = `${fontSize}px monospace`;
+        c.font = `${fontSize}px ${WESCAM_FONT}`;
         c.textBaseline = 'top';
         for (const t of this.gridTexts) {
             c.fillStyle = t.color === '#888888' ? dimHUDColor : hudColor;
@@ -353,7 +354,7 @@ export class CNodeWescamMXUI extends CNodeViewUI {
             } else {
                 x = boxX + (t.col - 1) * charWidth;
             }
-            c.fillText(t.text, x, rowY(t.row));
+            drawHUDText(c, t.text, x, rowY(t.row), fontSize);
         }
 
         c.strokeStyle = hudColor;
@@ -380,7 +381,7 @@ export class CNodeWescamMXUI extends CNodeViewUI {
         const pointerTop = tickBottom - fontSize * 0.62;
         const pointerBottom = labelTop + fontSize * 1.5;
 
-        c.font = `${fontSize}px monospace`;
+        c.font = `${fontSize}px ${WESCAM_FONT}`;
         c.textAlign = 'center';
         c.textBaseline = 'top';
 
@@ -395,7 +396,7 @@ export class CNodeWescamMXUI extends CNodeViewUI {
                 c.lineTo(x, tickTop);
                 c.stroke();
                 const label = ((deg % 360) + 360) % 360;
-                c.fillText(pad2(label / 10), x, labelTop);
+                drawHUDText(c, pad2(label / 10), x, labelTop, fontSize);
             } else {
                 // minor tick, a dot level with the top of the major ticks
                 c.fillRect(x - charWidth * 0.06, tickTop, charWidth * 0.12, fontSize * 0.09);
@@ -421,7 +422,7 @@ export class CNodeWescamMXUI extends CNodeViewUI {
         const tickLeft = boxX + charWidth * 4.6;
         const tickRight = boxX + charWidth * 5.05;
 
-        c.font = `${fontSize}px monospace`;
+        c.font = `${fontSize}px ${WESCAM_FONT}`;
         c.textAlign = 'right';
         c.textBaseline = 'middle';
 
@@ -434,7 +435,7 @@ export class CNodeWescamMXUI extends CNodeViewUI {
                 c.moveTo(tickLeft, y);
                 c.lineTo(tickRight, y);
                 c.stroke();
-                c.fillText(`${deg < 0 ? '-' : ''}${pad2(deg / 10)}`, labelRight, y);
+                drawHUDText(c, `${deg < 0 ? '-' : ''}${pad2(deg / 10)}`, labelRight, y, fontSize);
             } else {
                 c.fillRect(tickLeft + charWidth * 0.1, y - fontSize * 0.045,
                            charWidth * 0.14, fontSize * 0.09);
@@ -488,10 +489,10 @@ export class CNodeWescamMXUI extends CNodeViewUI {
         c.closePath();
         c.fill();
 
-        c.font = `${fontSize}px monospace`;
+        c.font = `${fontSize}px ${WESCAM_FONT}`;
         c.textAlign = 'center';
         c.textBaseline = 'middle';
-        c.fillText('N', ax, ay);
+        drawHUDText(c, 'N', ax, ay, fontSize);
     }
 
     // Centre reticle: four arms with a gap in the middle, each capped by a

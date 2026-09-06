@@ -16,6 +16,7 @@ import {NodeMan} from "../Globals";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getHUDColor} from "../HUDColor";
 import {formatDM, formatDMS} from "../CoordinateFormat";
+import {MQ9_FONT, ensureMQ9FontLoaded, drawHUDText} from "../HUDFonts";
 
 // Position readouts. Latitude degrees are zero-padded to two digits so the
 // column lines up; longitude degrees are not. DM shows minutes to 3 places
@@ -30,6 +31,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
     constructor(v) {
         super(v);
+        this.fontReady = ensureMQ9FontLoaded();
         this.input("camera");  // a camera node, this is the camera track
 
         // optional camera track for reticle display
@@ -451,8 +453,10 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         const charHeight = gridH / this.gridRows;
         gridX += charWidth;
         gridW -= charWidth * 2;
-        const fontSize = Math.floor(charHeight * 0.9);
-        c.font = `${fontSize}px monospace`;
+        // The reference OSD leaves space around its glyphs within each grid cell.
+        // Use 12px type at 640x480; fractional sizes preserve image zoom scaling.
+        const fontSize = charHeight * 0.75;
+        c.font = `${fontSize}px ${MQ9_FONT}`;
         c.textBaseline = 'top';
         for (const t of this.gridTexts) {
             c.fillStyle = t.color === '#888888' ? dimHUDColor : hudColor;
@@ -466,7 +470,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
                 x = gridX + (t.col - 1) * charWidth;
             }
             const y = gridY + (t.row - 1) * charHeight;
-            c.fillText(t.text, x, y);
+            drawHUDText(c, t.text, x, y, fontSize);
 
             // Store bounding box for click detection on clickable elements
             if (t.clickGroup) {
@@ -486,14 +490,15 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
         // draw the letter N in the center
         c.fillStyle = hudColor;
-        c.font = this.sx(1.5)+'px Arial';
+        const northFontSize = fontSize * 0.7;
+        c.font = `${northFontSize}px ${MQ9_FONT}`;
         c.textAlign = 'center';
         c.textBaseline = 'middle';
 
         const x = this.rx_square(this.cx,this.cy+27,heading+Math.PI);
         const y = this.ry(this.cx,this.cy+27,heading+Math.PI);
 
-        c.fillText('N', x, y);
+        drawHUDText(c, 'N', x, y, northFontSize);
 
 
         const crosshairWidth = 1
@@ -585,13 +590,13 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
         // Draw heading box with airframe heading value (T outside box)
         c.strokeRect(gratCenterX - boxWidth / 2, gratY, boxWidth, boxHeight);
-        c.font = `${fontSize}px monospace`;
+        c.font = `${fontSize}px ${MQ9_FONT}`;
         c.textAlign = 'center';
         c.textBaseline = 'middle';
-        c.fillText(`${Math.round(airframeHeadingDeg)}`, gratCenterX, gratY + boxHeight / 2);
+        drawHUDText(c, `${Math.round(airframeHeadingDeg)}`, gratCenterX, gratY + boxHeight / 2, fontSize);
         // T outside the box to the right
         c.textAlign = 'left';
-        c.fillText('T', gratCenterX + boxWidth / 2 + 2, gratY + boxHeight / 2);
+        drawHUDText(c, 'T', gratCenterX + boxWidth / 2 + 2, gratY + boxHeight / 2, fontSize);
 
         // Draw solid triangle below the box pointing down
         c.beginPath();
@@ -612,9 +617,9 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         c.stroke();
 
         // Draw relative azimuth number below the caret
-        c.font = `${fontSize}px monospace`;
+        c.font = `${fontSize}px ${MQ9_FONT}`;
         c.textAlign = 'center';
-        c.fillText(`${Math.round(relativeAzimuth)}`, caretX, caretY + caretSize + charHeight * 0.6);
+        drawHUDText(c, `${Math.round(relativeAzimuth)}`, caretX, caretY + caretSize + charHeight * 0.6, fontSize);
 
         // Elevation scale on the left side
         // Get camera elevation angle
@@ -646,7 +651,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         const majorElevTicks = [60, 0, -60, -120];
         const minorElevTicks = [30, -30, -90];
 
-        c.font = `${fontSize}px monospace`;
+        c.font = `${fontSize}px ${MQ9_FONT}`;
         c.fillStyle = hudColor;
         c.textAlign = 'right';
         c.textBaseline = 'middle';
@@ -657,7 +662,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
             c.moveTo(elevScaleX, y);
             c.lineTo(elevScaleX - elevTickLength, y);
             c.stroke();
-            c.fillText(`${deg}`, elevScaleX - elevTickLength - charWidth * 0.3, y);
+            drawHUDText(c, `${deg}`, elevScaleX - elevTickLength - charWidth * 0.3, y, fontSize);
         }
 
         for (const deg of minorElevTicks) {
@@ -682,7 +687,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
         // Draw elevation value to the right of arrow
         c.textAlign = 'left';
-        c.fillText(`${Math.round(elevation)}`, elevScaleX + arrowSize + charWidth * 0.3, elevIndicatorY);
+        drawHUDText(c, `${Math.round(elevation)}`, elevScaleX + arrowSize + charWidth * 0.3, elevIndicatorY, fontSize);
 
     }
 

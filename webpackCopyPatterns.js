@@ -25,7 +25,7 @@ const BUILD_V = Date.now();
 // Data directory handling
 if (isServerlessBuild) {
     // For serverless: only copy essential data directories
-    const serverlessDataDirs = ['custom', 'images', 'models', 'modelInspector', 'nightsky', 'egm96'];
+    const serverlessDataDirs = ['custom', 'images', 'models', 'modelInspector', 'nightsky', 'egm96', 'fonts'];
     serverlessDataDirs.forEach(dir => {
         patterns.push({ from: `data/${dir}`, to: `./data/${dir}`, globOptions: { ignore: globalIgnore } });
     });

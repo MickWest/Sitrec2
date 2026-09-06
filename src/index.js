@@ -2006,14 +2006,14 @@ async function initializeOnce() {
         .tooltip(t("menus.showHide.views.tooltip"));
     const _guiShowHideGraphs = addTranslatedGUIFolder("showhidegraphs", "menus.showHide.graphs.title", "showhide")
         .tooltip(t("menus.showHide.graphs.tooltip"));
-    const _guiTweaks = addTranslatedGUIMenu("effects", "menus.effects.title")
+    const _guiTweaks = addTranslatedGUIMenu("effects", "menus.effects.title", {closeFolders: true})
         .tooltip(t("menus.effects.tooltip"));
     // Permanent sub-folder that groups the sensor-look simulations: the
     // FLIRShader/Thermal/NightVision enable flags plus their parameter
     // sliders (routed in per sitch via gui: "thermalNV" / enabledGUI).
     // Hidden when a sitch leaves it empty — see showFolderIfPopulated.
     addGUIFolder("thermalNV", "Thermal/NV", "effects");
-    addTranslatedGUIMenu("lighting", "menus.lighting.title")
+    addTranslatedGUIMenu("lighting", "menus.lighting.title", {closeFolders: true})
         .tooltip(t("menus.lighting.tooltip"));
     addTranslatedGUIMenu("contents", "menus.contents.title")
         .tooltip(t("menus.contents.tooltip"));
