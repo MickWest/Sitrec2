@@ -11,8 +11,27 @@ import {drawAttributionOnCanvas} from "./AttributionOverlay";
 import {isLocal} from "./configUtils";
 import {t} from "./i18n";
 import {Color} from "three";
+import {MotionBackgroundTracker} from "./MotionBackgroundTracker";
 
 let cv = null;
+
+// Settings the user can change from the menu BEFORE Point Track is enabled —
+// that is, before the tracker object exists at all. Without somewhere to hold
+// them the menu silently reverts: the setter has no tracker to write to and
+// drops the value, then .listen() repaints the old one, with no error anywhere.
+// These are applied to the tracker the moment it is created.
+const pendingTrackingSettings = {
+    trackingMethod: 'template',
+    motionPolarity: 'both',
+    motionGap: 3,
+    motionSamples: 8,
+    motionSlack: 0,
+    motionThreshold: 6,
+};
+
+function applyPendingTrackingSettings(tracker) {
+    for (const [key, value] of Object.entries(pendingTrackingSettings)) tracker[key] = value;
+}
 
 // Auto Tracking - Automatic object tracking using OpenCV template matching or centroid tracking
 // This is distinct from Manual Tracking (CNodeTrackingOverlay) which requires manual keyframe placement
@@ -120,8 +139,46 @@ class ObjectTracker {
         //   'centerOnColor'   — color-similarity-weighted centroid within colorDistance
         //   'highPeak'        — local-maximum peak (blob-shaped, motion-extrapolated)
         //   'lowPeak'         — local-minimum peak (dark blob)
+        //   'motion'          — background-motion subtraction (see below)
         //   'sam2'            — server-side SAM2 segmentation
         this.trackingMethod = 'template';
+
+        // Motion tracking: the only method that does not key on appearance. It
+        // asks what is inconsistent with the BACKGROUND's own motion, so it can
+        // follow a target across clutter of identical brightness and texture,
+        // where template matching and the centroid methods have nothing to lock
+        // onto. See MotionBackgroundTracker.js.
+        this.motionTracker = null;
+        // Frames between the background samples. Larger separates the target
+        // from where it used to be; too large and the planar-background
+        // assumption starts to break down.
+        this.motionGap = 3;
+        // How many earlier frames the background median is built from.
+        this.motionSamples = 8;
+        // Px of background displacement to forgive. 0 for a flat, nadir scene;
+        // 2-3 for rugged terrain viewed obliquely, where real parallax means no
+        // single homography can cancel the background exactly.
+        this.motionSlack = 0;
+        // Detection threshold, in units of the response's own robust noise.
+        this.motionThreshold = 6;
+        // Which way the target differs from its background.
+        this.motionPolarity = 'both';
+        // Consecutive frames with no trusted detection, and how many of those to
+        // ride out before giving up and holding still.
+        this.motionMisses = 0;
+        this.motionMaxCoast = 15;
+        // While lost, attempt a wide re-acquisition this often (frames).
+        this.motionReacquireEvery = 5;
+        this.motionLastFrame = null;
+        // Frames where the object was actually measured, in decoded-image
+        // coordinates. The gate is aimed from these and from nothing else.
+        this.motionAnchors = [];
+        // Rolling record of why each frame was accepted or rejected. Diagnosing
+        // a lost lock from the resulting track alone is guesswork — the track
+        // cannot tell you whether the detector saw nothing or the gate was
+        // pointed somewhere else, and those need opposite fixes. Local builds
+        // only, alongside the window._objectTracker hook.
+        this.motionDebug = isLocal ? [] : null;
 
         // Maximum number of keyframes to display (0 = none, 100 = all)
         this.showMaxKeyframes = 20;
@@ -540,6 +597,13 @@ class ObjectTracker {
         this.initialKeypoints = null;
         this.initialKeypointCoords = null;
         this.initialCenter = null;
+
+        // Cached homographies describe one forward walk through one clip; a
+        // fresh run must not compose them into a different one.
+        if (this.motionTracker) this.motionTracker.reset();
+        this.motionMisses = 0;
+        this.motionLastFrame = null;
+        this.motionAnchors = [];
     }
     
     isWithinTrackPoint(vX, vY) {
@@ -736,6 +800,9 @@ class ObjectTracker {
                     break;
                 case 'lowPeak':
                     this.trackPeak(frame, img, pp, false);
+                    break;
+                case 'motion':
+                    this.trackMotion(frame, img, pp, videoData);
                     break;
                 case 'opticalflow':
                     this.trackOpticalFlow(frame, img, pp, videoData);
@@ -1010,6 +1077,185 @@ class ObjectTracker {
 
     trackColorCentroid(frame, currImage, prevPos) {
         this._trackCentroid(frame, currImage, prevPos, (r, g, b) => this._colorWeight(r, g, b));
+    }
+
+    // Background-motion tracking. Unlike every other method here, this one does
+    // not ask what the target looks like — it asks which pixels disagree with
+    // the motion of the background around them. That is what lets it follow a
+    // target across clutter it is indistinguishable from.
+    //
+    // The heavy lifting is in MotionBackgroundTracker; this wrapper supplies the
+    // prediction, decides whether a detection is trustworthy, and coasts on the
+    // last known velocity when it is not.
+    trackMotion(frame, currImage, prevPos, videoData) {
+        if (!cv) return;
+        if (!this.motionTracker) this.motionTracker = new MotionBackgroundTracker(cv);
+
+        // A jump backwards, or a gap, means the caller is no longer walking
+        // forward through the clip, so the cached homography chain no longer
+        // describes the frames being asked about.
+        if (this.motionLastFrame === null || frame <= this.motionLastFrame ||
+            frame - this.motionLastFrame > 4 * this.motionGap) {
+            this.motionTracker.reset();
+            this.motionMisses = 0;
+            this.motionAnchors = [];
+        }
+        this.motionLastFrame = frame;
+
+        const width = currImage.width || currImage.videoWidth;
+        const height = currImage.height || currImage.videoHeight;
+
+        // The gate is aimed from ANCHORS — frames where the object was actually
+        // measured — never from positions this method wrote itself. That
+        // distinction is the whole stability story: a prediction derived from
+        // its own previous output feeds back on itself, so one bad frame shifts
+        // the gate, which makes the next frame worse, and the track walks off the
+        // screen. Anchored, a run of misses cannot compound, because the anchor
+        // it is measured from does not move.
+        const anchors = this.motionAnchors;
+        const last = anchors.length ? anchors[anchors.length - 1] : null;
+        let speed = 0;
+        if (anchors.length >= 2) {
+            const before = anchors[anchors.length - 2];
+            const span = last.frame - before.frame;
+            if (span > 0) speed = Math.hypot(last.x - before.x, last.y - before.y) / span;
+        }
+        const searching = this.motionMisses > this.motionMaxCoast;
+
+        let predicted = prevPos;
+        if (last && !searching) {
+            // A brief dropout: the object is very likely still going the way it
+            // was, so follow it.
+            let vx = 0, vy = 0;
+            if (anchors.length >= 2) {
+                const before = anchors[anchors.length - 2];
+                const span = last.frame - before.frame;
+                if (span > 0) {
+                    vx = (last.x - before.x) / span;
+                    vy = (last.y - before.y) / span;
+                }
+            }
+            const ahead = frame - last.frame;
+            predicted = {x: last.x + vx * ahead, y: last.y + vy * ahead};
+        } else if (last) {
+            // Genuinely lost. Do NOT keep extrapolating: the velocity measured
+            // just before a loss says nothing about where the object is now, and
+            // it routinely points the search the wrong way — measured on this
+            // clip, the object was last seen moving left, immediately went right,
+            // and the extrapolated gate chased it into empty desert for 185
+            // frames while the object sat at 14 sigma just outside the search.
+            // Search around where it was last SEEN instead.
+            predicted = {x: last.x, y: last.y};
+        }
+        // Keep the gate centre on the frame. measure() slides its own window back
+        // inside the image when the centre is near an edge, so this only has to
+        // stop the prediction running off entirely — it must NOT try to reserve
+        // measure's full window, or a target that approaches an edge would be
+        // pushed out of its own gate.
+        const edge = Math.max(2, this.trackRadius);
+        const seedX = Math.min(width - edge, Math.max(edge, predicted.x));
+        const seedY = Math.min(height - edge, Math.max(edge, predicted.y));
+
+        // While the object is lost the search has to cover everywhere it could
+        // have got to, which is (time since it was last seen) x (how fast it was
+        // going) — not some fixed multiple of the frame-to-frame gate. Sizing it
+        // by uncertainty rather than by a constant is the difference between
+        // re-acquiring and never seeing it again.
+        const maxGate = Math.min(width, height) / 5;
+        const elapsed = last ? frame - last.frame : 0;
+        const gate = searching
+            ? Math.min(maxGate, this.searchRadius + Math.max(2, speed) * elapsed)
+            : this.searchRadius;
+        // A wider search gives noise more chances to clear the threshold, so
+        // what comes back has to be convincing rather than merely present.
+        const bar = searching ? this.motionThreshold * 1.5 : this.motionThreshold;
+
+        // Re-acquiring over a wide area costs far more than a normal step, so do
+        // it periodically rather than every frame — a couple of times a second is
+        // ample for an object that has already been missing for a while, and the
+        // frames in between get filled in by interpolation once it is found.
+        if (searching && (elapsed % this.motionReacquireEvery) !== 0) {
+            this.trackX = seedX;
+            this.trackY = seedY;
+            this.motionMisses++;
+            this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
+            return;
+        }
+
+        const hit = this.motionTracker.measure(videoData, frame, seedX, seedY, {
+            gap: this.motionGap,
+            samples: this.motionSamples,
+            gate,
+            targetRadius: this.trackRadius,
+            slack: this.motionSlack,
+            polarity: this.motionPolarity,
+            firstFrame: Sit.aFrame ?? 0,
+            lastFrame: Sit.bFrame ?? (Sit.frames - 1),
+        });
+
+        if (hit && hit.waiting) {
+            // The background window has not been decoded yet — tracking starts at
+            // the seed frame, so there is no history behind it. Hold exactly
+            // still: coasting here would walk the gate away from a target that
+            // has not actually been looked for.
+            this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
+            return;
+        }
+
+        // Accept only a detection that is strong in absolute terms AND clearly
+        // stronger than the next peak in the gate. An ambiguous gate is how a
+        // tracker silently steps onto clutter and never comes back.
+        const trusted = hit && hit.score >= bar &&
+            hit.score >= 1.6 * Math.max(hit.second, 1e-6);
+
+        if (trusted) {
+            const previous = anchors.length ? anchors[anchors.length - 1] : null;
+            // Re-acquired after a gap: replace the frames in between with a
+            // straight line joining the two measurements. Interpolating between
+            // two things that were seen is far better than extrapolating from
+            // one of them and hoping.
+            if (previous && frame - previous.frame > 1) {
+                const toTracker = (videoData?.originalVideoWidth || width) / width;
+                const toTrackerY = (videoData?.originalVideoHeight || height) / height;
+                const span = frame - previous.frame;
+                for (let f = previous.frame + 1; f < frame; f++) {
+                    const t = (f - previous.frame) / span;
+                    this.trackedPositions.set(f, {
+                        x: (previous.x + (hit.x - previous.x) * t) * toTracker,
+                        y: (previous.y + (hit.y - previous.y) * t) * toTrackerY,
+                    });
+                }
+            }
+            anchors.push({frame, x: hit.x, y: hit.y});
+            if (anchors.length > 8) anchors.shift();
+            this.trackX = hit.x;
+            this.trackY = hit.y;
+            this.motionMisses = 0;
+        } else {
+            // No trusted measurement. Write the anchored prediction so the track
+            // stays continuous for the UI, but it is NOT an anchor — nothing here
+            // will steer the next frame's gate, and it is overwritten by the
+            // interpolation above as soon as the object is picked up again.
+            this.trackX = seedX;
+            this.trackY = seedY;
+            this.motionMisses++;
+        }
+        if (this.motionDebug) {
+            this.motionDebug.push({
+                f: frame, ok: trusted ? 1 : 0,
+                s: hit ? +hit.score.toFixed(1) : -1,
+                r: hit ? +hit.second.toFixed(1) : -1,
+                g: +gate.toFixed(0), b: +bar.toFixed(1),
+                n: hit ? (hit.samples || 0) : 0,
+                m: this.motionMisses,
+                x: +this.trackX.toFixed(1), y: +this.trackY.toFixed(1),
+                hx: hit && hit.x !== undefined ? +hit.x.toFixed(1) : null,
+                hy: hit && hit.y !== undefined ? +hit.y.toFixed(1) : null,
+            });
+            if (this.motionDebug.length > 4000) this.motionDebug.shift();
+        }
+        this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
+        this.updateSliderStatus();
     }
 
     trackTemplateMatch(frame, currImage, prevPos, videoData) {
@@ -1388,6 +1634,7 @@ class ObjectTracker {
     // segments the whole frame and ignores both radii.)
     methodUsesSearchRadius() {
         switch (this.trackingMethod) {
+            case 'motion':
             case 'centerOnBright':
             case 'centerOnDark':
             case 'centerOnColor':
@@ -1590,6 +1837,10 @@ class ObjectTracker {
     clearTrack() {
         this.trackedPositions.clear();
         this.manualKeyframes.clear();
+        if (this.motionTracker) this.motionTracker.reset();
+        this.motionMisses = 0;
+        this.motionLastFrame = null;
+        this.motionAnchors = [];
         // Recenter the cursor to the middle of the (original-coords) video so
         // a freshly-cleared track has a sane seed point. The current frame
         // gets that center as its sole keyframe.
@@ -1670,6 +1921,13 @@ export function resetObjectTracking() {
         }
 
         objectTracker.disable();
+        // Every cv.Mat the motion tracker holds lives in the OpenCV heap and is
+        // freed only by hand, so dropping the reference alone leaks the whole
+        // cache on every sitch or video reload.
+        if (objectTracker.motionTracker) {
+            objectTracker.motionTracker.dispose();
+            objectTracker.motionTracker = null;
+        }
         objectTracker = null;
     }
     renderHooked = false;
@@ -1702,6 +1960,7 @@ function toggleEnableTracking() {
     
     if (!objectTracker) {
         objectTracker = new ObjectTracker(videoView);
+        applyPendingTrackingSettings(objectTracker);
         // Local-only debug hook so MCP / console can reach the module-scoped
         // tracker (mirrors the tools-page window.shf pattern). Never exposed in
         // production builds.
@@ -2352,28 +2611,80 @@ export function addObjectTrackingMenu() {
         'Center on Color': 'centerOnColor',
         'High Peak': 'highPeak',
         'Low Peak': 'lowPeak',
+        'Motion (Background)': 'motion',
         ...(isLocal ? {'SAM2 (Meta)': 'sam2'} : {}),
     };
     
     const trackingMethodParams = {
-        get trackingMethod() { 
-            const method = objectTracker?.trackingMethod ?? 'template';
+        get trackingMethod() {
+            const method = objectTracker?.trackingMethod ?? pendingTrackingSettings.trackingMethod;
             return Object.keys(trackingMethodOptions).find(k => trackingMethodOptions[k] === method) || 'Template Match';
         },
         set trackingMethod(v) {
+            pendingTrackingSettings.trackingMethod = trackingMethodOptions[v] || 'template';
             if (objectTracker) {
-                objectTracker.trackingMethod = trackingMethodOptions[v] || 'template';
+                objectTracker.trackingMethod = pendingTrackingSettings.trackingMethod;
                 if (objectTracker.tracking) {
                     objectTracker.clearTrack();
                 }
-                setRenderOne(true);
             }
+            setRenderOne(true);
         }
     };
 
     trackingFolder.add(trackingMethodParams, 'trackingMethod', Object.keys(trackingMethodOptions))
         .name(t("tracking.trackingMethod.label"))
         .tooltip(t("tracking.trackingMethod.tooltip"))
+        .listen()
+        .perm();
+
+    // Controls for the Motion (Background) method. Track Radius and Search
+    // Radius above are reused as the target size and the gate, so only what is
+    // specific to this method appears here.
+    const motionPolarityOptions = {
+        'Either': 'both',
+        'Brighter than background': 'bright',
+        'Darker than background': 'dark',
+    };
+    const setMotion = (key, value) => {
+        pendingTrackingSettings[key] = value;
+        if (objectTracker) objectTracker[key] = value;
+    };
+    const motionParams = {
+        get motionPolarity() {
+            const v = objectTracker?.motionPolarity ?? pendingTrackingSettings.motionPolarity;
+            return Object.keys(motionPolarityOptions).find(k => motionPolarityOptions[k] === v) || 'Either';
+        },
+        set motionPolarity(v) { setMotion('motionPolarity', motionPolarityOptions[v] || 'both'); },
+        get motionGap() { return objectTracker?.motionGap ?? pendingTrackingSettings.motionGap; },
+        set motionGap(v) { setMotion('motionGap', v); },
+        get motionSlack() { return objectTracker?.motionSlack ?? pendingTrackingSettings.motionSlack; },
+        set motionSlack(v) { setMotion('motionSlack', v); },
+        get motionThreshold() { return objectTracker?.motionThreshold ?? pendingTrackingSettings.motionThreshold; },
+        set motionThreshold(v) { setMotion('motionThreshold', v); },
+    };
+
+    trackingFolder.add(motionParams, 'motionPolarity', Object.keys(motionPolarityOptions))
+        .name(t("tracking.motionPolarity.label"))
+        .tooltip(t("tracking.motionPolarity.tooltip"))
+        .listen()
+        .perm();
+
+    trackingFolder.add(motionParams, 'motionGap', 1, 12, 1)
+        .name(t("tracking.motionGap.label"))
+        .tooltip(t("tracking.motionGap.tooltip"))
+        .listen()
+        .perm();
+
+    trackingFolder.add(motionParams, 'motionSlack', 0, 5, 1)
+        .name(t("tracking.motionSlack.label"))
+        .tooltip(t("tracking.motionSlack.tooltip"))
+        .listen()
+        .perm();
+
+    trackingFolder.add(motionParams, 'motionThreshold', 3, 30, 0.5)
+        .name(t("tracking.motionThreshold.label"))
+        .tooltip(t("tracking.motionThreshold.tooltip"))
         .listen()
         .perm();
 
@@ -2578,6 +2889,14 @@ export function serializeAutoTracking() {
         colorDistance: objectTracker.colorDistance,
         featureSize: objectTracker.featureSize,
         trackingMethod: objectTracker.trackingMethod,
+        // Motion (Background) settings. trackingMethod is saved, so without
+        // these a sitch saved with this method reopens using it with different
+        // parameters — the track would not reproduce.
+        motionPolarity: objectTracker.motionPolarity,
+        motionGap: objectTracker.motionGap,
+        motionSamples: objectTracker.motionSamples,
+        motionSlack: objectTracker.motionSlack,
+        motionThreshold: objectTracker.motionThreshold,
         showMaxKeyframes: objectTracker.showMaxKeyframes,
         editHeadOnly: objectTracker.editHeadOnly,
         trackedPositions: Array.from(objectTracker.trackedPositions.entries()),
@@ -2612,6 +2931,7 @@ export async function deserializeAutoTracking(data) {
     // flag means "on" — the behaviour those saves were made under.
     if (!objectTracker) {
         objectTracker = new ObjectTracker(videoView);
+        applyPendingTrackingSettings(objectTracker);
         // Local-only debug hook so MCP / console can reach the module-scoped
         // tracker (mirrors the tools-page window.shf pattern). Never exposed in
         // production builds.
@@ -2663,6 +2983,11 @@ export async function deserializeAutoTracking(data) {
     objectTracker.featureSize = data.featureSize ?? 1.5;
     objectTracker.showMaxKeyframes = data.showMaxKeyframes ?? 20;
     objectTracker.editHeadOnly = data.editHeadOnly ?? false;
+    objectTracker.motionPolarity = data.motionPolarity ?? 'both';
+    objectTracker.motionGap = data.motionGap ?? 3;
+    objectTracker.motionSamples = data.motionSamples ?? 8;
+    objectTracker.motionSlack = data.motionSlack ?? 0;
+    objectTracker.motionThreshold = data.motionThreshold ?? 6;
     // Legacy migration: pre-2.50.7 saves used separate centerOnBright/Dark
     // checkboxes. Map them onto the unified trackingMethod dropdown.
     if (data.trackingMethod) {

@@ -447,6 +447,22 @@ const en = {
             label: "Tracking Method",
             tooltip: "Template Match (OpenCV) or Optical Flow (jsfeat Lucas-Kanade)",
         },
+        motionPolarity: {
+            label: "Motion Polarity",
+            tooltip: "Motion (Background) mode: whether the object is brighter or darker than the background it crosses. Either works but is slightly noisier",
+        },
+        motionGap: {
+            label: "Motion Frame Gap",
+            tooltip: "Motion (Background) mode: frames between the earlier frames the background is built from. Raise it if the object moves slowly against the scene, so it separates from where it used to be",
+        },
+        motionSlack: {
+            label: "Motion Parallax Slack",
+            tooltip: "Motion (Background) mode: pixels of background shift to forgive. 0 for flat terrain viewed from directly above; 2-3 for hills or buildings viewed at an angle, where the background cannot be cancelled exactly",
+        },
+        motionThreshold: {
+            label: "Motion Threshold",
+            tooltip: "Motion (Background) mode: how far above the noise a detection must be before it is believed. Lower to hold a faint object, raise if the tracker jumps to clutter",
+        },
         centerOnBright: {
             label: "Center on Bright",
             tooltip: "Track centroid of bright pixels (better for stars/point lights)",

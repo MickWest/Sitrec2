@@ -31,7 +31,7 @@ is much quicker over a long clip.
 
 ## Choosing a tracking method
 
-There are seven (eight on a local development build), and picking the right one matters far
+There are eight (nine on a local development build), and picking the right one matters far
 more than tuning the sliders.
 
 | Method | Use it when |
@@ -43,11 +43,43 @@ more than tuning the sliders.
 | **Center on Color** | The object is distinguished by colour rather than brightness |
 | **High Peak** | A sub-pixel-accurate bright point. Better than *Center on Bright* for point sources, since it fits a peak rather than averaging |
 | **Low Peak** | The same for dark points |
+| **Motion (Background)** | The object is *indistinguishable* from the clutter it crosses — the same brightness, the same size, the same texture. See below |
 | **SAM2 (Meta)** | Segmentation-based tracking. Local builds only |
 
 For a light in the night sky, **High Peak** or **Center on Bright** will hold on far longer
 than template matching, because there is no template to match — just a blob that changes shape
 frame to frame.
+
+### Motion (Background)
+
+Every other method asks *what does the object look like?* — and there are videos where that
+question has no answer. A dot crossing a city of rooftops the same size and brightness as
+itself, or a bright object crossing a desert full of equally bright rocks, defeats template
+matching and the centroid methods alike, because there is nothing to lock onto.
+
+**Motion (Background)** asks a different question: *which pixels are moving differently from
+the ground around them?* The scene behind the object moves as one rigid thing as the camera
+pans, so Sitrec measures that motion, predicts what the background should look like this
+frame, and subtracts it. Whatever is left over is not part of the background — and that is
+the object. Detection then depends on the object's motion relative to the scene rather than
+on its contrast against it.
+
+One consequence follows directly, and it is the thing to know before you reach for it:
+
+* **An object that stops moving relative to the ground disappears.** At that moment it *is*
+  part of the background as far as this method can tell. Expect it to drop out while an
+  object hovers over fixed terrain, and to pick up again when it moves off. This is the one
+  case where *Template Match* or a *Center on* method will do better.
+
+A still camera is not a problem — if anything it is the easy case, because the background is
+then perfectly predictable and anything moving stands out.
+
+**Overlay:** coloured symbology — cursors, cardinal letters, readouts — and solid black
+redaction boxes are recognised and ignored, including when they drift across the frame as the
+aircraft turns. **Grey or white overlay is not**, because there is nothing to tell it apart
+from the picture. A white burned-in arrow or reticle that drifts across the object can
+therefore capture the track; move the object's start point away from it, or use another
+method for that stretch.
 
 Changing the method **while a track is actively running clears it**. Changing it while stopped
 leaves the existing track alone. Either way, choose before you invest in a long run.
@@ -61,6 +93,10 @@ leaves the existing track alone. Either way, choose before you invest in a long 
 | **Track Radius** | 30 | 10–100 | The inner solid circle: the template size, or the window the centroid is computed over |
 | **Search Radius** | 50 | 20–300 | The outer dashed circle: how far from the last position the tracker will look |
 | **Feature Size** | 4 | 2–20 | Gaussian sigma in pixels, for High/Low Peak only |
+| **Motion Polarity** | Either | — | Whether the object is brighter or darker than the background. *Either* works but is slightly noisier |
+| **Motion Frame Gap** | 3 | 1–12 | How far back the background samples are taken. Raise it when the object moves slowly against the scene, so it separates from where it used to be |
+| **Motion Parallax Slack** | 0 | 0–5 | Pixels of background shift to forgive. 0 for flat ground seen from above; 2–3 for hills or buildings seen at an angle, where the background cannot be cancelled exactly |
+| **Motion Threshold** | 6 | 3–30 | How far above the noise a detection must be before it is believed. Lower it to hold a faint object, raise it if the track jumps to clutter |
 | **Use Mask** | on | — | Ignore masked-out parts of the frame — for the centroid methods only, see below |
 | **Brightness Threshold** | 128 | 0–255 | Cutoff for the centroid methods |
 | **Color Distance** | 80 | 0–442 | How far a pixel may be from the target colour and still count, for *Center on Color*. 442 is "everything matches" |
@@ -91,7 +127,8 @@ If the object passes in front of trees, a rooftop, or a burned-in on-screen disp
 those regions out first and leave *Use Mask* on. See [Masking](Masking.md).
 
 **The mask only protects the centroid methods** — *Center on Bright*, *Center on Dark* and
-*Center on Color*. Template Match, Optical Flow and High/Low Peak do not consult it, so
+*Center on Color*. Template Match, Optical Flow, Motion (Background) and High/Low Peak do not
+consult it, so
 masking will not stop those from latching onto foliage. If masking is important to your clip,
 use one of the centroid methods.
 
