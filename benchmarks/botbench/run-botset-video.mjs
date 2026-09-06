@@ -58,6 +58,8 @@ try {
             if (!args['verify-only']) {
                 const setup = await page.evaluate(plan => window._botBenchVideo.prepare(plan), scenario);
                 console.log(JSON.stringify(setup));
+                const firstFrame = await page.evaluate(() => window._botBenchVideo.preview());
+                fs.writeFileSync(path.join(outputDir, `${scenario.name}.first.jpg`), Buffer.from(firstFrame.split(",")[1], "base64"));
                 const download = page.waitForEvent("download", {timeout: 900000});
                 const render = page.evaluate(() => window._botBenchVideo.record());
                 const progress = setInterval(async () => {

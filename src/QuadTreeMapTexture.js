@@ -24,8 +24,8 @@ class QuadTreeMapTexture extends QuadTreeMap {
         this.elOnly = options.elOnly ?? false;
         this.elevationMap = options.elevationMap;
 
-        // Track loading promises to properly call loadedCallback when all tiles are loaded
-        // This only makes sense if not dynamic
+        // Track initial and dynamic loads. Terrain subdivision also uses this
+        // set to stay awake until newly loaded tiles can refine further.
         this.pendingTileLoads = new Set();
 
         // Register the tile loading controller with async operation registry
@@ -64,15 +64,14 @@ class QuadTreeMapTexture extends QuadTreeMap {
 
     // Track a tile's loading promise
     trackTileLoading(tileKey, promise) {
-        // Only track loading if we haven't already called the loaded callback
-        if (!this.loaded) {
-            this.pendingTileLoads.add(tileKey);
-            
-            promise.finally(() => {
-                this.pendingTileLoads.delete(tileKey);
-                this.checkAndCallLoadedCallback();
-            });
-        }
+        // The initial loaded callback is one-shot, but the pending set must
+        // keep following later high-resolution loads. Otherwise the camera
+        // grace can expire mid-download and leave a stationary view coarse.
+        this.pendingTileLoads.add(tileKey);
+        promise.finally(() => {
+            this.pendingTileLoads.delete(tileKey);
+            this.checkAndCallLoadedCallback();
+        });
         
         return promise;
     }

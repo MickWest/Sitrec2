@@ -66,7 +66,8 @@ export async function prepare(plan) {
     renderFrame(0);
     const settled = await waitForExportFrameSettled({frame: 0, viewIds: [view.id], renderFrame: () => renderFrame(0)});
     if (settled.timedOut) throw new Error("Terrain did not finish loading before recording");
-    return {hfov, vfov, amplitudeDeg: amplitude, wobbleParams, firstRangeM: range, frames: plan.frames};
+    return {hfov, vfov, amplitudeDeg: amplitude, wobbleParams, firstRangeM: range, frames: plan.frames,
+        backgroundWait: {elapsedMs: settled.elapsedMs, checks: settled.checks}};
 }
 
 export function renderFrame(f) {
@@ -127,7 +128,9 @@ export async function record() {
         await exporter.initialize();
         for (let f = 0; f < a.plan.frames; f++) {
             renderFrame(f);
-            const settled = await waitForExportFrameSettled({frame: f, viewIds: [a.view.id], renderFrame: () => renderFrame(f), stableChecks: 1, postSettleRenders: 0});
+            // Same gate as Video > Wait for background loading. Re-renders
+            // hold f fixed; only the final settled image is encoded below.
+            const settled = await waitForExportFrameSettled({frame: f, viewIds: [a.view.id], renderFrame: () => renderFrame(f)});
             if (settled.timedOut) throw new Error(`Terrain did not settle at frame ${f}`);
             a.records.push(renderFrame(f));
             await exporter.addFrame(a.canvas, f);
