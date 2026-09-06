@@ -447,6 +447,22 @@ const en = {
             label: "Tracking Method",
             tooltip: "Template Match (OpenCV) or Optical Flow (jsfeat Lucas-Kanade)",
         },
+        clearUserPoints: {
+            label: "Clear User Points",
+            tooltip: "Delete only the points you placed by hand (the magenta ones). Asks first — the automatic points cannot replace them, because these are what the tracker uses to correct itself",
+        },
+        clearAutoPoints: {
+            label: "Clear Auto Points",
+            tooltip: "Delete only the automatically tracked points, keeping every point you placed by hand. Track again and the automatic points are recomputed, guided by yours",
+        },
+        analyseObject: {
+            label: "Analyse Object",
+            tooltip: "Motion (Background) mode: put the cursor on the object, then press this. It measures the object and sets Motion Polarity, Feature Size and Parallax Slack to suit it. A small dot on a smooth background and a soft blob on rough terrain need very different settings, and this finds them rather than leaving you to guess",
+        },
+        showMotionField: {
+            label: "Show Motion Field",
+            tooltip: "Motion (Background) mode: draw what the tracker actually works from — this frame with the background's own motion subtracted away. Mid-grey means \"explained by the background\", bright means \"brighter than the background predicts\", black means masked out. Use it to see whether the object stands out at all, and what else does",
+        },
         motionPolarity: {
             label: "Motion Polarity",
             tooltip: "Motion (Background) mode: whether the object is brighter or darker than the background it crosses. Either works but is slightly noisier",
@@ -461,7 +477,7 @@ const en = {
         },
         motionThreshold: {
             label: "Motion Threshold",
-            tooltip: "Motion (Background) mode: how far above the noise a detection must be before it is believed. Lower to hold a faint object, raise if the tracker jumps to clutter",
+            tooltip: "Motion (Background) mode: how far above the noise a detection must be before it is believed. Lower to hold a faint object, raise if the tracker jumps to clutter. Also set Feature Size to match the object — too large and a small object is smoothed away before it can be found",
         },
         centerOnBright: {
             label: "Center on Bright",

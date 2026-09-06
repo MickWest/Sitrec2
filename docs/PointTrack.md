@@ -74,6 +74,39 @@ One consequence follows directly, and it is the thing to know before you reach f
 A still camera is not a problem — if anything it is the easy case, because the background is
 then perfectly predictable and anything moving stands out.
 
+### Start with Analyse Object
+
+Put the cursor on the object, pick a frame where it is clearly visible, and press
+**Analyse Object**. It measures the object and sets Motion Polarity, Feature Size and Parallax
+Slack to suit it, then reports how strongly the object stands out with those settings.
+
+This matters more than it sounds, because the two ends of the range need genuinely different
+numbers. A 3 px dot on a smooth sky wants Feature Size 1; a soft blob on rough desert wants 4.
+Get that wrong and the object is either smoothed away before it can be found or buried in its
+own noise — measured on one clip, the same footage gives a confident track at Feature Size 1
+and **almost no detections** at 4. There is no single setting that serves both, which is why
+this measures rather than guesses.
+
+**It measures the frame you are on.** A target's apparent size and contrast change over a long
+clip, so the best settings at the start are not always the best throughout — on one test clip
+Feature Size 2 wins at frame 0 but Feature Size 4 tracks far better over the whole video. The
+result therefore also lists any close alternatives. If tracking fades partway through, try one
+of those, or move to a frame in the difficult stretch and analyse again.
+
+If the object is not clearly visible where you analyse, it says so and changes nothing, rather
+than committing settings measured from noise.
+
+### Show Motion Field
+
+Draws what the tracker actually works from: the current frame with the background's own motion
+subtracted away. Mid-grey means "explained by the background", bright means "brighter than the
+background predicts", and black means masked out.
+
+It answers in one glance what the resulting track never can — whether the object stands out at
+all, what else in the frame does, and whether something the tracker chased was a real feature
+or an artefact. If the object is not visible in the motion field, no amount of tuning the other
+settings will find it, and a different method is the answer.
+
 **Overlay:** coloured symbology — cursors, cardinal letters, readouts — and solid black
 redaction boxes are recognised and ignored, including when they drift across the frame as the
 aircraft turns. **Grey or white overlay is not**, because there is nothing to tell it apart
@@ -92,7 +125,7 @@ leaves the existing track alone. Either way, choose before you invest in a long 
 |---|---|---|---|
 | **Track Radius** | 30 | 10–100 | The inner solid circle: the template size, or the window the centroid is computed over |
 | **Search Radius** | 50 | 20–300 | The outer dashed circle: how far from the last position the tracker will look |
-| **Feature Size** | 4 | 2–20 | Gaussian sigma in pixels, for High/Low Peak only |
+| **Feature Size** | 4 | 1–20 | How big the thing you are tracking is, in pixels. Used by High/Low Peak and by *Motion (Background)* — see the note below |
 | **Motion Polarity** | Either | — | Whether the object is brighter or darker than the background. *Either* works but is slightly noisier |
 | **Motion Frame Gap** | 3 | 1–12 | How far back the background samples are taken. Raise it when the object moves slowly against the scene, so it separates from where it used to be |
 | **Motion Parallax Slack** | 0 | 0–5 | Pixels of background shift to forgive. 0 for flat ground seen from above; 2–3 for hills or buildings seen at an angle, where the background cannot be cancelled exactly |
@@ -131,6 +164,26 @@ those regions out first and leave *Use Mask* on. See [Masking](Masking.md).
 consult it, so
 masking will not stop those from latching onto foliage. If masking is important to your clip,
 use one of the centroid methods.
+
+## User points and auto points
+
+A track holds two kinds of point, and the difference matters.
+
+* **Auto points** are what the tracker worked out. They are drawn as the track line, marked
+  green on the timeline, and can always be recomputed.
+* **User points** are the ones you placed by hand, by dragging the cursor onto the object.
+  They are drawn as magenta crosses, marked magenta on the timeline, and are **inviolable** —
+  tracking never overwrites one, never interpolates over one, and treats each as a fresh
+  starting point for what follows.
+
+That is what makes a difficult clip workable. Where the tracker cannot see the object — a
+stretch of saturated terrain, say, where a bright object is indistinguishable from bright
+rocks — you place a few points by eye and track again. The tracker uses them to correct itself
+and carries on between them, so you do not have to place every frame.
+
+**Clear User Points** deletes only yours, and asks first, because nothing can recompute them.
+**Clear Auto Points** deletes only the tracked ones and keeps yours, so you can re-track from
+the same guidance. User points are saved with the sitch.
 
 ## Editing the track
 

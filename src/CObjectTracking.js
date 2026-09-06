@@ -7,6 +7,7 @@ import {EventManager} from "./CEventManager";
 import {KeyMan} from "./KeyBoardHandler";
 import {createVideoExporter, DefaultVideoFormat, getBestFormatForResolution, getVideoExtension} from "./VideoExporter";
 import {drawVideoWatermark, ExportProgressWidget, getExportPrefix} from "./utils";
+import {showConfirm} from "./showError";
 import {drawAttributionOnCanvas} from "./AttributionOverlay";
 import {isLocal} from "./configUtils";
 import {t} from "./i18n";
@@ -14,6 +15,18 @@ import {Color} from "three";
 import {MotionBackgroundTracker} from "./MotionBackgroundTracker";
 
 let cv = null;
+
+// A user point resets the tracker's idea of where the object is: it becomes the
+// newest anchor, any pending candidate is dropped and the miss count goes back
+// to zero. Without that the tracker keeps aiming from a stale anchor and ignores
+// the correction it was just handed.
+function anchorsFromUserPoint(tracker, frame, x, y) {
+    tracker.motionAnchors.push({frame, x, y});
+    if (tracker.motionAnchors.length > 8) tracker.motionAnchors.shift();
+    tracker.motionCandidate = null;
+    tracker.motionTrail = [];
+    tracker.motionMisses = 0;
+}
 
 // Settings the user can change from the menu BEFORE Point Track is enabled —
 // that is, before the tracker object exists at all. Without somewhere to hold
@@ -169,6 +182,24 @@ class ObjectTracker {
         this.motionMaxCoast = 15;
         // While lost, attempt a wide re-acquisition this often (frames).
         this.motionReacquireEvery = 5;
+        // Largest believable frame-to-frame jump, in decoded-image pixels, for an
+        // object that is otherwise stationary. Scaled up by how fast the object
+        // has actually been moving, so a fast target is not held back.
+        this.motionMinJump = 6;
+        // A sighting waiting for a second one to confirm it.
+        this.motionCandidate = null;
+        // Scores of recent accepted detections, so the tracker can judge a new
+        // sighting against what this particular clip has been yielding rather
+        // than against a fixed number.
+        this.motionScores = [];
+        // Recent unconfirmed sightings, for the coherence test.
+        this.motionTrail = [];
+        // Largest believable change of velocity between sightings, px/frame^2.
+        this.motionCoherence = 4;
+        // Draw the motion field itself instead of the video — what the detector
+        // is actually working from.
+        this.showMotionField = false;
+        this.motionFieldCache = null;
         this.motionLastFrame = null;
         // Frames where the object was actually measured, in decoded-image
         // coordinates. The gate is aimed from these and from nothing else.
@@ -604,6 +635,9 @@ class ObjectTracker {
         this.motionMisses = 0;
         this.motionLastFrame = null;
         this.motionAnchors = [];
+        this.motionCandidate = null;
+        this.motionScores = [];
+        this.motionTrail = [];
     }
     
     isWithinTrackPoint(vX, vY) {
@@ -1087,6 +1121,14 @@ class ObjectTracker {
     // The heavy lifting is in MotionBackgroundTracker; this wrapper supplies the
     // prediction, decides whether a detection is trustworthy, and coasts on the
     // last known velocity when it is not.
+    // Median of recent accepted detection scores — what a good detection looks
+    // like in THIS clip. Zero until enough have been seen to be meaningful.
+    motionTypicalScore() {
+        if (this.motionScores.length < 5) return 0;
+        const sorted = [...this.motionScores].sort((a, b) => a - b);
+        return sorted[sorted.length >> 1];
+    }
+
     trackMotion(frame, currImage, prevPos, videoData) {
         if (!cv) return;
         if (!this.motionTracker) this.motionTracker = new MotionBackgroundTracker(cv);
@@ -1099,8 +1141,28 @@ class ObjectTracker {
             this.motionTracker.reset();
             this.motionMisses = 0;
             this.motionAnchors = [];
+            this.motionCandidate = null;
+            this.motionScores = [];
+            this.motionTrail = [];
         }
         this.motionLastFrame = frame;
+
+        // A point a person placed is evidence, and outranks anything measured.
+        // Take it as given, make it the anchor, and let the tracker carry on
+        // from there — that is what lets a user rescue a stretch the detector
+        // cannot see, without hand-placing every frame of it.
+        if (this.isUserPoint(frame)) {
+            const given = this.trackedPositions.get(frame);
+            if (given) {
+                const toImage = (currImage.width || currImage.videoWidth)
+                    / (videoData?.originalVideoWidth || currImage.width || 1);
+                this.trackX = given.x * toImage;
+                this.trackY = given.y * toImage;
+                anchorsFromUserPoint(this, frame, this.trackX, this.trackY);
+                this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
+                return;
+            }
+        }
 
         const width = currImage.width || currImage.videoWidth;
         const height = currImage.height || currImage.videoHeight;
@@ -1122,8 +1184,35 @@ class ObjectTracker {
         }
         const searching = this.motionMisses > this.motionMaxCoast;
 
+        // An unconfirmed candidate still steers the search, even though it is not
+        // yet trusted enough to anchor. Without this the gate stays behind at the
+        // old anchor, the object leaves it, and the corroborating sighting can
+        // never arrive — the check meant to protect the track would be what
+        // destroys it.
+        // Only a SURPRISING candidate steers the search — one found while the
+        // tracker still basically knew where the object was, which jumped
+        // further than expected. Following that for a frame is how a real jolt
+        // gets confirmed instead of lost.
+        //
+        // A candidate from the wide re-acquisition search must not steer. Doing
+        // so both narrows the gate and stops the periodic wide sweep, so one
+        // marginal peak parks the search on empty ground for ten frames at a
+        // time; measured on the turbine clip that alone took a healthy 92% track
+        // down to 51% and shredded it into fragments.
+        //
+        // It must also be about as convincing as what this clip has actually
+        // been yielding, judged against a running median rather than a fixed
+        // number, because what counts as a strong detection differs per clip.
+        const typical = this.motionTypicalScore();
+        const cand = this.motionCandidate;
+        const pending = cand && !cand.fromSearch &&
+            (frame - cand.frame) <= 2 * this.motionReacquireEvery &&
+            cand.score >= 0.8 * typical ? cand : null;
+
         let predicted = prevPos;
-        if (last && !searching) {
+        if (pending) {
+            predicted = {x: pending.x, y: pending.y};
+        } else if (last && !searching) {
             // A brief dropout: the object is very likely still going the way it
             // was, so follow it.
             let vx = 0, vy = 0;
@@ -1163,9 +1252,25 @@ class ObjectTracker {
         // re-acquiring and never seeing it again.
         const maxGate = Math.min(width, height) / 5;
         const elapsed = last ? frame - last.frame : 0;
-        const gate = searching
-            ? Math.min(maxGate, this.searchRadius + Math.max(2, speed) * elapsed)
-            : this.searchRadius;
+        // Even when merely following, the gate has to allow for the object's own
+        // speed. Search Radius says how far beyond the PREDICTED position to
+        // look, but the prediction is only as good as the velocity estimate, and
+        // a manoeuvring object's velocity is uncertain by roughly its own speed.
+        // Measured on a hand-slewed clip: the object accelerated to 20 px/frame
+        // while the gate was 20 px, so it sat exactly on the boundary and fell
+        // out — detection was 11-28 sigma at every one of those frames, with the
+        // runner-up under 4, so nothing was ambiguous. The track was lost purely
+        // by looking in a place a fraction too small.
+        // One rule for how far to look, growing with how long it has been since
+        // the object was actually seen: Search Radius, plus the distance it
+        // could have travelled in that time at its own speed. A constant gate
+        // during a dropout is why an intermittently-visible object gets lost —
+        // measured on one clip, detections of 7-10 sigma were sitting there
+        // unfound at frames 143 to 167 simply because the gate was still centred
+        // where the object had been ten frames earlier.
+        const gate = pending
+            ? this.searchRadius + speed
+            : Math.min(maxGate, this.searchRadius + Math.max(2, speed) * Math.max(1, elapsed));
         // A wider search gives noise more chances to clear the threshold, so
         // what comes back has to be convincing rather than merely present.
         const bar = searching ? this.motionThreshold * 1.5 : this.motionThreshold;
@@ -1174,7 +1279,7 @@ class ObjectTracker {
         // it periodically rather than every frame — a couple of times a second is
         // ample for an object that has already been missing for a while, and the
         // frames in between get filled in by interpolation once it is found.
-        if (searching && (elapsed % this.motionReacquireEvery) !== 0) {
+        if (searching && !pending && (elapsed % this.motionReacquireEvery) !== 0) {
             this.trackX = seedX;
             this.trackY = seedY;
             this.motionMisses++;
@@ -1187,8 +1292,13 @@ class ObjectTracker {
             samples: this.motionSamples,
             gate,
             targetRadius: this.trackRadius,
+            // Feature Size is the scale of the thing being detected; Track Radius
+            // is how big the object is. For a small point target they are very
+            // different numbers, and using the latter for both loses the target.
+            featureScale: this.featureSize,
             slack: this.motionSlack,
             polarity: this.motionPolarity,
+            preferNear: true,
             firstFrame: Sit.aFrame ?? 0,
             lastFrame: Sit.bFrame ?? (Sit.frames - 1),
         });
@@ -1205,10 +1315,100 @@ class ObjectTracker {
         // Accept only a detection that is strong in absolute terms AND clearly
         // stronger than the next peak in the gate. An ambiguous gate is how a
         // tracker silently steps onto clutter and never comes back.
-        const trusted = hit && hit.score >= bar &&
+        let trusted = hit && hit.score >= bar &&
             hit.score >= 1.6 * Math.max(hit.second, 1e-6);
 
+        // A strong peak is not enough: it also has to be somewhere the object
+        // could actually have got to. Without this, the first false peak after a
+        // brief dropout becomes the new anchor and the track walks away from a
+        // target it had been holding perfectly — measured on a clip whose object
+        // drifts at under 1 px/frame, a peak 130 px away was accepted four frames
+        // after the object dimmed behind a dark turbine.
+        //
+        // Only while merely coasting, though. Re-acquisition after a real loss is
+        // exactly the case where the object legitimately turns up somewhere else,
+        // and there the widened search and raised bar do the filtering instead.
+        // How far the object could plausibly be from where it was last seen: as
+        // far as its own speed carries it, plus a fixed tolerance and a small
+        // allowance for manoeuvre. Note this is a DISTANCE, not a per-frame rate
+        // multiplied by the gap — an object does not speed up merely because we
+        // stopped seeing it, and treating the allowance as per-frame lets a
+        // five-frame dropout admit a 50 px jump.
+        const reach = (step) => speed * step + this.motionMinJump + 0.5 * step;
+        let surprising = false;
+        if (trusted && last && !searching) {
+            const step = Math.max(1, frame - last.frame);
+            surprising = Math.hypot(hit.x - last.x, hit.y - last.y) > reach(step);
+        }
+
+        // Two kinds of detection are not believed on their own: one found by the
+        // wide re-acquisition search, and one that implies a jump the object
+        // should not have been able to make. Both are held as a candidate and
+        // only become the new anchor once a second sighting turns up somewhere
+        // the object could have moved to since. Noise does not repeat in the same
+        // place; an object does.
+        //
+        // Corroboration rather than rejection, because a threshold cannot tell
+        // these apart: measured across the two test clips, a spurious jump was
+        // 5.2x the object's own speed and a perfectly good one — a hand-slewed
+        // camera jolting 22 px in a single frame — was 4.2x. Rejecting the first
+        // by threshold necessarily rejects the second, and losing one true
+        // detection is enough to unravel everything after it.
+        if (trusted && (searching || surprising)) {
+            const seen = this.motionCandidate;
+            const gap2 = seen ? frame - seen.frame : 0;
+            // Two different questions, because the two cases fail differently.
+            //
+            // From the WIDE search, the gate spans a fifth of the frame, so the
+            // risk is two unrelated noise peaks vouching for each other:
+            // consistency has to be tight, measured against how far the object
+            // could actually have travelled.
+            //
+            // From a SURPRISING detection the risk is the opposite — the bound
+            // must not be the object's OLD speed, because the reason it looked
+            // surprising is that it stopped moving at that speed. So instead of
+            // asking "is it close?", ask "are these sightings COHERENT?" — three
+            // in a row on a near-constant velocity. Measured on a hand-slewed
+            // clip the object accelerated to 21 px/frame with a second
+            // difference of 0.5 px/frame^2, unmistakably a moving object, while
+            // post-loss noise on the turbine clip is strong but never coherent.
+            // This asks nothing about the previous speed, so real acceleration
+            // is accepted and noise is not.
+            let confirms;
+            if (seen && seen.fromSearch) {
+                confirms = gap2 > 0 && gap2 <= 3 * this.motionReacquireEvery &&
+                    Math.hypot(hit.x - seen.x, hit.y - seen.y) <= reach(gap2);
+            } else {
+                const trail = this.motionTrail;
+                if (trail.length && frame - trail[trail.length - 1].frame > 3) trail.length = 0;
+                trail.push({frame, x: hit.x, y: hit.y});
+                if (trail.length > 3) trail.shift();
+                confirms = false;
+                if (trail.length === 3) {
+                    const [a, b, c] = trail;
+                    const dt1 = b.frame - a.frame, dt2 = c.frame - b.frame;
+                    if (dt1 > 0 && dt2 > 0) {
+                        const change = Math.hypot(
+                            (c.x - b.x) / dt2 - (b.x - a.x) / dt1,
+                            (c.y - b.y) / dt2 - (b.y - a.y) / dt1);
+                        confirms = change <= this.motionCoherence;
+                    }
+                }
+                if (confirms) this.motionTrail = [];
+            }
+            if (confirms) {
+                this.motionCandidate = null;
+            } else {
+                this.motionCandidate = {frame, x: hit.x, y: hit.y, score: hit.score,
+                    fromSearch: searching};
+                trusted = false;
+            }
+        }
+        if (trusted) this.motionCandidate = null;
+
         if (trusted) {
+            this.motionScores.push(hit.score);
+            if (this.motionScores.length > 20) this.motionScores.shift();
             const previous = anchors.length ? anchors[anchors.length - 1] : null;
             // Re-acquired after a gap: replace the frames in between with a
             // straight line joining the two measurements. Interpolating between
@@ -1219,6 +1419,11 @@ class ObjectTracker {
                 const toTrackerY = (videoData?.originalVideoHeight || height) / height;
                 const span = frame - previous.frame;
                 for (let f = previous.frame + 1; f < frame; f++) {
+                    // Never over-write a point a person placed. Filling a gap by
+                    // interpolation is a guess; a user point is an observation,
+                    // and the whole purpose of placing one is to correct exactly
+                    // the stretch this backfill covers.
+                    if (this.isUserPoint(f)) continue;
                     const t = (f - previous.frame) / span;
                     this.trackedPositions.set(f, {
                         x: (previous.x + (hit.x - previous.x) * t) * toTracker,
@@ -1483,6 +1688,187 @@ class ObjectTracker {
         }
     }
 
+    // A user point resets the tracker's idea of where the object is: it becomes
+    // the newest anchor, any pending candidate is dropped, and the miss count
+    // goes back to zero. Without that the tracker would keep aiming from a stale
+    // anchor and ignore the correction it was just handed.
+    // (Defined as a free function so trackMotion reads in one line.)
+
+    // Measure the object under the cursor and set the motion settings to suit
+    // it, once, instead of leaving the user to guess or the tracker to re-decide
+    // every frame.
+    //
+    // The two clips this was built against sit at opposite ends of the range —
+    // a 3 px dot on a smooth background, and an amorphous blob on heavily
+    // textured terrain — and no single set of numbers serves both. But the
+    // settings that DO serve each are measurable in a couple of seconds: sweep
+    // detection scale, polarity and parallax slack at the seed point and keep
+    // whichever combination makes the object stand out most against its own
+    // surroundings. Doing it once and committing is what keeps the track stable;
+    // re-deciding per frame lets a wrong choice win occasionally and fragments
+    // the result.
+    async analyseObject(onProgress) {
+        const say = onProgress || (() => {});
+        const videoData = this.videoView?.videoData;
+        if (!videoData) return null;
+
+        // Do the waiting here rather than handing the user a button that does
+        // nothing the first time and works the second.
+        if (!cv) {
+            cv = getCV();
+            if (!cv) {
+                say("loading OpenCV");
+                try { await loadOpenCV(); cv = getCV(); } catch (e) {
+                    console.warn("Analyse Object: OpenCV failed to load", e);
+                    return {error: "OpenCV failed to load"};
+                }
+            }
+        }
+        if (!this.motionTracker) this.motionTracker = new MotionBackgroundTracker(cv);
+
+        const frame = Math.floor(par.frame);
+
+        // The background model needs the frames either side of this one, and at
+        // the start of a clip — where a user naturally begins — none of them have
+        // been decoded. Ask for them and wait, instead of reporting a failure
+        // that is really just "not ready yet".
+        say("reading frames");
+        const reach = this.motionGap * this.motionSamples;
+        const first = Sit.aFrame ?? 0;
+        const last = Sit.bFrame ?? (Sit.frames - 1);
+        const wanted = [];
+        for (let k = 1; k <= this.motionSamples; k++) {
+            for (const f of [frame - k * this.motionGap, frame + k * this.motionGap]) {
+                if (f >= first && f <= last) wanted.push(f);
+            }
+        }
+        for (const f of wanted) videoData.getImage(f);
+        await Promise.all(wanted.slice(0, 2 * this.motionSamples)
+            .map(f => videoData.waitForFrame(f, 4000).catch(() => false)));
+
+        const image = videoData.getImage(frame);
+        if (!image || !image.width) return null;
+        const w = image.width || image.videoWidth;
+        const origW = videoData.originalVideoWidth || w;
+        const scale = w / origW;
+        const cx = this.trackX * scale, cy = this.trackY * scale;
+
+        let best = null;
+        const tried = [];
+        for (const polarity of ['bright', 'dark']) {
+            for (const slack of [0, 2]) {
+                for (const featureScale of [1, 2, 4, 8]) {
+                    say(`testing ${polarity} scale ${featureScale}`);
+                    const hit = this.motionTracker.measure(videoData, frame, cx, cy, {
+                        gap: this.motionGap,
+                        samples: this.motionSamples,
+                        // A tight gate: we are asking "how well does the object
+                        // right here show up", not "find me something".
+                        gate: Math.max(8, this.trackRadius * scale),
+                        targetRadius: this.trackRadius * scale,
+                        featureScale,
+                        slack,
+                        polarity,
+                        firstFrame: Sit.aFrame ?? 0,
+                        lastFrame: Sit.bFrame ?? (Sit.frames - 1),
+                    });
+                    if (!hit || hit.waiting) continue;
+                    tried.push({score: hit.score, polarity, slack, featureScale});
+                    if (!best || hit.score > best.score) {
+                        best = {score: hit.score, polarity, slack, featureScale};
+                    }
+                }
+            }
+        }
+        if (!best) return {error: "nothing measurable here"};
+        // A weak best is not a measurement of the object, it is a measurement of
+        // noise — and committing settings derived from it is worse than doing
+        // nothing, because they look deliberate. Say so and change nothing.
+        if (best.score < this.motionThreshold) {
+            return {error: `object not clear here (best ${best.score.toFixed(1)} sigma)`};
+        }
+
+        this.motionPolarity = best.polarity;
+        this.motionSlack = best.slack;
+        this.featureSize = best.featureScale;
+        this.motionFieldCache = null;
+
+        // Report the close runners-up too. This measures ONE frame, and a
+        // target's apparent size changes over a long clip — measured on one,
+        // Feature Size 2 wins at frame 0 (16.5 vs 12.8 sigma) yet 4 tracks far
+        // better over the whole thing. Showing the alternatives lets the user
+        // try the other one instead of trusting a single number, which is more
+        // honest than a tie-break rule tuned to whichever clip was to hand.
+        const alternatives = tried
+            .filter(t => t.polarity === best.polarity && t !== best
+                && t.score > best.score * 0.6)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 2)
+            .map(t => `size ${t.featureScale} at ${t.score.toFixed(0)}`);
+        return Object.assign({}, best, {alternatives});
+    }
+
+    // Draw the motion field — the current frame with the background's own
+    // motion subtracted away. Mid-grey is "explained by the background", bright
+    // is "brighter than the background predicts", black is masked out. This is
+    // the picture that says whether a target is there to be found at all, which
+    // the resulting track never can.
+    renderMotionField(ctx) {
+        const videoData = this.videoView?.videoData;
+        if (!videoData) return;
+        // The field can be switched on before tracking has ever run, which is
+        // exactly when it is most useful — so fetch or start the OpenCV load
+        // here rather than relying on the tracking path having done it.
+        if (!cv) {
+            cv = getCV();
+            if (!cv) {
+                if (!this.motionFieldLoading) {
+                    this.motionFieldLoading = true;
+                    loadOpenCV().then(() => { cv = getCV(); setRenderOne(true); })
+                        .catch(e => console.warn("Motion Field: OpenCV load failed", e));
+                }
+                return;
+            }
+        }
+        if (!this.motionTracker) this.motionTracker = new MotionBackgroundTracker(cv);
+
+        const frame = Math.floor(par.frame);
+        let cached = this.motionFieldCache;
+        if (!cached || cached.frame !== frame) {
+            const f = this.motionTracker.field(videoData, frame, {
+                gap: this.motionGap,
+                samples: this.motionSamples,
+                slack: this.motionSlack,
+                polarity: this.motionPolarity,
+                firstFrame: Sit.aFrame ?? 0,
+                lastFrame: Sit.bFrame ?? (Sit.frames - 1),
+            });
+            if (!f) return;
+            const canvas = document.createElement('canvas');
+            canvas.width = f.width;
+            canvas.height = f.height;
+            canvas.getContext('2d').putImageData(
+                new ImageData(f.data, f.width, f.height), 0, 0);
+            cached = this.motionFieldCache = {frame, canvas, f};
+        }
+
+        // Blit through the same zoom/pan transform the rest of the overlay uses,
+        // so the field stays registered with the video underneath. The field
+        // covers the image inset by its border, in decoded-image pixels, so map
+        // that rectangle into original-video coords first.
+        const img = videoData.getImage(frame);
+        const imgW = img?.width || img?.videoWidth || 1;
+        const imgH = img?.height || img?.videoHeight || 1;
+        const toOrigX = (videoData.originalVideoWidth || imgW) / imgW;
+        const toOrigY = (videoData.originalVideoHeight || imgH) / imgH;
+        const {f} = cached;
+        const [ax, ay] = this.videoView.videoToCanvasCoordsOriginal(
+            f.x0 * toOrigX, f.y0 * toOrigY);
+        const [bx, by] = this.videoView.videoToCanvasCoordsOriginal(
+            (f.x0 + f.width) * toOrigX, (f.y0 + f.height) * toOrigY);
+        ctx.drawImage(cached.canvas, ax, ay, bx - ax, by - ay);
+    }
+
     renderThresholdPreview(ctx, width, height) {
         const videoData = this.videoView?.videoData;
         if (!videoData) return;
@@ -1712,6 +2098,11 @@ class ObjectTracker {
             return;
         }
 
+        if (this.showMotionField && this.trackingMethod === 'motion') {
+            this.renderMotionField(ctx);
+            // fall through so the cursor still draws on top of the field
+        }
+
         if (this.featureSizePreview) {
             this.renderFeatureSizePreview(ctx, width, height);
             // fall through so the cursor and existing-keyframe markers still draw
@@ -1774,8 +2165,11 @@ class ObjectTracker {
 
         ctx.font = '12px monospace';
         ctx.fillStyle = this.tracking ? '#00ff00' : '#ffff00';
-        const status = this.tracking ? 'TRACKING' : 'ENABLED';
-        ctx.fillText(`${status} (${Math.round(this.trackX)}, ${Math.round(this.trackY)})`, cx + canvasRadius + 10, cy);
+        // The frame number rather than a state word: which frame you are looking
+        // at is what you actually need when reading a track back, and the colour
+        // already says whether tracking is running.
+        ctx.fillText(`${Math.floor(frame)} (${Math.round(this.trackX)}, ${Math.round(this.trackY)})`,
+            cx + canvasRadius + 10, cy);
         
         // Edit Head Only fades back everything a drag can no longer reach, so
         // what stays bright is exactly what is still editable.
@@ -1841,6 +2235,9 @@ class ObjectTracker {
         this.motionMisses = 0;
         this.motionLastFrame = null;
         this.motionAnchors = [];
+        this.motionCandidate = null;
+        this.motionScores = [];
+        this.motionTrail = [];
         // Recenter the cursor to the middle of the (original-coords) video so
         // a freshly-cleared track has a sane seed point. The current frame
         // gets that center as its sole keyframe.
@@ -1878,14 +2275,46 @@ class ObjectTracker {
         return interpolatePosition(this.trackedPositions, frame);
     }
     
+    // 1 = a point the tracker worked out, 2 = a point a person placed. The
+    // slider draws each value in its own colour, so the user points a track
+    // depends on are visible at a glance along the timeline.
     getCacheStatusArray() {
         const status = new Array(Sit.frames).fill(0);
         for (const f of this.trackedPositions.keys()) {
-            if (f >= 0 && f < Sit.frames) {
-                status[f] = 1;
-            }
+            if (f >= 0 && f < Sit.frames) status[f] = 1;
+        }
+        for (const f of this.manualKeyframes) {
+            if (f >= 0 && f < Sit.frames) status[f] = 2;
         }
         return status;
+    }
+
+    // Points a person placed. These are evidence, not estimates: the tracker
+    // never overwrites one, and uses them to re-seed itself.
+    isUserPoint(frame) {
+        return this.manualKeyframes.has(Math.floor(frame));
+    }
+
+    clearUserPoints() {
+        for (const f of Array.from(this.manualKeyframes)) this.trackedPositions.delete(f);
+        this.manualKeyframes.clear();
+        this.updateSliderStatus();
+        setRenderOne(true);
+    }
+
+    clearAutoPoints() {
+        for (const f of Array.from(this.trackedPositions.keys())) {
+            if (!this.manualKeyframes.has(f)) this.trackedPositions.delete(f);
+        }
+        if (this.motionTracker) this.motionTracker.reset();
+        this.motionAnchors = [];
+        this.motionCandidate = null;
+        this.motionTrail = [];
+        this.motionScores = [];
+        this.motionMisses = 0;
+        this.motionLastFrame = null;
+        this.updateSliderStatus();
+        setRenderOne(true);
     }
     
     updateSliderStatus() {
@@ -1907,6 +2336,7 @@ let objectTracker = null;
 let trackingFolder = null;
 let enableMenuItem = null;
 let startMenuItem = null;
+let analyseMenuItem = null;
 let renderHooked = false;
 
 export function resetObjectTracking() {
@@ -2515,9 +2945,34 @@ export function addObjectTrackingMenu() {
         .tooltip(t("tracking.clearFromHere.tooltip"))
         .perm();
 
-    trackingFolder.add(menuActions, 'clearTrack')
-        .name(t("tracking.clearTrack.label"))
-        .tooltip(t("tracking.clearTrack.tooltip"))
+    // Two separate actions, because the two kinds of point are not equivalent:
+    // auto points can always be recomputed, the points a person placed cannot.
+    // Only the destructive one asks.
+    const clearActions = {
+        async clearUserPoints() {
+            if (!objectTracker) return;
+            const count = objectTracker.manualKeyframes.size;
+            if (count === 0) return;
+            const ok = await showConfirm(
+                `Delete the ${count} point${count === 1 ? "" : "s"} you placed by hand? `
+                + "The automatically tracked points are not affected, and cannot replace "
+                + "these — they are what the tracker uses to correct itself.",
+                {title: "Clear User Points", yesLabel: "Delete", noLabel: "Keep"});
+            if (ok) objectTracker.clearUserPoints();
+        },
+        clearAutoPoints() {
+            if (objectTracker) objectTracker.clearAutoPoints();
+        },
+    };
+
+    trackingFolder.add(clearActions, 'clearUserPoints')
+        .name(t("tracking.clearUserPoints.label"))
+        .tooltip(t("tracking.clearUserPoints.tooltip"))
+        .perm();
+
+    trackingFolder.add(clearActions, 'clearAutoPoints')
+        .name(t("tracking.clearAutoPoints.label"))
+        .tooltip(t("tracking.clearAutoPoints.tooltip"))
         .perm();
 
     trackingFolder.add(menuActions, 'stabilizeVideo')
@@ -2688,6 +3143,62 @@ export function addObjectTrackingMenu() {
         .listen()
         .perm();
 
+    // The result has to appear on the button itself. A menu action whose only
+    // output goes to the console reads as doing nothing at all, which is exactly
+    // how this first landed.
+    const analyseAction = {
+        async analyseObject() {
+            if (!objectTracker || analyseAction.busy) return;
+            analyseAction.busy = true;
+            const label = t("tracking.analyseObject.label");
+            const show = (text) => { if (analyseMenuItem) analyseMenuItem.name(text); };
+            try {
+                const found = await objectTracker.analyseObject(
+                    (step) => show(`${label}: ${step}...`));
+                if (!found || found.error) {
+                    show(`${label}: ${found?.error || "nothing found"}`);
+                    console.warn("Analyse Object: " + (found?.error || "nothing measurable") +
+                        " — put the cursor on the object, at a frame where it is visible.");
+                } else {
+                    show(`${found.polarity}, size ${found.featureScale}, `
+                        + `slack ${found.slack} (${found.score.toFixed(0)} sigma)`);
+                    console.log(`Analyse Object: ${found.polarity}, feature size `
+                        + `${found.featureScale}, parallax slack ${found.slack} — the object `
+                        + `stands out at ${found.score.toFixed(1)} sigma with those settings.`
+                        + (found.alternatives?.length
+                            ? ` Close alternatives: ${found.alternatives.join(", ")} —`
+                              + ` this measures one frame, so if tracking fades later,`
+                              + ` try one of those or re-analyse further into the clip.`
+                            : ""));
+                }
+            } finally {
+                analyseAction.busy = false;
+                setRenderOne(true);
+                setTimeout(() => show(label), 6000);
+            }
+        }
+    };
+    analyseMenuItem = trackingFolder.add(analyseAction, 'analyseObject')
+        .name(t("tracking.analyseObject.label"))
+        .tooltip(t("tracking.analyseObject.tooltip"))
+        .perm();
+
+    const motionFieldParams = {
+        get showMotionField() { return objectTracker?.showMotionField ?? false; },
+        set showMotionField(v) {
+            if (objectTracker) {
+                objectTracker.showMotionField = v;
+                objectTracker.motionFieldCache = null;
+                setRenderOne(true);
+            }
+        }
+    };
+    trackingFolder.add(motionFieldParams, 'showMotionField')
+        .name(t("tracking.showMotionField.label"))
+        .tooltip(t("tracking.showMotionField.tooltip"))
+        .listen()
+        .perm();
+
     // Feature Size: Gaussian sigma in image pixels for the High Peak / Low Peak
     // methods. Sliding shows a peak-marker preview overlay so the user can see
     // which features the algorithm currently treats as blobs.
@@ -2701,7 +3212,7 @@ export function addObjectTrackingMenu() {
         }
     };
 
-    trackingFolder.add(featureSizeParams, 'featureSize', 2, 20, 0.1)
+    trackingFolder.add(featureSizeParams, 'featureSize', 1, 20, 0.5)
         .name("Feature Size")
         .tooltip("Gaussian blur sigma (px) for High/Low Peak detection. Higher = smoother / larger features. Slide to preview detected peaks.")
         .onChange(() => {

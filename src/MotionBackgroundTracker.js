@@ -47,7 +47,8 @@ const DEFAULTS = {
     gap: 3,
     samples: 8,          // earlier frames in the background window
     gate: 40,            // px from the prediction to search
-    targetRadius: 6,     // px; sets the centroid window and peak spacing
+    targetRadius: 6,     // px; the object's extent, sets the centroid window
+    featureScale: 2,     // px; the size of the thing being DETECTED
     context: 24,         // px around the gate, for the noise estimate
     slack: 0,            // px of background displacement to forgive
     polarity: "both",
@@ -57,6 +58,8 @@ const DEFAULTS = {
     border: 10,
     firstFrame: 0,
     lastFrame: Number.MAX_SAFE_INTEGER,
+    preferNear: false,   // rank peaks by nearness as well as strength
+    fieldSigmas: 8,      // display range of the Motion Field view, in sigma
 };
 
 // 3x3 matrix helpers on plain arrays. The matrices here are small and numerous,
@@ -437,9 +440,9 @@ export class MotionBackgroundTracker {
         const h = img.height || img.videoHeight;
         const back = inv3(m);
         if (!back) return null;
-        const {x0, y0, side} = window;
+        const {x0, y0, w: ww, h: wh} = window;
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const [cx, cy] of [[x0, y0], [x0 + side, y0], [x0, y0 + side], [x0 + side, y0 + side]]) {
+        for (const [cx, cy] of [[x0, y0], [x0 + ww, y0], [x0, y0 + wh], [x0 + ww, y0 + wh]]) {
             const p = apply3(back, cx, cy);
             if (!p) return null;
             minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
@@ -461,40 +464,19 @@ export class MotionBackgroundTracker {
     }
 
     /**
-     * Strongest motion-inconsistent response within `gate` px of (cx, cy).
-     *
-     * Returns {x, y, score, samples} in full-resolution image coordinates, or
-     * null if nothing there disagrees with the background model. `score` is in
-     * units of the response's own robust noise sigma, so a single threshold
-     * carries across very different scenes.
+     * The response over an arbitrary rectangle: this frame minus the background
+     * predicted from its neighbours. Shared by the tracker's small search window
+     * and by the whole-frame Motion Field view, so what the user is shown is
+     * exactly what the detector works from — not a lookalike that could drift
+     * out of step with it.
      */
-    measure(videoData, frame, cx, cy, options) {
+    computeResponse(videoData, frame, rect, opts) {
         const cv = this.cv;
-        const opts = Object.assign({}, DEFAULTS, options || {});
-
         const img = this.frameImage(videoData, frame);
         if (!img) return null;
-        const width = img.width || img.videoWidth;
-        const height = img.height || img.videoHeight;
+        const {x0, y0, w, h} = rect;
+        const n = w * h;
 
-        // The oldest frame still reachable, with slack for held frames the
-        // neighbour walk may have skipped over.
-        this.evictBefore(frame - opts.gap * opts.samples - 32);
-
-        const half = Math.round(opts.gate + opts.context);
-        const side = 2 * half + 1;
-        const lowest = opts.border;
-        const highestX = width - opts.border - side;
-        const highestY = height - opts.border - side;
-        if (highestX < lowest || highestY < lowest) return null;   // frame smaller than the window
-        // Slide the window back inside the frame rather than refusing. The peak
-        // search is already restricted to the gate AND to the window, so near an
-        // edge this searches a truncated gate — which is much better than never
-        // detecting a target that gets close to the edge at all.
-        const x0 = Math.min(highestX, Math.max(lowest, Math.round(cx) - half));
-        const y0 = Math.min(highestY, Math.max(lowest, Math.round(cy) - half));
-
-        const window = {x0, y0, side};
         const picked = this.neighbours(videoData, frame, opts.gap, opts.samples,
             opts.firstFrame, opts.lastFrame);
         if (picked.length < 2) {
@@ -509,10 +491,9 @@ export class MotionBackgroundTracker {
         // no evidence. Symbology and redaction do not stay put — a heading
         // letter drifts as the aircraft turns, and redaction boxes are moved to
         // keep covering what they hide — so this is tested per frame, never once.
-        const ctx = this.scratch(side, side);
-        ctx.drawImage(img, x0, y0, side, side, 0, 0, side, side);
-        const cur = ctx.getImageData(0, 0, side, side).data;
-        const n = side * side;
+        const ctx = this.scratch(w, h);
+        ctx.drawImage(img, x0, y0, w, h, 0, 0, w, h);
+        const cur = ctx.getImageData(0, 0, w, h).data;
         const current = new Float32Array(n);
         const evidence = new Uint8Array(n);
         for (let i = 0, p = 0; i < n; i++, p += 4) {
@@ -527,14 +508,14 @@ export class MotionBackgroundTracker {
         for (const f of picked) {
             const m = this.between(videoData, f, frame, opts);
             if (!m) continue;
-            const crop = this.sourceCrop(videoData, f, m, window, 8 + opts.slack);
+            const crop = this.sourceCrop(videoData, f, m, rect, 8 + opts.slack);
             if (!crop) continue;
             // cropped source -> full source -> current frame -> window
             const warpM = mul3(translate3(-x0, -y0), mul3(m, translate3(crop.sx, crop.sy)));
             const warped = new cv.Mat(), covered = new cv.Mat();
             const ones = new cv.Mat(crop.sh, crop.sw, cv.CV_8UC1, new cv.Scalar(255));
             const M = cv.matFromArray(3, 3, cv.CV_64F, warpM);
-            const dsize = new cv.Size(side, side);
+            const dsize = new cv.Size(w, h);
             try {
                 cv.warpPerspective(crop.mat, warped, M, dsize, cv.INTER_CUBIC,
                     cv.BORDER_CONSTANT, new cv.Scalar(0));
@@ -590,8 +571,8 @@ export class MotionBackgroundTracker {
         if (opts.slack > 0) {
             high = new Float32Array(n);
             low = new Float32Array(n);
-            slide(background, high, side, side, opts.slack, true);
-            slide(background, low, side, side, opts.slack, false);
+            slide(background, high, w, h, opts.slack, true);
+            slide(background, low, w, h, opts.slack, false);
         }
 
         const response = new Float32Array(n);
@@ -603,34 +584,158 @@ export class MotionBackgroundTracker {
                 : opts.polarity === "dark" ? dark
                     : Math.max(bright, dark);
         }
+        return {response, usable, samples: stack.length, x0, y0, w, h};
+    }
 
-        const smooth = new Float32Array(n);
-        blur(response, smooth, side, side, Math.max(0.6, opts.targetRadius / 3));
+    /**
+     * The whole frame's motion field, as an RGBA image for display.
+     *
+     * Exactly what the detector sees. Looking at it answers in one glance what
+     * no amount of staring at the track can: whether the object stands out at
+     * all, whether it is swamped by sensor noise, and whether the thing the
+     * tracker chased was a real feature or an artefact. Mid-grey is zero;
+     * brightness is scaled by the field's own robust spread, so it reads the
+     * same way on a quiet scene and a noisy one, and masked-out pixels are black.
+     */
+    field(videoData, frame, options) {
+        const opts = Object.assign({}, DEFAULTS, options || {});
+        const img = this.frameImage(videoData, frame);
+        if (!img) return null;
+        const width = img.width || img.videoWidth;
+        const height = img.height || img.videoHeight;
+        const b = opts.border;
+        const got = this.computeResponse(videoData, frame,
+            {x0: b, y0: b, w: width - 2 * b, h: height - 2 * b}, opts);
+        if (!got || got.waiting) return null;
 
+        const {response, usable, w, h} = got;
+        const n = w * h;
         const pool = new Float32Array(n);
         let count = 0;
-        for (let i = 0; i < n; i++) if (usable[i]) pool[count++] = smooth[i];
+        for (let i = 0; i < n; i++) if (usable[i]) pool[count++] = response[i];
         if (count < 64) return null;
         const {median, sigma} = robustScale(pool, count);
 
-        let bestValue = -Infinity, bestIndex = -1;
+        // Show a fixed number of sigma either side of zero, so the picture is a
+        // calibrated view in the detector's own units rather than an auto-levelled
+        // image that would hide how marginal a peak really is.
+        const span = Math.max(1e-6, (opts.fieldSigmas || 8) * sigma);
+        const out = new Uint8ClampedArray(n * 4);
+        for (let i = 0; i < n; i++) {
+            const k = i * 4;
+            out[k + 3] = 255;
+            if (!usable[i]) continue;                       // masked: black
+            const t = (response[i] - median) / span;
+            const v = Math.max(0, Math.min(255, Math.round(128 + t * 127)));
+            out[k] = v; out[k + 1] = v; out[k + 2] = v;
+        }
+        return {data: out, width: w, height: h, x0: got.x0, y0: got.y0, sigma};
+    }
+
+    /**
+     * Strongest motion-inconsistent response within `gate` px of (cx, cy).
+     *
+     * Returns {x, y, score, samples} in full-resolution image coordinates, or
+     * null if nothing there disagrees with the background model. `score` is in
+     * units of the response's own robust noise sigma, so a single threshold
+     * carries across very different scenes.
+     */
+    measure(videoData, frame, cx, cy, options) {
+        const cv = this.cv;
+        const opts = Object.assign({}, DEFAULTS, options || {});
+
+        const img = this.frameImage(videoData, frame);
+        if (!img) return null;
+        const width = img.width || img.videoWidth;
+        const height = img.height || img.videoHeight;
+
+        // The oldest frame still reachable, with slack for held frames the
+        // neighbour walk may have skipped over.
+        this.evictBefore(frame - opts.gap * opts.samples - 32);
+
+        const half = Math.round(opts.gate + opts.context);
+        const side = 2 * half + 1;
+        const lowest = opts.border;
+        const highestX = width - opts.border - side;
+        const highestY = height - opts.border - side;
+        if (highestX < lowest || highestY < lowest) return null;   // frame smaller than the window
+        // Slide the window back inside the frame rather than refusing. The peak
+        // search is already restricted to the gate AND to the window, so near an
+        // edge this searches a truncated gate — which is much better than never
+        // detecting a target that gets close to the edge at all.
+        const x0 = Math.min(highestX, Math.max(lowest, Math.round(cx) - half));
+        const y0 = Math.min(highestY, Math.max(lowest, Math.round(cy) - half));
+
+        const window = {x0, y0, w: side, h: side};
+        const got = this.computeResponse(videoData, frame, window, opts);
+        if (!got) return null;
+        if (got.waiting) return {waiting: true};
+        const {response, usable} = got;
+        const n = side * side;
+
+        // ONE detection scale, fixed by the caller. Choosing it per frame — a
+        // ladder of scales, best peak wins — sounds better and is not: on some
+        // frames a wrong scale wins by chance, and the track fragments. The
+        // scale is a property of the clip, so it is measured once by
+        // analyseObject() and then committed to, which is both more stable and
+        // visible to the user instead of hidden inside the loop.
+        const scales = [opts.featureScale];
+
         const gate2 = opts.gate * opts.gate;
-        for (let y = 0; y < side; y++) {
-            const dy = y0 + y - cy;
-            for (let x = 0; x < side; x++) {
-                const i = y * side + x;
-                if (!usable[i]) continue;
-                const dx = x0 + x - cx;
-                if (dx * dx + dy * dy > gate2) continue;
-                if (smooth[i] > bestValue) { bestValue = smooth[i]; bestIndex = i; }
+        // Half weight at the edge of the gate. Among comparable candidates the
+        // nearest is much the likeliest to be the object, and without that prior
+        // a search over a scene containing several genuinely moving things —
+        // rotating turbine blades, say — always finds a rival of equal strength
+        // somewhere, so the ambiguity check below refuses everything and the
+        // track never recovers. It is gentle enough not to block a real jump:
+        // a target that jolted to the edge of the gate still wins outright when
+        // it is the only strong thing there.
+        const nearness = opts.preferNear
+            ? (dx, dy) => 1 / (1 + (dx * dx + dy * dy) / gate2)
+            : () => 1;
+
+        const smooth = new Float32Array(n);
+        const pool = new Float32Array(n);
+        let best = null;
+        for (const scale of scales) {
+            blur(response, smooth, side, side, Math.max(0.6, scale));
+            let count = 0;
+            for (let i = 0; i < n; i++) if (usable[i]) pool[count++] = smooth[i];
+            if (count < 64) continue;
+            const {median, sigma} = robustScale(pool, count);
+
+            let bestValue = -Infinity, bestIndex = -1, bestRanked = -Infinity;
+            for (let y = 0; y < side; y++) {
+                const dy = y0 + y - cy;
+                for (let x = 0; x < side; x++) {
+                    const i = y * side + x;
+                    if (!usable[i]) continue;
+                    const dx = x0 + x - cx;
+                    if (dx * dx + dy * dy > gate2) continue;
+                    const ranked = (smooth[i] - median) * nearness(dx, dy);
+                    if (ranked > bestRanked) {
+                        bestRanked = ranked;
+                        bestValue = smooth[i];
+                        bestIndex = i;
+                    }
+                }
+            }
+            if (bestIndex < 0) continue;
+            const score = (bestValue - median) / sigma;
+            if (!best || score > best.score) {
+                best = {scale, score, sigma, median, bestIndex, bestRanked,
+                    field: Float32Array.from(smooth)};
             }
         }
-        if (bestIndex < 0) return null;
+        if (!best) return null;
 
-        // Runner-up, at least three target radii away. An ambiguous gate — two
-        // comparable peaks — is how a tracker silently steps onto clutter and
-        // never comes back, so the caller is given what it needs to refuse.
+        const {median, sigma, bestIndex, bestRanked, field} = best;
         const px = bestIndex % side, py = (bestIndex / side) | 0;
+
+        // Runner-up, at least three target radii away, ranked the same way. An
+        // ambiguous gate — two comparable peaks — is how a tracker silently
+        // steps onto clutter and never comes back, so the caller is given what
+        // it needs to refuse.
         const keepOut = (3 * opts.targetRadius) * (3 * opts.targetRadius);
         let second = -Infinity;
         for (let y = 0; y < side; y++) {
@@ -642,18 +747,32 @@ export class MotionBackgroundTracker {
                 if (dx * dx + dy * dy > gate2) continue;
                 const ex = x - px, ey = y - py;
                 if (ex * ex + ey * ey <= keepOut) continue;
-                if (smooth[i] > second) second = smooth[i];
+                const ranked = (field[i] - median) * nearness(dx, dy);
+                if (ranked > second) second = ranked;
             }
         }
 
-        const centre = centroid(smooth, side, side, px, py, Math.max(2, Math.round(opts.targetRadius)));
-        this.lastDiagnostic = {samples: stack.length, sigma, gap: opts.gap};
+        // Centre of mass over the object, sized by the scale that actually found
+        // it — averaging a 2 px dot's position across 40 px of noise is what
+        // pulls a marker off a target it has correctly located.
+        const centroidRadius = Math.max(2,
+            Math.round(Math.min(opts.targetRadius, 3 * best.scale)));
+        const centre = centroid(field, side, side, px, py, centroidRadius);
+        // score is the winner's own strength, unweighted, so a threshold in
+        // sigma means the same thing everywhere. `second` is reported on the
+        // same scale but reduced by the RANKED ratio, so the caller's
+        // "must beat the runner-up" test compares like with like: a rival that
+        // is equally bright but twice as far away is correctly the weaker claim.
+        const score = best.score;
+        const ratio = (second > 0 && bestRanked > 0) ? second / bestRanked : 0;
+        this.lastDiagnostic = {samples: got.samples, sigma, gap: opts.gap, scale: best.scale};
         return {
             x: x0 + centre.x,
             y: y0 + centre.y,
-            score: (bestValue - median) / sigma,
-            second: second > -Infinity ? (second - median) / sigma : 0,
-            samples: stack.length,
+            score,
+            second: score * ratio,
+            scale: best.scale,
+            samples: got.samples,
         };
     }
 }

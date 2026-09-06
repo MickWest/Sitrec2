@@ -924,16 +924,20 @@ export class CNodeFrameSlider extends CNode {
         const padding = 5; // pixels of padding on each side
         const drawableWidth = this.canvas.width - (2 * padding);
 
-        // Draw status overlay if set
+        // Draw status overlay if set. Values are drawn in their own colour, so a
+        // caller can distinguish kinds of frame — Point Track uses this to show
+        // the points a person placed apart from the ones it worked out itself.
         if (this.statusOverlay && this.statusOverlay.length > 0) {
-            ctx.strokeStyle = '#00ff00';
+            const colours = {1: '#00ff00', 2: '#ff00ff'};
+            for (const value of Object.keys(colours).map(Number)) {
+            ctx.strokeStyle = colours[value];
             ctx.lineWidth = 2;
             ctx.beginPath();
             let inSegment = false;
             let segmentStartX = 0;
             for (let i = 0; i < this.statusOverlay.length; i++) {
                 const x = padding + (drawableWidth * i / Sit.frames);
-                if (this.statusOverlay[i]) {
+                if (this.statusOverlay[i] === value) {
                     if (!inSegment) {
                         ctx.moveTo(x, this.statusOverlayOffset);
                         segmentStartX = x;
@@ -954,6 +958,7 @@ export class CNodeFrameSlider extends CNode {
                 const lastX = padding + drawableWidth;
                 ctx.lineTo(Math.max(lastX, segmentStartX + 1), this.statusOverlayOffset);
                 ctx.stroke();
+            }
             }
         }
 
