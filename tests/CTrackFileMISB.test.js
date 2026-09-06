@@ -82,6 +82,17 @@ describe('CTrackFileMISB', () => {
         trackFileWithCenter = new CTrackFileMISB(misbWithCenter);
     });
 
+    test('video-timed KLV preserves camera angles on import', () => {
+        const rows = createTestMISBArray(false, true);
+        rows.pesPTSus = rows.map((_, i) => i * 1e6 / 30);
+        expect(new CTrackFileMISB(rows).anglesSmoothing()).toBe(0);
+        // Standalone MISB keeps its existing default; missing timestamps do
+        // not establish that the attitude is synchronized to video.
+        expect(trackFile.anglesSmoothing()).toBe(120);
+        rows.pesPTSus = rows.map(() => null);
+        expect(new CTrackFileMISB(rows).anglesSmoothing()).toBe(120);
+    });
+
     describe('canHandle', () => {
         test('returns true for valid MISB array data', () => {
             expect(CTrackFileMISB.canHandle('test.klv', misbArray)).toBe(true);

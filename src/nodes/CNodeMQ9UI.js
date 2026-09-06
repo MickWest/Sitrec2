@@ -261,6 +261,40 @@ export class   CNodeMQ9UI extends CNodeViewUI {
     }
 
 
+    getHUDRect(videoView = NodeMan.get("mirrorVideo", false) ?? NodeMan.get("video", false)) {
+        if (videoView?.videoWidth > 0 && videoView.videoHeight > 0 && videoView.videoToCanvasCoords) {
+            // Map the WHOLE source image, including the part outside the pane
+            // after zoom/pan. dx/dy/dWidth/dHeight describe only the clipped
+            // visible part and therefore cannot locate the sensor boresight.
+            const [x0, y0] = videoView.videoToCanvasCoords(0, 0);
+            const [x1, y1] = videoView.videoToCanvasCoords(videoView.videoWidth, videoView.videoHeight);
+            const scaleX = this.widthPx / videoView.widthPx;
+            const scaleY = this.heightPx / videoView.heightPx;
+            if ([x0, y0, x1, y1, scaleX, scaleY].every(Number.isFinite) && x1 > x0 && y1 > y0) {
+                return {x: x0 * scaleX, y: y0 * scaleY, width: (x1 - x0) * scaleX, height: (y1 - y0) * scaleY};
+            }
+        }
+        // No loaded video: retain the standalone HUD layout used by recording.
+        const width = Math.min(this.widthPx, this.heightPx * 16 / 9);
+        return {x: (this.widthPx - width) / 2, y: 0, width, height: this.heightPx};
+    }
+
+    px(x) {
+        return this.hudRect ? this.hudRect.x + this.hudRect.width * x / 100 : super.px(x);
+    }
+
+    px_square(x) {
+        return this.hudRect ? this.hudRect.x + this.hudRect.width / 2 + this.hudRect.height * (x - 50) / 100 : super.px_square(x);
+    }
+
+    py(y) {
+        return this.hudRect ? this.hudRect.y + this.hudRect.height * y / 100 : super.py(y);
+    }
+
+    sx(x) {
+        return this.hudRect ? this.hudRect.width * x / 100 : super.sx(x);
+    }
+
     renderCanvas(frame) {
         if (this.overlayView && !this.overlayView.visible) return;
 
@@ -406,30 +440,9 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
         const c = this.ctx;
 
-        // Get video rect to match grid to video aspect
-        // Use mirrorVideo (overlay on lookView) if available, otherwise video
-        let gridX = 0, gridY = 0, gridW = this.widthPx, gridH = this.heightPx;
-        let videoView = NodeMan.get("mirrorVideo", false);
-        if (!videoView) {
-            videoView = NodeMan.get("video", false);
-        }
-        if (videoView && videoView.getSourceAndDestCoords) {
-            videoView.getSourceAndDestCoords();
-            gridX = videoView.dx;
-            gridY = videoView.dy;
-            gridW = videoView.dWidth;
-            gridH = videoView.dHeight;
-        } else {
-            // No video: center on look view, clamp to 16:9 max aspect
-            const maxAspect = 16 / 9;
-            const viewAspect = this.widthPx / this.heightPx;
-            if (viewAspect > maxAspect) {
-                gridW = this.heightPx * maxAspect;
-                gridH = this.heightPx;
-                gridX = (this.widthPx - gridW) / 2;
-                gridY = 0;
-            }
-        }
+        // Use one image coordinate system for text, scales and crosshair.
+        this.hudRect = this.getHUDRect();
+        let {x: gridX, y: gridY, width: gridW, height: gridH} = this.hudRect;
 
         // Render grid-based text (inset by one character on left and right)
         const hudColor = getHUDColor();
@@ -473,7 +486,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
         // draw the letter N in the center
         c.fillStyle = hudColor;
-        c.font = this.px(1.5)+'px Arial';
+        c.font = this.sx(1.5)+'px Arial';
         c.textAlign = 'center';
         c.textBaseline = 'middle';
 

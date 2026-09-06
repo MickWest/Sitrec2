@@ -1702,6 +1702,12 @@ async function initializeOnce() {
         // (www.metabunk.org) is byte-for-byte unchanged.
         if (isLocal) {
             window.sitrecAPI = sitrecAPI;
+            window._botBenchVideo = {
+                prepare: async plan => (await import("./analysis/BotBenchVideo")).prepare(plan),
+                record: async () => (await import("./analysis/BotBenchVideo")).record(),
+                preview: async () => (await import("./analysis/BotBenchVideo")).preview(),
+                verifyImported: async records => (await import("./analysis/BotBenchVideo")).verifyImported(records),
+            };
         }
 
         // Set a flag to indicate that these objects are ready

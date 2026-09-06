@@ -12,6 +12,14 @@ export class CTrackFileMISB extends CTrackFile {
         this._uniqueTrackIDs = null; // lazy-initialized cache
     }
 
+    anglesSmoothing(trackIndex = 0) {
+        // TS metadata is timed to the video. Averaging its attitude moves the
+        // reconstructed boresight away from the image it describes, including
+        // removing real tracking drift and corrections. Keep filtering opt-in.
+        if (Array.isArray(this.data?.pesPTSus) && this.data.pesPTSus.some(Number.isFinite)) return 0;
+        return super.anglesSmoothing(trackIndex);
+    }
+
     // Returns array of unique TrackID values found in the data, or null if only one/no TrackID
     _getUniqueTrackIDs() {
         if (this._uniqueTrackIDs !== undefined && this._uniqueTrackIDs !== null) {

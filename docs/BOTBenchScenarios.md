@@ -218,6 +218,88 @@ A sealed release keeps its sidecars **beside each CSV**, not gathered into
 level, so the writer refuses to combine a gathered sidecar folder with
 descriptive filenames at all.
 
+## Optional scenario videos
+
+The starter video set records three balloon cases from the existing platform
+generator: level drift on an orbit, rising on an orbit, and level drift on a
+straight pass. Each clip defaults to 20 seconds of **640×480 progressive video
+at 30 fps**, in black and white, with Sitrec's **MQ9UI** overlay.
+
+```bash
+npm run build
+npm run bench-bot-video -- --video --count=3 --url='https://local.metabunk.org/sitrec/?action=new'
+```
+
+Use the URL of the worktree you built. `BOTBENCH_URL` can supply the URL instead.
+FFmpeg must be on `PATH`; the runner uses the installed Playwright Chromium and
+opens its own browser. `--headed` shows it. Without `--video`, the command only
+writes the scenario plans. Existing CSV benchmark generation is unchanged.
+
+Outputs go to `benchmarks/botbench/results/video/` (`--out` changes this):
+
+- `.ts`: H.264 video plus embedded, frame-synchronous ST 0601 KLV. Open this
+  directly with **File → Import** in a new custom sitch; no CSV is needed.
+- `.mp4`: the same H.264 video, without the KLV track.
+- `.video.json` and `.recording.json`: source scenario, truth, camera settings,
+  and per-frame verification data. These are development answer keys.
+- `.jpg`, `.roundtrip.jpg`, `.roundtrip.json`: rendered preview, decoded TS
+  preview, and the import check's measured errors.
+
+`--count=1` records just the first case. `--duration=10` changes the clip length
+(up to the source track's 90 seconds), and `--wobble=0.1` sets the operator
+deadband to **0.1% of image width**, or 0.64 pixels. This uses the shared correlated
+tracking-wobble model; the setting is an amplitude, not an RMS or a peak limit.
+
+Use `--wobble-deg=0.5` to specify the Tracking Wobble amplitude directly in
+degrees. The lens and target size stay the same; the operator drift and
+correction rates scale with amplitude using the same benchmark wobble model.
+Choose either `--wobble` (percent) or `--wobble-deg` (degrees). Use a separate
+output directory to keep alternate versions:
+
+```bash
+npm run bench-bot-video -- --video --wobble-deg=0.5 --out=benchmarks/botbench/results/video-wobble-0.5deg --url='https://local.metabunk.org/sitrec/?action=new'
+```
+
+`--scenario=02-party-rising-orbit` selects just the rising-orbit case (instead
+of the `--count` prefix). `--recenter-speed-scale=0.25` quarters the recenter
+speed while retaining the drift speed, reaction time, accuracy and seed.
+At 0.5° amplitude, that changes the base recenter speed from 3.333°/s to
+0.833°/s. Each correction still uses the model's ±25% speed variation. The
+complete effective wobble parameters are saved in `.recording.json`.
+
+For absolute rates in degrees per second, use `--drift-speed=0.1` and
+`--recenter-speed=0.3`. The other wobble settings remain the same. An absolute
+recenter rate cannot be combined with a non-default recenter speed scale.
+
+The target is a **1 m diameter sphere** representing a balloon. The fixed lens
+is set so its diameter at frame zero spans **exactly six pixels** (6/640,
+0.9375% of width). Its apparent size subsequently changes with distance. The
+first case starts at about 1.971 km slant range with a 3.099886° horizontal FOV
+and 2.325162° vertical FOV. The original 10 Hz generated truth is interpolated
+to 30 fps, preserving the source trajectory and seed.
+
+Recording renders the real Sitrec scene, waits for terrain loading, composites
+MQ9UI, and encodes MP4. The runner remuxes the video into TS and places one KLV
+record at each video's presentation timestamp. It then imports the TS through
+the normal file picker in a fresh sitch and verifies frame counts, timestamps,
+camera position, sightline, FOV, and rendered projection against the recording.
+The check also compares the MQ9UI crosshair with the recorded image coordinates,
+both in the default layout and with zoom/pan in stacked video and look panes.
+TS metadata with transport timestamps imports with **Angle Smooth Window
+(frames)** set to **0**, preserving the recorded wobble. The check verifies
+that default without changing it. For a previously saved sitch, set the window
+to 0 manually. Standalone MISB retains its 120-frame default. KLV field
+quantization is included in the comparison tolerances. To repeat only that check:
+
+```bash
+npm run bench-bot-video -- --verify-only --count=1 --url='https://local.metabunk.org/sitrec/?action=new'
+```
+
+These are synthetic development clips with rendered grayscale imagery and a
+white target, not a calibrated thermal sensor simulation. Descriptive names,
+known target dimensions and truth-sized FOV make this set unsuitable for blind
+range scoring.
+
 ## Other commands
 
 `npm run bench-bot-export` writes a few scenarios as KML track pairs (sensor +
@@ -226,4 +308,3 @@ target) for loading into the live app. The wider suite (`npm run bench-bot`,
 battery headless over the full synthetic matrix — several hundred scenarios —
 which is where the calibration figures quoted in
 [Traverse Analysis and the Verdict](TraverseAnalysis.md) come from.
-

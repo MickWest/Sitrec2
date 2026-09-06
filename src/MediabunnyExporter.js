@@ -146,16 +146,15 @@ export class MediabunnyExporter {
         this.encodedWidth = encodedWidth;
         this.encodedHeight = encodedHeight;
         this.frameCount = 0;
-        this.timestampAccumulatorMicros = 0;
-
-        this.baseFrameDurationMicros = Math.round(1_000_000 / this.fps);
     }
 
     async addFrame(canvas, frameIndex) {
         if (this.error) throw this.error;
 
-        const timestampMicros = this.timestampAccumulatorMicros;
-        const frameDurationMicros = this.baseFrameDurationMicros;
+        // Round absolute frame boundaries: accumulating a rounded 33333 us
+        // period drifts away from 30p (and from frame-synchronous metadata).
+        const timestampMicros = Math.round(this.frameCount * 1_000_000 / this.fps);
+        const frameDurationMicros = Math.round((this.frameCount + 1) * 1_000_000 / this.fps) - timestampMicros;
 
         let frameCanvas = canvas;
         if (canvas.width !== this.encodedWidth || canvas.height !== this.encodedHeight) {
@@ -184,7 +183,6 @@ export class MediabunnyExporter {
             await new Promise(r => setTimeout(r, 1));
         }
 
-        this.timestampAccumulatorMicros += frameDurationMicros;
         this.frameCount++;
     }
 
