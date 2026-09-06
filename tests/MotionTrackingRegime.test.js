@@ -34,6 +34,18 @@ test('a failed registration is unknown, not a stationary camera', () => {
     expect(regime.stationaryPrediction({frame: 3, x: 500, y: 300}, 4)).toBeNull();
 });
 
+test('target velocity recovers from a newer measured interval after registration fails', () => {
+    const regime = new MotionTrackingRegime(), camera = new MotionTrackPath();
+    for (let f = 1; f <= 5; f++) {
+        camera.record(f, step(-10, f === 2 ? 0 : 50));
+        regime.observeTarget({frame: f, x: 100 - 6 * f, y: 300}, camera);
+        if (f < 5) expect(regime.relativeVelocity).toBeNull();
+    }
+    // The oldest observation still crosses the failed fit. The valid 2–5
+    // interval already supplies three frames of +4 px/frame target motion.
+    expect(regime.relativeVelocity).toEqual({x: 4, y: 0});
+});
+
 test('repeated video frames during a pan do not imply a ground lock', () => {
     const regime = new MotionTrackingRegime(), camera = new MotionTrackPath();
     for (let f = 1; f <= 9; f++) {

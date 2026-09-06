@@ -73,9 +73,10 @@ matching and the centroid methods alike, because there is nothing to lock onto.
 **Motion (Background)** asks a different question: *which pixels are moving differently from
 the ground around them?* The scene behind the object moves as one rigid thing as the camera
 pans, so Sitrec measures that motion, predicts what the background should look like this
-frame, and subtracts it. Whatever is left over is not part of the background — and that is
-the object. Detection then depends on the object's motion relative to the scene rather than
-on its contrast against it.
+frame, and subtracts it. The residual reveals candidate objects, along with sensor noise
+and imperfect registration. The tracker checks their strength and motion before accepting
+them. Detection depends on the object's motion relative to the scene as well as the quality
+of that background estimate.
 
 One consequence follows directly, and it is the thing to know before you reach for it:
 
@@ -84,8 +85,12 @@ One consequence follows directly, and it is the thing to know before you reach f
   object hovers over fixed terrain, and to pick up again when it moves off. This is the one
   case where *Template Match* or a *Center on* method will do better.
 
-A still camera is not a problem — if anything it is the easy case, because the background is
-then perfectly predictable and anything moving stands out.
+A still camera can simplify background registration, but the object must move far enough
+between the sampled frames. A slowly moving or enlarged object can remain in most of those
+samples and be partly subtracted from itself, leaving an edge instead of its center.
+Increasing **Motion Frame Gap** can help in that situation, while a rapid pan or zoom may
+need closer samples to keep registration usable. Recheck calibration after a large change
+in apparent size; one setting may not suit an entire clip.
 
 ### Start with Analyse Object
 

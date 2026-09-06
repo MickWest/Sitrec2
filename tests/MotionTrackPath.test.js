@@ -19,6 +19,28 @@ test('internal prediction removes camera motion from target velocity', () => {
         .toEqual({x: 84, y: 50});
 });
 
+test('prediction uses a valid recent anchor pair after an older registration outage', () => {
+    const path = new MotionTrackPath();
+    path.record(1, null);
+    path.record(2, shift(-10));
+    path.record(3, shift(-10));
+    // The target moves +4 against the background, hence -6 in the image.
+    const anchors = [{frame: 0, x: 500, y: 50}, {frame: 1, x: 100, y: 50},
+        {frame: 2, x: 94, y: 50}];
+    expect(path.predict(anchors, 3)).toEqual({x: 88, y: 50});
+});
+
+test('unavailable target velocity cannot masquerade as motion with the ground', () => {
+    const path = new MotionTrackPath();
+    path.record(1, null);
+    path.record(2, shift(-10));
+    const last = {frame: 1, x: 100, y: 50};
+    expect(path.predict([{frame: 0, x: 500, y: 50}, last], 2)).toBeNull();
+    // A single reacquisition candidate still needs a camera-only search hint;
+    // its caller explicitly allows unknown target speed during association.
+    expect(path.predict([last], 2)).toEqual({x: 90, y: 50});
+});
+
 test('rotation and scale are composed in time order and inverted for reconstruction', () => {
     const path = new MotionTrackPath();
     path.record(1, [0, -1, 10, 1, 0, 0, 0, 0, 1]);

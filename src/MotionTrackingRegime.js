@@ -54,15 +54,20 @@ export class MotionTrackingRegime {
     observeTarget(point, camera) {
         this.lastTarget = point;
         this.targetHistory = this.targetHistory.filter(p => point.frame - p.frame <= 8);
-        const before = this.targetHistory[0];
         this.targetHistory.push(point);
-        const dt = before ? point.frame - before.frame : 0;
         // Measure across several frames. A median of adjacent velocities would
         // become zero when a low-rate video repeats most frames, erasing the
         // relative motion just when a pan-to-lock transition needs it.
-        if (dt < 3) return;
-        const old = camera.transport?.(before, before.frame, point.frame);
-        if (!old) return;
+        let old = null, dt = 0;
+        // A zoom can break the oldest pair while more recent observations
+        // already span a valid interval. Recover without waiting for eviction.
+        for (const before of this.targetHistory) {
+            dt = point.frame - before.frame;
+            if (dt < 3) break;
+            old = camera.transport?.(before, before.frame, point.frame);
+            if (old) break;
+        }
+        if (!old || dt < 3) return;
         this.velocitySamples.push({x: (point.x - old.x) / dt, y: (point.y - old.y) / dt});
         if (this.velocitySamples.length > 5) this.velocitySamples.shift();
         this.relativeVelocity = {

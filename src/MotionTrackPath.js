@@ -63,9 +63,18 @@ export class MotionTrackPath {
         if (!last) return null;
         // Average several measurements to avoid magnifying one pixel of jitter
         // into a long off-screen search excursion.
-        const before = anchors[Math.max(0, anchors.length - 6)];
-        const old = this.transport(before, before.frame, last.frame);
-        const dt = last.frame - before.frame;
+        let before = null, old = null;
+        for (let i = Math.max(0, anchors.length - 6); i < anchors.length - 1; i++) {
+            if (anchors[i].frame >= last.frame) continue;
+            const transported = this.transport(anchors[i], anchors[i].frame, last.frame);
+            if (transported) { before = anchors[i]; old = transported; break; }
+        }
+        // An older failed fit must not hide a healthy recent velocity estimate.
+        // If no pair is registered, velocity is unknown, not zero. Returning a
+        // ground-attached prediction here would override continued image motion
+        // just as the camera recovers from a zoom or a registration outage.
+        if (anchors.length > 1 && !old) return null;
+        const dt = before ? last.frame - before.frame : 0;
         const ahead = frame - last.frame;
         const point = old && dt > 0 ? {
             x: last.x + (last.x - old.x) * ahead / dt,
