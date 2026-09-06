@@ -1,5 +1,6 @@
 import {acquireControlLease} from "./InteractionRouter";
 import {editingControls} from "./EditorInteraction";
+import {objectFocusTrack, sameFocusTrack, syncCameraFocusUI} from "./CameraFocusUI";
 // Dragging a 3D object around, instead of typing numbers into whatever track drives it.
 //
 // An object never owns its position. A CNodeControllerTrackPosition copies one out of a
@@ -175,6 +176,7 @@ class CObjectMoveWidget {
     }
 
     updateFrame() {
+        syncCameraFocusUI();
         // Never re-pick mid-drag: releasing Alt, or dragging the object out from under
         // the cursor, must not hand the widget to a different object half way through.
         if (!this.dragging) {
@@ -184,7 +186,7 @@ class CObjectMoveWidget {
         if (!this.node) {
             this.suppressCamera(false);
             this.updateDropLine();      // hides it
-            this.updateEditFocus();     // releases focus back to whatever it was
+            this.updateEditFocus();
             return;
         }
 
@@ -523,43 +525,14 @@ class CObjectMoveWidget {
         }
     }
 
-    // "Focus While Editing": point every 3D view's camera at the object being edited.
-    //
-    // This reuses the view's existing focus-track machinery rather than moving cameras
-    // directly — CNodeView3D already does `controls.target = node.p(frame)` plus a lookAt
-    // every frame for whatever focusTrackName names, and a CNode3DObject answers p() like
-    // any track. So focusing is one assignment, and it inherits the orbit behaviour and
-    // the frame-by-frame follow for free.
-    //
-    // SUSPENDED WHILE DRAGGING. Focus pins the orbit centre to the object, so dragging
-    // under it means the camera swings to chase the thing your pointer is moving — the
-    // view fights the gesture. Released on drag start and restored on drop, which is also
-    // when you most want to see where it ended up.
+    // Suspend aiming while dragging the focused object, without changing the
+    // selected track. No saved focus can later overwrite a newer menu choice.
     updateEditFocus() {
-        const node = this.node;
-        const wanted = (node && node.focusWhileEditing && !this.dragging && !this.altMode)
-            ? node.id : null;
-
-        if (wanted === this.focusedNodeId) return;
-        this.focusedNodeId = wanted;
-
-        // Every view that has a focus track — i.e. the 3D ones. Tested by the property
-        // rather than by class so it needs no import and cannot miss a subclass.
         ViewMan.iterate((id, view) => {
             if (view?.focusTrackName === undefined) return;
-            if (wanted) {
-                // Remember what the view was focused on, once, so releasing focus puts
-                // back the user's own choice rather than "default".
-                if (view._focusBeforeEdit === undefined) {
-                    view._focusBeforeEdit = view.focusTrackName;
-                }
-                view.focusTrackName = wanted;
-            } else if (view._focusBeforeEdit !== undefined) {
-                view.focusTrackName = view._focusBeforeEdit;
-                view._focusBeforeEdit = undefined;
-            }
+            view.suspendObjectFocus = !!(this.node && this.dragging && sameFocusTrack(
+                NodeMan.get(view.focusTrackName, false), objectFocusTrack(this.node)));
         });
-        setRenderOne(true);
     }
 
     // A plumb line from the object straight down to the ground.
@@ -678,6 +651,7 @@ class CObjectMoveWidget {
         // next pointermove — a frame's delay is enough for the view that captured the
         // press to orbit once. Leaving a drag while Alt is still held keeps it on.
         this.suppressCamera(this.dragging || this.altMode);
+        this.updateEditFocus();
     }
 
     onWidgetMoved() {

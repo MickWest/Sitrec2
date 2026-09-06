@@ -1,4 +1,5 @@
 import {par} from "../par";
+import {requestCameraFocusSync} from "../CameraFocusUI";
 import {showError} from "../showError";
 import {
     createVideoExporter,
@@ -3814,26 +3815,44 @@ export class CNodeView3D extends CNodeViewCanvas {
         setRenderOne(true);
     }
 
-    // todo - change to nodes, so we can add and remove them
-    // for the custom sitch
     addFocusTracks(focusTracks) {
-        let select = "default"
-        if (focusTracks.select !== undefined) {
-            select = focusTracks.select
-            delete focusTracks.select
-        }
+        const {select = "default", ...options} = focusTracks;
+        this._baseFocusTracks = options;
+        this.focusTrackName = select;
+        this.lockTrackName = select;
+        this.refreshFocusTrackMenus(options);
+        requestCameraFocusSync();
+    }
 
-        this.focusTrackName = select
-        this.lockTrackName = select
-        guiMenus.view.add(this, "focusTrackName", focusTracks).onChange(focusTrackName => {
-            //
-        }).name(t("view3d.focusTrack.label")).listen()
-            .tooltip(t("view3d.focusTrack.tooltip"))
-        guiMenus.view.add(this, "lockTrackName", focusTracks).onChange(lockTrackName => {
-            //
-            console.log(this.lockTrackName)
-        }).name(t("view3d.lockTrack.label")).listen()
-            .tooltip(t("view3d.lockTrack.tooltip"))
+    refreshFocusTrackMenus(options) {
+        for (const [property, controllerKey, label] of [
+            ["focusTrackName", "focusTrackController", "focusTrack"],
+            ["lockTrackName", "lockTrackController", "lockTrack"],
+        ]) {
+            const previous = this[controllerKey];
+            this[controllerKey] = (previous ? previous.options(options) : guiMenus.view.add(this, property, options))
+                .name(t(`view3d.${label}.label`)).listen()
+                .tooltip(t(`view3d.${label}.tooltip`))
+                .onChange(() => requestCameraFocusSync());
+        }
+    }
+
+    get focusTrackName() { return this._focusTrackName ?? "default"; }
+    set focusTrackName(value) {
+        if (value === this.focusTrackName) return;
+        this._focusTrackName = value;
+        requestCameraFocusSync();
+    }
+
+    get lockTrackName() { return this._lockTrackName ?? "default"; }
+    set lockTrackName(value) {
+        if (value === this.lockTrackName) return;
+        this._lockTrackName = value;
+        // Switching directly between two tracks must not apply the old
+        // track's displacement/heading to the newly selected one.
+        this.lastLockPos = null;
+        this.lastLockHeading = null;
+        requestCameraFocusSync();
     }
 
     get camera() {
@@ -3889,7 +3908,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             this.controls.update(1);
 
             // if we have a focus track, then focus on it after camera controls have updated
-            if (this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName)) {
+            if (!this.suspendObjectFocus && this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName)) {
                 this.controls.justRotate = true;
                 var focusTrackNode = NodeMan.get(this.focusTrackName)
                 const target = focusTrackNode.p(par.frame);

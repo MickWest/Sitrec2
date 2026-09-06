@@ -20,6 +20,7 @@ import {ECEFToLLAVD_radii, haversineDistanceKM, interpolateGreatCircle, LLAToECE
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {t} from "../i18n";
 import {CNodeContrail} from "./CNodeContrail";
+import {addCameraFocusControl, addCameraFollowControl} from "../CameraFocusUI";
 
 export class CNodeDisplayTrack extends CNode3DGroup {
     constructor(v) {
@@ -402,6 +403,8 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             }
 
             this.guiFolder.add(this, "gotoTrack").name(t("displayTrack.gotoTrack.label")).tooltip(t("displayTrack.gotoTrack.tooltip"));
+            addCameraFocusControl(this, this.guiFolder, () => this.in.track);
+            addCameraFollowControl(this, this.guiFolder, () => this.in.track);
 
         }
 

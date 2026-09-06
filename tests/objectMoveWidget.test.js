@@ -3,6 +3,7 @@ import {ObjectMoveWidget} from "../src/CObjectMoveWidget";
 import {CNodeBalloonTrack} from "../src/nodes/CNodeBalloonTrack";
 import {CNode3DObject} from "../src/nodes/CNode3DObject";
 import {setNodeMan, setSit} from "../src/Globals";
+import {ViewMan} from "../src/CViewManager";
 import {LLAToECEF, ECEFToLLAVD_radii} from "../src/LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../src/EGM96Geoid";
 import {getLocalEastVector, getLocalUpVector} from "../src/SphericalMath";
@@ -21,7 +22,7 @@ jest.mock("../src/UndoManager", () => ({undoManager: {add: jest.fn()}}));
 
 class CNodeController {}
 class CNodeControllerTrackPosition extends CNodeController {
-    constructor(track) { super(); this.inputs = {sourceTrack: track}; }
+    constructor(track) { super(); this.isController = true; this.inputs = {sourceTrack: track}; }
 }
 function objectFor(track) {
     return Object.assign(new CNode3DObject(), {id: "editableObject", group: new Group(),
@@ -59,6 +60,42 @@ beforeEach(() => {
 afterEach(() => {
     ObjectMoveWidget.dragging = false; ObjectMoveWidget.dragPrepared = false;
     ObjectMoveWidget.target = ObjectMoveWidget.node = null;
+});
+
+test("dragging suspends only matching camera focus and never restores a stale selection", () => {
+    const a = {id: "a"}, b = {id: "b"};
+    const selected = {id: "selected", choice: "A", inputs: {A: a, B: b}};
+    const tracks = {a, b, selected};
+    setNodeMan({get: id => tracks[id]});
+    const main = {focusTrackName: "a"}, look = {focusTrackName: "b"};
+    ViewMan.iterate.mockImplementation(fn => {fn("mainView", main); fn("lookView", look);});
+    const widget = ObjectMoveWidget;
+    try {
+        widget.node = objectFor(selected);
+        widget.dragging = true;
+        widget.updateEditFocus();
+        expect(main.suspendObjectFocus).toBe(true);
+        expect(look.suspendObjectFocus).toBe(false);
+        expect(main.focusTrackName).toBe("a");
+
+        // A menu choice during a drag takes effect immediately. Dropping the
+        // object must not restore whichever track was focused before the drag.
+        main.focusTrackName = "b";
+        widget.updateEditFocus();
+        expect(main.suspendObjectFocus).toBe(false);
+        widget.dragging = false;
+        widget.updateEditFocus();
+        expect(main.focusTrackName).toBe("b");
+
+        main.focusTrackName = "a";
+        widget.dragging = true;
+        widget.updateEditFocus();
+        widget.dragging = false;
+        widget.node = null;
+        widget.updateEditFocus();
+        expect(main.suspendObjectFocus).toBe(false);
+        expect(main.focusTrackName).toBe("a");
+    } finally {ViewMan.iterate.mockImplementation(() => {});}
 });
 
 test.each([0, 90])("balloon drag at frame %s moves the launch point and rebakes, with undo and redo", frame => {

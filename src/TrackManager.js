@@ -1,6 +1,7 @@
 // Creating timed data and then tracks from pre-parsed track files
 // should be agnostic to the source of the data (KML/ADSB, CSV, KLVS, etc)
 import {CNodeScale} from "./nodes/CNodeScale";
+import {requestCameraFocusSync} from "./CameraFocusUI";
 import {showConfirm, showChoice} from "./showError";
 import {CNodeGUIValue, CNodeGUIFlag} from "./nodes/CNodeGUIValue";
 import {CNodeConstant} from "./nodes/CNode";
@@ -511,6 +512,7 @@ class CTrackManager extends CManager {
         // Radius Resize reading is brought up to date. Quietly — see the note
         // on syncGlobalSphereResize about why it must not act.
         syncGlobalSphereResize();
+        requestCameraFocusSync();
         EventManager.dispatchEvent("tracksChanged", this);
     }
 
