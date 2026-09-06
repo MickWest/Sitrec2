@@ -4115,6 +4115,15 @@ function showResultGallery(results, uiState = null) {
     overlay.setAttribute("aria-modal", "true");
     overlay.setAttribute("aria-label", "Traverse analysis results");
     overlay.tabIndex = -1;
+    // The InteractionRouter owns document wheel events and gives each one to the
+    // topmost adapter whose surface the pointer is over. A full-screen overlay is
+    // not a surface, so that adapter was still the 3D view underneath: it zoomed,
+    // preventDefault'd, and the panel never scrolled (except over a <button>, one
+    // of the router's native targets). Declare the overlay native, as the sitch
+    // and track browsers do, and the browser scrolls whatever pane is under the
+    // pointer. The 3D graph canvases register as allowNative surfaces, so drag to
+    // rotate keeps working.
+    overlay.dataset.interactionNative = "true";
     const _prevFocus = (typeof document !== "undefined" && document.activeElement) || null;
     overlay.style.cssText = "position:fixed;inset:0;z-index:10000;display:flex;" +
         "align-items:flex-start;justify-content:center;padding:24px 16px;box-sizing:border-box;" +
