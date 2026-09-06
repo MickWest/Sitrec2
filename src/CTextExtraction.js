@@ -1,5 +1,6 @@
 import {guiMenus, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
+import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysisResolution';
 import {getTesseract, loadTesseract} from "./tesseractLoader";
 import {isLocal} from "./configUtils";
 import {t} from "./i18n";
@@ -49,7 +50,7 @@ class TextRegion {
 
 let renderHooked = false;
 
-class TextExtractor {
+export class TextExtractor {
     constructor(videoView) {
         this.videoView = videoView;
         this.enabled = false;
@@ -107,7 +108,7 @@ class TextExtractor {
 
         mouse.handlers.down = (e) => {
             if (this.enabled && this.isLearning && this.selectedRegion) {
-                const [vX, vY] = this.videoView.canvasToVideoCoords(mouse.x, mouse.y);
+                const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(mouse.x, mouse.y);
                 const charIndex = this.getCharIndexAtPosition(vX, vY, this.selectedRegion);
                 if (charIndex >= 0) {
                     this.promptLearnCharacter(charIndex);
@@ -115,13 +116,13 @@ class TextExtractor {
                 }
             }
             if (this.enabled && this.isDefiningRegion) {
-                const [vX, vY] = this.videoView.canvasToVideoCoords(mouse.x, mouse.y);
+                const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(mouse.x, mouse.y);
                 this.newRegionStart = {x: vX, y: vY};
                 this.newRegionEnd = {x: vX, y: vY};
                 return;
             }
             if (this.enabled && !this.isDefiningRegion) {
-                const [vX, vY] = this.videoView.canvasToVideoCoords(mouse.x, mouse.y);
+                const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(mouse.x, mouse.y);
                 const hit = this.findRegionCorner(vX, vY);
                 if (hit) {
                     this.isDragging = true;
@@ -137,13 +138,13 @@ class TextExtractor {
 
         mouse.handlers.drag = (e) => {
             if (this.enabled && this.isDefiningRegion && this.newRegionStart) {
-                const [vX, vY] = this.videoView.canvasToVideoCoords(mouse.x, mouse.y);
+                const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(mouse.x, mouse.y);
                 this.newRegionEnd = {x: vX, y: vY};
                 setRenderOne(true);
                 return;
             }
             if (this.enabled && this.isDragging && this.dragRegion) {
-                const [vX, vY] = this.videoView.canvasToVideoCoords(mouse.x, mouse.y);
+                const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(mouse.x, mouse.y);
                 const dx = vX - this.lastMouseX;
                 const dy = vY - this.lastMouseY;
                 this.lastMouseX = vX;
@@ -245,6 +246,8 @@ class TextExtractor {
 
     disable() {
         this.enabled = false;
+        this.extracting = false;
+        if (this.extractionSession) this.extractionSession.cancelled = true;
         this.hideOverlay();
     }
 
@@ -302,8 +305,7 @@ class TextExtractor {
     }
 
     learnCharacter(charIndex, char) {
-        const region = this.selectedRegion;
-        if (!region) return;
+        if (!this.selectedRegion) return;
 
         const videoData = this.videoView?.videoData;
         if (!videoData) return;
@@ -312,6 +314,7 @@ class TextExtractor {
         const image = videoData.getImage(frame);
         if (!image || !image.width) return;
 
+        const region = this.regionToImage(this.selectedRegion, image);
         const charWidth = region.width / region.numChars;
         const x1 = Math.floor(region.x1 + charIndex * charWidth);
         const y1 = Math.floor(region.y1);
@@ -405,11 +408,23 @@ class TextExtractor {
 
     async startExtraction() {
         if (!this.enabled || this.regions.length === 0) return;
-        if (this.extracting) {
+        if (this.extractionSession) {
+            this.extractionSession.cancelled = true;
             this.extracting = false;
             return;
         }
+        const session = beginVideoAnalysis(this.videoView?.videoData, () => { this.extracting = false; });
+        this.extractionSession = session;
+        try { return await this.startExtractionAtResolution(session); }
+        finally {
+            this.extracting = false;
+            this.extractionSession = null;
+            session.end();
+            setMenuItemLabel(startExtractMenuItem, "menu.startExtract.label");
+        }
+    }
 
+    async startExtractionAtResolution(session) {
         try {
             await loadTesseract();
         } catch (e) {
@@ -418,6 +433,7 @@ class TextExtractor {
             return;
         }
 
+        if (session.cancelled || !this.enabled) return;
         this.extracting = true;
         setMenuItemLabel(startExtractMenuItem, "menu.startExtract.stopLabel");
 
@@ -435,13 +451,16 @@ class TextExtractor {
         for (let frame = startFrame; frame <= endFrame && this.extracting; frame++) {
             par.frame = frame;
             videoData.getImage(frame);
-            await videoData.waitForFrame(frame, 5000);
+            const ready = await videoData.waitForFrame(frame, 5000);
+            if (session.cancelled || !this.extracting) break;
+            if (!ready) continue;
 
             const image = videoData.getImage(frame);
             if (!image || !image.width) continue;
 
             for (const region of this.regions) {
                 const text = await this.extractTextFromRegion(Tesseract, image, region);
+                if (session.cancelled || !this.extracting) break;
                 region.setTextForFrame(frame, text);
             }
 
@@ -460,7 +479,20 @@ class TextExtractor {
         setRenderOne(true);
     }
 
-    async extractTextFromRegion(Tesseract, image, region) {
+    // Region geometry stays in source pixels while decoded images can change
+    // size between playback, template learning, and extraction.
+    regionToImage(region, image) {
+        const vd = this.videoView.videoData;
+        const sx = (image.width || image.videoWidth) / (vd.originalVideoWidth || vd.videoWidth);
+        const sy = (image.height || image.videoHeight) / (vd.originalVideoHeight || vd.videoHeight);
+        const scaled = Object.assign(Object.create(Object.getPrototypeOf(region)), region);
+        scaled.x1 *= sx; scaled.x2 *= sx;
+        scaled.y1 *= sy; scaled.y2 *= sy;
+        return scaled;
+    }
+
+    async extractTextFromRegion(Tesseract, image, sourceRegion) {
+        const region = this.regionToImage(sourceRegion, image);
         const imgWidth = image.width || image.videoWidth;
         const imgHeight = image.height || image.videoHeight;
 
@@ -550,8 +582,8 @@ class TextExtractor {
         ctx.clearRect(0, 0, width, height);
 
         if (this.isDefiningRegion && this.newRegionStart && this.newRegionEnd) {
-            const [cx1, cy1] = this.videoView.videoToCanvasCoords(this.newRegionStart.x, this.newRegionStart.y);
-            const [cx2, cy2] = this.videoView.videoToCanvasCoords(this.newRegionEnd.x, this.newRegionEnd.y);
+            const [cx1, cy1] = this.videoView.videoToCanvasCoordsOriginal(this.newRegionStart.x, this.newRegionStart.y);
+            const [cx2, cy2] = this.videoView.videoToCanvasCoordsOriginal(this.newRegionEnd.x, this.newRegionEnd.y);
             ctx.strokeStyle = '#00ffff';
             ctx.lineWidth = 2;
             ctx.setLineDash([5, 5]);
@@ -565,8 +597,8 @@ class TextExtractor {
     }
 
     renderRegion(ctx, region, frame, isSelected) {
-        const [cx1, cy1] = this.videoView.videoToCanvasCoords(region.x1, region.y1);
-        const [cx2, cy2] = this.videoView.videoToCanvasCoords(region.x2, region.y2);
+        const [cx1, cy1] = this.videoView.videoToCanvasCoordsOriginal(region.x1, region.y1);
+        const [cx2, cy2] = this.videoView.videoToCanvasCoordsOriginal(region.x2, region.y2);
 
         ctx.strokeStyle = isSelected ? '#ffff00' : '#00ff00';
         ctx.lineWidth = isSelected ? 2 : 1;
@@ -673,6 +705,7 @@ export function addTextExtractionMenu() {
     if (!isLocal) return;
 
     textExtractionFolder = guiMenus.video.addFolder(tt("menu.title")).close().perm();
+    addVideoAnalysisResolutionMenu(textExtractionFolder, () => NodeMan.get('video', false)?.videoData);
 
     const menuActions = {
         enableExtraction: toggleEnableExtraction,

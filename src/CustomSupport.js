@@ -8,6 +8,7 @@
  * - Provide advanced UI helpers, including GUI mirroring utilities.
  */
 // Support functions for the custom sitches and mods
+import {notifyVideoResolutionSettingsChanged} from './VideoAnalysisResolution';
 // 
 // GUI Mirroring Functionality:
 // - mirrorGUIFolder(sourceFolderName, menuTitle, x, y): Mirror any GUI menu to a standalone draggable window with dynamic updates
@@ -155,6 +156,7 @@ export function applyPerformancePreset(name) {
     const p = PERFORMANCE_PRESETS[name];
     if (!p) return; // "Custom" or unknown — leave settings alone
     Object.assign(Globals.settings, p);
+    notifyVideoResolutionSettingsChanged();
 }
 
 // Push the current renderScale + msaaSamples into every CNodeView3D so changes
@@ -333,6 +335,7 @@ export class CCustomManager {
      * @param {boolean} immediate - Force immediate save, bypassing debounce
      */
     async saveGlobalSettings(immediate = false) {
+        notifyVideoResolutionSettingsChanged();
         await this.settingsSaver.save(immediate);
     }
 

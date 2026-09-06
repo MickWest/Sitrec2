@@ -252,13 +252,23 @@ export class CVideoStreamData extends CVideoWebCodecBase {
     }
 
     maybeReady() {
-        if (this.disposed || this.loaded || this.error || !this.config || !this.bufferedFrames) return;
+        if (this.disposed || this.loaded || (this.error && !(this._loadFailureReported && this.downloadFinished)) ||
+            !this.config || !this.bufferedFrames) return;
         if (!this.rawH264 && !this.completeFramePTSus && !this.downloadFinished) return;
         const first = this.groups[0];
         if (!this.isFrameCached(first.frame * this.videoSpeed)) {
+            if (this.error) return;
             if (first.loaded || first._permanentlyFailed) { this.failInitialDecode(); return; }
             this.requestGroup(first);
             return;
+        }
+        // A delayed/retried decode can succeed after the startup timeout.
+        // Its valid pixels must restore readiness rather than leave a sticky
+        // failure flag that prevents every analysis wait from succeeding.
+        if (this._loadFailureReported) {
+            this.error = false;
+            this.streamError = null;
+            this._loadFailureReported = false;
         }
         this.loaded = true;
         clearTimeout(this._readyTimer);
@@ -339,9 +349,12 @@ export class CVideoStreamData extends CVideoWebCodecBase {
 
     async waitForFrame(frame, timeout = 10000) {
         const started = performance.now();
-        while (!this.disposed && !this.streamError && performance.now() - started < timeout) {
+        while (!this.disposed && performance.now() - started < timeout) {
             const group = this.getGroup(Math.floor(frame / this.videoSpeed));
             if (group?.dataReady) return super.waitForFrame(frame, Math.max(0, timeout - (performance.now() - started)));
+            // A stream failure can leave a usable downloaded prefix. Test its
+            // frame readiness first; only missing bytes make this wait futile.
+            if (this.streamError) return false;
             await new Promise(resolve => setTimeout(resolve, 50));
         }
         return false;

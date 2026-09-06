@@ -1,5 +1,6 @@
 import {Globals, NodeMan, registerFrameBlocker, setRenderOne, Sit, unregisterFrameBlocker} from "./Globals";
 import {par} from "./par";
+import {beginVideoAnalysis} from './VideoAnalysisResolution';
 import {startAnalysis, updateGuiValues, updateOptimizeStatus} from "./CMotionAnalysisShared";
 
 import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
@@ -1188,6 +1189,15 @@ export class MotionAnalyzer {
     }
 
     start() {
+        this.analysisResolutionSession?.end();
+        this.analysisResolutionSession = beginVideoAnalysis(this.videoView?.videoData, () => {
+            this.invalidateCache();
+            this.stop();
+        });
+        const vd = this.videoView?.videoData;
+        const resolution = `${vd?.videoWidth}x${vd?.videoHeight}`;
+        if (this.lastAnalysisResolution !== resolution) this.invalidateCache();
+        this.lastAnalysisResolution = resolution;
         this.active = true;
         this.createOverlays();
         this.showOverlays();
@@ -1210,6 +1220,8 @@ export class MotionAnalyzer {
 
     stop() {
         this.active = false;
+        this.analysisResolutionSession?.end();
+        this.analysisResolutionSession = null;
         this.hideOverlays();
         this.clearSliderStatus();
         unregisterFrameBlocker('motionAnalysis');
@@ -1224,8 +1236,10 @@ export class MotionAnalyzer {
         if (!videoData) return;
 
         const videoId = videoData.id || videoData.filename || 'unknown';
-        if (this.lastVideoDataId !== videoId) {
+        const resolution = `${videoData.videoWidth}x${videoData.videoHeight}`;
+        if (this.lastVideoDataId !== videoId || this.lastAnalysisResolution !== resolution) {
             this.lastVideoDataId = videoId;
+            this.lastAnalysisResolution = resolution;
             this.invalidateCache();
         }
         

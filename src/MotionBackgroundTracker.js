@@ -39,7 +39,17 @@
 // See private/notes/MotionBasedPointTracking.md for the measurements behind each
 // of the choices here, and for the failure each one was forced by.
 
+import {MotionTrackPath} from './MotionTrackPath';
+
 const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+
+export function motionPixelMasked(mask, x, y, width, height) {
+    const image = mask?.imageData;
+    if (!image) return false;
+    const mx = Math.floor(x * image.width / width), my = Math.floor(y * image.height / height);
+    if (mx < 0 || my < 0 || mx >= image.width || my >= image.height) return false;
+    return image.data[(my * image.width + mx) * 4 + 3] > 128;
+}
 
 // One source of truth for the response geometry, so a caller sizing a search
 // cannot drift out of step with what measure() actually requires.
@@ -59,6 +69,8 @@ const DEFAULTS = {
     firstFrame: 0,
     lastFrame: Number.MAX_SAFE_INTEGER,
     preferNear: false,   // rank peaks by nearness as well as strength
+    requireAppearance: false, // a wide search also needs a real image feature
+    maxCandidates: 1,
     fieldSigmas: 8,      // display range of the Motion Field view, in sigma
 };
 
@@ -156,6 +168,7 @@ export class MotionBackgroundTracker {
         this.cv = cv;
         this.smallGray = new Map();   // frame -> {mat, scale}  reduced, for registration
         this.step = new Map();        // frame -> 3x3 mapping frame -> frame+1, full-res coords
+        this.cameraPath = new MotionTrackPath();
         this.canvas = null;
         this.ctx = null;
         this.lastDiagnostic = null;
@@ -168,6 +181,7 @@ export class MotionBackgroundTracker {
         for (const entry of this.smallGray.values()) entry.mat.delete();
         this.smallGray.clear();
         this.step.clear();
+        this.cameraPath.clear();
         this.lastDiagnostic = null;
     }
 
@@ -175,6 +189,18 @@ export class MotionBackgroundTracker {
         this.reset();
         this.canvas = null;
         this.ctx = null;
+    }
+
+    syncVideoContext(videoData, opts) {
+        const key = [videoData.frameCacheGeneration, videoData.videoWidth, videoData.videoHeight,
+            opts.registerSize, opts.maxFeatures, opts.mask?.revision].join(':');
+        if (this.cachedVideo !== undefined && (this.cachedVideo !== videoData || this.cachedVideoKey !== key ||
+            this.cachedMaskData !== opts.mask?.imageData)) {
+            this.reset();
+        }
+        this.cachedVideo = videoData;
+        this.cachedVideoKey = key;
+        this.cachedMaskData = opts.mask?.imageData;
     }
 
     scratch(w, h) {
@@ -251,7 +277,7 @@ export class MotionBackgroundTracker {
         const prev = new cv.Mat(), next = new cv.Mat(), back = new cv.Mat();
         const st1 = new cv.Mat(), st2 = new cv.Mat(), err1 = new cv.Mat(), err2 = new cv.Mat();
         // goodFeaturesToTrack needs a Mat, not null, when there is no mask.
-        const mask = this.overlayMask(videoData, frame, a) || new cv.Mat();
+        const mask = this.overlayMask(videoData, frame, a, opts.mask) || new cv.Mat();
         try {
             // qualityLevel is a fraction of the STRONGEST corner anywhere in the
             // image, and the mask filters only the OUTPUT, not that threshold. A
@@ -329,10 +355,20 @@ export class MotionBackgroundTracker {
         return result;
     }
 
+    recordCameraMotion(videoData, frame, options) {
+        const opts = Object.assign({}, DEFAULTS, options);
+        this.syncVideoContext(videoData, opts);
+        const last = this.cameraPath.lastFrame ?? frame - 1;
+        for (let f = last + 1; f <= frame; f++) {
+            this.cameraPath.record(f, this.stepHomography(videoData, f - 1, opts));
+        }
+        this.evictBefore(frame - opts.gap * opts.samples - 32);
+    }
+
     // Registration must not key on symbology. This mask is built at the reduced
     // registration scale, so it costs little; the response path masks the same
     // content again, per frame, at full resolution.
-    overlayMask(videoData, frame, small) {
+    overlayMask(videoData, frame, small, userMask) {
         const img = this.frameImage(videoData, frame);
         if (!img) return null;
         const cv = this.cv;
@@ -349,7 +385,7 @@ export class MotionBackgroundTracker {
             // Colour RANGE, not HSV saturation: saturation divides by
             // brightness, so in a blue-tinted image the dark shadows read as
             // fully saturated and half the scene gets excluded.
-            out[i] = (hi - lo > 40 || hi < 6) ? 0 : 255;
+            out[i] = (hi - lo > 40 || hi < 6 || motionPixelMasked(userMask, i % w, Math.floor(i / w), w, h)) ? 0 : 255;
         }
         return mask;
     }
@@ -373,7 +409,7 @@ export class MotionBackgroundTracker {
                 if (!h) return null;
                 const back = inv3(h);
                 if (!back) return null;
-                m = mul3(m, back);
+                m = mul3(back, m);
             }
         }
         return m;
@@ -460,7 +496,7 @@ export class MotionBackgroundTracker {
         const gray = new cv.Mat();
         cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
         rgba.delete();
-        return {mat: gray, sx, sy, sw, sh};
+        return {mat: gray, sx, sy, sw, sh, sourceWidth: w, sourceHeight: h};
     }
 
     /**
@@ -501,7 +537,8 @@ export class MotionBackgroundTracker {
             const hi = r > g ? (r > b ? r : b) : (g > b ? g : b);
             const lo = r < g ? (r < b ? r : b) : (g < b ? g : b);
             current[i] = 0.299 * r + 0.587 * g + 0.114 * b;
-            evidence[i] = (hi - lo > 40 || hi < opts.blackLevel) ? 0 : 1;
+            evidence[i] = (hi - lo > 40 || hi < opts.blackLevel ||
+                motionPixelMasked(opts.mask, x0 + i % w, y0 + Math.floor(i / w), img.width, img.height)) ? 0 : 1;
         }
 
         const stack = [];
@@ -514,6 +551,13 @@ export class MotionBackgroundTracker {
             const warpM = mul3(translate3(-x0, -y0), mul3(m, translate3(crop.sx, crop.sy)));
             const warped = new cv.Mat(), covered = new cv.Mat();
             const ones = new cv.Mat(crop.sh, crop.sw, cv.CV_8UC1, new cv.Scalar(255));
+            // Excluded pixels in earlier frames must not warp into the current
+            // image and masquerade as a dark/bright target beside the mask.
+            if (opts.mask) for (let y = 0; y < crop.sh; y++) for (let x = 0; x < crop.sw; x++) {
+                if (motionPixelMasked(opts.mask, crop.sx + x, crop.sy + y, crop.sourceWidth, crop.sourceHeight)) {
+                    ones.data[y * crop.sw + x] = 0;
+                }
+            }
             const M = cv.matFromArray(3, 3, cv.CV_64F, warpM);
             const dsize = new cv.Size(w, h);
             try {
@@ -584,7 +628,7 @@ export class MotionBackgroundTracker {
                 : opts.polarity === "dark" ? dark
                     : Math.max(bright, dark);
         }
-        return {response, usable, samples: stack.length, x0, y0, w, h};
+        return {response, current, usable, samples: stack.length, x0, y0, w, h};
     }
 
     /**
@@ -599,6 +643,8 @@ export class MotionBackgroundTracker {
      */
     field(videoData, frame, options) {
         const opts = Object.assign({}, DEFAULTS, options || {});
+        this.syncVideoContext(videoData, opts);
+        this.evictBefore(frame - opts.gap * opts.samples - 32);
         const img = this.frameImage(videoData, frame);
         if (!img) return null;
         const width = img.width || img.videoWidth;
@@ -643,6 +689,7 @@ export class MotionBackgroundTracker {
     measure(videoData, frame, cx, cy, options) {
         const cv = this.cv;
         const opts = Object.assign({}, DEFAULTS, options || {});
+        this.syncVideoContext(videoData, opts);
 
         const img = this.frameImage(videoData, frame);
         if (!img) return null;
@@ -654,11 +701,14 @@ export class MotionBackgroundTracker {
         this.evictBefore(frame - opts.gap * opts.samples - 32);
 
         const half = Math.round(opts.gate + opts.context);
-        const side = 2 * half + 1;
         const lowest = opts.border;
-        const highestX = width - opts.border - side;
-        const highestY = height - opts.border - side;
-        if (highestX < lowest || highestY < lowest) return null;   // frame smaller than the window
+        // Clip the measurement rectangle on small/low-resolution videos. A
+        // large search radius must not disable detection for the whole frame.
+        const windowWidth = Math.min(2 * half + 1, width - 2 * lowest);
+        const windowHeight = Math.min(2 * half + 1, height - 2 * lowest);
+        if (windowWidth < 8 || windowHeight < 8) return null;
+        const highestX = width - opts.border - windowWidth;
+        const highestY = height - opts.border - windowHeight;
         // Slide the window back inside the frame rather than refusing. The peak
         // search is already restricted to the gate AND to the window, so near an
         // edge this searches a truncated gate — which is much better than never
@@ -666,12 +716,28 @@ export class MotionBackgroundTracker {
         const x0 = Math.min(highestX, Math.max(lowest, Math.round(cx) - half));
         const y0 = Math.min(highestY, Math.max(lowest, Math.round(cy) - half));
 
-        const window = {x0, y0, w: side, h: side};
+        const window = {x0, y0, w: windowWidth, h: windowHeight};
         const got = this.computeResponse(videoData, frame, window, opts);
         if (!got) return null;
         if (got.waiting) return {waiting: true};
         const {response, usable} = got;
-        const n = side * side;
+        const n = windowWidth * windowHeight;
+        let appearance = null;
+        if (opts.requireAppearance && got.current) {
+            const raw = new Float32Array(n);
+            blur(got.current, raw, windowWidth, windowHeight, Math.max(0.6, opts.featureScale));
+            appearance = compactImagePeaks(raw, windowWidth, windowHeight, opts.polarity);
+            // The residual's centroid can differ slightly from the raw peak,
+            // especially on an irregular object. Require nearby corroboration.
+            const expanded = new Uint8Array(n);
+            for (let y = 2; y < windowHeight - 2; y++) for (let x = 2; x < windowWidth - 2; x++) {
+                if (!appearance[y * windowWidth + x]) continue;
+                for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+                    expanded[(y + dy) * windowWidth + x + dx] = 1;
+                }
+            }
+            appearance = expanded;
+        }
 
         // ONE detection scale, fixed by the caller. Choosing it per frame — a
         // ladder of scales, best peak wins — sounds better and is not: on some
@@ -698,18 +764,19 @@ export class MotionBackgroundTracker {
         const pool = new Float32Array(n);
         let best = null;
         for (const scale of scales) {
-            blur(response, smooth, side, side, Math.max(0.6, scale));
+            blur(response, smooth, windowWidth, windowHeight, Math.max(0.6, scale));
             let count = 0;
             for (let i = 0; i < n; i++) if (usable[i]) pool[count++] = smooth[i];
             if (count < 64) continue;
             const {median, sigma} = robustScale(pool, count);
 
             let bestValue = -Infinity, bestIndex = -1, bestRanked = -Infinity;
-            for (let y = 0; y < side; y++) {
+            for (let y = 0; y < windowHeight; y++) {
                 const dy = y0 + y - cy;
-                for (let x = 0; x < side; x++) {
-                    const i = y * side + x;
+                for (let x = 0; x < windowWidth; x++) {
+                    const i = y * windowWidth + x;
                     if (!usable[i]) continue;
+                    if (appearance && !appearance[i]) continue;
                     const dx = x0 + x - cx;
                     if (dx * dx + dy * dy > gate2) continue;
                     const ranked = (smooth[i] - median) * nearness(dx, dy);
@@ -730,19 +797,23 @@ export class MotionBackgroundTracker {
         if (!best) return null;
 
         const {median, sigma, bestIndex, bestRanked, field} = best;
-        const px = bestIndex % side, py = (bestIndex / side) | 0;
+        const px = bestIndex % windowWidth, py = (bestIndex / windowWidth) | 0;
 
-        // Runner-up, at least three target radii away, ranked the same way. An
+        const centroidRadius = Math.max(2,
+            Math.round(Math.min(opts.targetRadius, 3 * best.scale)));
+        // Runner-up, outside the detected object's footprint, ranked the same way. An
         // ambiguous gate — two comparable peaks — is how a tracker silently
         // steps onto clutter and never comes back, so the caller is given what
-        // it needs to refuse.
-        const keepOut = (3 * opts.targetRadius) * (3 * opts.targetRadius);
+        // it needs to refuse. Using the UI's Track Radius here could exclude
+        // the entire search gate around a tiny point, hiding every competitor.
+        const keepOut = (3 * centroidRadius) * (3 * centroidRadius);
         let second = -Infinity;
-        for (let y = 0; y < side; y++) {
+        for (let y = 0; y < windowHeight; y++) {
             const dy = y0 + y - cy;
-            for (let x = 0; x < side; x++) {
-                const i = y * side + x;
+            for (let x = 0; x < windowWidth; x++) {
+                const i = y * windowWidth + x;
                 if (!usable[i]) continue;
+                if (appearance && !appearance[i]) continue;
                 const dx = x0 + x - cx;
                 if (dx * dx + dy * dy > gate2) continue;
                 const ex = x - px, ey = y - py;
@@ -755,9 +826,7 @@ export class MotionBackgroundTracker {
         // Centre of mass over the object, sized by the scale that actually found
         // it — averaging a 2 px dot's position across 40 px of noise is what
         // pulls a marker off a target it has correctly located.
-        const centroidRadius = Math.max(2,
-            Math.round(Math.min(opts.targetRadius, 3 * best.scale)));
-        const centre = centroid(field, side, side, px, py, centroidRadius);
+        const centre = centroid(field, windowWidth, windowHeight, px, py, centroidRadius);
         // score is the winner's own strength, unweighted, so a threshold in
         // sigma means the same thing everywhere. `second` is reported on the
         // same scale but reduced by the RANKED ratio, so the caller's
@@ -766,7 +835,7 @@ export class MotionBackgroundTracker {
         const score = best.score;
         const ratio = (second > 0 && bestRanked > 0) ? second / bestRanked : 0;
         this.lastDiagnostic = {samples: got.samples, sigma, gap: opts.gap, scale: best.scale};
-        return {
+        const result = {
             x: x0 + centre.x,
             y: y0 + centre.y,
             score,
@@ -774,7 +843,84 @@ export class MotionBackgroundTracker {
             scale: best.scale,
             samples: got.samples,
         };
+        if (opts.maxCandidates > 1) {
+            const peaks = [];
+            for (let y = 1; y < windowHeight - 1; y++) for (let x = 1; x < windowWidth - 1; x++) {
+                const i = y * windowWidth + x;
+                if (!usable[i] || (appearance && !appearance[i])) continue;
+                const dx = x0 + x - cx, dy = y0 + y - cy;
+                if (dx * dx + dy * dy > gate2) continue;
+                const value = field[i];
+                if (value < median + 3 * sigma) continue;
+                let peak = true;
+                for (let yy = -1; yy <= 1 && peak; yy++) for (let xx = -1; xx <= 1; xx++) {
+                    if (!xx && !yy) continue;
+                    const j = i + yy * windowWidth + xx;
+                    if (field[j] > value || (field[j] === value && j < i)) { peak = false; break; }
+                }
+                if (peak) {
+                    // A large search may span quiet sky and highly textured
+                    // ground. Judge each candidate against its local background
+                    // so clutter elsewhere cannot hide an otherwise clear dot.
+                    const radius = Math.ceil(Math.max(12, 6 * best.scale));
+                    const local = [];
+                    for (let yy = Math.max(0, y - radius); yy <= Math.min(windowHeight - 1, y + radius); yy++) {
+                        for (let xx = Math.max(0, x - radius); xx <= Math.min(windowWidth - 1, x + radius); xx++) {
+                            if ((xx - x) ** 2 + (yy - y) ** 2 <= centroidRadius ** 2) continue;
+                            if (usable[yy * windowWidth + xx]) local.push(field[yy * windowWidth + xx]);
+                        }
+                    }
+                    if (local.length < 32) continue;
+                    const noise = robustScale(Float32Array.from(local), local.length);
+                    // Local noise can reveal a dot in a quiet part of a busy
+                    // frame, but must not disqualify a globally strong target
+                    // merely because a nearby edge contaminates its annulus.
+                    const score = Math.max((value - median) / sigma,
+                        (value - noise.median) / noise.sigma);
+                    peaks.push({x, y, score, rank: score * nearness(dx, dy)});
+                }
+            }
+            peaks.sort((a, b) => b.rank - a.rank);
+            const selected = [];
+            for (const p of peaks) {
+                if (selected.some(q => (p.x - q.x) ** 2 + (p.y - q.y) ** 2 < keepOut)) continue;
+                selected.push(p);
+                if (selected.length >= Math.min(16, opts.maxCandidates)) break;
+            }
+            result.candidates = selected.map(p => {
+                const c = centroid(field, windowWidth, windowHeight, p.x, p.y, centroidRadius);
+                return {x: x0 + c.x, y: y0 + c.y, score: p.score, second: 0,
+                    scale: best.scale, samples: got.samples};
+            });
+        }
+        return result;
     }
+}
+
+// A registration residual can be strong without an object in the raw image
+// (particularly beside a white reticle). On a wide reacquisition search require
+// a compact raw-image extremum too. This is corroboration, not an appearance
+// tracker: normal motion measurements can still cross indistinguishable clutter.
+function compactImagePeaks(src, w, h, polarity) {
+    const out = new Uint8Array(w * h);
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x, v = src[i];
+        let high = polarity !== 'dark', low = polarity !== 'bright';
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const a = src[i + dy * w + dx];
+            const earlierTie = a === v && (dy < 0 || (dy === 0 && dx < 0));
+            if (a > v || earlierTie) high = false;
+            if (a < v || earlierTie) low = false;
+        }
+        if (!high && !low) continue;
+        const xx = src[i + 1] - 2 * v + src[i - 1];
+        const yy = src[i + w] - 2 * v + src[i - w];
+        const xy = (src[i + w + 1] - src[i + w - 1] - src[i - w + 1] + src[i - w - 1]) / 4;
+        const det = xx * yy - xy * xy, trace = xx + yy;
+        if (det > 0 && trace * trace / det <= 12) out[i] = 1;
+    }
+    return out;
 }
 
 // Intensity-weighted centroid of a peak, above its own local floor. With the

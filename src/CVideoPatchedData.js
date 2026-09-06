@@ -99,6 +99,10 @@ export class CVideoPatchedData extends CVideoData {
     set videoDroppedData(v) { if (this.source) this.source.videoDroppedData = v; }
     get videoDroppedURL() { return this.source ? this.source.videoDroppedURL : undefined; }
     set videoDroppedURL(v) { if (this.source) this.source.videoDroppedURL = v; }
+    get videoWidth() { return this.source?.videoWidth ?? this._videoWidth; }
+    set videoWidth(v) { this._videoWidth = v; }
+    get videoHeight() { return this.source?.videoHeight ?? this._videoHeight; }
+    set videoHeight(v) { this._videoHeight = v; }
 
     // Preserve the streaming lifecycle through the virtual timeline. The byte
     // transport is separate from `source`, which is the wrapped video here.
@@ -156,9 +160,12 @@ export class CVideoPatchedData extends CVideoData {
     // --- frame-data delegation ---
 
     getImage(frame) {
+        this.syncSourceCache();
         const V = Math.floor(frame);
         const S = this.virtualToSource(V);
         const img = this.source.getImage(S);
+        this.videoWidth = this.source.videoWidth;
+        this.videoHeight = this.source.videoHeight;
         if (DEBUG_HELD_MARKER && img && this.isHeldFrame(V)) {
             return this._withHeldMarker(S, img);
         }
@@ -215,6 +222,17 @@ export class CVideoPatchedData extends CVideoData {
         return this.source.isFrameLoaded(this.virtualToSource(frame));
     }
 
+    get frameCacheGeneration() { return this.source?.frameCacheGeneration; }
+
+    syncSourceCache() {
+        if (this._sourceCacheGeneration !== this.source?.frameCacheGeneration) {
+            this.flushEntireCache();
+            this._sourceCacheGeneration = this.source?.frameCacheGeneration;
+        }
+        this.videoWidth = this.source.videoWidth;
+        this.videoHeight = this.source.videoHeight;
+    }
+
     async waitForFrame(frame, timeout = 5000) {
         return this.source.waitForFrame(this.virtualToSource(frame), timeout);
     }
@@ -237,6 +255,7 @@ export class CVideoPatchedData extends CVideoData {
     }
 
     getStabilizedImage(frame, originalImage, sourceFrame = undefined) {
+        this.syncSourceCache();
         const V = Math.floor(frame);
         const canonical = this.sourceToVirtual(this.virtualToSource(V));
         const sf = sourceFrame !== undefined ? Math.floor(sourceFrame) : canonical;

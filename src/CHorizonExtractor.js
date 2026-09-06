@@ -1,5 +1,6 @@
 import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
+import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysisResolution';
 import {EventManager} from "./CEventManager";
 import {CNode} from "./nodes/CNode";
 import {KeyframeRegistry} from "./CKeyframeRegistry";
@@ -124,6 +125,8 @@ class HorizonExtractor {
     }
 
     enable() {
+        this.analysisResolutionSession?.end();
+        this.analysisResolutionSession = beginVideoAnalysis(this.videoView?.videoData);
         this.enabled = true;
         this.ensureOverlay();
         this.showOverlay();
@@ -133,6 +136,8 @@ class HorizonExtractor {
     }
 
     disable() {
+        this.analysisResolutionSession?.end();
+        this.analysisResolutionSession = null;
         this.enabled = false;
         this.hideOverlay();
         setRenderOne(true);
@@ -640,6 +645,7 @@ export function setupHorizonExtractorMenu() {
     horizonFolder = guiMenus.video.addFolder("Horizon Extractor")
         .close()
         .tooltip("Manually mark the horizon angle on a video. Move the cross to position it; grab any of the four handles to rotate. Each move/rotate writes a keyframe.");
+    addVideoAnalysisResolutionMenu(horizonFolder, () => NodeMan.get('video', false)?.videoData);
 
     const actions = {
         enable: toggleEnable,

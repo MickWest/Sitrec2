@@ -81,9 +81,8 @@ export class CNodeAutoTrackLOS extends CNode {
         // Adjust vFOV for the video's letterbox/pillarbox coverage — matches CNodeTrackingOverlay.
         vFOV = 180 / Math.PI * 2 * Math.atan(Math.tan(vFOV * Math.PI / 360) / videoView.fovCoverage);
 
-        // Auto tracker positions are in video-pixel coordinates matching videoView.videoWidth/Height
-        // (the possibly-rotated decoded frame). videoToCanvasCoords matches that convention — the
-        // auto tracker itself uses it for overlay rendering (see CObjectTracking.renderOverlay).
+        // Auto tracker output stays in original source pixels, regardless of
+        // the playback cap or analysis resolution.
         //
         // Zero pan offset during conversion so the LOS uses unadjusted camera geometry independent
         // of any user pan on the video view (matches CNodeTrackingOverlay's approach).
@@ -92,7 +91,7 @@ export class CNodeAutoTrackLOS extends CNode {
         videoView.panOffsetX = 0;
         videoView.panOffsetY = 0;
 
-        const [x, y] = videoView.videoToCanvasCoords(pos.x, pos.y);
+        const [x, y] = videoView.videoToCanvasCoordsOriginal(pos.x, pos.y);
 
         videoView.panOffsetX = savedPanX;
         videoView.panOffsetY = savedPanY;

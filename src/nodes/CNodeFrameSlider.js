@@ -928,7 +928,7 @@ export class CNodeFrameSlider extends CNode {
         // caller can distinguish kinds of frame — Point Track uses this to show
         // the points a person placed apart from the ones it worked out itself.
         if (this.statusOverlay && this.statusOverlay.length > 0) {
-            const colours = {1: '#00ff00', 2: '#ff00ff'};
+            const colours = {1: '#00ff00', 2: '#ff00ff', 3: '#ffb347'};
             for (const value of Object.keys(colours).map(Number)) {
             ctx.strokeStyle = colours[value];
             ctx.lineWidth = 2;

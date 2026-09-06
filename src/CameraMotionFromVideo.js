@@ -1,3 +1,4 @@
+import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysisResolution';
 // CameraMotionFromVideo.js
 //
 // "Camera Motion (Background)" analysis: estimate the camera's motion from the moving
@@ -191,13 +192,14 @@ async function frameImage(vd, f) {
 // are never bright across the sampled frames), their high-contrast edges (erosion), and the
 // center reticle. Samples a sequential run of early frames (not scattered across the clip) so
 // the decoder steps forward frame-by-frame instead of thrashing between distant frames.
-async function buildMask(cv, vd, W, H, P, grayMat, total) {
+async function buildMask(cv, vd, W, H, P, grayMat, total, session) {
     const N = Math.min(12, total);
     const samples = [];
     for (let i = 0; i < N; i++) samples.push(i);
     let maxMat = null;
     for (const f of samples) {
         const img = await frameImage(vd, f);
+        if (session.cancelled) { maxMat?.delete(); return null; }
         if (!img || !img.width) continue;
         const g = grayMat(img);
         if (!maxMat) { maxMat = g; } else { cv.max(maxMat, g, maxMat); g.delete(); }
@@ -418,13 +420,14 @@ function redistributeUnreliable(motion, vizVectors, interp) {
 let _cmInflight = null;
 export async function runCameraMotionAnalysis(opts = {}) {
     if (_cmInflight) return _cmInflight;
-    _cmInflight = _runCameraMotionAnalysis(opts);
+    const resolutionSession = beginVideoAnalysis(getVideo()?.videoData);
+    _cmInflight = _runCameraMotionAnalysis(opts, resolutionSession);
     try { return await _cmInflight; }
-    finally { _cmInflight = null; }
+    finally { _cmInflight = null; resolutionSession.end(); }
 }
 
 // Run the full analysis and (re)build the camera-motion track + display nodes.
-async function _runCameraMotionAnalysis(opts = {}) {
+async function _runCameraMotionAnalysis(opts = {}, resolutionSession) {
     const P = { ...DEFAULTS, ...opts };
     const S = status();
     const videoView = getVideo();
@@ -436,6 +439,9 @@ async function _runCameraMotionAnalysis(opts = {}) {
 
     S.state = "loading-opencv"; S.progress = 0; S.total = total; S.error = null;
     await loadOpenCV();
+    if (resolutionSession.cancelled) {
+        S.state = 'error'; S.error = 'Resolution changed; run analysis again'; return null;
+    }
     const cv = getCV();
     if (!cv || !cv.Mat) { S.state = "error"; S.error = "OpenCV not available"; return null; }
 
@@ -450,7 +456,10 @@ async function _runCameraMotionAnalysis(opts = {}) {
     let prevG = null;   // current grayscale Mat — deleted in finally so it can't leak on error
     try {
         S.state = "masking";
-        mask = await buildMask(cv, vd, W, H, P, grayMat, total);
+        mask = await buildMask(cv, vd, W, H, P, grayMat, total, resolutionSession);
+        if (resolutionSession.cancelled) {
+            S.state = 'error'; S.error = 'Resolution changed; run analysis again'; return null;
+        }
 
         S.state = "analyzing";
         const motion = new Array(total);
@@ -462,10 +471,17 @@ async function _runCameraMotionAnalysis(opts = {}) {
         const ZERO = () => ({ dx: 0, dy: 0, theta: 0, scale: 1, confidence: 0 });
         let dupCount = 0, lowQCount = 0, residSum = 0, inlierSum = 0, goodCount = 0;
         const img0 = await frameImage(vd, 0);
+        if (resolutionSession.cancelled) {
+            S.state = 'error'; S.error = 'Resolution changed; run analysis again'; return null;
+        }
         if (!img0 || !img0.width) { S.state = "error"; S.error = "Could not decode the first frame"; return null; }
         prevG = grayMat(img0);
         let lastYield = performance.now();
         for (let f = 1; f < total; f++) {
+            if (resolutionSession.cancelled) {
+                S.state = 'error'; S.error = 'Resolution changed; run analysis again';
+                return null;
+            }
             // Yield to the event loop periodically so the page stays responsive. The optical-flow
             // work is synchronous and, for already-decoded frames, waitForFrame() returns without
             // a macrotask yield — so without this the whole pass blocks the UI thread.
@@ -474,6 +490,9 @@ async function _runCameraMotionAnalysis(opts = {}) {
                 lastYield = performance.now();
             }
             const img = await frameImage(vd, f);
+            if (resolutionSession.cancelled) {
+                S.state = 'error'; S.error = 'Resolution changed; run analysis again'; return null;
+            }
             if (!img || !img.width) {
                 // Undecoded gap: interpolate later, don't advance prevG (keep last good frame).
                 motion[f] = ZERO(); vizVectors[f] = []; interp[f] = true; S.progress = f; continue;
@@ -703,6 +722,7 @@ export function setupCameraMotionMenu() {
     if (!NodeMan.exists("video")) return;
 
     folder = guiMenus.video.addFolder("Camera Motion (Background)").close();
+    addVideoAnalysisResolutionMenu(folder, () => getVideo()?.videoData);
 
     const params = {
         metersPerPixel: DEFAULTS.metersPerPixel,

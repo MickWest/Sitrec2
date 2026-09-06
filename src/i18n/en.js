@@ -396,7 +396,7 @@ const en = {
         },
         useMask: {
             label: "Use Mask",
-            tooltip: "Ignore pixels inside the video mask when centring on the object.\nThe centring methods take a weighted average of the pixels in the cursor, so bright masked ground drifting into the cursor pulls the track towards it.\nPaint a mask under Video > Masking. Has no effect if there is no mask.",
+            tooltip: "Ignore masked pixels in Motion (Background) and the centring methods.\nMotion tracking also excludes them from camera registration and the background model, helping prevent false returns on readouts and reticles.\nPaint a mask under Video > Masking. Has no effect if there is no mask.",
         },
         clearFromHere: {
             label: "Clear from Here",

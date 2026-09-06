@@ -52,6 +52,23 @@ function makePTS(fps, totalSlots, drops = []) {
 
 describe('CVideoPatchedData mapping algorithm', () => {
 
+    test('source cache flushes invalidate held and stabilized wrapper images', () => {
+        const source = fakeSource(makePTS(30, 4));
+        source.frameCacheGeneration = 1;
+        const wrapper = new CVideoPatchedData(source, {fps: 30});
+        wrapper.getImage(0);
+        wrapper._heldMarkerCache = {old: true};
+        wrapper.stabilizedImageCache = ['old'];
+        source.frameCacheGeneration++;
+        source.videoWidth = 1280; source.videoHeight = 720;
+        // Dimensions are available even before a frame has decoded.
+        expect([wrapper.videoWidth, wrapper.videoHeight]).toEqual([1280, 720]);
+        wrapper.getImage(0);
+        expect(wrapper._heldMarkerCache).toBeNull();
+        expect(wrapper.stabilizedImageCache).toEqual([]);
+        expect(wrapper.frameCacheGeneration).toBe(2);
+    });
+
     test('clean CFR -> identity-like mapping (one virtual slot per source slot)', () => {
         const fps = 30;
         const N = 100;

@@ -29,6 +29,7 @@ import {Color} from "three";
 import {getCV, loadOpenCV} from "./openCVLoader";
 import {fitSimilarity} from "./CameraMotionFromVideo";
 import {isAlignWithFlowEnabled, setAlignWithFlow, setMotionAnalyzerRef} from "./FlowAlignment";
+import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysisResolution';
 import {setStartAnalysis, setUpdateGuiValues, setUpdateOptimizeStatus, updateGuiValues} from "./CMotionAnalysisShared";
 import {getLocalComputeBridge} from "./LocalComputeBridge";
 import {resolveURLForFetch} from "./SitrecObjectResolver";
@@ -1148,6 +1149,8 @@ async function analyzeAllFrames(progressCallback) {
     const videoData = motionAnalyzer.videoView?.videoData;
     if (!videoData) return false;
 
+    const resolutionSession = beginVideoAnalysis(videoData, () => { panoCancelRequested = true; });
+
     const savedPaused = par.paused;
     const savedFrame = par.frame;
     Globals.justVideoAnalysis = true;
@@ -1292,6 +1295,7 @@ async function analyzeAllFrames(progressCallback) {
         Globals.justVideoAnalysis = false;
         resolveDone();
         analysisInProgress = null;
+        resolutionSession.end();
     }
 }
 
@@ -2180,6 +2184,7 @@ export function addMotionAnalysisMenu() {
     if (!guiMenus.view) return;
     
     motionFolder = guiMenus.video.addFolder(mt("menu.title")).close().perm();
+    addVideoAnalysisResolutionMenu(motionFolder, () => NodeMan.get('video', false)?.videoData);
     
     const menuActions = {
         analyzeMotion: toggleMotionAnalysis,

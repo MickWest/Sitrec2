@@ -27,6 +27,19 @@ The hold loop advances at the sitch's frame rate, so it runs at roughly playback
 separate **Start Point Track** button runs its own loop as fast as the machine allows, which
 is much quicker over a long clip.
 
+### Analysis resolution
+
+**Analysis Resolution** defaults to **Original (no limit)** so small targets are measured
+using every source pixel, even when Settings limits normal playback to 720p. The choice is
+shared by the video analysis menus in this tab. Select **Use Settings** to follow the playback
+limit, or choose a smaller size when speed or memory matters more. **Analysis pixels** shows
+the resulting dimensions and warns when they are reduced from the source.
+
+Changing either this dropdown or the Settings video limit clears the decoded frame cache.
+A running analysis stops so it cannot mix measurements from different resolutions; start it
+again after changing the limit. Existing track points keep their original video coordinates.
+Playback returns to its Settings limit when analysis and any motion-field preview finish.
+
 ---
 
 ## Choosing a tracking method
@@ -130,15 +143,16 @@ leaves the existing track alone. Either way, choose before you invest in a long 
 | **Motion Frame Gap** | 3 | 1–12 | How far back the background samples are taken. Raise it when the object moves slowly against the scene, so it separates from where it used to be |
 | **Motion Parallax Slack** | 0 | 0–5 | Pixels of background shift to forgive. 0 for flat ground seen from above; 2–3 for hills or buildings seen at an angle, where the background cannot be cancelled exactly |
 | **Motion Threshold** | 6 | 3–30 | How far above the noise a detection must be before it is believed. Lower it to hold a faint object, raise it if the track jumps to clutter |
-| **Use Mask** | on | — | Ignore masked-out parts of the frame — for the centroid methods only, see below |
+| **Use Mask** | on | — | Ignore masked-out parts of the frame in Motion (Background) and the centroid methods |
 | **Brightness Threshold** | 128 | 0–255 | Cutoff for the centroid methods |
 | **Color Distance** | 80 | 0–442 | How far a pixel may be from the target colour and still count, for *Center on Color*. 442 is "everything matches" |
 | **Edit Head Only** | off | — | Only the point at the current frame can be dragged; the rest of the track fades back. See [Edit Head Only](#edit-head-only) |
 | **Stabilize Centers** | on | — | See below |
 | **Include Video Info Display** | off | — | Burn the readouts into a stabilized render |
 
-All radii are in **video** pixels, not screen pixels — so they do not change when you resize
-the view.
+Track Radius and Search Radius use **original video** pixels, so they do not change when you
+resize the view or change the decode limit. Feature Size and Parallax Slack use the pixels
+actually analysed. Run **Analyse Object** again after changing the analysis resolution.
 
 ### Getting the radii right
 
@@ -159,18 +173,18 @@ Start with the defaults, and if the track jumps, reduce the *search* radius firs
 If the object passes in front of trees, a rooftop, or a burned-in on-screen display, mask
 those regions out first and leave *Use Mask* on. See [Masking](Masking.md).
 
-**The mask only protects the centroid methods** — *Center on Bright*, *Center on Dark* and
-*Center on Color*. Template Match, Optical Flow, Motion (Background) and High/Low Peak do not
-consult it, so
-masking will not stop those from latching onto foliage. If masking is important to your clip,
-use one of the centroid methods.
+The mask protects *Motion (Background)* and the centroid methods — *Center on Bright*,
+*Center on Dark* and *Center on Color*. Motion tracking excludes masked pixels from camera
+registration, detection and the earlier frames used to predict the background. This helps
+prevent readouts and reticles from becoming false targets during a wide reacquisition search.
+Template Match, Optical Flow and High/Low Peak do not consult the mask.
 
 ## User points and auto points
 
 A track holds two kinds of point, and the difference matters.
 
-* **Auto points** are what the tracker worked out. They are drawn as the track line, marked
-  green on the timeline, and can always be recomputed.
+* **Auto points** are what the tracker worked out. Detections are marked green on the
+  timeline; interpolated estimates from Motion (Background) are amber. Both can be recomputed.
 * **User points** are the ones you placed by hand, by dragging the cursor onto the object.
   They are drawn as magenta crosses, marked magenta on the timeline, and are **inviolable** —
   tracking never overwrites one, never interpolates over one, and treats each as a fresh
@@ -184,6 +198,57 @@ and carries on between them, so you do not have to place every frame.
 **Clear User Points** deletes only yours, and asks first, because nothing can recompute them.
 **Clear Auto Points** deletes only the tracked ones and keeps yours, so you can re-track from
 the same guidance. User points are saved with the sitch.
+
+### Leaving the image and returning
+
+Motion (Background) keeps missing frames blank while it searches. The marker stays at the
+last available position as an editing handle, with **target not found** beside the frame
+number. No extrapolated position is added to the track during the loss.
+
+When an object crosses the edge, background motion guides an internal search prediction.
+A return needs a second consistent detection, or a user point. After that confirmation,
+Sitrec estimates the intervening path using the measured camera motion at each frame and
+constant target motion relative to the registered background between the two observations.
+This can produce off-screen positions during the gap even when both endpoints are on-screen.
+
+These points are labeled **estimated** and marked amber on the timeline. They are rough
+reconstructions, not observations: turns, acceleration, parallax, or registration error can
+make them wrong. If camera registration is missing or fails, an off-screen gap stays blank.
+An in-frame return can instead use straight interpolation, also marked estimated. Estimates
+and missing-frame status are saved with the sitch, and smoothing does not fill a missing gap.
+
+The tracker also makes periodic wide searches, even if its off-screen prediction has drifted
+away. Wide returns need three consistent sightings and a corresponding feature in the raw
+image. Mask readouts and reticles before searching a cluttered frame. Shorter **Motion Frame Gap**
+values help when rapid camera motion leaves little overlap with older background samples;
+**Analyse Object** tries a one-frame gap if the current spacing cannot measure the selected
+point. Its result reports the chosen gap.
+
+While tracking, **Background: stationary** identifies a camera locked onto the scenery.
+The tracker retains the object's motion relative to that scenery across a pan/lock/pan
+transition, and temporarily searches more frequently during the transition. **Registration
+unavailable** is a separate state; it does not mean the camera has stopped moving.
+
+Brief in-frame gaps reconnect confirmed image positions with straight interpolation. This
+avoids inserting false zigzags when background registration switches between a tower and
+the more distant scene. A detection that continues the observed target motion is still
+plausible even if a background-motion prediction disagrees with it.
+
+## Smoothing the output
+
+**Output Smoothing** offers **Off** and **2–10 frames**. Start with 3–5 frames when the
+measured point jumps between bright parts of the same object. The centered average reduces
+that jitter without shifting a constant-velocity track forward or backward in time. Longer
+windows soften real changes in motion too.
+
+Smoothing affects the trail, graphs, line of sight, stabilization, and stabilized exports.
+It leaves the raw points used by the tracking algorithm intact; choose **Off** to see them
+again. The smoothing choice is saved with the sitch alongside those raw points. User points
+remain exactly where you placed them, and the filter does not reach across a user point or
+a missing-frame gap. At the ends of the track it uses a shorter symmetric window.
+
+This produces a steadier image reference point. It does not determine the object's physical
+center of mass or repair a track that has latched onto a different object.
 
 ## Editing the track
 

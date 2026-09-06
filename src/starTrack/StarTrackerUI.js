@@ -1,4 +1,5 @@
 import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from '../VideoAnalysisResolution';
 // Star Tracker: the app-facing layer over the pure Star Track pipeline.
 //
 // Everything the analysis actually does lives in StarDetect / StarMatch / StarSolve, which are
@@ -116,6 +117,7 @@ let calibration = null;
 // videoData with no teardown, and a plate-scale measurement of one video says nothing about
 // another - consumers drop the calibration when this no longer matches.
 let calibrationVideoData = null;
+let calibrationResolution = null;
 let minAreaController = null;
 let threshSigmaController = null;
 // Whether params.minArea currently holds a MEASURED value rather than a user-chosen one - it
@@ -491,9 +493,11 @@ export async function scoreStarTrackerIdentification() {
  * plate scale. A hand-edited minArea is a preference, not a measurement, and stays.
  */
 function dropCalibrationForOtherVideo(videoData) {
-    if (!calibration || calibrationVideoData === videoData) return;
+    if (!calibration || (calibrationVideoData === videoData
+        && calibrationResolution === `${videoData.videoWidth}x${videoData.videoHeight}`)) return;
     calibration = null;
     calibrationVideoData = null;
+    calibrationResolution = null;
     if (minAreaCalibrated) {
         params.minArea = STAR_DETECT_DEFAULTS.minArea;
         minAreaCalibrated = false;
@@ -520,6 +524,12 @@ function dropCalibrationForOtherVideo(videoData) {
  * swapped in AFTER clicking.
  */
 export async function detectStarSize(opts = {}) {
+    const session = beginVideoAnalysis(videoView()?.videoData);
+    try { return await detectStarSizeAtResolution(opts, session); }
+    finally { session.end(); }
+}
+
+async function detectStarSizeAtResolution(opts, resolutionSession) {
     // opts.measure marks the button - an explicit "measure it for me", which overwrites the blob
     // size whatever its provenance. The Full Analysis chain calls this WITHOUT it, because there
     // the user asked to run an analysis with the settings they have, not to have one of them
@@ -536,7 +546,7 @@ export async function detectStarSize(opts = {}) {
         lockToInFrame: !!view.lockToInFrame,
         aFrame: Sit.aFrame ?? 0,
         applyAdjustments: !!params.applyAdjustments,
-        stale: () => Globals.loadGeneration !== generation
+        stale: () => resolutionSession.cancelled || Globals.loadGeneration !== generation
             || videoView() !== view || view.videoData !== videoData,
     };
     const request = ++calibrationRequest;
@@ -588,6 +598,7 @@ export async function detectStarSize(opts = {}) {
         }
         calibration = cal;
         calibrationVideoData = videoData;
+        calibrationResolution = `${videoData.videoWidth}x${videoData.videoHeight}`;
         // The apertures are always taken - they are pure measurement, and nothing chooses them.
         // The blob size is only taken when it is not somebody's deliberate choice, or when a
         // measurement was explicitly asked for.
@@ -1897,6 +1908,12 @@ export async function identifyStars(opts = {}) {
  * ten times would take the user's own Abort button away from them.
  */
 export async function runStarTracker(opts = {}) {
+    const session = beginVideoAnalysis(videoView()?.videoData, () => { aborted = true; });
+    try { return await runStarTrackerAtResolution(opts); }
+    finally { session.end(); }
+}
+
+async function runStarTrackerAtResolution(opts) {
     const singleFrame = !!opts.singleFrame;
     const quiet = !!opts.quiet;
     const view = videoView();
@@ -3395,6 +3412,7 @@ export function setupStarTrackerMenu() {
     folder = null;
 
     folder = guiMenus.video.addFolder("Star Tracker").close();
+    addVideoAnalysisResolutionMenu(folder, () => videoView()?.videoData);
 
     folder.add({all: () => { runFullStarTracker(); }}, "all")
         .name("Full Analysis");

@@ -6,6 +6,8 @@ import {par} from "./par";
 import {isAdmin, isLocal} from "./configUtils";
 import {showError, showErrorOnce} from "./showError";
 import {VideoDecodeWorkerManager} from "./CVideoDecodeWorker";
+import {getVideoDecodeResolution, registerVideoResolutionSource, unregisterVideoResolutionSource,
+    videoResolutionDimensions} from "./VideoAnalysisResolution";
 
 /**
  * Base class for WebCodec-based video data handlers
@@ -40,6 +42,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
 
     constructor(v, loadedCallback, errorCallback) {
         super(v);
+        registerVideoResolutionSource(this);
         
         this.format = "";
         this.error = false;
@@ -156,7 +159,8 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
     configureWorker(config, hardwareAcceleration) {
         if (!this._workerManager) this.initWorker();
         this._workerConfig = config;
-        this._workerManager.configure(config, this.effectiveRotation, Globals.settings?.videoMaxSize, hardwareAcceleration);
+        this._workerHardwareAcceleration = hardwareAcceleration;
+        this._workerManager.configure(config, this.effectiveRotation, getVideoDecodeResolution(this), hardwareAcceleration);
     }
 
     _onWorkerFrame(groupId, frameNumber, bitmap, width, height) {
@@ -487,8 +491,37 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         }
 
         if (this._workerManager) {
-            this._workerManager.updateTransforms(this.effectiveRotation, Globals.settings?.videoMaxSize);
+            this._workerManager.updateTransforms(this.effectiveRotation, getVideoDecodeResolution(this));
         }
+    }
+
+    onVideoResolutionChanged() {
+        this._clearAllDecodeTimers();
+        this.flushEntireCache();
+        this.stabilizedImageCache = [];
+        // Keep original-coordinate stabilization points. Only their rendered
+        // images depend on the decode size.
+        const rotated = this.effectiveRotation === 90 || this.effectiveRotation === 270;
+        const size = videoResolutionDimensions(
+            rotated ? this.originalVideoHeight : this.originalVideoWidth,
+            rotated ? this.originalVideoWidth : this.originalVideoHeight,
+            getVideoDecodeResolution(this));
+        if (size.width && size.height) {
+            this.videoWidth = size.width;
+            this.videoHeight = size.height;
+        }
+        // Terminate queued work as well as flushing completed frames. An old
+        // decoder must not refill the new cache with frames at its former size.
+        if (this._workerManager) {
+            this._workerManager.dispose();
+            this._workerManager = null;
+            if (this._workerConfig) this.configureWorker(this._workerConfig, this._workerHardwareAcceleration);
+        }
+        if (this.decoder && this.decoder.state !== 'closed') {
+            this.decoder.reset();
+            if (this.config) this.decoder.configure(this.config);
+        }
+        setRenderOne(true);
     }
 
     /**
@@ -525,7 +558,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
      */
     resizeFrameIfNeeded(image) {
         // Check if videoMaxSize is set
-        const videoMaxSize = Globals.settings?.videoMaxSize;
+        const videoMaxSize = getVideoDecodeResolution(this);
         if (!videoMaxSize || videoMaxSize === "None") {
             return image;
         }
@@ -613,6 +646,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
      * @param {Object} group - Frame group this frame belongs to
      */
     processDecodedFrame(frameNumber, videoFrame, group) {
+        const generation = this.frameCacheGeneration;
         // Check if imageCache is still valid (video might have been disposed)
         if (!this.imageCache) {
             videoFrame.close();
@@ -631,7 +665,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
 
         createImageBitmap(videoFrame).then(image => {
             // Double-check imageCache still exists (video might have been disposed during async operation)
-            if (!this.imageCache) {
+            if (!this.imageCache || generation !== this.frameCacheGeneration) {
                 if (typeof image.close === 'function') {
                     try {
                         image.close();
@@ -663,7 +697,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
 
             return rotationPromise.then(rotatedImage => {
                 // Guard: video may have been disposed during rotation
-                if (!this.imageCache) {
+                if (!this.imageCache || generation !== this.frameCacheGeneration) {
                     if (rotatedImage && typeof rotatedImage.close === 'function') {
                         try { rotatedImage.close(); } catch (e) { /* already disposed */ }
                     }
@@ -677,7 +711,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
             if (!processedImage) return;
 
             // Double-check imageCache still exists after async operations
-            if (!this.imageCache) {
+            if (!this.imageCache || generation !== this.frameCacheGeneration) {
                 if (typeof processedImage.close === 'function') {
                     try {
                         processedImage.close();
@@ -1645,6 +1679,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
     }
 
     flushEntireCache() {
+        this.frameCacheGeneration = (this.frameCacheGeneration || 0) + 1;
         // Close lastGoodFrame first since we're clearing everything
         if (this.lastGoodFrame && typeof this.lastGoodFrame.close === 'function') {
             try {
@@ -1757,6 +1792,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
      * Critical for preventing decoder operations after disposal
      */
     dispose() {
+        unregisterVideoResolutionSource(this);
         this.loadedCallback = null;
         this.errorCallback = null;
 

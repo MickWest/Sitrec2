@@ -4,6 +4,7 @@ export function interpolatePosition(positionsMap, frame) {
     if (positionsMap.has(frame)) {
         return positionsMap.get(frame);
     }
+    if (positionsMap.unmeasuredFrames?.has(Math.floor(frame))) return null;
     if (positionsMap.size === 0) {
         return null;
     }
@@ -16,6 +17,11 @@ export function interpolatePosition(positionsMap, frame) {
             nextFrame = f;
             break;
         }
+    }
+    // A known loss also blocks interpolation across the interval and
+    // extrapolation beyond a stopped run whose tail is still missing.
+    for (const f of positionsMap.unmeasuredFrames || []) {
+        if (f > (prevFrame ?? -Infinity) && f < (nextFrame ?? Infinity)) return null;
     }
     if (prevFrame !== null && nextFrame !== null) {
         const prevPos = positionsMap.get(prevFrame);
@@ -207,6 +213,7 @@ export class CVideoData {
     //               if false, trackingData contains tracked positions to center on referencePoint
     setStabilizationData(trackingData, referencePoint, directOffset = false) {
         this.stabilizationData = new Map(trackingData);
+        this.stabilizationData.unmeasuredFrames = trackingData.unmeasuredFrames;
         this.stabilizationReferencePoint = referencePoint;
         this.stabilizationDirectOffset = directOffset;
         this.stabilizedImageCache = [];
