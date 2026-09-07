@@ -19,10 +19,36 @@ test("starter video set preserves the generated track while resampling at 30p", 
 });
 
 test("video options reject invalid or unbounded batches", () => {
-    for (const options of [{count: 0}, {count: 4}, {durationSeconds: -1}, {durationSeconds: 100}, {wobblePercent: NaN},
+    for (const options of [{count: 0}, {count: 4}, {set: "unknown"}, {set: "extended", count: 7},
+        {durationSeconds: -1}, {durationSeconds: 100}, {wobblePercent: NaN},
         {wobbleDegrees: NaN}, {wobbleDegrees: -0.5}, {wobbleDegrees: 6}, {wobbleDegrees: 0.5, wobblePercent: 0.1}]) {
         expect(() => generateVideoScenarios(options)).toThrow();
     }
+});
+
+test("extended set adds six distinct balloon tracks while preserving starter identities", () => {
+    const starter = generateVideoScenarios({durationSeconds: 2});
+    const clips = generateVideoScenarios({set: "extended", durationSeconds: 2, wobbleDegrees: .5,
+        driftSpeed: .1, recenterSpeed: .3});
+    expect(clips).toHaveLength(6);
+    expect(clips.map(c => c.name)).toEqual([
+        "04-party-neutral-orbit-g5km-f50", "05-party-rising-orbit-g5km-f50", "06-party-neutral-straight-g5km-f50",
+        "07-party-neutral-orbit-g10km-f25", "08-party-rising-orbit-g10km-f25", "09-party-neutral-straight-g10km-f25",
+    ]);
+    expect(new Set([...starter, ...clips].map(c => c.sourceScenarioId)).size).toBe(9);
+    for (const clip of clips) {
+        expect(clip).toMatchObject({width: 640, height: 480, fps: 30, frames: 60, diameterM: 1, targetPixels: 6});
+        const truth = generateScenario(clip.sourceSpec, {scenarioSeed: clip.scenarioSeed});
+        expect(clip.sensorENU[30]).toEqual(Array.from(truth.platform.positionENU.slice(30, 33)));
+        expect(clip.targetENU[30]).toEqual(Array.from(truth.target.positionENU.slice(30, 33)));
+    }
+});
+
+test("a wobble seed changes only the observation realization", () => {
+    const options = {set: "extended", count: 1, durationSeconds: 2};
+    const original = generateVideoScenarios(options)[0];
+    expect(generateVideoScenarios({...options, wobbleSeed: 12345})[0]).toEqual({...original, wobbleSeed: 12345});
+    for (const wobbleSeed of [-1, 1.5, NaN, 2 ** 32]) expect(() => generateVideoScenarios({wobbleSeed})).toThrow();
 });
 
 test("selecting one scenario and slowing recentering preserves its identity and drift seed", () => {
@@ -59,4 +85,30 @@ test("absolute drift and recenter speeds preserve the scene and reject conflicti
         {recenterSpeed: 0.3, recenterSpeedScale: 0.25}]) {
         expect(() => generateVideoScenarios({...options, ...rates})).toThrow();
     }
+});
+
+test("optional zoom keeps the trajectory and schedules two lens switches in a 30 second clip", () => {
+    const original = generateVideoScenarios({durationSeconds: 30, count: 1})[0];
+    const zoom = generateVideoScenarios({zoomFactor: 2, count: 1})[0];
+    expect(zoom).toEqual({...original, zoomEvents: [{timeSeconds: 10, magnification: 2}, {timeSeconds: 20, magnification: 1}]});
+    for (const options of [{zoomFactor: 1}, {zoomFactor: 0}, {zoomFactor: 11}, {zoomFactor: NaN},
+        {zoomFactor: 2, durationSeconds: 20}, {zoomFactor: 2, durationSeconds: 20.001}]) {
+        expect(() => generateVideoScenarios(options)).toThrow();
+    }
+});
+
+test("tracking set covers acquisition, loss, recovery and operator takeover with frame-timed commands", () => {
+    const clips = generateVideoScenarios({set: "tracking"});
+    expect(clips).toHaveLength(6);
+    expect(clips.map(c => c.trackingSimulation.id)).toEqual([
+        "acquire-track-offset", "partial-acquisition", "coast-recover",
+        "loss-ground-hold", "manual-takeover", "gate-escape-retry",
+    ]);
+    for (const clip of clips) {
+        expect(clip.frames).toBe(900);
+        const commands = clip.trackingSimulation.commands;
+        expect(commands.find(c => c.action === "acquire")).toMatchObject({timeSeconds: 2});
+        expect(commands.every((c, i) => !i || c.timeSeconds >= commands[i-1].timeSeconds)).toBe(true);
+    }
+    expect(() => generateVideoScenarios({set: "tracking", durationSeconds: 26})).toThrow();
 });

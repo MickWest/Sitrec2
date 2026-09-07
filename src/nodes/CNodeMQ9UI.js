@@ -6,13 +6,18 @@ import {mouseInViewOnly} from "../ViewUtils";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {getAzElFromPositionAndForward, getCompassHeading} from "../SphericalMath";
 import {MV3} from "../threeUtils";
-import {Raycaster} from "three";
+import {Box3, Raycaster, Vector3} from "three";
 import * as LAYER from "../LayerMasks";
 import {getPointBelow, intersectSurface} from "../threeExt";
 import {ECEFToLLAVD_radii, haversineDistanceKM} from "../LLA-ECEF-ENU";
 import {forward as mgrsForward} from "mgrs";
 import {degrees} from "../utils";
-import {NodeMan} from "../Globals";
+import {NodeMan, Sit, guiMenus, setRenderOne} from "../Globals";
+import {par} from "../par";
+import {objectFocusTrack} from "../CameraFocusUI";
+import {extractFOV} from "../FOVUtils";
+import {MQ9TrackingSimulation} from "../MQ9TrackingSimulation";
+import {MQ9_TRACKING_DEFAULTS} from "../MQ9TrackingModel";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getHUDColor} from "../HUDColor";
 import {formatDM, formatDMS} from "../CoordinateFormat";
@@ -72,6 +77,15 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         this.addSimpleSerial("grnMode");
         this.addSimpleSerial("irMode");
         this.addSimpleSerial("targetMode");
+
+        this.trackingEnabled = v.trackingEnabled ?? false;
+        this.trackingObject = v.trackingObject ?? "targetObject";
+        this.trackingSettings = {...MQ9_TRACKING_DEFAULTS, ...v.trackingSettings};
+        this.trackingProgram = v.trackingProgram ?? null;
+        this.trackingStatus = "Off";
+        this.trackingLowConfidence = false;
+        for (const key of ["trackingEnabled", "trackingObject", "trackingSettings", "trackingProgram"]) this.addSimpleSerial(key);
+        this.setupTrackingMenu();
 
         const grey = '#888888';
 
@@ -138,6 +152,164 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         // Prevent double-click from propagating through to 3D view
         this.boundHandleDblClick = (e) => this.handleDblClick(e);
         this.canvas.addEventListener('dblclick', this.boundHandleDblClick);
+        this.unregisterTrackingInteraction = registerSurfaceInteraction(this.canvas, {
+            model: this, view: this, profile: "mq9Tracking", intent: {kind: "drag", priority: 80},
+            enabled: () => this.trackingEnabled && this.visible,
+            contains: e => mouseInViewOnly(this, e.clientX, e.clientY),
+            hitTest: e => {
+                const rect = this.canvas.getBoundingClientRect();
+                return this.getClickedTextElement(e.clientX - rect.left, e.clientY - rect.top) ? null : {};
+            },
+            move: (e, dx, dy) => {
+                const rect = this.hudRect ?? this.getHUDRect();
+                this.trackingCommand("slew", {pixels: [dx * 480 / rect.height, dy * 480 / rect.height]});
+            }, cursor: "crosshair",
+        });
+    }
+
+    setupTrackingMenu() {
+        if (!guiMenus.camera) return;
+        const menu = this.trackingMenu = guiMenus.camera.addFolder("MQ9 Tracking").close();
+        menu.add(this, "trackingEnabled").name("Simulate Tracking").listen().onChange(enabled => {
+            if (enabled) this.startTrackingSimulation(); else this.stopTrackingSimulation();
+            setRenderOne(true);
+        }).tooltip("Track a projected scene object. Drag in Look View to slew; while locked, slew is relative to the tracked object.");
+        this.trackingObjectController = menu.add(this, "trackingObject", {"Target object": "targetObject"})
+            .name("Scene Object").onChange(() => {
+                this.trackingProgram = null; this.stopTrackingSimulation(); this.trackingEnabled = true; setRenderOne(true);
+            });
+        menu.add(this, "trackingStatus").name("State").listen().disable();
+        const actions = {acquire: () => this.trackingCommand("acquire"), manual: () => this.trackingCommand("manual"),
+            center: () => this.trackingCommand("center"),
+            ground: () => this.trackingCommand("ground"), reset: () => {
+                this.trackingProgram = null; this.stopTrackingSimulation(); this.startTrackingSimulation(); setRenderOne(true);
+            }};
+        menu.add(actions, "acquire").name("Acquire / Box Target");
+        menu.add(actions, "center").name("Center Tracked Object").tooltip("Move the tracked object to the image center over one second, then hold it there.");
+        menu.add(actions, "manual").name("Manual Tracking");
+        menu.add(actions, "ground").name("Ground Track");
+        menu.add(actions, "reset").name("Reset Simulation");
+        menu.add(this, "trackingLowConfidence").name("Simulate Low Confidence").listen().onChange(() => {
+            // Invalidate from the edited frame while preserving accepted history.
+            this.trackingCommand("confidence", {value: this.trackingLowConfidence ? 0 : 1});
+        });
+        menu.add(this.trackingSettings, "refineSeconds", .25, 5, .05).name("Refinement (seconds)").onChange(() => {
+            if (this.trackingSimulation) { this.stopTrackingSimulation(); this.startTrackingSimulation(); }
+        });
+        menu.add(this.trackingSettings, "boxPixels", 20, 300, 1).name("Acquisition Box (pixels)").onChange(() => {
+            if (this.trackingSimulation) { this.stopTrackingSimulation(); this.startTrackingSimulation(); }
+        });
+    }
+
+    startTrackingSimulation(options) {
+        if (this.trackingSimulation) return this.trackingSimulation;
+        this.trackingEnabled = true;
+        const cameraNode = this.in.camera, camera = cameraNode.camera;
+        this.trackingSavedFreeLook = this.trackingNeedsRestore && this.trackingProgram
+            ? this.trackingProgram.restoreFreeLook ?? false : cameraNode.freeLook;
+        this.trackingNeedsRestore = false;
+        cameraNode.freeLook = true;
+        const program = this.trackingProgram;
+        if (!options && program?.initial) {
+            camera.position.fromArray(program.initial.position); camera.quaternion.fromArray(program.initial.quaternion);
+            camera.fov = program.initial.fov;
+        }
+        const simulation = this.trackingSimulation = new MQ9TrackingSimulation(options ?? {
+            camera, fps: Sit.fps, startFrame: program?.startFrame ?? par.frame,
+            commands: program?.commands ?? [], options: this.trackingSettings,
+            sensorAt: f => this.in.cameraTrack?.p(f)?.toArray() ?? camera.position.toArray(),
+            lensAt: f => NodeMan.exists("fovSwitch") ? extractFOV(NodeMan.get("fovSwitch").v(f)) : camera.fov,
+            observationAt: f => {
+                const object = NodeMan.get(this.trackingObject, false);
+                if (!object?.group) return null;
+                const track = objectFocusTrack(object);
+                const position = track !== object ? track.p(f) : object.group.getWorldPosition(new Vector3());
+                const size = new Box3().setFromObject(object.group).getSize(new Vector3());
+                if (!Number.isFinite(size.lengthSq()) || size.lengthSq() === 0) return null;
+                return {id: object.id, position: position.toArray(), diameterM: Math.max(size.x, size.y, size.z),
+                    confidence: 1, visible: object.group.visible && object.visible !== false};
+            },
+        });
+        cameraNode.mq9Tracking = simulation;
+        this.trackingProgram = {startFrame: simulation.startFrame, initial: simulation.initial, commands: simulation.commands,
+            restoreFreeLook: this.trackingSavedFreeLook};
+        return simulation;
+    }
+
+    stopTrackingSimulation() {
+        if (this.in.camera.mq9Tracking === this.trackingSimulation) delete this.in.camera.mq9Tracking;
+        if (this.trackingSimulation) this.in.camera.freeLook = this.trackingSavedFreeLook;
+        else if (this.trackingNeedsRestore && this.trackingProgram) this.in.camera.freeLook = this.trackingProgram.restoreFreeLook ?? false;
+        this.trackingNeedsRestore = false;
+        this.trackingSimulation = null; this.trackingEnabled = false; this.trackingStatus = "Off";
+    }
+
+    modDeserialize(v) {
+        if (this.trackingSimulation) this.stopTrackingSimulation();
+        const settings = this.trackingSettings;
+        super.modDeserialize(v);
+        // Keep GUI controllers bound to the same settings object.
+        if (settings && this.trackingSettings) {
+            Object.assign(settings, this.trackingSettings); this.trackingSettings = settings;
+        }
+        this.trackingNeedsRestore = this.trackingEnabled;
+    }
+
+    trackingCommand(action, extra = {}) {
+        const simulation = this.startTrackingSimulation();
+        const rect = this.getHUDRect();
+        simulation.imageAspect = rect.width / rect.height;
+        simulation.command(action, par.frame, extra);
+        setRenderOne(true);
+    }
+
+    updateTracking(frame, view) {
+        if (view.cameraNode !== this.in.camera) return;
+        if (!this.trackingEnabled) { if (this.trackingSimulation) this.stopTrackingSimulation(); return; }
+        const simulation = this.startTrackingSimulation();
+        const rect = this.getHUDRect();
+        simulation.imageAspect = rect.width / rect.height;
+        simulation.applyFrame(frame);
+        this.trackingStatus = simulation.current?.state ?? "manual";
+        this.trackingLowConfidence = simulation.confidence < simulation.model.options.confidenceThreshold;
+        const objects = {"Target object": "targetObject"};
+        for (const {data: node} of Object.values(NodeMan.list)) {
+            if (node.constructor.name === "CNode3DObject") objects[node.id] = node.id;
+        }
+        const signature = JSON.stringify(objects);
+        if (signature !== this.trackingObjectSignature) {
+            this.trackingObjectSignature = signature; this.trackingObjectController?.options(objects);
+        }
+    }
+
+    drawTrackingBox() {
+        const simulation = this.trackingSimulation, display = simulation?.current;
+        const box = display?.box;
+        if (!this.trackingEnabled || !box?.visible) return;
+        const c = this.ctx, rect = this.hudRect;
+        const sx = rect.width / 640, sy = rect.height / 480;
+        const x = rect.x + rect.width / 2 + (box.x - 320) * sy, y = rect.y + box.y * sy;
+        const w = box.width * sy, h = box.height * sy;
+        c.save(); c.strokeStyle = getHUDColor(); c.fillStyle = getHUDColor(); c.lineWidth = Math.max(.6, sy);
+        if (box.style === "square") {
+            const gap = Math.min(9 * sy, h / 2);
+            c.beginPath(); c.moveTo(x + w/2, y - gap); c.lineTo(x + w/2, y - h/2);
+            c.lineTo(x - w/2, y - h/2); c.lineTo(x - w/2, y + h/2);
+            c.lineTo(x + w/2, y + h/2); c.lineTo(x + w/2, y + gap); c.stroke();
+            if (display.boxWidthM !== null) {
+                c.font = `${12 * sy}px ${MQ9_FONT}`; c.textAlign = "left"; c.textBaseline = "middle";
+                drawHUDText(c, `${Math.round(display.boxWidthM)}M`, x + w/2 + 3*sx, y, 12*sy);
+            }
+        } else {
+            const length = Math.min(w, h) * .23;
+            c.beginPath();
+            for (const a of [-1, 1]) for (const b of [-1, 1]) {
+                c.moveTo(x + a*(w/2 - length), y + b*h/2); c.lineTo(x + a*w/2, y + b*h/2);
+                c.lineTo(x + a*w/2, y + b*(h/2 - length));
+            }
+            c.stroke();
+        }
+        c.restore();
     }
 
     addGridText(col, row, text, color = '#FFFFFF', align = 'left', clickGroup = null) {
@@ -349,12 +521,16 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         this.acftAlt.text = this.formatAltitude(lla, this.acftAltMode);
 
         // Update target mode text
+        const tracking = this.trackingEnabled && this.trackingSimulation?.current;
+        if (tracking) this.targetMode = ["object", "coast"].includes(tracking.cameraMode) ? 0 : 1;
         const targetModeLabels = ['TARGET', 'GROUND'];
         this.targetModeText.text = targetModeLabels[this.targetMode];
 
         // Get target position based on mode
         let targetPos = null;
-        if (this.targetMode === 0) {
+        if (tracking?.estimatedPosition && this.targetMode === 0) {
+            targetPos = new Vector3(...tracking.estimatedPosition);
+        } else if (this.targetMode === 0) {
             // TARGET mode - use target track
             if (!this.in.target) {
                 if (NodeMan.exists("targetTrackSwitchSmooth")) {
@@ -521,6 +697,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         c.stroke();
 
         // Heading graticule at top of display
+        this.drawTrackingBox();
         // Get airframe heading from camera track velocity corrected for wind
         // Airframe heading = direction the aircraft is pointing (into the wind relative to ground track)
         // Air velocity = Ground velocity - Wind velocity
@@ -692,6 +869,9 @@ export class   CNodeMQ9UI extends CNodeViewUI {
     }
 
     dispose() {
+        this.stopTrackingSimulation();
+        this.trackingMenu?.destroy();
+        this.unregisterTrackingInteraction?.();
         // Clean up event listeners
         this.unregisterButtonInteraction?.();
         if (this.canvas && this.boundHandleDblClick) {

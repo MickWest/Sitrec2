@@ -1,4 +1,4 @@
-import {muxVideoKlv, mpegCRC} from "../../benchmarks/botbench/lib/muxVideoKlv";
+import {muxVideoKlv, mpegCRC, encodePTS} from "../../benchmarks/botbench/lib/muxVideoKlv";
 import {scanTransportStreamForMetadata} from "../../src/analysis/TSMetadataScanner";
 import {encodeMISBLocalSet} from "../../src/MISBEncoder";
 import {TSParser} from "../../src/TSParser";
@@ -13,12 +13,14 @@ const psi = (pid, data) => {
     s.writeUInt32BE(mpegCRC(s.subarray(0, -4)), s.length - 4);
     return packet(pid, [0, ...s]);
 };
-function fixture() {
+function fixture(start = 0, audio = false) {
     return Buffer.concat([
         psi(0, [0,0xb0,13,0,1,0xc1,0,0,0,1,0xf0,0]),
-        psi(0x1000, [2,0xb0,18,0,1,0xc1,0,0,0xe1,0,0xf0,0,0x1b,0xe1,0,0xf0,0]),
+        psi(0x1000, [2,0xb0,audio ? 23 : 18,0,1,0xc1,0,0,0xe1,0,0xf0,0,0x1b,0xe1,0,0xf0,0,
+            ...(audio ? [0x0f,0xe1,1,0xf0,0] : [])]),
+        ...(audio ? [packet(0x101, [0,0,1,0xc0,0,0,0x80,0x80,5,...encodePTS(start),1,2,3])] : []),
         ...[0, 3000, 6000].map(t => packet(0x100, [0,0,1,0xe0,0,0,0x80,0x80,5,
-            0x21,0,1 | (t >> 14), (t >> 7) & 255, ((t & 127) << 1) | 1, 0,0,0,1,9,0xf0])),
+            ...encodePTS(start+t), 0,0,0,1,9,0xf0])),
     ]);
 }
 
@@ -44,6 +46,36 @@ test("native TS scanner reads one synchronous KLV PES at each video PTS", async 
     const pmt = ts.subarray(188 + 5, 188 + 188);
     const length = (pmt.readUInt16BE(1) & 4095) + 3;
     expect(mpegCRC(pmt.subarray(0, length))).toBe(0);
+});
+
+test("sparse metadata keeps its independent PTS, audio, and repeated program tables", async () => {
+    const start = 120 * 90000;
+    const records = [0,1,2].map(() => ({klv: encodeMISBLocalSet({2: 1000000, 13: 37, 14: -120})}));
+    const samples = [1500,4500].map(ptsOffset90k => ({ptsOffset90k, klv: Uint8Array.from({length: 260}, (_, i) => i % 251)}));
+    const input = fixture(start, true);
+    const ts = muxVideoKlv(input, records, 30, {klvPID: 0x102, metadataSamples: samples,
+        allowAudio: true, sequenceCounter: false, tablePacketPeriod: 2});
+    const scan = await scanTransportStreamForMetadata(ts);
+    const meta = scan.metadataStreams[0];
+    expect(meta.pesEntries.map(p => p.ptsUs)).toEqual(samples.map(s => (start+s.ptsOffset90k)*1000/90));
+    for (const {offset} of meta.pesEntries) {
+        const bytes = new Uint8Array(meta.data);
+        expect(Array.from(bytes.slice(offset, offset+3))).toEqual([0,0,0xdf]);
+        expect(Array.from(bytes.slice(offset+5, offset+265))).toEqual(Array.from(samples[0].klv));
+    }
+    const pidPackets = (buffer, pid) => Array.from({length: buffer.length/188}, (_, i) => buffer.subarray(i*188,(i+1)*188))
+        .filter(p => (((p[1]&31)<<8)|p[2]) === pid);
+    expect(pidPackets(ts, 0x101)).toEqual(pidPackets(input, 0x101));
+    expect(pidPackets(ts, 0x100)).toEqual(pidPackets(input, 0x100));
+    const tables = pidPackets(ts, 0x1000);
+    expect(tables.length).toBeGreaterThan(1);
+    expect(tables.map(p => p[3]&15)).toEqual(tables.map((_,i) => i&15));
+    for (const p of tables) {
+        const s = p.subarray(5), size = (s.readUInt16BE(1)&4095)+3;
+        expect(mpegCRC(s.subarray(0,size))).toBe(0);
+    }
+    expect(() => muxVideoKlv(input, records, 30, {allowAudio: true})).toThrow("Metadata PID already in use");
+    expect(() => muxVideoKlv(fixture(), records, 30, {metadataSamples: [{ptsOffset90k: 9000, klv: []}]})).toThrow("Invalid metadata schedule");
 });
 
 test("multi-packet metadata preserves data and continuity counters", async () => {

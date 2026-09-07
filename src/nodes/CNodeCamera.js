@@ -691,6 +691,9 @@ export class CNodeCamera extends CNode3D {
         if (this.orthographic) {
             this._refreshOrthoProjection();
         }
+        // Replay an already simulated sensor pose for graph consumers. State
+        // advances in the view after ordinary camera controls have finished.
+        this.mq9Tracking?.applyCachedFrame(f);
     }
 
     updateGroundTrackSwitchFrameRange() {

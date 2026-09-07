@@ -1,5 +1,5 @@
 import {Vector3} from "three";
-import {setNodeMan, setSit} from "../../src/Globals";
+import {setGlobalDateTimeNode, setNodeMan, setSit} from "../../src/Globals";
 import {CNodeManager} from "../../src/nodes/CNodeManager";
 import {CNodeArray} from "../../src/nodes/CNodeArray";
 import {CNodeSwitch} from "../../src/nodes/CNodeSwitch";
@@ -16,6 +16,46 @@ beforeEach(() => {
 function source(id = "source") {
     return new CNodeArray({id, array: Array.from({length: 101}, (_, f) => ({position: new Vector3(f, 50 * Math.sin(f / 5), 100)}))});
 }
+
+function sparseClockFixture(mode = "pts", matchingSource = true, baked = true) {
+    const epoch = Date.UTC(2026, 0, 1);
+    setGlobalDateTimeNode({getStartTimeValue: () => epoch});
+    const raw = source();
+    const data = new CNodeArray({id: "sparseData", array: [0, 10, 20].map(x => ({position: new Vector3(x, 0, 0)}))});
+    data.misb = [[], [], []];
+    data.getTime = i => epoch + 1000 + i * 100;
+    data.getRecordPTSms = i => i * 100;
+    data.isTerrainDependent = () => !baked;
+    data.isValid = () => true;
+    data.getPosition = i => data.array[i].position.clone();
+    raw.pairingInfo = {mode, misbNode: matchingSource ? data : {}};
+    const video = new CNodeArray({id: "video", array: [0]});
+    // A dropped frame at frame 2; absolute transport origin is deliberately nonzero.
+    video.videoData = {framePTSus: [120000000, 120050000, 120150000, 120200000]};
+    const smooth = new CNodeSmoothedPositionTrack({id: "smooth", source: raw, method: "spline"});
+    smooth.addInput("dataTrack", data);
+    return {smooth, data};
+}
+
+test.each([true, false])("sparse spline follows source PES timing with uneven video intervals (baked=%s)", baked => {
+    const {smooth} = sparseClockFixture("pts", true, baked);
+    expect([0, 1, 2, 3].map(f => smooth.p(f).x)).toEqual([0, 5, 15, 20]);
+});
+
+test("sparse PES spline applies fractional manual and track start offsets on the video clock", () => {
+    const {smooth, data} = sparseClockFixture();
+    data.timeOffset = 1 / 30;
+    data.getTrackStartTimeOffsetSeconds = () => 0.5 / 30;
+    expect(smooth.p(0).x).toBeCloseTo(10, 9);
+    expect(smooth.p(1).x).toBeCloseTo(17.5, 9);
+});
+
+test.each([["uts", true], ["pts", false]])("sparse spline retains UTC timing for mode=%s matchingSource=%s", (mode, matching) => {
+    const {smooth, data} = sparseClockFixture(mode, matching);
+    data.timeOffset = 0.1;
+    expect(smooth.p(0).x).toBe(0);
+    expect(smooth.p(30).x).toBeCloseTo(10, 9);
+});
 
 test.each(["none", "moving", "savgol", "sliding"])("restores %s over a previously materialized default", method => {
     const raw = source();

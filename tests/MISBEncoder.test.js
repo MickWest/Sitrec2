@@ -26,3 +26,15 @@ test("invalid metadata is rejected instead of wrapped or silently clamped", () =
         expect(() => encodeMISBLocalSet(values)).toThrow();
     }
 });
+
+test("text identifiers use UTF-8 byte lengths and a valid checksum across long BER payloads", () => {
+    const text = "Simulated caméra ".repeat(6);
+    const packet = Buffer.from(encodeMISBLocalSet({2: 1000000, 3: text, 4: "SIM-0001", 12: "WGS-84"}));
+    const bytes = Buffer.from(text, "utf8");
+    expect(packet.includes(Buffer.concat([Buffer.from([3, bytes.length]), bytes]))).toBe(true);
+    expect(packet[16]).toBe(0x81);
+    let sum = 0;
+    for (let i = 0; i < packet.length-2; i++) sum += packet[i] << (i%2 === 0 ? 8 : 0);
+    expect(packet.readUInt16BE(packet.length-2)).toBe(sum & 65535);
+    for (const invalid of ["", "é".repeat(64), 123]) expect(() => encodeMISBLocalSet({2: 1, 3: invalid})).toThrow();
+});

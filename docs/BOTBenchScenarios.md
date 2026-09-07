@@ -271,9 +271,44 @@ For absolute rates in degrees per second, use `--drift-speed=0.1` and
 `--recenter-speed=0.3`. The other wobble settings remain the same. An absolute
 recenter rate cannot be combined with a non-default recenter speed scale.
 
-The target is a **1 m diameter sphere** representing a balloon. The fixed lens
+`--set=extended` selects six additional balloon scenarios: level orbit, rising
+orbit, and level straight pass at each of two geometries (5km ground range at
+50% slant depth, and 10km ground range at 25% slant depth). The original three
+scenarios remain the default. Each set defaults to all its scenarios; `--count`
+limits the prefix and `--scenario` selects one by name.
+`--wobble-seed=<integer>` selects a different operator-drift realization while
+preserving the sensor and target trajectories.
+
+`--set=offscreen --duration=30` adds six clips based on the starter geometries:
+one or two smooth pointing excursions per clip, taking the target briefly
+outside the horizontal field before reacquisition. These excursions are added
+to the regular tracking wobble and recorded in the camera KLV. Their scheduled
+maneuver durations include the visible departure and return; measure actual
+off-screen intervals from the per-frame target projections.
+
+`--set=tracking` creates six 30-second [MQ9 tracking demonstrations](MQ9TrackingSimulation.md):
+full and partial acquisition, predictive coast and recovery, permanent loss to
+ground hold, manual takeover, and acquisition-gate escape followed by a retry.
+The expanding square, metre label, refining corners, and loss flashes are
+recorded into the imagery. KLV follows the simulated camera through each mode
+change. The `.recording.json` includes frame-by-frame state and transition times.
+
+`--zoom-factor=2` adds an instant 2× optical zoom at 10 seconds and returns to
+the original lens at 20 seconds. It defaults to a 30-second recording and can
+be combined with any scenario set or wobble settings. Magnification scales
+focal length, preserving the correct horizontal and vertical FOV relationship.
+The video and KLV switch together at frames 300 and 600. Capture-style variants
+include exact-time lens updates between their regular sparse samples; they
+hold the FOV until the next switch instead of interpolating a zoom ramp.
+
+`--resume` retains clips that already passed both import checks, requiring their
+saved plans to match the requested settings. On macOS the runner uses Metal
+graphics; `--software-renderer` selects the software fallback.
+
+The target is a **1 m diameter sphere** representing a balloon. The initial lens
 is set so its diameter at frame zero spans **exactly six pixels** (6/640,
-0.9375% of width). Its apparent size subsequently changes with distance. The
+0.9375% of width). Its apparent size subsequently changes with distance and any
+requested zoom. Without zoom, the lens remains fixed. The
 first case starts at about 1.971 km slant range with a 3.099886° horizontal FOV
 and 2.325162° vertical FOV. The original 10 Hz generated truth is interpolated
 to 30 fps, preserving the source trajectory and seed.
@@ -289,7 +324,10 @@ TS metadata with transport timestamps imports with **Angle Smooth Window
 (frames)** set to **0**, preserving the recorded wobble. The check verifies
 that default without changing it. For a previously saved sitch, set the window
 to 0 manually. Standalone MISB retains its 120-frame default. KLV field
-quantization is included in the comparison tolerances. To repeat only that check:
+quantization is included in the comparison tolerances. Optical zoom magnifies
+its pixel error, so the projection tolerance scales with magnification. Reports
+retain the actual video-pixel error and separately check viewport mapping using
+the decoded lens and pose. To repeat only that check:
 
 ```bash
 npm run bench-bot-video -- --verify-only --count=1 --url='https://local.metabunk.org/sitrec/?action=new'
@@ -299,6 +337,33 @@ These are synthetic development clips with rendered grayscale imagery and a
 white target, not a calibrated thermal sensor simulation. Descriptive names,
 known target dimensions and truth-sized FOV make this set unsuitable for blind
 range scoring.
+
+### Capture-style transport variants
+
+After generating a representative set into `low-wobble/` and `tracking-wobble/`
+subfolders, add transport variants alongside the precise controls:
+
+```bash
+node benchmarks/botbench/build-video-transport.mjs --root=<representative-output-folder>
+```
+
+For other wobble folders, pass their names explicitly with
+`--profiles=wobble-010deg,wobble-025deg,wobble-050deg`.
+
+This reuses the rendered imagery and writes matching TS/MP4 files plus timing
+manifests under `realistic/`. It preserves 640×480/30p and the original motion,
+and uses Baseline H.264 with 120-frame keyframe intervals, silent stereo AAC,
+and a transport clock starting at 120 seconds. KLV arrives at roughly 4.8 Hz
+with deterministic cadence variation and presentation timestamps between video
+frames. Acquisition UTC and presentation time remain separate, and each
+manifest records both. Descriptive synthetic identifiers make the KLV records
+span multiple TS packets. No reference-footage metadata is copied.
+
+These variants exercise sparse interpolation and timing variation. Their
+reconstructed cameras can depart from the per-frame truth even when parsing is
+correct; compare them with the dense controls when assessing traversal errors.
+The model does not reproduce every capture behavior, such as video beginning
+after a long metadata pre-roll or differing source frame rates.
 
 ## Other commands
 

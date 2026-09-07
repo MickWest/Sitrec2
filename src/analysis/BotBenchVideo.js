@@ -1,7 +1,7 @@
 // Local benchmark recorder. Invoked by run-botset-video.mjs in a dedicated
 // custom sitch. Uses Sitrec's real renderer, object nodes and MQ9UI overlay.
 import {Vector3} from "three";
-import {NodeMan, Sit, GlobalDateTimeNode, NodeFactory} from "../Globals";
+import {NodeMan, Sit, GlobalDateTimeNode, NodeFactory, setRenderOne} from "../Globals";
 import {ViewMan} from "../CViewManager";
 import {par} from "../par";
 import {ENU2ECEF_radii, RLLAToECEF_radii, ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
@@ -11,6 +11,8 @@ import {generateWobbleOffsets} from "../TrackingWobbleMath";
 import {MediabunnyExporter} from "../MediabunnyExporter";
 import {encodeMISBLocalSet} from "../MISBEncoder";
 import {botsetWobbleParams} from "../../benchmarks/botbench/lib/botsetErrors";
+import {applyVideoOffscreenEvents} from "../../benchmarks/botbench/lib/videoOffscreenEvents";
+import {videoLensAtFrame} from "../../benchmarks/botbench/lib/videoZoom";
 import {waitForExportFrameSettled} from "../ExportFrameSettler";
 import {misbSightlineHeading} from "../MISBSightline";
 import {LLAToECEF} from "../LLA-ECEF-ENU";
@@ -40,7 +42,8 @@ export async function prepare(plan) {
     const wobbleParams = {seed: plan.wobbleSeed, ...botsetWobbleParams(amplitude)};
     wobbleParams.driftSpeed = plan.driftSpeed ?? wobbleParams.driftSpeed;
     wobbleParams.correctionSpeed = plan.recenterSpeed ?? wobbleParams.correctionSpeed * (plan.recenterSpeedScale ?? 1);
-    const wobble = generateWobbleOffsets(wobbleParams, plan.frames, plan.fps);
+    const wobble = applyVideoOffscreenEvents(generateWobbleOffsets(wobbleParams, plan.frames, plan.fps),
+        plan.offscreenEvents, plan.fps, hfov);
     const cameraNode = NodeMan.get("lookCamera"), view = NodeMan.get("lookView"), hud = NodeMan.get("MQ9UI");
     if (!await hud.fontReady) throw new Error("MQ9 HUD font must load before recording");
     cameraNode.freeLook = true;
@@ -59,11 +62,25 @@ export async function prepare(plan) {
     const track = NodeFactory.create("Array", {id: "botVideoTruth", array: target.map(position => ({position})), fps: 30});
     const balloon = NodeFactory.create("3DObject", {id: "botVideoBalloon", geometry: "sphere", radius: plan.diameterM / 2,
         size: 1, color: "white", material: "basic", opacity: 1, transparent: false});
+    if (hud.in.cameraTrack) hud.removeInput("cameraTrack");
     hud.addInput("cameraTrack", NodeFactory.create("Array", {id: "botVideoSensor", array: sensor.map(position => ({position})), fps: 30}));
     // A normal target node makes the geometry inspectable through NodeMan.
     balloon.addInput("track", track);
     const canvas = document.createElement("canvas"); canvas.width = plan.width; canvas.height = plan.height;
     active = {plan, sensor, target, hfov, vfov, amplitude, wobble, wobbleParams, camera, view, hud, balloon, canvas, records: []};
+    if (plan.trackingSimulation) {
+        camera.position.copy(sensor[0]); camera.up.copy(getLocalUpVector(sensor[0])); camera.lookAt(target[0]); camera.updateMatrixWorld(true);
+        active.tracker = hud.startTrackingSimulation({camera, fps: plan.fps,
+            sensorAt: f => sensor[f].toArray(), lensAt: f => videoLensAtFrame(hfov, vfov, plan, f).vfov,
+            observationAt: f => ({id: balloon.id, position: target[f].toArray(), diameterM: plan.diameterM, confidence: 1, visible: true}),
+            // This is scripted operator following, used only in MANUAL mode.
+            // Automatic tracking/coast never receive this as a pointing source.
+            manualAimAt: f => target[f].toArray(),
+            wobbleAt: f => {
+                const fy = plan.height / (2 * Math.tan(videoLensAtFrame(hfov, vfov, plan, f).vfov / DEG / 2));
+                return [Math.tan(wobble[f].pan / DEG) * fy, -Math.tan(wobble[f].tilt / DEG) * fy];
+            }, commands: plan.trackingSimulation.commands});
+    }
     renderFrame(0);
     const settled = await waitForExportFrameSettled({frame: 0, viewIds: [view.id], renderFrame: () => renderFrame(0)});
     if (settled.timedOut) throw new Error("Terrain did not finish loading before recording");
@@ -75,14 +92,20 @@ export function renderFrame(f) {
     const a = active;
     if (!a || !Number.isInteger(f) || f < 0 || f >= a.plan.frames) throw new Error("Invalid video frame");
     const {camera, sensor, target, view, hud, balloon, wobble, canvas, plan} = a;
+    const lens = videoLensAtFrame(a.hfov, a.vfov, plan, f);
+    // The view reapplies FOV controllers during rendering, including free look.
+    // Keep the source synchronized so it cannot restore the initial lens.
+    const fovSource = NodeMan.get("fovUI");
+    if (fovSource.v0 !== lens.vfov) fovSource.setValue(lens.vfov);
     par.frame = f; GlobalDateTimeNode.update(f);
     camera.position.copy(sensor[f]);
     camera.up.copy(getLocalUpVector(sensor[f]));
     camera.lookAt(target[f]);
     camera.rotateY(-wobble[f].pan / DEG); camera.rotateX(wobble[f].tilt / DEG);
-    camera.fov = a.vfov; camera.aspect = plan.width / plan.height;
+    camera.fov = lens.vfov; camera.aspect = plan.width / plan.height;
     camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
     balloon.group.position.copy(target[f]); balloon.group.updateMatrixWorld(true);
+    a.tracker?.applyFrame(f);
     // Recording advances independently of the animation loop. Request terrain
     // subdivision for this camera pose before asking the export settler to wait.
     NodeMan.get("terrainUI", false)?.update();
@@ -106,16 +129,17 @@ export function renderFrame(f) {
     const roll = (Math.atan2(actualUp.dot(right0), actualUp.dot(up0)) * DEG + 360) % 360;
     const values = {2: Date.parse(plan.site.epochISO) * 1000 + Math.round(f * 1e6 / plan.fps),
         5: 0, 6: 0, 7: 0, 13: pos.x, 14: pos.y, 15: pos.z - meanSeaLevelOffset(pos.x, pos.y),
-        16: a.hfov, 17: a.vfov, 18: az, 19: el, 20: roll};
+        16: lens.hfov, 17: lens.vfov, 18: az, 19: el, 20: roll};
     const projected = target[f].clone().project(camera);
     const renderedVFOV = camera.renderedFOV ?? camera.fov;
-    if (Math.abs(renderedVFOV - a.vfov) > 1e-8 || Math.abs(camera.aspect - plan.width / plan.height) > 1e-8) {
+    if (Math.abs(renderedVFOV - lens.vfov) > 1e-8 || Math.abs(camera.aspect - plan.width / plan.height) > 1e-8) {
         throw new Error(`Rendered camera differs from recording lens: ${renderedVFOV} degrees, aspect ${camera.aspect}`);
     }
     const projectedDiameterPixels = plan.height * Math.tan(Math.asin(plan.diameterM / (2 * sensor[f].distanceTo(target[f])))) / Math.tan(renderedVFOV / DEG / 2);
     return {frame: f, klv: Array.from(encodeMISBLocalSet(values)), values,
         sensorECEF: sensor[f].toArray(), directionECEF: forward.toArray(), upECEF: actualUp.toArray(),
-        projectedDiameterPixels,
+        projectedDiameterPixels, magnification: lens.magnification,
+        ...(a.tracker ? {tracking: JSON.parse(JSON.stringify(a.tracker.current))} : {}),
         targetPixel: [(projected.x + 1) * plan.width / 2, (1 - projected.y) * plan.height / 2]};
 }
 
@@ -144,7 +168,8 @@ export async function record() {
         const url = URL.createObjectURL(blob), link = document.createElement("a");
         link.href = url; link.download = `${a.plan.name}.mp4`; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-        return {records: a.records, hfov: a.hfov, vfov: a.vfov, amplitudeDeg: a.amplitude, wobbleParams: a.wobbleParams};
+        return {records: a.records, hfov: a.hfov, vfov: a.vfov, amplitudeDeg: a.amplitude, wobbleParams: a.wobbleParams,
+            ...(a.tracker ? {trackingTransitions: a.tracker.model.history} : {})};
     } finally {
         await exporter.dispose();
         par.paused = true;
@@ -162,6 +187,32 @@ export async function verifyImported(expected) {
     const cameraNode = NodeMan.get("lookCamera"), camera = cameraNode.camera, view = NodeMan.get("lookView");
     const hud = NodeMan.get("MQ9UI");
     hud.setVisible(true);
+    // The first decoded image can change the layout; showing the HUD and the
+    // WebGL resize debounce also finish asynchronously. Observe the final sizes
+    // before running pixel comparisons, rather than assuming a fixed delay.
+    par.paused = true; par.frame = 0; GlobalDateTimeNode.update(0);
+    video.getImage(0);
+    if (!await video.waitForFrame(0, 30000)) throw new Error("Imported frame zero did not decode");
+    let stableLayout = 0, previousLayout = "";
+    const layoutStarted = performance.now();
+    while (stableLayout < 2) {
+        setRenderOne(true);
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        // Mirror the ordinary renderer's sizing pass. Hidden HUDs can retain
+        // their previous size until their first explicit render after import.
+        for (const v of [videoView, view, NodeMan.get("mirrorVideo", false), hud]) {
+            if (!v) continue;
+            v.setFromDiv(v.div);
+            v.updateWH();
+        }
+        videoView.renderCanvas(0);
+        const layout = JSON.stringify([view, videoView, hud].map(v =>
+            [v.widthPx, v.heightPx, v.canvas.width, v.canvas.height, v.div.clientWidth, v.div.clientHeight]));
+        const aligned = hud.widthPx === view.widthPx && hud.heightPx === view.heightPx;
+        stableLayout = aligned && !view._resizeTimeout && layout === previousLayout ? stableLayout + 1 : 0;
+        previousLayout = layout;
+        if (performance.now() - layoutStarted > 10000) throw new Error("Imported HUD/view layout did not settle");
+    }
     const los = nodes.find(n => n.constructor.name === "CNodeLOSTrackMISB");
     if (!data || !video || !los) throw new Error("Imported video, MISB track or camera sightline is missing");
     // Verify the ordinary import settings, without repairing them for the test.
@@ -173,8 +224,9 @@ export async function verifyImported(expected) {
         defaultAngleSmoothingFrames, angleSmoothingFrames: smoothing.v0,
         fps: Sit.fps, maxPositionErrorM: 0, maxDirectionErrorDeg: 0, maxFovErrorDeg: 0, maxTimestampErrorUs: 0, maxPtsErrorUs: 0,
         maxTrackPositionErrorM: 0, maxTrackDirectionErrorDeg: 0, maxTrackUpErrorDeg: 0, maxVideoPtsErrorUs: 0,
-        maxCameraPositionErrorM: 0, maxCameraDirectionErrorDeg: 0, maxCameraUpErrorDeg: 0,
-        maxRenderedPointErrorPixels: 0, maxHUDAlignmentErrorPixels: 0};
+        maxCameraPositionErrorM: 0, maxCameraDirectionErrorDeg: 0, maxCameraUpErrorDeg: 0, maxCameraFOVErrorDeg: 0,
+        maxRenderedPointErrorPixels: 0, maxRenderedPointErrorAtInitialFOVPixels: 0,
+        maxViewportProjectionErrorPixels: 0, maxHUDAlignmentErrorPixels: 0};
     par.paused = true;
     for (let f = 0; f < expected.length; f++) {
         const row = data.misb[f], ref = expected[f];
@@ -196,12 +248,14 @@ export async function verifyImported(expected) {
         result.maxTrackUpErrorDeg = Math.max(result.maxTrackUpErrorDeg, importedUp.angleTo(new Vector3(...ref.upECEF)) * DEG);
         par.frame = f; GlobalDateTimeNode.update(f);
         cameraNode.update(f); camera.updateMatrixWorld(true);
+        result.maxCameraFOVErrorDeg = Math.max(result.maxCameraFOVErrorDeg, Math.abs(camera.fov - ref.values[17]));
         result.maxCameraPositionErrorM = Math.max(result.maxCameraPositionErrorM, camera.position.distanceTo(new Vector3(...ref.sensorECEF)));
         result.maxCameraDirectionErrorDeg = Math.max(result.maxCameraDirectionErrorDeg, camera.getWorldDirection(new Vector3()).angleTo(new Vector3(...ref.directionECEF)) * DEG);
         result.maxCameraUpErrorDeg = Math.max(result.maxCameraUpErrorDeg, new Vector3().setFromMatrixColumn(camera.matrixWorld, 1).angleTo(new Vector3(...ref.upECEF)) * DEG);
     }
     if (result.frames !== expected.length || result.width !== 640 || result.height !== 480 || Math.abs(result.fps - 30) > 0.001
         || result.maxPositionErrorM > 0.16 || result.maxDirectionErrorDeg > 0.00002 || result.maxFovErrorDeg > 180 / 65535 / 2 + 1e-8
+        || result.maxCameraFOVErrorDeg > 180 / 65535 / 2 + 1e-8
         || result.maxTimestampErrorUs > 1 || result.maxPtsErrorUs > 1 || result.maxVideoPtsErrorUs > 1
         || result.maxTrackPositionErrorM > 0.17 || result.maxTrackDirectionErrorDeg > 0.0002 || result.maxTrackUpErrorDeg > 0.0002
         // The camera's normal Savitzky-Golay position filter can overshoot
@@ -212,7 +266,10 @@ export async function verifyImported(expected) {
     const canvas = document.createElement("canvas"); canvas.width = 640; canvas.height = 480;
     const ctx = canvas.getContext("2d");
     result.decodedFrames = [];
-    for (const f of [...new Set([0, Math.min(284, expected.length - 1), Math.min(394, expected.length - 1), Math.floor(expected.length / 2), expected.length - 1])]) {
+    const lensChangeFrames = expected.flatMap((r, f) => f > 0 && r.values[17] !== expected[f - 1].values[17] ? [f - 1, f, f + 1] : []);
+    const trackingChangeFrames = expected.flatMap((r, f) => f > 0 && r.tracking?.state !== expected[f - 1].tracking?.state ? [f - 1, f, f + 1] : []);
+    for (const f of [...new Set([0, Math.min(284, expected.length - 1), Math.min(394, expected.length - 1), Math.floor(expected.length / 2), expected.length - 1,
+        ...lensChangeFrames, ...trackingChangeFrames])].filter(f => f < expected.length).sort((a, b) => a - b)) {
         // Move the visible timeline too, so its rendering cannot evict the
         // requested frame while the decoder is filling its cache.
         par.paused = true; par.frame = f; GlobalDateTimeNode.update(f);
@@ -220,6 +277,13 @@ export async function verifyImported(expected) {
         if (!await video.waitForFrame(f, 30000)) throw new Error(`TS video frame ${f} did not decode`);
         const source = video.getCachedImage(f);
         if (!source) throw new Error(`TS video frame ${f} is missing from the decoder cache`);
+        for (const v of [videoView, view, NodeMan.get("mirrorVideo", false), hud]) {
+            if (!v) continue;
+            v.setFromDiv(v.div);
+            v.updateWH();
+        }
+        videoView.renderCanvas(f);
+        NodeMan.get("mirrorVideo", false)?.renderCanvas(f);
         cameraNode.update(f);
         for (const node of NodeMan.getPreRenderNodes()) node.preRender(view);
         // Inspect the camera at the actual scene draw, including viewport FOV,
@@ -231,12 +295,20 @@ export async function verifyImported(expected) {
                 checkedProjection = true;
                 const ref = expected[f], forward = new Vector3(...ref.directionECEF), up = new Vector3(...ref.upECEF);
                 const right = forward.clone().cross(up).normalize();
+                // Also isolate viewport mapping from metadata precision: an
+                // ideal 4:3 camera using the imported pose and decoded FOV
+                // must map to exactly the same displayed video coordinates.
+                const importedCamera = camera.clone();
+                importedCamera.fov = data.misb[f][17]; importedCamera.aspect = 4 / 3;
+                importedCamera.zoom = 1; importedCamera.clearViewOffset();
+                importedCamera.updateProjectionMatrix();
                 // Probe a 3x3 grid at 8 km, approximately the ground range in
                 // these scenes. Report discrepancies in original video pixels.
                 for (const u of [-0.8, 0, 0.8]) for (const v of [-0.8, 0, 0.8]) {
                     const point = new Vector3(...ref.sensorECEF).addScaledVector(forward, 8000)
                         .addScaledVector(right, u * 8000 * Math.tan(ref.values[16] / DEG / 2))
                         .addScaledVector(up, v * 8000 * Math.tan(ref.values[17] / DEG / 2));
+                    const importedPoint = point.clone().project(importedCamera);
                     const projected = point.project(renderCamera);
                     const [vx, vy] = videoView.videoToCanvasCoords((u + 1) * 320, (1 - v) * 240);
                     const rect = view.canvas.getBoundingClientRect(), pane = view.div.getBoundingClientRect();
@@ -244,14 +316,24 @@ export async function verifyImported(expected) {
                     const y = ((1 - projected.y) / 2 * rect.height + rect.top - pane.top) / pane.height * videoView.heightPx;
                     const error = Math.hypot((x - vx) * videoView.sWidth / videoView.dWidth,
                         (y - vy) * videoView.sHeight / videoView.dHeight);
+                    const [ix, iy] = videoView.videoToCanvasCoords((importedPoint.x + 1) * 320, (1 - importedPoint.y) * 240);
+                    const viewportError = Math.hypot((x - ix) * videoView.sWidth / videoView.dWidth,
+                        (y - iy) * videoView.sHeight / videoView.dHeight);
+                    if (!Number.isFinite(viewportError) || viewportError > 1e-6) throw new Error(`Viewport lens mismatch at frame ${f}: ${viewportError} pixels`);
+                    result.maxViewportProjectionErrorPixels = Math.max(result.maxViewportProjectionErrorPixels, viewportError);
                     if (!Number.isFinite(error)) throw new Error(`Invalid rendered projection at frame ${f}`);
                     result.maxRenderedPointErrorPixels = Math.max(result.maxRenderedPointErrorPixels, error);
+                    // The same quantized position/angle error grows in pixels
+                    // under optical zoom. Keep the original-lens tolerance and
+                    // report actual video-pixel error separately.
+                    const magnification = Math.tan(expected[0].values[17] / DEG / 2) / Math.tan(ref.values[17] / DEG / 2);
+                    result.maxRenderedPointErrorAtInitialFOVPixels = Math.max(result.maxRenderedPointErrorAtInitialFOVPixels, error / magnification);
                 }
             }
             return originalRender.call(this, scene, renderCamera);
         };
         try { view.renderCanvas(f); } finally { view.renderer.render = originalRender; }
-        if (!checkedProjection || result.maxRenderedPointErrorPixels > 0.5) {
+        if (!checkedProjection || result.maxRenderedPointErrorAtInitialFOVPixels > 0.5) {
             throw new Error(`Rendered camera round trip failed at frame ${f}: ${result.maxRenderedPointErrorPixels} pixels`);
         }
         hud.renderCanvas(f);

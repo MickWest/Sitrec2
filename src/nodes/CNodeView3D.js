@@ -3922,11 +3922,13 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
         if (globalProfiler) globalProfiler.pop();
 
+        NodeMan.get("MQ9UI", false)?.updateTracking(frame, this);
+
         // Display-only camera aim (e.g. "Render Camera Use Traverse Track"):
         // applied for the duration of the render only, restored bit-exactly in
         // the finally below so no code outside this window (node updates,
         // cascades, serialization, PTZ sync) can observe the display orientation.
-        const _dlSaved = this.applyDisplayLookAt(frame);
+        const _dlSaved = this.cameraNode.mq9Tracking ? null : this.applyDisplayLookAt(frame);
         try {
 
         // Profile: Pre-render Camera Update

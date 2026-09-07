@@ -11,12 +11,14 @@ import {chromium} from "playwright";
 const require = createRequire(import.meta.url);
 const root = path.dirname(fileURLToPath(import.meta.url));
 const {values: args} = parseArgs({options: {
-    video: {type: "boolean", default: false}, count: {type: "string", default: "3"},
-    duration: {type: "string", default: "20"}, wobble: {type: "string"}, 'wobble-deg': {type: "string"},
+    video: {type: "boolean", default: false}, count: {type: "string"}, set: {type: "string", default: "starter"},
+    duration: {type: "string"}, wobble: {type: "string"}, 'wobble-deg': {type: "string"},
     scenario: {type: "string"}, 'recenter-speed-scale': {type: "string", default: "1"},
     'drift-speed': {type: "string"}, 'recenter-speed': {type: "string"},
+    'wobble-seed': {type: "string"}, 'zoom-factor': {type: "string"},
     url: {type: "string"}, out: {type: "string"}, headed: {type: "boolean", default: false},
     'verify-only': {type: "boolean", default: false},
+    resume: {type: "boolean", default: false}, 'software-renderer': {type: "boolean", default: false},
 }});
 const outputDir = path.resolve(args.out || path.join(root, "results", "video"));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-video-"));
@@ -31,20 +33,40 @@ try {
         }}]});
     const {generateVideoScenarios, muxVideoKlv, setSit} = require(outfile);
     setSit({name: "botbench-video", frames: 10000, fps: 10, simSpeed: 1, lat: 37.244358, lon: -120.738187});
-    const scenarios = generateVideoScenarios({count: Number(args.count), durationSeconds: Number(args.duration),
+    const scenarios = generateVideoScenarios({count: args.count === undefined ? undefined : Number(args.count), set: args.set,
+        durationSeconds: args.duration === undefined ? undefined : Number(args.duration),
+        zoomFactor: args['zoom-factor'] === undefined ? undefined : Number(args['zoom-factor']),
+        wobbleSeed: args['wobble-seed'] === undefined ? undefined : Number(args['wobble-seed']),
         scenarioName: args.scenario, recenterSpeedScale: Number(args['recenter-speed-scale']),
         driftSpeed: args['drift-speed'] === undefined ? undefined : Number(args['drift-speed']),
         recenterSpeed: args['recenter-speed'] === undefined ? undefined : Number(args['recenter-speed']),
         wobblePercent: args.wobble === undefined ? undefined : Number(args.wobble),
         wobbleDegrees: args['wobble-deg'] === undefined ? undefined : Number(args['wobble-deg'])});
     fs.mkdirSync(outputDir, {recursive: true});
-    if (!args['verify-only']) for (const scenario of scenarios) fs.writeFileSync(path.join(outputDir, `${scenario.name}.video.json`), JSON.stringify(scenario));
+    if (!args['verify-only']) for (const scenario of scenarios) {
+        const filename = path.join(outputDir, `${scenario.name}.video.json`);
+        if (args.resume && fs.existsSync(filename) && JSON.stringify(JSON.parse(fs.readFileSync(filename))) !== JSON.stringify(scenario)) {
+            throw new Error(`Existing plan differs; choose a new output directory or omit --resume: ${filename}`);
+        }
+        fs.writeFileSync(filename, JSON.stringify(scenario));
+    }
     if (args.video || args['verify-only']) {
         const url = args.url || process.env.BOTBENCH_URL;
         if (!url) throw new Error("Pass --url=https://local.metabunk.org/<worktree>/?action=new or BOTBENCH_URL");
         execFileSync("ffmpeg", ["-version"], {stdio: "ignore"});
-        browser = await chromium.launch({headless: !args.headed, args: ["--enable-unsafe-swiftshader"]});
+        browser = await chromium.launch({headless: !args.headed, args: [process.platform === "darwin" && !args['software-renderer']
+            ? "--use-angle=metal" : "--enable-unsafe-swiftshader"]});
         for (const scenario of scenarios) {
+            const base = path.join(outputDir, scenario.name);
+            if (args.resume && !args['verify-only'] && [".mp4", ".ts", ".recording.json", ".roundtrip.json", ".roundtrip-layout.json"]
+                .every(ext => fs.existsSync(base + ext))) {
+                const reports = [".roundtrip.json", ".roundtrip-layout.json"].map(ext => JSON.parse(fs.readFileSync(base + ext)));
+                if (reports.every(r => r.frames === scenario.frames && r.records === scenario.frames
+                    && r.defaultAngleSmoothingFrames === 0 && (r.maxRenderedPointErrorAtInitialFOVPixels ?? r.maxRenderedPointErrorPixels) <= .5 && r.maxHUDAlignmentErrorPixels < 1e-6)) {
+                    console.log(`Keeping verified ${scenario.name}`);
+                    continue;
+                }
+            }
             console.log(`${args['verify-only'] ? 'Verifying' : 'Recording'} ${scenario.name}: ${scenario.frames} frames at 640x480/30p`);
             const page = await browser.newPage({ignoreHTTPSErrors: true, viewport: {width: 1440, height: 1000}, deviceScaleFactor: 1});
             await page.addInitScript(() => { window._mcpDebug = true; });
@@ -97,6 +119,10 @@ try {
                     tracks: Object.values(window.NodeMan.list).filter(e => e.data.misb).map(e => ({id: e.data.id, rows: e.data.misb.length}))}));
                 throw new Error(`TS import did not finish: ${JSON.stringify(state)}`, {cause: error});
             }
+            // Stream parsing finishes before the normal import's layout and
+            // camera updates. Let that cascade settle before measuring pixels.
+            await page.waitForFunction(() => window.Globals.pendingActions === 0 && window.Globals.wasPending === 0,
+                null, {timeout: 90000});
             const verified = await page.evaluate(records => window._botBenchVideo.verifyImported(records), result.records);
             const {preview, ...roundTrip} = verified;
             fs.writeFileSync(path.join(outputDir, `${scenario.name}.roundtrip.jpg`), Buffer.from(preview.split(",")[1], "base64"));
