@@ -14,11 +14,11 @@
     "test:browser": "node --test tests_browser/*.test.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.5",
-    "ws": "^8.21.0"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.2"
   },
   "overrides": {
     "ip-address": "^10.2.0",
