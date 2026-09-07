@@ -237,9 +237,22 @@ export class   CNodeMQ9UI extends CNodeViewUI {
     }
 
     stopTrackingSimulation() {
-        if (this.in.camera.mq9Tracking === this.trackingSimulation) delete this.in.camera.mq9Tracking;
-        if (this.trackingSimulation) this.in.camera.freeLook = this.trackingSavedFreeLook;
-        else if (this.trackingNeedsRestore && this.trackingProgram) this.in.camera.freeLook = this.trackingProgram.restoreFreeLook ?? false;
+        // The camera input can already be GONE here, and on the teardown path it always is:
+        // CNodeManager.unlinkDisposeRemove() empties node.inputs before calling dispose(),
+        // and dispose() calls this. Since `get in()` returns `this.inputs` directly, that
+        // leaves this.in.camera undefined, and dereferencing it threw right in the middle of
+        // disposeAll() - aborting the sitch transition and leaving the app half torn down.
+        //
+        // There is nothing to restore on a camera we can no longer reach, and it is being
+        // disposed in the same pass anyway, so the state we own is simply cleared. The normal
+        // path - a user stopping the simulation, or modDeserialize - still has the input and
+        // still does the full restore.
+        const camera = this.in.camera;
+        if (camera) {
+            if (camera.mq9Tracking === this.trackingSimulation) delete camera.mq9Tracking;
+            if (this.trackingSimulation) camera.freeLook = this.trackingSavedFreeLook;
+            else if (this.trackingNeedsRestore && this.trackingProgram) camera.freeLook = this.trackingProgram.restoreFreeLook ?? false;
+        }
         this.trackingNeedsRestore = false;
         this.trackingSimulation = null; this.trackingEnabled = false; this.trackingStatus = "Off";
     }
