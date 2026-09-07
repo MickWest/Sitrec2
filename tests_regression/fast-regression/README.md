@@ -121,5 +121,11 @@ run-scenarios.mjs    value/behavior scenario runner
 baseline/*.png       local pixel baselines (one per sitch, slug-named)
 value-baseline/*.json committed value baselines
 output/              report.json + failure artifacts   (gitignored)
-.chrome-profile/     persistent Chrome profile = warm cache     (gitignored)
 ```
+
+The persistent Chrome profile (the warm cache) is NOT in the repo: it lives in the
+OS cache directory, keyed by checkout, at
+`~/Library/Caches/sitrec-fast-regression/<checkout>/chrome-profile` (macOS) or
+`$XDG_CACHE_HOME/...` elsewhere. It grows to a couple of GB and is never pruned,
+so keeping it out of the repo keeps Dropbox and Finder honest. Deleting it is
+always safe - the next run recreates it and re-warms the cache.

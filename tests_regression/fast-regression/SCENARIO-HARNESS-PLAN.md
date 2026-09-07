@@ -260,7 +260,7 @@ literal, keyed on the real `isLocal` const. Append each new read-only getter nam
    today, `run.mjs:476`). In-page node-graph/menu/notes/ViewMan mutations never leak between
    scenarios; only the on-disk warm tile/asset/video cache is shared (the real speedup).
 2. **localStorage/IndexedDB are PROFILE-scoped, not page-scoped (correction C2).** A fresh page
-   does **not** isolate them — they persist on disk in `.chrome-profile/` across pages and runs.
+   does **not** isolate them — they persist on disk in the shared Chrome profile across pages and runs.
    `CScriptedVideoManager.parse()` writes `localStorage[STORAGE_KEY]` (`CScriptedVideo.js:279`).
    So any scenario that writes localStorage/IndexedDB MUST either (a) snapshot the specific keys
    and restore them in `finally`, or (b) run in a **separate ephemeral context/profile**, or
@@ -473,7 +473,7 @@ following concrete fixes are folded into this plan:
 - **Determinism:** `node run-scenarios.mjs` is green twice in a row, and on a second machine for
   the committed value baselines (pixels remain local-only).
 - **No side effects:** after a full run, the regression user's saved versions are unchanged; the
-  `.chrome-profile/` localStorage/IndexedDB is unchanged (or restored); no `PUT`/`rehost.php`/
+  profile localStorage/IndexedDB is unchanged (or restored); no `PUT`/`rehost.php`/
   `getsitches.php?get=myfiles` request was issued (assert in the runner).
 - **No production leak:** a production build (`www.metabunk.org`) exposes none of the new getters
   / `window.__sitrecTest` / motion hooks (covered by `auditBundleSecrets`-style check or a unit
@@ -531,7 +531,8 @@ M1 is built and **green twice** (deterministic), reoriented per direction toward
   **One finding still documented (not yet actionable):** `getCurrentSimTime` does **not** re-derive
   from a forced `setFrame` in regression mode — it reflects the loaded frame's offset — so a true
   per-frame temporal assertion needs a frame-indexed node read (deferred).
-- `value-baseline/*.json` committed; `baseline/` (PNG) + `output/` + `.chrome-profile/` ignored.
+- `value-baseline/*.json` committed; `baseline/` (PNG) + `output/` ignored, and the Chrome profile lives outside the repo
+  entirely (OS cache dir, keyed by checkout).
 - npm scripts `test-scenarios`, `test-scenarios-update`, `test-scenarios-list`.
 
 **One app change (gated, pre-authorized "extend the API as needed"):** `src/index.js` now does

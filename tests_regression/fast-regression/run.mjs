@@ -51,9 +51,11 @@ import {chromium} from 'playwright';
 import pixelmatch from 'pixelmatch';
 import {PNG} from 'pngjs';
 import {existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync, unlinkSync} from 'fs';
-import {dirname, join} from 'path';
+import {basename, dirname, join} from 'path';
 import {fileURLToPath, pathToFileURL} from 'url';
 import {createRequire} from 'module';
+import {homedir, platform} from 'os';
+import {createHash} from 'crypto';
 import {execSync} from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -170,7 +172,29 @@ export function buildLaunchOpts(config = CONFIG) {
 
 export const baselineDir = join(__dirname, 'baseline');
 export const outputDir = join(__dirname, 'output');
-export const profileDir = join(__dirname, '.chrome-profile');
+// The Chrome profile deliberately stays warm between runs (that is the whole
+// speedup - see the header), so nothing ever prunes it. It reaches ~2.4 GB of
+// HTTP/tile/IndexedDB cache across ~45k files. It therefore lives in the OS
+// cache directory, NOT in the repo: inside the repo it is 45k changed files per
+// run for Dropbox to sync, and it makes tests_regression/ look like 2.5 GB of
+// test data in Finder. Being gitignored does not help - git is not the only
+// thing that walks this directory. Deleting it is always safe; the next run
+// recreates it and re-warms the cache.
+const cacheRoot = platform() === 'darwin'
+    ? join(homedir(), 'Library', 'Caches')
+    : (process.env.XDG_CACHE_HOME || join(homedir(), '.cache'));
+
+// ...but it MUST stay per-checkout. Every agent worktree runs its own suite, and
+// two runs sharing one profile directory collide on Chromium's ProcessSingleton
+// lock - the second launchPersistentContext fails outright. A shared profile
+// would also serve one branch's cached bundle to another. So the path is keyed
+// by the checkout root: its folder name for legibility, plus a hash of the full
+// path so two checkouts with the same folder name never collide.
+const checkoutRoot = join(__dirname, '..', '..');
+const checkoutKey = basename(checkoutRoot) + '-' +
+    createHash('sha1').update(checkoutRoot).digest('hex').slice(0, 8);
+
+export const profileDir = join(cacheRoot, 'sitrec-fast-regression', checkoutKey, 'chrome-profile');
 for (const d of [baselineDir, outputDir, profileDir]) mkdirSync(d, {recursive: true});
 
 export const slug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
