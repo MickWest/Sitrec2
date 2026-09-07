@@ -162,6 +162,22 @@ export class CStarField {
         return Math.cbrt(100000000 * Math.pow(10, -0.4 * (mag - magRef))) / 16;
     }
 
+    /**
+     * True linear flux for HDR point mode, normalised so a magnitude 6 star - the naked-eye
+     * limit - comes out at 1.0.
+     *
+     * The cube root in magnitudeToFlux above is a DISPLAY compression: it turns a 1000:1 flux
+     * range into a 10:1 range of disc radii, which is what makes a star field legible when
+     * brightness is drawn as area. It is exactly wrong for a physical convolution, where the
+     * whole point is that a bright star outshines a faint one by three orders of magnitude and
+     * therefore throws spikes that clear the background while the faint one does not.
+     *
+     * Pogson's ratio, unmodified: each magnitude is 10^0.4 = 2.512 in flux.
+     */
+    magnitudeToHDRFlux(mag) {
+        return Math.pow(10, -0.4 * (mag - 6));
+    }
+
     createStarCloud(scene) {
         if (this.lightCloud) {
             NodeMan.disposeRemove(this.lightCloud);
@@ -176,14 +192,22 @@ export class CStarField {
             }
         }
 
+        // HDR point mode is baked into the shader, so switching it rebuilds the cloud.
+        const hdr = !!Sit.physicalPointSources;
+
         this.lightCloud = new CPointLightCloud({
             id: "StarfieldLightCloud",
             mode: 'celestial',
             singleColor: 0xffffff,
             sphereRadius: this.sphereRadius,
-            baseScale: Sit.starScale / window.devicePixelRatio,
-            minPointSize: 2.0,
-            uRadius: 0.4,
+            baseScale: this._baseScale(Sit.starScale),
+            // Every star is the same small size and its magnitude rides on intensity. Small
+            // enough that the point is not what you see - the PSF is meant to be that - but
+            // not one pixel, which aliases as the camera moves and makes the bright pass
+            // sample it inconsistently from frame to frame.
+            minPointSize: hdr ? 3.0 : 2.0,
+            uRadius: hdr ? 0.5 : 0.4,
+            hdrPoint: hdr,
             count: visibleCount,
             scene: scene,
         });
@@ -193,7 +217,7 @@ export class CStarField {
             const mag = this.BSC_MAG[i];
             if (mag <= Sit.starLimit) {
                 const equatorial = raDec2Celestial(this.BSC_RA[i], this.BSC_DEC[i], this.sphereRadius);
-                const flux = this.magnitudeToFlux(mag);
+                const flux = hdr ? this.magnitudeToHDRFlux(mag) : this.magnitudeToFlux(mag);
 
                 this.lightCloud.setPosition(lightIndex, equatorial.x, equatorial.y, equatorial.z);
                 this.lightCloud.setBrightness(lightIndex, flux);
@@ -318,16 +342,34 @@ export class CStarField {
         this.starIndexMap = [];
     }
 
+    /**
+     * The value CPointLightCloud's `baseScale` should hold.
+     *
+     * It means two different things depending on the mode, which is the trap this exists to
+     * close: a SIZE multiplier normally, and an INTENSITY multiplier in physical point-source
+     * mode. The corrections folded in here - the device pixel ratio, and the 1.4/1.78*2 view
+     * factor - are there to keep a point the same apparent SIZE on any display. Applied to an
+     * intensity they make a star's BRIGHTNESS, and therefore whether it clears the diffraction
+     * glare threshold, depend on the monitor it happens to be shown on.
+     *
+     * All three places that write baseScale go through this, because updateStarScales() runs
+     * from the render path and would otherwise overwrite the constructor's value every frame.
+     */
+    _baseScale(scale, viewFactor = 1) {
+        if (Sit.physicalPointSources) return scale;
+        return (viewFactor * scale) / window.devicePixelRatio;
+    }
+
     updateScale(newScale) {
         this.starScale = newScale;
         if (this.lightCloud) {
-            this.lightCloud.baseScale = newScale / window.devicePixelRatio;
+            this.lightCloud.baseScale = this._baseScale(newScale);
         }
     }
 
     updateStarScales(view) {
         if (this.lightCloud) {
-            this.lightCloud.baseScale = 1.4 / 1.78 * 2 * Sit.starScale / window.devicePixelRatio;
+            this.lightCloud.baseScale = this._baseScale(Sit.starScale, (1.4 / 1.78) * 2);
             this.lightCloud.preRender(view);
         }
     }

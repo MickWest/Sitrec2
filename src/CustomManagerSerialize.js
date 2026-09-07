@@ -500,6 +500,11 @@ export const serializeMethods = {
             "file",
             "starScale",
             "planetScale",
+            // Without this, reopening a saved sitch resets stars and planets to the disc
+            // approximation while KEEPING the camera's diffraction-glare settings, which are
+            // serialized on the camera node - leaving a scenario tuned for point sources
+            // rendering oversized discs, with no indication anything changed.
+            "physicalPointSources",
             "satScale",
             "flareScale",
             "satCutOff",

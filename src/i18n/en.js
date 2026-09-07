@@ -1232,6 +1232,7 @@ const en = {
         clearTLEFilter: { label: "Clear TLE Filter", tooltip: "Remove all TLE spatial/orbital filters, restoring category-based visibility" },
         maxLabelsDisplayed: { label: "Max Labels Displayed", tooltip: "Maximum number of satellite labels to render at once" },
         starBrightness: { label: "Star Brightness", tooltip: "Scale factor for the brightness of the stars. 1 is normal, 0 is invisible, 2 is twice as bright, etc." },
+        physicalPointSources: { label: "Physical Point Sources", tooltip: "Draw stars at a fixed few pixels and planets at their TRUE angular diameter, carrying brightness as intensity instead of as disc size. That is what these objects actually are, and it is the correct mode to pair with a camera Diffraction Glare PSF, which then produces the apparent size and the spikes. Normally Sitrec sizes both by magnitude so they stay visible at any zoom - with no PSF active this mode looks worse, because nothing turns the intensity back into visible size." },
         starLimit: { label: "Star Limit", tooltip: "Brightness limit for stars to be displayed" },
         planetBrightness: { label: "Planet Brightness", tooltip: "Scale factor for the brightness of the planets (except Sun and Moon). 1 is normal, 0 is invisible, 2 is twice as bright, etc." },
         lockStarPlanetBrightness: { label: "Lock Star Planet Brightness", tooltip: "When checked, the Star Brightness and Planet Brightness sliders are locked together" },

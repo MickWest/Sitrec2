@@ -494,6 +494,20 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // they will get saves as all of Sit is saved
         // the addSimpleSerial calls were doing nothing
 
+        // Physically-correct star rendering, for use with a camera diffraction PSF. Off by
+        // default: with no PSF in the chain, a fixed-size point carrying its magnitude as
+        // intensity looks WORSE than the disc approximation, because nothing is left to turn
+        // that intensity into apparent size. See docs/DiffractionGlare.md.
+        if (Sit.physicalPointSources === undefined) Sit.physicalPointSources = false;
+        guiMenus.view.add(Sit, "physicalPointSources").name(t("nightSky.physicalPointSources.label"))
+            .tooltip(t("nightSky.physicalPointSources.tooltip"))
+            .listen()
+            .onChange(() => {
+                // The mode is compiled into the shader, so the cloud has to be rebuilt.
+                this.starField.createStarCloud(this.starField.scene);
+                setRenderOne(true);
+            });
+
         // Create star brightness slider and store reference
         this.guiStarScale = guiMenus.view.add(Sit, "starScale", 0, 3, 0.01).name(t("nightSky.starBrightness.label")).listen()
             .tooltip(t("nightSky.starBrightness.tooltip"))

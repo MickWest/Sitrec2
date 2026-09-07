@@ -26,6 +26,7 @@ import {
     ShaderMaterial,
     SphereGeometry,
     Sprite,
+    Color,
     SpriteMaterial,
     SRGBColorSpace,
     TextureLoader,
@@ -146,6 +147,24 @@ const MOON_ECLIPSE_GLSL = /* glsl */`
 `;
 
 export class CPlanets {
+    /** Equatorial radii in metres, for true angular diameters in physical point-source mode.
+     *  The Sun and Moon are not here: both already have their own physical sizing. */
+    static PLANET_RADIUS_M = {
+        Mercury: 2439700, Venus: 6051800, Mars: 3396200,
+        Jupiter: 71492000, Saturn: 60268000, Uranus: 25559000, Neptune: 24764000,
+    };
+
+    /** Smallest angular diameter a planet is DRAWN at, in arcseconds. Below this a sprite quad
+     *  can fall between samples and disappear entirely; the light lost to the floor is given
+     *  back as surface brightness, so total flux is unaffected. */
+    static MIN_DRAWN_ARCSEC = 12;
+
+    /** Solid angle, in square arcseconds, at which a source's surface brightness equals its
+     *  total flux. Set from the star point's footprint at the narrow fields this mode targets
+     *  (a 3 px point at about 8 arcsec/px covers roughly 500 square arcsec), so a planet and a
+     *  star of equal magnitude deliver comparable light there. */
+    static REFERENCE_SOLID_ARCSEC2 = 500;
+
     /**
      * Creates a new CPlanets instance
      * @param {Object} config Configuration object
@@ -811,6 +830,58 @@ export class CPlanets {
      * @param {Astronomy.Observer} observer Observer location
      * @param {Sprite} [daySkySprite] Optional day sky sprite to update in parallel
      */
+    /**
+     * Size and light a planet PHYSICALLY, for HDR point-source mode.
+     *
+     * The default path sizes a planet by its MAGNITUDE (`10 * 10^(-0.4*(mag+5))`, clamped),
+     * which makes it visible at any zoom but bears no relation to how big it actually is.
+     * Measured on a 2 degree field: Jupiter rendered 1006 arcsec across against a true
+     * diameter of about 38 - 26x too wide, and roughly 700x too much area. Convolve that with
+     * a point spread function and you get the smeared, striped result of an oversized disc
+     * rather than a clean diffraction pattern.
+     *
+     * Here the size is the planet's TRUE angular diameter, and its brightness is a SURFACE
+     * BRIGHTNESS: total flux divided by solid angle. That is the physically invariant
+     * quantity - a resolved object's surface brightness does not change with zoom, while the
+     * total light it delivers grows with the pixel area it covers, which is exactly how real
+     * imaging behaves and needs no knowledge of the camera.
+     *
+     * @returns {{scale: number, intensity: number}|null} null if this body is not covered.
+     */
+    _physicalPlanetAppearance(planet, mag, date, observer) {
+        const radiusM = CPlanets.PLANET_RADIUS_M[planet];
+        if (radiusM === undefined) return null;
+
+        const angDiamRad = this._getAngularDiameterRad(planet, date, observer, radiusM);
+        const trueArcsec = angDiamRad * 206264.806;
+
+        // A true angular size goes sub-pixel at a wide field, and a sub-pixel sprite quad can
+        // miss every sample and vanish. Floor the DRAWN size and give the light back as
+        // surface brightness, so the total flux is preserved whichever side of the floor it
+        // lands on. HDR mode is meant for narrow fields; this only stops it disappearing.
+        const drawnArcsec = Math.max(trueArcsec, CPlanets.MIN_DRAWN_ARCSEC);
+        const drawnRad = (drawnArcsec / 206264.806);
+
+        // Same magnitude zero point as the stars (CStarField.magnitudeToHDRFlux): magnitude 6
+        // is 1.0, on Pogson's unmodified ratio.
+        const totalFlux = Math.pow(10, -0.4 * (mag - 6));
+
+        // Divided by solid angle, in units where REFERENCE_SOLID_ARCSEC2 gives unity - chosen
+        // so a planet and a star of the same magnitude deliver comparable total light at the
+        // narrow fields this mode is for.
+        //
+        // Sit.planetScale rides on the INTENSITY here, not the size: the size is the planet's
+        // true angular diameter and is not the slider's to move. Applied linearly, matching
+        // how Sit.starScale scales star intensity in the same mode, so 0 really is invisible
+        // and the "lock star and planet brightness" pairing still means something. The legacy
+        // path's planetScale^0.4 curve is a SIZE compression and does not belong on a
+        // brightness.
+        const intensity = (totalFlux * CPlanets.REFERENCE_SOLID_ARCSEC2 * (Sit.planetScale ?? 1))
+                        / (drawnArcsec * drawnArcsec);
+
+        return { scale: 2 * Math.tan(drawnRad / 2) * this.sphereRadius, intensity };
+    }
+
     updatePlanetSprite(planet, sprite, date, observer, daySkySprite = undefined, options = {}) {
         const storeState = options.storeState ?? true;
         if (planet === "Moon") {
@@ -840,6 +911,38 @@ export class CPlanets {
 
         var scale = 10 * Math.pow(10, -0.4 * (mag - -5));
         if (scale > 1) scale = 1;
+
+        // Physical point-source mode. Shares Sit.physicalPointSources with the star field: the two have to
+        // agree, or a planet and a star of the same magnitude would be on different scales in
+        // the same frame. The Sun is skipped because it is already sized by its true angular
+        // diameter below, and the Moon never reaches here.
+        const physical = Sit.physicalPointSources && planet !== "Sun"
+            ? this._physicalPlanetAppearance(planet, mag, date, observer)
+            : null;
+        // The material colour is set on BOTH paths, never only on the physical one. Setting it
+        // only when physical mode is on leaves the HDR-scaled colour baked into the sprite
+        // after the mode is switched off, which renders the planet as a blown-out white square.
+        //
+        // The base is captured from the MATERIAL, once, rather than read from
+        // planetSprites[planet].color: that entry is not created until the end of this very
+        // function, so on the first call it is undefined and any fallback would paint the
+        // planet white, discarding the per-planet colour the constructor just set.
+        if (planet !== "Sun") {
+            const baseOf = (obj) => {
+                if (obj.userData.basePlanetColor === undefined) {
+                    obj.userData.basePlanetColor = obj.material.color.clone();
+                }
+                return obj.userData.basePlanetColor;
+            };
+            const tint = (obj) => {
+                const c = baseOf(obj).clone();
+                if (physical) c.multiplyScalar(physical.intensity);
+                obj.material.color.copy(c);
+            };
+            if (physical) scale = physical.scale;
+            tint(sprite);
+            if (daySkySprite) tint(daySkySprite);
+        }
         
         if (planet === "Sun") {
             // IAU nominal solar radius — matches astronomy-engine's eclipse
@@ -849,7 +952,10 @@ export class CPlanets {
             scale = 2 * Math.tan(sunAngularDiameter / 2) * this.sunSphereRadius;
         }
         
-        if (planet !== "Sun") {
+        // Physical mode deliberately skips this: it is a SIZE multiplier, and there the size is
+        // the true angular diameter. The slider is not ignored - it has already been applied to
+        // the intensity in _physicalPlanetAppearance.
+        if (planet !== "Sun" && !physical) {
             scale *= Math.pow(10, 0.4 * Math.log10(Sit.planetScale));
         }
 

@@ -127,6 +127,25 @@ export class CPointLightCloud extends CNode3D {
         this.useSkyAttenuation = v.useSkyAttenuation ?? true;
         /** @type {boolean} */
         this.useSizeRange = v.useSizeRange ?? false;
+        /**
+         * HDR POINT MODE. Brightness becomes INTENSITY rather than area: every point is drawn
+         * at a fixed small size and its magnitude is carried by a linear value that is free to
+         * go far above 1.0.
+         *
+         * The default mode expresses a star's brightness as a DISC whose radius grows with
+         * magnitude, and clamps the colour at 1.0. That is the right compromise when the frame
+         * is the final image - you cannot see a sub-pixel point otherwise. It is the wrong one
+         * when a point spread function is going to be convolved over the frame afterwards,
+         * because the convolution then faithfully reproduces a source that is hundreds of times
+         * too large: measured on a 2 deg field, stars rendered 110-200 arcsec across against a
+         * true angular diameter of milliarcseconds, and the diffraction spikes came out
+         * smeared and multiplied instead of sharp.
+         *
+         * In HDR mode the apparent size of a star is produced by the PSF, which is what
+         * produces it in a real instrument too.
+         * @type {boolean}
+         */
+        this.hdrPoint = v.hdrPoint ?? false;
         /** @type {boolean} */
         this.useDistanceAttenuation = v.useDistanceAttenuation ?? false;
         /** @type {number} */
@@ -198,7 +217,13 @@ export class CPointLightCloud extends CNode3D {
                }`
             : '';
 
-        const sizeCalc = this.useSizeRange
+        const sizeCalc = this.hdrPoint
+            // Fixed size, intensity carries the magnitude. minPointSize stays a couple of
+            // pixels rather than one: a true 1-pixel point aliases badly as the camera moves,
+            // and the bright pass that feeds the glare would sample it inconsistently.
+            ? `gl_PointSize = minPointSize * baseScale;
+               vAlpha = 1.0;`
+            : this.useSizeRange
             ? `float size = mix(minPointSize, maxPointSize, effectiveBrightness) * baseScale;
                gl_PointSize = size;
                vAlpha = 1.0;`
@@ -259,6 +284,7 @@ export class CPointLightCloud extends CNode3D {
 
         const fragmentShader = `
             uniform float uRadius;
+            ${this.hdrPoint ? 'uniform float uIntensityScale;' : ''}
             ${this.useLogDepth ? `
             uniform float nearPlane;
             uniform float farPlane;
@@ -278,7 +304,12 @@ export class CPointLightCloud extends CNode3D {
                 float dist = length(centered) * 2.0;
                 float alpha = 1.0 - smoothstep(uRadius, 1.0, dist);
                 alpha *= vAlpha;
-                gl_FragColor = vec4(vColor * alpha, alpha);
+                ${this.hdrPoint
+                    // Intensity, not coverage. uIntensityScale carries the global brightness
+                    // slider and the daylight fade, which in the default mode ride on the
+                    // point SIZE - there is no size here for them to ride on.
+                    ? `gl_FragColor = vec4(vColor * vBrightness * uIntensityScale * alpha, alpha);`
+                    : `gl_FragColor = vec4(vColor * alpha, alpha);`}
                 
                 ${this.useLogDepth ? `
                 // Orthographic projection makes vDepth a constant 1.0, collapsing the
@@ -321,6 +352,10 @@ export class CPointLightCloud extends CNode3D {
 
         if (this.useDistanceAttenuation) {
             uniforms.distanceReference = { value: this.distanceReference };
+        }
+
+        if (this.hdrPoint) {
+            uniforms.uIntensityScale = { value: 1.0 };
         }
 
         this.material = new ShaderMaterial({
@@ -583,6 +618,23 @@ export class CPointLightCloud extends CNode3D {
             const distance = camera.position.length();
             const fovRadians = camera.fov * (Math.PI / 180);
             scale = this.boostScale(scale, 5, distance, fovRadians, this.boostAmount);
+        }
+
+        if (this.hdrPoint) {
+            // Size is fixed in HDR mode, so the brightness slider and the daylight fade have
+            // to move INTENSITY instead. Applying them to baseScale here would silently
+            // rescale the point size and undo the whole point of the mode.
+            this.material.uniforms.uIntensityScale.value = this.baseScale * skyFactor;
+
+            // Deliberately NOT view.adjustPointScale(). That converts an ANGULAR size into
+            // pixels, so it grows as the field of view narrows - correct for a sprite
+            // standing in for something with real angular extent, and wrong here, where the
+            // point stands in for a mathematical point and must stay a fixed few pixels at
+            // every zoom. Measured: at a 2 degree field it inflated a nominal 2.6 px point to
+            // about 15 px, which is the disc approximation all over again.
+            this.material.uniforms.baseScale.value = 1.0;
+            this.material.uniforms.cameraFOV.value = camera.fov;
+            return;
         }
 
         scale *= skyFactor;

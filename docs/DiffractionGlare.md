@@ -147,6 +147,59 @@ trying to match.
 
 ---
 
+## Physical point sources
+
+**View ▸ Physical Point Sources.** Off by default. Turn it on whenever you are using diffraction
+glare.
+
+Sitrec normally draws a star as a **disc whose radius grows with brightness**, with its colour
+clamped at white. That is the right compromise when the frame is the finished image — a star is
+a point source of essentially zero angular size, and you cannot see a sub-pixel dot, so
+brightness has to be expressed as area to be visible at all.
+
+It is the wrong compromise once a PSF is being convolved over the frame, because the convolution
+then faithfully reproduces a source hundreds of times larger than the real thing. Measured on a
+2° field: stars were rendered 68–203 arcseconds across, against a true angular diameter of
+milliarcseconds. Worse, **every source had a peak brightness of exactly 1.0** — all of the
+magnitude information was in the area, none in the intensity. Convolving that gives smeared,
+multiplied spikes instead of one sharp pattern, and a bright star throws no more glare than a
+faint one.
+
+With the mode on, every star is drawn as a fixed 3-pixel point and its magnitude is carried by
+**intensity**, on Pogson's true ratio — each magnitude is 2.512× in flux, so a first-magnitude
+star really is a thousand times a sixth-magnitude one. The same 2° field then gives 2-pixel
+sources with peak values spanning the real range. The apparent size of a star becomes something
+the PSF produces, which is what produces it in a real instrument too.
+
+Faint stars correctly stop throwing visible spikes, because they are faint. That is the point:
+in real footage only the bright sources have spikes, and which sources do is evidence.
+
+With no PSF active the mode looks *worse* — nothing is left to turn the intensity back into
+apparent size, so most of the sky becomes very small dots. That is why it is off by default.
+
+### Planets
+
+Planets get the same treatment from the same switch, but they are handled differently, because
+a planet is genuinely *resolved* — it really does have an angular size worth drawing.
+
+Normally a planet is sized by magnitude too, and it is even further out than a star: Jupiter
+rendered **1006 arcseconds** across against a true diameter of about 38, so 26× too wide and
+roughly 700× too much area. Convolved with a PSF that produced a striped smear, not a pattern.
+
+With the mode on, a planet is drawn at its true angular diameter and given a **surface
+brightness** — total flux divided by solid angle. That is the physically invariant quantity: a
+resolved object's surface brightness does not change when you zoom, while the total light it
+delivers grows with the pixel area it covers, which is exactly how real imaging behaves.
+Measured, Jupiter then renders 34 arcseconds across with a peak far above white, and convolves
+into a clean pattern with a slightly extended core — which is what a resolved planet should do.
+
+At a wide field a true-size planet goes sub-pixel, and a sub-pixel sprite can fall between
+samples and vanish, so the drawn size is floored at 12 arcseconds with the light given back as
+surface brightness. Total flux is unaffected either side of the floor. This mode is meant for
+narrow fields; the floor only stops planets disappearing outside them.
+
+---
+
 ## What it does and does not model
 
 It models Fraunhofer diffraction from an aperture, polychromatically, with defocus. That covers
