@@ -183,7 +183,7 @@
   "devDependencies": {
     "@babel/core": "^7.28.3",
     "@babel/plugin-transform-modules-commonjs": "^7.27.1",
-    "@babel/preset-typescript": "^7.28.5",
+    "@babel/preset-typescript": "^8.0.1",
     "@biomejs/biome": "^2.5.12",
     "@playwright/test": "^1.62.1",
     "@techstark/opencv-js": "^4.12.0-release.1",
