@@ -16,6 +16,7 @@ import {ThermalShader} from "../shaders/ThermalShader";
 import {NightVisionShader} from "../shaders/NightVisionShader";
 import {Globals, guiMenus, guiTweaks, Sit} from "../Globals";
 import {CopyShader} from "../shaders/CopyShader";
+import {CDiffractionGlarePass, psfScreenPixels} from "../CDiffractionGlarePass";
 import {assert} from "../assert";
 
 let guiOnOffFolder = null;
@@ -41,6 +42,9 @@ export class CNodeEffect extends CNode {
         "Copy": CopyShader,
         "Thermal": ThermalShader,
         "NightVision": NightVisionShader,
+        // Not a ShaderPass: a PSF convolution needs three draws and two intermediate
+        // targets, so it supplies its own pass object. See the constructor branch below.
+        "DiffractionGlare": "custom",
     }
 
     effectTips = {
@@ -60,6 +64,7 @@ export class CNodeEffect extends CNode {
         "Copy": "Copy",
         "Thermal": "Advanced FLIR simulation (white/black hot, Ironbow palette, bloom, sensor noise)",
         "NightVision": "Night vision image intensifier (P43 phosphor, gain, bloom, tube mask)",
+        "DiffractionGlare": "Diffraction glare from the camera's imported point spread function - the spikes an aperture puts on a bright source",
     }
 
 
@@ -77,7 +82,11 @@ export class CNodeEffect extends CNode {
         this.effectName = v.effectName;
         // look up the shader and create it as this.pass
         assert(this.effectLookup[this.effectName] !== undefined, "Unknown effect " + this.effectName)
-        this.pass = new ShaderPass(this.effectLookup[this.effectName]);
+        if (this.effectLookup[this.effectName] === "custom") {
+            this.pass = new CDiffractionGlarePass(v);
+        } else {
+            this.pass = new ShaderPass(this.effectLookup[this.effectName]);
+        }
 
         this.enabled = v.enabled ?? true;
         this.addSimpleSerial("enabled");
@@ -134,6 +143,14 @@ export class CNodeEffect extends CNode {
 
 
         const pass = this.pass
+
+        // A custom pass owns its own materials and is configured by plain properties rather
+        // than by a uniforms dictionary, so it takes an entirely separate path.
+        if (pass.isCustomPass) {
+            this.updateCustomPass(f, view, pass);
+            return;
+        }
+
         const uniforms = pass.material.uniforms;
         for (let [key, node] of Object.entries(this.inputs)) {
             if (uniforms[key] !== undefined) {
@@ -170,6 +187,38 @@ export class CNodeEffect extends CNode {
 
     }
 
+    /** Configure the diffraction glare pass for this frame.
+     *
+     *  The PSF lives on the CAMERA, not on the effect: it describes the optics, so it has to
+     *  follow the camera that has those optics rather than the view that happens to be
+     *  showing it. The pass then only has to be told how big to draw it, which depends on
+     *  the camera's current field of view and so changes every time anyone zooms.
+     */
+    updateCustomPass(f, view, pass) {
+        const cameraNode = view.cameraNode;
+        // getPSF decodes lazily, per renderer, and returns null until it is ready - so an
+        // imported PSF simply starts drawing a frame or two later rather than stalling the
+        // render loop on an image decode.
+        pass.psf = cameraNode?.getPSF ? cameraNode.getPSF(view.renderer) : null;
+        if (!pass.psf) return;
 
+        const glare = cameraNode.psfGlare ?? {};
+        pass.threshold = glare.threshold ?? 0.5;
+        // The GUI stores decades; the shader wants the multiplier.
+        pass.gain = Math.pow(10, glare.gainLog ?? 3);
+        pass.downsample = glare.downsample ?? 8;
+
+        // Physical angular size, scaled by the user's multiplier. Computed here rather than
+        // in the pass because only the node knows which camera and which view to ask.
+        pass.psfPixels = psfScreenPixels(
+            pass.psf, view.camera?.fov ?? 30, view.canvas?.height ?? 720, glare.sizeScale ?? 1);
+    }
+
+    /** True when this pass has everything it needs to draw. The glare pass with no imported
+     *  PSF must be SKIPPED, not run - running it would blit a black frame over the render. */
+    canRender() {
+        if (!this.pass.isCustomPass) return true;
+        return !!this.pass.psf && this.pass.psfPixels > 0.5;
+    }
 
 }

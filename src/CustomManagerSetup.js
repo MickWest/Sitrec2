@@ -1823,6 +1823,15 @@ export const setupMethods = {
                     satBoost: sensorSlider("NVG Sat Boost", 4, 1, 50, 0.1,
                         "Multiplier on satellite brightness while NVG is on (an intensifier shows satellites the eye cannot)"),
                 });
+
+                // Diffraction glare. It takes no sliders here: everything it needs lives on
+                // the CAMERA (Camera > Camera Tweaks > Diffraction Glare), because the PSF
+                // describes the optics rather than the view. Last in the chain so the spikes
+                // are drawn on the finished sensor image, which is where a real optic puts
+                // them - the diffraction happens at the aperture, ahead of everything the
+                // earlier passes are simulating, but those passes model the SENSOR, and the
+                // spikes reach the sensor. It self-skips while no PSF is imported.
+                insertSensorEffect("DiffractionGlare", "Custom_DiffractionGlare", "NightVision", {});
             }
         }
 

@@ -77,6 +77,7 @@ assistant — so if you add a doc, add it there.
 - [Control Sitrec with ChatGPT site tools (WebMCP)](docs/WebMCP.md)
 - [Local Custom Sitches - JSON-based sitch definitions for advanced setups](docs/LocalCustomSitches.md)
 - [Scripted Camera Moves](docs/ScriptedVideo.md)
+- [Diffraction Glare - modelling a camera's diffraction spikes, and telling them from an object](docs/DiffractionGlare.md)
 - [What's New (Details)](docs/WhatsNew-Details.md)
 
 

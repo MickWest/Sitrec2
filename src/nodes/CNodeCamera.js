@@ -1,6 +1,7 @@
 import {Camera, PerspectiveCamera, Raycaster, Vector3} from "three";
 import {f2m, m2f} from "../utils";
 import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {disposePSF, loadPSF} from "../CameraPSF";
 import {ECEFToLLAVD_radii, LLAToECEF, LLAVToECEF} from "../LLA-ECEF-ENU";
 import {
     altitudeAboveSphere,
@@ -43,6 +44,28 @@ export class CNodeCamera extends CNode3D {
         this.addSimpleSerial("freeLook");
 
         this.addInput("altAdjust", "altAdjust", true);
+
+        // Diffraction point spread function, imported from tools/psf. It belongs to the
+        // CAMERA rather than to the view or the effect because it describes this camera's
+        // optics - the same aperture puts the same spikes on a bright source in every view
+        // that looks through it.
+        //
+        // psfFile is the parsed .psf.json and is what SERIALISES: it is renderer
+        // independent, whereas the decoded texture is tied to one WebGL context, and a
+        // camera can be shown in more than one view. See getPSF().
+        this.psfFile = null;
+        this.psfGlare = {
+            threshold: 0.5,   // luminance above which a pixel glares
+            // Gain in DECADES, so the slider actually reaches the useful range. A flux
+            // normalised PSF puts the spikes about 1e-5 below the core, and a renderer
+            // clipping at 1.0 has already thrown away the headroom that makes a real source
+            // outshine its own spikes by that much - so this multiplier is standing in for
+            // the dynamic range the frame no longer carries. 3 means 1000x.
+            gainLog: 3.0,
+            sizeScale: 1.0,   // 1 = the PSF's true angular size for this field of view
+            downsample: 8,    // bright-pass reduction; sets the splat count, so also the cost
+        };
+        this._psfDecoded = new Map();   // renderer -> decoded PSF (or null while loading)
 
         this.startPos = v.startPos;
         this.lookAt = v.lookAt;
@@ -107,6 +130,7 @@ export class CNodeCamera extends CNode3D {
         }
 
         this.addCameraTweaksControls();
+        this.addDiffractionGlareGUI();
     }
 
 
@@ -130,6 +154,11 @@ export class CNodeCamera extends CNode3D {
             fov: this.camera.fov,
             orthographic: this.orthographic,
             nearPlane: this.nearPlane,
+            // The whole file, image included - a few hundred kB. Storing only a reference
+            // would mean a shared sitch arrives with its optics missing, which is worse:
+            // the glare is part of what the scenario is claiming about the camera.
+            psfFile: this.psfFile,
+            psfGlare: {...this.psfGlare},
         }
     }
 
@@ -141,6 +170,8 @@ export class CNodeCamera extends CNode3D {
         this.camera.fov = v.fov;
         if (v.orthographic !== undefined) this.orthographic = v.orthographic;
         if (v.nearPlane !== undefined) this.nearPlane = v.nearPlane;
+        if (v.psfGlare !== undefined) Object.assign(this.psfGlare, v.psfGlare);
+        if (v.psfFile !== undefined) this.setPSFFile(v.psfFile);
         if (this._ownsNearPlane) this.camera.near = this.nearPlane;
 
         this.resetCamera()
@@ -403,6 +434,144 @@ export class CNodeCamera extends CNode3D {
     }
 
 
+
+    /** The decoded PSF for one renderer, or null if there is none yet.
+     *
+     *  Decoding is per-renderer because a texture belongs to a WebGL context, and each
+     *  CNodeView3D owns its own renderer. It is also ASYNCHRONOUS (the PNG has to be decoded
+     *  by the browser), so the first few frames after an import return null and simply draw
+     *  no glare - which is the right failure mode, and better than blocking the render loop
+     *  on an image decode.
+     */
+    getPSF(renderer) {
+        if (!this.psfFile || !renderer) return null;
+        if (this._psfDecoded.has(renderer)) return this._psfDecoded.get(renderer);
+
+        // Marked before the await so a slow decode cannot start a second one every frame.
+        // A failure leaves null in place deliberately: retrying a broken file 60 times a
+        // second would spam the console and never succeed.
+        this._psfDecoded.set(renderer, null);
+        const wanted = this.psfFile;
+        loadPSF(this.psfFile, renderer).then((psf) => {
+            if (this.psfFile !== wanted || !this._psfDecoded.has(renderer)) {
+                // Superseded while decoding, by a new import or a context loss. The result
+                // is a GPU render target that nothing will ever reference, so it has to be
+                // freed here - dropping it on the floor leaks a few megabytes per import.
+                disposePSF(psf);
+                return;
+            }
+            this._psfDecoded.set(renderer, psf);
+            setRenderOne(true);
+        }).catch((err) => {
+            console.warn("Camera PSF could not be decoded:", err.message);
+        });
+        return null;
+    }
+
+    /** Free every decoded copy. The parsed file is untouched, so the next getPSF re-decodes. */
+    _disposeDecodedPSFs() {
+        for (const psf of this._psfDecoded.values()) disposePSF(psf);
+        this._psfDecoded = new Map();
+    }
+
+    /** Adopt a parsed .psf.json. Drops every decoded copy so each renderer re-decodes. */
+    setPSFFile(json) {
+        this._disposeDecodedPSFs();
+        this.psfFile = json;
+        if (this.psfNameController) this.psfNameController.updateDisplay();
+        setRenderOne(true);
+    }
+
+    /** Called by a view whose WebGL context was restored (see CNodeView3D._onContextRestored).
+     *  A decoded PSF lives in a render target, which has no source data to be re-uploaded
+     *  from and therefore comes back blank - so it must be decoded again, not reused. */
+    invalidateDecodedPSFs() {
+        if (!this._psfDecoded || this._psfDecoded.size === 0) return;
+        // Not disposed: the GPU objects behind them died with the context, and calling
+        // dispose() on a target belonging to a lost context is at best a no-op.
+        this._psfDecoded = new Map();
+        setRenderOne(true);
+    }
+
+    get psfName() {
+        return this.psfFile ? (this.psfFile.name || "unnamed PSF") : "(none imported)";
+    }
+
+    /** Camera ▸ Camera Tweaks ▸ Diffraction Glare. Import lives with the camera because the
+     *  PSF is a property of the optics; the effect that DRAWS it is a separate pass in the
+     *  look view's chain, and reads these values every frame. */
+    addDiffractionGlareGUI() {
+        // LOOK CAMERA ONLY. The pass that draws this is inserted into the lookView effect
+        // chain (see CustomManagerSetup), alongside the other camera-simulation effects -
+        // FLIR, Thermal, NightVision are all lookView too. Offering the same folder on the
+        // main camera would let someone import a PSF and get nothing, with no clue why, and
+        // would put two identically named folders in the same menu.
+        if (this.id !== "lookCamera") return;
+        const menu = guiMenus.cameraTweaks ?? guiMenus.camera;
+        if (!menu) return;
+
+        const folder = menu.addFolder("Diffraction Glare").close();
+        this.psfGlareFolder = folder;
+
+        this.psfNameController = folder.add(this, "psfName")
+            .name("PSF")
+            .listen()
+            .disable()
+            .tooltip("The imported point spread function. Generate one in tools/psf "
+                + "(Diffraction PSF Studio) and import the .psf.json here.");
+
+        folder.add(this, "importPSF").name("Import PSF…")
+            .tooltip("Load a .psf.json produced by the Diffraction PSF Studio. It is stored "
+                + "with the sitch, so a saved scenario keeps its optics.");
+        folder.add(this, "clearPSF").name("Clear PSF");
+
+        folder.add(this.psfGlare, "gainLog", -1, 6, 0.05).name("Glare Gain (10^)")
+            .onChange(() => setRenderOne(true))
+            .tooltip("How much of the convolved glare is added back, as a power of ten: 3 "
+                + "means 1000x. It needs to be this large because the render clipped the "
+                + "source at white, and a real source outshines its own spikes by orders of "
+                + "magnitude - this is standing in for the dynamic range that was lost.");
+
+        folder.add(this.psfGlare, "threshold", 0, 20, 0.01).name("Threshold")
+            .onChange(() => setRenderOne(true))
+            .tooltip("Luminance a pixel must exceed before it throws glare. Raising it also "
+                + "removes the part of the source that the frame already draws correctly.");
+
+        folder.add(this.psfGlare, "sizeScale", 0.05, 20, 0.01).name("Size ×")
+            .onChange(() => setRenderOne(true))
+            .tooltip("1 draws the pattern at its TRUE angular size for the current field of "
+                + "view, so zooming in enlarges it. Change this only to exaggerate a pattern "
+                + "that is physically only a few pixels across.");
+
+        folder.add(this.psfGlare, "downsample", 2, 16, 1).name("Bright Pass ÷")
+            .onChange(() => setRenderOne(true))
+            .tooltip("Resolution reduction of the bright pass. One PSF copy is drawn per "
+                + "bright texel, so this sets both the cost and how finely separated sources "
+                + "are resolved.");
+    }
+
+    /** A plain hidden input rather than showOpenFilePicker: no permission prompt, and it
+     *  works the same in every browser and in the desktop build. */
+    importPSF() {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".json,application/json";
+        input.onchange = async () => {
+            const file = input.files && input.files[0];
+            if (!file) return;
+            try {
+                this.setPSFFile(JSON.parse(await file.text()));
+                console.log(`Camera ${this.id}: imported PSF "${this.psfName}"`);
+            } catch (err) {
+                console.warn("Could not read PSF file:", err.message);
+            }
+        };
+        input.click();
+    }
+
+    clearPSF() {
+        this.setPSFFile(null);
+    }
 
     get camera() {
         return this._object

@@ -2055,6 +2055,14 @@ export class CNodeView3D extends CNodeViewCanvas {
         this._onContextRestored = () => {
             console.warn(`[WebGL] Context restored on view "${this.id}"`);
             this.contextLost = false;
+
+            // A decoded PSF lives in a render target, and a render target has no source data
+            // to be re-uploaded from - it comes back blank. Cached ones must therefore be
+            // thrown away and decoded again, or the scene is restored with the diffraction
+            // glare silently missing.
+            NodeMan.iterate((id, node) => {
+                if (typeof node.invalidateDecodedPSFs === "function") node.invalidateDecodedPSFs();
+            });
             // Re-establish per-view renderer state: setPixelRatio + recreate
             // render targets. applyPerformanceSettings already does both.
             this.applyPerformanceSettings();
@@ -2726,6 +2734,29 @@ export class CNodeView3D extends CNodeViewCanvas {
                             const effectNode = this.effectPasses[effectName];
                             if (!effectNode.enabled) continue;
                             let effectPass = effectNode.pass;
+
+                            // A custom pass does its own drawing - the diffraction glare pass
+                            // needs a bright pass, an instanced splat and a composite, which
+                            // the shared fullscreen quad below cannot express. It is skipped
+                            // rather than run when it has nothing to draw with (no PSF
+                            // imported), because running it would blit black over the frame.
+                            if (effectPass.isCustomPass) {
+                                // Reconfigured HERE, every frame, rather than in updateEffects:
+                                // that only runs when needUpdate is set, but this pass's inputs
+                                // (the camera's PSF, its glare sliders, the field of view) change
+                                // from the GUI and from an ASYNCHRONOUS texture decode, none of
+                                // which marks the view dirty. Relying on needUpdate meant an
+                                // imported PSF rendered nothing until some unrelated recalculation
+                                // happened to run. It is a handful of property reads.
+                                effectNode.updateCustomPass(par.frame, this, effectPass);
+                                if (effectNode.canRender && !effectNode.canRender()) continue;
+                                const customTarget = currentRenderTarget === this.renderTargetA
+                                    ? this.renderTargetB : this.renderTargetA;
+                                effectPass.render(this.renderer, customTarget, currentRenderTarget,
+                                                  effectPass.psfPixels);
+                                currentRenderTarget = customTarget;
+                                continue;
+                            }
 
                             // the efferctNode has an optional filter type for the source texture
                             // which will be from the PREVIOUS effect pass's render target

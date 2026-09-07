@@ -130,6 +130,7 @@ const en = {
                 pointTrack: "Point Track and Stabilization",
                 lensGhost: "Lens Ghosts and Reflections",
                 scriptedVideo: "Scripted Camera Moves",
+                diffractionGlare: "Diffraction Glare",
                 wind: "Wind",
                 traverseConcepts: "Traverse Analysis: the Ideas First",
                 groundTrack: "Ground Track (Points on the Ground)",

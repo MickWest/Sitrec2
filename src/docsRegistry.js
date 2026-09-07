@@ -340,6 +340,11 @@ export const helpDocs = [
         chatDesc: "The scripting language for cinematic camera moves and automated video production: writing a script of timed camera moves, cuts and captions, and rendering it out. Read for 'how do I animate the camera', 'how do I make a fly-through', or 'how do I script a video'.",
     },
     {
+        file: "docs/DiffractionGlare", labelKey: "menus.help.documentation.diffractionGlare",
+        section: "advanced", menuId: "camera", role: "reference",
+        chatDesc: "Diffraction spikes and starburst glare: why a bright point of light grows spikes in a camera, what the aperture geometry that causes them looks like, and how to build a camera's point spread function in the Diffraction PSF Studio (tools/psf) and import it into a Sitrec camera. Read for 'why does that light have spikes', 'what causes a starburst', 'is that shape the object or the camera', 'diffraction', 'point spread function', 'PSF', 'spider vanes', 'aigrette', or any question about whether a spiked or star-shaped object in footage is a camera artefact.",
+    },
+    {
         file: "docs/WhatsNew-Details", labelKey: "menus.help.documentation.whatsNewDetails",
         section: "advanced", role: "reference",
         // No chatDesc: ~1 MB, so the assistant would only ever see the newest fraction.
