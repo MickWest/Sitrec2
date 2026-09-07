@@ -2,7 +2,6 @@ import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {mouseInViewOnly} from "../ViewUtils";
 // The compass UI displays the compass rose and the heading
 // base on an input camera node
-
 import {CNodeViewUI} from "./CNodeViewUI";
 import {getAzElFromPositionAndForward, getCompassHeading} from "../SphericalMath";
 import {MV3} from "../threeUtils";
@@ -12,7 +11,7 @@ import {getPointBelow, intersectSurface} from "../threeExt";
 import {ECEFToLLAVD_radii, haversineDistanceKM} from "../LLA-ECEF-ENU";
 import {forward as mgrsForward} from "mgrs";
 import {degrees} from "../utils";
-import {NodeMan, Sit, guiMenus, setRenderOne} from "../Globals";
+import {guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {objectFocusTrack} from "../CameraFocusUI";
 import {extractFOV} from "../FOVUtils";
@@ -21,7 +20,7 @@ import {MQ9_TRACKING_DEFAULTS} from "../MQ9TrackingModel";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getHUDColor} from "../HUDColor";
 import {formatDM, formatDMS} from "../CoordinateFormat";
-import {MQ9_FONT, ensureMQ9FontLoaded, drawHUDText} from "../HUDFonts";
+import {drawHUDText, ensureMQ9FontLoaded, MQ9_FONT} from "../HUDFonts";
 
 // Position readouts. Latitude degrees are zero-padded to two digits so the
 // column lines up; longitude degrees are not. DM shows minutes to 3 places
@@ -133,6 +132,9 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         this.addGridText(60, 27, "489FT", grey, 'right');
 
         // Bottom (dummy - grey)
+        // Faint provenance mark for rendered footage, sitting above SEL in the
+        // otherwise empty left column. Same font/color as the other disabled text
+        this.addGridText(1, 27, "SITREC", grey, 'left');
         this.addGridText(1, 28, "SEL", grey, 'left');
         this.addGridText(1, 29, "00:03:59", grey, 'left');
         this.addGridText(30, 28, "ELRF", grey, 'center');
@@ -325,8 +327,8 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         c.restore();
     }
 
-    addGridText(col, row, text, color = '#FFFFFF', align = 'left', clickGroup = null) {
-        const entry = { col, row, text, color, align, clickGroup, bbox: null };
+    addGridText(col, row, text, color = '#FFFFFF', align = 'left', clickGroup = null, alpha = 1) {
+        const entry = { col, row, text, color, align, clickGroup, alpha, bbox: null };
         this.gridTexts.push(entry);
         return entry;
     }
@@ -648,7 +650,8 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         c.font = `${fontSize}px ${MQ9_FONT}`;
         c.textBaseline = 'top';
         for (const t of this.gridTexts) {
-            c.fillStyle = t.color === '#888888' ? dimHUDColor : hudColor;
+            c.fillStyle = t.alpha < 1 ? getHUDColor(t.alpha)
+                : t.color === '#888888' ? dimHUDColor : hudColor;
             c.textAlign = t.align;
             let x;
             if (t.align === 'right') {
@@ -659,7 +662,11 @@ export class   CNodeMQ9UI extends CNodeViewUI {
                 x = gridX + (t.col - 1) * charWidth;
             }
             const y = gridY + (t.row - 1) * charHeight;
-            drawHUDText(c, t.text, x, y, fontSize);
+            // drawHUDText outlines each glyph in opaque black, which at a low
+            // fill alpha would swamp the fill and read as dark text. A
+            // translucent entry is therefore filled plain.
+            if (t.alpha < 1) c.fillText(t.text, x, y);
+            else drawHUDText(c, t.text, x, y, fontSize);
 
             // Store bounding box for click detection on clickable elements
             if (t.clickGroup) {
