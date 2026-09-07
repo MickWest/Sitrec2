@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Builds an aperture mask, computes its polychromatic diffraction point spread function by FFT, previews the glare it produces, and exports the PSF for use in Sitrec.">
+  <title>Diffraction PSF Studio</title>
+
+  <!-- Cache busting. These modules are served RAW (no bundler ever sees tools/), so a
+       browser will happily keep last week's psf.js next to today's app.js. Stamping the
+       entry alone is not enough, because app.js's own `import "./psf.js"` carries no
+       stamp - hence an import map, which rewrites the whole graph including transitive
+       imports while leaving every import statement readable. __BUILD_V__ is substituted at
+       build time by webpackCopyPatterns.js. The worker versions itself separately: a module
+       worker does not inherit the document's import map. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "./fft.js":      "./fft.js?v=__BUILD_V__",
+      "./cie.js":      "./cie.js?v=__BUILD_V__",
+      "./aperture.js": "./aperture.js?v=__BUILD_V__",
+      "./psf.js":      "./psf.js?v=__BUILD_V__",
+      "./presets.js":  "./presets.js?v=__BUILD_V__",
+      "./display.js":  "./display.js?v=__BUILD_V__",
+      "./glare.js":    "./glare.js?v=__BUILD_V__",
+      "./psfFile.js":  "./psfFile.js?v=__BUILD_V__"
+    }
+  }
+  </script>
+  <link rel="stylesheet" href="style.css?v=__BUILD_V__">
+</head>
+<body>
+
+<header class="topbar">
+  <h1>Diffraction PSF Studio</h1>
+  <div class="topbar-right">
+    <span id="status" class="status">ready</span>
+    <div class="progress"><div id="progressBar"></div></div>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ── Controls ──────────────────────────────────────────────────────────── -->
+  <aside class="controls" id="controls">
+
+    <section class="panel" open>
+      <h2>Preset</h2>
+      <div class="row">
+        <select id="presetSelect" class="wide"></select>
+      </div>
+      <p id="presetNote" class="note"></p>
+      <div class="row buttons">
+        <input type="text" id="presetName" placeholder="name for a saved preset">
+        <button id="savePreset" class="btn">Save</button>
+        <button id="deletePreset" class="btn subtle">Delete</button>
+      </div>
+      <div class="row buttons">
+        <button id="loadSpec" class="btn subtle">Open .psf.json…</button>
+        <button id="copySpec" class="btn subtle">Copy spec</button>
+        <button id="resetPreset" class="btn subtle">Revert</button>
+      </div>
+      <input type="file" id="specFile" accept=".json,application/json" hidden>
+    </section>
+
+    <div id="schemaMount"></div>
+
+    <section class="panel">
+      <h2>Export</h2>
+      <div class="row">
+        <label>Name</label>
+        <input type="text" id="exportName" class="wide" value="Diffraction PSF">
+      </div>
+      <div class="row">
+        <label>Note</label>
+        <input type="text" id="exportNote" class="wide" placeholder="what this models">
+      </div>
+      <div class="row">
+        <label>Range floor</label>
+        <select id="exportFloor" class="wide">
+          <option value="1e-6">1e-6 of peak — smallest</option>
+          <option value="1e-7" selected>1e-7 of peak — recommended</option>
+          <option value="1e-8">1e-8 of peak</option>
+          <option value="0">Keep everything — largest</option>
+        </select>
+      </div>
+      <div class="row buttons">
+        <button id="exportPSF" class="btn primary">Download .psf.json</button>
+      </div>
+      <div class="row buttons">
+        <button id="exportPNG" class="btn subtle">PSF as displayed (PNG)</button>
+        <button id="exportGlare" class="btn subtle">Glare preview (PNG)</button>
+      </div>
+      <p class="note">
+        The <code>.psf.json</code> carries the PSF as an RGBE-encoded PNG — three 8-bit
+        mantissas and a shared exponent, holding the full ~13 decades of range — plus the
+        generator spec, so reopening it here restores every control. Sitrec imports the same
+        file into a camera.
+      </p>
+      <p class="note">
+        The range floor discards pixels below a fraction of the peak. Most of the file is the
+        deep tail, which is incompressible noise far below anything a display can show:
+        measured on the 512&sup2; Chandelier, flooring at 1e-7 takes the PNG from 635&nbsp;kB
+        to 80&nbsp;kB and loses 0.11% of the flux, while the faintest structure worth looking
+        at sits at 1e-6.
+      </p>
+    </section>
+
+  </aside>
+
+  <!-- ── Views ─────────────────────────────────────────────────────────────── -->
+  <div class="views">
+
+    <div class="view">
+      <div class="view-head">
+        <h3>Pupil</h3>
+        <span class="view-sub">what the light passes through</span>
+      </div>
+      <canvas id="pupilCanvas" class="pixelated"></canvas>
+      <p class="caption" id="pupilCaption"></p>
+    </div>
+
+    <div class="view">
+      <div class="view-head">
+        <h3>Point spread function</h3>
+        <span class="view-sub">|FFT(pupil)|², summed over the band</span>
+      </div>
+      <canvas id="psfCanvas"></canvas>
+      <div class="view-controls" id="psfDisplayMount"></div>
+      <p class="caption" id="psfCaption"></p>
+    </div>
+
+    <div class="view">
+      <div class="view-head">
+        <h3>Glare</h3>
+        <span class="view-sub">a scene convolved with that PSF</span>
+      </div>
+      <canvas id="glareCanvas"></canvas>
+      <div class="view-controls" id="glareMount"></div>
+      <input type="file" id="sceneFile" accept="image/*" hidden>
+      <p class="caption" id="glareCaption"></p>
+    </div>
+
+  </div>
+</main>
+
+<footer class="foot">
+  <p>
+    Fraunhofer model: the image-plane amplitude of a point source is the Fourier transform of
+    the complex pupil, so the PSF is <code>|FFT(mask · e<sup>iφ</sup>)|²</code> with
+    <code>φ = 2π·W20·ρ²/λ</code> carrying defocus. Wavelength does not change the transform,
+    only the scale it lands at — which is why the spikes are spectra, and why an in-focus
+    polychromatic PSF costs one transform rather than one per wavelength.
+    Method after the Maskulator + FFTW analysis of the "Chandelier" image on Metabunk.
+  </p>
+</footer>
+
+<script type="module" src="app.js?v=__BUILD_V__"></script>
+</body>
+</html>

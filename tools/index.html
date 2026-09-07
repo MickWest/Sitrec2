@@ -154,6 +154,23 @@
         <a href="shf/">Open Starlink Flare Predictor</a>
     </div>
 
+    <div class="tool">
+        <h3>Diffraction PSF Studio</h3>
+        <p>Builds an aperture mask &mdash; outer shape, central obstruction, spider vanes with
+           apodised edges, plus an optional second stop &mdash; computes its polychromatic
+           diffraction point spread function by FFT, previews the glare that PSF produces, and
+           exports it for import into a Sitrec camera.</p>
+        <p><strong>Features:</strong></p>
+        <ul>
+            <li>Editable presets: Airy, Newtonian, Cassegrain, camera iris, segmented, apodised, and the two-stop "Chandelier" model</li>
+            <li>Every parameter live: vane count/angle/width/taper, serration depth and period, obstruction, radii, aperture flats</li>
+            <li>Polychromatic over a chosen band using the CIE 1931 observer, so the spikes carry real spectra</li>
+            <li>Defocus, log/gamma/asinh stretch, and a sampling readout that warns when the core is under-sampled</li>
+            <li>Exports <code>.psf.json</code> (RGBE PNG + the generator spec) for Sitrec's camera glare</li>
+        </ul>
+        <a href="psf/">Open Diffraction PSF Studio</a>
+    </div>
+
     <h2>Usage</h2>
     <ol>
         <li>For LOS Viewer: Export LOS data from Sitrec using the "CSV" button on any LOS node</li>

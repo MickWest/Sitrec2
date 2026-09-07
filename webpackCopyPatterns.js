@@ -79,6 +79,19 @@ patterns.push({ from: "tools", to: "./tools", globOptions: {
     });
 });
 
+// Same cache-busting for the Diffraction PSF Studio. Its index.html carries the stamp on the
+// stylesheet, on the entry module, and on an import map covering the rest of the module
+// graph; app.js passes the same stamp to its Worker, which a module worker needs because it
+// does not inherit the document's import map.
+patterns.push({
+    from: "tools/psf/index.html",
+    to: "./tools/psf/index.html",
+    force: true,
+    transform(content) {
+        return content.toString().replace(/__BUILD_V__/g, String(BUILD_V));
+    },
+});
+
 patterns.push({ from: "assets/install", to: "./install" });
 
 // Copy tests directory (for browser-based benchmarks/tests) - dev only
