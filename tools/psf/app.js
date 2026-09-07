@@ -79,6 +79,18 @@ function makeRow(def, target, onChange) {
         return { row, sync: () => {} };
     }
 
+    // A note whose text is derived from the current spec. Exists so a control whose EFFECT is
+    // invisible in the panel it sits next to can state that effect where the decision is made,
+    // instead of leaving it in a caption under a different canvas.
+    if (def.t === "derived") {
+        row.className = "note";
+        return { row, sync: () => {
+            const { text, warn } = def.compute(target());
+            row.textContent = text;
+            row.className = "note" + (warn ? " warn" : "");
+        } };
+    }
+
     const label = document.createElement("label");
     label.textContent = def.label;
     if (def.hint) label.title = def.hint;
@@ -144,6 +156,13 @@ function buildSection(title, rows, target, onChange, collapsed = false) {
     return sec;
 }
 
+/** Refresh only the rows whose text is DERIVED from the spec. Separate from syncControls()
+ *  because this runs on every slider movement, and re-reading forty inputs mid-drag to update
+ *  one line of text is both wasteful and a good way to fight the control being dragged. */
+function refreshDerived() {
+    for (const { def, sync } of rebindable) if (def.t === "derived") sync();
+}
+
 /** Re-read every control from the spec and re-apply the `show` gates. Called after a preset
  *  load, and after any change that could open or close a dependent control. */
 function syncControls() {
@@ -206,7 +225,19 @@ const SCHEMA = [
         { t: "sel", p: "n", label: "Grid size", int: true,
           opts: [[128, "128 (draft)"], [256, "256"], [512, "512"], [1024, "1024 (slow)"]] },
         { t: "range", p: "fill", label: "Pupil fill", min: 0.12, max: 0.9, step: 0.01,
-          hint: "Pupil diameter as a fraction of the grid — the zero padding. Small = fine core, narrow field. Large = coarse core, wide field." },
+          hint: "How much of the transform grid the pupil fills; the rest is zero padding. This is NOT a zoom of the drawing — it sets how finely the PSF is sampled and how much of it fits on the grid." },
+        { t: "derived", compute: (spec) => {
+            const s = describeSampling(spec);
+            const core = s.airyRadiusPx;
+            const text = `Airy core ${core.toFixed(1)} px across ${(2 * core).toFixed(1)} px, `
+                       + `field ±${s.fieldHalfWidthArcsec.toFixed(1)}″ `
+                       + `(${Math.round(s.airyRadiiAcrossField)} Airy radii).`
+                       + (s.undersampledCore
+                            ? " The core is under a pixel and a half: what you are seeing is spikes"
+                              + " with no real core. Lower the fill."
+                            : " Lower fill resolves the core; higher fill reaches further out.");
+            return { text, warn: s.undersampledCore };
+          } },
         { t: "range", p: "supersample", label: "Edge samples", min: 1, max: 5, step: 1,
           hint: "Sub-samples per pixel when rasterising the mask. Hard pixel edges ring in the transform." },
         { t: "range", p: "optics.apertureM", label: "Aperture (m)", min: 0.01, max: 2, step: 0.005 },
@@ -289,6 +320,7 @@ let computeTimer = null;
 function scheduleCompute(delay = 220) {
     drawPupil();                             // cheap, so it tracks the sliders live
     updateSamplingCaption();
+    refreshDerived();
     clearTimeout(computeTimer);
     computeTimer = setTimeout(compute, delay);
 }
