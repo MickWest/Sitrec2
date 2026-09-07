@@ -221,7 +221,24 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                 ? dataTrack.getTrackStartTimeOffsetSeconds() : 0;
             const totalOffsetFrames = (manualOffset + startTimeOffset) * Sit.fps;
 
-            // Collect valid sparse data point positions and their frame numbers.
+            // Follow the source track's clock selection. Sync KLV positions and
+            // angles must both use PES timing; UTC can drift relative to video.
+            // Identity matching keeps an unrelated video from retiming a UTC track.
+            const videoPTS = NodeMan.get("video", false)?.videoData?.framePTSus;
+            const usePES = resolved?.pairingInfo?.mode === "pts"
+                && resolved.pairingInfo.misbNode === dataTrack && videoPTS?.length >= 2;
+            const sparseTime = i => usePES ? dataTrack.getRecordPTSms(i)
+                : (dataTrack.getTime(i) - startMS) / msPerFrame - totalOffsetFrames;
+            const frameTime = f => {
+                if (!usePES) return f;
+                const shiftedFrame = f + totalOffsetFrames;
+                const i = Math.max(0, Math.min(videoPTS.length - 2, Math.floor(shiftedFrame)));
+                // Fractional offsets use the real frame intervals, including gaps.
+                return (videoPTS[i] - videoPTS[0]
+                    + (shiftedFrame - i) * (videoPTS[i + 1] - videoPTS[i])) / 1000;
+            };
+
+            // Collect valid sparse data point positions and their time coordinates.
             //
             // Fast path: the dataTrack's own recalculate (which the cascade
             // guarantees ran before us — it's an input) already baked
@@ -240,7 +257,7 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                 && dataTrack.array.length === numPoints;
 
             const sparsePositions = [];
-            const sparseFrames = [];
+            const sparseTimes = [];
             if (canUseBaked) {
                 const baked = dataTrack.array;
                 for (let i = 0; i < numPoints; i++) {
@@ -249,15 +266,13 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                     // clone: the original pushed a fresh Vector3 per point, and
                     // the baked vectors belong to the dataTrack
                     sparsePositions.push(pos.clone());
-                    const timeMS = dataTrack.getTime(i);
-                    sparseFrames.push((timeMS - startMS) / msPerFrame - totalOffsetFrames);
+                    sparseTimes.push(sparseTime(i));
                 }
             } else {
                 for (let i = 0; i < numPoints; i++) {
                     if (!dataTrack.isValid(i)) continue;
                     sparsePositions.push(dataTrack.getPosition(i));
-                    const timeMS = dataTrack.getTime(i);
-                    sparseFrames.push((timeMS - startMS) / msPerFrame - totalOffsetFrames);
+                    sparseTimes.push(sparseTime(i));
                 }
             }
 
@@ -277,18 +292,19 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                 // coefficients while consecutive frames stay in one segment
                 const sampler = new CCachedCurveSampler(this.spline);
                 for (let f = 0; f < this.frames; f++) {
+                    const time = frameTime(f);
                     let t;
-                    if (f <= sparseFrames[0]) {
+                    if (time <= sparseTimes[0]) {
                         t = 0;
-                    } else if (f >= sparseFrames[n - 1]) {
+                    } else if (time >= sparseTimes[n - 1]) {
                         t = 1;
                     } else {
                         // Find the bracketing sparse points for this frame
-                        while (idx < n - 2 && sparseFrames[idx + 1] < f) {
+                        while (idx < n - 2 && sparseTimes[idx + 1] < time) {
                             idx++;
                         }
                         // Interpolate spline parameter proportional to time within this segment
-                        const alpha = (f - sparseFrames[idx]) / (sparseFrames[idx + 1] - sparseFrames[idx]);
+                        const alpha = (time - sparseTimes[idx]) / (sparseTimes[idx + 1] - sparseTimes[idx]);
                         t = (idx + alpha) / (n - 1);
                     }
                     const pos = V3();

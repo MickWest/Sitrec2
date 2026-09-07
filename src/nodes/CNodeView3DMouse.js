@@ -110,7 +110,7 @@ export const mouseMethods = {
         let targetIsTerrain = hit?.isTerrain ?? false;
 
         const focusTrackActive = options.focusTrackActive
-            ?? (this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName));
+            ?? (!this.suspendObjectFocus && this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName));
         let scrubbedFocusTrack = false;
 
         if (focusTrackActive) {
@@ -164,7 +164,7 @@ export const mouseMethods = {
             this._cursorRefreshRafId = undefined;
             if (!this.visible || !this.camera || !this.mouseEnabled) return;
             const focusTrackActive =
-                this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
+                !this.suspendObjectFocus && this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
             const positionKeyHeld =
                 isKeyHeld('c') || isKeyHeld('x')
                 || isKeyHeld('v') || isKeyHeld('b');
@@ -546,7 +546,7 @@ export const mouseMethods = {
             // setRenderOne(true), avoiding a full-scene redraw on every
             // hover when nothing visible depends on it.
             const focusTrackActive =
-                this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
+                !this.suspendObjectFocus && this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
             const positionKeyHeld =
                 isKeyHeld('c') || isKeyHeld('x')
                 || isKeyHeld('v') || isKeyHeld('b');

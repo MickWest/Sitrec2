@@ -83,6 +83,8 @@ function recoverDecoder() {
 }
 
 function handleDecodedFrame(videoFrame) {
+    const groupId = currentGroupId;
+    const generation = decodeGeneration;
     const frameNumber = timestampToFrameNumber.get(videoFrame.timestamp);
     if (frameNumber === undefined) {
         videoFrame.close();
@@ -96,9 +98,10 @@ function handleDecodedFrame(videoFrame) {
         videoFrame.close();
         return applyTransforms(bitmap);
     }).then(finalBitmap => {
+        if (generation !== decodeGeneration) { finalBitmap.close(); return; }
         self.postMessage({
             type: 'frame',
-            groupId: currentGroupId,
+            groupId: groupId,
             frameNumber: frameNumber,
             bitmap: finalBitmap,
             width: finalBitmap.width,
@@ -106,14 +109,15 @@ function handleDecodedFrame(videoFrame) {
         }, [finalBitmap]);
     }).catch(err => {
         try { videoFrame.close(); } catch(e) {}
+        if (generation !== decodeGeneration) return;
         self.postMessage({
             type: 'frameError',
-            groupId: currentGroupId,
+            groupId: groupId,
             frameNumber: frameNumber,
             message: err.message,
         });
     }).finally(() => {
-        frameDrained();
+        if (generation === decodeGeneration) frameDrained();
     });
 }
 
@@ -249,7 +253,9 @@ self.onmessage = async function(e) {
                 flushing = true;
                 let flushTimedOut = false;
                 const flushTimer = setTimeout(() => {
+                    if (decodeGeneration !== myGen) return;
                     flushTimedOut = true;
+                    wakeDrainWaiters();
                     flushing = false;
                     const elapsed = ((performance.now() - groupStartTime) / 1000).toFixed(1);
                     self.postMessage({ type: 'log', level: 'error',
@@ -270,14 +276,22 @@ self.onmessage = async function(e) {
                         configured = false;
                     }
                 }, FLUSH_TIMEOUT_MS);
-                decoder.flush().then(() => {
+                decoder.flush().then(async () => {
+                    // flush() finishes VideoDecoder output callbacks, but their
+                    // asynchronous bitmap conversions may still be running.
+                    // Post every frame before the main thread retires this group.
+                    while (inFlightFrames > 0 && decodeGeneration === myGen && !flushTimedOut) {
+                        await waitForDrain();
+                    }
+                    if (decodeGeneration !== myGen) { clearTimeout(flushTimer); return; }
                     if (!flushTimedOut) {
                         clearTimeout(flushTimer);
                         flushing = false;
                         const elapsed = ((performance.now() - groupStartTime) / 1000).toFixed(1);
-                        self.postMessage({ type: 'groupFlushed', groupId: currentGroupId });
+                        self.postMessage({ type: 'groupFlushed', groupId: msg.groupId });
                     }
                 }).catch((err) => {
+                    if (decodeGeneration !== myGen) { clearTimeout(flushTimer); return; }
                     if (!flushTimedOut) {
                         clearTimeout(flushTimer);
                         flushing = false;

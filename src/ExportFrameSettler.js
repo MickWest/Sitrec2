@@ -53,6 +53,23 @@ function hasPendingTerrainTiles() {
     return false;
 }
 
+// Terrain refines by at most one quadtree level per render. Cached parent
+// imagery can make those passes entirely synchronous, with no pending loads.
+// Follow tile-set changes until refinement stops, without waiting out the
+// terrain UI's fixed camera grace period on every exported frame.
+function detectTerrainRefinement(epochs) {
+    let changed = false;
+    for (const {data: node} of Object.values(NodeMan.list)) {
+        const maps = [node.elevationMap, ...Object.values(node.maps ?? {}).map(entry => entry?.map)];
+        for (const map of maps) {
+            if (!map || map._tileEpoch === undefined) continue;
+            if (epochs.get(map) !== map._tileEpoch) changed = true;
+            epochs.set(map, map._tileEpoch);
+        }
+    }
+    return changed;
+}
+
 /**
  * Detect whether any video source still lacks the target frame in cache.
  * @param {number} frame
@@ -118,6 +135,7 @@ function getPendingState(frame, viewIds = null) {
         pendingActions: Globals.pendingActions,
         pendingAsyncOps: asyncOperationRegistry.getCount(),
         pendingTerrainTiles: hasPendingTerrainTiles(),
+        pendingTerrainRefinement: false,
         pending3DTiles: pending3DTiles.hasPending,
         pendingVideoFrames: hasPendingVideoFrames(frame),
         pending3DTileChurn: false,
@@ -134,6 +152,7 @@ function hasPendingWork(state) {
     return state.pendingActions > 0
         || state.pendingAsyncOps > 0
         || state.pendingTerrainTiles
+        || state.pendingTerrainRefinement
         || state.pending3DTiles
         || state.pendingVideoFrames
         || state.pending3DTileChurn;
@@ -155,6 +174,9 @@ function formatPendingState(state) {
     }
     if (state.pendingTerrainTiles) {
         parts.push("terrainTiles=true");
+    }
+    if (state.pendingTerrainRefinement) {
+        parts.push("terrainRefining=true");
     }
     if (state.pending3DTiles) {
         parts.push("buildings3DTiles=true");
@@ -239,7 +261,7 @@ function detect3DTileVisibilityChurn(state, visibilityVersions) {
  * @param {Function|null} [options.renderFrame=null] - Callback to force another render pass while waiting.
  * @param {number} [options.maxWaitMs=45000] - Timeout guard to avoid infinite wait.
  * @param {number} [options.stableChecks=2] - Consecutive "quiet" checks required before accepting settled.
- * @param {number} [options.postSettleRenders=2] - Extra renders after settled to ensure on-screen presentation caught up.
+ * @param {number} [options.postSettleRenders=1] - Extra renders after settled to ensure on-screen presentation caught up.
  * @param {string} [options.logPrefix='Video export'] - Prefix for timeout/debug logs.
  * @returns {Promise<{timedOut:boolean, elapsedMs:number, checks:number, state:Object}>}
  */
@@ -256,9 +278,11 @@ export async function waitForExportFrameSettled({
     let stableCount = 0;
     let checks = 0;
     const visibilityVersions = new Map();
+    const terrainEpochs = new Map();
 
     while (true) {
         const state = getPendingState(frame, viewIds);
+        state.pendingTerrainRefinement = detectTerrainRefinement(terrainEpochs);
         // Treat visibility flips themselves as pending work even if queue counts are zero.
         state.pending3DTileChurn = detect3DTileVisibilityChurn(state, visibilityVersions);
         const pending = hasPendingWork(state);
@@ -274,6 +298,7 @@ export async function waitForExportFrameSettled({
                     }
 
                     const postState = getPendingState(frame, viewIds);
+                    postState.pendingTerrainRefinement = detectTerrainRefinement(terrainEpochs);
                     // Re-check churn after each post-settle render to ensure no new tile swaps occurred.
                     postState.pending3DTileChurn = detect3DTileVisibilityChurn(postState, visibilityVersions);
                     if (hasPendingWork(postState)) {

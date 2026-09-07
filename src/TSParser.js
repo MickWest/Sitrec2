@@ -154,7 +154,7 @@ export class TSParser {
             const YIELD_INTERVAL = 100000;
             let nextYieldOffset = YIELD_INTERVAL * packetSize;
             const totalBytes = uint8Array.length;
-            for (let offset = 0; offset < uint8Array.length - packetSize; offset += packetSize) {
+            for (let offset = 0; offset + packetSize <= uint8Array.length; offset += packetSize) {
                 if (offset >= nextYieldOffset) {
                     nextYieldOffset += YIELD_INTERVAL * packetSize;
                     updateProgress({status: 'Extracting streams...', loaded: offset, total: totalBytes});
@@ -164,7 +164,7 @@ export class TSParser {
                 if (uint8Array[offset] !== 0x47) {
                     // Try to find next sync byte
                     let found = false;
-                    for (let i = offset + 1; i < uint8Array.length - packetSize; i++) {
+                    for (let i = offset + 1; i + packetSize <= uint8Array.length; i++) {
                         if (uint8Array[i] === 0x47) {
                             offset = i;
                             found = true;
@@ -1041,7 +1041,7 @@ export function probeTransportStreamBufferDetailed(buffer) {
     }
     
     // Scan through all packets to collect stream data
-    for (let offset = 0; offset < uint8Array.length - packetSize; offset += packetSize) {
+    for (let offset = 0; offset + packetSize <= uint8Array.length; offset += packetSize) {
         if (uint8Array[offset] !== 0x47) continue; // Skip non-sync packets
         
         // Parse TS header

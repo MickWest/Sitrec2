@@ -6,16 +6,22 @@ import {mouseInViewOnly} from "../ViewUtils";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {getAzElFromPositionAndForward, getCompassHeading} from "../SphericalMath";
 import {MV3} from "../threeUtils";
-import {Raycaster} from "three";
+import {Box3, Raycaster, Vector3} from "three";
 import * as LAYER from "../LayerMasks";
 import {getPointBelow, intersectSurface} from "../threeExt";
 import {ECEFToLLAVD_radii, haversineDistanceKM} from "../LLA-ECEF-ENU";
 import {forward as mgrsForward} from "mgrs";
 import {degrees} from "../utils";
-import {NodeMan} from "../Globals";
+import {NodeMan, Sit, guiMenus, setRenderOne} from "../Globals";
+import {par} from "../par";
+import {objectFocusTrack} from "../CameraFocusUI";
+import {extractFOV} from "../FOVUtils";
+import {MQ9TrackingSimulation} from "../MQ9TrackingSimulation";
+import {MQ9_TRACKING_DEFAULTS} from "../MQ9TrackingModel";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getHUDColor} from "../HUDColor";
 import {formatDM, formatDMS} from "../CoordinateFormat";
+import {MQ9_FONT, ensureMQ9FontLoaded, drawHUDText} from "../HUDFonts";
 
 // Position readouts. Latitude degrees are zero-padded to two digits so the
 // column lines up; longitude degrees are not. DM shows minutes to 3 places
@@ -30,6 +36,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
     constructor(v) {
         super(v);
+        this.fontReady = ensureMQ9FontLoaded();
         this.input("camera");  // a camera node, this is the camera track
 
         // optional camera track for reticle display
@@ -70,6 +77,15 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         this.addSimpleSerial("grnMode");
         this.addSimpleSerial("irMode");
         this.addSimpleSerial("targetMode");
+
+        this.trackingEnabled = v.trackingEnabled ?? false;
+        this.trackingObject = v.trackingObject ?? "targetObject";
+        this.trackingSettings = {...MQ9_TRACKING_DEFAULTS, ...v.trackingSettings};
+        this.trackingProgram = v.trackingProgram ?? null;
+        this.trackingStatus = "Off";
+        this.trackingLowConfidence = false;
+        for (const key of ["trackingEnabled", "trackingObject", "trackingSettings", "trackingProgram"]) this.addSimpleSerial(key);
+        this.setupTrackingMenu();
 
         const grey = '#888888';
 
@@ -136,6 +152,164 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         // Prevent double-click from propagating through to 3D view
         this.boundHandleDblClick = (e) => this.handleDblClick(e);
         this.canvas.addEventListener('dblclick', this.boundHandleDblClick);
+        this.unregisterTrackingInteraction = registerSurfaceInteraction(this.canvas, {
+            model: this, view: this, profile: "mq9Tracking", intent: {kind: "drag", priority: 80},
+            enabled: () => this.trackingEnabled && this.visible,
+            contains: e => mouseInViewOnly(this, e.clientX, e.clientY),
+            hitTest: e => {
+                const rect = this.canvas.getBoundingClientRect();
+                return this.getClickedTextElement(e.clientX - rect.left, e.clientY - rect.top) ? null : {};
+            },
+            move: (e, dx, dy) => {
+                const rect = this.hudRect ?? this.getHUDRect();
+                this.trackingCommand("slew", {pixels: [dx * 480 / rect.height, dy * 480 / rect.height]});
+            }, cursor: "crosshair",
+        });
+    }
+
+    setupTrackingMenu() {
+        if (!guiMenus.camera) return;
+        const menu = this.trackingMenu = guiMenus.camera.addFolder("MQ9 Tracking").close();
+        menu.add(this, "trackingEnabled").name("Simulate Tracking").listen().onChange(enabled => {
+            if (enabled) this.startTrackingSimulation(); else this.stopTrackingSimulation();
+            setRenderOne(true);
+        }).tooltip("Track a projected scene object. Drag in Look View to slew; while locked, slew is relative to the tracked object.");
+        this.trackingObjectController = menu.add(this, "trackingObject", {"Target object": "targetObject"})
+            .name("Scene Object").onChange(() => {
+                this.trackingProgram = null; this.stopTrackingSimulation(); this.trackingEnabled = true; setRenderOne(true);
+            });
+        menu.add(this, "trackingStatus").name("State").listen().disable();
+        const actions = {acquire: () => this.trackingCommand("acquire"), manual: () => this.trackingCommand("manual"),
+            center: () => this.trackingCommand("center"),
+            ground: () => this.trackingCommand("ground"), reset: () => {
+                this.trackingProgram = null; this.stopTrackingSimulation(); this.startTrackingSimulation(); setRenderOne(true);
+            }};
+        menu.add(actions, "acquire").name("Acquire / Box Target");
+        menu.add(actions, "center").name("Center Tracked Object").tooltip("Move the tracked object to the image center over one second, then hold it there.");
+        menu.add(actions, "manual").name("Manual Tracking");
+        menu.add(actions, "ground").name("Ground Track");
+        menu.add(actions, "reset").name("Reset Simulation");
+        menu.add(this, "trackingLowConfidence").name("Simulate Low Confidence").listen().onChange(() => {
+            // Invalidate from the edited frame while preserving accepted history.
+            this.trackingCommand("confidence", {value: this.trackingLowConfidence ? 0 : 1});
+        });
+        menu.add(this.trackingSettings, "refineSeconds", .25, 5, .05).name("Refinement (seconds)").onChange(() => {
+            if (this.trackingSimulation) { this.stopTrackingSimulation(); this.startTrackingSimulation(); }
+        });
+        menu.add(this.trackingSettings, "boxPixels", 20, 300, 1).name("Acquisition Box (pixels)").onChange(() => {
+            if (this.trackingSimulation) { this.stopTrackingSimulation(); this.startTrackingSimulation(); }
+        });
+    }
+
+    startTrackingSimulation(options) {
+        if (this.trackingSimulation) return this.trackingSimulation;
+        this.trackingEnabled = true;
+        const cameraNode = this.in.camera, camera = cameraNode.camera;
+        this.trackingSavedFreeLook = this.trackingNeedsRestore && this.trackingProgram
+            ? this.trackingProgram.restoreFreeLook ?? false : cameraNode.freeLook;
+        this.trackingNeedsRestore = false;
+        cameraNode.freeLook = true;
+        const program = this.trackingProgram;
+        if (!options && program?.initial) {
+            camera.position.fromArray(program.initial.position); camera.quaternion.fromArray(program.initial.quaternion);
+            camera.fov = program.initial.fov;
+        }
+        const simulation = this.trackingSimulation = new MQ9TrackingSimulation(options ?? {
+            camera, fps: Sit.fps, startFrame: program?.startFrame ?? par.frame,
+            commands: program?.commands ?? [], options: this.trackingSettings,
+            sensorAt: f => this.in.cameraTrack?.p(f)?.toArray() ?? camera.position.toArray(),
+            lensAt: f => NodeMan.exists("fovSwitch") ? extractFOV(NodeMan.get("fovSwitch").v(f)) : camera.fov,
+            observationAt: f => {
+                const object = NodeMan.get(this.trackingObject, false);
+                if (!object?.group) return null;
+                const track = objectFocusTrack(object);
+                const position = track !== object ? track.p(f) : object.group.getWorldPosition(new Vector3());
+                const size = new Box3().setFromObject(object.group).getSize(new Vector3());
+                if (!Number.isFinite(size.lengthSq()) || size.lengthSq() === 0) return null;
+                return {id: object.id, position: position.toArray(), diameterM: Math.max(size.x, size.y, size.z),
+                    confidence: 1, visible: object.group.visible && object.visible !== false};
+            },
+        });
+        cameraNode.mq9Tracking = simulation;
+        this.trackingProgram = {startFrame: simulation.startFrame, initial: simulation.initial, commands: simulation.commands,
+            restoreFreeLook: this.trackingSavedFreeLook};
+        return simulation;
+    }
+
+    stopTrackingSimulation() {
+        if (this.in.camera.mq9Tracking === this.trackingSimulation) delete this.in.camera.mq9Tracking;
+        if (this.trackingSimulation) this.in.camera.freeLook = this.trackingSavedFreeLook;
+        else if (this.trackingNeedsRestore && this.trackingProgram) this.in.camera.freeLook = this.trackingProgram.restoreFreeLook ?? false;
+        this.trackingNeedsRestore = false;
+        this.trackingSimulation = null; this.trackingEnabled = false; this.trackingStatus = "Off";
+    }
+
+    modDeserialize(v) {
+        if (this.trackingSimulation) this.stopTrackingSimulation();
+        const settings = this.trackingSettings;
+        super.modDeserialize(v);
+        // Keep GUI controllers bound to the same settings object.
+        if (settings && this.trackingSettings) {
+            Object.assign(settings, this.trackingSettings); this.trackingSettings = settings;
+        }
+        this.trackingNeedsRestore = this.trackingEnabled;
+    }
+
+    trackingCommand(action, extra = {}) {
+        const simulation = this.startTrackingSimulation();
+        const rect = this.getHUDRect();
+        simulation.imageAspect = rect.width / rect.height;
+        simulation.command(action, par.frame, extra);
+        setRenderOne(true);
+    }
+
+    updateTracking(frame, view) {
+        if (view.cameraNode !== this.in.camera) return;
+        if (!this.trackingEnabled) { if (this.trackingSimulation) this.stopTrackingSimulation(); return; }
+        const simulation = this.startTrackingSimulation();
+        const rect = this.getHUDRect();
+        simulation.imageAspect = rect.width / rect.height;
+        simulation.applyFrame(frame);
+        this.trackingStatus = simulation.current?.state ?? "manual";
+        this.trackingLowConfidence = simulation.confidence < simulation.model.options.confidenceThreshold;
+        const objects = {"Target object": "targetObject"};
+        for (const {data: node} of Object.values(NodeMan.list)) {
+            if (node.constructor.name === "CNode3DObject") objects[node.id] = node.id;
+        }
+        const signature = JSON.stringify(objects);
+        if (signature !== this.trackingObjectSignature) {
+            this.trackingObjectSignature = signature; this.trackingObjectController?.options(objects);
+        }
+    }
+
+    drawTrackingBox() {
+        const simulation = this.trackingSimulation, display = simulation?.current;
+        const box = display?.box;
+        if (!this.trackingEnabled || !box?.visible) return;
+        const c = this.ctx, rect = this.hudRect;
+        const sx = rect.width / 640, sy = rect.height / 480;
+        const x = rect.x + rect.width / 2 + (box.x - 320) * sy, y = rect.y + box.y * sy;
+        const w = box.width * sy, h = box.height * sy;
+        c.save(); c.strokeStyle = getHUDColor(); c.fillStyle = getHUDColor(); c.lineWidth = Math.max(.6, sy);
+        if (box.style === "square") {
+            const gap = Math.min(9 * sy, h / 2);
+            c.beginPath(); c.moveTo(x + w/2, y - gap); c.lineTo(x + w/2, y - h/2);
+            c.lineTo(x - w/2, y - h/2); c.lineTo(x - w/2, y + h/2);
+            c.lineTo(x + w/2, y + h/2); c.lineTo(x + w/2, y + gap); c.stroke();
+            if (display.boxWidthM !== null) {
+                c.font = `${12 * sy}px ${MQ9_FONT}`; c.textAlign = "left"; c.textBaseline = "middle";
+                drawHUDText(c, `${Math.round(display.boxWidthM)}M`, x + w/2 + 3*sx, y, 12*sy);
+            }
+        } else {
+            const length = Math.min(w, h) * .23;
+            c.beginPath();
+            for (const a of [-1, 1]) for (const b of [-1, 1]) {
+                c.moveTo(x + a*(w/2 - length), y + b*h/2); c.lineTo(x + a*w/2, y + b*h/2);
+                c.lineTo(x + a*w/2, y + b*(h/2 - length));
+            }
+            c.stroke();
+        }
+        c.restore();
     }
 
     addGridText(col, row, text, color = '#FFFFFF', align = 'left', clickGroup = null) {
@@ -261,6 +435,40 @@ export class   CNodeMQ9UI extends CNodeViewUI {
     }
 
 
+    getHUDRect(videoView = NodeMan.get("mirrorVideo", false) ?? NodeMan.get("video", false)) {
+        if (videoView?.videoWidth > 0 && videoView.videoHeight > 0 && videoView.videoToCanvasCoords) {
+            // Map the WHOLE source image, including the part outside the pane
+            // after zoom/pan. dx/dy/dWidth/dHeight describe only the clipped
+            // visible part and therefore cannot locate the sensor boresight.
+            const [x0, y0] = videoView.videoToCanvasCoords(0, 0);
+            const [x1, y1] = videoView.videoToCanvasCoords(videoView.videoWidth, videoView.videoHeight);
+            const scaleX = this.widthPx / videoView.widthPx;
+            const scaleY = this.heightPx / videoView.heightPx;
+            if ([x0, y0, x1, y1, scaleX, scaleY].every(Number.isFinite) && x1 > x0 && y1 > y0) {
+                return {x: x0 * scaleX, y: y0 * scaleY, width: (x1 - x0) * scaleX, height: (y1 - y0) * scaleY};
+            }
+        }
+        // No loaded video: retain the standalone HUD layout used by recording.
+        const width = Math.min(this.widthPx, this.heightPx * 16 / 9);
+        return {x: (this.widthPx - width) / 2, y: 0, width, height: this.heightPx};
+    }
+
+    px(x) {
+        return this.hudRect ? this.hudRect.x + this.hudRect.width * x / 100 : super.px(x);
+    }
+
+    px_square(x) {
+        return this.hudRect ? this.hudRect.x + this.hudRect.width / 2 + this.hudRect.height * (x - 50) / 100 : super.px_square(x);
+    }
+
+    py(y) {
+        return this.hudRect ? this.hudRect.y + this.hudRect.height * y / 100 : super.py(y);
+    }
+
+    sx(x) {
+        return this.hudRect ? this.hudRect.width * x / 100 : super.sx(x);
+    }
+
     renderCanvas(frame) {
         if (this.overlayView && !this.overlayView.visible) return;
 
@@ -313,12 +521,16 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         this.acftAlt.text = this.formatAltitude(lla, this.acftAltMode);
 
         // Update target mode text
+        const tracking = this.trackingEnabled && this.trackingSimulation?.current;
+        if (tracking) this.targetMode = ["object", "coast"].includes(tracking.cameraMode) ? 0 : 1;
         const targetModeLabels = ['TARGET', 'GROUND'];
         this.targetModeText.text = targetModeLabels[this.targetMode];
 
         // Get target position based on mode
         let targetPos = null;
-        if (this.targetMode === 0) {
+        if (tracking?.estimatedPosition && this.targetMode === 0) {
+            targetPos = new Vector3(...tracking.estimatedPosition);
+        } else if (this.targetMode === 0) {
             // TARGET mode - use target track
             if (!this.in.target) {
                 if (NodeMan.exists("targetTrackSwitchSmooth")) {
@@ -406,30 +618,9 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
         const c = this.ctx;
 
-        // Get video rect to match grid to video aspect
-        // Use mirrorVideo (overlay on lookView) if available, otherwise video
-        let gridX = 0, gridY = 0, gridW = this.widthPx, gridH = this.heightPx;
-        let videoView = NodeMan.get("mirrorVideo", false);
-        if (!videoView) {
-            videoView = NodeMan.get("video", false);
-        }
-        if (videoView && videoView.getSourceAndDestCoords) {
-            videoView.getSourceAndDestCoords();
-            gridX = videoView.dx;
-            gridY = videoView.dy;
-            gridW = videoView.dWidth;
-            gridH = videoView.dHeight;
-        } else {
-            // No video: center on look view, clamp to 16:9 max aspect
-            const maxAspect = 16 / 9;
-            const viewAspect = this.widthPx / this.heightPx;
-            if (viewAspect > maxAspect) {
-                gridW = this.heightPx * maxAspect;
-                gridH = this.heightPx;
-                gridX = (this.widthPx - gridW) / 2;
-                gridY = 0;
-            }
-        }
+        // Use one image coordinate system for text, scales and crosshair.
+        this.hudRect = this.getHUDRect();
+        let {x: gridX, y: gridY, width: gridW, height: gridH} = this.hudRect;
 
         // Render grid-based text (inset by one character on left and right)
         const hudColor = getHUDColor();
@@ -438,8 +629,10 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         const charHeight = gridH / this.gridRows;
         gridX += charWidth;
         gridW -= charWidth * 2;
-        const fontSize = Math.floor(charHeight * 0.9);
-        c.font = `${fontSize}px monospace`;
+        // The reference OSD leaves space around its glyphs within each grid cell.
+        // Use 12px type at 640x480; fractional sizes preserve image zoom scaling.
+        const fontSize = charHeight * 0.75;
+        c.font = `${fontSize}px ${MQ9_FONT}`;
         c.textBaseline = 'top';
         for (const t of this.gridTexts) {
             c.fillStyle = t.color === '#888888' ? dimHUDColor : hudColor;
@@ -453,7 +646,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
                 x = gridX + (t.col - 1) * charWidth;
             }
             const y = gridY + (t.row - 1) * charHeight;
-            c.fillText(t.text, x, y);
+            drawHUDText(c, t.text, x, y, fontSize);
 
             // Store bounding box for click detection on clickable elements
             if (t.clickGroup) {
@@ -473,14 +666,15 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
         // draw the letter N in the center
         c.fillStyle = hudColor;
-        c.font = this.px(1.5)+'px Arial';
+        const northFontSize = fontSize * 0.7;
+        c.font = `${northFontSize}px ${MQ9_FONT}`;
         c.textAlign = 'center';
         c.textBaseline = 'middle';
 
         const x = this.rx_square(this.cx,this.cy+27,heading+Math.PI);
         const y = this.ry(this.cx,this.cy+27,heading+Math.PI);
 
-        c.fillText('N', x, y);
+        drawHUDText(c, 'N', x, y, northFontSize);
 
 
         const crosshairWidth = 1
@@ -503,6 +697,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         c.stroke();
 
         // Heading graticule at top of display
+        this.drawTrackingBox();
         // Get airframe heading from camera track velocity corrected for wind
         // Airframe heading = direction the aircraft is pointing (into the wind relative to ground track)
         // Air velocity = Ground velocity - Wind velocity
@@ -572,13 +767,13 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
         // Draw heading box with airframe heading value (T outside box)
         c.strokeRect(gratCenterX - boxWidth / 2, gratY, boxWidth, boxHeight);
-        c.font = `${fontSize}px monospace`;
+        c.font = `${fontSize}px ${MQ9_FONT}`;
         c.textAlign = 'center';
         c.textBaseline = 'middle';
-        c.fillText(`${Math.round(airframeHeadingDeg)}`, gratCenterX, gratY + boxHeight / 2);
+        drawHUDText(c, `${Math.round(airframeHeadingDeg)}`, gratCenterX, gratY + boxHeight / 2, fontSize);
         // T outside the box to the right
         c.textAlign = 'left';
-        c.fillText('T', gratCenterX + boxWidth / 2 + 2, gratY + boxHeight / 2);
+        drawHUDText(c, 'T', gratCenterX + boxWidth / 2 + 2, gratY + boxHeight / 2, fontSize);
 
         // Draw solid triangle below the box pointing down
         c.beginPath();
@@ -599,9 +794,9 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         c.stroke();
 
         // Draw relative azimuth number below the caret
-        c.font = `${fontSize}px monospace`;
+        c.font = `${fontSize}px ${MQ9_FONT}`;
         c.textAlign = 'center';
-        c.fillText(`${Math.round(relativeAzimuth)}`, caretX, caretY + caretSize + charHeight * 0.6);
+        drawHUDText(c, `${Math.round(relativeAzimuth)}`, caretX, caretY + caretSize + charHeight * 0.6, fontSize);
 
         // Elevation scale on the left side
         // Get camera elevation angle
@@ -633,7 +828,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         const majorElevTicks = [60, 0, -60, -120];
         const minorElevTicks = [30, -30, -90];
 
-        c.font = `${fontSize}px monospace`;
+        c.font = `${fontSize}px ${MQ9_FONT}`;
         c.fillStyle = hudColor;
         c.textAlign = 'right';
         c.textBaseline = 'middle';
@@ -644,7 +839,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
             c.moveTo(elevScaleX, y);
             c.lineTo(elevScaleX - elevTickLength, y);
             c.stroke();
-            c.fillText(`${deg}`, elevScaleX - elevTickLength - charWidth * 0.3, y);
+            drawHUDText(c, `${deg}`, elevScaleX - elevTickLength - charWidth * 0.3, y, fontSize);
         }
 
         for (const deg of minorElevTicks) {
@@ -669,11 +864,14 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
         // Draw elevation value to the right of arrow
         c.textAlign = 'left';
-        c.fillText(`${Math.round(elevation)}`, elevScaleX + arrowSize + charWidth * 0.3, elevIndicatorY);
+        drawHUDText(c, `${Math.round(elevation)}`, elevScaleX + arrowSize + charWidth * 0.3, elevIndicatorY, fontSize);
 
     }
 
     dispose() {
+        this.stopTrackingSimulation();
+        this.trackingMenu?.destroy();
+        this.unregisterTrackingInteraction?.();
         // Clean up event listeners
         this.unregisterButtonInteraction?.();
         if (this.canvas && this.boundHandleDblClick) {

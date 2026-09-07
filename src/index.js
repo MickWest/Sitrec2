@@ -1702,6 +1702,12 @@ async function initializeOnce() {
         // (www.metabunk.org) is byte-for-byte unchanged.
         if (isLocal) {
             window.sitrecAPI = sitrecAPI;
+            window._botBenchVideo = {
+                prepare: async plan => (await import("./analysis/BotBenchVideo")).prepare(plan),
+                record: async () => (await import("./analysis/BotBenchVideo")).record(),
+                preview: async () => (await import("./analysis/BotBenchVideo")).preview(),
+                verifyImported: async records => (await import("./analysis/BotBenchVideo")).verifyImported(records),
+            };
         }
 
         // Set a flag to indicate that these objects are ready
@@ -2000,14 +2006,14 @@ async function initializeOnce() {
         .tooltip(t("menus.showHide.views.tooltip"));
     const _guiShowHideGraphs = addTranslatedGUIFolder("showhidegraphs", "menus.showHide.graphs.title", "showhide")
         .tooltip(t("menus.showHide.graphs.tooltip"));
-    const _guiTweaks = addTranslatedGUIMenu("effects", "menus.effects.title")
+    const _guiTweaks = addTranslatedGUIMenu("effects", "menus.effects.title", {closeFolders: true})
         .tooltip(t("menus.effects.tooltip"));
     // Permanent sub-folder that groups the sensor-look simulations: the
     // FLIRShader/Thermal/NightVision enable flags plus their parameter
     // sliders (routed in per sitch via gui: "thermalNV" / enabledGUI).
     // Hidden when a sitch leaves it empty — see showFolderIfPopulated.
     addGUIFolder("thermalNV", "Thermal/NV", "effects");
-    addTranslatedGUIMenu("lighting", "menus.lighting.title")
+    addTranslatedGUIMenu("lighting", "menus.lighting.title", {closeFolders: true})
         .tooltip(t("menus.lighting.tooltip"));
     addTranslatedGUIMenu("contents", "menus.contents.title")
         .tooltip(t("menus.contents.tooltip"));

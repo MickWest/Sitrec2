@@ -218,6 +218,153 @@ A sealed release keeps its sidecars **beside each CSV**, not gathered into
 level, so the writer refuses to combine a gathered sidecar folder with
 descriptive filenames at all.
 
+## Optional scenario videos
+
+The starter video set records three balloon cases from the existing platform
+generator: level drift on an orbit, rising on an orbit, and level drift on a
+straight pass. Each clip defaults to 20 seconds of **640×480 progressive video
+at 30 fps**, in black and white, with Sitrec's **MQ9UI** overlay.
+
+```bash
+npm run build
+npm run bench-bot-video -- --video --count=3 --url='https://local.metabunk.org/sitrec/?action=new'
+```
+
+Use the URL of the worktree you built. `BOTBENCH_URL` can supply the URL instead.
+FFmpeg must be on `PATH`; the runner uses the installed Playwright Chromium and
+opens its own browser. `--headed` shows it. Without `--video`, the command only
+writes the scenario plans. Existing CSV benchmark generation is unchanged.
+
+Outputs go to `benchmarks/botbench/results/video/` (`--out` changes this):
+
+- `.ts`: H.264 video plus embedded, frame-synchronous ST 0601 KLV. Open this
+  directly with **File → Import** in a new custom sitch; no CSV is needed.
+- `.mp4`: the same H.264 video, without the KLV track.
+- `.video.json` and `.recording.json`: source scenario, truth, camera settings,
+  and per-frame verification data. These are development answer keys.
+- `.jpg`, `.roundtrip.jpg`, `.roundtrip.json`: rendered preview, decoded TS
+  preview, and the import check's measured errors.
+
+`--count=1` records just the first case. `--duration=10` changes the clip length
+(up to the source track's 90 seconds), and `--wobble=0.1` sets the operator
+deadband to **0.1% of image width**, or 0.64 pixels. This uses the shared correlated
+tracking-wobble model; the setting is an amplitude, not an RMS or a peak limit.
+
+Use `--wobble-deg=0.5` to specify the Tracking Wobble amplitude directly in
+degrees. The lens and target size stay the same; the operator drift and
+correction rates scale with amplitude using the same benchmark wobble model.
+Choose either `--wobble` (percent) or `--wobble-deg` (degrees). Use a separate
+output directory to keep alternate versions:
+
+```bash
+npm run bench-bot-video -- --video --wobble-deg=0.5 --out=benchmarks/botbench/results/video-wobble-0.5deg --url='https://local.metabunk.org/sitrec/?action=new'
+```
+
+`--scenario=02-party-rising-orbit` selects just the rising-orbit case (instead
+of the `--count` prefix). `--recenter-speed-scale=0.25` quarters the recenter
+speed while retaining the drift speed, reaction time, accuracy and seed.
+At 0.5° amplitude, that changes the base recenter speed from 3.333°/s to
+0.833°/s. Each correction still uses the model's ±25% speed variation. The
+complete effective wobble parameters are saved in `.recording.json`.
+
+For absolute rates in degrees per second, use `--drift-speed=0.1` and
+`--recenter-speed=0.3`. The other wobble settings remain the same. An absolute
+recenter rate cannot be combined with a non-default recenter speed scale.
+
+`--set=extended` selects six additional balloon scenarios: level orbit, rising
+orbit, and level straight pass at each of two geometries (5km ground range at
+50% slant depth, and 10km ground range at 25% slant depth). The original three
+scenarios remain the default. Each set defaults to all its scenarios; `--count`
+limits the prefix and `--scenario` selects one by name.
+`--wobble-seed=<integer>` selects a different operator-drift realization while
+preserving the sensor and target trajectories.
+
+`--set=offscreen --duration=30` adds six clips based on the starter geometries:
+one or two smooth pointing excursions per clip, taking the target briefly
+outside the horizontal field before reacquisition. These excursions are added
+to the regular tracking wobble and recorded in the camera KLV. Their scheduled
+maneuver durations include the visible departure and return; measure actual
+off-screen intervals from the per-frame target projections.
+
+`--set=tracking` creates six 30-second [MQ9 tracking demonstrations](MQ9TrackingSimulation.md):
+full and partial acquisition, predictive coast and recovery, permanent loss to
+ground hold, manual takeover, and acquisition-gate escape followed by a retry.
+The expanding square, metre label, refining corners, and loss flashes are
+recorded into the imagery. KLV follows the simulated camera through each mode
+change. The `.recording.json` includes frame-by-frame state and transition times.
+
+`--zoom-factor=2` adds an instant 2× optical zoom at 10 seconds and returns to
+the original lens at 20 seconds. It defaults to a 30-second recording and can
+be combined with any scenario set or wobble settings. Magnification scales
+focal length, preserving the correct horizontal and vertical FOV relationship.
+The video and KLV switch together at frames 300 and 600. Capture-style variants
+include exact-time lens updates between their regular sparse samples; they
+hold the FOV until the next switch instead of interpolating a zoom ramp.
+
+`--resume` retains clips that already passed both import checks, requiring their
+saved plans to match the requested settings. On macOS the runner uses Metal
+graphics; `--software-renderer` selects the software fallback.
+
+The target is a **1 m diameter sphere** representing a balloon. The initial lens
+is set so its diameter at frame zero spans **exactly six pixels** (6/640,
+0.9375% of width). Its apparent size subsequently changes with distance and any
+requested zoom. Without zoom, the lens remains fixed. The
+first case starts at about 1.971 km slant range with a 3.099886° horizontal FOV
+and 2.325162° vertical FOV. The original 10 Hz generated truth is interpolated
+to 30 fps, preserving the source trajectory and seed.
+
+Recording renders the real Sitrec scene, waits for terrain loading, composites
+MQ9UI, and encodes MP4. The runner remuxes the video into TS and places one KLV
+record at each video's presentation timestamp. It then imports the TS through
+the normal file picker in a fresh sitch and verifies frame counts, timestamps,
+camera position, sightline, FOV, and rendered projection against the recording.
+The check also compares the MQ9UI crosshair with the recorded image coordinates,
+both in the default layout and with zoom/pan in stacked video and look panes.
+TS metadata with transport timestamps imports with **Angle Smooth Window
+(frames)** set to **0**, preserving the recorded wobble. The check verifies
+that default without changing it. For a previously saved sitch, set the window
+to 0 manually. Standalone MISB retains its 120-frame default. KLV field
+quantization is included in the comparison tolerances. Optical zoom magnifies
+its pixel error, so the projection tolerance scales with magnification. Reports
+retain the actual video-pixel error and separately check viewport mapping using
+the decoded lens and pose. To repeat only that check:
+
+```bash
+npm run bench-bot-video -- --verify-only --count=1 --url='https://local.metabunk.org/sitrec/?action=new'
+```
+
+These are synthetic development clips with rendered grayscale imagery and a
+white target, not a calibrated thermal sensor simulation. Descriptive names,
+known target dimensions and truth-sized FOV make this set unsuitable for blind
+range scoring.
+
+### Capture-style transport variants
+
+After generating a representative set into `low-wobble/` and `tracking-wobble/`
+subfolders, add transport variants alongside the precise controls:
+
+```bash
+node benchmarks/botbench/build-video-transport.mjs --root=<representative-output-folder>
+```
+
+For other wobble folders, pass their names explicitly with
+`--profiles=wobble-010deg,wobble-025deg,wobble-050deg`.
+
+This reuses the rendered imagery and writes matching TS/MP4 files plus timing
+manifests under `realistic/`. It preserves 640×480/30p and the original motion,
+and uses Baseline H.264 with 120-frame keyframe intervals, silent stereo AAC,
+and a transport clock starting at 120 seconds. KLV arrives at roughly 4.8 Hz
+with deterministic cadence variation and presentation timestamps between video
+frames. Acquisition UTC and presentation time remain separate, and each
+manifest records both. Descriptive synthetic identifiers make the KLV records
+span multiple TS packets. No reference-footage metadata is copied.
+
+These variants exercise sparse interpolation and timing variation. Their
+reconstructed cameras can depart from the per-frame truth even when parsing is
+correct; compare them with the dense controls when assessing traversal errors.
+The model does not reproduce every capture behavior, such as video beginning
+after a long metadata pre-roll or differing source frame rates.
+
 ## Other commands
 
 `npm run bench-bot-export` writes a few scenarios as KML track pairs (sensor +
@@ -226,4 +373,3 @@ target) for loading into the live app. The wider suite (`npm run bench-bot`,
 battery headless over the full synthetic matrix — several hundred scenarios —
 which is where the calibration figures quoted in
 [Traverse Analysis and the Verdict](TraverseAnalysis.md) come from.
-

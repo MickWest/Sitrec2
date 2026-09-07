@@ -362,14 +362,14 @@ export function setupGUIGlobals(_gui, _show, _tweaks, _showViews, _showGraphs, _
 }
 
 // add to the menubar
-export function addGUIMenu(id, title) {
-    guiMenus[id] = Globals.menuBar.addFolder(title).close().perm();
+export function addGUIMenu(id, title, options) {
+    guiMenus[id] = Globals.menuBar.addFolder(title, options).close().perm();
     guiMenus[id]._menuId = id;
     return guiMenus[id];
 }
 
-export function addTranslatedGUIMenu(id, titleKey) {
-    const gui = addGUIMenu(id, t(titleKey));
+export function addTranslatedGUIMenu(id, titleKey, options) {
+    const gui = addGUIMenu(id, t(titleKey), options);
     gui._serializationAliases = getTranslationVariants(titleKey);
     return gui;
 }

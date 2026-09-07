@@ -356,8 +356,15 @@ where there is no fixed averaging window.
 Imported tracks with recorded sensor angles have an **Angle Smooth Window
 (frames)** control in their Contents folder. This filters the platform and sensor
 angles before constructing sightlines, independently of position smoothing;
-set it to zero to disable it. Existing source defaults are retained. Position
-smoothing methods and angle windows are saved with the sitch. A zero position
+set it to zero to disable it. TS metadata with transport timestamps defaults to
+zero so the camera preserves the attitude recorded for each video frame.
+Standalone MISB retains its 120-frame default, and saved sitches retain their
+saved window. At 30 fps and simulation speed 1, a window of 120 averages up to
+121 samples spanning four seconds, shortening symmetrically at the source ends.
+This can suppress real camera motion as well as measurement noise. When using
+tracked target pixels, preserve the matching per-frame camera attitude before
+combining it with the target's image offset to construct the target sightline.
+Position smoothing methods and angle windows are saved with the sitch. A zero position
 window does not disable spline interpolation; choose **none** for that stage.
 Exact analysis snapshots bypass the live traverse position filter, and the
 displayed line, object, distance graph and traverse exports use the same output.

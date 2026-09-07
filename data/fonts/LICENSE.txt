@@ -1,0 +1,51 @@
+# Sitrec License
+
+**Copyright (c) 2025 Mick West**
+
+Permission is hereby granted, free of charge, to:
+- Any natural person (hobbyist, enthusiast, or independent researcher) for personal, educational, or non-commercial research purposes.
+- Academic users (students, faculty, or staff) for non-commercial university or educational research, including use in coursework, publications, and lab projects.
+
+subject to the following conditions:
+
+---
+
+## 1. Permitted Use
+- Personal, hobbyist, and educational use.
+- Academic research and teaching, provided the use is **non-commercial**.
+- Use in publications, presentations, and demonstrations, provided attribution is given.
+
+---
+
+## 2. Prohibited Use
+This software may **not** be used for:
+
+### Commercial Use
+Any use intended for or directed toward commercial advantage, monetary compensation, or financial gain. Examples include (but are not limited to):
+- Selling, licensing, or renting the software.
+- Using the software to provide commercial services to third parties (e.g., consulting, SaaS, analysis-for-hire).
+- Incorporating the software into a commercial product, service, or platform.
+
+### Institutional Use Beyond Academia
+Use by corporations, government agencies, or non-academic organizations without a separate license agreement.
+
+---
+
+## 3. Redistribution and Modification
+Redistribution, sublicensing, modification, or creation of derivative works is prohibited without the explicit written permission of the copyright holder.
+
+---
+
+## 4. Commercial and Non-Academic Institutional Licensing
+Separate licenses are available for commercial or non-academic institutional use.
+For inquiries, please contact **Mick West**.
+
+---
+
+## 5. Attribution
+Any permitted use must retain this license text and copyright notice.
+
+---
+
+## Disclaimer
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

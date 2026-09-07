@@ -856,8 +856,6 @@ sitch = {
     // for each type of files that is dropped (e.g. KLV, CSV, video)
     // specify what switch nodes will be updated with this new option
     // and what kind of data will be extracted from the file
-    // TODO: add support for focus tracks, which are currently using
-    // a direct GUI, and should be a CNodeSwitch
     dropTargets: {
         "track": ["cameraTrackSwitch-1", "targetTrackSwitch-2", "zoomToTrack"],
 //        "track": ["cameraTrackSwitch", "targetTrackSwitch"],
