@@ -78,10 +78,27 @@ function addHeadingIds(html) {
     });
 }
 
+// A checkout with no tags -- a shallow CI clone, a `git archive` tarball, a fresh
+// clone fetched without tags -- has nothing for `git describe` to name. Unguarded,
+// that threw and killed the whole build. Fall back instead, the way getWorktreeName()
+// and getBuildBranch() below already do; VERSION still wins when it is set.
+//
+// The fallback has to stay a dotted numeric version. CustomManagerSerialize.js splits
+// BUILD_VERSION_NUMBER on "." and does arithmetic on the parts, so a word like
+// "unknown" would put NaN in every saved sitch. 0.0.0 parses, and sorts below every
+// real release, so a version gate treats an untagged build as the oldest thing there is.
 function getVersionNumber() {
-    const gitTag = process.env.VERSION ||
-        child_process.execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
-    return gitTag
+    if (process.env.VERSION) return process.env.VERSION;
+    try {
+        return child_process.execFileSync('git', ['describe', '--tags', '--abbrev=0'], {
+            cwd: __dirname,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+    } catch (e) {
+        console.warn('webpack: no git tag found (untagged or shallow checkout) - building as 0.0.0. Set VERSION to override.');
+        return '0.0.0';
+    }
 }
 
 function getWorktreeName() {
