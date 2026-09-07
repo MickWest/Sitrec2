@@ -83,10 +83,29 @@ function addHeadingIds(html) {
 // that threw and killed the whole build. Fall back instead, the way getWorktreeName()
 // and getBuildBranch() below already do; VERSION still wins when it is set.
 //
-// The fallback has to stay a dotted numeric version. CustomManagerSerialize.js splits
+// Version stamped into a build made from a checkout with no tags. Deliberately far
+// above every exportTagNumber migration threshold -- see getVersionNumber() below --
+// and obviously synthetic, so an untagged build is recognisable in the banner.
+const UNTAGGED_VERSION = '9999.0.0';
+
+// Two constraints on the fallback value, and they point the same way.
+//
+// It has to be a dotted numeric version: CustomManagerSerialize.js splits
 // BUILD_VERSION_NUMBER on "." and does arithmetic on the parts, so a word like
-// "unknown" would put NaN in every saved sitch. 0.0.0 parses, and sorts below every
-// real release, so a version gate treats an untagged build as the oldest thing there is.
+// "unknown" would put NaN in every saved sitch.
+//
+// It also has to be HIGH, not low. That number becomes exportTagNumber in every saved
+// sitch, and exportTagNumber is a migration gate, not a version label: deserialize()
+// reads it as `?? 0`, and each migration fires BELOW a threshold
+// (CNodeTrackingOverlay < 2001001, CNodeDisplayTrack < 2005005, CNodeDisplayNightSky
+// <= 2025003, TrackManager and CNode at 2009003). A low fallback like 0.0.0 therefore
+// tells the loader that a file this build just wrote is ancient, and it "upgrades"
+// current data -- rewriting tracking keyframe coordinates, dropping track colors and
+// overwriting the sky display range. Nothing anywhere checks for a version that is too
+// NEW, so erring high is the safe direction: an untagged build is by definition built
+// from current source, so current is what it should claim. The cost is that migrations
+// added later will skip files written by an untagged build, which is an acceptable
+// trade for a build that is a development or CI artifact rather than a release.
 function getVersionNumber() {
     if (process.env.VERSION) return process.env.VERSION;
     try {
@@ -96,8 +115,9 @@ function getVersionNumber() {
             stdio: ['ignore', 'pipe', 'ignore'],
         }).trim();
     } catch (e) {
-        console.warn('webpack: no git tag found (untagged or shallow checkout) - building as 0.0.0. Set VERSION to override.');
-        return '0.0.0';
+        console.warn('webpack: no git tag found (untagged or shallow checkout) - building as '
+            + UNTAGGED_VERSION + '. Set VERSION to stamp a real version.');
+        return UNTAGGED_VERSION;
     }
 }
 
