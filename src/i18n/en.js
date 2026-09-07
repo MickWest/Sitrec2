@@ -128,6 +128,7 @@ const en = {
                 masking: "Masking Out Part of the Video",
                 starTracker: "Star Tracker",
                 pointTrack: "Point Track and Stabilization",
+                mq9Tracking: "MQ9 Tracking Simulation",
                 lensGhost: "Lens Ghosts and Reflections",
                 scriptedVideo: "Scripted Camera Moves",
                 diffractionGlare: "Diffraction Glare",

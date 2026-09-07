@@ -52,6 +52,7 @@ assistant — so if you add a doc, add it there.
 - [Point Track and Stabilization](docs/PointTrack.md)
 - [Long Exposure Simulation](docs/LongExposure.md)
 - [Lens Ghosts and Reflections](docs/LensGhost.md)
+- [MQ9 Tracking Simulation - simulating an operator acquiring and following a scene object](docs/MQ9TrackingSimulation.md)
 
 **Analysis**
 

@@ -241,6 +241,11 @@ export const helpDocs = [
         chatDesc: "Simulating a long-exposure photograph (Video → Long Exposure) so moving aircraft, satellites, and stars leave trails.",
     },
     {
+        file: "docs/MQ9TrackingSimulation", labelKey: "menus.help.documentation.mq9Tracking",
+        section: "video", menuId: "camera", role: "reference",
+        chatDesc: "The MQ9 tracking simulation (Camera > MQ9 Tracking): simulating an operator acquiring and following a rendered scene object behind the MQ9 sensor overlay. Covers the acquisition gate and how its metre label is estimated from where the boresight meets the terrain, the handoff to tracking corners, temporary loss and reacquisition, and operator control. Read for 'how do I simulate tracking an object', 'what do the tracking corners mean', or questions about the acquisition box. Note this simulates an operator tracking a SCENE object - it does not do computer vision on a loaded video, which is Point Track.",
+    },
+    {
         file: "docs/LensGhost", labelKey: "menus.help.documentation.lensGhost",
         section: "video", menuId: "video", role: "reference",
         chatDesc: "Lens ghosts and internal reflections: recognising when the 'object' in a video is an artefact of the optics rather than something in the sky, and testing that explanation geometrically. Read for 'could this be a lens flare / reflection / internal reflection', or when a light moves opposite to, or mirrored about, a bright source.",
