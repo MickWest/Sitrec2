@@ -2,6 +2,9 @@ import {MediabunnyExporter} from "./MediabunnyExporter";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {showError} from "./showError";
 import {t} from "./i18n";
+// Pure data and pure functions with no imports of their own, so this stays out of
+// the way; the heavy filter chain and its dialog are loaded on demand below.
+import {isVideoFilterActive, videoFilterFilenameSuffix} from "./videoFilters/VideoFilterSettings";
 
 const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.includes('Firefox');
 const defaultAccelerationOrder = isFirefox 
@@ -40,12 +43,31 @@ export async function createVideoExporter(formatId, options) {
         throw new Error(`Unknown video format: ${formatId}`);
     }
 
-    return new MediabunnyExporter({
+    const exporterOptions = {
         ...options,
         format: format.format,
         codec: format.codec,
         hardwareAcceleration: options.hardwareAcceleration,
-    });
+    };
+
+    // options.videoFilter holds the analog / recorded-off-a-screen settings, either
+    // chosen in the render dialog or supplied as plain data by a caller such as the
+    // benchmark recorder. Applying it HERE is what puts the filter in front of every
+    // export in the app, because they all build their encoder through this function.
+    if (options.videoFilter) {
+        const encoding = options.videoFilter.encoding;
+        if (encoding) {
+            // An explicit choice in the dialog outranks the caller's default bitrate.
+            if (encoding.bitrateMbps > 0) exporterOptions.bitrate = Math.round(encoding.bitrateMbps * 1e6);
+            if (encoding.keyFrameInterval > 0) exporterOptions.keyFrameInterval = Math.round(encoding.keyFrameInterval);
+        }
+        if (isVideoFilterActive(options.videoFilter)) {
+            const {createExporterWithFilter} = await import("./videoFilters/FilteredVideoExporter");
+            return createExporterWithFilter(exporterOptions, options.videoFilter);
+        }
+    }
+
+    return new MediabunnyExporter(exporterOptions);
 }
 
 export function getVideoExtension(formatId) {
@@ -533,6 +555,42 @@ export class VideoExportManager {
         this.fadeViewport = false;
     }
 
+    // Every user-facing render opens this first: signal format, the recorded-off-a-screen
+    // simulation and the compression settings, over a live preview of a real frame.
+    // Returns null when the user cancels, in which case the export must not start.
+    async promptExportSettings(title) {
+        const { ViewMan } = await import("./CViewManager");
+        const { par } = await import("./par");
+        const { showVideoFilterDialog } = await import("./videoFilters/VideoFilterDialog");
+
+        // Snapshot a frame for the preview. The view renderers do not set
+        // preserveDrawingBuffer, so the canvas has to be re-rendered and copied within
+        // the same task or it reads back empty.
+        let previewCanvas = null;
+        const view = ViewMan.get(this.videoExportView, false) ?? ViewMan.get("lookView", false);
+        if (view && view.canvas && view.canvas.width > 0 && view.canvas.height > 0) {
+            try {
+                view.renderCanvas(Math.floor(par.frame));
+                previewCanvas = document.createElement("canvas");
+                previewCanvas.width = view.canvas.width;
+                previewCanvas.height = view.canvas.height;
+                previewCanvas.getContext("2d").drawImage(view.canvas, 0, 0);
+            } catch (e) {
+                // No preview frame available; the dialog falls back to colour bars.
+                previewCanvas = null;
+            }
+        }
+
+        const encodingSupport = await checkVideoEncodingSupport();
+        const settings = await showVideoFilterDialog({
+            title,
+            formatOptions: getFilteredVideoFormatOptions(encodingSupport),
+            getPreviewCanvas: () => previewCanvas,
+        });
+        if (settings?.encoding?.formatId) this.videoFormat = settings.encoding.formatId;
+        return settings;
+    }
+
     async setupMenu(parentFolder, options = {}) {
         const { ViewMan } = await import("./CViewManager");
         const { setupPanoramaExport } = await import("./PanoramaExporter");
@@ -574,16 +632,18 @@ export class VideoExportManager {
                 .tooltip(t("videoExport.renderView.tooltip"));
 
             this.renderVideoFolder.add({
-                exportVideo: () => {
+                exportVideo: async () => {
                     const view = ViewMan.get(this.videoExportView, false);
-                    if (view && view.exportVideo) {
-                        // Keep single-view export behavior in sync with viewport export toggle semantics.
-                        view.exportVideo(this.videoFormat, this.exportAudio, this.waitForBackgroundLoading, {
-                            loops: this.videoExportLoops,
-                            uniqueFramesOnly: this.uniqueFramesOnly,
-                            uniqueFrameMeanAbsDiffThreshold: this.uniqueFrameMeanAbsDiffThreshold,
-                        });
-                    }
+                    if (!view || !view.exportVideo) return;
+                    const videoFilter = await this.promptExportSettings(t("videoExport.renderSingleVideo.label"));
+                    if (!videoFilter) return;
+                    // Keep single-view export behavior in sync with viewport export toggle semantics.
+                    view.exportVideo(this.videoFormat, this.exportAudio, this.waitForBackgroundLoading, {
+                        loops: this.videoExportLoops,
+                        uniqueFramesOnly: this.uniqueFramesOnly,
+                        uniqueFrameMeanAbsDiffThreshold: this.uniqueFrameMeanAbsDiffThreshold,
+                        videoFilter,
+                    });
                 }
             }, "exportVideo").name(t("videoExport.renderSingleVideo.label"))
                 .tooltip(t("videoExport.renderSingleVideo.tooltip"));
@@ -600,22 +660,34 @@ export class VideoExportManager {
             .tooltip(t("videoExport.loops.tooltip"));
 
         this.renderVideoFolder.add({
-            exportSourceVideo: () => this.exportSourceVideo()
+            exportSourceVideo: async () => {
+                const videoFilter = await this.promptExportSettings(t("videoExport.renderSource.label"));
+                if (videoFilter) this.exportSourceVideo(videoFilter);
+            }
         }, "exportSourceVideo").name(t("videoExport.renderSource.label"))
             .tooltip(t("videoExport.renderSource.tooltip"));
 
         this.renderVideoFolder.add({
-            exportViewport: () => this.exportViewportVideo()
+            exportViewport: async () => {
+                const videoFilter = await this.promptExportSettings(t("videoExport.renderViewport.label"));
+                if (videoFilter) this.exportViewportVideo({videoFilter});
+            }
         }, "exportViewport").name(t("videoExport.renderViewport.label"))
             .tooltip(t("videoExport.renderViewport.tooltip"));
 
         this.renderVideoFolder.add({
-            exportFullscreenViewport: () => this.exportFullscreenViewportVideo()
+            exportFullscreenViewport: async () => {
+                const videoFilter = await this.promptExportSettings(t("videoExport.renderFullscreen.label"));
+                if (videoFilter) this.exportFullscreenViewportVideo(videoFilter);
+            }
         }, "exportFullscreenViewport").name(t("videoExport.renderFullscreen.label"))
             .tooltip(t("videoExport.renderFullscreen.tooltip"));
 
         this.renderVideoFolder.add({
-            exportWindow: () => this.exportWindowVideo()
+            exportWindow: async () => {
+                const videoFilter = await this.promptExportSettings(t("videoExport.recordWindow.label"));
+                if (videoFilter) this.exportWindowVideo(videoFilter);
+            }
         }, "exportWindow").name(t("videoExport.recordWindow.label"))
             .tooltip(t("videoExport.recordWindow.tooltip"));
 
@@ -695,7 +767,10 @@ export class VideoExportManager {
             .tooltip(t("videoExport.fade.viewport.tooltip"));
 
         fadeFolder.add({
-            renderFade: () => this.exportFadeVideo()
+            renderFade: async () => {
+                const videoFilter = await this.promptExportSettings(t("videoExport.fade.render.label"));
+                if (videoFilter) this.exportFadeVideo(videoFilter);
+            }
         }, "renderFade").name(t("videoExport.fade.render.label"))
             .tooltip(t("videoExport.fade.render.tooltip"));
 
@@ -704,7 +779,7 @@ export class VideoExportManager {
 
     // Render the selected view (the "Render Video View" pick, normally the look view) while
     // crossfading the video overlay in and out on a seconds-based schedule.
-    async exportFadeVideo() {
+    async exportFadeVideo(videoFilter = null) {
         const { ViewMan } = await import("./CViewManager");
         const { Sit } = await import("./Globals");
         const { par } = await import("./par");
@@ -746,9 +821,9 @@ export class VideoExportManager {
             // Audio is left out either way: the schedule holds one frame or wraps the clip, so
             // there is no source timeline for an audio track to follow.
             if (this.fadeViewport) {
-                await this.exportViewportVideo({ plan, fadeOverlay, includeAudio: false });
+                await this.exportViewportVideo({ plan, fadeOverlay, includeAudio: false, videoFilter });
             } else {
-                await view.exportVideo(this.videoFormat, false, this.waitForBackgroundLoading, { plan, fadeOverlay });
+                await view.exportVideo(this.videoFormat, false, this.waitForBackgroundLoading, { plan, fadeOverlay, videoFilter });
             }
         } finally {
             fadeOverlay.transparency = savedTransparency;
@@ -777,7 +852,7 @@ export class VideoExportManager {
         }
     }
 
-    async exportSourceVideo() {
+    async exportSourceVideo(videoFilter = null) {
         const { GlobalDateTimeNode, NodeMan, Sit, setRenderOne } = await import("./Globals");
         const { par } = await import("./par");
         const { ExportProgressWidget, getExportPrefix } = await import("./utils");
@@ -864,6 +939,7 @@ export class VideoExportManager {
                 fps: plan.fps,
                 bitrate: 10_000_000,
                 keyFrameInterval: Math.max(1, Math.round(plan.fps)),
+                videoFilter,
                 videoStartDate,
                 audioBuffer,
                 audioStartTime,
@@ -903,7 +979,7 @@ export class VideoExportManager {
                     (status) => progress.setStatus(status)
                 );
 
-                const filename = `${getExportPrefix()}_source${getVideoExportSpeedSuffix(plan)}_${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.${extension}`;
+                const filename = `${getExportPrefix()}_source${getVideoExportSpeedSuffix(plan)}${videoFilterFilenameSuffix(videoFilter)}_${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.${extension}`;
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
@@ -976,7 +1052,7 @@ export class VideoExportManager {
     // being downloaded, and errors are rethrown instead of shown in an alert().
     // options.plan supplies a pre-built frame plan (Render Fade) instead of the A-B one, and
     // options.fadeOverlay is the video overlay whose opacity that plan animates.
-    async exportViewportVideo({ download = true, plan: injectedPlan = null, fadeOverlay = null, includeAudio = null } = {}) {
+    async exportViewportVideo({ download = true, plan: injectedPlan = null, fadeOverlay = null, includeAudio = null, videoFilter = null } = {}) {
         const { ViewMan } = await import("./CViewManager");
         const { GlobalDateTimeNode, NodeMan, Sit, Globals, setRenderOne } = await import("./Globals");
         const { par } = await import("./par");
@@ -1092,6 +1168,7 @@ export class VideoExportManager {
                 fps: plan.fps,
                 bitrate: 8_000_000 * scale * scale,
                 keyFrameInterval: 30,
+                videoFilter,
                 videoStartDate,
                 audioBuffer,
                 audioStartTime,
@@ -1299,7 +1376,7 @@ export class VideoExportManager {
                 );
 
                 const { getExportPrefix } = await import("./utils");
-                const filename = `${getExportPrefix()}_viewport${getVideoExportSpeedSuffix(plan)}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
+                const filename = `${getExportPrefix()}_viewport${getVideoExportSpeedSuffix(plan)}${videoFilterFilenameSuffix(videoFilter)}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
                 exportResult = { filename, size: blob.size, totalFrames: plan.totalFrames };
                 if (download) {
                     const url = URL.createObjectURL(blob);
@@ -1328,7 +1405,7 @@ export class VideoExportManager {
         return exportResult;
     }
 
-    async exportFullscreenViewportVideo() {
+    async exportFullscreenViewportVideo(videoFilter = null) {
         const { Globals } = await import("./Globals");
         const { openFullscreen, closeFullscreen } = await import("./utils");
         const { updateSize } = await import("./JetStuff");
@@ -1349,7 +1426,7 @@ export class VideoExportManager {
                 document.addEventListener('fullscreenchange', handler);
                 document.addEventListener('webkitfullscreenchange', handler);
             });
-            await this.exportViewportVideo();
+            await this.exportViewportVideo({videoFilter});
         } finally {
             closeFullscreen();
             if (uiWasVisible) {
@@ -1358,7 +1435,7 @@ export class VideoExportManager {
         }
     }
 
-    async exportWindowVideo() {
+    async exportWindowVideo(videoFilter = null) {
         const { GlobalDateTimeNode, NodeMan, Sit, setRenderOne, guiMenus } = await import("./Globals");
         const { par } = await import("./par");
         const { drawVideoWatermark, getDocumentTitle } = await import("./utils");
@@ -1494,6 +1571,7 @@ export class VideoExportManager {
                 fps: plan.fps,
                 bitrate: 8_000_000,
                 keyFrameInterval: 30,
+                videoFilter,
                 videoStartDate,
                 audioBuffer,
                 audioStartTime,
@@ -1560,7 +1638,7 @@ export class VideoExportManager {
                 );
 
                 const { getExportPrefix } = await import("./utils");
-                const filename = `${getExportPrefix()}_window${getVideoExportSpeedSuffix(plan)}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
+                const filename = `${getExportPrefix()}_window${getVideoExportSpeedSuffix(plan)}${videoFilterFilenameSuffix(videoFilter)}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;

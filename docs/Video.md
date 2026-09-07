@@ -55,6 +55,82 @@ layout first with the view presets (`1`–`8`).
 *Render Video View* lists every view that can export — by default `lookView`. Overlay views
 are not offered on their own; they composite into the viewport render.
 
+## The render dialog
+
+Every render button opens a settings dialog first. Nothing is captured until you press
+**Render**; **Cancel** or Escape backs out without starting.
+
+The dialog previews a real frame with your settings applied, updating as you change them,
+so you can judge a look in a second rather than after a five-minute export. Tick
+**Colour bars** to preview against a test pattern instead — saturated vertical edges and a
+fine grating make chroma bleed, dot crawl and rainbowing far easier to see than a
+photograph does. Your settings are remembered between exports and between sessions.
+
+### Signal format
+
+Puts the rendered frames through a simulation of an analog video path on their way to the
+encoder. This is not a colour grade with grain over it: the picture is genuinely modulated
+onto a colour subcarrier and demodulated back off it, so dot crawl, cross-colour
+rainbowing, chroma bleed and luma/chroma crosstalk arise the way they do on real hardware,
+and respond to picture content accordingly.
+
+| Format | What it is |
+|---|---|
+| **Pure digital** | No filter. The rendered frames, untouched — the previous behaviour, and still the default |
+| **NTSC (525/60 colour)** | US broadcast composite. Dot crawl and cross-colour rainbowing |
+| **EIA RS-170 (525/60 monochrome)** | The pre-colour US studio standard. Luminance only, no subcarrier |
+| **PAL (625/50 colour)** | European composite. Phase-alternating V axis, softer vertical colour |
+| **VHS (SP)** | Colour-under tape. Smeared colour, head-switching tear at the bottom, tape noise |
+| **VHS (worn, 3rd generation)** | A copy of a copy on a played-out tape. Dropouts, tracking error, grain |
+
+**Output resolution** chooses between the raster you rendered at and the format's own
+active picture — 640×480 for the 525-line formats, 768×576 for PAL. Rendering 16:9 to a 4:3
+format letterboxes it, exactly as putting widescreen footage on tape would.
+
+**Signal detail** opens the individual parameters behind whichever preset is selected:
+luma and chroma bandwidth in MHz, chroma timing error, edge pre-emphasis, comb filter
+strength, Y/C separation (0 is composite, 1 is an S-Video or component feed), hue error,
+time-base error, head switching, tape noise, dropouts, interlace combing, ghosting, scan
+lines, vertical chroma smear, and the number of tape generations to run.
+
+**Tape noise** is one level from 0 to 1, starting at 0.05. Its *character* is not a
+setting: luma noise is grain the width of the format's luma channel, colour noise is broad
+horizontal smears the width of its colour channel — about ten times wider on VHS, which
+records colour on a far narrower band than luminance. So VHS and NTSC at the same level
+still look quite different, and the level only says how much.
+The presets are derived from the published figures for each standard, so they are a
+reasonable starting point; the sliders are there for when you want a specific look.
+
+### Recorded off a screen
+
+Simulates pointing a phone at a monitor playing the video. Runs after the signal format,
+because that is the order it happens in.
+
+Three camera presets — **handheld**, **handheld (unsteady)** and **on a tripod** — set
+everything below, which you can then adjust:
+
+- **Handheld** — wobble amount, speed, and *variation*, which modulates the amount over
+  time so the shot has steady stretches and unsteady ones instead of a constant buzz.
+  Plus slow drift and rotation. The crop tightens automatically as far as it must to keep
+  a frame edge from swinging into view.
+- **Exposure** — auto exposure meters the frame and chases the target rather than snapping
+  to it, so it visibly hunts. Bias, adaptation speed, a highlight knee and a clipping
+  control for how hard the highlights blow out, black crush, black lift and bloom.
+- **Lens and screen** — zoom, keystone, barrel distortion, chromatic aberration, edge
+  softness, the screen's own pixel grid and its pitch (the moiré is the genuine beat
+  between that grid and the output raster, not a drawn-on pattern), the rolling refresh
+  beat, a reflection on the glass, vignette and sensor noise.
+
+### Compression
+
+| Control | Default | What it does |
+|---|---|---|
+| **Container / codec** | MP4 (H.264) | As the *Video Format* control below, and shown only when the browser supports more than one |
+| **Bitrate** | 8 Mbit/s | Overrides the per-render default in the table below |
+| **Keyframe interval** | 30 frames | Frames between keyframes. Lower seeks better and compresses worse |
+
+---
+
 ## Format
 
 | Option | Container | Codec |
@@ -84,7 +160,8 @@ streaming will appear to pop in during the shot.
 
 ## Bitrates
 
-Not exposed in the interface, but worth knowing when judging output quality:
+The render dialog's **Bitrate** control overrides these. They are what each render uses
+when nothing sets it — and worth knowing when judging output quality:
 
 | Render | Bitrate |
 |---|---|

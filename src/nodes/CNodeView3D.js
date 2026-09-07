@@ -1,6 +1,7 @@
 import {par} from "../par";
 import {requestCameraFocusSync} from "../CameraFocusUI";
 import {showError} from "../showError";
+import {videoFilterFilenameSuffix} from "../videoFilters/VideoFilterSettings";
 import {
     createVideoExporter,
     createVideoExportFramePlan,
@@ -558,6 +559,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 fps: plan.fps,
                 bitrate: 5_000_000,
                 keyFrameInterval: 30,
+                videoFilter: options.videoFilter ?? null,
                 videoStartDate,
                 audioBuffer,
                 audioStartTime,
@@ -682,7 +684,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     (status) => progress.setStatus(status)
                 );
                 
-                const filename = `lookview_${Sit.name || 'export'}${getVideoExportSpeedSuffix(plan)}_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.${extension}`;
+                const filename = `lookview_${Sit.name || 'export'}${getVideoExportSpeedSuffix(plan)}${videoFilterFilenameSuffix(options.videoFilter)}_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.${extension}`;
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;

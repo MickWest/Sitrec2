@@ -8,7 +8,8 @@ import {ENU2ECEF_radii, RLLAToECEF_radii, ECEFToLLAVD_radii} from "../LLA-ECEF-E
 import {getLocalUpVector, getLocalEastVector, getLocalNorthVector} from "../SphericalMath";
 import {meanSeaLevelOffset, ensureGeoidLoaded} from "../EGM96Geoid";
 import {generateWobbleOffsets} from "../TrackingWobbleMath";
-import {MediabunnyExporter} from "../MediabunnyExporter";
+import {createExporterWithFilter} from "../videoFilters/FilteredVideoExporter";
+import {resolveVideoFilterSettings, SIGNAL_FORMATS} from "../videoFilters/VideoFilterSettings";
 import {encodeMISBLocalSet} from "../MISBEncoder";
 import {botsetWobbleParams} from "../../benchmarks/botbench/lib/botsetErrors";
 import {applyVideoOffscreenEvents} from "../../benchmarks/botbench/lib/videoOffscreenEvents";
@@ -67,7 +68,14 @@ export async function prepare(plan) {
     // A normal target node makes the geometry inspectable through NodeMan.
     balloon.addInput("track", track);
     const canvas = document.createElement("canvas"); canvas.width = plan.width; canvas.height = plan.height;
-    active = {plan, sensor, target, hfov, vfov, amplitude, wobble, wobbleParams, camera, view, hud, balloon, canvas, records: []};
+    // plan.videoFilter, when present, describes the analog / recorded-off-a-screen
+    // treatment for this scenario - either a bare format name ("vhs") or a full
+    // settings object. Resolved here so a malformed spec fails before a long record.
+    // The output raster is pinned to the plan's, since the scenario's ground truth is
+    // in those pixels; a format's native raster would silently change the geometry.
+    const videoFilter = plan.videoFilter ? resolveVideoFilterSettings(plan.videoFilter) : null;
+    if (videoFilter) videoFilter.signal.resolution = "viewport";
+    active = {plan, sensor, target, hfov, vfov, amplitude, wobble, wobbleParams, camera, view, hud, balloon, canvas, videoFilter, records: []};
     if (plan.trackingSimulation) {
         camera.position.copy(sensor[0]); camera.up.copy(getLocalUpVector(sensor[0])); camera.lookAt(target[0]); camera.updateMatrixWorld(true);
         active.tracker = hud.startTrackingSimulation({camera, fps: plan.fps,
@@ -85,6 +93,7 @@ export async function prepare(plan) {
     const settled = await waitForExportFrameSettled({frame: 0, viewIds: [view.id], renderFrame: () => renderFrame(0)});
     if (settled.timedOut) throw new Error("Terrain did not finish loading before recording");
     return {hfov, vfov, amplitudeDeg: amplitude, wobbleParams, firstRangeM: range, frames: plan.frames,
+        ...(videoFilter ? {videoFilter} : {}),
         backgroundWait: {elapsedMs: settled.elapsedMs, checks: settled.checks}};
 }
 
@@ -146,8 +155,8 @@ export function renderFrame(f) {
 export async function record() {
     const a = active;
     if (!a) throw new Error("Prepare a video scenario first");
-    const exporter = new MediabunnyExporter({...a.plan, format: "mp4", codec: "avc", hardwareAcceleration: "prefer-software",
-        videoStartDate: new Date(a.plan.site.epochISO), bitrate: 5_000_000});
+    const exporter = createExporterWithFilter({...a.plan, format: "mp4", codec: "avc", hardwareAcceleration: "prefer-software",
+        videoStartDate: new Date(a.plan.site.epochISO), bitrate: 5_000_000}, a.videoFilter);
     a.records = [];
     try {
         await exporter.initialize();
@@ -157,18 +166,32 @@ export async function record() {
             // hold f fixed; only the final settled image is encoded below.
             const settled = await waitForExportFrameSettled({frame: f, viewIds: [a.view.id], renderFrame: () => renderFrame(f)});
             if (settled.timedOut) throw new Error(`Terrain did not settle at frame ${f}`);
-            a.records.push(renderFrame(f));
+            const record = renderFrame(f);
+            a.records.push(record);
             await exporter.addFrame(a.canvas, f);
+            // The recorded-off-a-screen stage MOVES the picture (handheld sway, keystone,
+            // the crop that hides it), so the truth pixel measured against the rendered
+            // frame no longer indexes the encoded one. addFrame has just filtered this
+            // frame, so the filter still holds its geometry: map the truth through it.
+            if (exporter.filter && record.targetPixel) {
+                const mapped = exporter.filter.mapSourceToOutput(record.targetPixel[0], record.targetPixel[1]);
+                if (mapped) record.targetPixelFiltered = [mapped.x, mapped.y];
+            }
             if (f % 30 === 0) {
                 window._botBenchVideo.progress = f;
                 await new Promise(r => setTimeout(r, 0));
             }
+        }
+        if (a.videoFilter && exporter.filterFailed) {
+            throw new Error("The video filter stopped partway through the recording, so this " +
+                "clip is filtered for some frames and not others - re-record it");
         }
         const blob = await exporter.finalize();
         const url = URL.createObjectURL(blob), link = document.createElement("a");
         link.href = url; link.download = `${a.plan.name}.mp4`; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
         return {records: a.records, hfov: a.hfov, vfov: a.vfov, amplitudeDeg: a.amplitude, wobbleParams: a.wobbleParams,
+            ...(a.videoFilter ? {videoFilter: a.videoFilter} : {}),
             ...(a.tracker ? {trackingTransitions: a.tracker.model.history} : {})};
     } finally {
         await exporter.dispose();
@@ -179,7 +202,10 @@ export async function record() {
 export function preview() { return active.canvas.toDataURL("image/jpeg", 0.9); }
 
 // Read the nodes produced by File > Import, not the generator's KLV buffer.
-export async function verifyImported(expected) {
+// `videoFilter` is the resolved filter settings the clip was recorded with, or null.
+// This runs in a fresh page after File > Import, so `active` is gone and the filter has
+// to be handed back in - see the grayscale check below for why it needs to know.
+export async function verifyImported(expected, videoFilter = null) {
     await ensureGeoidLoaded();
     const nodes = Object.values(NodeMan.list).map(e => e.data);
     const data = nodes.find(n => n.misb?.length === expected.length && n.misb[0]?.[2] === expected[0].values[2]);
@@ -355,7 +381,22 @@ export async function verifyImported(expected) {
             maxChroma = Math.max(maxChroma, Math.abs(pixels[i] - pixels[i + 1]), Math.abs(pixels[i] - pixels[i + 2]));
         }
         const mean = sum / (640 * 480);
-        if (mean < 5 || max - min < 100 || maxChroma > 2) throw new Error(`TS frame ${f} is blank or not grayscale`);
+        if (mean < 5 || max - min < 100) throw new Error(`TS frame ${f} is blank`);
+        // These scenes render grayscale, so any colour normally means the wrong render
+        // path produced the clip - except when a colour signal format was asked for, where
+        // chroma noise and cross-colour are the point of the exercise. A monochrome format
+        // (RS-170) still has to come back monochrome, which keeps the check meaningful for
+        // the one filtered case where it can be.
+        // The recorded-off-a-screen stage samples red and blue at different positions from
+        // green - chromatic aberration, and the edge-softness offset - so it manufactures
+        // colour out of a grayscale picture whatever the signal format is. Colour is
+        // therefore expected from a colour signal format OR from the camera stage.
+        const signal = videoFilter?.signal;
+        const colourSignal = !!signal && signal.format !== "digital"
+            && (signal.chromaGain ?? 1) > 0
+            && !SIGNAL_FORMATS[signal.format]?.mono;
+        const colourExpected = colourSignal || !!videoFilter?.screen?.enabled;
+        if (!colourExpected && maxChroma > 2) throw new Error(`TS frame ${f} is not grayscale`);
         // The three starter scenes look down at textured ground. Inspect an
         // area away from the HUD/target, which alone can disguise unloaded tiles.
         const background = ctx.getImageData(100, 140, 160, 180).data;

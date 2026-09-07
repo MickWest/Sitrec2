@@ -19,6 +19,7 @@ const {values: args} = parseArgs({options: {
     url: {type: "string"}, out: {type: "string"}, headed: {type: "boolean", default: false},
     'verify-only': {type: "boolean", default: false},
     resume: {type: "boolean", default: false}, 'software-renderer': {type: "boolean", default: false},
+    'video-filter': {type: "string"},
 }});
 const outputDir = path.resolve(args.out || path.join(root, "results", "video"));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-video-"));
@@ -42,6 +43,19 @@ try {
         recenterSpeed: args['recenter-speed'] === undefined ? undefined : Number(args['recenter-speed']),
         wobblePercent: args.wobble === undefined ? undefined : Number(args.wobble),
         wobbleDegrees: args['wobble-deg'] === undefined ? undefined : Number(args['wobble-deg'])});
+    // --video-filter puts every scenario through the export video filter: a bare signal
+    // format name ("vhs", "ntsc", "pal", "rs170", "vhsWorn"), or a JSON settings object
+    // for full control, e.g.
+    //   --video-filter='{"signal":{"format":"vhs"},"screen":{"enabled":true,"preset":"handheld"}}'
+    // It becomes part of the scenario plan, so it is recorded alongside the video and
+    // --resume treats a change of filter as a different plan.
+    if (args['video-filter']) {
+        const spec = args['video-filter'].trim().startsWith("{")
+            ? JSON.parse(args['video-filter'])
+            : args['video-filter'];
+        for (const scenario of scenarios) scenario.videoFilter = spec;
+    }
+
     fs.mkdirSync(outputDir, {recursive: true});
     if (!args['verify-only']) for (const scenario of scenarios) {
         const filename = path.join(outputDir, `${scenario.name}.video.json`);
@@ -123,7 +137,9 @@ try {
             // camera updates. Let that cascade settle before measuring pixels.
             await page.waitForFunction(() => window.Globals.pendingActions === 0 && window.Globals.wasPending === 0,
                 null, {timeout: 90000});
-            const verified = await page.evaluate(records => window._botBenchVideo.verifyImported(records), result.records);
+            const verified = await page.evaluate(
+                ({records, videoFilter}) => window._botBenchVideo.verifyImported(records, videoFilter),
+                {records: result.records, videoFilter: result.videoFilter ?? null});
             const {preview, ...roundTrip} = verified;
             fs.writeFileSync(path.join(outputDir, `${scenario.name}.roundtrip.jpg`), Buffer.from(preview.split(",")[1], "base64"));
             fs.writeFileSync(path.join(outputDir, `${scenario.name}.roundtrip.json`), JSON.stringify(roundTrip, null, 2));
@@ -147,7 +163,9 @@ try {
                 const look = window.NodeMan.get("lookView"), video = window.NodeMan.get("video");
                 return look.widthPx > 900 && look.heightPx < 500 && look.heightPx === video.heightPx;
             });
-            const layoutReport = await page.evaluate(records => window._botBenchVideo.verifyImported(records), result.records);
+            const layoutReport = await page.evaluate(
+                ({records, videoFilter}) => window._botBenchVideo.verifyImported(records, videoFilter),
+                {records: result.records, videoFilter: result.videoFilter ?? null});
             delete layoutReport.preview;
             fs.writeFileSync(path.join(outputDir, `${scenario.name}.roundtrip-layout.json`), JSON.stringify(layoutReport, null, 2));
             console.log(`Zoom/pan layout: ${JSON.stringify(layoutReport)}`);

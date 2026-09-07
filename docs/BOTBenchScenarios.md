@@ -338,6 +338,35 @@ white target, not a calibrated thermal sensor simulation. Descriptive names,
 known target dimensions and truth-sized FOV make this set unsuitable for blind
 range scoring.
 
+### Analog and off-a-screen variants
+
+`--video-filter` puts every scenario through the same export video filter the
+Video menu uses, so a set can be recorded as if it came off tape, off a
+broadcast, or off someone's phone pointed at a screen. Pass a signal format
+name — `ntsc`, `rs170`, `pal`, `vhs`, `vhsWorn` — or a JSON settings object for
+full control:
+
+```bash
+npm run bench-bot-video -- --video --count=3 --video-filter=vhs --url='https://local.metabunk.org/sitrec/?action=new'
+
+npm run bench-bot-video -- --video --count=3 \
+  --video-filter='{"signal":{"format":"vhs"},"screen":{"enabled":true,"preset":"handheld"}}' \
+  --url='https://local.metabunk.org/sitrec/?action=new'
+```
+
+The filter becomes part of the scenario plan, so it is written to the
+`.video.json` alongside the clip and `--resume` treats a change of filter as a
+different plan. The output stays 640×480/30p: the scenario's truth is expressed
+in those pixels, so a format's own native raster is not substituted.
+
+**The off-a-screen stage moves the picture** — handheld sway, keystone, barrel
+distortion, and the crop that hides the sway. Where it is enabled, each record
+gains a `targetPixelFiltered` alongside `targetPixel`: the same truth point
+mapped through that frame's geometry. Use it, not `targetPixel`, when scoring
+against the filtered video. The signal formats alone (no off-a-screen stage)
+move nothing except the tape's own time-base error, so `targetPixel` remains
+valid for those.
+
 ### Capture-style transport variants
 
 After generating a representative set into `low-wobble/` and `tracking-wobble/`
