@@ -9,6 +9,43 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.154.0 (2026-09-06)
+
+### New Features
+
+- **Diffraction PSF Studio** (a standalone page at `/tools/psf/`, linked from the Tools index): build a camera aperture — outer shape, central obstruction, spider vanes with wavy edges, an optional second stop — see the diffraction pattern it produces in real colour, preview the glare, and save it for use in a Sitrec camera. Eight editable starting points, from a plain round opening to a two-stop model.
+- **Diffraction Glare** (Camera → Camera Tweaks → *Diffraction Glare*): import a pattern made in the Diffraction PSF Studio and every bright source the look camera sees is drawn with that camera's own spikes and starburst, at their true angular size, so zooming in enlarges them; switch the effect on in Effects → Thermal/NV. If an object in footage has a spiked or star-shaped look, this is how you test whether the shape belongs to the object or to the camera. The pattern is stored with the sitch, so a shared sitch keeps its optics. Explained at Help → Documentation → *Diffraction Glare*.
+- **Physical Point Sources** (View → *Physical Point Sources*): draws stars a fixed few pixels across and planets at their true angular diameter, carrying brightness as intensity rather than as disc size — the correct mode to pair with a camera's diffraction pattern, which then produces the apparent size and the spikes. Off by default, because with no pattern loaded it looks worse: nothing turns the intensity back into visible size.
+- **Motion (Background) tracking** (Video → Point Track → *Tracking Method*): a method for the object that looks exactly like the clutter it crosses. Rather than asking what the object looks like, it measures how the scene behind it moves, predicts the background for this frame and subtracts it — whatever is left is the object. An object that stops moving relative to the ground disappears, so the older methods are still the answer there.
+- **Analyse Object** (Video → Point Track): put the cursor on the object and press it; it measures the object, sets *Motion Polarity*, *Feature Size* and *Motion Parallax Slack* to suit, and reports on the button how strongly the object stands out — a small dot on smooth sky and a soft blob on rough terrain need genuinely different settings.
+- **Show Motion Field** (Video → Point Track): draws what the tracker actually works from, which is the only way to tell "the object is not visible here" from "the search looked in the wrong place".
+- **Hand-placed track points are now protected** (Video → Point Track): tracking never overwrites one and never interpolates over one, they are marked magenta on the timeline, and *Clear Track* is split into **Clear User Points** and **Clear Auto Points** — so you can place a few points by eye through a difficult stretch, re-track, and keep them.
+- **Output Smoothing** (Video → Point Track): a centred average over 2 to 10 frames that steadies the trail, the graphs, the line of sight and stabilization, while keeping the raw measurements and your hand-placed points exactly as they are.
+- **Analysis Resolution** (Video → Point Track, Motion Analysis, Star Tracker, Horizon Extractor, Text Extraction and Camera Motion): video analysis now uses the original resolution by default instead of the reduced size that Settings applies to playback, so a small target is measured with every source pixel. *Analysis pixels* below it shows the size actually used, and changing either limit clears the decoded frames and stops a running analysis so measurements at different scales cannot mix.
+- **MQ9 Tracking** (Camera → *MQ9 Tracking*): simulate a sensor operator acquiring and following an object in the 3D scene behind the MQ9 overlay — an acquisition box that expands and hands over to shrinking tracking corners, drag in the look view to slew, *Center Tracked Object*, flashing corners and a coast while the object is lost, recovery, and a fall back to a fixed ground point when it is lost for good. Your actions are saved with the sitch and replay exactly. It follows an object in the scene; it does not analyse a loaded video, which is Point Track. Described at Help → Documentation → *MQ9 Tracking Simulation*.
+- **A video kept on the server now plays before it has finished downloading**: reopening a saved or shared sitch starts on the first frames while the rest arrives, with a panel showing progress and how far you can play whenever you reach a part not yet downloaded, and a *Retry video download* button if the download is interrupted. Scrubbing over parts already downloaded shows no panel at all.
+- **Focus Camera Here** and **Follow Camera Here** (an object's or a track's own menu): keep the main camera looking at that track and orbiting it, or move the camera along with it. They replace *Focus While Editing*, they stay on after you close the menu, and every copy of the control shows the same choice. The View menu's *Focus Track* and *Lock Track* lists now include imported, generated and hidden tracks as well.
+
+### Improvements
+
+- **New lettering for the MQ9 and Wescam overlays**: the MQ9 overlay uses an original angular display face at a smaller size with thin dark outlines, and the Wescam overlay uses proportionally spaced lettering. Both faces were drawn for Sitrec and ship with it, so an offline build has them too.
+- The **Effects** and **Lighting** menus now open with their sub-folders closed, unless a saved sitch says otherwise.
+- Exported video waits for the ground to finish sharpening before it records each frame, so a clip no longer opens on coarse terrain.
+- Imported transport-stream metadata no longer averages its recorded camera angles by default: those angles are timed to the video, and averaging them moves the reconstructed aim away from the picture it describes. Plain metadata files keep their previous setting, and so do saved sitches.
+- Metadata paired to a video by transport timestamps now places its positions on the same clock as its camera angles, so position and aim no longer drift apart.
+- **Use Mask** (Video → Point Track) now applies to the Motion (Background) method too, which additionally keeps masked pixels out of the background it builds — so a burned-in readout or reticle is much less likely to be picked up as a target.
+
+### Bug Fixes
+
+- Fixed the line of sight from a Point Track disagreeing with the tracking cursor whenever the video was decoded below its source resolution, which is the default at Balanced quality.
+- Fixed a crash when leaving a sitch that contains the MQ9 overlay, which left Sitrec half torn down.
+- Fixed the scroll wheel zooming the 3D view instead of scrolling the traverse results gallery (Traverse → *Analyze Traverse Methods...*).
+- Fixed the MQ9 overlay drifting out of line with the picture when the video was zoomed, panned or letterboxed.
+- Fixed terrain stopping short of full sharpness once its first load had finished, leaving a still view coarser than it should be.
+- Fixed decoded video frames occasionally being lost, or shown for the wrong moment, when a batch of frames finished decoding.
+- Fixed the last packet of a transport stream never being read.
+- Fixed exported video timings drifting slowly away from the chosen frame rate.
+
 ## Version 2.153.0 (2026-09-05)
 
 ### New Features
