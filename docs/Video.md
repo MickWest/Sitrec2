@@ -129,6 +129,10 @@ everything below, which you can then adjust:
 | **Bitrate** | 8 Mbit/s | Overrides the per-render default in the table below |
 | **Keyframe interval** | 30 frames | Frames between keyframes. Lower seeks better and compresses worse |
 
+**Defaults** puts the three back where they started, without touching the signal format or
+the off-a-screen settings. If your browser cannot encode MP4 it restores the container it
+can encode instead.
+
 ---
 
 ## Format

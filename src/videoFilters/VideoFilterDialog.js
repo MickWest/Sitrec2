@@ -11,6 +11,7 @@ import {AnalogVideoFilter} from "./AnalogVideoFilter";
 import {
     applyScreenPreset,
     applySignalPreset,
+    DEFAULT_ENCODING,
     defaultVideoFilterSettings,
     filterOutputSize,
     SCREEN_PRESETS,
@@ -141,6 +142,17 @@ function dropdown(parent, label, options, value, onChange) {
     select.value = value;
     select.onchange = () => onChange(select.value);
     return select;
+}
+
+// A quiet button that sits inside a settings section, rather than one of the big
+// commit buttons along the bottom of the dialog.
+function smallButton(parent, text) {
+    const btn = element("button", `
+        padding: 5px 12px; border: none; border-radius: 4px; cursor: pointer;
+        font-size: 12px; color: #ddd; background: #4a4a4a;
+    `, parent);
+    btn.textContent = text;
+    return btn;
 }
 
 function button(parent, text, background) {
@@ -397,22 +409,39 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
 
         // ── Compression ──
         const encodingBody = section(scroll, "Compression", true);
+        let codecSelect = null;
+        let encodableFormatIds = null;
         if (formatOptions && Object.keys(formatOptions).length > 0) {
             const inverted = Object.fromEntries(Object.entries(formatOptions).map(([name, id]) => [id, name]));
+            encodableFormatIds = Object.values(formatOptions);
             // A remembered container the browser cannot encode has to be corrected even
             // when there is no dropdown to correct it with - a Firefox profile carries a
             // stored "mp4-h264" that Chrome wrote, and vice versa.
             if (!inverted[settings.encoding.formatId]) {
-                settings.encoding.formatId = Object.values(formatOptions)[0];
+                settings.encoding.formatId = encodableFormatIds[0];
             }
-            if (Object.keys(inverted).length > 1) {
-                dropdown(encodingBody, "Container / codec", inverted, settings.encoding.formatId, (value) => {
+            if (encodableFormatIds.length > 1) {
+                codecSelect = dropdown(encodingBody, "Container / codec", inverted, settings.encoding.formatId, (value) => {
                     settings.encoding.formatId = value;
                 });
             }
         }
-        controls.push(slider(encodingBody, "Bitrate (Mbit/s)", settings.encoding, "bitrateMbps", 0.5, 60, 0.5, () => {}, 1));
-        controls.push(slider(encodingBody, "Keyframe interval (frames)", settings.encoding, "keyFrameInterval", 1, 120, 1, () => {}, 0));
+        const bitrateControl = slider(encodingBody, "Bitrate (Mbit/s)", settings.encoding, "bitrateMbps", 0.5, 60, 0.5, () => {}, 1);
+        const keyframeControl = slider(encodingBody, "Keyframe interval (frames)", settings.encoding, "keyFrameInterval", 1, 120, 1, () => {}, 0);
+        controls.push(bitrateControl, keyframeControl);
+
+        const encodingDefaultsRow = element("div", "display: flex; justify-content: flex-end; margin-top: 8px;", encodingBody);
+        smallButton(encodingDefaultsRow, "Defaults").onclick = () => {
+            Object.assign(settings.encoding, DEFAULT_ENCODING);
+            // The default container is MP4, which not every browser can encode. Restoring
+            // it blindly would hand the export a codec this one has no encoder for.
+            if (encodableFormatIds && !encodableFormatIds.includes(settings.encoding.formatId)) {
+                settings.encoding.formatId = encodableFormatIds[0];
+            }
+            if (codecSelect) codecSelect.value = settings.encoding.formatId;
+            bitrateControl.refresh();
+            keyframeControl.refresh();
+        };
 
         // ── Buttons ──
         const buttonRow = element("div", "display: flex; gap: 8px; margin-top: 12px; flex-shrink: 0;", dialog);
@@ -476,9 +505,13 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
 
         const onKey = (e) => {
             if (e.key === "Escape") { e.preventDefault(); cleanup(null); }
-            // Enter renders, but not while a range slider has focus - there the arrow
-            // keys and Enter belong to the control the user is adjusting.
-            else if (e.key === "Enter" && document.activeElement?.tagName !== "INPUT") {
+            // Enter renders, but not while a control has focus: on a range slider the
+            // arrow keys and Enter belong to the control being adjusted, and on a button
+            // Enter should press THAT button rather than quietly starting the export.
+            else if (e.key === "Enter"
+                && document.activeElement?.tagName !== "INPUT"
+                && document.activeElement?.tagName !== "BUTTON"
+                && document.activeElement?.tagName !== "SELECT") {
                 e.preventDefault();
                 accept();
             }
