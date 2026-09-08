@@ -1508,11 +1508,27 @@ export class CNodeTerrainUI extends CNode {
     // later stroke, undo or Clear Paint (which truncates the array in place) would
     // silently see its "snapshot" change underneath it.
     modSerialize() {
+        // "Manual Remove" (treeFlattenParams.manualEdit) is deliberately left out.
+        // It is a transient editing mode, not a property of the situation: it arms
+        // a brush that turns the next left-drag over the Google tiles into an edit,
+        // so a sitch that reopened with it on would eat the first drag of whoever
+        // loaded it. The edits themselves still persist — the dab list and "Apply
+        // Edits" are both saved as before; only the brush being ARMED is dropped.
+        const treeFlattenParams = {...this.treeFlattenParams, dabs: copyDabs(this.treeFlattenParams.dabs)};
+        delete treeFlattenParams.manualEdit;
+
         return {
             ...super.modSerialize(),
-            treeFlattenParams: {...this.treeFlattenParams, dabs: copyDabs(this.treeFlattenParams.dabs)},
+            treeFlattenParams,
             groundPaintParams: {...this.groundPaintParams, dabs: copyDabs(this.groundPaintParams.dabs)},
         };
+    }
+
+    // Disarm the manual-remove brush, keeping the buildings node in step.
+    disarmManualEdit() {
+        this.treeFlattenParams.manualEdit = false;
+        // The GUI checkbox is built with .listen(), so it follows on its own.
+        this.buildingsNode?.setManualEditEnabled(false);
     }
 
     modDeserialize(v) {
@@ -1529,6 +1545,12 @@ export class CNodeTerrainUI extends CNode {
                 this.buildingsNode.applyTreeFlattenParams();
             }
         }
+        // Every load starts with the brush off. Outside the branch above on
+        // purpose: it must also reset when the blob carries no treeFlattenParams
+        // at all (this node survives a sitch switch, so the previous sitch's mode
+        // would otherwise carry over), and it must beat a sitch saved before
+        // manualEdit stopped being serialized, which still has the flag set.
+        this.disarmManualEdit();
         if (v.groundPaintParams) {
             Object.assign(this.groundPaintParams, v.groundPaintParams);
             this.groundPaintParams.dabs = copyDabs(v.groundPaintParams.dabs);
