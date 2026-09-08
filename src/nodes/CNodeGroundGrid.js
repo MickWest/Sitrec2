@@ -345,8 +345,8 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
         return ref;
     }
 
-    createOverlayTileFromTerrainTile(tile, mapProjection, layerMask) {
-        super.createOverlayTileFromTerrainTile(tile, mapProjection, layerMask);
+    createOverlayTileFromTerrainTile(tile, mapProjection, layerMask, covered = []) {
+        super.createOverlayTileFromTerrainTile(tile, mapProjection, layerMask, covered);
         const entry = this.overlayTileMeshes.get(tile.key());
         if (!entry) return;
         const ref = this.bakeLatLonAttribute(entry.mesh, null);
