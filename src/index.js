@@ -8,6 +8,7 @@
  * - Coordinate startup lifecycle, GUI initialization, and main loop wiring.
  */
 import {ColorManagement, Group, REVISION, Scene, WebGLRenderer,} from "three";
+import {setupVideoFormatEffectsMenu} from "./videoFilters/VideoFormatLayer";
 import "./js/uPlot/uPlot.css"
 import {makeDraggable} from "./DragResizeUtils";
 import {
@@ -2013,6 +2014,10 @@ async function initializeOnce() {
     // sliders (routed in per sitch via gui: "thermalNV" / enabledGUI).
     // Hidden when a sitch leaves it empty — see showFolderIfPopulated.
     addGUIFolder("thermalNV", "Thermal/NV", "effects");
+    // Live analog / off-a-screen video format simulation. Permanent, like the folder
+    // above, and populated once at init rather than per sitch - it is not a node.
+    addGUIFolder("videoFormat", "Video Format Effects", "effects");
+    setupVideoFormatEffectsMenu();
     addTranslatedGUIMenu("lighting", "menus.lighting.title", {closeFolders: true})
         .tooltip(t("menus.lighting.tooltip"));
     addTranslatedGUIMenu("contents", "menus.contents.title")

@@ -44,8 +44,16 @@ function loadSavedSettings() {
         for (const section of ["signal", "screen", "encoding"]) {
             if (saved[section]) Object.assign(settings[section], saved[section]);
         }
-        if (!SIGNAL_FORMATS[settings.signal.format]) settings.signal.format = "digital";
         if (!SCREEN_PRESETS[settings.screen.preset]) settings.screen.preset = "handheld";
+
+        // An export starts UNFILTERED however the last one was set up. Restoring the
+        // format would mean a tape look, tried once weeks ago, silently applied to
+        // someone's next export - a filter is destructive and easy not to notice until
+        // the file is already published. What each stage was tuned TO is still restored,
+        // so re-selecting a format or re-ticking the camera brings the settings back;
+        // only the choice to apply them has to be made again, deliberately, each time.
+        settings.signal.format = "digital";
+        settings.screen.enabled = false;
     } catch (e) {
         // Corrupt or unavailable storage: fall back to defaults rather than fail to open.
     }
@@ -375,6 +383,16 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
         });
 
         const scr = settings.screen;
+
+        // The physical setup: these decide how much of the frame the screen fills, so
+        // stepping back really does let the dark room into shot around it.
+        const cameraBody = section(screenControls, "Camera and screen", true);
+        controls.push(slider(cameraBody, "Camera HFOV (deg)", scr, "hfov", 10, 140, 1, changed, 0));
+        controls.push(slider(cameraBody, "Aspect ratio", scr, "cameraAspect", 0.5, 3, 0.01, changed));
+        controls.push(slider(cameraBody, "Screen width (m)", scr, "screenWidthM", 0.1, 5, 0.01, changed));
+        controls.push(slider(cameraBody, "Distance (m)", scr, "screenDistanceM", 0.1, 10, 0.01, changed));
+        controls.push(slider(cameraBody, "Extra crop", scr, "zoom", 0.5, 2, 0.01, changed));
+
         const handheldBody = section(screenControls, "Handheld", true);
         controls.push(slider(handheldBody, "Wobble", scr, "handheld", 0, 2, 0.01, changed));
         controls.push(slider(handheldBody, "Wobble speed", scr, "handheldSpeed", 0.1, 3, 0.05, changed));
@@ -393,7 +411,6 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
         controls.push(slider(exposureBody, "Bloom", scr, "bloom", 0, 2, 0.01, changed));
 
         const lensBody = section(screenControls, "Lens and screen", false);
-        controls.push(slider(lensBody, "Zoom / crop", scr, "zoom", 1, 1.5, 0.01, changed));
         controls.push(slider(lensBody, "Keystone", scr, "keystone", -0.4, 0.4, 0.005, changed, 3));
         controls.push(slider(lensBody, "Barrel distortion", scr, "barrel", 0, 0.3, 0.005, changed, 3));
         controls.push(slider(lensBody, "Chromatic aberration", scr, "aberration", 0, 0.01, 0.0002, changed, 4));
@@ -404,6 +421,8 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
         controls.push(slider(lensBody, "Beat bars", scr, "beatBars", 0.5, 5, 0.1, changed, 1));
         controls.push(slider(lensBody, "Beat speed", scr, "beatSpeed", 0, 0.5, 0.005, changed, 3));
         controls.push(slider(lensBody, "Glass reflection", scr, "glare", 0, 0.5, 0.005, changed, 3));
+        controls.push(slider(lensBody, "Bezel width", scr, "bezelWidth", 0, 0.15, 0.002, changed, 3));
+        controls.push(slider(lensBody, "Bezel brightness", scr, "bezelLevel", 0, 0.5, 0.005, changed, 3));
         controls.push(slider(lensBody, "Vignette", scr, "vignette", 0, 1, 0.01, changed));
         controls.push(slider(lensBody, "Sensor noise", scr, "noise", 0, 0.15, 0.002, changed, 3));
 

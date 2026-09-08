@@ -122,6 +122,8 @@ export const SCREEN_PRESETS = {
     handheld: {
         name: "Phone, handheld",
         values: {
+            hfov: 65, cameraAspect: 16 / 9, screenWidthM: 1.2, screenDistanceM: 0.9,
+            bezelWidth: 0.025, bezelLevel: 0.1,
             handheld: 0.5, handheldSpeed: 1.0, handheldDrift: 0.5, handheldRotation: 0.5,
             handheldVariation: 0.6, zoom: 1.06, keystone: 0.10, barrel: 0.06,
             aberration: 0.0015, edgeSoftness: 0.7,
@@ -135,6 +137,8 @@ export const SCREEN_PRESETS = {
     handheldRough: {
         name: "Phone, handheld (unsteady)",
         values: {
+            hfov: 65, cameraAspect: 16 / 9, screenWidthM: 1.2, screenDistanceM: 0.9,
+            bezelWidth: 0.025, bezelLevel: 0.1,
             handheld: 1.0, handheldSpeed: 1.6, handheldDrift: 0.9, handheldRotation: 1.0,
             handheldVariation: 1.0, zoom: 1.12, keystone: 0.18, barrel: 0.09,
             aberration: 0.0025, edgeSoftness: 1.2,
@@ -148,6 +152,8 @@ export const SCREEN_PRESETS = {
     tripod: {
         name: "Phone, on a tripod",
         values: {
+            hfov: 65, cameraAspect: 16 / 9, screenWidthM: 1.2, screenDistanceM: 0.9,
+            bezelWidth: 0.025, bezelLevel: 0.1,
             handheld: 0.05, handheldSpeed: 0.4, handheldDrift: 0.2, handheldRotation: 0.1,
             handheldVariation: 0.2, zoom: 1.02, keystone: 0.05, barrel: 0.04,
             aberration: 0.001, edgeSoftness: 0.4,

@@ -20,7 +20,7 @@ import {
     TAPE_SHADER,
 } from "./videoFilterShaders";
 import {SIGNAL_FORMATS} from "./VideoFilterSettings";
-import {mapSourceToOutputPixels} from "./screenGeometry";
+import {mapSourceToOutputPixels, screenFill} from "./screenGeometry";
 
 // Deterministic 1D value noise for the slow drifts. Sines rather than a hash table so
 // the motion is reproducible across runs and machines without carrying any state.
@@ -110,8 +110,11 @@ export class AnalogVideoFilter {
         }
     }
 
+    // Null once disposed, rather than throwing. Cleanup code reaches for the canvas to
+    // detach it from the DOM, and having that throw halfway through leaves the caller
+    // holding a half-released filter it believes is still alive.
     get canvas() {
-        return this.ctx.canvas;
+        return this.ctx ? this.ctx.canvas : null;
     }
 
     // A bandwidth in MHz becomes a gaussian sigma in pixels of the working raster:
@@ -161,10 +164,11 @@ export class AnalogVideoFilter {
 
         // Crop in far enough that the wobble never swings a frame edge into view. The
         // authored zoom wins when it is larger; this only ever raises it.
-        const needed = 1 + 2.2 * Math.max(Math.abs(ox), Math.abs(oy)) + 0.6 * s.keystone + 0.6 * Math.abs(rot);
-        const zoom = Math.max(s.zoom, needed) * breathe;
-
-        return [ox, oy, rot, zoom];
+        // No crop guard any more: how the screen sits in the frame is decided by the lens
+        // angle, the screen's width and the distance to it. If that framing leaves room
+        // visible around the screen, the wobble should show it moving - which is the
+        // whole point of describing the setup physically.
+        return [ox, oy, rot, s.zoom * breathe];
     }
 
     // Meter the frame the way a phone does, and let the exposure chase the target rather
@@ -312,6 +316,9 @@ export class AnalogVideoFilter {
         this.updateExposure(sourceCanvas);
         // Kept on the instance so mapSourceToOutput can invert this frame's geometry.
         this.lastHandheld = this.handheldTransform(t);
+        // The picture being filtered is what the screen is showing, so it sets the
+        // screen's shape; the rest of the framing comes from the physical setup.
+        const fill = screenFill(this.screen, this.width / this.height);
 
         this.ctx.run(this.programs.bright, {uSrc: this.t0, uThreshold: 0.6}, this.b0);
         this.ctx.run(this.programs.blur, {uSrc: this.b0, uDirection: [1 / this.b0.width, 0]}, this.b1);
@@ -322,6 +329,8 @@ export class AnalogVideoFilter {
             uBloom: this.b0,
             uSize: [this.width, this.height],
             uAspect: this.width / this.height,
+            uCameraAspect: fill.cameraAspect,
+            uFill: [fill.fillX, fill.fillY],
             uHandheld: this.lastHandheld,
             uBarrel: s.barrel,
             uKeystone: s.keystone,
@@ -339,6 +348,10 @@ export class AnalogVideoFilter {
             uBlackLift: s.blackLift,
             uBloomAmount: s.bloom,
             uGlare: s.glare,
+            // A physical bezel is the same width all the way round, so in screen uv the
+            // vertical margin is scaled by the screen's own aspect.
+            uBezel: [s.bezelWidth ?? 0, (s.bezelWidth ?? 0) * (this.width / this.height)],
+            uBezelLevel: Math.pow(Math.max(s.bezelLevel ?? 0, 0), 2.2),
             // The reflection sits on the glass, so it slides about as the phone moves.
             uGlarePos: [0.5 + 0.25 * cnoise(t * 0.11 + 5), 0.55 + 0.2 * cnoise(t * 0.09 + 15)],
             uVignette: s.vignette,
