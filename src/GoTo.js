@@ -1,7 +1,8 @@
 // One text box's worth of navigation: a frame number, a date and/or time, a
-// coordinate in any supported format, or a place name. Lives here rather than in
-// the "G" key handler because pasting or dropping text onto the app goes through
-// exactly the same chain — whatever you can type into Go To, you can paste.
+// coordinate in any supported format, a place name, or a TLE. Lives here rather
+// than in the "G" key handler because pasting or dropping text onto the app goes
+// through exactly the same chain — whatever you can type into Go To, you can
+// paste.
 
 import {par} from "./par";
 import {GlobalDateTimeNode, Sit, setRenderOne} from "./Globals";
@@ -10,6 +11,7 @@ import {lastSitFrame} from "./UpdateSitFrames";
 import {EventManager} from "./CEventManager";
 import {goToLatLon, resolveLocationString} from "./CoordinateInput";
 import {applyDateTimeString} from "./DateTimeParser";
+import {importPastedTLE} from "./TLEPaste";
 
 // A single bare number - anything else is treated as a location, not a frame.
 // Decimals are accepted (and truncated) because the old number-only prompt did
@@ -43,8 +45,8 @@ export function goToFrame(f) {
 }
 
 /**
- * Act on a line of Go To text: frame, then date/time, then coordinate, then
- * place name.
+ * Act on a line of Go To text: frame, then TLE, then date/time, then coordinate,
+ * then place name.
  *
  * @param {string} text
  * @returns {Promise<boolean>} false only when nothing recognised it, so the
@@ -62,6 +64,12 @@ export async function applyGoToString(text) {
         goToFrame(parseInt(text, 10));
         return true;
     }
+
+    // A pasted or typed two-line element set, which becomes a satellite. Tried
+    // early because it is decided by structure rather than by a lookup: it takes
+    // the text only if the TLE field grammar accounts for all of it, so nothing
+    // the other readings would have claimed can reach it.
+    if (await importPastedTLE(text)) return true;
 
     // A date and/or time, applied as if typed into the Time menu. Safe to try
     // before coordinates: the parser requires the whole string to be date/time
