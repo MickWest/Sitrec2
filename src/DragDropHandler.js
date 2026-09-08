@@ -1219,8 +1219,8 @@ class CDragDropHandler {
     // have been handled before we got here). It goes to the same parser as the
     // "G" (Go To) prompt, so anything you can type there works as a paste too: a
     // frame number, a date and/or time, a coordinate in any supported format
-    // — "38.73,-120.56", "38.73,-120.56,100000", DMS, MGRS, ECEF x,y,z — or a
-    // place name.
+    // — "38.73,-120.56", "38.73,-120.56,100000", DMS, MGRS, ECEF x,y,z — a place
+    // name, or the two or three lines of a TLE.
     async uploadText(text) {
         try {
             if (await applyGoToString(text)) return;
@@ -1231,7 +1231,7 @@ class CDragDropHandler {
         // Long enough to show a coordinate or an address in full, short enough
         // that a stray paste of a whole document doesn't fill the screen.
         const shown = text.length > 120 ? text.slice(0, 120) + "…" : text;
-        showError(`"${shown}" is not a frame number, a date/time, a coordinate, or a place we could find.`);
+        showError(`"${shown}" is not a frame number, a date/time, a coordinate, a TLE, or a place we could find.`);
     }
 
 

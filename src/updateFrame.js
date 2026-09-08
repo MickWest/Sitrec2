@@ -29,9 +29,9 @@ export function updateFrame(elapsed) {
 
             });
 
-            // "G" = Go To: one prompt that takes a frame number, a date and/or
-            // time, a coordinate in any supported format, or a place name —
-            // tried in that order.
+            // "G" = Go To: one prompt that takes a frame number, a two-line
+            // element set, a date and/or time, a coordinate in any supported
+            // format, or a place name — tried in that order.
             // The initKeyboard() dispatch bails on text-input focus, so this only
             // fires outside input fields (and the prompt's own field is isolated).
             KeyMan.key('g').onDown((e) => {
@@ -42,13 +42,13 @@ export function updateFrame(elapsed) {
                 // Opens blank: the box takes places, coordinates and times as
                 // well as frames, so pre-filling the current frame number would
                 // just be something to clear.
-                showPrompt("Frame, date/time, coordinates, or place name:", {
+                showPrompt("Frame, date/time, coordinates, place name, or TLE:", {
                     title: "Go To",
                 }).then(async (result) => {
                     if (result === null || result.trim() === "") return;
                     const text = result.trim();
                     if (!await applyGoToString(text)) {
-                        showError(`Go To: "${text}" is not a frame number, a date/time, a coordinate, or a place we could find.`);
+                        showError(`Go To: "${text}" is not a frame number, a date/time, a coordinate, a TLE, or a place we could find.`);
                     }
                 });
             });
