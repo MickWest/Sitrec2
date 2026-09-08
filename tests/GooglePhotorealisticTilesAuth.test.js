@@ -15,6 +15,7 @@ jest.mock("3d-tiles-renderer/plugins", () => {
 
     class CesiumIonAuthPlugin {
         constructor() {
+            this.auth = {refreshToken: jest.fn(async options => options)};
             this._nextFetchResult = Promise.resolve({
                 ok: true,
                 headers: {
@@ -23,7 +24,8 @@ jest.mock("3d-tiles-renderer/plugins", () => {
             });
         }
 
-        fetchData() {
+        fetchData(uri, options) {
+            this._lastFetchOptions = options;
             return this._nextFetchResult;
         }
     }
@@ -63,6 +65,15 @@ import {
 } from "../src/GooglePhotorealisticTilesAuth";
 
 describe("Google Photorealistic root request caching", () => {
+    test("Ion endpoint lookup and tiles send only the origin while preserving request options", async () => {
+        const plugin = new TrackedCesiumIonAuthPlugin({apiToken: "test-key"});
+        const options = {headers: {Accept: "application/json"}, referrerPolicy: "unsafe-url"};
+        expect(await plugin.auth.refreshToken(options)).toEqual({...options, referrerPolicy: "strict-origin"});
+        await plugin.fetchData("https://assets.cesium.com/example.json", options);
+        expect(plugin._lastFetchOptions).toEqual({...options, referrerPolicy: "strict-origin"});
+        expect(options.referrerPolicy).toBe("unsafe-url");
+    });
+
     beforeEach(() => {
         _resetSharedGooglePhotorealisticStateForTests();
         mockTrackGoogle3DRootSession.mockReset();

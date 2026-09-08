@@ -51,8 +51,10 @@ FROM ${BASE_IMAGE}
 # falls accordingly. Leave it at 1 for the published image, where GFS works.
 ARG WITH_GFS_WIND=1
 
-RUN apt-get update && apt-get install -y libzip-dev libonig-dev \
-    && docker-php-ext-install zip mbstring iconv \
+# GD with JPEG support is required by the Street View panorama stitcher.
+RUN apt-get update && apt-get install -y libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev \
+    && docker-php-ext-configure gd --with-jpeg \
+    && docker-php-ext-install zip mbstring iconv gd \
     && if [ "$WITH_GFS_WIND" = "1" ]; then \
            apt-get install -y python3 python3-pip \
            && pip3 install --no-cache-dir --break-system-packages eccodes certifi; \

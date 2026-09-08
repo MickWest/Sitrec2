@@ -2,6 +2,7 @@ import {SITREC_SERVER} from "../src/configUtils";
 import {GlobalDateTimeNode, NodeMan} from "../src/Globals";
 import {ECEFToLLAVD_radii} from "../src/LLA-ECEF-ENU";
 import {assert} from "../src/assert";
+import {getEnv} from "../src/envUtils";
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -19,7 +20,7 @@ export const _configParams = {
             mapURL: (z, x, y, layer) => {
                 // direct URL to the MapBox tile
                 // this is the URL that is used by the MapBox GL JS library
-                return `https://api.mapbox.com/v4/mapbox.${layer}/${z}/${x}/${y}@2x.jpg80?access_token=${process.env.MAPBOX_TOKEN}`
+                return `https://api.mapbox.com/v4/mapbox.${layer}/${z}/${x}/${y}@2x.jpg80?access_token=${getEnv("MAPBOX_TOKEN", process.env.MAPBOX_TOKEN)}`
             },
             layers: {
                 "satellite": {
@@ -76,8 +77,7 @@ export const _configParams = {
         osm: {
             name: "Open Streetmap",
             mapURL: (z,x,y) => {
-//                return SITREC_SERVER+"cachemaps.php?url=" + encodeURIComponent(`https://c.tile.openstreetmap.org/${z}/${x}/${y}.png`)
-                return `https://c.tile.openstreetmap.org/${z}/${x}/${y}.png`
+                return `https://tile.openstreetmap.org/${z}/${x}/${y}.png`
             },
             maxZoom: 19,
             supportsOceanSurface: true, // OpenStreetMap can have ocean surface overlay
@@ -86,6 +86,7 @@ export const _configParams = {
             // the tile texture; sources without it get no reflection.
             waterColor: [170, 211, 223],
             attribution: "\u00a9 OpenStreetMap contributors",
+            requiredAttribution: true,
             termsURL: "https://www.openstreetmap.org/copyright",
         },
         maptiler: {
@@ -113,7 +114,7 @@ export const _configParams = {
             },
 
             mapURL: (z,x,y, layerName, layerType) => {
-                return(`https://api.maptiler.com/tiles/${layerName}/${z}/${x}/${y}.${layerType}?key=${process.env.MAPTILER_KEY}`); // key is metabunk specific - replace with your own
+                return(`https://api.maptiler.com/tiles/${layerName}/${z}/${x}/${y}.${layerType}?key=${getEnv("MAPTILER_KEY", process.env.MAPTILER_KEY)}`);
             },
             maxZoom: 16,
             supportsOceanSurface: true, // MapTiler satellite imagery can have ocean surface overlay

@@ -1945,15 +1945,17 @@ export class CNodeTerrainUI extends CNode {
     }
 
     updateAttribution() {
+        const googleActive = this.isGooglePhotorealisticActive();
+        const mapSource = googleActive ? null : this.mapSources[this.mapType];
         if (!Globals.settings?.showAttribution) {
-            setMapAttribution(null);
+            // Providers can require a permanently visible map credit.
+            setMapAttribution(mapSource?.requiredAttribution ? mapSource : null);
             setElevationAttribution(null);
             setTilesAttribution("");
             return;
         }
-        const googleActive = this.isGooglePhotorealisticActive();
         // Google 3D tiles replace the basemap, so hide map attribution when active
-        setMapAttribution(googleActive ? null : this.mapSources[this.mapType]);
+        setMapAttribution(mapSource);
         setElevationAttribution(this.elevationSources[this.elevationType]);
         setTilesAttribution(this.buildingsNode ? this.buildingsNode.getAttribution() : "");
     }

@@ -1169,13 +1169,14 @@ Both are resolved in `scripts/buildTarget.js`. Everything else in the checkout, 
 
 ### Production Server Requirements
 
-The Docker images (`Dockerfile`, `Dockerfile.dev`, `Dockerfile.release`) already include everything below. Bare-metal / non-Docker deploys must install it manually on the server.
+The production Docker images (`Dockerfile`, `Dockerfile.release`) include the dependencies below. Bare-metal / non-Docker deploys must install it manually on the server.
 
 | Feature | Requirement |
 |---------|-------------|
 | PHP backend | PHP 8.4.1+ with CLI, XML, mbstring, cURL and ZIP extensions |
+| Street View panoramas | PHP GD with JPEG support, included in the container images. The metadata lookup can succeed even when GD is missing; verify an actual panorama image. |
 | PHP dependencies (build checkout) | Composer; run `composer install` before `npm run deploy` so `sitrecServer/vendor/` is included in the output |
-| Wind visualization | `python3`, `pip3`, and the pip packages `eccodes` and `certifi` — `sitrecServer/windProxy.php` shells out to `tools/fetch_wind.py`, which parses GRIB2 with `eccodes`. Without these, every wind request returns HTTP 502. |
+| Wind visualization | `python3`, `pip3`, and the pip packages `eccodes` and `certifi`. `sitrecServer/windProxy.php` launches `tools/fetch_wind.py` directly using `proc_open`, which must remain available in PHP. Shell-command functions such as `shell_exec` can stay disabled. |
 | Wind cache dir | `data/wind/` writable by the web-server user (auto-created on first request if the parent is writable). |
 
 One-time setup on a current Ubuntu / Debian server whose package repositories provide PHP
@@ -1183,13 +1184,25 @@ One-time setup on a current Ubuntu / Debian server whose package repositories pr
 
 ```bash
 apt-get update
-apt-get install -y php-cli php-xml php-mbstring php-curl php-zip python3 python3-pip
+apt-get install -y php-cli php-xml php-mbstring php-curl php-zip php-gd python3 python3-pip
 pip3 install --no-cache-dir --break-system-packages eccodes certifi
 ```
 
 Confirm the installed PHP version with `php -v`. The current Composer lock file needs PHP
 8.4.1 or newer on both the build machine and the server. `--break-system-packages` is needed on distributions that
 mark the system Python environment as externally managed (PEP 668).
+
+For a reverse proxy with a Content Security Policy, permit `blob:` in Sitrec's
+`connect-src` for locally loaded 3D models, and `wss://stream.aisstream.io` for the
+optional AIS ship feed. Mapbox tiles, OpenStreetMap tiles and Cesium authentication
+use an origin-only referrer for provider identification and URL-restricted browser
+tokens; they do not send the page path or query. OpenStreetMap uses the canonical
+`https://tile.openstreetmap.org/{z}/{x}/{y}.png` endpoint with normal browser HTTP
+caching. Its required attribution stays visible when the optional credits setting
+is off. Follow the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/):
+do not bulk download, prefetch regions, or bypass the browser cache.
+Container map URLs read the runtime Mapbox/MapTiler keys, so changing deployment
+configuration does not require baking those keys into a new image.
 
 On the build machine, install the locked PHP dependencies in the source checkout before
 building and transferring `dist/`:

@@ -15,6 +15,7 @@ function logNetwork(url, status) {
 const requestQueue = [];
 let activeRequests = 0;
 const MAX_CONCURRENT_REQUESTS = 5;
+const OSM_TILE_URL_PATTERN = /^https:\/\/(?:[abc]\.)?tile\.openstreetmap\.org\//i;
 
 // ESRI World Imagery's "Map Data Not Yet Available" placeholder tile is
 // returned with HTTP 200 OK for any tile beyond the available zoom level
@@ -45,6 +46,15 @@ async function isLikelyEsriPlaceholderTile(url, blob) {
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');
     return hashHex === ESRI_PLACEHOLDER_SHA256;
+}
+
+// OSM can serve this access-block notice as a valid PNG with HTTP 200.
+// Match the content, not just its dimensions or size: real tiles vary in size.
+async function isOsmBlockedTile(url, blob) {
+    if (!OSM_TILE_URL_PATTERN.test(url) || blob.size !== 6987) return false;
+    const hash = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+    return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('')
+        === 'b02c44252dac5a5e820ecef1e9bf9200e9407c042df668a466a1aa81a9ecca7a';
 }
 
 function processQueue() {
@@ -100,7 +110,14 @@ export function loadTextureWithRetries(url, maxRetries = 0, delay = 100, current
       const currentUrl = url[urlIndex];
       logNetwork(currentUrl, 'pending');
 
-      fetch(currentUrl, {signal: abortSignal ?? undefined})
+      // Mapbox token restrictions and OSM's tile policy require the app origin.
+      // Limit this exception to those hosts; never send the page path/query.
+      // Keep default browser caching and identification (no custom headers).
+      const fetchOptions = {signal: abortSignal ?? undefined};
+      if (/^https:\/\/api\.mapbox\.com\//.test(currentUrl) || OSM_TILE_URL_PATTERN.test(currentUrl)) {
+        fetchOptions.referrerPolicy = 'strict-origin';
+      }
+      fetch(currentUrl, fetchOptions)
         .then(response => {
           if (abortSignal?.aborted) throw new Error('Aborted');
 
@@ -124,6 +141,10 @@ export function loadTextureWithRetries(url, maxRetries = 0, delay = 100, current
           if (await isLikelyEsriPlaceholderTile(currentUrl, blob)) {
             logNetwork(currentUrl, 'placeholder');
             throw new Error('PlaceholderTile');
+          }
+          if (await isOsmBlockedTile(currentUrl, blob)) {
+            console.warn('OpenStreetMap blocked a tile request. Check identification, caching and the tile usage policy.');
+            throw new Error('BlockedTile');
           }
           return blob;
         })
@@ -170,7 +191,7 @@ export function loadTextureWithRetries(url, maxRetries = 0, delay = 100, current
           // The ESRI placeholder is deterministic — the server returns the same
           // placeholder bytes for this URL on every request — so fallback URLs
           // and retries are pure waste. Go straight to the terminal branch.
-          const deterministicFailure = err.message === 'PlaceholderTile';
+          const deterministicFailure = err.message === 'PlaceholderTile' || err.message === 'BlockedTile';
 
           // Try next URL in the list
           if (!deterministicFailure && urlIndex < url.length - 1) {

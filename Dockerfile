@@ -81,9 +81,10 @@ RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoload
 # We're copying the built app from the first stage to this image
 FROM php:8.4-apache
 
-RUN apt-get update && apt-get install -y libzip-dev libonig-dev \
+RUN apt-get update && apt-get install -y libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev \
     python3 python3-pip \
-    && docker-php-ext-install zip mbstring iconv \
+    && docker-php-ext-configure gd --with-jpeg \
+    && docker-php-ext-install zip mbstring iconv gd \
     && pip3 install --no-cache-dir --break-system-packages eccodes certifi \
     && rm -rf /var/lib/apt/lists/*
 

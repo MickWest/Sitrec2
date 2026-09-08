@@ -155,6 +155,16 @@ export class SharedGoogleCloudAuthPlugin extends GoogleCloudAuthPlugin {
 }
 
 export class TrackedCesiumIonAuthPlugin extends CesiumIonAuthPlugin {
+    constructor(options) {
+        super(options);
+        // URL-restricted Ion tokens need the application's origin. The library's
+        // initial endpoint lookup bypasses renderer.fetchOptions, so apply this
+        // to its authentication helper as well as tile requests below. Never
+        // send the page path or query (which can contain a shared sitch URL).
+        const refreshToken = this.auth.refreshToken.bind(this.auth);
+        this.auth.refreshToken = options => refreshToken({...options, referrerPolicy: "strict-origin"});
+    }
+
     trackBytesFromResponse(response) {
         if (!response || typeof response !== "object") return;
         const headers = response.headers;
@@ -168,7 +178,7 @@ export class TrackedCesiumIonAuthPlugin extends CesiumIonAuthPlugin {
     }
 
     fetchData(uri, options) {
-        const result = super.fetchData(uri, options);
+        const result = super.fetchData(uri, {...options, referrerPolicy: "strict-origin"});
         if (result) {
             TileUsageTracker.trackCesiumOSM3DTile();
         }

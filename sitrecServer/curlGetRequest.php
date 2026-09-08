@@ -43,7 +43,9 @@ function curlGetRequest($url, $extraHeaders = [], $timeoutSec = 0) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     $data = curl_exec($ch);
     if ($data === false) {
-        $tlsErrors = [CURLE_SSL_CONNECT_ERROR, CURLE_PEER_FAILED_VERIFICATION, CURLE_SSL_CACERT_BADFILE];
+        // PHP exposes libcurl's peer-verification error under CURLE_SSL_CACERT;
+        // the newer libcurl alias is not defined by every PHP cURL extension.
+        $tlsErrors = [CURLE_SSL_CONNECT_ERROR, CURLE_SSL_CACERT, CURLE_SSL_CACERT_BADFILE];
         sitrecAuditWrite('storage.fetch', 'failure',
             in_array(curl_errno($ch), $tlsErrors, true) ? 'tls_error' : 'transport_error');
     }

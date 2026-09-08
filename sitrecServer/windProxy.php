@@ -76,17 +76,52 @@ $extraPaths = implode(':', array_filter([
     '/home/node/.local/bin',
 ]));
 
-$cmd = sprintf(
-    'export PATH=%s:$PATH && python3 %s --date %s --hour %s --level %s --output %s 2>&1',
-    escapeshellarg($extraPaths),
-    escapeshellarg($script),
-    escapeshellarg($date),
-    escapeshellarg((string)(int)$cycleHour),
-    escapeshellarg($level),
-    escapeshellarg($cacheDir)
-);
+// An argument array launches Python directly, including on deployments that
+// disable shell_exec(). Request values never become shell syntax.
+$environment = getenv();
+$environment['PATH'] = $extraPaths . ':' . ($environment['PATH'] ?? '/usr/bin:/bin');
+$command = ['python3', $script, '--date', $date, '--hour', (string)$cycleHour,
+    '--level', $level, '--output', $cacheDir];
+$process = proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'],
+    2 => ['redirect', 1]], $pipes, null, $environment);
+$output = '';
+$timedOut = false;
+if (is_resource($process)) {
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    // Bound both wall time and diagnostics; PHP's execution limit does not
+    // reliably include time spent waiting for a child process on Unix.
+    $deadline = microtime(true) + 100;
+    while (true) {
+        $chunk = stream_get_contents($pipes[1]);
+        $output .= substr($chunk === false ? '' : $chunk, 0, max(0, 32768 - strlen($output)));
+        if (!proc_get_status($process)['running']) {
+            break;
+        }
+        if (microtime(true) >= $deadline) {
+            $timedOut = true;
+            proc_terminate($process);
+            usleep(100000);
+            if (proc_get_status($process)['running']) {
+                proc_terminate($process, 9);
+            }
+            break;
+        }
+        usleep(50000);
+    }
+    $chunk = stream_get_contents($pipes[1]);
+    $output .= substr($chunk === false ? '' : $chunk, 0, max(0, 32768 - strlen($output)));
+    fclose($pipes[1]);
+    proc_close($process);
+} else {
+    $output = 'Unable to start the wind data fetcher';
+}
 
-$output = shell_exec($cmd);
+if ($timedOut) {
+    http_response_code(504);
+    echo json_encode(['error' => 'Wind data fetch timed out; please retry']);
+    exit;
+}
 
 // Check for any cycle that was written
 for ($h = $cycleHour; $h >= 0; $h -= 6) {

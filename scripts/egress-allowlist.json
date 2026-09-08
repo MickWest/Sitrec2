@@ -179,9 +179,27 @@
     },
     {
       "host": "www.ncei.noaa.gov",
-      "purpose": "the list of sounding stations",
-      "trigger": "the user opens the sounding menu",
-      "mayReceive": ["none"]
+      "purpose": "sounding station lists and IGRA observation archives selected by station and date",
+      "trigger": "the user selects an archived sounding; the station menu uses a bundled station list",
+      "mayReceive": ["identifier", "time"]
+    },
+    {
+      "host": "nomads.ncep.noaa.gov",
+      "purpose": "NOAA GFS global wind grids fetched by the server; no viewed position",
+      "trigger": "the user enables GFS wind for a date, cycle and pressure level",
+      "mayReceive": ["time"]
+    },
+    {
+      "host": "noaa-gfs-bdp-pds.s3.amazonaws.com",
+      "purpose": "archived NOAA GFS global wind grids fetched by the server",
+      "trigger": "a requested GFS cycle is unavailable from the primary source",
+      "mayReceive": ["time"]
+    },
+    {
+      "host": "stream.aisstream.io",
+      "purpose": "AIS vessel positions over a secure WebSocket, with the user's own key and subscribed bounding boxes",
+      "trigger": "the user enters a key and enables the ship feed",
+      "mayReceive": ["coarse-area"]
     },
     {
       "host": "api.v2.sondehub.org",
