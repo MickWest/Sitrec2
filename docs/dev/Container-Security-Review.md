@@ -291,13 +291,22 @@ scope. Verify it by reading a report — the mapping is printed in it, not asser
 ### Build provenance — signed, and verifiable by digest
 
 Every published image carries a Sigstore-signed provenance attestation recording which
-workflow, at which commit, on which runner produced that exact digest. Both architectures
-get one, generated in the `package` job right after each push. Check it with no local
-tooling beyond the GitHub CLI:
+workflow, at which commit, on which runner produced that exact digest. Check it with no
+local tooling beyond the GitHub CLI:
 
 ```bash
 gh attestation verify oci://ghcr.io/mickwest/sitrec2:<tag> --repo MickWest/Sitrec2
 ```
+
+Three attestations are generated per release, because a published image is two kinds of
+object. Each architecture gets one in the `package` job, on the digest of that platform's
+manifest — two of the three. The multi-arch index gets the third, in the `manifest` job,
+once it exists. That last one is what the command above actually checks: a tag resolves to
+the index, so the index digest is the digest `gh` asks about. It is also generated before
+the release tags are, so a tag anyone can pull never exists without it. Attesting only the per-architecture images leaves
+that command answering HTTP 404, which is what it did for every release up to and
+including 2.154.0 — those carry no attestation that can be verified against a published
+digest, and no change to the pipeline can add one after the fact.
 
 That answers "did this image really come from this source, built by this pipeline" without
 trusting the tag, the registry, or us. It is the evidence a supply-chain reviewer asks for

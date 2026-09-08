@@ -11,10 +11,10 @@ name: Cleanup container images
 #      implicitly preserved because it always points at the newest semver, which
 #      stays in the kept set.
 #
-#   3. Delete orphaned untagged manifests (platform children and SLSA provenance
-#      attestations from deleted indexes), keeping the 10 newest for safety.
+#   3. Delete untagged manifests that nothing references any more. "Untagged" alone
+#      is NOT a safe test — see the long comment on that step.
 #
-# Manual trigger accepts dry_run=true to preview steps 1 and 2 without deleting.
+# Manual trigger accepts dry_run=true to preview all three steps without deleting.
 
 on:
   schedule:
@@ -36,17 +36,25 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
     steps:
-      - name: Prune leftover build-<arch>-<sha> tags
+      - name: Prune leftover build-* tags
         run: |
-          # Any version tagged build-amd64-* or build-arm64-* is per-commit CI
-          # debris — nothing else references it, so delete the whole version.
+          # Any version whose tags are ALL build-amd64-*, build-arm64-* or
+          # build-index-* is per-commit CI debris, so delete the whole version.
+          #
+          # "all", not "any". build-index-<sha> is the staging tag the release job
+          # pushes before attesting; on a successful run it names the SAME version
+          # as that release, because the bytes are identical. Selecting on "any"
+          # would delete the release along with the staging tag it shares. A run
+          # that failed between staging and tagging leaves a version carrying only
+          # the staging tag, and that one is real debris — this is what collects it.
           ALL=$(gh api "/user/packages/container/${PKG}/versions" --paginate | jq -s 'add')
           mapfile -t VIDS < <(
             echo "$ALL" | jq -r '
               .[]
               | . as $v
               | (.metadata.container.tags // []) as $tags
-              | select($tags | map(test("^build-(amd64|arm64)-")) | any)
+              | select($tags | length > 0)
+              | select($tags | map(test("^build-(amd64|arm64|index)-")) | all)
               | "\($v.id) \($tags | join(","))"
             '
           )
@@ -55,6 +63,9 @@ jobs:
             vid="${line%% *}"
             tags="${line#* }"
             echo "  version ${vid}  tags=${tags}"
+            # Recorded whether or not it is deleted here, so the third pass can see
+            # what a real run removes and a dry run previews the same deletions.
+            echo "$vid" >> "${RUNNER_TEMP}/pruned-ids.txt"
             if [ "$DRY_RUN" = "true" ]; then
               echo "    (dry run — skipped)"
             else
@@ -92,6 +103,7 @@ jobs:
             vid="${line%% *}"
             tag="${line#* }"
             echo "  version ${vid}  tag=${tag}"
+            echo "$vid" >> "${RUNNER_TEMP}/pruned-ids.txt"
             if [ "$DRY_RUN" = "true" ]; then
               echo "    (dry run — skipped)"
             else
@@ -99,11 +111,148 @@ jobs:
             fi
           done
 
-      - name: Prune untagged manifests (keep newest 10)
-        if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5
-        with:
-          package-name: 'sitrec2'
-          package-type: 'container'
-          min-versions-to-keep: 10
-          delete-only-untagged-versions: 'true'
+      # Delete untagged manifests that nothing references any more.
+      #
+      # This must NOT be actions/delete-package-versions with
+      # delete-only-untagged-versions. In GHCR a multi-architecture image is stored
+      # as several versions: the index carries the tag, and each per-platform
+      # manifest inside it is a separate version with NO tag of its own. So
+      # "delete untagged, keep the newest 10" deletes the contents of live
+      # releases. It did exactly that: the run on 2026-09-06 reported 100 versions
+      # deleted, and afterwards every tag from 2.147.1 to 2.151.2 was an index
+      # whose children returned 404 — the tag still resolves, and `docker pull`
+      # fails with "manifest unknown".
+      #
+      # So work out what is actually referenced before deleting anything. Start
+      # from every tagged version, walk each index down to its children, and repeat
+      # until the set stops growing. That set holds the platform manifests of live
+      # releases, the build provenance attestations stored beside them, and the
+      # sigstore bundles those point at. Everything untagged and outside it is
+      # debris from a deleted index.
+      #
+      # The age guard is a second line of defence: a manifest pushed minutes ago
+      # may belong to a build whose index is not tagged yet.
+      #
+      # Note this deliberately keeps every sha256-<digest> version. Those are the
+      # registry copies of build attestations, which GHCR stores as tags because it
+      # does not serve the OCI referrers API. They are tagged, so they are never
+      # candidates here, and a few of them outlive the release they describe. That
+      # is a slow, harmless leak, and much the better failure than deleting one.
+      - name: Prune unreferenced untagged manifests
+        env:
+          MIN_AGE_DAYS: '7'
+        run: |
+          set -euo pipefail
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          ACCEPT='application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
+          BODY="${RUNNER_TEMP}/manifest.json"
+
+          # A registry pull token. It is short-lived, so the walk below refreshes it
+          # rather than assuming one lasts the whole run. Basic auth with the
+          # workflow token also works if this package is ever made private.
+          registry_token() {
+            curl -sSL -u "x:${GH_TOKEN}" \
+              "https://ghcr.io/token?scope=repository:${OWNER}/${PKG}:pull&service=ghcr.io" \
+              | jq -r .token
+          }
+          REG_TOKEN=$(registry_token)
+
+          # Drop what the first two passes remove. In a real run they are already
+          # gone and this changes nothing. In a dry run they are still present and
+          # still tagged, so without this they would anchor the closure and hide
+          # every manifest they are about to orphan — a preview that shows less
+          # than the run it is previewing.
+          PRUNED="${RUNNER_TEMP}/pruned-ids.txt"
+          [ -f "$PRUNED" ] || : > "$PRUNED"
+          PRUNED_IDS=$(jq -R -s 'split("\n") | map(select(length > 0) | tonumber)' < "$PRUNED")
+          echo "Removed by the earlier passes: $(printf '%s' "$PRUNED_IDS" | jq 'length')"
+
+          ALL=$(gh api "/user/packages/container/${PKG}/versions" --paginate \
+            | jq -s --argjson pruned "$PRUNED_IDS" \
+                'add | map(select(.id as $id | ($pruned | index($id)) | not))')
+
+          # Every digest one manifest names: an index names its children, and an
+          # attestation manifest names its subject.
+          #
+          # Any answer other than 200 or 404 stops the whole step. A transient
+          # registry failure read as "this index has no children" would drop live
+          # platform manifests out of the keep set and delete them — the exact
+          # accident this step exists to prevent — so it must never be shrugged off.
+          # A 404 is different and is fine: that digest is already gone, which is
+          # true of the releases the old prune emptied.
+          children_of() {
+            local digest="$1" code attempt
+            for attempt in 1 2; do
+              code=$(curl -sSL -o "$BODY" -w '%{http_code}' \
+                -H "Authorization: Bearer ${REG_TOKEN}" -H "Accept: ${ACCEPT}" \
+                "https://ghcr.io/v2/${OWNER}/${PKG}/manifests/${digest}")
+              case "$code" in
+                200)
+                  jq -r '[(.manifests // [])[].digest, .subject.digest] | .[] | select(. != null)' < "$BODY"
+                  return 0
+                  ;;
+                404) return 0 ;;
+                401|403) REG_TOKEN=$(registry_token) ;;
+                *) echo "::error::GHCR returned ${code} for ${digest}"; return 2 ;;
+              esac
+            done
+            echo "::error::GHCR still returned ${code} for ${digest} after a token refresh"
+            return 2
+          }
+
+          KEEP="${RUNNER_TEMP}/keep.txt"
+          FRONTIER="${RUNNER_TEMP}/frontier.txt"
+          NEXT="${RUNNER_TEMP}/next.txt"
+          echo "$ALL" \
+            | jq -r '.[] | select(((.metadata.container.tags // []) | length) > 0) | .name' \
+            | sort -u > "$FRONTIER"
+
+          # If the seed is empty the closure is empty, and every untagged version
+          # looks like debris. Refuse: an empty seed means the versions API answered
+          # in a shape this script does not understand, not that nothing is tagged.
+          if [ ! -s "$FRONTIER" ]; then
+            echo "::error::No tagged versions found — refusing to delete anything"
+            exit 1
+          fi
+          cp "$FRONTIER" "$KEEP"
+          echo "Tagged versions: $(wc -l < "$FRONTIER")"
+
+          while [ -s "$FRONTIER" ]; do
+            : > "$NEXT"
+            while read -r digest; do
+              children_of "$digest" >> "$NEXT" || exit 1
+            done < "$FRONTIER"
+            sort -u "$NEXT" -o "$NEXT"
+            comm -23 "$NEXT" "$KEEP" > "$FRONTIER"
+            cat "$FRONTIER" >> "$KEEP"
+            sort -u "$KEEP" -o "$KEEP"
+          done
+          echo "Referenced digests, tagged and below: $(wc -l < "$KEEP")"
+
+          CUTOFF=$(date -u -d "-${MIN_AGE_DAYS} days" +%s)
+          mapfile -t CANDIDATES < <(
+            echo "$ALL" | jq -r --argjson cutoff "$CUTOFF" '
+              .[]
+              | select(((.metadata.container.tags // []) | length) == 0)
+              | select(((.updated_at // .created_at) | fromdateiso8601) < $cutoff)
+              | "\(.id) \(.name)"
+            '
+          )
+          echo "Untagged versions older than ${MIN_AGE_DAYS} days: ${#CANDIDATES[@]}"
+
+          DELETED=0
+          for line in "${CANDIDATES[@]}"; do
+            vid="${line%% *}"
+            digest="${line#* }"
+            if grep -qxF "$digest" "$KEEP"; then
+              continue
+            fi
+            echo "  version ${vid}  ${digest}"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "    (dry run — skipped)"
+            else
+              gh api --method DELETE "/user/packages/container/${PKG}/versions/${vid}"
+            fi
+            DELETED=$((DELETED + 1))
+          done
+          echo "Unreferenced untagged versions deleted: ${DELETED}"

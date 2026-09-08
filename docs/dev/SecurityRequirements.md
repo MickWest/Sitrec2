@@ -26,7 +26,8 @@ in. That is a **site image**, expected to carry credentials, and the review repo
 handling requirement — see [Container Security Review](Container-Security-Review.md).
 
 **SR-2 — A published artifact can be traced to the source and pipeline that produced it.**
-*Implemented:* per-architecture Sigstore-signed build provenance, pushed beside the image.
+*Implemented:* Sigstore-signed build provenance on the multi-arch index a tag resolves to,
+and on each per-architecture image inside it, pushed beside the image.
 *Verified:* `gh attestation verify oci://ghcr.io/mickwest/sitrec2:<tag> --repo MickWest/Sitrec2`,
 by anyone, without an account.
 

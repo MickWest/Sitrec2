@@ -156,22 +156,58 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.suffix }}
           cache-to: type=gha,scope=${{ matrix.suffix }},mode=max
 
+      # The digest that build-push-action reports is NOT the digest of the image.
+      # BuildKit exports its own provenance attestation alongside the push, so what
+      # it pushes is a small index: one child is the linux/<arch> image, the other is
+      # that attestation. steps.build.outputs.digest is that index's digest — and the
+      # manifest job never references the index, because imagetools create reads its
+      # children and composes a new one. So attesting steps.build.outputs.digest
+      # signs an object that appears nowhere in the published image and that "Clean
+      # up per-arch build tags" deletes minutes later. That is exactly why every
+      # release up to 2.154.0 failed `gh attestation verify`: the attestation existed,
+      # for a digest nobody can ever hold. Resolve the platform manifest instead —
+      # that digest is what ends up inside the published multi-arch index.
+      - name: Resolve the platform manifest digest
+        id: platform
+        run: |
+          REF="${REGISTRY}/${IMAGE_NAME_LC}:build-${{ matrix.suffix }}-${GITHUB_SHA}"
+          DIGEST=$(docker buildx imagetools inspect "$REF" --raw \
+            | jq -r --arg arch "${{ matrix.suffix }}" \
+                '.manifests[]? | select(.platform.architecture == $arch and .platform.os == "linux") | .digest')
+          # Check the shape, not just that something came back. An attestation is
+          # only worth having if its subject is right, so anything that is not one
+          # bare digest — empty, "null", two lines, a block of human-readable text
+          # from a command that quietly ignored its arguments — must stop the build
+          # rather than be signed.
+          if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::Could not resolve the linux/${{ matrix.suffix }} manifest digest from ${REF}"
+            echo "Got: ${DIGEST}"
+            docker buildx imagetools inspect "$REF" --raw
+            exit 1
+          fi
+          echo "Platform manifest digest: ${DIGEST}"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
       # Signed build provenance: which workflow, at which commit, on which runner,
-      # produced this exact image digest. BuildKit already attaches its own provenance
+      # produced this exact image. BuildKit already attaches its own provenance
       # attestation when it pushes, but that one is unsigned and nothing names it, so
       # nobody can be asked to verify it. This produces a Sigstore-signed attestation
-      # recorded against the repository, which anyone can check by digest with:
+      # recorded against the repository.
+      #
+      # This one covers the per-architecture image. The multi-arch index that a
+      # version tag points at needs an attestation of its own, because a tag resolves
+      # to the index, and the index digest is what `gh attestation verify` asks about.
+      # That is done at the end of the manifest job, once the index exists:
       #
       #   gh attestation verify oci://ghcr.io/mickwest/sitrec2:<tag> --repo MickWest/Sitrec2
       #
-      # push-to-registry stores it beside the image, so verification needs the registry
-      # and not this repository's API. Runs per architecture, on the digest that leg
-      # just pushed, so both published images carry one.
+      # push-to-registry also stores it beside the image, so verification can use the
+      # registry rather than this repository's API.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.platform.outputs.digest }}
           push-to-registry: true
 
       # ── Container security review ────────────────────────────────────
@@ -474,6 +510,10 @@ jobs:
       # what makes a release's security evidence durable rather than expiring.
       contents: write
       packages: write
+      # The multi-arch index is attested here, once it exists. id-token signs it
+      # through Sigstore; attestations records it against the repository.
+      id-token: write
+      attestations: write
 
     steps:
       - name: Log in to GHCR
@@ -530,24 +570,137 @@ jobs:
           annotations: |
             org.opencontainers.image.description=Sitrec (multi-arch)
 
-      - name: Create and push multi-arch manifest
+      # Publishing happens in two steps, with the attestation between them, so that
+      # a pullable version tag never exists without the provenance the docs promise.
+      # An index cannot be attested before it exists, so it is pushed here under a
+      # throwaway name that nothing is told to pull, and the release tags are only
+      # created once signing has succeeded. If Sigstore, the attestations API or the
+      # registry fails, this job stops with no public tag pointing at an unattested
+      # image.
+      - name: Push the multi-arch index under a staging tag
+        id: create
         env:
           ANNOTATIONS: ${{ steps.meta.outputs.annotations }}
         run: |
-          SOURCE_AMD64="${REGISTRY}/${IMAGE_NAME_LC}:build-amd64-${GITHUB_SHA}"
-          SOURCE_ARM64="${REGISTRY}/${IMAGE_NAME_LC}:build-arm64-${GITHUB_SHA}"
+          set -euo pipefail
+
+          # Pin the sources by digest before doing anything with them.
+          # build-amd64-<sha> and build-arm64-<sha> are ordinary mutable tags: a
+          # second run for the same commit — a rerun, or two version tags pushed on
+          # one commit — moves them under this job. The release tags would then be
+          # composed from different images than the ones that were attested. Resolve
+          # them once, and let every later step name the same immutable bytes.
+          resolve_digest() {
+            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r '.digest'
+          }
+          AMD64_DIGEST=$(resolve_digest "${REGISTRY}/${IMAGE_NAME_LC}:build-amd64-${GITHUB_SHA}")
+          ARM64_DIGEST=$(resolve_digest "${REGISTRY}/${IMAGE_NAME_LC}:build-arm64-${GITHUB_SHA}")
+          for d in "$AMD64_DIGEST" "$ARM64_DIGEST"; do
+            if ! printf '%s' "$d" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "::error::Could not resolve a source build digest, got: ${d}"
+              exit 1
+            fi
+          done
+          SOURCE_AMD64="${REGISTRY}/${IMAGE_NAME_LC}@${AMD64_DIGEST}"
+          SOURCE_ARM64="${REGISTRY}/${IMAGE_NAME_LC}@${ARM64_DIGEST}"
+          STAGING_TAG="${REGISTRY}/${IMAGE_NAME_LC}:build-index-${GITHUB_SHA}"
+          echo "Sources: ${SOURCE_AMD64} ${SOURCE_ARM64}"
 
           # Turn each "index:key=value" line from metadata-action into a
           # --annotation flag. Passed via env var (not inline expansion)
-          # so values with special characters don't break the shell.
+          # so values with special characters don't break the shell. Written out
+          # for the tagging step below, which must compose byte-identical indexes
+          # and so must pass exactly these flags.
           ANNOTATION_ARGS=()
           while IFS= read -r ann; do
             [ -z "$ann" ] && continue
             ANNOTATION_ARGS+=(--annotation "$ann")
           done <<< "$ANNOTATIONS"
+          printf '%s\n' "${ANNOTATION_ARGS[@]}" > "${RUNNER_TEMP}/annotation-args.txt"
 
-          # Create a manifest for each target tag (e.g. 2.41.1, latest)
-          echo '${{ steps.meta.outputs.tags }}' | while IFS= read -r tag; do
+          echo "Creating the index as: ${STAGING_TAG}"
+          docker buildx imagetools create \
+            "${ANNOTATION_ARGS[@]}" \
+            --tag "${STAGING_TAG}" \
+            "${SOURCE_AMD64}" \
+            "${SOURCE_ARM64}"
+
+          # Read the digest as JSON and pick the field out with jq. Do NOT use
+          # --format '{{.Manifest.Digest}}': buildx does not fail on a template it
+          # cannot resolve, it prints its ordinary human-readable block instead, so
+          # that spelling hands a page of text to the attestation step and a mere
+          # non-empty check waves it through.
+          INDEX_DIGEST=$(docker buildx imagetools inspect "$STAGING_TAG" --format '{{json .Manifest}}' | jq -r '.digest')
+          if ! printf '%s' "$INDEX_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::Could not read the index digest of ${STAGING_TAG}"
+            echo "Got: ${INDEX_DIGEST}"
+            exit 1
+          fi
+          echo "Index digest: ${INDEX_DIGEST}"
+
+          # Kept for the pre-publication comparison in the tagging step.
+          docker buildx imagetools inspect "$STAGING_TAG" --raw > "${RUNNER_TEMP}/attested-index.json"
+
+          {
+            echo "index-digest=${INDEX_DIGEST}"
+            echo "source-amd64=${SOURCE_AMD64}"
+            echo "source-arm64=${SOURCE_ARM64}"
+          } >> "$GITHUB_OUTPUT"
+
+      # A tag resolves to the index, so the index digest is the one that
+      #
+      #   gh attestation verify oci://ghcr.io/mickwest/sitrec2:<tag> --repo MickWest/Sitrec2
+      #
+      # asks about. The per-architecture attestations in the package job do not
+      # answer for it: their subjects are the platform manifests INSIDE this index,
+      # which is a different digest. Without this step that command returns HTTP 404
+      # for every release, which is what it did up to and including 2.154.0.
+      #
+      # Runs before the release tags are created, so the evidence exists before the
+      # image is published, and before any build tag is deleted.
+      - name: Attest the multi-arch index
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+          subject-digest: ${{ steps.create.outputs.index-digest }}
+          push-to-registry: true
+
+      # Only now, with the attestation recorded, do the tags anyone is told to pull
+      # come into existence — and not before the index they will carry has been
+      # shown to be the one that was attested.
+      - name: Tag the attested index for release
+        env:
+          ATTESTED_DIGEST: ${{ steps.create.outputs.index-digest }}
+          SOURCE_AMD64: ${{ steps.create.outputs.source-amd64 }}
+          SOURCE_ARM64: ${{ steps.create.outputs.source-arm64 }}
+        run: |
+          set -euo pipefail
+          mapfile -t ANNOTATION_ARGS < <(grep -v '^$' "${RUNNER_TEMP}/annotation-args.txt" || true)
+
+          # Prove it before publishing it. --dry-run composes the index and pushes
+          # nothing, and the tag name does not enter the composed content, so an
+          # index that matches the attested one here will match under every tag
+          # below. Checking only afterwards would let a wrong digest go public and
+          # then complain about it, which is the fault this whole ordering exists
+          # to prevent.
+          CANDIDATE="${RUNNER_TEMP}/candidate-index.json"
+          ATTESTED="${RUNNER_TEMP}/attested-index.json"
+          docker buildx imagetools create --dry-run \
+            "${ANNOTATION_ARGS[@]}" \
+            --tag "${REGISTRY}/${IMAGE_NAME_LC}:dry-run" \
+            "${SOURCE_AMD64}" \
+            "${SOURCE_ARM64}" > "$CANDIDATE"
+          if ! diff -q <(jq -S . "$CANDIDATE") <(jq -S . "$ATTESTED") > /dev/null; then
+            echo "::error::These sources no longer compose the index that was attested"
+            diff <(jq -S . "$ATTESTED") <(jq -S . "$CANDIDATE") || true
+            exit 1
+          fi
+          echo "Composed index matches the attested one; publishing ${ATTESTED_DIGEST}"
+
+          # A here-string, not a pipe. A piped `while` runs in a subshell, where the
+          # `exit 1` below would end only the subshell — and letting a digest
+          # mismatch through is the one thing this loop exists to stop.
+          while IFS= read -r tag; do
             [ -z "$tag" ] && continue
             echo "Creating manifest for: $tag"
             docker buildx imagetools create \
@@ -555,19 +708,36 @@ jobs:
               --tag "${tag}" \
               "${SOURCE_AMD64}" \
               "${SOURCE_ARM64}"
-          done
+
+            PUBLISHED=$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest}}' | jq -r '.digest')
+            if [ "$PUBLISHED" != "$ATTESTED_DIGEST" ]; then
+              echo "::error::${tag} is ${PUBLISHED}, but the attestation covers ${ATTESTED_DIGEST}"
+              exit 1
+            fi
+            echo "  ${tag} -> ${PUBLISHED} (attested)"
+          done <<< '${{ steps.meta.outputs.tags }}'
 
       - name: Clean up per-arch build tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PKG="${IMAGE_NAME_LC##*/}"
+          # Note build-index-<sha> is deliberately absent. On a successful run that
+          # tag names the SAME version as the release tags — identical bytes, so
+          # identical digest — and deleting a version deletes every tag on it, which
+          # would delete the release. It stays, costing one extra tag row per
+          # version in the GHCR UI. A run that failed between staging and tagging
+          # leaves a version carrying only that tag, and the weekly sweep in
+          # docker-cleanup.yml collects those: it selects versions whose tags are
+          # ALL build-*, so a released version is never eligible.
           for SUFFIX in amd64 arm64; do
             TAG="build-${SUFFIX}-${GITHUB_SHA}"
             echo "Deleting tag: ${TAG}"
-            # Find the version ID for this tag
+            # Find the version ID for this tag. Match the WHOLE tag set, not one
+            # entry in it: a version that also carries a release tag must never be
+            # deleted for the sake of a build tag it happens to share.
             VID=$(gh api "/user/packages/container/${PKG}/versions" \
-              --paginate --jq ".[] | select(.metadata.container.tags[] == \"${TAG}\") | .id")
+              --paginate --jq ".[] | select((.metadata.container.tags // []) == [\"${TAG}\"]) | .id")
             if [ -n "$VID" ]; then
               gh api --method DELETE "/user/packages/container/${PKG}/versions/${VID}"
               echo "Deleted version ${VID} (${TAG})"
