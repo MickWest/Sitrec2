@@ -80,7 +80,26 @@ $extraPaths = implode(':', array_filter([
 // disable shell_exec(). Request values never become shell syntax.
 $environment = getenv();
 $environment['PATH'] = $extraPaths . ':' . ($environment['PATH'] ?? '/usr/bin:/bin');
-$command = ['python3', $script, '--date', $date, '--hour', (string)$cycleHour,
+// proc_open resolves an unqualified executable using PHP's own PATH, before
+// applying the child environment. Resolve against the intended search path
+// explicitly so local installations can use their Python dependencies too.
+$python = null;
+foreach (explode(PATH_SEPARATOR, $environment['PATH']) as $directory) {
+    if ($directory === '' || $directory[0] !== DIRECTORY_SEPARATOR) {
+        continue;
+    }
+    $candidate = $directory . '/python3';
+    if (is_file($candidate) && is_executable($candidate)) {
+        $python = $candidate;
+        break;
+    }
+}
+if ($python === null) {
+    http_response_code(503);
+    echo json_encode(['error' => 'Python is unavailable for wind data fetching']);
+    exit;
+}
+$command = [$python, $script, '--date', $date, '--hour', (string)$cycleHour,
     '--level', $level, '--output', $cacheDir];
 $process = proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'],
     2 => ['redirect', 1]], $pipes, null, $environment);

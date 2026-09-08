@@ -1179,6 +1179,14 @@ The production Docker images (`Dockerfile`, `Dockerfile.release`) include the de
 | Wind visualization | `python3`, `pip3`, and the pip packages `eccodes` and `certifi`. `sitrecServer/windProxy.php` launches `tools/fetch_wind.py` directly using `proc_open`, which must remain available in PHP. Shell-command functions such as `shell_exec` can stay disabled. |
 | Wind cache dir | `data/wind/` writable by the web-server user (auto-created on first request if the parent is writable). |
 
+For a local macOS installation using pyenv, PHP must receive the service user's
+`HOME` so the wind launcher can find that user's shims and installed packages.
+PHP-FPM normally clears inherited environment variables; set `env[HOME]` in the
+local pool configuration when needed, validate the configuration, and reload the
+service. Verify an uncached wind request through PHP, since the Python selected by
+an interactive terminal may differ from the web server's interpreter. Container
+images install the decoder for their own Python and need no pyenv configuration.
+
 One-time setup on a current Ubuntu / Debian server whose package repositories provide PHP
 8.4.1 or newer (run as root or with `sudo`):
 

@@ -25,7 +25,7 @@ lockstep with docs/WhatsNew-Details.md.
 ### Bug Fixes
 
 - Fixed map and building loading with restricted provider keys, and OpenStreetMap block notices appearing as terrain imagery.
-- Fixed GFS wind loading and Street View panorama generation in container installations.
+- Fixed GFS wind loading in container and local installations, and Street View panorama generation in containers.
 
 ### Security
 
