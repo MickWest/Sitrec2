@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.155.1 (2026-09-08)
+
+### Bug Fixes
+
+- **Fixed public links to the latest saved sitch version** (`sitrecServer/object.php`). Folder references ending in `/` now follow the existing `S3_DEFAULT_VISIBILITY` and prefix exceptions instead of requiring every reader to be the owner or an administrator. Anyone with a public folder link can resolve its newest public `.js` version, including anonymous readers and other signed-in users. `resolveLatestObjectKey()` filters private child versions in both local filesystem and S3 storage. Private folders remain restricted to their owner or an administrator, who can resolve the newest version regardless of visibility. Complete versioned keys retain their existing link-based read behavior without an identity lookup.
+- **Fixed shared-link resolution failures aborting startup** (`src/index.js`). `resolveSitrecReference()` now runs inside the custom-sitch load error handler. A refused or unavailable reference reaches the existing error dialog and `selectInitialSitch()` fallback instead of escaping as an uncaught promise rejection before initialization finishes.
+
+### Security
+
+- **Refresh container runtime packages during release builds** (`Dockerfile`, `Dockerfile.release`, `.github/workflows/docker.yml`, `scripts/auditReleaseImage.mjs`). Both production Dockerfiles explicitly install `linux-libc-dev`, allowing apt to upgrade inherited Linux userspace headers with available security fixes. The release workflow and local image audit pull the current base and bypass the named `runtime` stage's cache, so a cached package-install command cannot skip that update; independent build stages remain cacheable. The audit helper uses a full cache bypass with Podman, which lacks the per-stage filter. The container security guide documents the rebuild flags and installed-package verification, since refreshing a floating base tag alone does not ensure current package versions.
+
 ## Version 2.155.0 (2026-09-08)
 
 ### New Features

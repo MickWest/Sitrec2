@@ -18,6 +18,24 @@ import {takeScreenshotOrCompare} from './snapshot-utils.js';
  */
 
 test.describe('Docker Smoke Tests', () => {
+    test('a refused shared-sitch resolver shows an error and finishes startup', async ({page}) => {
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+        await page.route('**/sitrecServer/object.php?*', route => route.fulfill({
+            status: 403, contentType: 'application/json',
+            body: JSON.stringify({error: 'Private folder references require their owner.'}),
+        }));
+        await page.goto('?custom=42%2FPrivate%2F&ignoreunload=1&regression=1');
+        await expect(page.locator('textarea:visible').first())
+            .toHaveValue(/Failed to load custom sitch: Object resolver failed: HTTP 403/);
+        await page.getByRole('button', {name: 'Close', exact: true}).click();
+        await page.waitForFunction(() => window.Globals && window.NodeMan?.list &&
+            Object.keys(window.NodeMan.list).length > 0 && window.Globals.pendingActions === 0,
+            null, {timeout: 60000});
+        expect(await page.locator('canvas').count()).toBeGreaterThan(0);
+        expect(errors).toEqual([]);
+    });
+
     test('app loads and renders without errors', async ({page}, testInfo) => {
         test.setTimeout(120000);
         await page.setViewportSize({width: 1280, height: 720});

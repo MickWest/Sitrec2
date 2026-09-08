@@ -242,10 +242,16 @@ one-flag remedy attached.
 `Dockerfile.release` selects `php:8.4-apache` and `composer:2` by tag, not by digest, and
 the baseline declares that as an accepted risk rather than pinning them.
 
-The reasoning is that pinning and patching pull in opposite directions. A floating tag means
-a rebuild collects the distribution's current security patches without anyone acting, which
-is why `IMG-03` — the advisories a rebuild can close — sits at 13 out of 1547 rather than
-climbing. Pin the base and that number grows steadily between deliberate bumps.
+The floating tag allows builds to pick up a newer base, but refreshing the base alone does
+not refresh cached package-install commands or upgrade every inherited package. The release
+workflow and `audit-release-image` pull the current base and bypass the `runtime` stage's
+cache. Both production Dockerfiles explicitly install `linux-libc-dev` so apt also upgrades
+the inherited headers from the distribution's configured security repository.
+
+For a manual rebuild, use `docker build --pull --no-cache-filter runtime` with either
+production Dockerfile, then scan the resulting image. This keeps the independent build
+stages cacheable while refreshing the runtime packages. Check the installed version and
+`IMG-03` in the new report; a successful rebuild alone does not prove every advisory is fixed.
 
 Reproducibility is enforced one level up, where it decides what actually runs: the
 deployment pins the **application** image by digest, and the hardened-install guide's

@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.155.1 (2026-09-08)
+
+### Bug Fixes
+
+- Fixed shared links to a sitch's latest public version being refused for other users or visitors who are not logged in.
+- Fixed unavailable shared sitch links preventing startup; an error now appears and Sitrec opens its default sitch.
+
+### Security
+
+- Container release builds refresh system packages to pick up available security fixes.
+
 ## Version 2.155.0 (2026-09-08)
 
 ### New Features

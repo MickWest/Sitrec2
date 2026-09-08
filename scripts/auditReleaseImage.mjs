@@ -182,6 +182,10 @@ function main(argv) {
         step(2, total, `Building ${opts.tag} from Dockerfile.release`);
         const status = runInherit(engine, [
             "build",
+            // Podman has no per-stage cache filter; refresh its full image build.
+            ...(engine === "docker"
+                ? ["--pull", "--no-cache-filter", "runtime"]
+                : ["--pull=always", "--no-cache"]),
             "-f", "Dockerfile.release",
             "--build-arg", `DIST_DIR=${SCRATCH_DIST_NAME}`,
             "-t", opts.tag,

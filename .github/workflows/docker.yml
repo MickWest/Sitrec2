@@ -164,6 +164,10 @@ jobs:
           file: Dockerfile.release
           platforms: ${{ matrix.platform }}
           push: true
+          # Refresh distribution packages even when the base tag has not changed.
+          # Keep the independent Composer stage cached.
+          pull: true
+          no-cache-filters: runtime
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:build-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}

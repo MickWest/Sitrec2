@@ -35,7 +35,7 @@ COPY sitrecServer/composer.json sitrecServer/composer.lock ./
 RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress --ignore-platform-reqs
 
 ARG BASE_IMAGE
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS runtime
 
 # WITH_GFS_WIND=0 omits Python and the GRIB decoder.
 #
@@ -52,7 +52,9 @@ FROM ${BASE_IMAGE}
 ARG WITH_GFS_WIND=1
 
 # GD with JPEG support is required by the Street View panorama stitcher.
-RUN apt-get update && apt-get install -y libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev \
+# Request the inherited headers explicitly so apt upgrades them from the security
+# repository even when the other build dependencies are already satisfied.
+RUN apt-get update && apt-get install -y linux-libc-dev libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev \
     && docker-php-ext-configure gd --with-jpeg \
     && docker-php-ext-install zip mbstring iconv gd \
     && if [ "$WITH_GFS_WIND" = "1" ]; then \

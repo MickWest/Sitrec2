@@ -198,9 +198,10 @@ function normalizeRequestedRef($ref) {
  * Works in both local filesystem and AWS S3 modes.
  *
  * @param string $folderKey Key with or without trailing slash.
+ * @param bool $publicOnly Exclude private versions for readers other than the owner/admin.
  * @return string|null Full key including filename, or null when no matching versions exist.
  */
-function resolveLatestObjectKey($folderKey) {
+function resolveLatestObjectKey($folderKey, $publicOnly = false) {
     global $useAWS, $UPLOAD_PATH, $s3creds;
 
     $latestFile = null;
@@ -212,6 +213,7 @@ function resolveLatestObjectKey($folderKey) {
             $files = scandir($localDir);
             foreach ($files as $file) {
                 if (is_file($localDir . $file) && preg_match('/\.js$/', $file)) {
+                    if ($publicOnly && !isObjectKeyPublic($folderKey . $file)) continue;
                     if ($latestFile === null || strcmp($file, $latestFile) > 0) {
                         $latestFile = $file;
                     }
@@ -243,6 +245,7 @@ function resolveLatestObjectKey($folderKey) {
         $filename = substr($candidate, strlen($folderKey));
         if ($filename === '' || strpos($filename, '/') !== false) continue;
         if (!preg_match('/\.js$/', $filename)) continue;
+        if ($publicOnly && !isObjectKeyPublic($candidate)) continue;
         if ($latestFile === null || strcmp($filename, $latestFile) > 0) {
             $latestFile = $filename;
         }
@@ -321,34 +324,23 @@ if ($resolvedKey === null) {
 sitrecAuditResource($resolvedKey);
 
 if (str_ends_with($resolvedKey, '/')) {
-    // Folder resolution turns <userid>/<name>/ into the newest version inside it.
-    //
-    // For an anonymous caller that is an ENUMERATION ORACLE against the sharing
-    // model. A share URL is <userid>/<name>/<version>.js and the VERSION is the
-    // capability, but the NAME is not secret: it is human-readable and appears in
-    // full in every shared link. Resolving a folder without identity would hand
-    // out the current version for any name that can be guessed or read off a
-    // shared link, exposing versions the owner never shared - including drafts
-    // they replaced.
-    //
-    // Owners browsing their own sitches need this, so it is allowed for the
-    // prefix owner and for admins.
-    //
-    // Identity is resolved HERE rather than at the top of the file on purpose:
-    // the common case is a complete key, which IS the capability and needs no
-    // identity, so it must not pay for a forum session lookup on every asset
-    // load. user.php (not config.php) because it caches - calling the XenForo
-    // resolver twice in one request is known to crash it.
+    // A public folder link shares its latest public version with anyone who has
+    // the URL. Private folders still require the owner/admin. Filter private
+    // children too: a public folder can contain a version covered by an explicit
+    // private prefix. Owners/admins may resolve any version in their scope.
+    // Complete version keys keep their existing link-based read behavior and
+    // avoid identity lookup. user.php caches the forum identity per request.
     require_once __DIR__ . '/user.php';
     $userInfo = getUserInfo();
     $callerId = (int)($userInfo['user_id'] ?? 0);
     $ownerId  = (int)explode('/', $resolvedKey, 2)[0];
 
-    if ($callerId === 0 || ($callerId !== $ownerId && !isAdmin($userInfo))) {
-        jsonError(403, 'Folder references are only resolvable by their owner. Use the full object key.');
+    $canReadAllVersions = $callerId !== 0 && ($callerId === $ownerId || isAdmin($userInfo));
+    if (!$canReadAllVersions && !isObjectKeyPublic($resolvedKey)) {
+        jsonError(403, 'Private folder references require their owner or an administrator. Use a shared full object key.');
     }
 
-    $latestKey = resolveLatestObjectKey($resolvedKey);
+    $latestKey = resolveLatestObjectKey($resolvedKey, !$canReadAllVersions);
     if ($latestKey === null) {
         jsonError(404, 'No versions found for folder');
     }

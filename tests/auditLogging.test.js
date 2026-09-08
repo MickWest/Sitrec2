@@ -33,6 +33,7 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 putenv('AUTH_MODE=' . ($_SERVER['HTTP_X_TEST_AUTH'] ?? 'forum'));
 putenv('AUDIT_LOG_ENABLED=' . ($_SERVER['HTTP_X_TEST_AUDIT'] ?? 'true'));
 putenv('AUDIT_LOG_DESTINATION=' . ($_SERVER['HTTP_X_TEST_DESTINATION'] ?? 'error_log'));
+putenv('S3_PRIVATE_PREFIXES=73/Private/');
 $useAWS = ($_SERVER['HTTP_X_TEST_STORAGE'] ?? '') === 's3';
 $s3creds = ['bucket' => 'example-bucket', 'region' => 'example-region'];
 function getUserInfoCustom() {

@@ -750,19 +750,20 @@ if (fromAppParams !== null) {
         resolvable ? ("shared sitch from user " + ownerId) : customSitch
     );
 
-    if (resolvable) {
-        // Resolve to a temporary fetch URL for this session while preserving a stable canonical ref.
-        const resolvedCustom = await resolveSitrecReference(customSitch);
-        customSitchRef = resolvedCustom.ref;
-        customSitch = resolvedCustom.url;
-        console.log("Resolved custom sitch to temporary fetch URL from ref: " + customSitchRef);
-    } else {
-        // Keep non-resolved custom URLs in canonical-ref form when possible for downstream comparisons.
-        customSitchRef = toCanonicalSitrecRef(customSitch);
-    }
-
     let customSitchLoaded = false;
     try {
+        if (resolvable) {
+            // Resolution can fail too; keep it inside the load error handler so a
+            // refused or unavailable shared link still finishes default startup.
+            const resolvedCustom = await resolveSitrecReference(customSitch);
+            customSitchRef = resolvedCustom.ref;
+            customSitch = resolvedCustom.url;
+            console.log("Resolved custom sitch to temporary fetch URL from ref: " + customSitchRef);
+        } else {
+            // Keep non-resolved custom URLs in canonical-ref form when possible for downstream comparisons.
+            customSitchRef = toCanonicalSitrecRef(customSitch);
+        }
+
         const response = await fetch(customSitch, {mode: 'cors'});
         if (!response.ok) {
             // Say what the failure most likely means (a stale link into scratch storage,

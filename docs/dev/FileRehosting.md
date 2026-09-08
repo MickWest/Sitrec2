@@ -45,9 +45,12 @@ share value, fetchable URL, and an expiry time when the URL is temporary. This i
 allows storage hosts and public/private read modes to change without changing saved
 situations. Legacy direct URLs remain supported.
 
-A folder reference such as `42/My Situation/` means "the newest `.js` version". Because
-that would otherwise reveal an unshared version, only its owner or an administrator may
-resolve it. Public share links should contain the complete versioned key.
+A folder reference such as `42/My Situation/` shares the newest public `.js` version with
+anyone who knows that URL. This follows `S3_DEFAULT_VISIBILITY` (public by default) and
+its prefix exceptions. Private folders remain restricted to their owner or an administrator;
+private versions within a public folder are excluded for other readers. Owners and admins
+can resolve the newest version regardless of visibility. A complete versioned key shares
+that particular saved version and keeps working without a login.
 
 An exact object key currently acts as a read capability: knowing a valid complete key is
 normally enough to ask the resolver for it. `S3_DEFAULT_VISIBILITY=private` controls how
