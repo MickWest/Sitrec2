@@ -9,6 +9,29 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.155.0 (2026-09-08)
+
+### New Features
+
+- **Paste satellite orbits** (press G for Go To, or Ctrl/Cmd+V outside a text field): import TLE text directly into a sitch, with or without a satellite name and despite disrupted spacing.
+- **Analog video export** (Video → Video Render & Export): preview NTSC, PAL, monochrome and VHS effects, optionally simulate a phone filming a screen, and choose compression settings before rendering.
+- **Live video effects** (Effects → Video Format Effects): apply the same analog and phone-camera simulations to the look view, including its on-screen display.
+- **Target positions from video metadata** (File → Import): import reported target coordinates and elevation as a visible track alongside the camera track.
+
+### Improvements
+
+- The simulated MQ-9 display includes a faint “SITREC” label to identify generated footage.
+
+### Bug Fixes
+
+- Fixed map and building loading with restricted provider keys, and OpenStreetMap block notices appearing as terrain imagery.
+- Fixed GFS wind loading and Street View panorama generation in container installations.
+
+### Security
+
+- Container build signatures cover the published image and both supported processor architectures.
+- Container cleanup protects image contents needed by retained releases, stops on invalid registry responses, and waits for active releases to finish.
+
 ## Version 2.154.0 (2026-09-06)
 
 ### New Features

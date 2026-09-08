@@ -317,6 +317,24 @@ BuildKit also attaches its own provenance attestation when it pushes — visible
 one is unsigned and unnamed, so it proves less. The signed attestation above is the one to
 cite.
 
+The release pipeline records the immutable build-index and platform digests as
+per-architecture workflow artifacts. Security reviews and smoke tests use those
+platform digests, and final assembly consumes those same build indexes. Temporary
+tags include the run ID and attempt; retries may reuse a successful architecture's
+record from an earlier attempt of the same run and commit.
+
+Publication and registry cleanup share a concurrency group with queued runs and
+no cancellation of the active run. Temporary build versions are retained for at
+least seven days to support retries. Cleanup preserves the full manifest-reference
+graph below retained tags and stops the untagged pass on failed downloads or
+invalid manifest documents. Its dry run accounts for the earlier passes' proposed
+deletions when computing that graph.
+
+The workflow regression tests exercise these safeguards against a local fake
+registry before a release build. After publication, verify provenance and pull
+both architectures; a valid index attestation alone does not prove that all its
+referenced images are still available.
+
 `buildx` is a Docker plugin with no podman equivalent, and this is the one command here that
 differs by engine. To read the same manifest list without it, use `podman manifest inspect
 <image>`, or `skopeo inspect --raw docker://<image>`, which needs no engine at all and is

@@ -15,6 +15,19 @@ defaults:
     shell: bash    # scripts should use bash on all OS-es 
 
 jobs:
+  container_workflows:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Install workflow test dependencies
+      run: python3 -m pip install -r .github/tests/requirements.txt
+    - name: Test container release and cleanup safeguards
+      run: python3 -m unittest discover -s .github/tests -p '*_test.py' -v
+
   build_web:
     if: true  # the job can be disabled from here
     permissions:

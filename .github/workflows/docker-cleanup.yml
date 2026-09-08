@@ -2,10 +2,8 @@ name: Cleanup container images
 
 # Weekly sweep of old GHCR container versions. Three cleanup passes run in order:
 #
-#   1. Delete leftover build-<arch>-<sha> tags. These are per-commit single-platform
-#      images created during release builds; docker.yml's manifest job deletes them
-#      after assembling the multi-arch index, but some linger from workflow_dispatch
-#      runs and any builds that failed before reaching that cleanup step.
+#   1. Delete temporary build and staging versions older than seven days. Keeping
+#      recent wrappers allows failed jobs to retry with their recorded digests.
 #
 #   2. Delete old semver versions beyond the newest 20. The 'latest' tag is
 #      implicitly preserved because it always points at the newest semver, which
@@ -26,6 +24,13 @@ on:
         type: boolean
         default: false
 
+# Shared with docker.yml for the ENTIRE run, including package pushes and signing.
+# Queue releases instead of canceling pending runs when a cleanup is waiting.
+concurrency:
+  group: sitrec-container-registry
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   cleanup:
     runs-on: ubuntu-latest
@@ -35,11 +40,13 @@ jobs:
       PKG: sitrec2
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      MIN_AGE_DAYS: '7'
     steps:
       - name: Prune leftover build-* tags
         run: |
-          # Any version whose tags are ALL build-amd64-*, build-arm64-* or
-          # build-index-* is per-commit CI debris, so delete the whole version.
+          set -euo pipefail
+          CUTOFF=$(date -u -d "-${MIN_AGE_DAYS} days" +%s)
+          # Only old versions whose tags are ALL temporary build tags are debris.
           #
           # "all", not "any". build-index-<sha> is the staging tag the release job
           # pushes before attesting; on a successful run it names the SAME version
@@ -49,12 +56,13 @@ jobs:
           # the staging tag, and that one is real debris — this is what collects it.
           ALL=$(gh api "/user/packages/container/${PKG}/versions" --paginate | jq -s 'add')
           mapfile -t VIDS < <(
-            echo "$ALL" | jq -r '
+            echo "$ALL" | jq -r --argjson cutoff "$CUTOFF" '
               .[]
               | . as $v
               | (.metadata.container.tags // []) as $tags
               | select($tags | length > 0)
               | select($tags | map(test("^build-(amd64|arm64|index)-")) | all)
+              | select((($v.updated_at // $v.created_at) | fromdateiso8601) < $cutoff)
               | "\($v.id) \($tags | join(","))"
             '
           )
@@ -139,8 +147,6 @@ jobs:
       # candidates here, and a few of them outlive the release they describe. That
       # is a slow, harmless leak, and much the better failure than deleting one.
       - name: Prune unreferenced untagged manifests
-        env:
-          MIN_AGE_DAYS: '7'
         run: |
           set -euo pipefail
           OWNER="${GITHUB_REPOSITORY_OWNER,,}"
@@ -151,9 +157,9 @@ jobs:
           # rather than assuming one lasts the whole run. Basic auth with the
           # workflow token also works if this package is ever made private.
           registry_token() {
-            curl -sSL -u "x:${GH_TOKEN}" \
+            curl -fsSL --connect-timeout 15 --max-time 60 -u "x:${GH_TOKEN}" \
               "https://ghcr.io/token?scope=repository:${OWNER}/${PKG}:pull&service=ghcr.io" \
-              | jq -r .token
+              | jq -er '.token | select(type == "string" and length > 0)'
           }
           REG_TOKEN=$(registry_token)
 
@@ -183,20 +189,47 @@ jobs:
           children_of() {
             local digest="$1" code attempt
             for attempt in 1 2; do
-              code=$(curl -sSL -o "$BODY" -w '%{http_code}' \
+              if ! code=$(curl -sSL --connect-timeout 15 --max-time 60 -o "$BODY" -w '%{http_code}' \
                 -H "Authorization: Bearer ${REG_TOKEN}" -H "Accept: ${ACCEPT}" \
-                "https://ghcr.io/v2/${OWNER}/${PKG}/manifests/${digest}")
+                "https://ghcr.io/v2/${OWNER}/${PKG}/manifests/${digest}"); then
+                echo "::error::Incomplete manifest download for ${digest}" >&2
+                return 2
+              fi
               case "$code" in
                 200)
-                  jq -r '[(.manifests // [])[].digest, .subject.digest] | .[] | select(. != null)' < "$BODY"
+                  # This function is called in an OR-list: set -e does not protect
+                  # commands inside it. Check every failure explicitly. Validate a
+                  # single complete document before emitting any child descriptors;
+                  # a valid image leaf has zero children and must still succeed.
+                  if ! jq -e -s '
+                    def descriptor:
+                      type == "object" and
+                      (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
+                      (.mediaType | type == "string" and length > 0) and
+                      (.size | type == "number" and . >= 0 and . == floor);
+                    length == 1 and (.[0] |
+                      type == "object" and .schemaVersion == 2 and
+                      (if .mediaType == "application/vnd.oci.image.index.v1+json" or
+                          .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+                       then (.manifests | type == "array" and all(.[]; descriptor))
+                       elif .mediaType == "application/vnd.oci.image.manifest.v1+json" or
+                            .mediaType == "application/vnd.docker.distribution.manifest.v2+json"
+                       then (.config | descriptor) and (.layers | type == "array" and all(.[]; descriptor))
+                       else false end) and
+                      (if has("subject") then (.subject | descriptor) else true end))
+                  ' "$BODY" > /dev/null; then
+                    echo "::error::Invalid manifest document for ${digest}" >&2
+                    return 2
+                  fi
+                  jq -r '(.manifests // [])[] .digest, (.subject.digest // empty)' "$BODY" || return 2
                   return 0
                   ;;
                 404) return 0 ;;
-                401|403) REG_TOKEN=$(registry_token) ;;
-                *) echo "::error::GHCR returned ${code} for ${digest}"; return 2 ;;
+                401|403) REG_TOKEN=$(registry_token) || return 2 ;;
+                *) echo "::error::GHCR returned ${code} for ${digest}" >&2; return 2 ;;
               esac
             done
-            echo "::error::GHCR still returned ${code} for ${digest} after a token refresh"
+            echo "::error::GHCR still returned ${code} for ${digest} after a token refresh" >&2
             return 2
           }
 

@@ -21,6 +21,13 @@ on:
       - '[0-9]+.[0-9]+.[0-9]+'    # matches tags like 12.19.0
   workflow_dispatch:               # manual trigger for testing
 
+# Must match docker-cleanup.yml, without a workflow/ref/run suffix. Hold this
+# across every job so cleanup cannot remove images during build or publication.
+concurrency:
+  group: sitrec-container-registry
+  cancel-in-progress: false
+  queue: max
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}   # lowercased in each job below
@@ -37,6 +44,12 @@ jobs:
           # No job here pushes with the checkout token.
           persist-credentials: false
           fetch-depth: 0    # full clone so git describe works for version string
+
+      - name: Install workflow test dependencies
+        run: python3 -m pip install -r .github/tests/requirements.txt
+
+      - name: Test container release and cleanup safeguards
+        run: python3 -m unittest discover -s .github/tests -p '*_test.py' -v
 
       - name: Copy example configs for clean build
         run: |
@@ -75,6 +88,7 @@ jobs:
         with:
           name: dist
           path: dist/
+          overwrite: true
           retention-days: 1
 
   # ── Stage 2: Package into Docker images (native per-arch) ──────
@@ -150,43 +164,41 @@ jobs:
           file: Dockerfile.release
           platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:build-${{ matrix.suffix }}-${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:build-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha,scope=${{ matrix.suffix }}
           cache-to: type=gha,scope=${{ matrix.suffix }},mode=max
 
-      # The digest that build-push-action reports is NOT the digest of the image.
-      # BuildKit exports its own provenance attestation alongside the push, so what
-      # it pushes is a small index: one child is the linux/<arch> image, the other is
-      # that attestation. steps.build.outputs.digest is that index's digest — and the
-      # manifest job never references the index, because imagetools create reads its
-      # children and composes a new one. So attesting steps.build.outputs.digest
-      # signs an object that appears nowhere in the published image and that "Clean
-      # up per-arch build tags" deletes minutes later. That is exactly why every
-      # release up to 2.154.0 failed `gh attestation verify`: the attestation existed,
-      # for a digest nobody can ever hold. Resolve the platform manifest instead —
-      # that digest is what ends up inside the published multi-arch index.
+      # BuildKit's output is a wrapper index containing the platform image and
+      # its unsigned provenance. Resolve the child from THIS build's immutable
+      # output, never by looking up a temporary tag. Both digests travel with the
+      # run: tests use the platform; composition also preserves BuildKit metadata.
       - name: Resolve the platform manifest digest
         id: platform
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          ARCH: ${{ matrix.suffix }}
         run: |
-          REF="${REGISTRY}/${IMAGE_NAME_LC}:build-${{ matrix.suffix }}-${GITHUB_SHA}"
+          set -euo pipefail
+          [[ "$BUILD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          REF="${REGISTRY}/${IMAGE_NAME_LC}@${BUILD_DIGEST}"
           DIGEST=$(docker buildx imagetools inspect "$REF" --raw \
-            | jq -r --arg arch "${{ matrix.suffix }}" \
-                '.manifests[]? | select(.platform.architecture == $arch and .platform.os == "linux") | .digest')
-          # Check the shape, not just that something came back. An attestation is
-          # only worth having if its subject is right, so anything that is not one
-          # bare digest — empty, "null", two lines, a block of human-readable text
-          # from a command that quietly ignored its arguments — must stop the build
-          # rather than be signed.
-          if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-            echo "::error::Could not resolve the linux/${{ matrix.suffix }} manifest digest from ${REF}"
-            echo "Got: ${DIGEST}"
-            docker buildx imagetools inspect "$REF" --raw
+            | jq -er --arg arch "$ARCH" '
+                [.manifests[] | select(.platform.architecture == $arch and .platform.os == "linux") | .digest]
+                | if length == 1 then .[0] else error("Expected exactly one platform manifest") end')
+          if ! [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Invalid linux/${ARCH} manifest digest from ${REF}"
             exit 1
           fi
           echo "Platform manifest digest: ${DIGEST}"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          mkdir -p image-digests
+          jq -n --arg index "$BUILD_DIGEST" --arg platform "$DIGEST" \
+            --arg arch "$ARCH" --arg commit "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" \
+            --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            '{index: $index, platform: $platform, arch: $arch, commit: $commit, run: $run, attempt: $attempt}' \
+            > "image-digests/${ARCH}.json"
 
       # Signed build provenance: which workflow, at which commit, on which runner,
       # produced this exact image. BuildKit already attaches its own provenance
@@ -248,8 +260,10 @@ jobs:
         uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
 
       - name: Container security review
+        env:
+          PLATFORM_DIGEST: ${{ steps.platform.outputs.digest }}
         run: |
-          IMAGE="${REGISTRY}/${IMAGE_NAME_LC}:build-${{ matrix.suffix }}-${GITHUB_SHA}"
+          IMAGE="${REGISTRY}/${IMAGE_NAME_LC}@${PLATFORM_DIGEST}"
           # buildx pushed straight to the registry without loading into the local
           # daemon, so the image has to be pulled before it can be inspected.
           docker pull "${IMAGE}"
@@ -258,6 +272,17 @@ jobs:
             --profile=published \
             --out=dist-audit \
             --fail-on=critical
+
+      # Download actions default to this workflow run. Overwrite only this arch on
+      # a retry, retaining a successful sibling's record from an earlier attempt.
+      - name: Upload tested image digests
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: image-digest-${{ matrix.suffix }}
+          path: image-digests/${{ matrix.suffix }}.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
 
       - name: Publish the review to the run summary
         if: always()
@@ -284,6 +309,7 @@ jobs:
         with:
           # Per-architecture: two matrix jobs uploading one name would collide.
           name: container-security-review-${{ matrix.suffix }}
+          overwrite: true
           path: |
             dist-audit/container-security-review.md
             dist-audit/container-security-review.json
@@ -333,9 +359,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Download the tested amd64 digest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: image-digest-amd64
+          path: image-digests
+
+      - name: Read the tested amd64 digest
+        run: bash .github/scripts/read-image-record.sh amd64 image-digests/amd64.json >> "$GITHUB_ENV"
+
       - name: Start Docker container
         run: |
-          IMAGE="${REGISTRY}/${IMAGE_NAME_LC}:build-amd64-${GITHUB_SHA}"
+          IMAGE="$PLATFORM_AMD64"
           echo "Pulling ${IMAGE}"
           docker pull "${IMAGE}"
           # Canonical mapping emitted by docker-compose.yml / install.sh /
@@ -408,7 +443,7 @@ jobs:
           # GitHub runners use rootful Docker — the entrypoint also listens on
           # 80 so those mappings keep working. Verify that compat shim so we
           # don't silently break upgrading users.
-          IMAGE="${REGISTRY}/${IMAGE_NAME_LC}:build-amd64-${GITHUB_SHA}"
+          IMAGE="$PLATFORM_AMD64"
           docker run -d --name sitrec-smoke-legacy \
             -p 8081:80 \
             -e NO_TERRAIN=true \
@@ -488,6 +523,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: docker-smoke-snapshots
+          overwrite: true
           path: |
             tests_regression/docker-smoke.test.js-snapshots/
             test-results/
@@ -516,6 +552,20 @@ jobs:
       attestations: write
 
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Download the tested image digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: image-digest-*
+          path: image-digests
+          merge-multiple: true
+
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
@@ -525,6 +575,11 @@ jobs:
 
       - name: Lowercase image name
         run: echo "IMAGE_NAME_LC=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+
+      - name: Read the tested image digests
+        run: |
+          bash .github/scripts/read-image-record.sh amd64 image-digests/amd64.json >> "$GITHUB_ENV"
+          bash .github/scripts/read-image-record.sh arm64 image-digests/arm64.json >> "$GITHUB_ENV"
 
       - name: Check if this is the newest version tag
         id: check-latest
@@ -584,26 +639,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Pin the sources by digest before doing anything with them.
-          # build-amd64-<sha> and build-arm64-<sha> are ordinary mutable tags: a
-          # second run for the same commit — a rerun, or two version tags pushed on
-          # one commit — moves them under this job. The release tags would then be
-          # composed from different images than the ones that were attested. Resolve
-          # them once, and let every later step name the same immutable bytes.
-          resolve_digest() {
-            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r '.digest'
-          }
-          AMD64_DIGEST=$(resolve_digest "${REGISTRY}/${IMAGE_NAME_LC}:build-amd64-${GITHUB_SHA}")
-          ARM64_DIGEST=$(resolve_digest "${REGISTRY}/${IMAGE_NAME_LC}:build-arm64-${GITHUB_SHA}")
-          for d in "$AMD64_DIGEST" "$ARM64_DIGEST"; do
-            if ! printf '%s' "$d" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-              echo "::error::Could not resolve a source build digest, got: ${d}"
-              exit 1
-            fi
-          done
-          SOURCE_AMD64="${REGISTRY}/${IMAGE_NAME_LC}@${AMD64_DIGEST}"
-          SOURCE_ARM64="${REGISTRY}/${IMAGE_NAME_LC}@${ARM64_DIGEST}"
-          STAGING_TAG="${REGISTRY}/${IMAGE_NAME_LC}:build-index-${GITHUB_SHA}"
+          # Sources came from the build artifacts, not a later tag lookup.
+          STAGING_TAG="${REGISTRY}/${IMAGE_NAME_LC}:build-index-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           echo "Sources: ${SOURCE_AMD64} ${SOURCE_ARM64}"
 
           # Turn each "index:key=value" line from metadata-action into a
@@ -631,7 +668,7 @@ jobs:
           # that spelling hands a page of text to the attestation step and a mere
           # non-empty check waves it through.
           INDEX_DIGEST=$(docker buildx imagetools inspect "$STAGING_TAG" --format '{{json .Manifest}}' | jq -r '.digest')
-          if ! printf '%s' "$INDEX_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+          if ! [[ "$INDEX_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "::error::Could not read the index digest of ${STAGING_TAG}"
             echo "Got: ${INDEX_DIGEST}"
             exit 1
@@ -639,7 +676,7 @@ jobs:
           echo "Index digest: ${INDEX_DIGEST}"
 
           # Kept for the pre-publication comparison in the tagging step.
-          docker buildx imagetools inspect "$STAGING_TAG" --raw > "${RUNNER_TEMP}/attested-index.json"
+          docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME_LC}@${INDEX_DIGEST}" --raw > "${RUNNER_TEMP}/attested-index.json"
 
           {
             echo "index-digest=${INDEX_DIGEST}"
@@ -717,34 +754,9 @@ jobs:
             echo "  ${tag} -> ${PUBLISHED} (attested)"
           done <<< '${{ steps.meta.outputs.tags }}'
 
-      - name: Clean up per-arch build tags
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PKG="${IMAGE_NAME_LC##*/}"
-          # Note build-index-<sha> is deliberately absent. On a successful run that
-          # tag names the SAME version as the release tags — identical bytes, so
-          # identical digest — and deleting a version deletes every tag on it, which
-          # would delete the release. It stays, costing one extra tag row per
-          # version in the GHCR UI. A run that failed between staging and tagging
-          # leaves a version carrying only that tag, and the weekly sweep in
-          # docker-cleanup.yml collects those: it selects versions whose tags are
-          # ALL build-*, so a released version is never eligible.
-          for SUFFIX in amd64 arm64; do
-            TAG="build-${SUFFIX}-${GITHUB_SHA}"
-            echo "Deleting tag: ${TAG}"
-            # Find the version ID for this tag. Match the WHOLE tag set, not one
-            # entry in it: a version that also carries a release tag must never be
-            # deleted for the sake of a build tag it happens to share.
-            VID=$(gh api "/user/packages/container/${PKG}/versions" \
-              --paginate --jq ".[] | select((.metadata.container.tags // []) == [\"${TAG}\"]) | .id")
-            if [ -n "$VID" ]; then
-              gh api --method DELETE "/user/packages/container/${PKG}/versions/${VID}"
-              echo "Deleted version ${VID} (${TAG})"
-            else
-              echo "Warning: could not find version for tag ${TAG}"
-            fi
-          done
+      # Keep temporary wrappers for retries using the recorded build digests.
+      # The shared, age-gated weekly sweep removes them after seven days. Staging
+      # indexes sharing a release tag remain protected by the whole-tag guard.
 
       # ── Durable release evidence ─────────────────────────────────────
       # The container security review, its bill of materials and its raw evidence are

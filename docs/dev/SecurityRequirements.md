@@ -28,6 +28,8 @@ handling requirement — see [Container Security Review](Container-Security-Revi
 **SR-2 — A published artifact can be traced to the source and pipeline that produced it.**
 *Implemented:* Sigstore-signed build provenance on the multi-arch index a tag resolves to,
 and on each per-architecture image inside it, pushed beside the image.
+The build's immutable digests are carried through review, smoke testing and final
+assembly; publication and age-gated registry cleanup cannot run concurrently.
 *Verified:* `gh attestation verify oci://ghcr.io/mickwest/sitrec2:<tag> --repo MickWest/Sitrec2`,
 by anyone, without an account.
 
