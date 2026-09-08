@@ -333,6 +333,34 @@ float lineNoise(float xPx, float lineSeed, float seed, float cellPx) {
     return mix(hash21(vec2(i, lineSeed + seed)), hash21(vec2(i + 1.0, lineSeed + seed)), f) - 0.5;
 }
 
+// The luma grain of one line. FM demodulation noise has a triangular spectrum, so
+// most of its power sits in the finest octave the luma channel carries - which is
+// what makes tape grain fine horizontal texture rather than blobs.
+float tapeLumaNoise(float xPx, float lineSeed, float cellPx) {
+    return lineNoise(xPx, lineSeed, 11.0, cellPx) * 0.4
+         + lineNoise(xPx, lineSeed, 37.0, max(cellPx * 0.4, 1.0)) * 0.6;
+}
+
+// One dropout, as it STARTS on line l: vec4(hit, xStart, xLength, concealed).
+//
+// A dropout is the head losing RF contact with the tape - a missing patch of
+// oxide, a crease, debris. Two things about the real artifact drive this:
+//
+//  - It costs a FRACTION of a scan line. A line is 63.5 us and a dropout rarely
+//    reaches that, so lengths are skewed hard toward short.
+//  - Almost every VCR CONCEALS it. The dropout compensator detects the RF
+//    envelope collapsing and switches in the previous line from a 1H delay, and
+//    a defect spanning several lines keeps repeating that same last good line.
+//    The classic bright streak is the unconcealed minority.
+vec4 dropoutStart(float l, float frame, float amount) {
+    if (hash21(vec2(l, frame * 17.0)) >= amount * 0.045) return vec4(0.0);
+    float r1 = hash21(vec2(l + 5.0, frame * 23.0));
+    float r2 = hash21(vec2(l + 9.0, frame * 31.0));
+    float r3 = hash21(vec2(l + 13.0, frame * 41.0));
+    float len = 0.012 + 0.30 * r2 * r2 * r2;      // cubic: mostly a few percent of the line
+    return vec4(1.0, r1 * (1.0 - len), len, step(0.22, r3));
+}
+
 void main() {
     float lineStep = 1.0 / uLines;
     float scan = (1.0 - vUV.y) * uLines;
@@ -373,12 +401,7 @@ void main() {
         // the frame is reliably the noisiest part of any tape.
         float wear = 1.0 + 1.2 * smoothstep(0.88, 1.0, scan / uLines);
 
-        // Luma noise is FM demodulation noise, whose power rises with frequency - a
-        // triangular spectrum - so most of it sits in the finest octave the luma
-        // channel can carry. That is what makes tape grain fine horizontal texture
-        // rather than blobs.
-        float nLuma = lineNoise(xPx, lineSeed, 11.0, uLumaNoiseCell) * 0.4
-                    + lineNoise(xPx, lineSeed, 37.0, max(uLumaNoiseCell * 0.4, 1.0)) * 0.6;
+        float nLuma = tapeLumaNoise(xPx, lineSeed, uLumaNoiseCell);
 
         // FM noise amplitude barely depends on the signal, but it reads far more
         // strongly against a dark picture than a bright one.
@@ -400,12 +423,47 @@ void main() {
         }
     }
 
-    // Dropouts: a lost patch of tape oxide reads back as a bright horizontal dash.
-    if (uDropouts > 0.001 && hash21(vec2(line, floor(uFrame) * 17.0)) < uDropouts * 0.06) {
-        float start = hash21(vec2(line + 5.0, floor(uFrame) * 23.0));
-        float len = 0.02 + 0.12 * hash21(vec2(line + 9.0, floor(uFrame) * 31.0));
-        float inDropout = step(start, vUV.x) * step(vUV.x, start + len);
-        c = mix(c, vec3(0.85), inDropout * 0.9);
+    // Dropouts. See dropoutStart() for what the artifact actually is; here we look
+    // back up to three lines for a defect that started there and still covers this
+    // one, so a tall defect repeats ONE source line rather than each line copying
+    // its own neighbour.
+    if (uDropouts > 0.001) {
+        float frame = floor(uFrame);
+        float xPx = vUV.x * uSize.x;
+        for (int k = 0; k < 3; k++) {
+            float l0 = line - float(k);
+            vec4 d = dropoutStart(l0, frame, uDropouts);
+            float height = 1.0 + floor(2.99 * hash21(vec2(l0 + 21.0, frame * 53.0)));
+            if (d.x < 0.5 || float(k) >= height) continue;
+
+            // No hard edges: the RF envelope collapses and recovers over a few
+            // microseconds, so a dropout fades in and out along the line.
+            float edge = min(d.z * 0.35, 0.005);
+            float m = smoothstep(d.y, d.y + edge, vUV.x)
+                    * (1.0 - smoothstep(d.y + d.z - edge, d.y + d.z, vUV.x));
+            if (m < 0.002) continue;
+
+            vec3 repl;
+            if (d.w > 0.5) {
+                // Concealed: the 1H delay serves the last good line. It serves the
+                // line as PLAYED, grain and all, so carry that line's grain across
+                // too - a patch that is cleaner than its surroundings reads as a
+                // paste, which is exactly what the old flat bar looked like.
+                float srcY = min(vUV.y + lineStep * (float(k) + 1.0), 1.0);
+                repl = texture(uSrc, vec2(vUV.x, srcY)).rgb;
+                if (uNoiseLevel > 0.0005) {
+                    float n = tapeLumaNoise(xPx, (l0 - 1.0) + frame * 131.0, uLumaNoiseCell);
+                    repl += vec3(n) * (uNoiseLevel * 0.35 * (0.75 + 0.5 * (1.0 - luma601(repl))));
+                }
+            } else {
+                // Unconcealed: the demodulator is running with no carrier, so this
+                // is noise pinned near the top of the range - bright and grainy,
+                // never a flat bar. Chroma drops out with it, hence monochrome.
+                float n = lineNoise(xPx, l0 + frame * 7.0, 61.0, max(uLumaNoiseCell, 1.5));
+                repl = vec3(clamp(0.72 + n * 0.55, 0.0, 1.0));
+            }
+            c = mix(c, repl, m);
+        }
     }
 
     if (uScanlines > 0.001) {

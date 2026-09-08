@@ -328,7 +328,7 @@ export function setupVideoFormatEffectsMenu() {
         .tooltip("The torn band across the bottom of the frame where the tape heads swap over.")
         .onChange(() => changed()));
     controllers.push(add(sig, "dropouts", 0, 1, 0.01).name("Dropouts")
-        .tooltip("Bright horizontal dashes where the tape has lost its oxide.")
+        .tooltip("Patches where the head loses contact with the tape. Most are hidden by the dropout compensator, which repeats the line above; the rest are the classic bright dash.")
         .onChange(() => changed()));
     controllers.push(add(sig, "interlace", 0, 1, 0.01).name("Interlace combing")
         .tooltip("Comb-toothed edges on anything moving, from alternate lines being a field older.")

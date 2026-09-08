@@ -99,6 +99,15 @@ strength, Y/C separation (0 is composite, 1 is an S-Video or component feed), hu
 time-base error, head switching, tape noise, dropouts, interlace combing, ghosting, scan
 lines, vertical chroma smear, and the number of tape generations to run.
 
+**Dropouts** are the head losing contact with the tape — a missing patch of oxide, a
+crease, debris. Each costs a fraction of one scan line, not a whole one. Most are hidden
+by the *dropout compensator*, which every VCR has: it detects the signal collapsing and
+repeats the previous line from a one-line delay, so a concealed dropout shows as a short
+horizontal smear of repeated picture rather than as anything bright, and a defect
+spanning several lines keeps repeating that same last good line. The minority the
+compensator misses are the classic bright dash — the demodulator running with no carrier,
+so grainy and monochrome rather than a flat white bar.
+
 **Tape noise** is one level from 0 to 1, starting at 0.05. Its *character* is not a
 setting: luma noise is grain the width of the format's luma channel, colour noise is broad
 horizontal smears the width of its colour channel — about ten times wider on VHS, which
