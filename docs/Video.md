@@ -64,7 +64,13 @@ The dialog previews a real frame with your settings applied, updating as you cha
 so you can judge a look in a second rather than after a five-minute export. Tick
 **Colour bars** to preview against a test pattern instead — saturated vertical edges and a
 fine grating make chroma bleed, dot crawl and rainbowing far easier to see than a
-photograph does. Your settings are remembered between exports and between sessions.
+photograph does.
+
+**An export always starts unfiltered**: *Pure digital*, with *Recorded off a screen* off,
+however the last one was set up. A filter is destructive and easy not to notice until the
+file is already out, so applying one is a decision made each time. What each stage was
+tuned to *is* remembered, so re-selecting a format or re-ticking the camera brings your
+settings back, and the compression settings persist as the preferences they are.
 
 ### Signal format
 
@@ -219,6 +225,65 @@ A few things that make more difference than the settings do:
 5. **Consider the burned-in readouts.** The Video Info Display and Sim Info Display put
    altitude, range, speed and time into the frame, so the numbers travel with the picture
    instead of living in a caption someone will crop off.
+
+---
+
+## Live video format effects
+
+**Effects → Video Format Effects**
+
+The same analog simulation, running on screen over the look view instead of only on an
+export. Useful for judging a look interactively, and for showing a recreation as it would
+have appeared on the format it was supposedly recorded on.
+
+It carries the same *Format* list and the main severity controls — tape noise, time-base
+error, head switching, dropouts, interlace combing, scan lines, colour smear — plus
+*Recorded off a screen* and, under it, a **Camera Tweaks** folder holding every camera
+parameter. The two keep their settings separately, so tuning one does not disturb the other.
+
+### Where the camera is standing
+
+The first four entries in Camera Tweaks describe the physical setup rather than a look, and
+between them they decide how much of the frame the screen fills:
+
+| Control | What it is |
+|---|---|
+| **Camera HFOV** | Horizontal field of view of the lens, in degrees. A phone's main camera is around 65 |
+| **Aspect ratio** | Shape of the camera's own frame, width over height — 1.78 is 16:9. Letterboxed into the view when it differs, because that is what watching phone footage in a wider window looks like |
+| **Screen width** | Physical width of the screen being filmed, in metres |
+| **Distance** | How far the camera is from it, in metres |
+
+**Bezel width** and **Bezel brightness** draw the monitor's frame around the screen — the
+width as a fraction of the screen's width, so it stays the same all the way round. It is a
+real object in the room rather than a border drawn on the picture, so it is metered,
+vignetted and grained with everything else: a dark bezel gets brighter as the auto exposure
+opens up, and a hard enough *Black crush* will take it to black entirely. The glass
+reflection stays on the glass and does not spill onto it, or into the room.
+
+The screen's half-width subtends `atan((width/2) / distance)` at the lens, and the frame's
+half-width subtends half the field of view; the ratio decides the framing. So standing back,
+narrowing the lens or filming a smaller screen all shrink the picture in frame and let the
+dark room in around it, and moving in crops into the screen. **Extra crop** is a manual
+adjustment on top, for when you want a particular framing without arguing with the numbers.
+
+**It includes the on-screen display.** The HUD, the compass and the annotation layer are
+composited into the picture before the effect runs, so they are degraded along with it
+rather than sitting crisp on top. That is the difference between this and the other
+entries in the Effects menu: those are shader passes inside the 3D render and can only
+ever see the 3D scene, so this one runs after every view has drawn.
+
+Two consequences of that:
+
+- It costs two full-frame copies per frame that the other effects do not pay. Measured at
+  a half-screen look view on a discrete GPU it holds 60 fps with no measurable frame-time
+  change; a full-screen view is four times the pixels and has not been measured.
+- The effect animates while the sitch is playing. Paused, the picture holds still — which
+  is what a paused tape looks like — and any setting you change still takes effect
+  immediately.
+
+**It always starts switched off**, whatever it was left as. Its format and tuning are
+remembered, so ticking it back on resumes where it was; only the choice to apply it is
+made afresh. The settings are not saved into a sitch.
 
 ---
 

@@ -19,6 +19,7 @@ import {
     Sit,
 } from "./Globals";
 import {par} from "./par";
+import {updateVideoFormatLayer} from "./videoFilters/VideoFormatLayer";
 import {arModeManager} from "./ARMode";
 import {glareSprite, targetSphere} from "./JetStuffVars";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
@@ -559,6 +560,12 @@ export function renderMain(elapsed) {
         // Adjacency-based shared-edge seams: rebuild the draggable seam overlay from the views'
         // freshly-laid-out pixel rects. Cheap — skips entirely when no rect moved.
         LayoutMan.updateSeams();
+
+        // Video format effects. Deliberately LAST: it composites the host view with its
+        // on-screen display, which means every one of those canvases has to have drawn
+        // already. They have no preserveDrawingBuffer, so this also has to happen inside
+        // the same animation frame that drew them. No-op when the effect is off.
+        updateVideoFormatLayer();
     }
     
     if (globalProfiler) globalProfiler.pop();

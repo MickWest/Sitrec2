@@ -457,8 +457,10 @@ ${COMMON}
 uniform sampler2D uSrc;
 uniform sampler2D uBloom;
 uniform vec2 uSize;
-uniform float uAspect;
-uniform vec4 uHandheld;       // x/y offset (frame fractions), rotation (radians), zoom
+uniform float uAspect;        // output raster w/h
+uniform float uCameraAspect;  // the camera's own frame w/h, letterboxed into the output
+uniform vec2 uFill;           // fraction of the camera frame the screen covers, x and y
+uniform vec4 uHandheld;       // x/y offset (frame-height units), rotation (radians), extra zoom
 uniform float uBarrel;
 uniform float uKeystone;
 uniform float uAberration;
@@ -476,24 +478,39 @@ uniform float uBlackLift;
 uniform float uBloomAmount;
 uniform float uGlare;
 uniform vec2 uGlarePos;
+uniform vec2 uBezel;          // bezel width around the screen, in screen uv (x, y)
+uniform float uBezelLevel;    // bezel brightness, LINEAR light
 uniform float uVignette;
 uniform float uNoise;
 uniform float uFrame;
 
 // Map an output pixel back to the point on the screen being filmed.
-vec2 screenUV(vec2 uv, float scale) {
-    vec2 p = uv - 0.5;
-    p.x *= uAspect;
+//
+// Three coordinate systems, in order: the output raster, the camera's own frame (which is
+// letterboxed into the output when their aspects differ), and the screen the camera is
+// pointed at. How much of the frame that screen covers is uFill, worked out on the CPU
+// from the lens angle, the screen's width and how far away it is - so moving the camera
+// back really does make the screen smaller and let more of the dark room in.
+//
+// The framed output parameter comes back 0 outside the camera's frame - the letterbox bar.
+vec2 screenUV(vec2 uv, float scale, out float framed) {
+    // Output raster -> camera frame.
+    float fitX = (uCameraAspect > uAspect) ? 1.0 : uCameraAspect / uAspect;
+    float fitY = (uCameraAspect > uAspect) ? uAspect / uCameraAspect : 1.0;
+    vec2 c = vec2((uv.x - 0.5) / fitX, (uv.y - 0.5) / fitY);
+    framed = step(abs(c.x), 0.5) * step(abs(c.y), 0.5);
+
+    // Into an isotropic space, so rotation and barrel distortion stay circular.
+    vec2 p = vec2(c.x * uCameraAspect, c.y);
 
     // Undo the handheld camera motion.
     p -= uHandheld.xy;
-    float s = sin(-uHandheld.z), c = cos(-uHandheld.z);
-    p = vec2(p.x * c - p.y * s, p.x * s + p.y * c);
-    p /= max(uHandheld.w, 0.01);
+    float s = sin(-uHandheld.z), co = cos(-uHandheld.z);
+    p = vec2(p.x * co - p.y * s, p.x * s + p.y * co);
 
     // Barrel distortion, as a phone's wide lens has: dividing (rather than
     // multiplying) pulls the sampled radius in, so the picture stretches outward at
-    // the edges and no frame edge is ever pulled into view.
+    // the edges rather than exposing anything past them.
     float r2 = dot(p, p);
     p /= 1.0 + uBarrel * r2 + uBarrel * 0.35 * r2 * r2;
     p *= scale;
@@ -502,17 +519,29 @@ vec2 screenUV(vec2 uv, float scale) {
     p.x *= 1.0 + uKeystone * p.y;
     p.y *= 1.0 + uKeystone * 0.35 * p.x;
 
-    p.x /= uAspect;
-    return p + 0.5;
+    // Camera frame -> the screen in it. uHandheld.w is a manual crop on top of the
+    // framing the physical setup already decided.
+    vec2 fill = max(uFill * max(uHandheld.w, 0.01), vec2(0.001));
+    return vec2(0.5 + (p.x / uCameraAspect) / fill.x, 0.5 + p.y / fill.y);
 }
 
 void main() {
-    vec2 uvG = screenUV(vUV, 1.0);
-    vec2 uvR = screenUV(vUV, 1.0 - uAberration);
-    vec2 uvB = screenUV(vUV, 1.0 + uAberration);
+    float framed, ignored;
+    vec2 uvG = screenUV(vUV, 1.0, framed);
+    vec2 uvR = screenUV(vUV, 1.0 - uAberration, ignored);
+    vec2 uvB = screenUV(vUV, 1.0 + uAberration, ignored);
 
-    // Past the edge of the screen is the dark room behind it.
-    float inside = step(0.0, uvG.x) * step(uvG.x, 1.0) * step(0.0, uvG.y) * step(uvG.y, 1.0);
+    // Past the edge of the screen is the monitor's bezel and then the dark room behind
+    // it; past the edge of the camera's frame is the letterbox.
+    float onScreen = step(0.0, uvG.x) * step(uvG.x, 1.0) * step(0.0, uvG.y) * step(uvG.y, 1.0);
+    float inside = framed * onScreen;
+
+    // The bezel is the screen's rectangle grown by uBezel and with the screen taken back
+    // out. It is a real object in the room, so it goes in before the exposure curve and
+    // gets metered, vignetted and grained along with everything else.
+    float onBezel = step(-uBezel.x, uvG.x) * step(uvG.x, 1.0 + uBezel.x)
+                  * step(-uBezel.y, uvG.y) * step(uvG.y, 1.0 + uBezel.y);
+    float bezel = framed * onBezel * (1.0 - onScreen);
 
     // Lenses are softest at the edge of frame.
     vec2 blurStep = (uEdgeSoftness * dot(uvG - 0.5, uvG - 0.5) * 4.0) / uSize;
@@ -538,13 +567,22 @@ void main() {
         lin *= 1.0 + uBeat * sin(TAU * (uvG.y * uBeatBars - uBeatPos));
     }
 
-    lin += texture(uBloom, vUV).rgb * uBloomAmount;
+    // Sampled where the SCREEN is, not where the output pixel is. The bloom texture is
+    // built from the unwarped screen content, so reading it at the output position adds a
+    // full-size ghost of the picture over a picture the camera geometry has since moved,
+    // scaled and rotated. Harmless while the geometry was near enough the identity;
+    // glaringly wrong the moment the camera stands back and the screen shrinks in frame.
+    lin += texture(uBloom, uvG).rgb * uBloomAmount * inside;
 
-    // A reflection sitting on the glass.
+    // A reflection sitting on the glass - and only on the glass. Unmasked it spread
+    // across the whole frame, and since auto exposure opens up for a mostly dark frame it
+    // was then multiplied into a bright fog with the screen adrift in the middle of it.
     if (uGlare > 0.001) {
         vec2 g = (vUV - uGlarePos) * vec2(uAspect, 1.0);
-        lin += uGlare * exp(-dot(g, g) * 6.0);
+        lin += uGlare * exp(-dot(g, g) * 6.0) * inside;
     }
+
+    lin += uBezelLevel * bezel;
 
     lin *= uExposure;
 
