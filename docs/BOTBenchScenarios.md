@@ -220,10 +220,54 @@ descriptive filenames at all.
 
 ## Optional scenario videos
 
-The starter video set records three balloon cases from the existing platform
-generator: level drift on an orbit, rising on an orbit, and level drift on a
-straight pass. Each clip defaults to 20 seconds of **640×480 progressive video
-at 30 fps**, in black and white, with Sitrec's **MQ9UI** overlay.
+### The delivered set
+
+One command builds the whole delivered set — render, transport mux, clip
+placement and manifest:
+
+```bash
+npm run build
+npm run bench-bot-video-set -- --url='https://local.metabunk.org/sitrec/?action=new'
+npm run bench-bot-video-verify
+```
+
+It writes `benchmarks/botbench/results/video/`:
+
+```
+manifest.json          the only index — every clip, with its axis values as fields
+clips/<NNN>-<name>.ts  every deliverable, exactly one copy
+render/                plans, recordings, round-trip reports and previews
+```
+
+The set is a **functional test corpus**, not a statistical instrument — the
+botsets are that. It carries one clip per thing that can break rather than a
+dense grid: a core grid of three geometries × two parallax apertures × two
+wobble amplitudes, then one clip per single-purpose axis against a fixed
+reference geometry (level orbit, near parallax, 0.5°), plus the six tracker
+state machines. Twenty-three clips, TS only.
+
+A clip's name carries every axis, so adding one needs no new directory:
+`<NNN>-<geometry>-<parallax>-<wobble>[-<event>][-<signal>]-<transport>`.
+**Numbers are allocated once and never reused** — deleting a clip leaves a gap
+instead of renumbering every clip after it, so a reference to "clip 13" stays
+true. `--only=<render id>` rebuilds part of the set; `--plans-only` writes the
+scenario plans without opening a browser.
+
+`verify-video-set.mjs` re-checks each clip's size and hash against the manifest,
+counts its video frames, decodes its KLV and asserts the sensor, range and
+target tags are complete, and re-asserts the render-time round-trip gates. Add
+`--url=…` to also import every clip and confirm the camera track claims the
+camera switch and the target track is drawn. Those checks are committed on
+purpose: the previous batch kept them in one-off probes that were deleted as
+soon as they passed, leaving no way to say whether a clip was still good.
+
+### Generating clips directly
+
+The runner underneath builds one scenario at a time. The starter set records
+three balloon cases from the existing platform generator: level drift on an
+orbit, rising on an orbit, and level drift on a straight pass. Each clip
+defaults to 20 seconds of **640×480 progressive video at 30 fps**, in black and
+white, with Sitrec's **MQ9UI** overlay.
 
 ```bash
 npm run build
@@ -239,6 +283,20 @@ Outputs go to `benchmarks/botbench/results/video/` (`--out` changes this):
 
 - `.ts`: H.264 video plus embedded, frame-synchronous ST 0601 KLV. Open this
   directly with **File → Import** in a new custom sitch; no CSV is needed.
+  Each record carries the sensor position and pose (tags 13–15, 16–20), the
+  slant range (21), the frame centre where the boresight meets the ground
+  (23–25), and the tracked object's own position (40–42). Importing therefore
+  builds three tracks: the camera, a `Center_` ground track that carries the
+  operator's wobble, and a `Target_` track that does not. On these synthetic
+  clips the target track is exact, so it doubles as the answer key — that is a
+  property of these files, not of the tags, which on a real capture hold the
+  sensor's own estimate — so the target track is drawn as an ordinary visible
+  sphere, not the lime answer-key marker, and it declares no camera/target role,
+  leaving the sensor track to claim the camera as before. Select it in the
+  **Target** switch by hand if you want it measured against. Target elevation quantizes to 0.30 m
+  under the standard's 2-byte tag 42; use tag 21's slant range when finer is
+  needed. A record carrying tags 40/41 but no 42 is skipped rather than placed
+  at 0 m, which for an airborne target would be a materially false position.
 - `.mp4`: the same H.264 video, without the KLV track.
 - `.video.json` and `.recording.json`: source scenario, truth, camera settings,
   and per-frame verification data. These are development answer keys.
@@ -301,8 +359,14 @@ The video and KLV switch together at frames 300 and 600. Capture-style variants
 include exact-time lens updates between their regular sparse samples; they
 hold the FOV until the next switch instead of interpolating a zoom ramp.
 
+`--name=<slug>` gives the selected scenario its final delivered name, so a clip
+carries one name from plan to deliverable and no rename step can lose the
+mapping. It renames a single scenario, so pass `--scenario` with it.
+
 `--resume` retains clips that already passed both import checks, requiring their
-saved plans to match the requested settings. On macOS the runner uses Metal
+saved plans to match the requested settings. It is for continuing an interrupted
+batch — it will KEEP a clip you are trying to replace, so omit it when
+re-recording one deliberately. On macOS the runner uses Metal
 graphics; `--software-renderer` selects the software fallback.
 
 The target is a **1 m diameter sphere** representing a balloon. The initial lens
@@ -373,11 +437,13 @@ After generating a representative set into `low-wobble/` and `tracking-wobble/`
 subfolders, add transport variants alongside the precise controls:
 
 ```bash
-node benchmarks/botbench/build-video-transport.mjs --root=<representative-output-folder>
+node benchmarks/botbench/build-video-transport.mjs --in=<render prefix> --out=<clip prefix>
 ```
 
-For other wobble folders, pass their names explicitly with
-`--profiles=wobble-010deg,wobble-025deg,wobble-050deg`.
+`--in`/`--out` name one source and one destination, which is what a
+clip-per-name set wants; `build-video-set.mjs` drives it that way. The older
+folder-per-profile layout is still reachable with
+`--root=<folder> --profiles=wobble-010deg,wobble-025deg,wobble-050deg`.
 
 This reuses the rendered imagery and writes matching TS/MP4 files plus timing
 manifests under `realistic/`. It preserves 640×480/30p and the original motion,

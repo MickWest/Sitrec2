@@ -6,8 +6,14 @@ const FIELDS = {
     5: [2, 0, 360], 6: [2, -20, 20], 7: [2, -50, 50],
     13: [4, -90, 90], 14: [4, -180, 180], 15: [2, -900, 19000],
     16: [2, 0, 180], 17: [2, 0, 180], 18: [4, 0, 360],
-    19: [4, -180, 180], 20: [4, 0, 360],
+    19: [4, -180, 180], 20: [4, 0, 360], 21: [4, 0, 5000000],
     23: [4, -90, 90], 24: [4, -180, 180], 25: [2, -900, 19000],
+    // Target Location: where the tracked object is, as distinct from tag
+    // 23/24/25's boresight-on-ground frame centre. Latitude and longitude get
+    // the same 4-byte resolution as the sensor position (~5 mm); elevation is
+    // 2 bytes over -900..19000 m, so it quantizes to 0.30 m — tag 21's slant
+    // range carries the radial component at 1.2 mm when that matters.
+    40: [4, -90, 90], 41: [4, -180, 180], 42: [2, -900, 19000],
 };
 
 export function berLength(n) {

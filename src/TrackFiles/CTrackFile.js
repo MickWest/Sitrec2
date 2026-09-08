@@ -146,6 +146,19 @@ export class CTrackFile {
         return null;
     }
 
+    // True when a SUPPLEMENTARY sub-track is an object in the scene rather than
+    // reference geometry, so it must be drawn instead of taking the deliberately
+    // invisible marker. A frame centre is a point on the ground; a reported
+    // target location is a thing in the air.
+    //
+    // Deliberately NOT trackRoleHint. A role puts TrackManager into role-based
+    // auto-selection for the WHOLE file — its roleless tracks then select into
+    // neither camera nor target switch — which is a far larger claim than "draw
+    // this one", and cost a KLV import its camera when it was tried.
+    supplementaryTrackIsObject(trackIndex) {
+        return false;
+    }
+
     // True when the track at `trackIndex` is GROUND TRUTH: the known answer for the
     // scenario, not a measurement of it. The traverse analysis auto-selects such a
     // track as its "Truth Track" reference and scores every method against it.

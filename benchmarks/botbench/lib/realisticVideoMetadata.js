@@ -18,7 +18,12 @@ export function realisticVideoMetadata(plan, records) {
         const frame = time * fps, lo = Math.floor(frame), fraction = frame - lo;
         const a = records[lo].values, b = records[lo + 1].values;
         const values = {};
-        for (const tag of [5,6,7,13,14,15,16,17,18,19,20]) {
+        // 21/40/41/42 are the tracked object, 23/24/25 the frame centre. A real
+        // capture drops frame centre whenever the boresight misses the ground,
+        // so skip a tag that either endpoint lacks rather than interpolating
+        // across the gap and inventing a ground point.
+        for (const tag of [5,6,7,13,14,15,16,17,18,19,20,21,23,24,25,40,41,42]) {
+            if (a[tag] === undefined || a[tag] === null || b[tag] === undefined || b[tag] === null) continue;
             const circular = [5,18,20].includes(tag);
             const delta = circular ? ((b[tag] - a[tag] + 540) % 360) - 180 : b[tag] - a[tag];
             const value = a[tag] + delta * fraction;

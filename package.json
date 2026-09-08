@@ -104,6 +104,8 @@
     "bench-bot-folder": "node benchmarks/botbench/run-folder-performance.mjs",
     "bench-bot-platform": "npx jest benchmarks/botbench/botset-platform.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-video": "node benchmarks/botbench/run-botset-video.mjs",
+    "bench-bot-video-set": "node benchmarks/botbench/build-video-set.mjs",
+    "bench-bot-video-verify": "node benchmarks/botbench/verify-video-set.mjs",
     "bench-bot-viz": "node benchmarks/botbench/vizBotBench.mjs",
     "bench-bot-real": "npx jest benchmarks/botbench/realtracks.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-tract": "npx jest benchmarks/botbench/tractability.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",

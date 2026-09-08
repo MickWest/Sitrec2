@@ -1358,14 +1358,22 @@ class CTrackManager extends CManager {
             // a small invisible reference sphere instead of duplicating it.
             // Multi-aircraft files (KML, ASTERIX PCAP) override
             // isSupplementaryTrack to keep each track visible.
+            //
+            // A supplementary track that is an OBJECT rather than reference
+            // geometry — a MISB Target Location, say — is the exception: it is
+            // drawn at the ordinary marker size, because a track rendered as
+            // nothing cannot be told apart from one that failed to import. It is
+            // display only; the switch auto-selection above is untouched.
+            const isObject = !!FileManager.get(trackOb.trackFileName)
+                ?.supplementaryTrackIsObject?.(trackOb.trackIndex);
             trackOb.displayTargetSphere = new CNode3DObject({
                 id: sphereId + "_ob",
                 geometry: "sphere",
-                radius: 2,
+                radius: isObject ? DEFAULT_TRACK_SPHERE_RADIUS_M : 2,
                 material: "phong",     // as the other auto track markers
                 color: trackColor,
                 label: shortName,
-                visible: false,
+                visible: isObject,
             });
         } else if (getEnv("DEFAULT_PLATFORM_MODEL", process.env.DEFAULT_PLATFORM_MODEL) && trackOb.trackFileName.endsWith(".klv")) {
 

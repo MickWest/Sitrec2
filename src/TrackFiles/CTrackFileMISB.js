@@ -117,6 +117,27 @@ export class CTrackFileMISB extends CTrackFile {
         return false;
     }
 
+    _hasTarget() {
+        if (!this.data || this.data.length === 0) {
+            return false;
+        }
+        // Target Location (tags 40/41) is reported only while the sensor has a
+        // target, so scan for the first usable pair like _hasCenter/_hasTruth.
+        for (const row of this.data) {
+            const lat = row[MISB.TargetLocationLatitude];
+            const lon = row[MISB.TargetLocationLongitude];
+            const elev = row[MISB.TargetLocationElevation];
+            // Elevation included deliberately: _targetTrackMISB skips a row
+            // without it, so testing only lat/lon here could advertise a
+            // sub-track that builds to nothing.
+            if (lat !== undefined && lat !== null && lon !== undefined && lon !== null
+                && elev !== undefined && elev !== null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Ordered list of derived supplementary sub-tracks present in a
     // single-TrackID file — track index i+1 maps to entry i, and the entry
     // doubles as the short-name prefix ("Center_...", "Truth_..."). Multi-
@@ -126,6 +147,10 @@ export class CTrackFileMISB extends CTrackFile {
         const types = [];
         if (this._hasCenter()) types.push("Center");
         if (this._hasTruth()) types.push("Truth");
+        // Appended, never inserted: trackIndex is this list's position + 1, so
+        // putting Target anywhere earlier would renumber the sub-tracks of every
+        // file that already has a Center or a Truth.
+        if (this._hasTarget()) types.push("Target");
         return types;
     }
 
@@ -174,6 +199,7 @@ export class CTrackFileMISB extends CTrackFile {
         const type = this._derivedTrackTypes()[trackIndex - 1];
         if (type === "Center") return this._centerTrackMISB();
         if (type === "Truth") return this._truthTrackMISB(trackIndex);
+        if (type === "Target") return this._targetTrackMISB();
 
         return false;
     }
@@ -288,6 +314,57 @@ export class CTrackFileMISB extends CTrackFile {
             newRow[MISB.SensorTrueAltitude] = (alt !== null && alt !== undefined) ? alt * altScale : 0;
             return newRow;
         }, "truth");
+    }
+
+    // ST 0601 Target Location (tags 40/41/42) — where the sensor says the
+    // tracked object is, as opposed to tag 23/24/25's boresight-on-ground frame
+    // centre. Elevation is MSL by the standard, so it takes the same geoid
+    // handling downstream as FrameCenterElevation.
+    //
+    // Deliberately NOT reported by trackIsTruth: on a real capture this is the
+    // platform's ESTIMATE, and flagging it as the answer key would put the lime
+    // truth marker on a measurement. On the synthetic BotBench clips it happens
+    // to be exact, which is a property of those files, not of the tag.
+    _targetTrackMISB() {
+        return this._buildDerivedTrack((row) => {
+            const lat = row[MISB.TargetLocationLatitude];
+            const lon = row[MISB.TargetLocationLongitude];
+            const elev = row[MISB.TargetLocationElevation];
+            // Elevation is required, unlike the Center track's 0 m fallback. A
+            // frame centre is on the ground, so 0 m is a poor-but-bounded guess
+            // there; a target can be anywhere in the air, and dropping a balloon
+            // at 4.6 km to sea level is a materially false position that looks
+            // like real data. A row without tag 42 is skipped instead.
+            if (lat === null || lat === undefined ||
+                lon === null || lon === undefined ||
+                elev === null || elev === undefined) {
+                return null;
+            }
+            const newRow = new Array(MISBFields).fill(null);
+            newRow[MISB.UnixTimeStamp] = row[MISB.UnixTimeStamp];
+            newRow[MISB.SensorLatitude] = lat;
+            newRow[MISB.SensorLongitude] = lon;
+            newRow[MISB.SensorTrueAltitude] = elev;
+            return newRow;
+        }, "target");
+    }
+
+    // The Target sub-track is an object in the air, so it is drawn, unlike the
+    // Center track's ground reference point.
+    //
+    // This is display only, and that is the whole point. Declaring the target
+    // through trackRoleHint instead switched TrackManager into role-based
+    // auto-selection for the entire file, and the roleless sensor track then
+    // selected into no switch at all: cameraTrackSwitch stayed on fixedCamera
+    // while targetTrackSwitch held the imported target, so the view never
+    // followed the sensor. Measured on a clean custom-sitch import.
+    //
+    // The track is still NOT ground truth — on a real capture tags 40/41/42 are
+    // the platform's own estimate, so trackIsTruth/isGroundTruthTrack stay false
+    // and it gets an ordinary marker, not the answer-key one.
+    supplementaryTrackIsObject(trackIndex) {
+        if (this._derivedTrackTypes()[trackIndex - 1] === "Target") return true;
+        return super.supplementaryTrackIsObject(trackIndex);
     }
 
     getShortName(trackIndex = 0, trackFileName = "") {

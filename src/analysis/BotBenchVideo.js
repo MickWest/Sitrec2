@@ -17,6 +17,7 @@ import {videoLensAtFrame} from "../../benchmarks/botbench/lib/videoZoom";
 import {waitForExportFrameSettled} from "../ExportFrameSettler";
 import {misbSightlineHeading} from "../MISBSightline";
 import {LLAToECEF} from "../LLA-ECEF-ENU";
+import {raycastGroundElevationFast} from "../raycastGround";
 import {GlobalScene} from "../LocalFrame";
 
 const DEG = 180 / Math.PI;
@@ -139,6 +140,27 @@ export function renderFrame(f) {
     const values = {2: Date.parse(plan.site.epochISO) * 1000 + Math.round(f * 1e6 / plan.fps),
         5: 0, 6: 0, 7: 0, 13: pos.x, 14: pos.y, 15: pos.z - meanSeaLevelOffset(pos.x, pos.y),
         16: lens.hfov, 17: lens.vfov, 18: az, 19: el, 20: roll};
+    // Two ground/target tracks, both standard ST 0601 and both per frame.
+    //
+    // Tags 40/41/42 (plus 21's slant range) are the tracked object itself. In a
+    // real capture that is the sensor's ESTIMATE of where the target is; here it
+    // is the exact simulated position, so for this set it is the answer key.
+    // Tags 23/24/25 are the frame centre — where the boresight meets the ground
+    // — so they carry the operator's wobble while the target track stays clean.
+    const targetLLA = ECEFToLLAVD_radii(target[f]);
+    values[21] = sensor[f].distanceTo(target[f]);
+    values[40] = targetLLA.x;
+    values[41] = targetLLA.y;
+    values[42] = targetLLA.z - meanSeaLevelOffset(targetLLA.x, targetLLA.y);
+    // The same raycast CNodeTrack's MISB CSV export uses, so the two exports
+    // agree. Omitted, as a real capture omits it, when the ray never lands.
+    const groundHit = raycastGroundElevationFast(camera.position, forward);
+    if (groundHit) {
+        const centerLLA = ECEFToLLAVD_radii(groundHit);
+        values[23] = centerLLA.x;
+        values[24] = centerLLA.y;
+        values[25] = centerLLA.z - meanSeaLevelOffset(centerLLA.x, centerLLA.y);
+    }
     const projected = target[f].clone().project(camera);
     const renderedVFOV = camera.renderedFOV ?? camera.fov;
     if (Math.abs(renderedVFOV - lens.vfov) > 1e-8 || Math.abs(camera.aspect - plan.width / plan.height) > 1e-8) {
@@ -208,7 +230,11 @@ export function preview() { return active.canvas.toDataURL("image/jpeg", 0.9); }
 export async function verifyImported(expected, videoFilter = null) {
     await ensureGeoidLoaded();
     const nodes = Object.values(NodeMan.list).map(e => e.data);
-    const data = nodes.find(n => n.misb?.length === expected.length && n.misb[0]?.[2] === expected[0].values[2]);
+    // Match on a sensor-only field as well as length and start time: the derived
+    // Center and Target tracks now have the same row count and the same first
+    // timestamp, and carry nothing in tag 18.
+    const data = nodes.find(n => n.misb?.length === expected.length && n.misb[0]?.[2] === expected[0].values[2]
+        && n.misb[0]?.[18] !== null && n.misb[0]?.[18] !== undefined);
     const videoView = NodeMan.get("video"), video = videoView.videoData;
     const cameraNode = NodeMan.get("lookCamera"), camera = cameraNode.camera, view = NodeMan.get("lookView");
     const hud = NodeMan.get("MQ9UI");

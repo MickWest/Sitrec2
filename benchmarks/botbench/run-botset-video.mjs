@@ -20,6 +20,7 @@ const {values: args} = parseArgs({options: {
     'verify-only': {type: "boolean", default: false},
     resume: {type: "boolean", default: false}, 'software-renderer': {type: "boolean", default: false},
     'video-filter': {type: "string"},
+    name: {type: "string"},
 }});
 const outputDir = path.resolve(args.out || path.join(root, "results", "video"));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-video-"));
@@ -43,6 +44,15 @@ try {
         recenterSpeed: args['recenter-speed'] === undefined ? undefined : Number(args['recenter-speed']),
         wobblePercent: args.wobble === undefined ? undefined : Number(args.wobble),
         wobbleDegrees: args['wobble-deg'] === undefined ? undefined : Number(args['wobble-deg'])});
+    // --name gives the selected scenario its final, delivered name, so a clip has
+    // ONE name from plan to deliverable and no rename step can lose the mapping.
+    // Single scenario only: a name is an identity, not a prefix.
+    if (args.name !== undefined) {
+        if (scenarios.length !== 1) throw new Error("--name renames one scenario; select it with --scenario");
+        if (!/^[0-9a-z][0-9a-z-]*$/.test(args.name)) throw new Error("--name must be lower-case letters, digits and hyphens");
+        scenarios[0].name = args.name;
+    }
+
     // --video-filter puts every scenario through the export video filter: a bare signal
     // format name ("vhs", "ntsc", "pal", "rs170", "vhsWorn"), or a JSON settings object
     // for full control, e.g.
@@ -72,7 +82,10 @@ try {
             ? "--use-angle=metal" : "--enable-unsafe-swiftshader"]});
         for (const scenario of scenarios) {
             const base = path.join(outputDir, scenario.name);
-            if (args.resume && !args['verify-only'] && [".mp4", ".ts", ".recording.json", ".roundtrip.json", ".roundtrip-layout.json"]
+            // No ".mp4" here on purpose: it is a byproduct that a TS-only set
+            // prunes, and the TS plus the two round-trip reports are what say
+            // this render is complete and verified.
+            if (args.resume && !args['verify-only'] && [".ts", ".recording.json", ".roundtrip.json", ".roundtrip-layout.json"]
                 .every(ext => fs.existsSync(base + ext))) {
                 const reports = [".roundtrip.json", ".roundtrip-layout.json"].map(ext => JSON.parse(fs.readFileSync(base + ext)));
                 if (reports.every(r => r.frames === scenario.frames && r.records === scenario.frames

@@ -175,6 +175,80 @@ describe('CTrackFileMISB', () => {
         });
     });
 
+    describe('target track (ST 0601 tags 40/41/42)', () => {
+        // Build rows carrying Target Location. `elevationRows` picks which rows
+        // get tag 42, so the optional-elevation cases are expressible.
+        const withTarget = (elevationRows = null) => {
+            const rows = createTestMISBArray(true, true);
+            rows.forEach((row, i) => {
+                row[MISB.TargetLocationLatitude] = 40.3 + i * 0.001;
+                row[MISB.TargetLocationLongitude] = -104.3 + i * 0.001;
+                if (elevationRows === null || elevationRows.includes(i)) {
+                    row[MISB.TargetLocationElevation] = 4600 + i;
+                }
+            });
+            return new CTrackFileMISB(rows);
+        };
+
+        test('adds a Target sub-track AFTER Center, so existing indices do not move', () => {
+            const tf = withTarget();
+            expect(tf.getTrackCount()).toBe(3);
+            expect(tf.getShortName(1)).toMatch(/^Center_/);
+            expect(tf.getShortName(2)).toMatch(/^Target_/);
+        });
+
+        test('carries the target position, not the frame centre', () => {
+            const target = withTarget().toMISB(2);
+            expect(target).toHaveLength(10);
+            expect(target[0][MISB.SensorLatitude]).toBeCloseTo(40.3, 6);
+            expect(target[0][MISB.SensorTrueAltitude]).toBe(4600);
+        });
+
+        test('is the observed target, never ground truth', () => {
+            const tf = withTarget();
+            // Truth would put the answer-key marker on what is, in a real
+            // capture, the platform's own estimate.
+            expect(tf.trackIsTruth(2)).toBe(false);
+            expect(tf.isGroundTruthTrack(2)).toBe(false);
+            // Still supplementary: it shares the sensor's file, so it must stay
+            // out of closest-approach timing.
+            expect(tf.isSupplementaryTrack(2)).toBe(true);
+            expect(tf.cpaCandidate(2)).toBe(false);
+        });
+
+        test('is drawn, unlike the Center track it sits beside', () => {
+            const tf = withTarget();
+            expect(tf.supplementaryTrackIsObject(2)).toBe(true);
+            // The frame centre is a point on the ground, not an object.
+            expect(tf.supplementaryTrackIsObject(1)).toBe(false);
+        });
+
+        test('declares NO track role, so switch auto-selection is untouched', () => {
+            // Regression guard. Declaring the target through trackRoleHint puts
+            // TrackManager into role-based auto-selection for the whole file,
+            // and the roleless sensor track then selects into no switch at all:
+            // cameraTrackSwitch stayed on fixedCamera while targetTrackSwitch
+            // held the imported target, so the view never followed the sensor.
+            // Visibility is settled by supplementaryTrackIsObject instead.
+            const tf = withTarget();
+            for (let i = 0; i < tf.getTrackCount(); i++) {
+                expect(tf.trackRoleHint(i)).toBe(null);
+            }
+        });
+
+        test('skips a row whose optional elevation is absent rather than placing it at 0 m', () => {
+            const target = withTarget([0, 1, 2]).toMISB(2);
+            expect(target).toHaveLength(3);
+            expect(target.every(row => row[MISB.SensorTrueAltitude] >= 4600)).toBe(true);
+        });
+
+        test('advertises no Target sub-track when no row has an elevation', () => {
+            const tf = withTarget([]);
+            expect(tf.getTrackCount()).toBe(2);
+            expect(tf.getShortName(1)).toMatch(/^Center_/);
+        });
+    });
+
     describe('center track (index 1)', () => {
         test('trackFile without center has 1 track', () => {
             expect(trackFile._hasCenter()).toBe(false);
