@@ -5,7 +5,7 @@ const {spawnSync} = require('node:child_process');
 const {pathToFileURL} = require('node:url');
 const runner = pathToFileURL(path.resolve(__dirname, '../scripts/quickship.mjs')).href;
 const call = code => spawnSync(process.execPath, ['--input-type=module', '-e',
-    `import {checkScope,snapshot,copyFrontend,buildReference} from ${JSON.stringify(runner)}; ${code}`], {encoding: 'utf8'});
+    `import {checkScope,checkEmergencyBoundary,snapshot,copyFrontend,buildReference} from ${JSON.stringify(runner)}; ${code}`], {encoding: 'utf8'});
 let directory;
 beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), 'quickship-test-')); });
 afterEach(() => fs.rmSync(directory, {recursive: true, force: true}));
@@ -45,6 +45,16 @@ test('the local-only channel warning exception requires the exact reviewed hoste
     expect(call(check).status).toBe(0);
     fs.appendFileSync(target,'\n// additional channel change\n');
     expect(call(check).status).not.toBe(0);
+});
+
+test('emergency frontend builds retain the reviewed static server without the ordinary scope gate', () => {
+    const baseline={'docker/frontend_server.py':'reviewed', 'src/index.js':'old', 'package-lock.json':'old'};
+    const candidate={...baseline, 'src/index.js':'new', 'package-lock.json':'new'};
+    expect(call(`checkEmergencyBoundary(${JSON.stringify(baseline)},${JSON.stringify(candidate)});`).status).toBe(0);
+    expect(call(`checkEmergencyBoundary(${JSON.stringify(baseline)},${JSON.stringify({...candidate,'docker/frontend_server.py':'changed'})});`).status).not.toBe(0);
+    expect(call(`checkEmergencyBoundary({},${JSON.stringify(candidate)});`).status).not.toBe(0);
+    // A normal quickship still refuses the same dependency change.
+    expect(call(`checkScope(['package-lock.json']);`).status).not.toBe(0);
 });
 
 test('static packaging includes decoders and loose workers but never backend or private configuration', () => {

@@ -76,6 +76,15 @@ export function checkScope(changed, {baseline = {}, source} = {}) {
     if (blocked.length) throw new Error(`Full ship required for: ${blocked.join(', ')}`);
 }
 
+// Emergency deployments rebuild the frontend without the normal review gate.
+// They still cannot replace the static server inherited from the reviewed pool.
+export function checkEmergencyBoundary(baseline, candidate) {
+    const server = 'docker/frontend_server.py';
+    if (!baseline[server] || candidate[server] !== baseline[server]) {
+        throw new Error('Emergency Beta cannot change the static server; use a full release');
+    }
+}
+
 const staticExtensions = new Set(['.js', '.mjs', '.css', '.json', '.html', '.md', '.txt', '.png', '.jpg', '.jpeg',
     '.gif', '.svg', '.ico', '.webmanifest', '.webp', '.avif', '.woff', '.woff2', '.ttf', '.otf',
     '.wasm', '.bin', '.glb', '.gltf', '.obj', '.mtl', '.csv', '.kml', '.kmz', '.tle', '.mp4', '.webm',
@@ -139,6 +148,9 @@ async function main(args) {
         const identity = snapshot(source, args.include);
         const channel = args.channel || 'beta';
         if (!['beta', 'shipped'].includes(channel)) throw new Error('Invalid channel');
+        const deploymentMode = args.mode || 'quickship';
+        if (!['quickship', 'emergency'].includes(deploymentMode) ||
+            (deploymentMode === 'emergency' && channel !== 'beta')) throw new Error('Invalid deployment mode');
         if (!/^\d+\.\d+\.\d+$/.test(args.version || '')) throw new Error('Pass a numeric --version');
         let baseline, changed = [];
         if (channel === 'beta') {
@@ -146,8 +158,9 @@ async function main(args) {
             baseline = JSON.parse(fs.readFileSync(args.baseline));
             if (baseline.channel !== 'shipped' || baseline.foundationReviewed !== true) throw new Error('Baseline is not a reviewed Shipped foundation');
             changed = deltaFiles(baseline.files, identity.files);
-            checkScope(changed, {baseline: baseline.files, source});
-            if (!changed.length) throw new Error('No changes beyond Shipped');
+            if (deploymentMode === 'emergency') checkEmergencyBoundary(baseline.files, identity.files);
+            else checkScope(changed, {baseline: baseline.files, source});
+            if (!changed.length && deploymentMode !== 'emergency') throw new Error('No changes beyond Shipped');
         }
         const builtAt = new Date().toISOString();
         const id = `${channel}-${builtAt.replace(/[^0-9]/g, '').slice(0, 17)}-${identity.sourceHash.slice(0, 12)}`;
@@ -155,7 +168,7 @@ async function main(args) {
         const tracked = new Set(run('git', ['ls-files', '-z']).split('\0'));
         const dirty = run('git', ['diff', 'HEAD', '--name-only', '-z']).split('\0').filter(name => name && !excluded(name));
         const sourceMatchesCommit = dirty.length === 0 && Object.keys(identity.files).every(name => tracked.has(name));
-        const record = {format: 1, ...identity, channel, version: args.version, builtAt, id,
+        const record = {format: 1, ...identity, channel, deploymentMode, version: args.version, builtAt, id,
             sourceCommit: run('git', ['rev-parse', 'HEAD']).trim(), sourceMatchesCommit, changed, deltaHash,
             baselineId: baseline?.id || null, baselineRuntime: baseline?.runtime || null,
             foundationReviewed: false, phases: []};
@@ -274,7 +287,7 @@ async function main(args) {
         if (!/^(?:ghcr\.io\/mickwest\/sitrec2@)?sha256:[a-f0-9]{64}$/.test(args.runtime || '')) {
             throw new Error('Pass --runtime with an immutable reviewed image digest');
         }
-        if (record.channel === 'beta' && args['reviewed-delta'] !== record.deltaHash) throw new Error('Review the frozen diff and pass its --reviewed-delta hash');
+        if (record.channel === 'beta' && record.deploymentMode !== 'emergency' && args['reviewed-delta'] !== record.deltaHash) throw new Error('Review the frozen diff and pass its --reviewed-delta hash');
         if (record.channel === 'beta' && record.baselineRuntime !== args.runtime) throw new Error('Beta must use the Shipped foundation runtime');
         const context = path.join(work, 'image-context');
         fs.mkdirSync(context, {recursive: true});
