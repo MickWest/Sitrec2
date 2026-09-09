@@ -64,6 +64,7 @@ import {approveSitchChannel} from './release/ChannelUI';
 import {takeChannelHandoff} from './release/channelHandoff';
 import {SetupMouseHandler} from "./mouseMoveView";
 import {initKeyboard, showHider} from "./KeyBoardHandler";
+import {initTooltips} from "./Tooltips";
 import {CommonJetStuff, initJetStuff, initJetStuffOverlays, initJetVariables, updateSize} from "./JetStuff";
 import {
     GlobalDaySkyScene,
@@ -2280,6 +2281,9 @@ async function initializeOnce() {
 
     // setup the common keyboard handler
     initKeyboard();
+
+    // replace the browser's slow native `title` tooltips with our own quicker ones
+    initTooltips();
 
 
     function injectExtraCSS(cssContent) {

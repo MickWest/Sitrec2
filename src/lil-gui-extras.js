@@ -255,7 +255,10 @@ Controller.prototype.setLabelColor = function (color) {
     return this; // Return the controller to allow method chaining
 };
 
-// adding a tooltip to a controller
+// adding a tooltip to a controller.
+// This stays a plain `title` attribute. src/Tooltips.js intercepts hovers app-wide,
+// borrows the attribute and draws the tooltip itself, because the delay before a NATIVE
+// title tooltip appears is the browser's to choose and is about a second.
 Controller.prototype.tooltip = function (tooltip) {
     // Keep the text as readable state as well as a DOM attribute: the two mirroring paths
     // (MenuMirror, CustomManagerMirror) copy a control's tooltip onto its twin, and both read

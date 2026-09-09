@@ -432,4 +432,37 @@ html, body {
     color: var(--sitrec-text-dim);
 }
 
+/* Fast tooltips (src/Tooltips.js). These replace the browser's native title-attribute
+   tooltip, whose ~1s delay the page cannot change. Note this whole file is a JS
+   template literal: no backticks and no dollar-brace in here.
+   pointer-events:none matters - the tip is drawn under the cursor and must never
+   swallow a click. */
+.sitrec-tooltip {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 2147483647;
+    pointer-events: none;
+    max-width: 340px;
+    padding: var(--sitrec-space-1) var(--sitrec-space-2);
+    background: var(--sitrec-bg-title);
+    color: var(--sitrec-text);
+    border: 1px solid var(--sitrec-border);
+    border-radius: var(--sitrec-radius);
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.6);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    font-size: 12px;
+    line-height: 1.35;
+    white-space: pre-wrap;
+    user-select: none;
+    -webkit-user-select: none;
+    opacity: 0;
+    visibility: hidden;
+}
+
+.sitrec-tooltip.visible {
+    opacity: 1;
+    visibility: visible;
+}
+
 `;
