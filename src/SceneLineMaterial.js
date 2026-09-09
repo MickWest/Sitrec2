@@ -39,6 +39,62 @@ export class SceneLineMaterial extends LineMaterial {
             vec4 linePrevious = modelViewMatrix * vec4( instanceLinePrevious.xyz, 1.0 );
             vec4 lineNext = modelViewMatrix * vec4( instanceLineNext.xyz, 1.0 );
             vec4 start = modelViewMatrix * vec4( instanceStart, 1.0 );
+        `).replace("void main() {", `
+            // Clip the centerline before expanding its ribbon. Near-plane
+            // trimming alone can leave endpoints millions of pixels away;
+            // interpolating those coordinates loses the subpixel precision
+            // needed by coverage and makes a solid line break into dots.
+            bool clipLineToViewport(inout vec4 a, inout vec4 b, out vec2 interval) {
+                vec2 limit = vec2(1.0) + (linePixelWidth + 4.0) / resolution;
+                vec4 da = vec4(a.x + limit.x * a.w, limit.x * a.w - a.x,
+                               a.y + limit.y * a.w, limit.y * a.w - a.y);
+                vec4 db = vec4(b.x + limit.x * b.w, limit.x * b.w - b.x,
+                               b.y + limit.y * b.w, limit.y * b.w - b.y);
+                interval = vec2(0.0, 1.0);
+                for (int i = 0; i < 4; i++) {
+                    if (da[i] < 0.0 && db[i] < 0.0) return false;
+                    if (da[i] < 0.0) interval.x = max(interval.x, da[i] / (da[i] - db[i]));
+                    if (db[i] < 0.0) interval.y = min(interval.y, da[i] / (da[i] - db[i]));
+                }
+                if (interval.x > interval.y) return false;
+                vec4 originalA = a;
+                a = mix(originalA, b, interval.x);
+                b = mix(originalA, b, interval.y);
+                return true;
+            }
+
+            void main() {
+        `).replace("// camera space", `
+            vec2 lineParameter = vec2(0.0, 1.0);
+            // camera space
+        `).replace("end.xyz = mix( start.xyz, end.xyz, alpha );", `
+            end.xyz = mix( start.xyz, end.xyz, alpha );
+            lineParameter.y = alpha;
+        `).replace("start.xyz = mix( end.xyz, start.xyz, alpha );", `
+            start.xyz = mix( end.xyz, start.xyz, alpha );
+            lineParameter.x = 1.0 - alpha;
+        `).replace("// ndc space", `
+            vec2 lineClipInterval = vec2(0.0, 1.0);
+            #ifndef WORLD_UNITS
+                if (!clipLineToViewport(clipStart, clipEnd, lineClipInterval)) {
+                    gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+                    return;
+                }
+                #ifdef USE_DASH
+                    float originalDistanceStart = lineDistanceStart;
+                    lineDistanceStart = mix(originalDistanceStart, lineDistanceEnd, lineClipInterval.x);
+                    lineDistanceEnd = mix(originalDistanceStart, lineDistanceEnd, lineClipInterval.y);
+                    vLineDistance = (position.y < 0.5) ? lineDistanceStart : lineDistanceEnd;
+                #endif
+            #endif
+            // Original segment parameter for colors and custom line shaders.
+            float lineVertexFraction = mix(lineParameter.x, lineParameter.y,
+                (position.y < 0.5) ? lineClipInterval.x : lineClipInterval.y);
+            #ifdef USE_COLOR
+                vColor.xyz = mix(instanceColorStart, instanceColorEnd, lineVertexFraction);
+            #endif
+            // scene line attributes
+            // ndc space
         `).replace("// direction", `
             vLinePixelStart = (ndcStart.xy * 0.5 + 0.5) * resolution + lineViewportOrigin;
             vLinePixelEnd = (ndcEnd.xy * 0.5 + 0.5) * resolution + lineViewportOrigin;
@@ -46,6 +102,16 @@ export class SceneLineMaterial extends LineMaterial {
             vec4 lineClipNext = projectionMatrix * lineNext;
             vLineJoins = vec2(instanceLinePrevious.w * step(1e-6, lineClipPrevious.w),
                               instanceLineNext.w * step(1e-6, lineClipNext.w));
+            // A viewport-clipped endpoint is outside the coverage fringe and
+            // has no visible join. Bound neighboring endpoints as well, so
+            // the closest-segment comparison has the same precision.
+            if (lineClipInterval.x > 0.0) vLineJoins.x = 0.0;
+            if (lineClipInterval.y < 1.0) vLineJoins.y = 0.0;
+            vec2 neighborInterval;
+            vec4 joinStart = clipStart;
+            vec4 joinEnd = clipEnd;
+            if (vLineJoins.x > 0.5 && !clipLineToViewport(lineClipPrevious, joinStart, neighborInterval)) vLineJoins.x = 0.0;
+            if (vLineJoins.y > 0.5 && !clipLineToViewport(joinEnd, lineClipNext, neighborInterval)) vLineJoins.y = 0.0;
             vLinePixelPrevious = vLinePixelStart;
             vLinePixelNext = vLinePixelEnd;
             if (vLineJoins.x > 0.5) vLinePixelPrevious = (lineClipPrevious.xy / lineClipPrevious.w * 0.5 + 0.5) * resolution + lineViewportOrigin;
@@ -54,7 +120,15 @@ export class SceneLineMaterial extends LineMaterial {
         `).replace("dir = normalize( dir );", `
             float directionLength = length(dir);
             dir = directionLength > 1e-8 ? dir / directionLength : vec2(1.0, 0.0);
-        `).replace("offset *= linewidth;", "offset *= linePixelWidth + 3.0;");
+        `).replace("offset *= linewidth;", "offset *= linePixelWidth + 3.0;").replace(
+            "#include <clipping_planes_vertex>", `
+                #ifndef WORLD_UNITS
+                    // Fog and user clipping planes also follow the retained
+                    // portion of the physical segment, before refraction.
+                    mvPosition = modelViewMatrix * vec4(mix(instanceStart, instanceEnd, lineVertexFraction), 1.0);
+                #endif
+                #include <clipping_planes_vertex>
+            `);
 
         const start = this.fragmentShader.indexOf("\t\t\t#ifdef USE_DASH", this.fragmentShader.indexOf("void main()"));
         const end = this.fragmentShader.indexOf("\t\t\t#include <logdepthbuf_fragment>", start);
