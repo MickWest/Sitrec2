@@ -16,7 +16,7 @@
 // builds everything stays cached. See VERSION below, reused for the Worker URL.
 const VERSION = new URL(import.meta.url).search; // e.g. "?v=1716998400000" (or "")
 const [
-  { resolveLocation, searchAirports, loadAirports, reverseGeocode },
+  { resolveLocation, searchAirports, loadAirports, reverseGeocode, ensureTz },
   { compass16, greatCircleDistanceKm },
   { equatorialToAltAz, planetEquatorial, moonEquatorial, sunEquatorial },
   { BRIGHT_STARS },
@@ -234,13 +234,15 @@ async function resolveField(input) {
   if (input._geoOrigin) return input._geoOrigin;
   if (input._resolved) {
     const r = input._resolved;
-    return {
+    // 593 airport records carry no zone; ensureTz infers one from the nearest that does,
+    // rather than letting it fall through to the browser's.
+    return await ensureTz({
       lat: r.lat, lon: r.lon,
       altKm: (r.alt || 0) / 1000,
       name: r.name || (r.iata || r.icao || q),
       short: (r.iata || r.icao || "") + (r.city ? ", " + r.city : ""),
       tz: r.tz || "", source: "airport",
-    };
+    }, r.country);
   }
   return await resolveLocation(q);
 }
@@ -537,6 +539,14 @@ function parseDateTime() {
 // The little button after the Time field shows the active zone and toggles it.
 let tzMode = "local";          // "local" | "utc"
 let formTz = "";               // origin location's IANA tz when known ("" = browser local)
+let formTzNote = "";           // how we got it, when it was inferred rather than known
+
+// Set the pair together — a stale note beside a fresh zone would be worse than none.
+function setFormTz(tz, note) {
+  formTz = tz || "";
+  formTzNote = formTz ? (note || "") : "";
+  updateTzButton();
+}
 
 // IANA zone the entered time is read in, given the current mode/location.
 function formInterpTz() { return tzMode === "utc" ? "UTC" : (formTz || ""); }
@@ -570,10 +580,15 @@ function updateTzButton() {
   updateTimeEcho();
   if (!els.tzbtn) return;
   const label = tzMode === "utc" ? "UTC" : zoneAbbrev(formTz, enteredMs());
+  // Say so when the zone was INFERRED from a nearby airport rather than read off the
+  // location: it is right ~98% of the time, and the 2% sit on zone boundaries, so a user
+  // near one should be able to see that it is a guess and switch to UTC.
+  const note = (tzMode !== "utc" && formTzNote) ? ` — inferred from the ${formTzNote}` : "";
   els.tzbtn.textContent = label;
   els.tzbtn.classList.toggle("utc", tzMode === "utc");
+  els.tzbtn.title = `Time zone: ${label}${note}. Tap to switch between local time and UTC.`;
   els.tzbtn.setAttribute("aria-label",
-    `Time zone: ${label}. Tap to switch to ${tzMode === "utc" ? "local time" : "UTC"}.`);
+    `Time zone: ${label}${note}. Tap to switch to ${tzMode === "utc" ? "local time" : "UTC"}.`);
 }
 
 // Write a UTC instant into the Date/Time fields as the wall-clock for zone `tz`
@@ -1726,7 +1741,7 @@ async function onSubmit(e) {
     // Interpret the entered wall-clock in the chosen zone (UTC if toggled, else the
     // location's zone when known, else browser local); sync the button for a later Edit.
     const interpTz = tzMode === "utc" ? "UTC" : (origin.tz || "");
-    if (tzMode !== "utc") { formTz = origin.tz || ""; updateTzButton(); }
+    if (tzMode !== "utc") setFormTz(origin.tz, origin.tzSource);
 
     // The real current TLE is only accurate within ~a week of "now". Within that window
     // we use it; beyond it we fall back to a synthetic constellation anchored to the
@@ -2092,14 +2107,16 @@ function init() {
   loadAirports();   // fire-and-forget; searchAirports degrades gracefully until ready
   // Origin picks set the time-zone button to that location's zone; destination doesn't
   // affect the observer's zone, so it has no onPick.
-  wireAutocomplete(els.origin, els.originSug, (rec) => { formTz = rec.tz || ""; updateTzButton(); });
+  // A suggestion is an airport record. Most carry a zone; the rest are filled in at
+  // submit time by ensureTz, so leave the chip on the browser's zone until then.
+  wireAutocomplete(els.origin, els.originSug, (rec) => setFormTz(rec.tz, ""));
   wireAutocomplete(els.dest, els.destSug);
   // Time-zone button: tap toggles local ↔ UTC. Typing a new origin clears the known
   // zone (back to browser-local) until it's picked or resolved; changing the date/time
   // refreshes the abbreviation in case it crosses a DST boundary.
   els.tzbtn.addEventListener("click", toggleTimeZone);
   if (els.originLocate) els.originLocate.addEventListener("click", locateOrigin);
-  els.origin.addEventListener("input", () => { formTz = ""; updateTzButton(); });
+  els.origin.addEventListener("input", () => setFormTz("", ""));
   els.date.addEventListener("change", updateTzButton);
   els.time.addEventListener("change", updateTzButton);
   els.time.addEventListener("input", updateTimeEcho);
