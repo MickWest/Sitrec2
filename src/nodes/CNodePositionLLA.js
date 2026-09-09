@@ -16,6 +16,7 @@ import {adjustHeightAboveGround, elevationAtLL, getTilesPointBelow} from "../thr
 import {getLocalUpVector} from "../SphericalMath";
 import {assert} from "../assert";
 import {getCursorPositionFromTopView} from "../mouseMoveView";
+import {disableFreeLookForCameraPosition} from "../FreeLookGuard";
 import {EventManager} from "../CEventManager";
 import {guiMenus, markSitchDirty, NodeMan, setSitchEstablished, Sit, UndoManager} from "../Globals";
 import {getApproximateLocationFromIP} from "../GeoLocation";
@@ -383,22 +384,41 @@ export class CNodePositionLLA extends CNodeTrack {
             if (posHeld) {
                 const cursorPos = getCursorPositionFromTopView();
                 if (cursorPos) {
-                    if (!this.posKeyWasHeld) {
+                    // Once per PRESS, on the first frame that actually moves something — which
+                    // is not the same as the first frame the key is down. Holding the key with
+                    // the pointer somewhere that has no cursor to read (a menu, a 2D view, a
+                    // graph) does nothing at all, and the move begins when the pointer arrives
+                    // over a 3D view several frames later. `undoLLA` is exactly "a move is in
+                    // progress"; posKeyWasHeld is only "the key was down last frame", and gating
+                    // on that let a move that began that way skip both of these.
+                    if (!this.undoLLA) {
+                        // A hand on the position key is a manual camera move, so the look camera
+                        // comes off Free Look first — while that is on the pose is suspended and
+                        // the key would silently do nothing. Ahead of the undo snapshot on
+                        // purpose: switching it off publishes where the camera was flown to, and
+                        // THAT is the place undoing this move should come back to.
+                        disableFreeLookForCameraPosition(this);
                         this.undoLLA = this._LLA.slice();
                     }
                     setSitchEstablished(true);
                     this.setFromECEF(cursorPos, true);
                 }
             }
-            if (!posHeld && this.posKeyWasHeld && this.undoLLA && UndoManager) {
-                const oldLLA = this.undoLLA.slice();
-                const newLLA = this._LLA.slice();
-                const self = this;
-                UndoManager.add({
-                    description: "Move position " + this.id,
-                    undo: () => { self.setLLA(oldLLA[0], oldLLA[1], oldLLA[2]); },
-                    redo: () => { self.setLLA(newLLA[0], newLLA[1], newLLA[2]); }
-                });
+            // The release edge, which is where a whole press becomes one undo step. The snapshot
+            // is dropped whether or not it got that far, so a press that never found a cursor —
+            // or one made with no UndoManager — cannot leave a stale one to be picked up by the
+            // next press and reported as its starting point.
+            if (!posHeld && this.posKeyWasHeld) {
+                if (this.undoLLA && UndoManager) {
+                    const oldLLA = this.undoLLA.slice();
+                    const newLLA = this._LLA.slice();
+                    const self = this;
+                    UndoManager.add({
+                        description: "Move position " + this.id,
+                        undo: () => { self.setLLA(oldLLA[0], oldLLA[1], oldLLA[2]); },
+                        redo: () => { self.setLLA(newLLA[0], newLLA[1], newLLA[2]); }
+                    });
+                }
                 this.undoLLA = null;
             }
             this.posKeyWasHeld = posHeld;

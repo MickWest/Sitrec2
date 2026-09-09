@@ -17,6 +17,7 @@ import {assert} from "../assert";
 import {Euler, Matrix4, Quaternion, Vector3} from "three";
 import {extractFOV} from "./CNodeControllerVarious";
 import {t} from "../i18n";
+import {markFreeLookSafe} from "../FreeLookGuard";
 
 const pszUIColor = "#C0C0FF";
 const _xAxis = new Vector3(1, 0, 0);
@@ -292,7 +293,10 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
                 this.syncModeTransition();
             }).setLabelColor(pszUIColor)
             this.rotationController = guiPTZ.add(this, "rotation", -180, 180, 0.1).listen().name(t("ptzUI.rotation.label")).tooltip(t("ptzUI.rotation.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
-            this.pan360Controller = guiPTZ.add(this, "pan360").listen().name(t("ptzUI.pan360.label")).tooltip(t("ptzUI.pan360.tooltip")).onChange(() => this.updatePanRange()).setLabelColor(pszUIColor)
+            // markFreeLookSafe: this is the one control in the Heading folder that changes only
+            // how the Pan angle is SPELLED (0-360 vs -180..180), not where the camera points, so
+            // it must not take the camera off Free Look the way the rest of the folder does.
+            this.pan360Controller = markFreeLookSafe(guiPTZ.add(this, "pan360").listen().name(t("ptzUI.pan360.label")).tooltip(t("ptzUI.pan360.tooltip")).onChange(() => this.updatePanRange()).setLabelColor(pszUIColor))
 
             if (this.satellite) {
                 this.updateSatelliteSliderRanges();

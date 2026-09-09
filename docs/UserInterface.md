@@ -93,13 +93,21 @@ Next to the name, the busiest of those are repeated as one-click icons.
 
 **Main** then adds the three things only it draws: red parallel lines for Lines of Sight, a white line down a greyed-out frustum for Current LOS, and a cyan triangle for the Camera Frustum.
 
-**Look** and **Video** each add one more: a data panel for that view's readout.
+**Look** puts **Free Look** — three orthogonal axes — *ahead* of that run, because it is the one button that says who is flying the camera rather than what the view is drawing, and it then adds a data panel for its readout at the end. **Video** adds the data panel for its own.
 
 **Video** also has **100%**, which sets the video zoom to 1:1 and stays lit while it is there. It remembers the zoom it took you away from, so pressing it again puts the video back exactly where it was.
 
 An icon whose control is off is drained of colour and dimmed, so a glance along the header tells you what the view is showing. They are the same controls again, not a third copy — click the icon or the menu row, it makes no difference — and an icon whose control does not exist in this sitch (no compass, no night sky) is simply absent.
 
 **Declutter** is the first icon, and it is the whole run in one press: it hides every overlay in that view — labels, pins, measurements, tracks, star names, lines of sight, the frustum, the compass, the clock and the readout — and lights up to say the view is clear. Press it again and exactly the ones that were showing come back. If you switch something back on by hand in between, Declutter re-arms, and the next press clears the view again from wherever it now stands.
+
+**Free Look** hands the look camera to the mouse, so it flies exactly like the main view's camera — left-drag moves the world, middle-drag orbits the point under the cursor, right-drag looks around, the wheel zooms, and WASD walks. While it is on, the Camera menu's Location and Heading sources are suspended, because you are the one aiming. Where you fly to is written into the camera's Location as you go, so switching it off keeps the camera exactly where you left it — which makes the mode a way of *choosing* a camera position, not just a way of looking around.
+
+Free Look is also the one icon that stays on screen when the header is hidden. It sits exactly where it would be on the bar, and it is a working button: press it and you are back out of the mode. With a mouse you will usually not need to — moving the pointer up to it brings the bar in around it, and you press the real one — but on a touch screen, where there is no hover to bring the bar back, it is the way out. Nothing shows there when Free Look is off.
+
+Because those sources are suspended, touching any of them switches Free Look off first: change anything under Camera ▸ Location or Camera ▸ Heading — or press **C** to drop the camera on the point under the cursor — and the camera comes back off the mouse, with **Free look disabled** shown briefly over the look view. Nothing is lost: the camera stays where you flew it, and the control you just reached for takes effect from there.
+
+Camera ▸ FOV (Zoom) is the exception, because the field of view is not part of the pose and is never suspended. Zoom, HFOV, the 35mm equivalent and Shift + the wheel all keep working while you fly, so you can frame what you have flown to without leaving the mode.
 
 **Show Tracks** and **Extend Tracks to Ground** work over every track at once, and both remember what they found: turning Show Tracks back on reveals the tracks that were showing rather than every track, and turning Extend Tracks to Ground back off restores the ones that were extended. **Double-clicking** Extend Tracks to Ground is the blunt version — it clears it on every track and forgets the mixture.
 

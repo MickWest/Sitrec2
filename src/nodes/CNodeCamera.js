@@ -19,6 +19,7 @@ import {t} from "../i18n";
 import {raycastLocalGround} from "../raycastGround";
 import {ViewMan} from "../CViewManager";
 import {viewMenuKey} from "../ViewUIBarMenus";
+import {installFreeLookGuards} from "../FreeLookGuard";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 export class CNodeCamera extends CNode3D {
@@ -415,7 +416,7 @@ export class CNodeCamera extends CNode3D {
         if (!menu) return;
 
         // First in the folder, because it overrides everything else in the Camera
-        // menu: while it is on, the Location / Heading / FOV sources are suspended.
+        // menu: while it is on, the Location and Heading sources are suspended.
         // Also mirrored into the look view's own header menu (src/ViewUIBarMenus.js),
         // which is where you want it when you are flying the camera and not looking
         // at the menu bar. shareAs comes last: registration captures the source's
@@ -427,6 +428,13 @@ export class CNodeCamera extends CNode3D {
             .moveToFirst()
             .shareAs(viewMenuKey("lookView", "freeLook"));
         setTimeout(() => this.freeLookController.moveToFirst(), 0);
+
+        // Reaching for anything in Camera > Location or Heading switches this back off, so a
+        // control the mode was suspending starts working the moment you touch it rather than
+        // appearing to be broken. FOV is not one of them — it is not suspended, see
+        // applyControllers below. See src/FreeLookGuard.js — it is idempotent, so calling it for
+        // every look camera (one per sitch load) hooks the permanent folders exactly once.
+        installFreeLookGuards();
 
         // (freeLook is serialized — registered in the constructor, see the note there.
         // The pose itself already round-trips: modSerialize writes the camera's CURRENT

@@ -334,17 +334,20 @@ describe("the icon registry", () => {
         }
     });
 
-    // Main and Look are read as a pair, side by side. A button in both has to be in the same
-    // PLACE in both, or the bar has to be re-read every time the eye moves between them.
+    // Main and Look are read as a pair, side by side, so the run they share has to read the same
+    // way in both: the same icons, in the same order, with nothing of the view's own spliced into
+    // the middle of it. It is NOT required to start at the same place — Look leads with Free
+    // Look, which outranks the run because it says who is flying the camera rather than what the
+    // view is drawing. One button in front of a matching run still lets the eye track along it.
     test("Main and Look agree on the order of the icons they share", () => {
         const main = VIEW_UIBAR_ICONS.mainView.map(iconId);
         const look = VIEW_UIBAR_ICONS.lookView.map(iconId);
         const common = main.filter(slot => look.includes(slot));
         expect(look.filter(slot => main.includes(slot))).toEqual(common);
-        // …and they come first, so the shared run is a prefix of both rather than something to
-        // hunt for among the view-specific ones.
-        expect(main.slice(0, common.length)).toEqual(common);
-        expect(look.slice(0, common.length)).toEqual(common);
+        // …and unbroken in each, rather than something to hunt for among the view-specific ones.
+        const run = (list) => list.slice(list.indexOf(common[0]), list.indexOf(common[0]) + common.length);
+        expect(run(main)).toEqual(common);
+        expect(run(look)).toEqual(common);
     });
 
     // An icon borrows its label and its tooltip from the control the menu row mirrors, and the
@@ -457,6 +460,104 @@ describe("populateViewUIBarIcons", () => {
         state.labels = false;
         view.uiBar._toggleGui.updateListeners();   // ...and once a frame after that
         expect(icon.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    // --- PEEK: the one icon that stays on screen with the header away ------------------------
+
+    const peekOf = (view) => view.uiBar.host.querySelector(".view-uibar-peek");
+
+    test("a peek icon is on screen only while its control is on AND the bar is away", () => {
+        // Free Look is a MODE — with the header hidden there would otherwise be nothing at all
+        // to say the camera is on the mouse, or how to get it back.
+        const state = {freeLook: false};
+        source(state, "freeLook").name("Free Look Camera").listen()
+            .shareAs(viewMenuKey("lookView", "freeLook"));
+
+        const view = fakeBar("lookView");
+        populateViewUIBarIcons(view);
+        const peek = peekOf(view);
+        expect(peek).not.toBe(null);
+
+        view.uiBar.setShown(false);
+        expect(peek.style.display).toBe("none");        // control off: nothing to say
+
+        iconOf(view, "freeLook").click();
+        expect(state.freeLook).toBe(true);
+        expect(peek.style.display).toBe("flex");        // on, and the bar is away
+
+        view.uiBar.setShown(true);
+        expect(peek.style.display).toBe("none");        // the real button is up in front of it
+
+        view.uiBar.setShown(false);
+        expect(peek.style.display).toBe("flex");
+    });
+
+    test("a peek reads its control, not the icon it copies", () => {
+        // The icon repaints from a POLLED twin, and the poll only reports a change — so a value
+        // switched on and off again between two polls leaves the icon painted the way it last
+        // was. That is invisible while the bar is hidden; a peek is not, so it must not inherit
+        // that staleness.
+        const state = {freeLook: false};
+        source(state, "freeLook").name("Free Look Camera").listen()
+            .shareAs(viewMenuKey("lookView", "freeLook"));
+
+        const view = fakeBar("lookView");
+        populateViewUIBarIcons(view);
+        const bar = view.uiBar;
+        const peek = peekOf(view);
+
+        bar._toggleGui.updateListeners();   // seed what the poller thinks it last saw: off
+
+        // Revealing the bar repaints the icons from the live value, but does NOT advance that.
+        // So this leaves the icon painted "on" with the poller still holding "off" — which is
+        // the ordinary way to get here: switch Free Look on from the header, move the pointer
+        // away, and let something else switch it back off.
+        state.freeLook = true;
+        bar.setShown(true);
+        bar.setShown(false);
+        expect(iconOf(view, "freeLook").getAttribute("aria-pressed")).toBe("true");
+        expect(peek.style.display).toBe("flex");
+
+        state.freeLook = false;
+        bar._toggleGui.updateListeners();   // the per-frame pass, which is where a peek re-reads
+        // The poll sees off === off and repaints nothing, so the ICON keeps its stale paint…
+        expect(iconOf(view, "freeLook").getAttribute("aria-pressed")).toBe("true");
+        // …while the peek, which reads the control, is gone.
+        expect(peek.style.display).toBe("none");
+    });
+
+    test("pressing a peek does what the icon it copies does", () => {
+        // It has to be pressable in its own right. The header reveals itself on HOVER, and a
+        // touch screen has no hover — so without this, the advertised way out of the mode is a
+        // picture that does nothing under a finger.
+        const state = {freeLook: true};
+        source(state, "freeLook").name("Free Look Camera").listen()
+            .shareAs(viewMenuKey("lookView", "freeLook"));
+
+        const view = fakeBar("lookView");
+        populateViewUIBarIcons(view);
+        view.uiBar.setShown(false);
+        const peek = peekOf(view);
+        expect(peek.tagName).toBe("BUTTON");        // which is also what keeps the press off the
+        expect(peek.style.display).toBe("flex");    // camera — see nativeTarget in InteractionRouter
+
+        peek.click();
+        expect(state.freeLook).toBe(false);
+        expect(peek.style.display).toBe("none");
+        // …and it carries the button's own wording rather than being an unlabelled glyph.
+        expect(peek.getAttribute("aria-label")).toBe("Free Look");
+    });
+
+    test("a peek goes away with the bar it belongs to", () => {
+        const state = {freeLook: true};
+        source(state, "freeLook").name("Free Look Camera").listen()
+            .shareAs(viewMenuKey("lookView", "freeLook"));
+
+        const view = fakeBar("lookView");
+        populateViewUIBarIcons(view);
+        expect(peekOf(view)).not.toBe(null);
+        view.uiBar.dispose();
+        expect(peekOf(view)).toBe(null);
     });
 
     test("hiding the control takes its icon away with it", () => {
