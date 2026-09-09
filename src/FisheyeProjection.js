@@ -243,6 +243,8 @@ export function patchFisheyeVertexShader(vertexShader) {
             "vec4 clipStart = ( uFishOn > 0.0 ) ? fisheyeClip( start ) : ( projectionMatrix * start );");
         out = replaceCode(out, FATLINE_CLIP_END,
             "vec4 clipEnd = ( uFishOn > 0.0 ) ? fisheyeClip( end ) : ( projectionMatrix * end );");
+        out = out.replace("projectionMatrix * linePrevious", "((uFishOn > 0.0) ? fisheyeClip(linePrevious) : projectionMatrix * linePrevious)")
+            .replace("projectionMatrix * lineNext", "((uFishOn > 0.0) ? fisheyeClip(lineNext) : projectionMatrix * lineNext)");
         matched = true;
     }
 

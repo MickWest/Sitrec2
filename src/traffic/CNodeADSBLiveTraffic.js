@@ -1,3 +1,5 @@
+import {SceneLineSegments} from "../SceneLines";
+import {SceneLineMaterial} from "../SceneLineMaterial";
 /**
  * CNodeADSBLiveTraffic — every aircraft adsb.lol can currently see near the
  * sitch origin, drawn as one lightweight layer.
@@ -25,7 +27,7 @@
 
 import {
     BufferAttribute, BufferGeometry, Color, ConeGeometry, DynamicDrawUsage,
-    DoubleSide, InstancedMesh, LineBasicMaterial, LineSegments, MeshBasicMaterial,
+    DoubleSide, InstancedMesh, MeshBasicMaterial,
     Matrix4, Quaternion, Vector3,
 } from "three";
 import {CNode3DGroup} from "../nodes/CNode3DGroup";
@@ -223,9 +225,10 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
             new BufferAttribute(new Float32Array(trailVertices * 3), 3).setUsage(DynamicDrawUsage));
         trailGeometry.setAttribute('color',
             new BufferAttribute(new Float32Array(trailVertices * 3), 3).setUsage(DynamicDrawUsage));
+        trailGeometry.setDrawRange(0, 0);
         this.trailGeometry = trailGeometry;
-        this.trails = new LineSegments(trailGeometry,
-            new LineBasicMaterial({vertexColors: true, transparent: true, opacity: 0.65}));
+        this.trails = new SceneLineSegments(trailGeometry,
+            new SceneLineMaterial({vertexColors: true, transparent: true, opacity: 0.65}));
         this.trails.frustumCulled = false;
         this.group.add(this.trails);
     }
@@ -265,6 +268,7 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         this.lastError = null;
         this.instances.count = 0;
         this.trailGeometry.setDrawRange(0, 0);
+        this.trails.syncGeometry();
         this.group.visible = false;
         getLiveFeedOverlay().clear();
         setRenderOne(true);
@@ -505,6 +509,7 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
         this.trailGeometry.setDrawRange(0, trailVertex);
         positions.needsUpdate = true;
         trailColors.needsUpdate = true;
+        this.trails.syncGeometry();
 
         setRenderOne(true);
     }

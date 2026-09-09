@@ -1,5 +1,5 @@
 import {radians, tan, unitsToMeters} from "../utils";
-import {LineGeometry} from "three/addons/lines/LineGeometry.js";
+import {LineGeometry} from "../SceneLineGeometry";
 import {Line2} from "three/addons/lines/Line2.js";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {DebugArrow, dispose, removeDebugArrow} from "../threeExt";

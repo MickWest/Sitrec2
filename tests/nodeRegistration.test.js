@@ -17,6 +17,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import {parseSync} from '@babel/core';
 
 const nodesDir = path.resolve(__dirname, '../src/nodes');
 
@@ -103,8 +104,7 @@ describe('Node Registration', () => {
         expect(managerClasses).toEqual(['CNodeManager']);
     });
 
-    // Verify that every file with CNode exports is importable (no syntax errors)
-    // This uses dynamic import to catch module-level errors without executing constructors
+    // Parse without executing nodes or their constructor-time dependencies.
     const CNodeFiles = Object.keys(fileExports);
 
     test('all node files are valid JavaScript (parseable)', () => {
@@ -112,14 +112,12 @@ describe('Node Registration', () => {
         for (const file of CNodeFiles) {
             const filePath = path.join(nodesDir, file);
             const content = fs.readFileSync(filePath, 'utf-8');
-            // Check for common syntax issues that would prevent import
-            // (unmatched braces, unterminated strings, etc.)
-            // A full parse would require babel, but we can catch obvious issues
-            const openBraces = (content.match(/\{/g) || []).length;
-            const closeBraces = (content.match(/\}/g) || []).length;
-            if (Math.abs(openBraces - closeBraces) > 2) {
-                // Allow small discrepancy for template literals/regex, but flag large mismatches
-                parseErrors.push(`${file}: brace mismatch (open=${openBraces}, close=${closeBraces})`);
+            try {
+                // Shader snippets can contain unmatched braces inside valid strings.
+                // Use the existing build parser instead of counting their characters.
+                parseSync(content, {sourceType: 'module', configFile: false, babelrc: false});
+            } catch (error) {
+                parseErrors.push(`${file}: ${error.message}`);
             }
         }
         expect(parseErrors).toEqual([]);

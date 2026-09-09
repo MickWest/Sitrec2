@@ -1,5 +1,5 @@
 //var matLineWhiteThin = makeMatLine(0xFFFFFF, 0.75);
-import {makeMatLine} from "../MatLines";
+import {disposeMatLine, makeMatLine} from "../MatLines";
 import {guiShowHide, setRenderOne, Sit} from "../Globals";
 import {DebugSphere, dispose, intersectSurface} from "../threeExt";
 import {par} from "../par";
@@ -12,7 +12,7 @@ import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {t} from "../i18n";
 import {viewMenuKey} from "../ViewUIBarMenus";
 
-import {LineGeometry} from "three/addons/lines/LineGeometry.js";
+import {LineGeometry} from "../SceneLineGeometry";
 import {Line2} from "three/addons/lines/Line2.js";
 import {Group} from "three";
 import * as LAYER from "../LayerMasks";
@@ -289,6 +289,12 @@ export class CNodeDisplayLOS extends CNode3DGroup {
     }
 
     dispose() {
+        for (const item of this.Jet_LOS3D) {
+            this.group.remove(item.line);
+            item.geometry.dispose();
+        }
+        this.Jet_LOS3D = [];
+        disposeMatLine(this.material);
         this.clearCurrentLOS();
         if (this.currentLOSGroup) {
             this.container.remove(this.currentLOSGroup);

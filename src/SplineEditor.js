@@ -1,7 +1,9 @@
+import {SceneLine} from "./SceneLines";
+import {SceneLineMaterial} from "./SceneLineMaterial";
 // e.g. in SitAguadilla.js:
 
 import {PointEditor} from "./PointEditor";
-import {BufferAttribute, BufferGeometry, CatmullRomCurve3, Line, LineBasicMaterial, Vector3} from "three";
+import {BufferAttribute, BufferGeometry, CatmullRomCurve3, Vector3} from "three";
 import * as LAYER from "./LayerMasks";
 
 export class   SplineEditor extends PointEditor{
@@ -45,7 +47,7 @@ export class   SplineEditor extends PointEditor{
         // 'chordal' gives a smooth velocity across the segment.
         // For 'linear' mode we handle interpolation ourselves, so set a valid CatmullRom type as fallback
         this.spline.curveType = curveType === 'catmull' ? 'catmullrom' : (curveType === 'linear' ? 'chordal' : curveType);
-        this.spline.mesh = new Line(geometry.clone(), new LineBasicMaterial({
+        this.spline.mesh = new SceneLine(geometry.clone(), new SceneLineMaterial({
             color: 0xFF0FF,
             opacity: 0.35
         }));
@@ -216,7 +218,7 @@ export class   SplineEditor extends PointEditor{
         splineMesh.visible = this.enable;
 
         const point = new Vector3();
-        const position = splineMesh.geometry.attributes.position;
+        const position = splineMesh.sourceGeometry.attributes.position;
 
         // Set mesh vertices in local coordinates (relative to splineLocalOrigin)
         // This avoids GPU precision issues with large world coordinates
@@ -236,6 +238,7 @@ export class   SplineEditor extends PointEditor{
             position.setXYZ(i, point.x, point.y, point.z);
         }
         position.needsUpdate = true;
+        splineMesh.syncGeometry();
 
         // Position the mesh at the local origin to place it correctly in world space
         splineMesh.position.copy(this.splineLocalOrigin);

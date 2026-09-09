@@ -1,3 +1,5 @@
+import {SceneLineLoop} from "./SceneLines";
+import {SceneLineMaterial} from "./SceneLineMaterial";
 import {registerEditorInteraction} from "./EditorInteraction";
 // GroundPaintBrush.js
 //
@@ -22,8 +24,6 @@ import {registerEditorInteraction} from "./EditorInteraction";
 import {
     BufferAttribute,
     BufferGeometry,
-    LineBasicMaterial,
-    LineLoop,
     Raycaster,
     Vector3,
 } from "three";
@@ -75,7 +75,7 @@ export class GroundPaintBrush {
         }
         const geo = new BufferGeometry();
         geo.setAttribute("position", new BufferAttribute(pts, 3));
-        this.ringMesh = new LineLoop(geo, new LineBasicMaterial({
+        this.ringMesh = new SceneLineLoop(geo, new SceneLineMaterial({
             color: 0xffffff,
             transparent: true,
             opacity: 0.9,

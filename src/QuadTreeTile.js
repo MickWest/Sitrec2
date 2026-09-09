@@ -1,3 +1,5 @@
+import {SceneLineSegments} from "./SceneLines";
+import {SceneLineMaterial} from "./SceneLineMaterial";
 import {assert} from "./assert";
 import {
     GLOBAL_UNMEASURED_MAX_ALT_M,
@@ -18,8 +20,6 @@ import {
     BufferGeometry,
     CanvasTexture,
     Float32BufferAttribute,
-    LineBasicMaterial,
-    LineSegments,
     Mesh,
     MeshStandardMaterial,
     NearestFilter,
@@ -465,8 +465,8 @@ export class QuadTreeTile {
         if (!this._obbDebugLines) {
             const geom = new BufferGeometry();
             geom.setAttribute("position", new Float32BufferAttribute(positions, 3));
-            const mat = new LineBasicMaterial({color: colorHex, depthTest: true, depthWrite: false});
-            this._obbDebugLines = new LineSegments(geom, mat);
+            const mat = new SceneLineMaterial({color: colorHex, depthTest: true, depthWrite: false});
+            this._obbDebugLines = new SceneLineSegments(geom, mat);
             // Helpers layer (bit 0); both mainView (0x69) and lookView (0x51)
             // include this bit so the overlay shows in both viewports.
             this._obbDebugLines.layers.mask = 0x1;
@@ -474,10 +474,11 @@ export class QuadTreeTile {
             this._obbDebugLines.renderOrder = 999;
             GlobalScene.add(this._obbDebugLines);
         } else {
-            const attr = this._obbDebugLines.geometry.getAttribute("position");
+            const attr = this._obbDebugLines.sourceGeometry.getAttribute("position");
             attr.array.set(positions);
             attr.needsUpdate = true;
             this._obbDebugLines.material.color.setHex(colorHex);
+            this._obbDebugLines.syncGeometry();
         }
     }
 

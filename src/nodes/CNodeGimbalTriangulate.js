@@ -2,7 +2,7 @@ import {makeMatLine} from "../MatLines";
 import {dispose, intersectSurface} from "../threeExt";
 import {metersFromMiles, radians} from "../utils";
 import {CNode3DGroup} from "./CNode3DGroup";
-import {LineGeometry} from "three/addons/lines/LineGeometry.js";
+import {LineGeometry} from "../SceneLineGeometry";
 import {Line2} from "three/addons/lines/Line2.js";
 import * as LAYER from "../LayerMasks";
 import {getLocalUpVector} from "../SphericalMath";

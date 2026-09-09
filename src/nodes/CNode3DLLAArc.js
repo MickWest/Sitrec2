@@ -1,8 +1,10 @@
+import {SceneLine} from "../SceneLines";
+import {SceneLineMaterial} from "../SceneLineMaterial";
 // a node that displays a 3D arc with a start point, end point
 
 import {Globals} from "../Globals";
 import {earthCenterECEF} from "../SphericalMath";
-import {BufferGeometry, Line, LineBasicMaterial, Quaternion, Vector3} from "three";
+import {BufferGeometry, Quaternion, Vector3} from "three";
 import {CNode3DGroup} from "./CNode3DGroup";
 
 export class CNode3DLLAArc extends CNode3DGroup {
@@ -78,10 +80,10 @@ function createArc(A, B, Center, segments = 32, color = 0xffff00) {
 
     // Create geometry and material for the arc
     const geometry = new BufferGeometry().setFromPoints(points);
-    const material = new LineBasicMaterial({ color: color });
+    const material = new SceneLineMaterial({ color: color });
 
     // Create the line (arc) and add it to the scene
-    const arc = new Line(geometry, material);
+    const arc = new SceneLine(geometry, material);
  //   scene.add(arc);
     return arc;
 }

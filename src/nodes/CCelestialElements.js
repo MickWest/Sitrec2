@@ -1,3 +1,5 @@
+import {SceneLineSegments, SceneLine} from "../SceneLines";
+import {SceneLineMaterial} from "../SceneLineMaterial";
 /**
  * CCelestialElements - Extracted celestial visualization from CNodeDisplayNightSky
  * 
@@ -13,7 +15,7 @@
  * - CelestialMath.raDec2Celestial: Converts RA/DEC to 3D coordinates
  */
 
-import {BufferGeometry, Line, LineBasicMaterial, LineSegments, MathUtils, Vector3} from "three";
+import {BufferGeometry, MathUtils, Vector3} from "three";
 import {FileManager} from "../Globals";
 import {raDec2Celestial} from "../CelestialMath";
 import {installRefractionOnMaterial} from "../atmosphere/refraction";
@@ -42,8 +44,8 @@ export class CCelestialElements {
      * @param {number} [color=0x808080] Hex color for grid lines (default: gray)
      */
     addCelestialSphereLines(scene, gap = 15, color = 0x808080) {
-        const material = new LineBasicMaterial({color: color});
-        const materialWhite = new LineBasicMaterial({color: "#FF00FF"}); // Reference line (0° RA or poles)
+        const material = new SceneLineMaterial({color: color});
+        const materialWhite = new SceneLineMaterial({color: "#FF00FF"}); // Reference line (0° RA or poles)
         installRefractionOnMaterial(material);
         installRefractionOnMaterial(materialWhite);
         const segments = 100; // Number of segments per line
@@ -51,7 +53,7 @@ export class CCelestialElements {
         // Helper function to create a single line
         function createLine(start, end) {
             const geometry = new BufferGeometry().setFromPoints([start, end]);
-            return new Line(geometry, material);
+            return new SceneLine(geometry, material);
         }
 
         // Adding lines for RA (Right Ascension)
@@ -66,7 +68,7 @@ export class CCelestialElements {
             }
             const geometry = new BufferGeometry().setFromPoints(points);
             // Highlight 0° RA line in white for reference
-            const line = new Line(geometry, ra === 0 ? materialWhite : material);
+            const line = new SceneLine(geometry, ra === 0 ? materialWhite : material);
             scene.add(line);
             this.celestialGridLines.push(line);
         }
@@ -83,7 +85,7 @@ export class CCelestialElements {
             }
             const geometry = new BufferGeometry().setFromPoints(points);
             // Highlight celestial poles in white for reference
-            const line = new Line(geometry, (dec === 90 - gap) ? materialWhite : material);
+            const line = new SceneLine(geometry, (dec === 90 - gap) ? materialWhite : material);
             scene.add(line);
             this.celestialGridLines.push(line);
         }
@@ -98,7 +100,7 @@ export class CCelestialElements {
      */
     addConstellationLines(scene, dataKey = "constellationsLines") {
         // Use a single material for all line segments (more efficient)
-        const material = new LineBasicMaterial({color: 0x808080});
+        const material = new SceneLineMaterial({color: 0x808080});
         installRefractionOnMaterial(material);
 
         const constellationsLines = FileManager.get(dataKey);
@@ -140,7 +142,7 @@ export class CCelestialElements {
             const geometry = new BufferGeometry().setFromPoints(segments);
             
             // Create multi-segment line and add to scene
-            const line = new LineSegments(geometry, material);
+            const line = new SceneLineSegments(geometry, material);
             scene.add(line);
             this.constellationLines.push(line);
         }

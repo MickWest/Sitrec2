@@ -40,7 +40,7 @@ import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {radians} from "./utils";
 import {makeMatLine, disposeMatLine} from "./MatLines";
-import {LineGeometry} from "three/addons/lines/LineGeometry.js";
+import {LineGeometry} from "./SceneLineGeometry";
 import {Line2} from "three/addons/lines/Line2.js";
 import {dispose, propagateLayerMaskObject} from "./threeExt";
 import {CustomGraphManager} from "./CCustomGraphManager";

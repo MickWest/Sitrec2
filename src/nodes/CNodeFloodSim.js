@@ -1,3 +1,5 @@
+import {SceneLineLoop} from "../SceneLines";
+import {SceneLineMaterial} from "../SceneLineMaterial";
 import {registerEditorInteraction} from "../EditorInteraction";
 // CNodeFloodSim.js - Flood simulator using Position Based Fluids (PBF)
 //
@@ -10,7 +12,7 @@ import {registerEditorInteraction} from "../EditorInteraction";
 //   GROUND: slope acceleration + terrain clamping (PBF handles fluid pressure)
 
 import {CNode3DGroup} from "./CNode3DGroup";
-import {BufferAttribute, BufferGeometry, Color, DoubleSide, DynamicDrawUsage, InstancedMesh, LineBasicMaterial, LineLoop, Matrix4, Mesh, MeshBasicMaterial, MeshPhongMaterial, Raycaster, SphereGeometry, Vector3} from "three";
+import {BufferAttribute, BufferGeometry, Color, DoubleSide, DynamicDrawUsage, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, MeshPhongMaterial, Raycaster, SphereGeometry, Vector3} from "three";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {guiPhysics, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
@@ -1490,7 +1492,7 @@ export class CNodeFloodSim extends CNode3DGroup {
 
         const lineGeo = new BufferGeometry();
         lineGeo.setAttribute('position', new BufferAttribute(new Float32Array(4 * 3), 3));
-        this.boundaryLine = new LineLoop(lineGeo, new LineBasicMaterial({color: 0xffff00}));
+        this.boundaryLine = new SceneLineLoop(lineGeo, new SceneLineMaterial({color: 0xffff00}));
         this.boundaryLine.frustumCulled = false;
         this.group.add(this.boundaryLine);
 
@@ -1514,7 +1516,7 @@ export class CNodeFloodSim extends CNode3DGroup {
             [this.hmEastMax, this.hmNorthMax],
             [this.hmEastMin, this.hmNorthMax],
         ];
-        const posArr = this.boundaryLine.geometry.attributes.position.array;
+        const posArr = this.boundaryLine.sourceGeometry.attributes.position.array;
         for (let c = 0; c < 4; c++) {
             const [e, n] = corners[c];
             const elev = this.sampleGrid(e, n).elev;
@@ -1526,7 +1528,8 @@ export class CNodeFloodSim extends CNode3DGroup {
                 this.cornerHandles[c].scale.setScalar(30);
             }
         }
-        this.boundaryLine.geometry.attributes.position.needsUpdate = true;
+        this.boundaryLine.sourceGeometry.attributes.position.needsUpdate = true;
+        this.boundaryLine.syncGeometry();
     }
 
     removeBoundaryVisuals() {
