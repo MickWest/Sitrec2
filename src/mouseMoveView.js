@@ -125,10 +125,10 @@ export function onDocumentMouseCancel(event) {
     return router().cancelPointer(event);
 }
 
-// Double-clicking a view's HEADER STRIP (its UIBar) toggles fullscreen — the same action as
-// the ⛶ icon. This is registered in the CAPTURE phase (see SetupMouseHandler) so it runs
-// before a hover-revealed bar's bubble-phase stopPropagation and before any content dblclick
-// handler. We gate on the bar's live bounding rect, which exists even when the bar is hidden
+// Double-clicking the blank part of a view's HEADER STRIP (its UIBar) toggles fullscreen — the
+// same action as the ⛶ icon. This is registered in the CAPTURE phase (see SetupMouseHandler) so
+// it runs before a hover-revealed bar's bubble-phase stopPropagation and before any content
+// dblclick handler. We gate on live bounding rects, which exist even when the bar is hidden
 // (opacity:0/pointerEvents:none), so it behaves identically whether the header is pinned or
 // hover-revealed. Double-clicking the CONTENT does nothing here — the old "double-click inside
 // the window to fullscreen" behaviour is intentionally removed.
@@ -144,11 +144,9 @@ export function onDocumentDoubleClick(event) {
     let done = false;
     ViewMan.iterate((key, view) => {
         if (done || !view._effectivelyVisible) return;
-        const bar = view.uiBar?.bar;
-        if (!bar) return;                          // only views WITH a header strip
+        if (!view.uiBar) return;                   // only views WITH a header strip
         if (!mouseInViewOnly(view, x, y)) return;  // top-most view under the cursor
-        const r = bar.getBoundingClientRect();     // the ~26px header strip rect
-        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        if (view.uiBar.isBlankAt(x, y)) {
             view.doubleClick();                    // self-gates on doubleClickResizes||doubleClickFullScreen
             done = true;
         }

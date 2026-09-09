@@ -102,7 +102,7 @@ import {
 import {estimateWindFromConstantAirspeed} from "./WindFromConstantAirspeed";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
 import {CNodeSAPage} from "./nodes/CNodeSAPage";
-import {viewMenuKey} from "./ViewUIBarMenus";
+import {sharedMenuKey, viewMenuKey} from "./ViewUIBarMenus";
 import {
     gimbalStepAirTrack,
     gimbalStepAirTrackDisplay,
@@ -1504,6 +1504,30 @@ export const setupMethods = {
             .tooltip(t("custom.showHide.toggleExtendToGround.tooltip"))
         )
 
+        // The same idea as a switch rather than a nudge, so it can be a header-bar button: on
+        // extends every track, off restores the mixture it found (CustomSupport, above). Shared
+        // rather than per-view — there is one flag per track, and both 3D views draw it — so one
+        // control stands behind the row in each view's header menu and the icon on each bar.
+        guiMenus.contents.add(this, "allTracksExtendToGround")
+            .name(t("custom.showHide.allTracksExtendToGround.label"))
+            .moveToFirst()
+            .tooltip(t("custom.showHide.allTracksExtendToGround.tooltip"))
+            .listen()
+            .shareAs(sharedMenuKey("extendToGround"));
+
+        guiMenus.contents.add(this, "showAllTracks")
+            .name(t("custom.showHide.showAllTracks.label"))
+            .moveToFirst()
+            .tooltip(t("custom.showHide.showAllTracks.tooltip"))
+            .listen()
+            .shareAs(sharedMenuKey("showTracks"));
+
+        guiMenus.contents.add(this, "clearAllExtendToGround")
+            .name(t("custom.showHide.clearAllExtendToGround.label"))
+            .moveToFirst()
+            .tooltip(t("custom.showHide.clearAllExtendToGround.tooltip"))
+            .shareAs(sharedMenuKey("clearExtendToGround"));
+
         if (Globals.showAllTracksInLook === undefined)
             Globals.showAllTracksInLook = false;
         guiMenus.showhide.add(Globals, "showAllTracksInLook").name(t("custom.showHide.showAllTracksInLook.label")).tooltip(t("custom.showHide.showAllTracksInLook.tooltip")).onChange(() => {
@@ -1857,6 +1881,20 @@ export const setupMethods = {
                     }
                 });
             });
+
+        // The same idea, but only for the main view — which is the view you are usually zoomed
+        // out in, looking for a 3-metre object somewhere over a county. Multiplies ON TOP of
+        // Global Scale, so the look view keeps showing the object at the size the camera would
+        // actually see. Applied per render pass rather than baked into the object (see
+        // CNode3DObject.preRender), because both views draw the same scene.
+        if (Globals.objectScaleMain === undefined)
+            Globals.objectScaleMain = 1.0;
+        guiMenus.objects.add(Globals, "objectScaleMain", 1, 50, 0.01)
+            .name(t("custom.objects.mainViewScale.label"))
+            .tooltip(t("custom.objects.mainViewScale.tooltip"))
+            .listen()
+            .onChange(() => setRenderOne(true))
+            .shareAs(viewMenuKey("mainView", "mainViewScale"));
 
         // configParmas.extraHelpFunctions has and object keyed on function name
         // The secure build offers none of them: they open external sites with the viewed

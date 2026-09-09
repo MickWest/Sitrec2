@@ -434,8 +434,8 @@ const en = {
             tooltip: "Export stabilized video with expanded canvas so no pixels are lost",
         },
         includeVideoInfo: {
-            label: "Include Video Info Display",
-            tooltip: "Composite the Video Info Display (frame counter, timecode, dates) and any visible OSD Tracker readouts onto the rendered stabilized video",
+            label: "Include Video Readout",
+            tooltip: "Composite the Video Readout (frame counter, timecode, dates) and any visible OSD Tracker readouts onto the rendered stabilized video",
         },
         trackRadius: {
             label: "Track Radius",
@@ -547,7 +547,7 @@ const en = {
         arrowLength: "Arrow Length",
         arrowColor: "Arrow Color",
         textColor: "Text Color",
-        deleteFeature: "Delete Feature",
+        deleteFeature: "Delete Pin",
         done: "Done",
     },
     panoramaExport: {
@@ -1088,6 +1088,9 @@ const en = {
         showHide: {
             keyboardShortcuts: { label: "[K]eyboard Shortcuts", tooltip: "Show or hide the keyboard shortcuts overlay" },
             toggleExtendToGround: { label: "Toggle ALL [E]xtend To Ground", tooltip: "Toggle 'Extend to Ground' for all tracks\nWill set all off if any are on\nWill set all on if none are on" },
+            showAllTracks: { label: "Show Tracks", tooltip: "Show or hide every track.\nTurning it back on restores whichever tracks were showing before" },
+            allTracksExtendToGround: { label: "Extend Tracks to Ground", tooltip: "Extend every track down to the ground.\nTurning it back off restores whichever tracks were extended before" },
+            clearAllExtendToGround: { label: "Clear Extend to Ground", tooltip: "Turn 'Extend to Ground' off for every track, and forget what it was" },
             showAllTracksInLook: { label: "All Tracks in Look", tooltip: "Display all aircraft tracks in the look/camera view" },
             showCompassElevation: { label: "Show Compass Elevation", tooltip: "Show compass elevation (angle above the local ground plane) in addition to bearing (azimuth)" },
             filterTracks: { label: "Filter Tracks", tooltip: "Show/hide tracks based on altitude, direction, or frustum intersection" },
@@ -1123,6 +1126,7 @@ const en = {
         },
         objects: {
             globalScale: { label: "Global Scale", tooltip: "Scale factor applied to all 3D objects in the scene - useful for finding things. Set back to 1 for real size" },
+            mainViewScale: { label: "Main View Scale", tooltip: "Extra scale for 3D objects, applied ONLY in the main view - on top of Global Scale.\nLets you find a small object from far out without changing what the look view sees. Set back to 1 for real size" },
             removeAllBuildings: { label: "Remove all Buildings", tooltip: "Delete every synthetic building from the scene.\nClouds and ground overlays are not affected." },
         },
         admin: {
@@ -1147,7 +1151,7 @@ const en = {
             setCameraOnGround: "Set Camera on Ground",
             setTargetAbove: "Set Target Above",
             setTargetOnGround: "Set Target on Ground",
-            dropPin: "Drop Pin / Add Feature",
+            dropPin: "Drop Pin",
             addFixedObject: "Add 3D Object",
             createTrackWithObject: "Create Track with Object",
             createTrackNoObject: "Create Track (No Object)",
@@ -1565,12 +1569,12 @@ const en = {
 
     videoInfo: {
         folderTitle: {
-            label: "Video Info Display",
-            tooltip: "Video info display controls for frame counter, timecode, and timestamp",
+            label: "Video Readout",
+            tooltip: "The on-screen readout drawn over the video: frame counter, timecode, timestamp and dates",
         },
         showVideoInfo: {
-            label: "Show Video Info",
-            tooltip: "Master toggle - enable or disable all video info displays",
+            label: "Show Video Readout",
+            tooltip: "Master toggle - enable or disable every item in the video readout. With nothing chosen yet, switching it on adds the frame number",
         },
         filename: {
             label: "Filename",
@@ -1632,12 +1636,12 @@ const en = {
 
     simInfo: {
         folderTitle: {
-            label: "Sim Info Display",
-            tooltip: "Date/time and traverse text overlays for the look view (independent of the Video Info Display)",
+            label: "Look View Readout",
+            tooltip: "The on-screen readout drawn over the look view: simulation date/time and traverse figures (independent of the Video Readout)",
         },
         showSimInfo: {
-            label: "Show Sim Info",
-            tooltip: "Master toggle - enable or disable all sim info displays",
+            label: "Show Look View Readout",
+            tooltip: "Master toggle - enable or disable every item in the look view readout. With nothing chosen yet, switching it on adds the UTC clock",
         },
         traverseSpeed: {
             label: "Traverse Speed",
@@ -2038,11 +2042,11 @@ const en = {
             tooltip: "Show track/object labels in the look/camera view",
         },
         featuresInMain: {
-            label: "Features in Main",
+            label: "Pins in Main",
             tooltip: "Show feature markers (pins) in the main 3D view",
         },
         featuresInLook: {
-            label: "Features in Look",
+            label: "Pins in Look",
             tooltip: "Show feature markers in the look/camera view",
         },
     },
@@ -2066,7 +2070,14 @@ const en = {
         freeLook: "Free Look",
         measurements: "Measurements",
         labels: "Labels",
-        features: "Features",
+        features: "Pins",
+        los: "Lines of Sight",
+        currentLos: "Current LOS",
+        frustum: "Camera Frustum",
+        showTracks: "Show Tracks",
+        showSatellites: "Satellites",
+        extendToGround: "Extend Tracks to Ground",
+        mainViewScale: "Object Scale",
         allTracks: "All Tracks",
         compass: "Compass",
         timeDisplay: "Time Display",
@@ -2083,7 +2094,8 @@ const en = {
         groundVideo: "Ground Video",
         zoom: "Zoom %",
         rotation: "Rotation",
-        videoInfo: "Video Info",
+        simInfo: "Readout",
+        videoInfo: "Readout",
         grid: "Grid",
         annotations: "Annotations",
         exifPanel: "EXIF / Metadata",
@@ -2099,6 +2111,13 @@ const en = {
             adjustments: "Adjustments",
             masking: "Masking",
         },
+    },
+
+    // Tooltips for the view header ICONS, keyed by slot. Only for an icon that does something
+    // its control's own label does not describe — a toggle icon borrows the control's wording.
+    viewIcons: {
+        declutter: "Declutter — hide every overlay in this view; press again to bring back exactly the ones that were showing",
+        zoom: "Video zoom 100% — press again to go back to the previous zoom",
     },
 
     traverseAnalysis: {

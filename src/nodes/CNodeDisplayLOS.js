@@ -10,6 +10,7 @@ import {ECEFToLLA_radii} from "../LLA-ECEF-ENU";
 import {degrees} from "../mathUtils";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {t} from "../i18n";
+import {viewMenuKey} from "../ViewUIBarMenus";
 
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
 import {Line2} from "three/addons/lines/Line2.js";
@@ -101,7 +102,8 @@ export class CNodeDisplayLOS extends CNode3DGroup {
 
         this.recalculate()
 
-        this.showHider(t("showHiders.linesOfSight.label"), "o", t("showHiders.linesOfSight.tooltip"));
+        this.showHider(t("showHiders.linesOfSight.label"), "o", t("showHiders.linesOfSight.tooltip"))
+            .shareAs(viewMenuKey("mainView", "los"));
         guiShowHide.add(this, "hideSomeLOS", 0, 10, 1)
             .name(t("showHiders.hideSomeLOS.label", {defaultValue: "Hide Some LOS"}))
             .tooltip(t("showHiders.hideSomeLOS.tooltip", {defaultValue:
@@ -119,7 +121,8 @@ export class CNodeDisplayLOS extends CNode3DGroup {
                 this.currentLOSGroup.visible = v;
                 if (!v) this.clearCurrentLOS();
                 setRenderOne(true);
-            });
+            })
+            .shareAs(viewMenuKey("mainView", "currentLos"));
     }
 
     // we update the positions of the spheres every frame

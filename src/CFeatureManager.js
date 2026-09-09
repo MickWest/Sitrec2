@@ -358,7 +358,7 @@ class CFeatureManager extends CManager {
             deleteFeature: async () => {
                 // Confirm before deleting
                 const featureName = featureNode.text || 'this feature';
-                if (await showConfirm(`Delete "${featureName}"?`, {title: "Delete Feature"})) {
+                if (await showConfirm(`Delete "${featureName}"?`, {title: "Delete Pin"})) {
                     // Remove the feature - this also closes the edit menu
                     this.removeFeature(featureNode.id);
                 }

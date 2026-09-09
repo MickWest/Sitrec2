@@ -2157,6 +2157,7 @@ export class CNode3DObject extends CNode3DGroup {
     }
 
     preRender(view) {
+        this.applyViewScale(view);
         const common = this.common;
         if (!common) return;
 
@@ -2450,8 +2451,12 @@ export class CNode3DObject extends CNode3DGroup {
 
     recalculate() {
         super.recalculate();
-        const scale = this.in.size.v0 * Globals.objectScale * this.getModelLengthScale();
-        this.group.scale.setScalar(scale);
+        // The object's true size, before any per-view exaggeration. preRender() below scales
+        // away from this and back to it, so it has to be remembered rather than read off the
+        // group — which may be holding whichever view drew last.
+        this.baseScale = this.in.size.v0 * Globals.objectScale * this.getModelLengthScale();
+        this.group.scale.setScalar(this.baseScale);
+        this._viewScale = this.baseScale;       // what the group is actually holding, now
         this.noteShadowCasterState("scale");
 
         // update the root track if any input changes (which is what triggers a recalculate)
@@ -2471,6 +2476,29 @@ export class CNode3DObject extends CNode3DGroup {
         // }
 
        // this.rebuildBoundingBox(false);
+    }
+
+    // "Main View Scale" (Globals.objectScaleMain) makes objects bigger in the MAIN view only —
+    // the view you are usually zoomed out in, hunting for a 3-metre object over a county —
+    // while the look view keeps showing what the camera would really see.
+    //
+    // Both views draw the SAME scene, so this cannot be baked into the object: it is applied
+    // per render pass instead. preRender runs immediately before each view's own draw (see
+    // indexRender.js), so whatever it leaves on the group is what that view renders, and the
+    // next view sets its own. Everything outside a render pass — picking, bounding boxes —
+    // therefore sees the scale of whichever view drew last, which is the main view at its
+    // exaggerated size. That is the right answer for clicking on what you can see.
+    //
+    // At the default of 1 nothing is touched at all, so a sitch that never opens this control
+    // renders exactly as it did before it existed.
+    applyViewScale(view) {
+        const exaggeration = Globals.objectScaleMain ?? 1;
+        if (this.baseScale === undefined) return;          // nothing sized yet
+        if (exaggeration === 1 && this._viewScale === this.baseScale) return;
+        const wanted = this.baseScale * (view?.id === "mainView" ? exaggeration : 1);
+        if (this._viewScale === wanted) return;
+        this._viewScale = wanted;
+        this.group.scale.setScalar(wanted);
     }
 
 

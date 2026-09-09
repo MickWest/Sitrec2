@@ -46,6 +46,11 @@ import {t} from "../i18n";
 import {eventMethods} from "./CNodeGroundOverlayEvents";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
+// Which views a draped overlay tile is drawn in. The same pair buildFlatMesh
+// uses: the overlay is a user-placed annotation, so it belongs in both 3D views
+// regardless of which view the terrain tile under it happens to be active for.
+const OVERLAY_TILE_LAYERS = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
+
 export class CNodeGroundOverlay extends CNode3DGroup {
     constructor(v) {
         super(v);
@@ -77,6 +82,11 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         this.corners = v.corners || null;
         this.lockPoints = v.lockPoints || [];
         
+        // dropPrunedTileMeshes has to run while paused: the GPU Memory Monitor's
+        // circuit breaker is pressed precisely when nothing is moving, and until
+        // it runs our copies keep the memory that button is trying to free.
+        this.updateWhilePaused = true;
+
         this.originalTexture = null;
         this.flatMesh = null;
         this.overlayTileMeshes = new Map();
@@ -438,6 +448,181 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         return !(tileEast < this.west || tileWest > this.east ||
                  tileSouth > this.north || tileNorth < this.south);
     }
+
+    // ---- Picking the LOD cut to drape onto --------------------------------
+    //
+    // The active set the terrain quad-tree exposes is NOT a clean leaf cut. A
+    // parent stays active while its children load, and while Google
+    // Photorealistic 3D tiles are the visible ground the basemap is hidden AND
+    // its imagery fetch is suppressed (CNodeTerrainUI.suppressMapImagery), so
+    // every tile keeps the wireframe placeholder material. Both parent-retirement
+    // passes (deactivateParentsWithLoadedChildren, reconcileRenderedTileCut)
+    // require a loaded, non-placeholder material, so neither ever fires and the
+    // whole ancestor chain from z=0 down stays active. Nothing looks wrong on the
+    // terrain, whose group is hidden — but the overlay copies that geometry into
+    // its own VISIBLE group, and one draped copy per zoom level is what you see.
+    //
+    // So the overlay picks its own cut rather than trusting that set: drape onto
+    // a tile only where no finer tile already covers the same ground inside the
+    // overlay rectangle.
+
+    // True if this tile carries geometry the overlay can drape onto.
+    //
+    // The layer mask is deliberately NOT consulted. The terrain keeps a separate
+    // active set per view for streaming reasons, and honouring that put the look
+    // view's grid on a z=2 tile (a 10,000 km span tessellated 33x33, so
+    // kilometres of vertical error across a 1 km rectangle) while the main view
+    // got z=18. It also makes a deactivated-but-loaded tile look like a hole,
+    // which would keep its parent draped on top of its own siblings. Geometry is
+    // geometry: if the tile has it, the overlay can sit on it, in both 3D views.
+    tileIsDrapable(tile) {
+        return !!(tile && tile.mesh && tile.mesh.geometry && tile.loaded);
+    }
+
+    // Footprint of a tile SLOT, from coordinates alone — the tile object need
+    // not exist. That is what lets the coverage scan below reason about a child
+    // that was pruned away, or one the tiling scheme never had.
+    boundsForTileCoords(x, y, z, mapProjection) {
+        return {
+            north: mapProjection.getNorthLatitude(y, z),
+            south: mapProjection.getNorthLatitude(y + 1, z),
+            west: mapProjection.getLeftLongitude(x, z),
+            east: mapProjection.getLeftLongitude(x + 1, z),
+        };
+    }
+
+    tileBounds(tile, mapProjection) {
+        return this.boundsForTileCoords(tile.x, tile.y, tile.z, mapProjection);
+    }
+
+    /**
+     * How much of this tile's share of the overlay rectangle its descendants
+     * already carry.
+     *
+     * Returns {full, covered}: `full` means every part of the rectangle under
+     * this tile is drawn by finer tiles, so the tile itself is dropped;
+     * otherwise `covered` lists the child footprints to CLIP OUT of the tile's
+     * draped mesh. Clipping is the point — refinement is routinely uneven (one
+     * quadrant loaded, three not; one beyond the source's maxZoom), and keeping
+     * a partly-refined parent whole would lay a second grid surface under its
+     * own children, which is the stacking this whole section exists to stop.
+     *
+     * The scan walks the four child SLOTS by coordinate rather than the entries
+     * of tile.children, because a null entry is ambiguous and the two readings
+     * fail in opposite directions. deleteTile() nulls one slot of an ORDINARY
+     * quadtree whenever a tile is pruned, and that is a real hole — call it
+     * covered and the rectangle loses a patch. But subdivideTile() also nulls
+     * slots 2 and 3 of a GoogleCRS84Quad (mapping: 4326) root, which are not
+     * missing tiles at all — call those holes and the world-scale root stays
+     * draped under every descendant. The slot's own footprint settles it
+     * without either special case: a slot the tiling scheme does not have lies
+     * outside the rectangle (the 4326 phantoms span [-90, -270]), so it is
+     * skipped like any non-overlapping child, while a pruned slot overlaps and
+     * is correctly counted as uncovered.
+     *
+     * Memoized per pass; without that the recursion is exponential in depth.
+     */
+    overlayCoverage(tile, mapProjection, memo) {
+        const cached = memo.coverage.get(tile);
+        if (cached !== undefined) return cached;
+
+        const result = {full: false, covered: []};
+        memo.coverage.set(tile, result);
+        if (!tile.children) return result;
+
+        let anyOverlapping = false;
+        let anyUncovered = false;
+        for (let i = 0; i < 4; i++) {
+            // subdivideTile's order: [(x,y), (x+1,y), (x,y+1), (x+1,y+1)] doubled.
+            const bounds = this.boundsForTileCoords(
+                tile.x * 2 + (i & 1), tile.y * 2 + (i >> 1), tile.z + 1, mapProjection);
+            if (!this.tilesOverlap(bounds.north, bounds.south, bounds.east, bounds.west)) continue;
+            anyOverlapping = true;
+            const child = tile.children[i];
+            if (child && this.subtreeCoversOverlay(child, mapProjection, memo)) {
+                result.covered.push({key: child.key(), ...bounds});
+            } else {
+                anyUncovered = true;
+            }
+        }
+        result.full = anyOverlapping && !anyUncovered;
+        if (result.full) result.covered.length = 0;   // nothing to clip; the tile is dropped
+        return result;
+    }
+
+    // True if this tile, or anything below it, covers its share of the rectangle.
+    subtreeCoversOverlay(tile, mapProjection, memo) {
+        const cached = memo.covers.get(tile);
+        if (cached !== undefined) return cached;
+        memo.covers.set(tile, false);                 // cycle guard; trees are acyclic, but cheap
+        const covers = this.tileIsDrapable(tile)
+            || this.overlayCoverage(tile, mapProjection, memo).full;
+        memo.covers.set(tile, covers);
+        return covers;
+    }
+
+    // Scratch for one pass of the recursion above.
+    newCoverageMemo() {
+        return {coverage: new Map(), covers: new Map()};
+    }
+
+    // The cut itself: which tiles the overlay draws, and which part of each.
+    // Returns null when the tile contributes nothing.
+    overlayCutFor(tile, mapProjection, memo) {
+        if (!this.tileIsDrapable(tile)) return null;
+        const coverage = this.overlayCoverage(tile, mapProjection, memo);
+        if (coverage.full) return null;
+        return coverage.covered;
+    }
+
+    // Bring one tile's overlay mesh in line with the cut. Returns true when
+    // something actually changed.
+    //
+    // A tile that drops out of the cut keeps its mesh with a zero mask instead
+    // of being disposed: visibility flips are frequent while the tile set
+    // churns and rebuilding the draped mesh dominates profiles. The clipped-out
+    // quadrants are baked into the geometry, though, so a change THERE has to
+    // rebuild — clipSignature is what detects it.
+    applyOverlayTileCut(tile, mapProjection, memo) {
+        if (!this.tileOverlapsOverlay(tile, mapProjection)) return false;
+        const covered = this.overlayCutFor(tile, mapProjection, memo);
+        const wanted = covered ? OVERLAY_TILE_LAYERS : 0;
+        const signature = covered ? covered.map(c => c.key).sort().join(",") : null;
+        const entry = this.overlayTileMeshes.get(tile.key());
+
+        if (!entry) {
+            if (!covered) return false;
+            this.createOverlayTileFromTerrainTile(tile, mapProjection, wanted, covered);
+            return true;
+        }
+
+        if (covered && entry.clipSignature !== signature) {
+            this.createOverlayTileFromTerrainTile(tile, mapProjection, wanted, covered);
+            return true;
+        }
+
+        let changed = false;
+        if (entry.mesh && entry.mesh.layers.mask !== wanted) {
+            entry.mesh.layers.mask = wanted;
+            changed = true;
+        }
+        if (entry.skirtMesh && entry.skirtMesh.layers.mask !== wanted) {
+            entry.skirtMesh.layers.mask = wanted;
+            changed = true;
+        }
+        return changed;
+    }
+
+    // One tile changed, so the coarser tiles above it may now have more (or
+    // less) of the rectangle left to cover. Walk the whole ancestor chain.
+    refreshOverlayTileAndAncestors(tile, mapProjection) {
+        const memo = this.newCoverageMemo();
+        let changed = this.applyOverlayTileCut(tile, mapProjection, memo);
+        for (let p = tile.parent; p; p = p.parent) {
+            if (this.applyOverlayTileCut(p, mapProjection, memo)) changed = true;
+        }
+        return changed;
+    }
     
     latLonToUV(lat, lon) {
         if (this.freeTransform && this.corners) {
@@ -648,12 +833,12 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         if (!mapProjection) return new Map();
 
         const desired = new Map();
+        const memo = this.newCoverageMemo();
         terrainMap.forEachTile((tile) => {
-            if (!tile.mesh || !tile.mesh.geometry || !tile.loaded) return;
-            const layerMask = tile.mesh.layers.mask;
-            if (layerMask === 0) return;
             if (!this.tileOverlapsOverlay(tile, mapProjection)) return;
-            desired.set(tile.key(), { tile, layerMask });
+            const covered = this.overlayCutFor(tile, mapProjection, memo);
+            if (!covered) return;
+            desired.set(tile.key(), { tile, layerMask: OVERLAY_TILE_LAYERS, covered });
         });
 
         return desired;
@@ -676,13 +861,16 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             }
         }
 
-        for (const [key, { tile, layerMask }] of desired) {
+        for (const [key, { tile, layerMask, covered }] of desired) {
             const existing = this.overlayTileMeshes.get(key);
-            if (existing) {
+            const signature = covered.map(c => c.key).sort().join(",");
+            // The clipped-out quadrants are baked into the geometry, so a tile
+            // whose covered set moved has to be rebuilt, not just re-masked.
+            if (existing && existing.clipSignature === signature) {
                 if (existing.mesh) existing.mesh.layers.mask = layerMask;
                 if (existing.skirtMesh) existing.skirtMesh.layers.mask = layerMask;
             } else {
-                this.createOverlayTileFromTerrainTile(tile, mapProjection, layerMask);
+                this.createOverlayTileFromTerrainTile(tile, mapProjection, layerMask, covered);
             }
         }
 
@@ -770,7 +958,13 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         this.group.add(this.flatMesh);
     }
     
-    createOverlayTileFromTerrainTile(tile, mapProjection, layerMask) {
+    /**
+     * `covered` is the list of child footprints that finer tiles already draw
+     * (see overlayCoverage). Triangles falling inside them are dropped, so a
+     * partly-refined parent fills only the gaps its children left instead of
+     * laying a second grid surface under them.
+     */
+    createOverlayTileFromTerrainTile(tile, mapProjection, layerMask, covered = []) {
         const tileKey = tile.key();
         
         this.disposeTileMesh(tileKey);
@@ -785,6 +979,10 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         const vertexCount = sourcePositions.length / 3;
         const newPositions = new Float32Array(sourcePositions.length);
         const newUVs = new Float32Array(vertexCount * 2);
+        // Kept only when there is clipping to do: the test is per triangle, on
+        // the centroid, so it needs each vertex's lat/lon back.
+        const vertexLat = covered.length > 0 ? new Float64Array(vertexCount) : null;
+        const vertexLon = covered.length > 0 ? new Float64Array(vertexCount) : null;
         
         for (let i = 0; i < vertexCount; i++) {
             const x = sourcePositions[i * 3];
@@ -806,6 +1004,11 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             
             newUVs[i * 2] = u;
             newUVs[i * 2 + 1] = v;
+
+            if (vertexLat) {
+                vertexLat[i] = lla.x;
+                vertexLon[i] = lla.y;
+            }
         }
         
         const overlayGeometry = new BufferGeometry();
@@ -813,7 +1016,9 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         overlayGeometry.setAttribute('uv', new Float32BufferAttribute(newUVs, 2));
         
         if (sourceIndex) {
-            overlayGeometry.setIndex(Array.from(sourceIndex));
+            overlayGeometry.setIndex(vertexLat
+                ? this.clipIndicesToUncovered(sourceIndex, vertexLat, vertexLon, covered)
+                : Array.from(sourceIndex));
         }
         
         overlayGeometry.computeVertexNormals();
@@ -825,17 +1030,47 @@ export class CNodeGroundOverlay extends CNode3DGroup {
 
         this.group.add(overlayMesh);
         
-        const skirtMesh = this.createSkirtMesh(newPositions, newUVs, segments, tile, layerMask);
+        // A clipped tile is by definition butted against finer tiles that cover
+        // the rest of it, so there is no LOD crack for a skirt to hide — and its
+        // perimeter no longer matches the geometry that is left.
+        const skirtMesh = covered.length > 0
+            ? null
+            : this.createSkirtMesh(newPositions, newUVs, segments, tile, layerMask);
         if (skirtMesh) {
             this.group.add(skirtMesh);
         }
         
-        this.overlayTileMeshes.set(tileKey, {mesh: overlayMesh, skirtMesh});
+        this.overlayTileMeshes.set(tileKey, {
+            tile,
+            mesh: overlayMesh,
+            skirtMesh,
+            clipSignature: covered.map(c => c.key).sort().join(","),
+        });
+    }
+
+    // Drop every triangle whose centroid falls inside an already-covered child.
+    // Centroid rather than any-vertex: quadrant edges land exactly on the tile's
+    // vertex lattice, so a triangle is wholly inside one quadrant and the test
+    // never splits one.
+    clipIndicesToUncovered(sourceIndex, vertexLat, vertexLon, covered) {
+        const kept = [];
+        for (let t = 0; t + 2 < sourceIndex.length; t += 3) {
+            const a = sourceIndex[t], b = sourceIndex[t + 1], c = sourceIndex[t + 2];
+            const lat = (vertexLat[a] + vertexLat[b] + vertexLat[c]) / 3;
+            const lon = (vertexLon[a] + vertexLon[b] + vertexLon[c]) / 3;
+            let inside = false;
+            for (const q of covered) {
+                if (lat <= q.north && lat >= q.south && lon >= q.west && lon <= q.east) {
+                    inside = true;
+                    break;
+                }
+            }
+            if (!inside) kept.push(a, b, c);
+        }
+        return kept;
     }
     
     createSkirtMesh(positions, uvs, segments, tile, layerMask) {
-        const skirtDepth = tile.size * 0.1;
-        
         const tileNorth = tile.map.options.mapProjection.getNorthLatitude(tile.y, tile.z);
         const tileSouth = tile.map.options.mapProjection.getNorthLatitude(tile.y + 1, tile.z);
         const tileWest = tile.map.options.mapProjection.getLeftLongitude(tile.x, tile.z);
@@ -844,6 +1079,15 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         const centerLon = (tileWest + tileEast) / 2;
         const centerPosition = LLAToECEF(centerLat, centerLon, 0);
         const downVector = getLocalDownVector(centerPosition);
+
+        // The skirt exists only to hide the crack against a neighbouring tile
+        // at a coarser LOD, so it should be a fraction of the tile. tile.size is
+        // the map's base tile size and is never halved on subdivision, so using
+        // it dropped every skirt 28 km whatever the zoom — a wall of grid lines
+        // hanging under a 30 m tile. Measure the tile's real span instead.
+        const tileSpan = LLAToECEF(tileNorth, centerLon, 0)
+            .distanceTo(LLAToECEF(tileSouth, centerLon, 0));
+        const skirtDepth = tileSpan * 0.1;
         
         const skirtVertices = [];
         const skirtUvs = [];
@@ -1129,11 +1373,51 @@ export class CNodeGroundOverlay extends CNode3DGroup {
     }
     
     tileOverlapsOverlay(tile, mapProjection) {
-        const tileNorth = mapProjection.getNorthLatitude(tile.y, tile.z);
-        const tileSouth = mapProjection.getNorthLatitude(tile.y + 1, tile.z);
-        const tileWest = mapProjection.getLeftLongitude(tile.x, tile.z);
-        const tileEast = mapProjection.getLeftLongitude(tile.x + 1, tile.z);
-        return this.tilesOverlap(tileNorth, tileSouth, tileEast, tileWest);
+        const b = this.tileBounds(tile, mapProjection);
+        return this.tilesOverlap(b.north, b.south, b.east, b.west);
+    }
+
+    update(f) {
+        super.update(f);
+        this.dropPrunedTileMeshes();
+    }
+
+    /**
+     * Drop copies of tiles the terrain has pruned away.
+     *
+     * deleteTile() removes a tile and bumps the map's _tileEpoch, but it emits
+     * no event — so nothing above would tell us. Left alone, a prune (ordinary
+     * inactive-tile pruning, or the GPU Memory Monitor's circuit breaker) would
+     * leave our copied meshes drawn from geometry that no longer exists, still
+     * holding the very GPU memory the prune set out to reclaim.
+     *
+     * The epoch is the signal ExportFrameSettler already watches for this. Cost
+     * is one integer compare per frame; the membership scan runs only when the
+     * epoch moves, and the re-sync only when a tile we actually drew has gone.
+     */
+    dropPrunedTileMeshes() {
+        if (this.altitude > 0) return;
+        const terrainMap = this.getTerrainMap();
+        if (!terrainMap) return;
+
+        const epoch = terrainMap._tileEpoch || 0;
+        if (terrainMap === this._prunedWatchMap && epoch === this._prunedWatchEpoch) return;
+        this._prunedWatchMap = terrainMap;
+        this._prunedWatchEpoch = epoch;
+
+        let pruned = false;
+        for (const [key, entry] of this.overlayTileMeshes) {
+            if (!entry.tile || terrainMap.allTiles.has(entry.tile)) continue;
+            this.disposeTileMesh(key);
+            pruned = true;
+        }
+        if (!pruned) return;
+
+        if (!this.visible) { this._overlayDirty = true; return; }
+        // The tile that went may have been the only cover for part of the
+        // rectangle, and its parent may now owe that patch, so re-derive the
+        // whole cut rather than just deleting a mesh and leaving a hole.
+        this.syncOverlayTiles();
     }
 
     onTileVisibilityChanged({tile, oldMask, newMask}) {
@@ -1144,48 +1428,13 @@ export class CNodeGroundOverlay extends CNode3DGroup {
 
         const mapProjection = terrainMap.options?.mapProjection;
         if (!mapProjection) return;
+        if (!this.tileOverlapsOverlay(tile, mapProjection)) return;
 
-        const tileKey = tile.key();
-        const isDesired = tile.mesh && tile.mesh.geometry && tile.loaded
-            && newMask !== 0
-            && this.tileOverlapsOverlay(tile, mapProjection);
-
-        const existing = this.overlayTileMeshes.get(tileKey);
-
-        // Tile visibility flips are frequent when the tile set is churning
-        // (loads, LRU eviction, per-view activation), and rebuilding the
-        // draped mesh dominates profiles. So: retain the built mesh across
-        // flips and just toggle its layer mask; the geometry only goes stale
-        // when the underlying tile changes, which onTileChanged handles with
-        // a real dispose. Only re-arm the render loop when something here
-        // actually changed.
-        let changed = false;
-        if (isDesired) {
-            if (existing) {
-                if (existing.mesh && existing.mesh.layers.mask !== newMask) {
-                    existing.mesh.layers.mask = newMask;
-                    changed = true;
-                }
-                if (existing.skirtMesh && existing.skirtMesh.layers.mask !== newMask) {
-                    existing.skirtMesh.layers.mask = newMask;
-                    changed = true;
-                }
-            } else {
-                this.createOverlayTileFromTerrainTile(tile, mapProjection, newMask);
-                changed = true;
-            }
-        } else if (existing) {
-            if (existing.mesh && existing.mesh.layers.mask !== 0) {
-                existing.mesh.layers.mask = 0;
-                changed = true;
-            }
-            if (existing.skirtMesh && existing.skirtMesh.layers.mask !== 0) {
-                existing.skirtMesh.layers.mask = 0;
-                changed = true;
-            }
-        }
-
-        if (changed) setRenderOne(true);
+        // newMask is deliberately not used directly: what this tile owes the
+        // overlay is its mask minus whatever finer tiles already cover, and the
+        // flip changes that answer for its ancestors too. Only re-arm the render
+        // loop when something actually changed.
+        if (this.refreshOverlayTileAndAncestors(tile, mapProjection)) setRenderOne(true);
     }
     
     onTileChanged(tile) {
@@ -1197,14 +1446,10 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         if (!mapProjection) return;
         if (!this.tileOverlapsOverlay(tile, mapProjection)) return;
 
+        // The source geometry really changed, so this one is rebuilt rather
+        // than re-masked; the ancestors above it only need re-masking.
         this.disposeTileMesh(tile.key());
-
-        if (tile.mesh && tile.mesh.geometry && tile.loaded) {
-            const layerMask = tile.mesh.layers.mask;
-            if (layerMask !== 0) {
-                this.createOverlayTileFromTerrainTile(tile, mapProjection, layerMask);
-            }
-        }
+        this.refreshOverlayTileAndAncestors(tile, mapProjection);
 
         setRenderOne(true);
     }
