@@ -464,7 +464,9 @@ class MetaBezierCurveEditor {
         this.unregisterInteraction = registerSurfaceInteraction(this.c, {
             profile: "legacyCurve",
             model: this, view: p.view, buttons: [0, 2],
-            hitTest: e => { const at = local(e); return this.insideGraph(at.layerX, at.layerY) ? {} : null; },
+            // Handles can extend into the canvas margins. The whole canvas
+            // owns input so they remain selectable and clicks cannot reach a view below.
+            hitTest: () => ({}),
             begin: e => {
                 const at = local(e);
                 this.interactionRadius = e.pointerType === "touch" ? HANDLE_STYLE.touchRadius : 10;
@@ -983,10 +985,6 @@ class MetaBezierCurveEditor {
         // we use shift key to drag the window, so ignore mouse down if shift pressed
      //   if (e.shiftKey) return;
 
-        // only allow clicking if inside the graph area
-        if (!this.insideGraph(e.layerX, e.layerY)) return;
-
-
         this.mouseIsDown = true;
         if (!this.curve.override && !this.disable) {
             this.selectPointAt(e.layerX, e.layerY);
@@ -1015,6 +1013,10 @@ class MetaBezierCurveEditor {
                 if (this.selectedPoint !== null) {
                     return;
                 }
+
+                // Existing handles are selectable in the margins, but new
+                // points must start inside the plotted domain.
+                if (!this.insideGraph(e.layerX, e.layerY)) return;
 
                 this.curve.ps.push(new Point(this.C2DX(e.layerX), this.C2DY(e.layerY)));
                 this.curve.ps.push(new Point(this.C2DX(e.layerX), this.C2DY(e.layerY + 25)));

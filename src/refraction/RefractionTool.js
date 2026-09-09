@@ -6,7 +6,8 @@ import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {getInteractionRouter} from "../InteractionRouter";
 import {blockViewEvents} from "../DragResizeUtils";
 import {RefractionPass} from "./RefractionPass";
-import {anchorsToCurve, atmosphere, clamp, defaultLaser, groundY, normalizeCurve, normalizeSettings, PROFILE_PRESETS} from "./RefractionPhysics";
+import {applyProfilePreset, atmosphere, clamp, defaultLaser, groundY, normalizeCurve, normalizeSettings,
+    PROFILE_PRESETS, PROFILE_PRESET_DETAILS} from "./RefractionPhysics";
 import "./refraction.css";
 
 function element(tag, className, text, parent) {
@@ -35,6 +36,9 @@ export class RefractionTool {
     }
 
     sync() {
+        // One explicitly selected view pays for ray tracing. Other views keep
+        // their existing analytic atmosphere; begin() restores its flags before
+        // another view renders. mainView is selectable here just like lookView.
         const candidate = NodeMan.get(this.settings.view, false);
         const view = candidate?.renderTargetAndEffects ? candidate : null;
         if (this.view !== view || !this.settings.enabled) this.releasePass();
@@ -140,7 +144,8 @@ export class RefractionTool {
         this.check(top, this.settings, "enabled", "Enable", false);
         const views = {};
         for (const {data: view} of Object.values(NodeMan.list)) if (view.renderTargetAndEffects) views[view.id] = view.id;
-        this.select(top, this.settings, "view", "View", views, false);
+        this.select(top, this.settings, "view", "Ray-traced view", views, false);
+        element("p", "rf-hint rf-view-scope", "Only this view uses the edited atmosphere. Other views keep their existing atmospheric refraction settings.", panel);
         const tabs = element("nav", "rf-tabs", null, panel);
         tabs.setAttribute("aria-label", "Refraction panels");
         this.pages = {};
@@ -216,14 +221,22 @@ export class RefractionTool {
     buildAtmosphere(page) {
         const s = this.settings;
         const presets = element("div", "rf-presets", null, page);
-        for (const [name, points] of Object.entries(PROFILE_PRESETS)) {
-            element("button", "", name, presets).onclick = () => {
-                s.useStandard = name === "Standard";
-                s.temperatureCurve = anchorsToCurve(points);
-                this.editors[0].setPointsFromFlatArray(swapAxes(s.temperatureCurve));
-                this.fitEditor(this.editors[0]); this.changed();
-            };
-        }
+        const presetLabel = element("label", "rf-field", null, presets);
+        element("span", "", "Temperature preset", presetLabel);
+        const preset = element("select", "", null, presetLabel);
+        preset.setAttribute("aria-label", "Temperature preset");
+        element("option", "", "Choose a starting profile…", preset).value = "";
+        for (const name of Object.keys(PROFILE_PRESETS)) element("option", "", name, preset).value = name;
+        const presetNote = element("p", "rf-hint", "Presets replace the temperature curve and upper lapse rate. Humidity and other optical settings are kept.", page);
+        preset.onchange = () => {
+            if (!preset.value) return;
+            const name = preset.value;
+            applyProfilePreset(s, name);
+            this.editors[0].setPointsFromFlatArray(swapAxes(s.temperatureCurve));
+            this.fitEditor(this.editors[0]); this.changed();
+            presetNote.textContent = `${name} applied. ${PROFILE_PRESET_DETAILS[name].note}`;
+            preset.value = "";
+        };
         const grid = element("div", "rf-grid", null, page);
         this.check(grid, s, "useStandard", "Standard temperature lapse");
         this.check(grid, s, "bend", "Bend light (off = straight rays)");
@@ -309,6 +322,17 @@ export class RefractionTool {
 
     buildRays(page) {
         this.observerElement = element("p", "rf-observer", "Camera follows the selected 3D view.", page);
+        const stats = element("dl", "rf-diagnostics", null, page);
+        this.diagnosticFields = {};
+        for (const [key, label] of Object.entries({kAt1m: "Local k at 1 m", kAt50m: "Local k at 50 m",
+            kAtObserver: "Local k at camera", groundHits: "Rays hitting the surface",
+            reachedSamples: "Samples above the surface", foldedPairs: "Folded ray pairs"})) {
+            const row = element("div", "", null, stats);
+            element("dt", "", label, row);
+            this.diagnosticFields[key] = element("dd", "", "—", row);
+        }
+        element("p", "rf-hint", "Last traced fan: k compares local bending with Earth curvature. Folds indicate reversed ray order; they do not guarantee a visible mirage. Sample coverage is not scene visibility.", page);
+        this.updateDiagnostics();
         this.sideCanvas = element("canvas", "rf-side", null, page);
         const s = this.settings, grid = element("div", "rf-grid", null, page);
         this.number(grid, s, "maxDistance", "Trace distance · m", 100, 300000, 100);
@@ -397,6 +421,7 @@ export class RefractionTool {
 
     setResult(result) {
         this.result = result;
+        this.updateDiagnostics();
         this.sideDirty = true;
         this.clearLasers();
         for (const l of result.lasers) {
@@ -416,6 +441,21 @@ export class RefractionTool {
             }
         }
         this.laserGroup.visible = this.settings.lasersEnabled;
+    }
+
+    updateDiagnostics() {
+        if (!this.diagnosticFields) return;
+        const d = this.result?.diagnostics;
+        const percent = (count, total) => {
+            if (!(total > 0)) return "—";
+            const value = 100 * count / total;
+            return value > 0 && value < 0.1 ? "<0.1%" : `${value.toFixed(1)}%`;
+        };
+        for (const [key, field] of Object.entries(this.diagnosticFields)) {
+            field.textContent = !d ? "—" : key.startsWith("kAt")
+                ? (Number.isFinite(d[key]) ? d[key].toFixed(3) : "—")
+                : percent(d[key], key === "groundHits" ? d.totalRays : key === "reachedSamples" ? d.totalSamples : d.testedPairs);
+        }
     }
 
     drawSide() {

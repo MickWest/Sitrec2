@@ -4,12 +4,8 @@
 // Reference: https://emtoolbox.nist.gov/Wavelength/Documentation.asp
 export const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
-export const PROFILE_PRESETS = {
-    Standard: [[0, 15], [100, 14.35], [1000, 8.5]],
-    "Inferior mirage": [[0, 30], [0.5, 23], [2, 19], [10, 18], [100, 17.4]],
-    "Superior mirage": [[0, 10], [2, 10.1], [10, 16], [30, 17], [100, 16.5]],
-    "Elevated inversion": [[0, 15], [10, 14.9], [20, 14.8], [30, 19], [45, 19.2], [100, 18.8]],
-};
+import {PROFILE_PRESETS, PROFILE_PRESET_DETAILS} from "./RefractionPresets";
+export {PROFILE_PRESETS, PROFILE_PRESET_DETAILS} from "./RefractionPresets";
 
 export function defaultLaser(index = 0) {
     return {name: `Laser ${index + 1}`, enabled: true, height: 1.524, angle: 0,
@@ -67,6 +63,19 @@ export function anchorsToCurve(points) {
         const other = points[i === 0 ? 1 : i - 1];
         return [h, v, h + (other[0] - h) / 3, v + (other[1] - v) / 3];
     });
+}
+
+export function applyProfilePreset(settings, name) {
+    const points = PROFILE_PRESETS[name];
+    if (!points) throw new Error(`Unknown temperature preset: ${name}`);
+    settings.useStandard = name === "Standard";
+    settings.temperature = points[0][1];
+    settings.lapseRate = PROFILE_PRESET_DETAILS[name].lapseRate ?? -6.5;
+    settings.temperaturePoints = points.map(point => [...point]);
+    // Sharp layers can have very uneven anchor spacing. Constrain handles
+    // before either the editor or worker sees them, so height stays monotonic.
+    settings.temperatureCurve = normalizeCurve(anchorsToCurve(points), points, -40, 100);
+    return settings;
 }
 
 export function normalizeCurve(curve, fallback, minValue, maxValue) {
@@ -229,15 +238,32 @@ export function buildRayTable({settings: input, height, radius, minAngle, maxAng
     for (let i = 0; i < width; i++) distances[i] = settings.maxDistance * (i / (width - 1)) ** 2;
     const data = new Float32Array(width * rows * 4);
     const earth = settings.flat ? Infinity : radius;
+    // Summarize the traced fan while its samples are already hot in the worker.
+    // Retain double precision between rows: rounded heights can invent folds.
+    const previousHeights = new Float64Array(width), previousAlive = new Uint8Array(width);
+    const foldTolerance = Math.max(1e-10, (maxAngle - minAngle) / (rows - 1) * 0.001);
+    let groundHits = 0, reachedSamples = 0, testedPairs = 0, foldedPairs = 0;
     for (let row = 0; row < rows; row++) {
         const angle = minAngle + (maxAngle - minAngle) * row / (rows - 1);
         const ray = traceRay({height, angle, distances, radius: earth, medium, step: settings.step});
+        if (ray.hitDistance !== undefined) groundHits++;
         for (let i = 0; i < width; i++) {
             const k = 4 * (row * width + i), d = distances[i];
             data[k] = d > 0 ? (ray[i * 3] - height) / d - Math.tan(angle) : 0;
             data[k + 1] = ray[i * 3 + 1] - Math.tan(angle);
             data[k + 2] = ray.hitDistance ?? settings.maxDistance;
             data[k + 3] = ray[i * 3];
+            const alive = ray[i * 3 + 2] > 0;
+            if (i > 0 && alive) {
+                reachedSamples++;
+                if (row > 0 && previousAlive[i]) {
+                    testedPairs++;
+                    // Endpoint order reverses when two adjacent launch rays fold.
+                    // This describes the fan, not visibility of a scene surface.
+                    if ((ray[i * 3] - previousHeights[i]) / d < -foldTolerance) foldedPairs++;
+                }
+            }
+            previousHeights[i] = ray[i * 3]; previousAlive[i] = alive ? 1 : 0;
         }
     }
     const lasers = settings.lasersEnabled ? settings.lasers.filter(l => l.enabled).map(l => {
@@ -251,5 +277,11 @@ export function buildRayTable({settings: input, height, radius, minAngle, maxAng
         const lower = traceRay({...args, height: l.height - l.diameter / 2000, angle: angle - l.divergence / 2000});
         return {laser: l, center, upper, lower, distances: samples};
     }) : [];
-    return {width, rows, data, distances, lasers, height, radius: earth, minAngle, maxAngle};
+    const referenceRadius = Number.isFinite(radius) && radius > 0 ? radius : 6371000;
+    const diagnostics = {groundHits, totalRays: rows, reachedSamples, totalSamples: rows * (width - 1),
+        testedPairs, foldedPairs,
+        // k is expressed relative to the local Earth radius even in flat mode.
+        kAt1m: -referenceRadius * medium.gradient(1), kAt50m: -referenceRadius * medium.gradient(50),
+        kAtObserver: -referenceRadius * medium.gradient(height)};
+    return {width, rows, data, distances, lasers, height, radius: earth, minAngle, maxAngle, diagnostics};
 }

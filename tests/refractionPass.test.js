@@ -127,11 +127,12 @@ test("an out-of-range stationary camera never reuses the previous valid table", 
     }
 });
 
-test("existing refraction flags restore exactly even when rendering throws", () => {
+test.each([[true, true], [false, false], [true, false]])("existing refraction flags (%p, %p) restore before other views render, even on failure", (sky, terrain) => {
+    Sit.refractionEnabled = sky; Sit.terrestrialRefraction = terrain;
     const restore = pass.begin();
     try { expect(Sit.refractionEnabled).toBe(false); expect(Sit.terrestrialRefraction).toBe(false); }
     finally { restore(); }
-    expect(Sit.refractionEnabled).toBe(true); expect(Sit.terrestrialRefraction).toBe(true);
+    expect(Sit.refractionEnabled).toBe(sky); expect(Sit.terrestrialRefraction).toBe(terrain);
 });
 
 test("disabling releases depth, textures, worker, and ignores late replies", () => {

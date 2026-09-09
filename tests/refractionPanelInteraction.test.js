@@ -2,14 +2,16 @@
 import {RefractionTool} from "../src/refraction/RefractionTool";
 import {getInteractionRouter} from "../src/InteractionRouter";
 import {registerSurfaceInteraction} from "../src/SurfaceInteraction";
+import {NodeMan, Sit} from "../src/Globals";
+import {RefractionPass} from "../src/refraction/RefractionPass";
 
-jest.mock("../src/Globals", () => ({Sit: {}, NodeMan: {get: () => null, list: {}},
+jest.mock("../src/Globals", () => ({Sit: {}, NodeMan: {get: jest.fn(() => null), list: {}},
     setRenderOne: jest.fn(), markSitchDirty: jest.fn()}));
 jest.mock("../src/LocalFrame", () => ({GlobalScene: {add: jest.fn()}}));
 jest.mock("../src/CViewManager", () => ({ViewMan: {iterate() {}}}));
 jest.mock("../src/KeyBoardHandler", () => ({isKeyHeld: () => false}));
 jest.mock("../src/MetaCurveEdit", () => ({}));
-jest.mock("../src/refraction/RefractionPass", () => ({}));
+jest.mock("../src/refraction/RefractionPass", () => ({RefractionPass: jest.fn().mockImplementation(() => ({dispose: jest.fn()}))}));
 jest.mock("../src/refraction/refraction.css", () => ({}));
 
 let tool, panel, header, router, navigation;
@@ -23,6 +25,9 @@ function pointer(target, type, x = 50, extra = {}) {
 }
 
 beforeEach(() => {
+    delete Sit.raytracedRefraction;
+    NodeMan.get.mockImplementation(() => null);
+    NodeMan.list = {};
     global.ResizeObserver = class { observe() {} disconnect() {} };
     // Exercise the real panel shell and router without rendering the graphs/GPU.
     for (const name of ["buildAtmosphere", "buildRays", "buildLasers", "resizeGraphs", "animate"]) {
@@ -91,4 +96,29 @@ test("the native boundary preserves controls and registered graph gestures", () 
         canvas.dispatchEvent(new WheelEvent("wheel", {bubbles: true, cancelable: true, deltaY: 100}));
         expect(wheel).toHaveBeenCalledTimes(1); expect(navigation.wheel).not.toHaveBeenCalled();
     } finally { unregister(); }
+});
+
+test("choosing the main view moves the sole pass and preserves other views' atmosphere", () => {
+    const look = {id: "lookView", renderTargetAndEffects() {}}, main = {id: "mainView", renderTargetAndEffects() {}};
+    const views = {lookView: look, mainView: main};
+    NodeMan.get.mockImplementation(id => views[id]);
+    NodeMan.list = {lookView: {data: look}, mainView: {data: main}};
+    Sit.refractionEnabled = true;
+    Sit.terrestrialRefraction = false;
+    tool.settings.enabled = true; tool.settings.view = "lookView"; tool.sync();
+    const first = tool.pass;
+    expect(look.raytracedRefraction).toBe(first);
+    expect(main.raytracedRefraction).toBeUndefined();
+    tool.rebuildPanel();
+    const select = tool.panel.querySelector(".rf-toolbar select");
+    expect([...select.options].map(option => option.value)).toEqual(["lookView", "mainView"]);
+    select.value = "mainView"; select.dispatchEvent(new Event("change"));
+    expect(first.dispose).toHaveBeenCalledTimes(1);
+    expect(look.raytracedRefraction).toBeUndefined();
+    expect(main.raytracedRefraction).toBe(tool.pass);
+    expect(tool.pass).not.toBe(first);
+    expect(Sit.refractionEnabled).toBe(true);
+    expect(Sit.terrestrialRefraction).toBe(false);
+    tool.settings.enabled = false; tool.sync();
+    expect(main.raytracedRefraction).toBeUndefined();
 });

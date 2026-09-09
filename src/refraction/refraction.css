@@ -17,6 +17,11 @@
 .refraction-tool .rf-tabs button[aria-pressed=true] { color: #007384; background: #e9f5f6; box-shadow: inset 0 -3px #098697; font-weight: 650; }
 .rf-body { flex: 1; overflow: auto; padding: 18px 20px; overscroll-behavior: contain; }
 .rf-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 15px; }
+.rf-presets .rf-field { flex: 1; }
+.rf-diagnostics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin: 12px 0; }
+.rf-diagnostics > div { padding: 10px; border: 1px solid #d3dfe5; border-radius: 8px; background: white; }
+.rf-diagnostics dt { font-size: 11px; color: #607784; }
+.rf-diagnostics dd { margin: 3px 0 0; font-size: 17px; font-variant-numeric: tabular-nums; }
 .rf-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px 18px; }
 .rf-field { display: flex; flex-direction: column; gap: 4px; color: #506775; font-size: 12px; }
 .rf-field input, .rf-field select { width: 100%; min-width: 0; border: 1px solid #cbd8df; background: white; padding: 6px 9px; border-radius: 6px; font-variant-numeric: tabular-nums; }
@@ -24,6 +29,7 @@
 .rf-check { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 .rf-check input { accent-color: #078595; width: 16px; height: 16px; }
 .rf-hint { font-size: 12px; color: #607784; margin: 14px 0; }
+.refraction-tool .rf-view-scope { margin: 0; padding: 0 20px 10px; background: white; }
 .rf-chart, .rf-laser { margin-top: 16px; background: white; border: 1px solid #d3dfe5; border-radius: 10px; overflow: hidden; }
 .rf-chart-title { display: flex; align-items: center; justify-content: space-between; padding: 10px 13px; border-bottom: 1px solid #e2e9ed; }
 .rf-chart-title button { font-size: 11px; padding: 4px 8px; }

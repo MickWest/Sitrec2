@@ -1,7 +1,74 @@
-import {airIndex, anchorsToCurve, atmosphere, buildRayTable, curveSampler, groundY,
+import {airIndex, anchorsToCurve, applyProfilePreset, atmosphere, buildRayTable, curveSampler, groundY,
     normalizeSettings, PROFILE_PRESETS, traceRay} from "../src/refraction/RefractionPhysics";
+import {terrestrialBendAngle, terrestrialKFromAtmosphere} from "../src/atmosphere/terrestrialRefraction";
 
 const radius = 6371000;
+
+test.each(Object.keys(PROFILE_PRESETS))("%s preset replaces the previous temperature model and round-trips", name => {
+    const s = normalizeSettings({temperature: 55, lapseRate: 85, humidity: 73, humidityProfile: true, wavelength: 633});
+    const rh = s.humidityCurve.slice();
+    applyProfilePreset(s, name);
+    const medium = atmosphere(s), points = PROFILE_PRESETS[name];
+    for (const [height, temp] of points) expect(medium.temperature(height)).toBeCloseTo(temp, 6);
+    expect(medium.temperature(points.at(-1)[0] + 100)).toBeCloseTo(points.at(-1)[1] + s.lapseRate / 10, 6);
+    expect(s.humidityCurve).toEqual(rh);
+    expect([s.humidity, s.humidityProfile, s.wavelength]).toEqual([73, true, 633]);
+    expect(normalizeSettings(JSON.parse(JSON.stringify(s)))).toEqual(s);
+});
+
+test("fan diagnostics distinguish ground termination from folds", () => {
+    const settings = normalizeSettings({bend: false, maxDistance: 10000, distanceSamples: 64});
+    const upward = buildRayTable({settings, height: 10, radius, minAngle: 0, maxAngle: .01, rows: 16}).diagnostics;
+    expect(upward.groundHits).toBe(0);
+    expect(upward.reachedSamples).toBe(upward.totalSamples);
+    expect(upward.foldedPairs).toBe(0);
+    expect(upward.kAtObserver).toBeCloseTo(0);
+    const crossing = buildRayTable({settings, height: 2, radius, minAngle: -.01, maxAngle: .01, rows: 16}).diagnostics;
+    expect(crossing.groundHits).toBeGreaterThan(0);
+    expect(crossing.reachedSamples).toBeLessThan(crossing.totalSamples);
+    expect(crossing.foldedPairs).toBe(0);
+});
+
+test("the ducting preset detects actual reversals in the surviving ray fan", () => {
+    const settings = applyProfilePreset(normalizeSettings({maxDistance: 30000, distanceSamples: 128}), "Ducting inversion");
+    const d = buildRayTable({settings, height: 2, radius, minAngle: -.001, maxAngle: .003, rows: 128}).diagnostics;
+    expect(d.foldedPairs).toBeGreaterThan(0);
+    expect(d.testedPairs).toBeGreaterThan(d.foldedPairs);
+    expect(d.kAt1m).toBeGreaterThan(0);
+});
+
+describe("ray-traced refraction agrees with the analytic terrestrial model", () => {
+    // Ciddor's refractive-index gradient and the surveying approximation are
+    // independent derivations. Compare where constant-k refraction applies;
+    // its nonnegative clamp deliberately excludes upward-bending mirages.
+    test.each([-6.5, -9.8, -13.7, 0, 20, 50])("local k at lapse %p K/km", lapseRate => {
+        const medium = atmosphere(normalizeSettings({temperature: 15, pressure: 1013.25, humidity: 50, lapseRate}));
+        const tracedK = -radius * medium.gradient(1);
+        const analyticK = terrestrialKFromAtmosphere(1013.25, 15, lapseRate);
+        expect(Math.abs(tracedK - analyticK)).toBeLessThan(0.02 * Math.max(analyticK, 0.1));
+    });
+
+    test("finite-distance bending agrees with the analytic model over 5–50 km", () => {
+        const medium = atmosphere(normalizeSettings({temperature: 15, pressure: 1013.25, humidity: 50, lapseRate: -6.5}));
+        const distances = Float64Array.of(0, 5000, 20000, 50000);
+        const height = 10;
+        const ray = traceRay({height, angle: 0, distances, radius, medium});
+        const k = terrestrialKFromAtmosphere(1013.25, 15, -6.5);
+        for (let i = 1; i < distances.length; i++) {
+            const distance = distances[i];
+            // The launch is horizontal; its endpoint is depressed below that
+            // tangent. A target there consequently appears elevated by this angle.
+            const traced = -Math.atan2(ray[i * 3] - height, distance);
+            const analytic = terrestrialBendAngle(distance, k, radius, 0);
+            expect(Math.abs(traced / analytic - 1)).toBeLessThan(0.02);
+            expect(ray[i * 3 + 2]).toBe(1); // the ray remains above the surface
+            if (distance === 20000) {
+                expect(traced * 180 * 60 / Math.PI).toBeGreaterThan(0.85);
+                expect(traced * 180 * 60 / Math.PI).toBeLessThan(0.95);
+            }
+        }
+    });
+});
 
 test("Ciddor matches the original simulator's standard reference and dispersion", () => {
     expect(airIndex(633, 20, 1013.25, 50)).toBeCloseTo(1.000271373, 9);

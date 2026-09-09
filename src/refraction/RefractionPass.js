@@ -22,6 +22,7 @@ uniform vec3 zenith, fogColor;
 uniform vec2 angles, tableSize, resolution;
 uniform float maxDistance, cameraFar, cameraNear, logDepth, observerHeight, earthRadius;
 uniform float visibility, night, eyeLevel, horizon;
+uniform float rayLinearFiltering;
 
 vec3 directionAt(vec2 uv) {
     // Use the middle of the clip interval. With Sitrec's astronomical far
@@ -41,7 +42,14 @@ float horizontalDistanceAt(vec2 uv) {
 vec4 rayAt(float angle, float distance) {
     vec2 p = vec2(sqrt(clamp(distance / maxDistance, 0., 1.)),
         clamp((angle - angles.x) / (angles.y - angles.x), 0., 1.));
-    return texture2D(tRays, (p * (tableSize - 1.) + 0.5) / tableSize);
+    p *= tableSize - 1.;
+    if (rayLinearFiltering > 0.5) return texture2D(tRays, (p + 0.5) / tableSize);
+    // Float textures are core WebGL2, but their linear filtering is optional.
+    // Sample texel centers and interpolate explicitly when it is unavailable.
+    vec2 low = floor(p), f = fract(p), texel = 1. / tableSize;
+    vec2 uv = (low + 0.5) / tableSize;
+    return mix(mix(texture2D(tRays, uv), texture2D(tRays, uv + vec2(texel.x, 0.)), f.x),
+        mix(texture2D(tRays, uv + vec2(0., texel.y)), texture2D(tRays, uv + texel), f.x), f.y);
 }
 vec2 sourceAt(vec4 base, vec4 up, float offset) {
     vec4 clip = base + up * offset;
@@ -79,7 +87,13 @@ void main() {
             if (i == 0 && sceneDistance < 1.e19) missingSurface = true;
             // A far endpoint can leave the frame even though this ray hits a
             // visible surface sooner (including a folded mirage image).
-            distance *= 0.5;
+            // Seed that search from finite depth at the frame edge. Halving
+            // alone can alternate between outside and sky forever, skipping
+            // a thin visible surface between the trial distances. This is
+            // only a distance hint: accept a hit only at an in-frame endpoint.
+            vec2 inset = 0.5 / resolution;
+            float edgeDistance = horizontalDistanceAt(clamp(source, inset, 1. - inset));
+            distance = edgeDistance < distance ? edgeDistance : distance * 0.5;
             continue;
         }
         sceneDistance = horizontalDistanceAt(source);
@@ -158,6 +172,7 @@ export class RefractionPass {
                 observerHeight: {value: 0}, earthRadius: {value: 6371000},
                 fogColor: {value: new Color("#9aafbb")}, visibility: {value: 0}, night: {value: 0},
                 eyeLevel: {value: 0}, horizon: {value: 0},
+                rayLinearFiltering: {value: 1},
             }});
     }
 
@@ -348,6 +363,7 @@ export class RefractionPass {
             this.texture.minFilter = this.texture.magFilter = filter;
             this.texture.needsUpdate = true;
             const u = this.material.uniforms;
+            u.rayLinearFiltering.value = filter === LinearFilter ? 1 : 0;
             u.tRays.value = this.texture;
             u.angles.value.set(result.minAngle, result.maxAngle);
             u.tableSize.value.set(result.width, result.rows);

@@ -60,3 +60,27 @@ test("adding an inversion point sorts by height, not temperature", () => {
     expect(editor.curve.ps.filter((_, i) => i % 2 === 0).map(p => p.y)).toEqual([0, 300, 500, 1000]);
     expect(editor.curve.ps[4].x).toBe(25);
 });
+
+test("a handle in the canvas margin can be selected and dragged again", () => {
+    const handle = editor.curve.ps[1];
+    handle.x = -2;
+    expect(editor.D2CX(handle.x)).toBeGreaterThan(0);
+    expect(editor.insideGraph(editor.D2CX(handle.x), editor.D2CY(handle.y))).toBe(false);
+    pointer(canvas, "pointerdown", -2, 100);
+    expect(editor.selectedPoint).toBe(handle);
+    pointer(document, "pointermove", -3, 120);
+    expect(handle.x).toBeCloseTo(-3);
+    expect(handle.y).toBeCloseTo(120);
+    pointer(document, "pointerup", -3, 120);
+    expect(editor.selectedPoint).toBeNull();
+    expect(ended).toHaveBeenCalledTimes(1);
+});
+
+test("empty canvas margins claim input without inserting out-of-domain points", () => {
+    const before = editor.getProfile().slice();
+    pointer(canvas, "pointerdown", -2, 500, {button: 2, buttons: 2});
+    expect(started).toHaveBeenCalledTimes(1);
+    pointer(document, "pointerup", -2, 500, {button: 2});
+    expect(editor.getProfile()).toEqual(before);
+    expect(ended).toHaveBeenCalledTimes(1);
+});
