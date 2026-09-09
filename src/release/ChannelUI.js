@@ -1,4 +1,5 @@
 import {Globals, FileManager} from '../Globals';
+import {isLocal} from '../configUtils';
 import {showConfirm, showError} from '../showError';
 import {betaSaveNeedsWarning, buildLabel, cleanBuild} from './channelModel';
 import {saveChannelHandoff} from './channelHandoff';
@@ -42,6 +43,7 @@ export function chooseChannelDialog(message, choices) {
 }
 
 export async function approveSitchChannel(sitch, context = {}) {
+    if (isLocal) return true;
     if (!sitch || typeof sitch !== 'object' || approved.has(sitch) ||
         (approvedText !== undefined && getSitchText(sitch) === approvedText)) return true;
     const state = window.__SITREC_CHANNEL_STATE__;

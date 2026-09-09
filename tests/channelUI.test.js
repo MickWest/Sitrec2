@@ -1,5 +1,6 @@
 /** @jest-environment jsdom */
 jest.mock('../src/Globals', () => ({Globals: {sitchDirty: false}, FileManager: {loadURL: 'sitrec://42/current/file.js'}}));
+jest.mock('../src/configUtils', () => ({isLocal: false}));
 jest.mock('../src/showError', () => ({showConfirm: jest.fn(), showError: jest.fn()}));
 jest.mock('../src/release/channelHandoff', () => ({saveChannelHandoff: jest.fn()}));
 jest.mock('../src/SitrecObjectResolver', () => ({extractUserIdFromSitrecReference: () => '42'}));
