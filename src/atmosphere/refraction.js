@@ -426,6 +426,18 @@ export function installRefractionOnMaterial(material) {
         ).replace(
             "#include <begin_vertex>",
             "#include <begin_vertex>\n\ttransformed = applyRefractionECI_chunk(transformed);",
+        ).replace(
+            "modelViewMatrix * vec4( instanceStart, 1.0 )",
+            "modelViewMatrix * vec4( applyRefractionECI_chunk(instanceStart), 1.0 )",
+        ).replace(
+            "modelViewMatrix * vec4( instanceEnd, 1.0 )",
+            "modelViewMatrix * vec4( applyRefractionECI_chunk(instanceEnd), 1.0 )",
+        ).replace(
+            "modelViewMatrix * vec4( instanceLinePrevious.xyz, 1.0 )",
+            "modelViewMatrix * vec4( applyRefractionECI_chunk(instanceLinePrevious.xyz), 1.0 )",
+        ).replace(
+            "modelViewMatrix * vec4( instanceLineNext.xyz, 1.0 )",
+            "modelViewMatrix * vec4( applyRefractionECI_chunk(instanceLineNext.xyz), 1.0 )",
         );
     };
     material.needsUpdate = true;

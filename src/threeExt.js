@@ -1,3 +1,4 @@
+import {SceneLine, SceneLineSegments} from "./SceneLines";
 // threeExt.js - Mick's extensions to THREE.js
 import {
     ArrowHelper,
@@ -7,8 +8,6 @@ import {
     Float32BufferAttribute,
     Group,
     LinearFilter,
-    LineBasicMaterial,
-    LineSegments,
     Material,
     Mesh,
     MeshBasicMaterial,
@@ -23,7 +22,7 @@ import {
     WireframeGeometry
 } from "three";
 
-import {getEffectiveRenderScale, Globals, NodeMan, setRenderOne, Synth3DManager} from './Globals';
+import {Globals, NodeMan, setRenderOne, Synth3DManager} from './Globals';
 import {par} from "./par";
 import {showError} from "./showError";
 
@@ -33,8 +32,8 @@ import {GlobalScene} from "./LocalFrame";
 import * as LAYER from "./LayerMasks";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
 import {getDebugMatrixAxisSegments} from "./DebugMatrixAxesUtils";
-import {LineMaterial} from "three/addons/lines/LineMaterial.js";
-import {LineGeometry} from "three/addons/lines/LineGeometry.js";
+import {SceneLineMaterial} from "./SceneLineMaterial";
+import {LineGeometry} from "./SceneLineGeometry";
 import {Line2} from "three/addons/lines/Line2.js";
 import {assert} from "./assert";
 import {intersectSphere2, makeMatrix4PointYAt, V3} from "./threeUtils";
@@ -94,7 +93,7 @@ Mesh.prototype.getMap = function() {
 export function dispose(a) { if (a!=undefined) a.dispose()}
 
 // A grid helper that is a segment of a sphere (i.e. on the surface of the earth)
-class GridHelperWorldComplex extends LineSegments {
+class GridHelperWorldComplex extends SceneLineSegments {
     constructor (altitude, xStart, xEnd, xStep, yStart, yEnd, yStep, radius, color1=0x444444, color2 = 0x888888)
     {
 
@@ -128,7 +127,7 @@ class GridHelperWorldComplex extends LineSegments {
         geometry.setAttribute( 'position', new Float32BufferAttribute( vertices, 3 ) );
         geometry.setAttribute( 'color', new Float32BufferAttribute( colors, 3 ) );
 
-        const material = new LineBasicMaterial( { vertexColors: true, toneMapped: false } );
+        const material = new SceneLineMaterial( { vertexColors: true, toneMapped: false } );
 
         super( geometry, material );
 
@@ -136,7 +135,7 @@ class GridHelperWorldComplex extends LineSegments {
     }
 }
 
-export class ColoredLine extends LineSegments {
+export class ColoredLine extends SceneLineSegments {
     constructor(_positions, _colors) {
 
         const vertices = [];
@@ -156,7 +155,7 @@ export class ColoredLine extends LineSegments {
         geometry.setAttribute( 'position', new Float32BufferAttribute( vertices, 3 ) );
         geometry.setAttribute( 'color', new Float32BufferAttribute( colors, 3 ) );
 
-        const material = new LineBasicMaterial( { vertexColors: true, toneMapped: false } );
+        const material = new SceneLineMaterial( { vertexColors: true, toneMapped: false } );
 
         super (geometry, material)
         this.type = 'ColoredLine';
@@ -241,10 +240,10 @@ export function DebugSphere(name, origin, radius = 100, color = 0xffffff, parent
         let material, geometry, sphere;
         if (wireframe) {
             // create a wireframe sphere
-            material = new LineBasicMaterial({color: color})
+            material = new SceneLineMaterial({color: color})
             geometry = new SphereGeometry(1, 10, 10);
             geometry = new WireframeGeometry(geometry);
-            sphere = new LineSegments(geometry, material);
+            sphere = new SceneLineSegments(geometry, material);
         } else {
             material = new MeshBasicMaterial({color: color});
             geometry = new SphereGeometry(1, 10, 10);
@@ -274,7 +273,7 @@ export function DebugWireframeSphere(name, origin, radius = 100, color = 0xfffff
         // so scale passed in must be in meters.
         const geometry = new SphereGeometry(0.5, segments, segments);
         const wireframe = new WireframeGeometry(geometry);
-        const sphere = new LineSegments(wireframe);
+        const sphere = new SceneLineSegments(wireframe);
         sphere.material.color = new Color(color)
         sphere.material.depthTest = true;
         sphere.material.opacity = 0.75;
@@ -337,6 +336,16 @@ export function DebugArrow(name, direction, origin, _length = 100, color="#FFFFF
         color = new Color(color)  // convert from whatever format, like "green" or "#00ff00" to a THREE.Color(r,g,b)
 //        DebugArrows[name] = new ArrowHelper(dir, origin, _length, color, _headLength);
         DebugArrows[name] = new ArrowHelper(dir, origin, _length, color);
+        const arrow = DebugArrows[name];
+        const oldLine = arrow.line;
+        arrow.line = new SceneLine(oldLine.geometry, new SceneLineMaterial({color, toneMapped: false}));
+        arrow.line.matrixAutoUpdate = false;
+        arrow.line.scale.copy(oldLine.scale);
+        arrow.line.matrix.copy(oldLine.matrix);
+        arrow.remove(oldLine);
+        arrow.add(arrow.line);
+        oldLine.material.dispose();
+        patchMaterialForLinearOutput(arrow.cone.material);
         DebugArrows[name].visible = visible
         DebugArrows[name].length = _length;
         DebugArrows[name].headLength = _headLength;
@@ -766,39 +775,25 @@ export function rayIntersectsEllipsoid(origin, direction) {
 
 export class CDisplayLine {
     constructor(v) {
-        this.color = v.color ?? [1, 0, 1];
+        this.color = Array.isArray(v.color) ? new Color().fromArray(v.color) : new Color(v.color ?? 0xff00ff);
         this.width = v.width ?? 1;
         this.A = v.A;
         this.B = v.B;
         this.group = v.group;
         this.layers = v.layers ?? LAYER.MASK_HELPERS;
 
-        this.material = new LineMaterial({
-
-            // the color here is white, as
-            color: [1.0, 1.0, 1.0], // this.color,
-            linewidth: this.width, // in world units with size attenuation, pixels otherwise
-            vertexColors: true,
-            dashed: false,
-            alphaToCoverage: true,
-        });
+        this.material = new SceneLineMaterial({color: this.color, linewidth: this.width});
 
         this.geometry = null;
 
         const line_points = [];
-        const line_colors = [];
 
         line_points.push(this.A.x, this.A.y, this.A.z);
         line_points.push(this.B.x, this.B.y, this.B.z);
-        line_colors.push(this.color.r, this.color.g, this.color.b)
-        line_colors.push(this.color.r, this.color.g, this.color.b)
 
         this.geometry = new LineGeometry();
         this.geometry.setPositions(line_points);
-        this.geometry.setColors(line_colors);
 
-        const lineDPR = (window.devicePixelRatio || 1) * getEffectiveRenderScale();
-        this.material.resolution.set(window.innerWidth * lineDPR, window.innerHeight * lineDPR)
         this.line = new Line2(this.geometry, this.material);
         this.line.computeLineDistances();
         this.line.scale.set(1, 1, 1);

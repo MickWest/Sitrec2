@@ -1,8 +1,10 @@
 //
-import {getEffectiveMSAASamples, getEffectiveRenderScale, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {dispose, patchMaterialForLinearOutput} from "../threeExt";
-import {LineGeometry} from "three/addons/lines/LineGeometry.js";
-import {LineMaterial} from "three/addons/lines/LineMaterial.js";
+import {LineGeometry} from "../SceneLineGeometry";
+import {SceneLineMaterial} from "../SceneLineMaterial";
+import {LineSegments2} from "three/addons/lines/LineSegments2.js";
+import {LineSegmentsGeometry} from "three/addons/lines/LineSegmentsGeometry.js";
 
 import {Line2} from "three/addons/lines/Line2.js";
 import {CNode3DGroup} from "./CNode3DGroup";
@@ -471,6 +473,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
     dispose() {
         this.group.remove(this.trackLine)
+        this.trackLine?.material.dispose();
         dispose(this.trackGeometry)
         this.removeTrackWall();
         if (this.contrailNode) {
@@ -479,23 +482,6 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             this.contrailNode = null;
         }
         super.dispose();
-    }
-
-    // Called by CCustomManager.applyRenderPerformanceSettings() so the per-
-    // track LineMaterial picks up live changes to renderScale (resolution)
-    // and msaaSamples (alphaToCoverage). Without this the track Line2 keeps
-    // its construction-time resolution and gaps reappear after the user
-    // toggles between presets.
-    applyPerformanceSettings() {
-        if (this.trackLine && this.trackLine.material && this.trackLine.material.resolution) {
-            const lineDPR = (window.devicePixelRatio || 1) * getEffectiveRenderScale();
-            this.trackLine.material.resolution.set(window.innerWidth * lineDPR, window.innerHeight * lineDPR);
-            const wantATC = getEffectiveMSAASamples() > 0;
-            if (this.trackLine.material.alphaToCoverage !== wantATC) {
-                this.trackLine.material.alphaToCoverage = wantATC;
-                this.trackLine.material.needsUpdate = true;
-            }
-        }
     }
 
     modSerialize() {
@@ -627,6 +613,11 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
     recalculate() {
         this.group.remove(this.trackLine)
+        this.trackLine?.material.dispose();
+        dispose(this.trackGeometry);
+        this.trackLine = null;
+        this.trackGeometry = null;
+        this.removeTrackWall();
         const line_points = [];
         const line_colors = [];
         assert(this.inputs.track !== undefined, "CNodeDisplayTrack: track input is undefined, id="+this.id)
@@ -801,46 +792,12 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
 //        var material1 = this.in.color.v(0)
 
-        // Line width in pixels. The previous code multiplied by 3 here to
-        // hide rasterisation jaggies, but the LineMaterial shader does its
-        // own analytic-AA via alphaToCoverage when MSAA is on, and the
-        // renderer already clamps to ≥1 fb-pixel — so the multiplier just
-        // made every track 3× thicker than the configured width without
-        // giving the user a way to undo it. Render at the configured value.
-        var width = 1
-        if (this.in.width !== undefined)
-            width = this.in.width.v0
-
-        var matLineTrack = new LineMaterial({
-
+        const matLineTrack = new SceneLineMaterial({
             color: 0xffffff,
-         //   color: 0xff0000,
-            linewidth: width, // in world units with size attenuation, pixels otherwise
+            linewidth: this.in.width?.v0 ?? 1,
             vertexColors: true,
-
-            //resolution:  // to be set by this.renderer, eventually
-            dashed: false,
-            // Enabled when MSAA>0 so the LineMaterial fragment shader's
-            // smoothstep analytic-AA branch fills sub-pixel coverage and
-            // eliminates the gaps that appear when renderScale shrinks the
-            // rasterised line triangle below 1 fb pixel. Toggled live in
-            // applyRenderPerformanceSettings; original "off" was to avoid
-            // small end-of-segment artifacts, which only show with MSAA.
-            alphaToCoverage: getEffectiveMSAASamples() > 0,
-
-   //         depthTest: true,
-   //         depthWrite: true,
             depthFunc: this.depthFunc,
-
         });
-
-        // Resolution must reflect the actual offscreen render target the line
-        // will draw into, not the device backbuffer. With renderScale<1 the RT
-        // is smaller, so a stale window-DPR resolution leaves the line shader
-        // computing widths in clip-space using the wrong denominator → lines
-        // come out at fractional fb pixels and rasterise with gaps.
-        const lineDPR = (window.devicePixelRatio || 1) * getEffectiveRenderScale();
-        matLineTrack.resolution.set(window.innerWidth * lineDPR, window.innerHeight * lineDPR);
 
         this.trackLine = new Line2(this.trackGeometry, matLineTrack);
 
@@ -880,6 +837,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             // note the track wall includes the cap on KML polygons
             this.group.remove(this.trackWall);
             dispose(this.trackWall.geometry);
+            this.trackWall.material.dispose();
             this.trackWall.geometry = null;
             this.trackWall = null;
         }
@@ -888,6 +846,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         if (this.trackLines) {
             this.group.remove(this.trackLines);
             dispose(this.trackLines.geometry);
+            this.trackLines.material.dispose();
             this.trackLines.geometry = null;
             this.trackLines = null;
         }
@@ -1074,22 +1033,14 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             sideLineVertices.push(rx1, ry1, rz1, rx2, ry2, rz2);
         }
 
-        const sideLineGeom = new THREE.BufferGeometry();
-        sideLineGeom.setAttribute(
-            "position",
-            new THREE.BufferAttribute(new Float32Array(sideLineVertices), 3)
-        );
-
-        // Use a simple line material, more opaque than the fill
-        const lineMat = new THREE.LineBasicMaterial({
+        const sideLineGeom = new LineSegmentsGeometry().setPositions(sideLineVertices);
+        const lineMat = new SceneLineMaterial({
             color: lineColor,
-            transparent: true,
+            linewidth: 1,
             opacity: lineOpacity,
             depthFunc: this.depthFunc,
-
         });
-
-        this.trackLines = new THREE.LineSegments(sideLineGeom, lineMat);
+        this.trackLines = new LineSegments2(sideLineGeom, lineMat);
         // Same shift by midpoint
         this.trackLines.position.set(mid.x, mid.y, mid.z);
         this.group.add(this.trackLines);

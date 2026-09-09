@@ -253,6 +253,11 @@ export function patchFlatEarthVertexShader(vertexShader) {
 
     // (d) fat lines (Line2/LineSegments2) — tracks, LOS, measurement lines
     if (!matched && out.includes(FATLINE_ENDPOINTS)) {
+        if (out.includes("instanceLinePrevious")) {
+            out = out.replace(FATLINE_ENDPOINTS, FATLINE_ENDPOINTS
+                + "\nlinePrevious.xyz += mat3(viewMatrix) * flatEarthDelta((modelMatrix * vec4(instanceLinePrevious.xyz, 1.0)).xyz);"
+                + "\nlineNext.xyz += mat3(viewMatrix) * flatEarthDelta((modelMatrix * vec4(instanceLineNext.xyz, 1.0)).xyz);");
+        }
         out = out.replace(FATLINE_ENDPOINTS,
             FATLINE_ENDPOINTS
             + "\n\t\t\tstart.xyz += mat3( viewMatrix ) * flatEarthDelta( ( modelMatrix * vec4( instanceStart, 1.0 ) ).xyz );"

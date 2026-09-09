@@ -1,3 +1,4 @@
+import {setLineViewHeight} from "../SceneLineMaterial";
 import {par} from "../par";
 import {requestCameraFocusSync} from "../CameraFocusUI";
 import {showError} from "../showError";
@@ -2083,7 +2084,6 @@ export class CNodeView3D extends CNodeViewCanvas {
 
             // Trigger the SAME global resize path that a real window-resize
             // event takes. updateSize(true) calls updateWH on every view,
-            // updateMatLineResolution (LineMaterial pixel-width uniform),
             // ViewMan.updateSize, infoDiv font size, chart sizes, and
             // setRenderOne. Note: the 2D-canvas half-size recovery is
             // handled by forceContextRescale above, not by this call —
@@ -2296,6 +2296,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     this._renderTargetSize ??= new Vector2());
                 const rtWidth = targetSize.x;
                 const rtHeight = targetSize.y;
+                setLineViewHeight(this.renderer, this.heightPx * this.letterboxScaleY);
 
                 const useAtmosphereHDR = this.useLookViewHDR && this.atmosphereEnabled && this.atmosphereHDR && this.hdrToneMappingPass !== null;
                 // A legacy day sky is tone-mapped before world geometry. Draw that sky

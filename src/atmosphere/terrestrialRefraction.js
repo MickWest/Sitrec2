@@ -571,6 +571,11 @@ export function patchTerrestrialRefractionVertexShader(vertexShader) {
     // them — clip positions, NDC, extrusion basis, endcaps and trimSegment.
     // Dash phase keys off instanceDistanceStart/End and so stays physical.
     if (out.includes(FATLINE_ENDPOINTS)) {
+        if (out.includes("instanceLinePrevious")) {
+            out = out.replace(FATLINE_ENDPOINTS, FATLINE_ENDPOINTS
+                + "\nlinePrevious.xyz = applyTerrestrialRefraction_chunk(linePrevious.xyz);"
+                + "\nlineNext.xyz = applyTerrestrialRefraction_chunk(lineNext.xyz);");
+        }
         out = out.replace(FATLINE_ENDPOINTS,
             FATLINE_ENDPOINTS
             + "\n\t\t\tvec4 sitrecPhysicalStart = start;"

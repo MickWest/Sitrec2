@@ -5,7 +5,6 @@ import {getInteractionRouter} from "./InteractionRouter";
 
 import {
     EarthRadiusMiles,
-    getEffectiveRenderScale,
     Globals,
     gui,
     guiMenus,
@@ -23,7 +22,7 @@ import {DebugArrowAB, dispose, GridHelperWorld, propagateLayerMaskObject, sphere
 import * as LAYER from "./LayerMasks";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
 import {Line2} from "three/addons/lines/Line2.js";
-import {LineGeometry} from "three/addons/lines/LineGeometry.js";
+import {LineGeometry} from "./SceneLineGeometry";
 import {showHider} from "./KeyBoardHandler";
 import {t} from "./i18n";
 import {VG} from "./nodes/CNodeView";
@@ -60,7 +59,7 @@ import {CNodeLOSFitAnalysisResult} from "./nodes/CNodeLOSFitAnalysisResult";
 import {CNodeSwitch} from "./nodes/CNodeSwitch";
 import {QUADCOPTER_MODELS, FIXED_WING_MODELS} from "./VehicleModels";
 import {EventManager} from "./CEventManager";
-import {makeMatLine, updateMatLineResolution} from "./MatLines";
+import {makeMatLine} from "./MatLines";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
 import {
     AddAltitudeGraph,
@@ -76,7 +75,6 @@ import {
     DoubleSide,
     Float32BufferAttribute,
     Group,
-    LineBasicMaterial,
     Matrix4,
     Mesh,
     MeshBasicMaterial,
@@ -1163,12 +1161,6 @@ export function updateSize(force) {
         lastContentWidth = contentWidth;
         lastContentHeight = contentHeight;
 
-        // Match the actual render-target size so LineMaterial's shader maps
-        // pixel-width uniforms to real fb pixels. Stale resolution → lines
-        // render at sub-pixel widths and drop fragments at low renderScale.
-        const lineDPR = (window.devicePixelRatio || 1) * getEffectiveRenderScale();
-        updateMatLineResolution(windowWidth * lineDPR, windowHeight * lineDPR)
-
         const scale = window.innerWidth / 1920
 
         ViewMan.updateSize();
@@ -1261,8 +1253,6 @@ export function initViews() {
     }
 
 
-    const line_material = new LineBasicMaterial({color: 0xffffff});
-    const line_materialRED = new LineBasicMaterial({color: 0xff8080, linewidth: 5});
 
     // Now using the Line2, etc from https://github.com/mrdoob/three.js/blob/master/examples/webgl_lines_fat.html
 

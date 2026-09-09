@@ -1,3 +1,4 @@
+import {SceneLineSegments} from "../SceneLines";
 // CNode3DObject.js - CNode3DObject
 // a 3D object node - a sphere, cube, etc., with generated geometry and material from the input parameters
 // encapsulates a THREE.Object3D object, like:
@@ -28,7 +29,6 @@ import {
     LatheGeometry,
     LinearFilter,
     LineCurve3,
-    LineSegments,
     Matrix3,
     Mesh,
     MeshBasicMaterial,
@@ -1464,10 +1464,10 @@ export class CNode3DObject extends CNode3DGroup {
 
         if (common.wireframe) {
             this.wireframe = new WireframeGeometry(this.geometry);
-            this.object = new LineSegments(this.wireframe);
+            this.object = new SceneLineSegments(this.wireframe);
         } else if (common.edges) {
             this.wireframe = new EdgesGeometry(this.geometry);
-            this.object = new LineSegments(this.wireframe);
+            this.object = new SceneLineSegments(this.wireframe);
         } else {
             this.object = new Mesh(this.geometry, this.material);
         }
@@ -1477,7 +1477,7 @@ export class CNode3DObject extends CNode3DGroup {
 
         this.object.material.depthTest = common.depthTest ?? true;
         this.object.material.opacity = common.opacity ?? 1;
-        this.object.material.transparent = common.transparent ?? (v.opacity < 1.0);
+        this.object.material.transparent = this.object.material.isSceneLineMaterial || (common.transparent ?? (v.opacity < 1.0));
 
         if (Globals.shadowsEnabled) {
             this.object.castShadow = true;

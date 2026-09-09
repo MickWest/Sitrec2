@@ -1,3 +1,5 @@
+import {SceneLineSegments} from "../SceneLines";
+import {SceneLineMaterial} from "../SceneLineMaterial";
 import {getInteractionRouter} from "../InteractionRouter";
 // Synthetic 3D Building/Object Node
 // Uses a mesh-based data structure (vertices, edges, faces) for extensibility
@@ -11,8 +13,6 @@ import {
     Color,
     DoubleSide,
     Float32BufferAttribute,
-    LineBasicMaterial,
-    LineSegments,
     Mesh,
     MeshBasicMaterial,
     MeshLambertMaterial,
@@ -1023,13 +1023,13 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         
         edgeGeometry.setAttribute('position', new Float32BufferAttribute(edgePositions, 3));
         
-        const edgeMaterial = new LineBasicMaterial({
+        const edgeMaterial = new SceneLineMaterial({
             color: 0x000000,
             linewidth: 2,
             depthTest: true
         });
         
-        this.wireframe = new LineSegments(edgeGeometry, edgeMaterial);
+        this.wireframe = new SceneLineSegments(edgeGeometry, edgeMaterial);
         this.wireframe.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
         // Position wireframe at local origin to match solidMesh
         this.wireframe.position.copy(this.meshLocalOrigin);

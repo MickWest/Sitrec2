@@ -11,7 +11,7 @@ import {dispose, disposeScene, propagateLayerMaskObject} from "../threeExt";
 
 import {GLTFLoader} from "three/addons/loaders/GLTFLoader.js";
 import {Line2} from "three/addons/lines/Line2.js";
-import {LineGeometry} from "three/addons/lines/LineGeometry.js";
+import {LineGeometry} from "../SceneLineGeometry";
 import {LocalFrame} from "../LocalFrame";
 import {makeMatLine} from "../MatLines";
 import {GridHelper, Group} from "three";

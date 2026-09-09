@@ -7,14 +7,17 @@ import {CNode3DGroup} from "./CNode3DGroup";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {DebugArrowAB, removeDebugArrow} from "../threeExt";
 import {getLocalEastVector, getLocalNorthVector} from "../SphericalMath";
-import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {FileManager, GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit, Units} from "../Globals";
 import {LoadingManager} from "../CLoadingManager";
 import {mouseInView, mouseToView} from "../ViewUtils";
 import {ViewMan} from "../CViewManager";
 import pako from "pako";
 import * as LAYER from "../LayerMasks";
-import {BufferAttribute, BufferGeometry, LineSegments, ShaderMaterial, Vector3,} from "three";
+import {InstancedInterleavedBuffer, InterleavedBufferAttribute, Vector3} from "three";
+import {LineSegmentsGeometry} from "three/addons/lines/LineSegmentsGeometry.js";
+import {LineSegments2} from "three/addons/lines/LineSegments2.js";
+import {SceneLineMaterial} from "../SceneLineMaterial";
+import {updateLineJoins} from "../SceneLineGeometry";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {
     bracketingLevels,
@@ -31,7 +34,7 @@ import {
 import {isTrackSourceKey, trackDataIdFromSourceKey} from "./WindSources";
 import {isSecureBuild} from "../configUtils";
 import {MISB} from "../MISBUtils";
-import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
+import {installTerrestrialRefractionOnMaterial} from "../atmosphere/terrestrialRefraction";
 
 // Re-export so existing importers that reach into CNodeDisplayWindField keep working.
 export {
@@ -190,22 +193,20 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.lockAltitudeTo = "none";
 
         // ---------- shader material ----------
-        this.material = new ShaderMaterial({
-            uniforms: {
-                uTime:      {value: 0},
-                uNumDashes: {value: this.numDashes},
-                uFlowSpeed: {value: this.flowSpeed},
-                uOpacity:   {value: this.lineOpacity},
-                uMaxSpeed:  {value: this.maxWindSpeed},
-                ...sharedUniforms,
-            },
-            vertexShader: VERT,
-            fragmentShader: FRAG,
-            transparent: true,
-            depthTest: false,
-            depthWrite: false,
+        this.material = new SceneLineMaterial({depthTest: false});
+        Object.assign(this.material.uniforms, {
+            uTime:      {value: 0},
+            uNumDashes: {value: this.numDashes},
+            uFlowSpeed: {value: this.flowSpeed},
+            uOpacity:   {value: this.lineOpacity},
+            uMaxSpeed:  {value: this.maxWindSpeed},
         });
-        installTerrestrialRefractionOnShaderMaterial(this.material);
+        this.material.vertexShader = this.material.vertexShader.replace(
+            "void main() {", VERT_DECLARATIONS + "\nvoid main() {\n" + VERT_BODY);
+        this.material.fragmentShader = this.material.fragmentShader.replace(
+            "void main() {", FRAG_DECLARATIONS + "\nvoid main() {").replace(
+            "#include <color_fragment>", "#include <color_fragment>\n" + FRAG_BODY);
+        installTerrestrialRefractionOnMaterial(this.material);
 
         // visible in main view only (not look view)
         this.group.layers.mask = LAYER.MASK_MAIN;
@@ -1202,16 +1203,21 @@ export class CNodeDisplayWindField extends CNode3DGroup {
 
         if (out.pos.length === 0) return;
 
-        const geom = new BufferGeometry();
-        geom.setAttribute("position",     new BufferAttribute(new Float32Array(out.pos),  3));
-        geom.setAttribute("lineProgress", new BufferAttribute(new Float32Array(out.prog), 1));
-        geom.setAttribute("lineId",       new BufferAttribute(new Float32Array(out.id),   1));
-        geom.setAttribute("windSpeed",    new BufferAttribute(new Float32Array(out.spd),  1));
-        geom.setAttribute("coverage",     new BufferAttribute(new Float32Array(out.cov),  1));
-        geom.setAttribute("lodLevel",     new BufferAttribute(new Float32Array(out.lod),  1));
-        geom.computeBoundingSphere();
-
-        this.linesMesh = new LineSegments(geom, this.material);
+        const geom = new LineSegmentsGeometry().setPositions(out.pos);
+        // Two packed attributes per segment retain GPU-only dash animation and
+        // per-endpoint speed/coverage without duplicating ribbon vertices.
+        const wind = new Float32Array(out.prog.length * 4);
+        for (let i = 0; i < out.prog.length; i++) {
+            wind[i * 4] = out.prog[i];
+            wind[i * 4 + 1] = out.spd[i];
+            wind[i * 4 + 2] = out.cov[i];
+            wind[i * 4 + 3] = i % 2 === 0 ? out.id[i] : out.lod[i];
+        }
+        const windBuffer = new InstancedInterleavedBuffer(wind, 8, 1);
+        geom.setAttribute("instanceWindStart", new InterleavedBufferAttribute(windBuffer, 4, 0));
+        geom.setAttribute("instanceWindEnd", new InterleavedBufferAttribute(windBuffer, 4, 4));
+        updateLineJoins(geom);
+        this.linesMesh = new LineSegments2(geom, this.material);
         this.linesMesh.position.set(center.x, center.y, center.z);
         this.linesMesh.layers.mask = this.group.layers.mask;
         this.linesMesh.raycast = () => {};   // skip raycasting on millions of segments
@@ -2569,57 +2575,42 @@ export async function fetchOpenMeteoUV(lat, lon, altM) {
 //  GLSL Shaders
 // ═══════════════════════════════════════════════════════════════════
 
-const VERT = /* glsl */ `
-    attribute float lineProgress;
-    attribute float lineId;
-    attribute float windSpeed;
-    attribute float coverage;
-    attribute float lodLevel;
-
+const VERT_DECLARATIONS = /* glsl */ `
+    attribute vec4 instanceWindStart;
+    attribute vec4 instanceWindEnd;
     varying float vProgress;
     varying float vId;
     varying float vSpeed;
     varying float vCoverage;
-    varying float vDepth;
     varying float vLod;
     varying float vCamDist;
     varying float vBackFace;
-
-    void main() {
-        vProgress = lineProgress;
-        vId       = lineId;
-        vSpeed    = windSpeed;
-        vCoverage = coverage;
-        vLod      = lodLevel;
-
-        vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
-        vCamDist  = length(mvPos.xyz);
-        gl_Position = applyTerrestrialRefraction_clip(mvPos);
-        vDepth = gl_Position.w;
-
-        // back-face detection: dot(surface normal, view direction)
-        // positive = facing away from camera (far side of globe)
-        vec3 worldPos = (modelMatrix * vec4(position, 1.0)).xyz;
-        vec3 surfaceNormal = normalize(worldPos);
-        vec3 viewDir = normalize(worldPos - cameraPosition);
-        vBackFace = dot(surfaceNormal, viewDir);
-    }
 `;
 
-const FRAG = /* glsl */ `
+const VERT_BODY = /* glsl */ `
+    vec4 wind = position.y < 0.5 ? instanceWindStart : instanceWindEnd;
+    vProgress = wind.x;
+    vSpeed = wind.y;
+    vCoverage = wind.z;
+    vId = instanceWindStart.w;
+    vLod = instanceWindEnd.w;
+    vec3 endpoint = position.y < 0.5 ? instanceStart : instanceEnd;
+    vCamDist = length((modelViewMatrix * vec4(endpoint, 1.0)).xyz);
+    vec3 windWorldPos = (modelMatrix * vec4(endpoint, 1.0)).xyz;
+    vBackFace = dot(normalize(windWorldPos), normalize(windWorldPos - cameraPosition));
+`;
+
+const FRAG_DECLARATIONS = /* glsl */ `
     uniform float uTime;
     uniform float uNumDashes;
     uniform float uFlowSpeed;
     uniform float uOpacity;
     uniform float uMaxSpeed;
-    uniform float nearPlane;
-    uniform float farPlane;
 
     varying float vProgress;
     varying float vId;
     varying float vSpeed;
     varying float vCoverage;
-    varying float vDepth;
     varying float vLod;
     varying float vCamDist;
     varying float vBackFace;
@@ -2629,7 +2620,9 @@ const FRAG = /* glsl */ `
         return v * mix(vec3(1.0), c, s);
     }
 
-    void main() {
+`;
+
+const FRAG_BODY = /* glsl */ `
         // discard back-facing fragments (far side of globe)
         if (vBackFace > 0.0) discard;
 
@@ -2639,18 +2632,18 @@ const FRAG = /* glsl */ `
         // LOD 2:            fade in within 8,000 km
         // LOD 3 (finest):   fade in within 4,000 km
         float lodFade = 1.0;
-        if (vLod > 0.5) lodFade *= smoothstep(15000000.0, 10000000.0, vCamDist);
-        if (vLod > 1.5) lodFade *= smoothstep(8000000.0,  5000000.0, vCamDist);
-        if (vLod > 2.5) lodFade *= smoothstep(4000000.0,  2500000.0, vCamDist);
+        if (vLod > 0.5) lodFade *= (1.0 - smoothstep(10000000.0, 15000000.0, vCamDist));
+        if (vLod > 1.5) lodFade *= (1.0 - smoothstep(5000000.0, 8000000.0, vCamDist));
+        if (vLod > 2.5) lodFade *= (1.0 - smoothstep(2500000.0, 4000000.0, vCamDist));
         if (lodFade < 0.01) discard;
 
         // animated dash — long bright segments with short dim gaps
         float phase = fract(vProgress * uNumDashes - uTime * uFlowSpeed + vId);
-        float dash  = smoothstep(0.0, 0.08, phase) * smoothstep(0.75, 0.65, phase);
+        float dash  = smoothstep(0.0, 0.08, phase) * (1.0 - smoothstep(0.65, 0.75, phase));
         dash = 0.15 + 0.85 * dash;
 
         // fade at streamline endpoints
-        float endFade = smoothstep(0.0, 0.08, vProgress) * smoothstep(1.0, 0.92, vProgress);
+        float endFade = smoothstep(0.0, 0.08, vProgress) * (1.0 - smoothstep(0.92, 1.0, vProgress));
 
         // wind-speed color ramp (blue -> cyan -> green -> yellow -> red)
         float t = clamp(vSpeed / uMaxSpeed, 0.0, 1.0);
@@ -2660,19 +2653,7 @@ const FRAG = /* glsl */ `
         // vCoverage (per-vertex, interpolated along segment) dims streamlines
         // in regions that are far from any IDW input sample. GFS / Manual
         // sources emit coverage = 1 everywhere, so those are unaffected.
-        float alpha = dash * endFade * uOpacity * lodFade * vCoverage;
-        if (alpha < 0.01) discard;
-
-        gl_FragColor = vec4(color, alpha);
-
-        // logarithmic depth (matches Sitrec convention). Orthographic projection
-        // makes vDepth a constant 1.0, collapsing the log formula to one value per
-        // fragment → z-fighting; use linear rasteriser depth there.
-        if (vDepth == 1.0) {
-            gl_FragDepthEXT = gl_FragCoord.z;
-        } else {
-            float z = (log2(max(nearPlane, 1.0 + vDepth)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
-            gl_FragDepthEXT = z * 0.5 + 0.5;
-        }
-    }
+        alpha *= dash * endFade * uOpacity * lodFade * vCoverage;
+        if (alpha <= 0.0) discard;
+        diffuseColor.rgb = color;
 `;

@@ -5,11 +5,10 @@
 // Uses Line2/LineMaterial for thick, visible lines (same as CNodeDisplayTrack).
 
 import {CNode} from "./CNode";
-import {getEffectiveMSAASamples, getEffectiveRenderScale} from "../Globals";
 import {Group, Vector3, Color} from "three";
-import {Line2} from "three/addons/lines/Line2.js";
-import {LineGeometry} from "three/addons/lines/LineGeometry.js";
-import {LineMaterial} from "three/addons/lines/LineMaterial.js";
+import {LineSegments2} from "three/addons/lines/LineSegments2.js";
+import {LineSegmentsGeometry} from "three/addons/lines/LineSegmentsGeometry.js";
+import {SceneLineMaterial} from "../SceneLineMaterial";
 import {MISB} from "../MISBFields";
 import {getLocalNorthVector, getLocalEastVector} from "../SphericalMath";
 import * as LAYER from "../LayerMasks";
@@ -98,23 +97,15 @@ export class CNodeDisplaySondeWind extends CNode {
             positions[i + 2] -= cz;
         }
 
-        var geometry = new LineGeometry();
+        var geometry = new LineSegmentsGeometry();
         geometry.setPositions(positions);
         geometry.setColors(colors);
 
-        var dpr = (window.devicePixelRatio || 1) * getEffectiveRenderScale();
-        var material = new LineMaterial({
+        var material = new SceneLineMaterial({
             vertexColors: true,
             linewidth: this.lineWidth,
-            depthWrite: false,
-            // See CNodeDisplayTrack note: this is needed so the analytic-AA
-            // branch in LineMaterial fills sub-pixel coverage at low render
-            // scale. Toggled live from applyPerformanceSettings.
-            alphaToCoverage: getEffectiveMSAASamples() > 0,
         });
-        material.resolution.set(window.innerWidth * dpr, window.innerHeight * dpr);
-
-        var line = new Line2(geometry, material);
+        var line = new LineSegments2(geometry, material);
         line.computeLineDistances();
 
         // Offset the group to match the centering

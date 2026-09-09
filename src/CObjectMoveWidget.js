@@ -1,3 +1,5 @@
+import {SceneLine} from "./SceneLines";
+import {SceneLineMaterial} from "./SceneLineMaterial";
 import {acquireControlLease} from "./InteractionRouter";
 import {editingControls} from "./EditorInteraction";
 import {objectFocusTrack, sameFocusTrack, syncCameraFocusUI} from "./CameraFocusUI";
@@ -33,7 +35,7 @@ import {objectFocusTrack, sameFocusTrack, syncCameraFocusUI} from "./CameraFocus
 // handle scaling, because the handles are one shared Object3D that has to be re-scaled
 // into each view's pixel space just before that view renders.
 
-import {BufferGeometry, Float32BufferAttribute, Line, LineBasicMaterial, Object3D, Vector3} from "three";
+import {BufferGeometry, Float32BufferAttribute, Object3D, Vector3} from "three";
 import {PointEditorWidget} from "./PointEditorWidget";
 import {CNode3DObject} from "./nodes/CNode3DObject";
 import {GlobalScene} from "./LocalFrame";
@@ -564,10 +566,8 @@ class CObjectMoveWidget {
         if (!this.dropLine) {
             const geometry = new BufferGeometry();
             geometry.setAttribute("position", new Float32BufferAttribute(new Float32Array(6), 3));
-            this.dropLine = new Line(geometry, new LineBasicMaterial({
+            this.dropLine = new SceneLine(geometry, new SceneLineMaterial({
                 color: 0x808080,        // 50% grey
-                // WebGL ignores widths above 1 on almost every platform, so 1 is both the
-                // request and the only value that would have been honoured anyway.
                 linewidth: 1,
                 depthTest: true,
                 toneMapped: false,
@@ -583,11 +583,11 @@ class CObjectMoveWidget {
         // float32 range — ECEF coordinates are ~6,378 km from the origin, and a geometry
         // holding them directly would visibly jitter.
         this.dropLine.position.copy(top);
-        const positions = this.dropLine.geometry.getAttribute("position");
+        const positions = this.dropLine.sourceGeometry.getAttribute("position");
         positions.setXYZ(0, 0, 0, 0);
         positions.setXYZ(1, ground.x - top.x, ground.y - top.y, ground.z - top.z);
         positions.needsUpdate = true;
-        this.dropLine.geometry.computeBoundingSphere();
+        this.dropLine.syncGeometry();
         this.dropLine.visible = true;
     }
 

@@ -25,7 +25,7 @@ import {
     Vector3
 } from "three";
 import {Line2} from "three/addons/lines/Line2.js";
-import {LineGeometry} from "three/addons/lines/LineGeometry.js";
+import {LineGeometry} from "../SceneLineGeometry";
 import {disposeMatLine, makeMatLine} from "../MatLines";
 import * as LAYER from "../LayerMasks";
 import {getLocalDownVector, getLocalUpVector} from "../SphericalMath";

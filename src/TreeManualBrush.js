@@ -1,3 +1,5 @@
+import {SceneLineSegments} from "./SceneLines";
+import {SceneLineMaterial} from "./SceneLineMaterial";
 import {registerEditorInteraction} from "./EditorInteraction";
 // TreeManualBrush.js
 //
@@ -30,8 +32,6 @@ import {registerEditorInteraction} from "./EditorInteraction";
 import {
     BufferAttribute,
     BufferGeometry,
-    LineBasicMaterial,
-    LineSegments,
     Raycaster,
 } from "three";
 import {ViewMan} from "./CViewManager";
@@ -62,14 +62,14 @@ export class TreeManualBrush {
         // scene where the removed geometry was; shown in both views.
         const wireGeo = new BufferGeometry();
         wireGeo.setAttribute("position", new BufferAttribute(new Float32Array(0), 3));
-        const wireMat = new LineBasicMaterial({
+        const wireMat = new SceneLineMaterial({
             color: 0x66ffcc,
             transparent: true,
             opacity: 0.85,
             depthTest: true,
             depthWrite: false,
         });
-        this.wireMesh = new LineSegments(wireGeo, wireMat);
+        this.wireMesh = new SceneLineSegments(wireGeo, wireMat);
         this.wireMesh.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
         this.wireMesh.renderOrder = 998;
         this.wireMesh.frustumCulled = false;
@@ -267,7 +267,7 @@ export class TreeManualBrush {
             this.wireMesh.visible = false;
             return;
         }
-        const geo = this.wireMesh.geometry;
+        const geo = this.wireMesh.sourceGeometry;
         let attr = geo.getAttribute("position");
         if (!attr || attr.array.length < n) {
             const cap = Math.max(n, attr ? attr.array.length * 2 : 0, 6 * 512);
@@ -277,6 +277,7 @@ export class TreeManualBrush {
         attr.array.set(positions);
         attr.needsUpdate = true;
         geo.setDrawRange(0, n / 3);
+        this.wireMesh.syncGeometry();
         this.wireMesh.visible = true;
     }
 
