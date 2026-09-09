@@ -40,7 +40,7 @@ import {degrees, getDateTimeFilename, updateDocumentTitle} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {LayoutMan} from "./CLayoutManager";
 import {EventManager} from "./CEventManager";
-import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
+import {isAdmin, SITREC_APP, SITREC_SHARE_APP, SITREC_SERVER} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
@@ -100,6 +100,7 @@ import {
     gimbalStepTraverse,
 } from "./GimbalCustomSetup";
 import {Color} from "three";
+import {currentBuild} from './release/ChannelUI';
 
 export const serializeMethods = {
     getCustomSitchString(local = false) {
@@ -686,6 +687,7 @@ export const serializeMethods = {
         out.exportVersion = process.env.BUILD_VERSION_STRING
         out.exportTag = process.env.VERSION;
         out.exportTagNumber = versionNumber; // this is an integer like 1000000 for 1.0.0
+        if (currentBuild) out.exportBuild = {...currentBuild};
 
 
         // convert to a string
@@ -915,7 +917,7 @@ export const serializeMethods = {
                     name = Sit.name + "_mod.js"
                     paramName = "mod"
                 }
-                this.customLink = SITREC_APP + "?" + paramName + "=" + encodeShareParam(toShareableCustomValue(staticRef));
+                this.customLink = SITREC_SHARE_APP + "?" + paramName + "=" + encodeShareParam(toShareableCustomValue(staticRef));
                 console.log("  Custom link created:", this.customLink);
 
                 //

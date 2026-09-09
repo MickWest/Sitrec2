@@ -105,7 +105,7 @@ export function updateNightTexture(noNightLights) {
 export function createSphereDayNight(radius, radius1, segments) {
 
     const loader = new TextureLoader();
-    const dayTexture = loader.load('data/images/2_no_clouds_4k.jpg');
+    const dayTexture = loader.load(SITREC_APP + 'data/images/2_no_clouds_4k.jpg');
     // NOTE: NOT setting SRGBColorSpace — globe shader does lighting
     // in sRGB space (Phase 4 will convert it to linear workflow)
 

@@ -1,3 +1,4 @@
+import {buildAssetURL} from './release/assetURL';
 let jsfeatLib = null;
 let jsfeatLoadPromise = null;
 
@@ -13,7 +14,7 @@ export function loadJsfeat() {
         }
 
         const script = document.createElement("script");
-        script.src = "./libs/jsfeat.js";
+        script.src = buildAssetURL("./libs/jsfeat.js");
         script.async = true;
 
         script.onerror = () => {

@@ -27,6 +27,7 @@ CR=$(printf '\r')
 # JS bundle at build time, so exposing them at runtime is not a new risk.
 # ---------------------------------------------------------------------------
 CLIENT_VARS="
+SITREC_CHANNELS_ENABLED
 NO_TERRAIN
 LOCAL_DOCS
 LOCALHOST
@@ -103,6 +104,7 @@ done
 # `for var in $CLIENT_VARS $SERVER_VARS`, which word-splits, so a comment would be
 # treated as variable names.
 SERVER_VARS="
+SITREC_CHANNEL_MANIFEST
 CESIUM_ION_TOKEN
 GOOGLE_MAPS_API_KEY
 GOOGLE_MAPS_SERVER_API_KEY

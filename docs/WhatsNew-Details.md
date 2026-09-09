@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.156.0 (2026-09-08)
+
+### New Features
+
+- **Shipped and Beta update channels** (Sitrec → Settings → **Use Beta updates**; `src/release/ChannelUI.js`, `sitrecServer/channels.php`, `sitrecServer/channel_preferences.php`). On channel-enabled Metabunk installations, logged-in members with no saved preference default to Beta, while anonymous visitors default to Shipped. Members store an explicit choice separately from ordinary settings, so an older client saving its settings cannot erase an opt-out; visitors can save an explicit choice in the current browser. Changing the control saves the preference and offers **Reload** or **Later**, keeping the existing unsaved-work protection. A one-load channel selection does not change enrollment. An unavailable Beta falls back to Shipped.
+- **Select a complete frontend version before loading the application** (`src/release/bootstrap.js`, `src/release/channelModel.js`, `src/configUtils.js`, `webpack.common.js`). The lightweight bootstrap reads membership and channel preferences, validates the selected same-origin build descriptor, then loads that build's application scripts and styles. Each build has its own asset directory and webpack chunk namespace; loose video workers, image and model decoders, and vision libraries resolve against the selected directory. `SITREC_SHARE_APP` keeps navigation and shared sitch links at the original application URL, while `SITREC_APP` selects assets and `SITREC_SERVER` retains the common backend. Shipped and Beta use the same accounts and stored files. Channel selection is opt-in at installation level; ordinary installations continue to load their own build.
+- **Warn before opening an uncovered Beta save in Shipped** (`src/release/ChannelUI.js`, `src/release/channelModel.js`, `src/CustomManagerSerialize.js`). Saves record the creating build's channel, numeric version, unique ID and UTC build time in `exportBuild`, independently of the existing numeric migration version. Beta labels append **b** and include the UTC build time. The **Sitrec version** dialog shows the creating and current versions, explains that the sitch will probably work in Shipped, and offers the available **Open in Beta**, **Cancel**, or **Open in Shipped** choices with version/date labels. A Shipped manifest's `coveredBetaIds` suppresses warnings for Betas included in that reviewed release. Load paths check the choice before replacing the current sitch or its save target. Switching to Beta passes the incoming sitch through a one-use local IndexedDB handoff, preserving its original text and available local file handles rather than uploading it; unsaved changes require confirmation before reloading.
+
+### Bug Fixes
+
+- **Fix compact JSON sitches losing fields during parsing** (`src/Serialize.js`, `parseJavascriptObject()`). Valid JSON objects now use `JSON.parse()` directly instead of passing through the legacy JavaScript rewriter, whose handling of quoted braces can truncate compact input and discard later fields, including creating-build metadata. Non-JSON sitch syntax still uses the existing parser for unquoted keys, comments and single-quoted strings.
+
 ## Version 2.155.1 (2026-09-08)
 
 ### Bug Fixes

@@ -1,3 +1,4 @@
+import {buildAssetURL} from './release/assetURL';
 let cv = null;
 let cvLoadPromise = null;
 
@@ -34,7 +35,7 @@ export function loadOpenCV() {
 
         window.cv = window.cv || {};
         if (typeof window.cv.locateFile !== "function") {
-            window.cv.locateFile = (file) => "./libs/" + file;
+            window.cv.locateFile = (file) => buildAssetURL("./libs/" + file);
         }
 
         const existing = document.querySelector('script[data-opencvjs="1"]');
@@ -53,7 +54,7 @@ export function loadOpenCV() {
         }
 
         const script = document.createElement("script");
-        script.src = "./libs/opencv.js";
+        script.src = buildAssetURL("./libs/opencv.js");
         script.async = true;
         script.dataset.opencvjs = "1";
 

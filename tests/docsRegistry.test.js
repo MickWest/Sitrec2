@@ -239,6 +239,7 @@ describe("docs on disk", () => {
     // here, which is the point — that decision is exactly the one that was skipped when
     // docs/plans/ filled up with published plans.
     const NESTED_DOCS = new Set([
+        "dev/ReleaseChannels.md",          // Shipped and Beta deployment workflow
         "dev/ADDING_NEW_SETTINGS.md",       // how to add a user setting
         "dev/AddSitchInCode.md",            // legacy in-code sitch authoring
         "dev/Container-Security-Review.md", // the automated container image review

@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.156.0 (2026-09-08)
+
+### New Features
+
+- **Choose Beta or Shipped updates** (Sitrec → Settings → Use Beta updates): logged-in Metabunk members default to Beta and visitors default to Shipped, with an explicit choice available and the same saved sitches and share links in both versions.
+- **Beta sitch warning** (Sitrec version dialog): when Shipped does not yet include the Beta that saved a sitch, see the version numbers and dates and choose Open in Beta, Cancel, or Open in Shipped without changing your update preference.
+
+### Bug Fixes
+
+- Fixed compact saved sitches losing information when text contains braces.
+
 ## Version 2.155.1 (2026-09-08)
 
 ### Bug Fixes

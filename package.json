@@ -118,6 +118,7 @@
       "<rootDir>/.claude/",
       "<rootDir>/tests_regression/",
       "<rootDir>/test_other/",
+      "<rootDir>/dist/",
       "<rootDir>/dist-standalone/",
       "<rootDir>/dist-serverless/",
       "<rootDir>/dist-secure/",

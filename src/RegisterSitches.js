@@ -1,6 +1,7 @@
 // Register all the sitches in the sitch directory
 import {SitchMan} from "./Globals";
 import {parseJavascriptObject} from "./Serialize";
+import {rememberSitchText} from './release/sitchSource';
 import {checkForModding} from "./utils";
 import {showError} from "./showError";
 import {isServerless} from "./configUtils";
@@ -130,9 +131,9 @@ export function textSitchToObject(text, canMod = true) {
         // Carry a mask painted when the mask belonged to Motion Analysis onto the shared node.
         migrateMaskOverlayId(obj);
         if (canMod) {
-            return checkForModding(obj);
+            return rememberSitchText(checkForModding(obj), text);
         } else {
-            return obj;
+            return rememberSitchText(obj, text);
         }
     } catch (e) {
         console.error("Error parsing text sitch: ");

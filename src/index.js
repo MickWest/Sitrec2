@@ -60,6 +60,8 @@ import * as LAYER from "./LayerMasks"
 import {SetupFrameSlider} from "./nodes/CNodeFrameSlider";
 import {registerNodes} from "./RegisterNodes";
 import {registerSitches, textSitchToObject} from "./RegisterSitches";
+import {approveSitchChannel} from './release/ChannelUI';
+import {takeChannelHandoff} from './release/channelHandoff';
 import {SetupMouseHandler} from "./mouseMoveView";
 import {initKeyboard, showHider} from "./KeyBoardHandler";
 import {CommonJetStuff, initJetStuff, initJetStuffOverlays, initJetVariables, updateSize} from "./JetStuff";
@@ -90,6 +92,7 @@ import {
     isServerless,
     setupConfigPaths,
     SITREC_APP,
+    SITREC_SHARE_APP,
     SITREC_SERVER
 } from "./configUtils"
 import {SituationSetup, startLoadingInlineAssets} from "./SituationSetup";
@@ -263,7 +266,7 @@ if (typeof window !== 'undefined') {
         return false;
     }
 
-    fetch('build-version.txt', { cache: 'no-store' })
+    fetch(new URL('build-version.txt', window.__SITREC_ASSET_BASE__ || window.location.href), { cache: 'no-store' })
         .then(r => r.ok ? r.text() : null)
         .then(async serverVersion => {
             if (!serverVersion) return;
@@ -710,6 +713,10 @@ if (urlParams.get("frame") !== null) {
 }
 
 let customSitch = null;
+const channelHandoff = await takeChannelHandoff().catch(error => {
+    console.warn('Could not read the local version-switch handoff.', error);
+    return null;
+});
 // Stable canonical ref for custom sitches (`sitrec://...`) used for loadURL/version lookup/share links.
 let customSitchRef = null;
 
@@ -732,7 +739,31 @@ if (!initRendering()) {
 // night-sky sitch from the params instead of loading a named/custom sitch.
 const fromAppParams = parseFromAppParams(urlParams);
 
-if (fromAppParams !== null) {
+if (channelHandoff) {
+    const handedSitch = channelHandoff.text ? textSitchToObject(channelHandoff.text) : channelHandoff.sitch;
+    if (await approveSitchChannel(handedSitch, channelHandoff.context)) {
+        customSitchRef = channelHandoff.context.sourceRef;
+        FileManager.loadURL = customSitchRef || undefined;
+        FileManager.sourceUserID = channelHandoff.context.sourceUserID;
+        if (channelHandoff.context.localDirectoryHandle) {
+            FileManager.directoryHandle = channelHandoff.context.localDirectoryHandle;
+            FileManager.localSitchEntry = channelHandoff.context.localFileHandle || null;
+            FileManager.localSaveTargetArmed = !!FileManager.localSitchEntry;
+            FileManager.markLocalSitchContextActive();
+            await FileManager.persistWorkingFolder();
+        }
+        if (customSitchRef) {
+            setSitchProvenance(classifyProvenance({resolvable: isResolvableSitrecReference(customSitchRef),
+                ownerId: extractUserIdFromSitrecReference(customSitchRef), viewerId: getEffectiveUserID()}), customSitchRef);
+        }
+        setSit(new CSituation(handedSitch));
+        Globals.sitchEstablished = true;
+        Sit.initialDropZoneAnimation = false;
+        markSitrecReady();
+    } else {
+        selectInitialSitch();
+    }
+} else if (fromAppParams !== null) {
     Globals.sitchEstablished = true;
     setSit(new CSituation(buildFromAppSitch(fromAppParams)));
     Sit.initialDropZoneAnimation = false;
@@ -775,17 +806,14 @@ if (fromAppParams !== null) {
             const data = await response.text();
             console.log("Custom sitch = " + customSitch)
 
-            Globals.sitchEstablished = true;
-
             let sitchObject = textSitchToObject(data);
-
-            setSit(new CSituation(sitchObject))
-
-            Sit.initialDropZoneAnimation = false;
-
-            markSitrecReady();
-
-            customSitchLoaded = true;
+            if (await approveSitchChannel(sitchObject, {sourceRef: customSitchRef})) {
+                Globals.sitchEstablished = true;
+                setSit(new CSituation(sitchObject));
+                Sit.initialDropZoneAnimation = false;
+                markSitrecReady();
+                customSitchLoaded = true;
+            }
         }
     } catch (e) {
         const hint = customSitchLoadHint({url: customSitch, errorMessage: e.message});
@@ -793,6 +821,11 @@ if (fromAppParams !== null) {
     }
 
     if (!customSitchLoaded) {
+        customSitchRef = null;
+        urlParams.delete('custom');
+        urlParams.delete('mod');
+        FileManager.loadURL = undefined;
+        FileManager.sourceUserID = null;
         selectInitialSitch();
     }
 // }
@@ -1401,7 +1434,7 @@ async function checkUserAgent() {
 async function checkForTest() {
 //    console.log("Testing = " + testing + " toTest = " + toTest)
     if (toTest !== undefined && toTest !== "") {
-//        var url = SITREC_APP + "?test=" + toTest
+//        var url = SITREC_SHARE_APP + "?test=" + toTest
 //        window.location.assign(url)
 
         // Wait for all pending operations and tiles from the previous situation
@@ -1442,8 +1475,7 @@ async function checkFornewSitchObject() {
         const requestedSitchObject = Globals.newSitchObject;
         console.log("New Sitch Text = " + requestedSitchObject)
         try {
-            await newSitch(requestedSitchObject, true);
-            Globals.sitchDirty = false;
+            if (await newSitch(requestedSitchObject, true) !== false) Globals.sitchDirty = false;
         } catch (error) {
             console.error("Error loading requested sitch object:", error);
         } finally {
@@ -1461,6 +1493,7 @@ async function checkFornewSitchObject() {
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 async function newSitch(situation, customSetup = false ) {
+    if (customSetup && !await approveSitchChannel(situation)) return false;
     setIsTransitioning(true);
 
     // Everything from here runs inside a try/finally so that isTransitioning is
@@ -1486,16 +1519,16 @@ async function newSitch(situation, customSetup = false ) {
     // that way the user can share the url direct to this sitch
     let url;
     if (!customSetup) {
-        url = SITREC_APP + "?sitch=" + situation
+        url = SITREC_SHARE_APP + "?sitch=" + situation
     } else {
         // set the URL to the default
         if (FileManager.loadURL !== undefined) {
             // Share stable object-key values instead of host-bound storage URLs.
-            url = SITREC_APP + "?custom=" + encodeShareParam(toShareableCustomValue(FileManager.loadURL));
+            url = SITREC_SHARE_APP + "?custom=" + encodeShareParam(toShareableCustomValue(FileManager.loadURL));
         } else {
             // loading local sitch, so set to custom sitch
             // we don't have a URL, as it does not make sense to share a local sitch via URL
-            url = SITREC_APP + "?sitch=custom";
+            url = SITREC_SHARE_APP + "?sitch=custom";
         }
 
     }
@@ -2155,7 +2188,7 @@ async function initializeOnce() {
 
     for (const [key, sitch] of Object.entries(rootSitches)) {
         Globals[""+key+"Button"] = function()  {
-            const url = SITREC_APP+"?sitch=" + sitch
+            const url = SITREC_SHARE_APP+"?sitch=" + sitch
             newSitch(sitch);
             window.history.pushState({}, null, url);
         }
@@ -2169,7 +2202,7 @@ async function initializeOnce() {
         // standalone SHF predictor app (tools/shf) — a separate PWA, so it's an external
         // link (opens in a new tab) rather than a sitch button.
         if (sitch === "starlink") {
-            _gui.addExternalLink("SHF App", SITREC_APP + "tools/shf/").perm()
+            _gui.addExternalLink("SHF App", SITREC_SHARE_APP + "tools/shf/").perm()
                 .tooltip("Open the standalone Starlink Horizon Flares (SHF) predictor app");
         }
 
@@ -2178,7 +2211,7 @@ async function initializeOnce() {
     // add menu buttons (displayed after root sitches)
     for (const [key, sitch] of Object.entries(menuButtonSitches)) {
         Globals[""+key+"Button"] = function()  {
-            const url = SITREC_APP+"?sitch=" + sitch
+            const url = SITREC_SHARE_APP+"?sitch=" + sitch
             newSitch(sitch);
             window.history.pushState({}, null, url);
         }
@@ -2200,7 +2233,7 @@ async function initializeOnce() {
     _gui.add(par, "nameSelect", selectableSitches).name(t("menus.main.legacySitches.label")).perm().onChange(sitch => {
         par.name = par.nameSelect;
         console.log("SITCH par.name CHANGE TO: "+sitch+" ->"+par.nameSelect)
-        const url = SITREC_APP+"?sitch=" + sitch
+        const url = SITREC_SHARE_APP+"?sitch=" + sitch
         newSitch(sitch);
         window.history.pushState({}, null, url);
         par.nameSelect = unselectedText ;
@@ -2212,7 +2245,7 @@ async function initializeOnce() {
     par.toolSelect = unselectedText;
     _gui.add(par, "toolSelect", toolSitches).name(t("menus.main.legacyTools.label")).perm().listen().onChange(sitch => {
         console.log("SITCH par.name CHANGE TO: "+sitch+" ->"+par.name)
-        const url = SITREC_APP+"?sitch=" + sitch
+        const url = SITREC_SHARE_APP+"?sitch=" + sitch
 
 // smoke test of everything after the current sitch in alphabetical order
         if (sitch === "testhere") {
@@ -3272,12 +3305,12 @@ function selectInitialSitch(force) {
     const lower = situation.slice().toLowerCase();
 
     if (lower === "testall") {
-        const url = SITREC_APP + "?testAll=1"
+        const url = SITREC_SHARE_APP + "?testAll=1"
         window.location.assign(url)
         return;
     }
     if (lower === "testquick") {
-        const url = SITREC_APP + "?testAll=2"
+        const url = SITREC_SHARE_APP + "?testAll=2"
         window.location.assign(url)
         return;
     }

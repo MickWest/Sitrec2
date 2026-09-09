@@ -8,6 +8,7 @@
 // competing for budget.
 
 import {CNode} from "./CNode";
+import {buildAssetURL} from '../release/assetURL';
 import {Globals, markShadowCastersDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
 import {DoubleSide, Group, Matrix4, Raycaster, Sphere, Vector2, Vector3} from "three";
@@ -50,7 +51,7 @@ import {
 
 function createDracoLoader() {
     const dracoLoader = new DRACOLoader();
-    dracoLoader.setDecoderPath("./libs/draco/");
+    dracoLoader.setDecoderPath(buildAssetURL("./libs/draco/"));
     return dracoLoader;
 }
 

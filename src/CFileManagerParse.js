@@ -50,6 +50,7 @@ import csv from "./utils/CSVParser";
 import {par} from "./par";
 import {assert} from "./assert";
 import {textSitchToObject} from "./RegisterSitches";
+import {approveSitchChannel} from './release/ChannelUI';
 import {
     extractPBACSV,
     isCustom1,
@@ -114,6 +115,17 @@ export const parseMethods = {
         const metadataOverride = options.metadataOverride || null;
         return this.parseAsset(filename, filename, result, metadataOverride)
             .then(async parsedResult => {
+                // Ask before replacing any file-manager entry or loading another
+                // item from the same archive. Cancel leaves the current save intact.
+                for (const asset of (Array.isArray(parsedResult) ? parsedResult : [parsedResult])) {
+                    if (asset?.dataType !== 'sitch') continue;
+                    let sitch = asset.parsed;
+                    if (sitch instanceof ArrayBuffer) sitch = new TextDecoder().decode(sitch);
+                    if (typeof sitch === 'string') sitch = textSitchToObject(sitch);
+                    if (!await approveSitchChannel(sitch, {sourceRef: null})) {
+                        return options.returnMeta ? {parsedResult: [], changesSerializedState: false, cancelled: true} : [];
+                    }
+                }
                 let changesSerializedState = false;
 
                 let isMultiple = false;
@@ -782,6 +794,7 @@ export const parseMethods = {
                     const decodedString = decoder.decode(copy);
                     copy = textSitchToObject(decodedString);
                 }
+                if (!await approveSitchChannel(copy, {sourceRef: null})) return false;
                 setNewSitchObject(copy);
                 return false;
             } else if (fileManagerEntry.dataType === "model" || fileManagerEntry.dataType === "glb" || isSupportedModelFile(filename)) {

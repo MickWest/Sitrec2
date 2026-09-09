@@ -33,7 +33,8 @@ export async function getConfigFromServer() {
 
 
         // reconstruct the url from parts to strip off any filename or query string
-        const configURL = window.location.origin + window.location.pathname + "sitrecServer/" + "config_paths.php" + "?FETCH_CONFIG";
+        const configURL = new URL('sitrecServer/config_paths.php?FETCH_CONFIG',
+            window.__SITREC_APP_BASE__ || new URL('./', window.location.href).href).href;
         console.log("Fetching configuration from server URL: ", configURL);
 
         const response = await fetch(configURL);
@@ -90,6 +91,8 @@ export function checkLocal() {
 
 export let SITREC_DOMAIN;
 export let SITREC_APP;
+// The channel-neutral entry for navigation and sharing; SITREC_APP is assets.
+export let SITREC_SHARE_APP;
 export let SITREC_SERVER;
 export let SITREC_UPLOAD;
 export let SITREC_CACHE;
@@ -137,6 +140,10 @@ export async function setupConfigPaths() {
     SITREC_APP = isConsole
         ? "./sitrec/" // When running as a console application, use a relative path.
         : SITREC_DOMAIN + port + SITREC_APP_PATH;
+
+    SITREC_SHARE_APP = isConsole ? SITREC_APP : (window.__SITREC_APP_BASE__ || SITREC_APP);
+    if (!isConsole && window.__SITREC_ASSET_BASE__) SITREC_APP = window.__SITREC_ASSET_BASE__;
+    if (!isConsole) SITREC_SERVER = new URL('sitrecServer/', SITREC_SHARE_APP).href;
 
 
 // TEMP

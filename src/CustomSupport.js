@@ -60,6 +60,7 @@ import {degrees, getDateTimeFilename, screenshotFilename} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {EventManager} from "./CEventManager";
 import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
+import {addChannelSettings} from './release/ChannelUI';
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL, intersectSurface} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
@@ -453,6 +454,8 @@ export class CCustomManager {
         const settingsFolder = guiMenus.main.addFolder(t("custom.settings.title"))
             .tooltip(tooltipText)
             .close();
+
+        addChannelSettings(settingsFolder);
 
         Globals.settings.language = getCurrentLanguage();
 

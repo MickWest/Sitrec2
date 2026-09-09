@@ -364,6 +364,15 @@ class JSParser {
 // syntax errors are not handled, but get reported in the console
 // note you can't use expressions in the object (like 1/2), only literals (0.5)
 export function parseJavascriptObject(jsObjectString) {
+    // Valid JSON (including compact files) must not pass through the legacy
+    // JavaScript rewriter: braces inside quoted text can truncate its output.
+    // Preserve every field, including the creating build's compatibility data.
+    try {
+        const value = JSON.parse(jsObjectString);
+        if (value !== null && typeof value === 'object' && !Array.isArray(value)) return value;
+    } catch {
+        // Legacy unquoted keys, comments and single quotes still use JSParser.
+    }
 
     // if jsObjectString contains the string '  "stringified": "true",'
     // then skip the "requoted" process

@@ -7,6 +7,7 @@ import {isLocal} from "./configUtils";
 import {CVideoData} from "./CVideoData";
 import {updateSitFrames} from "./UpdateSitFrames";
 import {showError} from "./showError";
+import {buildAssetURL} from './release/assetURL';
 
 export class CVideoWebCodecData extends CVideoData {
 
@@ -30,7 +31,7 @@ export class CVideoWebCodecData extends CVideoData {
         if (this.incompatible) {
             console.log("Video Playback Requires up-to-date WebCodec Browser (Chrome/Edge/Safari")
             this.errorImage = null;
-            loadImage('./data/images/errorImage.png').then(result => {
+            loadImage(buildAssetURL('./data/images/errorImage.png')).then(result => {
                 this.errorImage = result;
             })
             return;
@@ -130,7 +131,7 @@ export class CVideoWebCodecData extends CVideoData {
         this.killWorkers()
 
         for (let i = 0; i < this.numWorkers; i++) {
-            this.filterWorkers[i] = new Worker('./src/workers/PixelFilterWorker.js?=' + versionString);
+            this.filterWorkers[i] = new Worker(buildAssetURL('./src/workers/PixelFilterWorker.js?=' + versionString));
             this.filterWorkers[i].onmessage = (e) => {
                 this.handleWorker(e)
             }
@@ -807,5 +808,4 @@ export class CVideoWebCodecData extends CVideoData {
     }
 
 }
-
 

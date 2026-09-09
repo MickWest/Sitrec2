@@ -1,4 +1,5 @@
 import {FileManager} from "./Globals";
+import {buildAssetURL} from './release/assetURL';
 import {getFileExtension, m2f, stripURLSuffixPreservingHashParameters} from "./utils";
 import {sharedUniforms} from "./js/map33/material/SharedUniforms";
 import {DRACOLoader} from "three/addons/loaders/DRACOLoader.js";
@@ -115,7 +116,7 @@ function attachFilenameParameters(modelAsset, filename) {
 
 function createDRACOLoader() {
     const dracoLoader = new DRACOLoader();
-    dracoLoader.setDecoderPath("./libs/draco/");
+    dracoLoader.setDecoderPath(buildAssetURL("./libs/draco/"));
     return dracoLoader;
 }
 

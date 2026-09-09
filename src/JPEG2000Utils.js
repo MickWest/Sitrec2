@@ -22,6 +22,7 @@
  */
 
 import {createImageFromArrayBuffer} from "./FileUtils";
+import {buildAssetURL} from './release/assetURL';
 
 let _openjpegWASM = null;
 let _openjpegJS = null;
@@ -36,7 +37,7 @@ async function getOpenJPEGWASM() {
     if (typeof window.OpenJPEGWASM === 'undefined') {
         await new Promise((resolve, reject) => {
             const script = document.createElement('script');
-            script.src = './libs/openjpeg/openjpegwasm_decode.js';
+            script.src = buildAssetURL('./libs/openjpeg/openjpegwasm_decode.js');
             script.onload = resolve;
             script.onerror = () => reject(new Error('Failed to load OpenJPEG WASM'));
             document.head.appendChild(script);
@@ -44,7 +45,7 @@ async function getOpenJPEGWASM() {
     }
 
     _openjpegWASM = await window.OpenJPEGWASM({
-        locateFile: (filename) => `./libs/openjpeg/${filename}`,
+        locateFile: (filename) => buildAssetURL(`./libs/openjpeg/${filename}`),
         print: () => {},       // suppress [INFO] log spam
         printErr: (msg) => {   // keep [ERROR] messages
             if (msg.includes('[ERROR]')) console.warn('OpenJPEG:', msg);
@@ -65,7 +66,7 @@ async function getOpenJPEGJS() {
     if (typeof window.OpenJPEGJS === 'undefined') {
         await new Promise((resolve, reject) => {
             const script = document.createElement('script');
-            script.src = './libs/openjpeg/openjpegjs_decode.js';
+            script.src = buildAssetURL('./libs/openjpeg/openjpegjs_decode.js');
             script.onload = resolve;
             script.onerror = () => reject(new Error('Failed to load OpenJPEG JS fallback'));
             document.head.appendChild(script);
@@ -605,7 +606,7 @@ async function _decodeWithWorkers(tileEntries, data, cs, numTilesX, totalTiles, 
     // Don't wait for all to be ready — dispatch tiles as each worker reports ready.
     const workers = [];
     for (let i = 0; i < numWorkers; i++) {
-        workers.push(new Worker('./src/workers/J2KTileDecodeWorker.js'));
+        workers.push(new Worker(buildAssetURL('./src/workers/J2KTileDecodeWorker.js')));
     }
 
     return new Promise((resolve, reject) => {

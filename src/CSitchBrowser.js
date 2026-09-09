@@ -5,7 +5,7 @@
  * Multi-selection: click, shift-click, cmd-click, rubber-band drag.
  * Right-click context menu with label checkboxes.
  */
-import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
+import {isAdmin, SITREC_APP, SITREC_SHARE_APP, SITREC_SERVER} from "./configUtils";
 import {showConfirm, showError, showPrompt} from "./showError";
 import {getEffectiveUserID, Globals, NodeMan, setNewSitchObject, SitchMan, withTestUser} from "./Globals";
 import {DragDropHandler} from "./DragDropHandler";
@@ -408,7 +408,7 @@ export class CSitchBrowser {
         newSitchBtn.addEventListener("mouseenter", () => { newSitchBtn.style.backgroundColor = "#3fb950"; });
         newSitchBtn.addEventListener("mouseleave", () => { newSitchBtn.style.backgroundColor = "#2ea043"; });
         newSitchBtn.addEventListener("click", () => {
-            window.location = SITREC_APP + "?action=new";
+            window.location = SITREC_SHARE_APP + "?action=new";
         });
         sidebar.appendChild(newSitchBtn);
 

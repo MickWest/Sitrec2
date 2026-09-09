@@ -47,7 +47,7 @@ import {UpdateHUD} from "./JetStuff";
 import {degrees, getDateTimeFilename} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {EventManager} from "./CEventManager";
-import {isAdmin, isSecureBuild, isServerless, SITREC_APP, SITREC_SERVER} from "./configUtils";
+import {isAdmin, isSecureBuild, isServerless, SITREC_APP, SITREC_SHARE_APP, SITREC_SERVER} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
@@ -2498,7 +2498,7 @@ export const setupMethods = {
                 const sitchStr = JSON.stringify({stringified: true, isASitchFile: true, ...gimbalSitch}, null, 2);
                 FileManager.rehoster.rehostFile("GimbalAnalysis", new TextEncoder().encode(sitchStr), getDateTimeFilename() + ".js").then((staticRef) => {
                     FileManager.loadURL = staticRef;
-                    window.location.href = SITREC_APP + "?custom=" + encodeShareParam(toShareableCustomValue(staticRef));
+                    window.location.href = SITREC_SHARE_APP + "?custom=" + encodeShareParam(toShareableCustomValue(staticRef));
                 });
             };
             gimbalFolder.add(this, "_enableGimbalAnalysis").name(">> Create Gimbal Sitch");
@@ -2514,7 +2514,7 @@ export const setupMethods = {
                     getDateTimeFilename() + ".js"
                 ).then((staticRef) => {
                     FileManager.loadURL = staticRef;
-                    window.location.href = SITREC_APP + "?custom=" + encodeShareParam(toShareableCustomValue(staticRef));
+                    window.location.href = SITREC_SHARE_APP + "?custom=" + encodeShareParam(toShareableCustomValue(staticRef));
                 });
             };
             gimbalFolder.add(this, "_enableGimbalManualBase").name(">> Create Gimbal Base (manual build)");

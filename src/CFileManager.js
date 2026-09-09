@@ -59,6 +59,7 @@ import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {par} from "./par";
 import {assert} from "./assert";
 import {textSitchToObject} from "./RegisterSitches";
+import {approveSitchChannel} from "./release/ChannelUI";
 import {addOptionToGUIMenu, removeOptionFromGUIMenu} from "./lil-gui-extras";
 import {
     extractPBACSV,
@@ -70,7 +71,7 @@ import {
     parseFR24CSV
 } from "./ParseCustom1CSV";
 import {findColumn, stripDuplicateTimes} from "./ParseUtils";
-import {isConsole, isLocal, isServerless, SITREC_APP, SITREC_DOMAIN, SITREC_SERVER} from "./configUtils";
+import {isConsole, isLocal, isServerless, SITREC_APP, SITREC_SHARE_APP, SITREC_DOMAIN, SITREC_SERVER} from "./configUtils";
 import {TSParser} from "./TSParser";
 import {NITFParser} from "./NITFParser";
 import {showError, showErrorOnce, showConfirm} from "./showError";
@@ -1041,7 +1042,7 @@ export class CFileManager extends CManager {
         // we just jump to the "custom" sitch, which is a blank sitch
         // that the user can modify and save
         // doing it as a URL to ensure a clean slate
-        window.location = SITREC_APP + "?action=new";
+        window.location = SITREC_SHARE_APP + "?action=new";
     }
 
     /**
@@ -1051,10 +1052,10 @@ export class CFileManager extends CManager {
      * Array of version objects normalized to always include `ref`.
      * `url` is retained for backwards compatibility with older server responses.
      */
-    getVersions(name) {
+    getVersions(name, sourceUserID = this.sourceUserID) {
         let url = SITREC_SERVER + "getsitches.php?get=versions&name=" + name;
-        if (this.sourceUserID) {
-            url += "&userid=" + this.sourceUserID;
+        if (sourceUserID) {
+            url += "&userid=" + sourceUserID;
         }
         return fetch(withTestUser(url), {mode: 'cors'}).then(response => {
             if (response.status !== 200) {
@@ -1134,45 +1135,25 @@ export class CFileManager extends CManager {
      * @param {string|null} [sourceUserID=null] - Optional owner user ID for cross-user shared sitches.
      * If provided, version listing and latest-resolution are performed against that owner's folder.
      */
-    loadSavedFile(name, sourceUserID = null) {
-        this.clearLocalSitchContext();
-        this.localSaveTargetArmed = false;
-        this.loadName = name;
-        // If a sourceUserID is provided (e.g. loading a featured sitch), use it;
-        // otherwise clear any stale override (e.g. from a ?custom=S3-URL at page load)
-        this.sourceUserID = sourceUserID;
-        console.log("Load Local File")
-        console.log(this.loadName);
-
-        if (this.loadName === "-") {
-            this.updateVersionsDropdown([]);
-            return;
-        }
-
-        this.getVersions(this.loadName).then((versions) => {
+    async loadSavedFile(name, sourceUserID = null) {
+        if (name === "-") { this.updateVersionsDropdown([]); return; }
+        try {
+            const versions = await this.getVersions(name, sourceUserID);
+            if (!versions?.length) throw new Error("No versions found for " + name);
+            const latest = versions[versions.length - 1];
+            const reference = latest.ref || latest.url;
+            const response = await fetch(await resolveURLForFetch(reference));
+            if (!response.ok) throw new Error(`Sitch load failed: HTTP ${response.status}`);
+            const sitch = textSitchToObject(await response.text());
+            if (!await approveSitchChannel(sitch, {sourceRef: reference})) return;
+            this.clearLocalSitchContext();
+            this.localSaveTargetArmed = false;
+            this.loadName = name;
+            this.sourceUserID = sourceUserID;
+            this.loadURL = reference;
             this.updateVersionsDropdown(versions);
-
-            if (!versions || versions.length === 0) {
-                console.error("No versions found for " + name);
-                return;
-            }
-
-            const latestVersion = versions[versions.length - 1];
-            const latestRef = latestVersion.ref || latestVersion.url;
-            console.log("Loading " + name + " version " + latestRef)
-
-            this.loadURL = latestRef;
-            resolveURLForFetch(latestRef).then(fetchUrl => fetch(fetchUrl)).then(response => response.arrayBuffer()).then(data => {
-                console.log("Loaded " + name + " version " + latestRef)
-
-                const decoder = new TextDecoder('utf-8');
-                const decodedString = decoder.decode(data);
-
-                let sitchObject = textSitchToObject(decodedString);
-
-                setNewSitchObject(sitchObject);
-            })
-        })
+            setNewSitchObject(sitch);
+        } catch (error) { showError("Could not open the saved sitch.", error); }
     }
 
     /**
@@ -1251,34 +1232,24 @@ export class CFileManager extends CManager {
      * @param {string} displayName - Dropdown label from `versionsList`.
      * @returns {void}
      */
-    loadVersion(displayName) {
+    async loadVersion(displayName) {
         if (displayName === "-" || !this.versionsData.length) return;
-        this.activateStorageFolder("server");
-        this.clearLocalSitchContext();
-        this.localSaveTargetArmed = false;
-        
         const index = this.versionsList.indexOf(displayName);
         if (index <= 0) return;
-        
-        const versionIndex = this.versionsData.length - index;
-        const versionData = this.versionsData[versionIndex];
-        
+        const versionData = this.versionsData[this.versionsData.length - index];
         if (!versionData) return;
-        
-        const versionRef = versionData.ref || versionData.url;
-        console.log("Loading version: " + versionData.version + " from " + versionRef);
-        
-        this.loadURL = versionRef;
-        resolveURLForFetch(versionRef).then(fetchUrl => fetch(fetchUrl)).then(response => response.arrayBuffer()).then(data => {
-            console.log("Loaded version " + versionData.version)
-
-            const decoder = new TextDecoder('utf-8');
-            const decodedString = decoder.decode(data);
-
-            let sitchObject = textSitchToObject(decodedString);
-
-            setNewSitchObject(sitchObject);
-        })
+        try {
+            const reference = versionData.ref || versionData.url;
+            const response = await fetch(await resolveURLForFetch(reference));
+            if (!response.ok) throw new Error(`Sitch load failed: HTTP ${response.status}`);
+            const sitch = textSitchToObject(await response.text());
+            if (!await approveSitchChannel(sitch, {sourceRef: reference})) return;
+            this.activateStorageFolder("server");
+            this.clearLocalSitchContext();
+            this.localSaveTargetArmed = false;
+            this.loadURL = reference;
+            setNewSitchObject(sitch);
+        } catch (error) { showError("Could not open the saved version.", error); }
     }
 
     /**
@@ -1461,7 +1432,7 @@ export class CFileManager extends CManager {
             const forumOrigin = (Globals.env && Globals.env.SITREC_FORUM_ORIGIN)
                 ? Globals.env.SITREC_FORUM_ORIGIN
                 : window.location.origin;
-            const redirectUrl = new URL("sitrecServer/successfullyLoggedIn.html", SITREC_APP).toString();
+            const redirectUrl = new URL("sitrecServer/successfullyLoggedIn.html", SITREC_SHARE_APP).toString();
             const loginUrl = new URL("/login", forumOrigin);
             loginUrl.searchParams.set("_xfRedirect", redirectUrl);
             window.open(loginUrl.toString(), "_blank");
@@ -1717,6 +1688,10 @@ export class CFileManager extends CManager {
                 ]
             });
 
+            const pendingFile = await fileHandle.getFile();
+            const pendingSitch = textSitchToObject(await pendingFile.text());
+            if (!await approveSitchChannel(pendingSitch, {sourceRef: null, localFileHandle: fileHandle,
+                localDirectoryHandle: this.directoryHandle})) return;
             this.localSitchEntry = fileHandle;
             console.log("User selected local sitch:", this.localSitchEntry.name);
             await this.persistWorkingFolder();
@@ -1742,11 +1717,15 @@ export class CFileManager extends CManager {
 
         // load the local sitch and see if it has changed
         const file = await this.localSitchEntry.getFile();
-        this.localSitchBuffer = await file.arrayBuffer();
+        const buffer = await file.arrayBuffer();
 //        console.log("CHECKING CONTENTS OF Local Sitch " + file.name);
 
         if (this.lastLocalSitchBuffer === undefined ||
-            !areArrayBuffersEqual(this.lastLocalSitchBuffer, this.localSitchBuffer)) {
+            !areArrayBuffersEqual(this.lastLocalSitchBuffer, buffer)) {
+            const sitch = textSitchToObject(new TextDecoder().decode(buffer));
+            if (!await approveSitchChannel(sitch, {sourceRef: null, localFileHandle: this.localSitchEntry,
+                localDirectoryHandle: this.directoryHandle})) return;
+            this.localSitchBuffer = buffer;
             this.localSaveTargetArmed = true;
             this.markLocalSitchContextActive();
             this.lastLocalSitchBuffer = this.localSitchBuffer;

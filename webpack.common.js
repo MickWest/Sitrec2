@@ -190,7 +190,11 @@ function getFormattedLocalDateTime() {
 }
 
 
-const buildVersionString = getFormattedLocalDateTime();
+const {channelBuild, ChannelEntryPlugin} = require('./scripts/channelBuild');
+const releaseBuild = channelBuild(getVersionNumber());
+const buildVersionString = releaseBuild.channel === 'beta'
+    ? `Sitrec ${releaseBuild.version}b: ${releaseBuild.builtAt.slice(0, 16).replace('T', ' ')} UTC`
+    : getFormattedLocalDateTime();
 const buildBranch = getBuildBranch();
 console.log(buildVersionString);
 
@@ -198,6 +202,7 @@ module.exports = (env = {}) => ({
 
     entry: {
         index: './src/index.js',
+        bootstrap: './src/release/bootstrap.js',
     },
     target: 'web',
     externals: {
@@ -264,6 +269,7 @@ module.exports = (env = {}) => ({
         }),
         new MiniCssExtractPlugin(),
         new HtmlWebpackPlugin({
+            chunks: ['bootstrap'],
             title: buildBranch && buildBranch !== 'main' ? `${buildBranch}: Sitrec` : 'Sitrec',
             meta: {
                 // ── Content-Security-Policy (partial, deliberately) ──────────────────
@@ -461,6 +467,7 @@ ${bodyContent}
             },
         },
         new webpack.DefinePlugin({
+            'process.env.SITREC_BUILD_INFO': JSON.stringify(releaseBuild),
             'process.env.BUILD_VERSION_STRING': JSON.stringify(buildVersionString),
             'process.env.BUILD_VERSION_NUMBER': JSON.stringify(getVersionNumber()),
             'process.env.BUILD_BRANCH': JSON.stringify(buildBranch),
@@ -479,6 +486,8 @@ ${bodyContent}
                 )
             )),
         }),
+
+        new ChannelEntryPlugin(releaseBuild),
 
         // Print build success with version string after webpack's summary line
         {
@@ -649,6 +658,7 @@ ${bodyContent}
         maxEntrypointSize: 5000000,
     },
     output: {
+        uniqueName: 'sitrec-' + releaseBuild.id,
         filename: '[name].[contenthash].bundle.js',
         path: InstallPaths.dev_path,
         clean: {
