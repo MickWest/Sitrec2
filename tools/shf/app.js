@@ -40,7 +40,7 @@ const els = {
   origin: $("origin"), dest: $("dest"),
   originSug: $("origin-suggestions"), destSug: $("dest-suggestions"),
   originLocate: $("origin-locate"),
-  date: $("date"), time: $("time"), tzbtn: $("tzbtn"),
+  date: $("date"), time: $("time"), tzbtn: $("tzbtn"), timeEcho: $("time-echo"),
   duration: $("duration"), alt: $("alt"),
   tlefile: $("tlefile"), fetchtle: $("fetchtle"), tlestatus: $("tlestatus"),
   status: $("status"), results: $("results"),
@@ -548,7 +548,26 @@ function enteredMs() {
   return dt ? wallClockToUTCms(dt.y, dt.mo, dt.d, dt.h, dt.mi, formInterpTz()) : Date.now();
 }
 
+// Both hour cycles for a wire-format "HH:MM" (an <input type="time"> .value is ALWAYS
+// 24-hour regardless of how the widget draws it) — e.g. "17:02" -> "17:02 · 5:02 pm".
+// Arithmetic, not Intl, so the echo is identical on every browser and locale: an echo that
+// inherited the browser's hour cycle would be blank exactly where the widget already is.
+function bothHourCycles(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec((hhmm || "").trim());
+  if (!m) return "";
+  const h = +m[1], mm = m[2];
+  if (h > 23 || +mm > 59) return "";
+  return `${String(h).padStart(2, "0")}:${mm} · ${h % 12 || 12}:${mm} ${h < 12 ? "am" : "pm"}`;
+}
+
+// Restate the entered time under the field. Rides the same refresh funnel as the zone chip,
+// since both describe what the Time field currently means.
+function updateTimeEcho() {
+  if (els.timeEcho) els.timeEcho.textContent = bothHourCycles(els.time.value);
+}
+
 function updateTzButton() {
+  updateTimeEcho();
   if (!els.tzbtn) return;
   const label = tzMode === "utc" ? "UTC" : zoneAbbrev(formTz, enteredMs());
   els.tzbtn.textContent = label;
@@ -2083,6 +2102,7 @@ function init() {
   els.origin.addEventListener("input", () => { formTz = ""; updateTzButton(); });
   els.date.addEventListener("change", updateTzButton);
   els.time.addEventListener("change", updateTzButton);
+  els.time.addEventListener("input", updateTimeEcho);
   updateTzButton();
   wireTLEControls();
   // Delegated: the synthetic-data note is re-rendered as a button on each result; one

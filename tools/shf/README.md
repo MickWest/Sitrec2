@@ -120,7 +120,11 @@ top-left to change your inputs):
 - **Flight duration** *(optional)* — defaults to roughly **distance ÷ 875 km/h + 30 min**.
 - **Cruise altitude** — default **37 000 ft**.
 - **Date / time** — the moment to search *from* (fixed location) or the **departure** (flight).
-  Defaults to **now**, interpreted in the **location's local time**.
+  Defaults to **now**, interpreted in the **location's local time**. The browser draws
+  `<input type="time">` in its own hour cycle, which the page can neither read nor override, so
+  the line under the field restates the entered time in **both** cycles (`17:02 · 5:02 pm`) —
+  whichever half the widget leaves out is still on screen. Everything the app *reports* is
+  24-hour.
 - **Advanced** — satellite data source only:
   - **Fetch current TLE** — download the live Starlink elements (for real-data accuracy near "now").
   - **…or load your own .tle file** — use an element set you supply, in either CCSDS OMM CSV
