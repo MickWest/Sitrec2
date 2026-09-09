@@ -1,3 +1,5 @@
+import {migrateViewColorSettings, splitViewEffects, viewColorPolicy} from "../rendering/ViewColorPipeline";
+import {SoftDepthPass} from "../rendering/SoftDepth";
 import {setLineViewHeight} from "../SceneLineMaterial";
 import {par} from "../par";
 import {requestCameraFocusSync} from "../CameraFocusUI";
@@ -139,6 +141,10 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.skyGradient = v.skyGradient ?? atmosphereDef.skyGradient ?? true;
         this.allowMobileSkyGradient = v.allowMobileSkyGradient ?? atmosphereDef.allowMobileSkyGradient ?? false;
         this.requestLookViewHDR = this.id === "lookView";
+        this.toneMappingEnabled = v.toneMappingEnabled ?? (this.atmosphereEnabled && this.atmosphereHDR);
+        this.viewExposure = v.viewExposure ?? this.atmosphereExposure;
+        this.opticsBeforeSensor = v.opticsBeforeSensor ?? false;
+        this.legacySkyExposure = v.legacySkyExposure ?? !v.colorPipelineVersion;
 
         // V5 shadows: per-view toggle. On by default; serialised. Gated
         // by the lighting node's master shadows flag (lighting.shadowsEnabled)
@@ -213,20 +219,13 @@ export class CNodeView3D extends CNodeViewCanvas {
                 setRenderOne(true);
             }).tooltip(t("view3d.atmoVisibility.tooltip"));
 
-            atmoFolder.add(this, "atmosphereHDR").name(t("view3d.atmoHDR.label")).listen().onChange(() => {
-                setRenderOne(true);
-            }).tooltip(t("view3d.atmoHDR.tooltip"));
-
-            atmoFolder.add(this, "atmosphereExposure", 0.1, 5.0, 0.01).name(t("view3d.atmoExposure.label")).listen().onChange(() => {
-                setRenderOne(true);
-            }).tooltip(t("view3d.atmoExposure.tooltip"));
-
-            // Snapshot the sitch's initial atmosphere state into the lighting
-            // node's "Default" preset so picking Default restores it.
-            const lightingNode = NodeMan.get("lighting", false);
-            if (lightingNode && typeof lightingNode.captureDefaultAtmosphere === "function") {
-                lightingNode.captureDefaultAtmosphere(this.atmosphereEnabled);
-            }
+            const outputFolder = guiMenus.lighting.addFolder("Look View Output").close();
+            outputFolder.add(this, "toneMappingEnabled").name(t("view3d.toneMapping.label")).listen()
+                .onChange(() => setRenderOne(true)).tooltip(t("view3d.toneMapping.tooltip"));
+            outputFolder.add(this, "viewExposure", 0.1, 5.0, 0.01).name(t("view3d.viewExposure.label")).listen()
+                .onChange(() => setRenderOne(true)).tooltip(t("view3d.viewExposure.tooltip"));
+            outputFolder.add(this, "opticsBeforeSensor").name(t("view3d.opticsBeforeSensor.label")).listen()
+                .onChange(() => setRenderOne(true)).tooltip(t("view3d.opticsBeforeSensor.tooltip"));
 
             atmoFolder.add(this, "skyGradient")
                 .name(t("view3d.skyGradient.label", {defaultValue: "Sky Gradient"}))
@@ -1326,8 +1325,12 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     renderAtmosphereScene(scene, camera = this.camera, {reflectionPlane} = {}) {
+        const renderWorld = () => {
+            const softDepth = this.softDepthPass ??= new SoftDepthPass();
+            return softDepth.render(this.renderer, scene, camera, () => this.renderer.render(scene, camera));
+        };
         if (!this.effectiveAerialPerspective) {
-            return withMaterialAtmosphere(scene, null, () => this.renderer.render(scene, camera));
+            return withMaterialAtmosphere(scene, null, renderWorld, this.renderer);
         }
         this._atmosphereContexts ??= new WeakMap();
         let context = this._atmosphereContexts.get(camera);
@@ -1361,7 +1364,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             const point = this._sunDirScratch.copy(reflectionPlane.point).applyMatrix4(camera.matrixWorldInverse);
             uniforms.atmoStartPlane.value.set(normal.x, normal.y, normal.z, -normal.dot(point));
         }
-        return withMaterialAtmosphere(scene, uniforms, () => this.renderer.render(scene, camera));
+        return withMaterialAtmosphere(scene, uniforms, renderWorld, this.renderer);
     }
 
     // `camera` defaults to the view's own, but can be overridden to ask for the
@@ -1957,7 +1960,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             const hasFloatColorBuffer = this.renderer.extensions.has('EXT_color_buffer_float');
             this.useLookViewHDR = this.renderer.capabilities.isWebGL2 && hasFloatColorBuffer;
             if (!this.useLookViewHDR) {
-                console.warn("lookView HDR atmosphere disabled: floating-point color buffers are not supported on this GPU/browser");
+                console.warn("lookView uses standard color buffers: floating-point color buffers are not supported on this GPU/browser");
             }
         }
 
@@ -2002,7 +2005,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         const geometry = new PlaneGeometry(2, 2);
         this.fullscreenQuad = new Mesh(geometry, this.copyMaterial);
 
-        this.hdrToneMappingPass = this.useLookViewHDR ? new ShaderPass(ACESFilmicToneMappingShader) : null;
+        this.hdrToneMappingPass = this.id === "lookView" ? new ShaderPass(ACESFilmicToneMappingShader) : null;
 
         this.effectPasses = {};
 
@@ -2300,11 +2303,12 @@ export class CNodeView3D extends CNodeViewCanvas {
                 const rtHeight = targetSize.y;
                 setLineViewHeight(this.renderer, this.heightPx * this.letterboxScaleY);
 
-                const useAtmosphereHDR = this.useLookViewHDR && this.supportsVisibleAtmosphere && this.atmosphereEnabled && this.atmosphereHDR && this.hdrToneMappingPass !== null;
+                const colorPolicy = this.getColorPolicy();
+                const useAtmosphereHDR = colorPolicy.toneMapping;
                 // A legacy day sky is tone-mapped before world geometry. Draw that sky
                 // into scratch A, then tone-map onto the scene target. All world geometry,
                 // including the aerial-perspective path, stays multisampled until resolve.
-                currentRenderTarget = GlobalDaySkyScene !== undefined && !useAtmosphereHDR
+                currentRenderTarget = GlobalDaySkyScene !== undefined && (!useAtmosphereHDR || !this.legacySkyExposure)
                     ? this.renderTargetA : this.renderTargetAntiAliased;
                 this.renderer.setRenderTarget(currentRenderTarget);
                 // ALWAYS store render target height for use right before rendering
@@ -2487,12 +2491,14 @@ export class CNodeView3D extends CNodeViewCanvas {
 
                     // For non-HDR pipelines, tone-map sky now.
                     // HDR lookView with atmosphere tone-maps once at the end.
-                    if (!useAtmosphereHDR) {
+                    if (!useAtmosphereHDR || !this.legacySkyExposure) {
                         const acesFilmicToneMappingPass = this.daySkyToneMappingPass ??=
                             new ShaderPass(ACESFilmicToneMappingShader);
                         const lightingNodeSky = NodeMan.get("lighting", true);
                         const sceneExposureSky = lightingNodeSky?.sceneExposure ?? 1.0;
-                        acesFilmicToneMappingPass.uniforms['exposure'].value = NodeMan.get("theSky").effectController.exposure * sceneExposureSky;
+                        acesFilmicToneMappingPass.uniforms['exposure'].value = NodeMan.get("theSky").effectController.exposure
+                            * (colorPolicy.active && !this.legacySkyExposure ? 1 : sceneExposureSky);
+                        acesFilmicToneMappingPass.uniforms.toneMappingEnabled.value = !useAtmosphereHDR;
                         acesFilmicToneMappingPass.uniforms['tDiffuse'].value = currentRenderTarget.texture;
 
                         this.renderer.setRenderTarget(this.renderTargetAntiAliased);
@@ -2658,90 +2664,46 @@ export class CNodeView3D extends CNodeViewCanvas {
                     }
                 }
 
-                if (this.effectsEnabled) {
-
-                    // Profile: Effects passes
-                    if (globalProfiler) globalProfiler.push('#bebada', 'effectsPasses');
-                    // [DBG] Render effects
-                    if (Globals.renderDebugFlags.dbg_renderEffects) {
-                        //   this.renderer.setRenderTarget(null);
-
-                        // Apply each effect pass sequentially
-                        for (let effectName in this.effectPasses) {
-                            const effectNode = this.effectPasses[effectName];
-                            if (!effectNode.enabled) continue;
-                            let effectPass = effectNode.pass;
-
-                            // A custom pass does its own drawing - the diffraction glare pass
-                            // needs a bright pass, an instanced splat and a composite, which
-                            // the shared fullscreen quad below cannot express. It is skipped
-                            // rather than run when it has nothing to draw with (no PSF
-                            // imported), because running it would blit black over the frame.
-                            if (effectPass.isCustomPass) {
-                                // Reconfigured HERE, every frame, rather than in updateEffects:
-                                // that only runs when needUpdate is set, but this pass's inputs
-                                // (the camera's PSF, its glare sliders, the field of view) change
-                                // from the GUI and from an ASYNCHRONOUS texture decode, none of
-                                // which marks the view dirty. Relying on needUpdate meant an
-                                // imported PSF rendered nothing until some unrelated recalculation
-                                // happened to run. It is a handful of property reads.
-                                effectNode.updateCustomPass(par.frame, this, effectPass);
-                                if (effectNode.canRender && !effectNode.canRender()) continue;
-                                const customTarget = currentRenderTarget === this.renderTargetA
-                                    ? this.renderTargetB : this.renderTargetA;
-                                effectPass.render(this.renderer, customTarget, currentRenderTarget,
-                                                  effectPass.psfPixels);
-                                currentRenderTarget = customTarget;
-                                continue;
-                            }
-
-                            // the efferctNode has an optional filter type for the source texture
-                            // which will be from the PREVIOUS effect pass's render target
-                            switch (effectNode.filter.toLowerCase()) {
-                                case "linear":
-                                    forceFilterChange(currentRenderTarget.texture, LinearFilter, this.renderer);
-                                    break;
-                                case "nearest":
-                                default:
-                                    forceFilterChange(currentRenderTarget.texture, NearestFilter, this.renderer);
-                                    break;
-                            }
-
-                            // Ensure the texture parameters are applied
-                            // currentRenderTarget.texture.needsUpdate = true;
-
-                            effectPass.uniforms['tDiffuse'].value = currentRenderTarget.texture;
-                            // flip the render targets
-                            const useRenderTarget = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
-
-                            this.renderer.setRenderTarget(useRenderTarget);
-                            //this.renderer.clear(true, true, true);
-                            this.fullscreenQuad.material = effectPass.material;  // Set the material to the current effect pass
-                            this.renderer.render(this.fullscreenQuad, this.fullscreenQuadCamera);
-                            currentRenderTarget = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
-                        }
-                    }
-                    if (globalProfiler) globalProfiler.pop();
-                }
-
-                // Profile: Copy to screen
-                if (globalProfiler) globalProfiler.push('#fdb462', 'copyToScreen');
-                // [DBG] Render the final texture to the screen, id we were using a render target.
-                if (Globals.renderDebugFlags.dbg_copyToScreen && currentRenderTarget !== null) {
-                    if (useAtmosphereHDR) {
-                        const skyExposure = NodeMan.get("theSky", false)?.effectController?.exposure ?? 1.0;
-                        const lightingNodeHDR = NodeMan.get("lighting", true);
-                        const sceneExposureHDR = lightingNodeHDR?.sceneExposure ?? 1.0;
-                        this.hdrToneMappingPass.uniforms['exposure'].value = skyExposure * this.atmosphereExposure * sceneExposureHDR;
-                        this.hdrToneMappingPass.uniforms['tDiffuse'].value = currentRenderTarget.texture;
-
-                        const toneMappedTarget = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
-                        this.renderer.setRenderTarget(toneMappedTarget);
-                        this.fullscreenQuad.material = this.hdrToneMappingPass.material;
+                if (globalProfiler) globalProfiler.push('#bebada', 'effectsPasses');
+                const effects = this.effectsEnabled && Globals.renderDebugFlags.dbg_renderEffects
+                    ? splitViewEffects(this.effectPasses, colorPolicy.opticsBeforeSensor)
+                    : {optical: [], sensor: []};
+                const drawEffect = effectNode => {
+                    const effectPass = effectNode.pass;
+                    const target = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
+                    if (effectPass.isCustomPass) {
+                        effectNode.updateCustomPass(par.frame, this, effectPass);
+                        if (effectNode.canRender && !effectNode.canRender()) return;
+                        effectPass.render(this.renderer, target, currentRenderTarget, effectPass.psfPixels);
+                    } else {
+                        forceFilterChange(currentRenderTarget.texture,
+                            effectNode.filter.toLowerCase() === "linear" ? LinearFilter : NearestFilter, this.renderer);
+                        effectPass.uniforms.tDiffuse.value = currentRenderTarget.texture;
+                        this.renderer.setRenderTarget(target);
+                        this.fullscreenQuad.material = effectPass.material;
                         this.renderer.render(this.fullscreenQuad, this.fullscreenQuadCamera);
-                        currentRenderTarget = toneMappedTarget;
                     }
+                    currentRenderTarget = target;
+                };
+                for (const effect of effects.optical) drawEffect(effect);
+                // Apply exposure once, after optical integration and before sensor
+                // clipping. Archived scenes can retain their original effect order.
+                if (colorPolicy.active && (colorPolicy.toneMapping || colorPolicy.exposure !== 1)) {
+                    const pass = this.hdrToneMappingPass;
+                    pass.uniforms.exposure.value = colorPolicy.exposure;
+                    pass.uniforms.toneMappingEnabled.value = colorPolicy.toneMapping;
+                    pass.uniforms.tDiffuse.value = currentRenderTarget.texture;
+                    const target = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
+                    this.renderer.setRenderTarget(target);
+                    this.fullscreenQuad.material = pass.material;
+                    this.renderer.render(this.fullscreenQuad, this.fullscreenQuadCamera);
+                    currentRenderTarget = target;
+                }
+                for (const effect of effects.sensor) drawEffect(effect);
+                if (globalProfiler) globalProfiler.pop();
 
+                if (globalProfiler) globalProfiler.push('#fdb462', 'copyToScreen');
+                if (Globals.renderDebugFlags.dbg_copyToScreen && currentRenderTarget !== null) {
                     this.copyMaterial.uniforms['tDiffuse'].value = currentRenderTarget.texture;
                     this.copyMaterial.uniforms['sRGBOutput'].value = Globals.renderDebugFlags.dbg_sRGBOutputEncoding;
                     this.fullscreenQuad.material = this.copyMaterial;  // Set the material to the copy material
@@ -3217,16 +3179,31 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
     }
 
+    getColorPolicy() {
+        const sceneExposure = NodeMan.get("lighting", false)?.sceneExposure ?? 1;
+        if (this._legacyColorSettings) {
+            Object.assign(this, migrateViewColorSettings(this._legacyColorSettings, this.atmosphereEnabled, sceneExposure, this.useLookViewHDR));
+            this._legacyColorSettings = null;
+        }
+        return viewColorPolicy(this, sceneExposure, NodeMan.get("theSky", false)?.effectController?.exposure ?? 1);
+    }
+
     modSerialize() {
+        this.getColorPolicy();
         return {
             ...super.modSerialize(),
             focusTrackName: this.focusTrackName,
             lockTrackName: this.lockTrackName,
             effectsEnabled: this.effectsEnabled,
+            colorPipelineVersion: 1,
+            toneMappingEnabled: this.toneMappingEnabled,
+            viewExposure: this.viewExposure,
+            opticsBeforeSensor: this.opticsBeforeSensor,
+            legacySkyExposure: this.legacySkyExposure,
             atmosphereEnabled: this.atmosphereEnabled,
             atmosphereVisibilityKm: this.atmosphereVisibilityKm,
-            atmosphereHDR: this.atmosphereHDR,
-            atmosphereExposure: this.atmosphereExposure,
+            atmosphereHDR: this.toneMappingEnabled,
+            atmosphereExposure: this.viewExposure,
             atmosphereVersion: 2,
             atmosphereHaze: this.atmosphereHaze,
             skyGradient: this.skyGradient,
@@ -3252,6 +3229,14 @@ export class CNodeView3D extends CNodeViewCanvas {
             // both on. Preserve that displayed state during migration.
             this.atmosphereHaze = true;
             this.skyGradient = true;
+        }
+        if (v.colorPipelineVersion) {
+            this._legacyColorSettings = null;
+            for (const key of ["toneMappingEnabled", "viewExposure", "opticsBeforeSensor", "legacySkyExposure"]) {
+                if (v[key] !== undefined) this[key] = v[key];
+            }
+        } else {
+            this._legacyColorSettings = v;
         }
         // V5 shadows: shadowsEnabled is restored via addSimpleSerial. If the
         // user saved a sitch with shadows on, we need to re-trigger
@@ -3382,6 +3367,8 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     disposeRenderTargets() {
+        this.softDepthPass?.dispose();
+        this.softDepthPass = null;
         if (this.renderTargetAntiAliased) this.renderTargetAntiAliased.dispose();
         if (this.renderTargetA) this.renderTargetA.dispose();
         if (this.renderTargetB) this.renderTargetB.dispose();

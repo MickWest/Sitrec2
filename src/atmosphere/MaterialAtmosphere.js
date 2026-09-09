@@ -161,9 +161,23 @@ export function installSceneAtmosphere(scene) {
 
 // Shared material programs serve several views and reflection cameras. Scope
 // their uniform values to the draw, including error paths and nested renders.
-export function withMaterialAtmosphere(scene, uniforms, render) {
+export function withMaterialAtmosphere(scene, uniforms, render, renderer) {
     if (!uniforms && !materialAtmosphereUniforms.atmoEnabled.value) return render();
-    if (uniforms?.atmoEnabled.value) installSceneAtmosphere(scene);
+    // Patch only the materials actually drawn, just before WebGLRenderer looks
+    // up/compiles their programs. Streamed tiles and replaced materials work on
+    // their first draw, without walking every hidden object for every camera.
+    // Shadow/depth draws pass a different scene and retain their own shaders.
+    const previousDraw = renderer?.renderBufferDirect;
+    if (uniforms?.atmoEnabled.value) {
+        if (previousDraw) {
+            renderer.renderBufferDirect = function(camera, drawScene, geometry, material, object, group) {
+                if (drawScene === scene && materialAtmosphereUniforms.atmoEnabled.value) installMaterialAtmosphere(material);
+                return previousDraw.call(this, camera, drawScene, geometry, material, object, group);
+            };
+        } else {
+            installSceneAtmosphere(scene);
+        }
+    }
     const previous = Object.fromEntries(Object.entries(materialAtmosphereUniforms).map(([key, uniform]) => [key, uniform.value]));
     for (const [key, uniform] of Object.entries(materialAtmosphereUniforms)) {
         if (uniforms) uniform.value = uniforms[key].value;
@@ -172,6 +186,7 @@ export function withMaterialAtmosphere(scene, uniforms, render) {
     try {
         return render();
     } finally {
+        if (previousDraw) renderer.renderBufferDirect = previousDraw;
         for (const [key, value] of Object.entries(previous)) materialAtmosphereUniforms[key].value = value;
     }
 }

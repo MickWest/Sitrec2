@@ -1,6 +1,32 @@
 import {InstancedInterleavedBuffer, InterleavedBufferAttribute} from "three";
 import {LineGeometry as ThreeLineGeometry} from "three/addons/lines/LineGeometry.js";
 
+// Dynamic independent segments (frusta, footprints) keep their GPU buffer while
+// the segment count is unchanged. Compare float32 values so rounding alone does
+// not upload the same positions again on every frame.
+export function updateLineSegmentPositions(geometry, positions) {
+    const data = geometry.attributes.instanceStart?.data;
+    if (!data || data.array.length !== positions.length) {
+        if (data) geometry.dispose();
+        geometry.setPositions(positions);
+        return true;
+    }
+    let changed = false;
+    for (let i = 0; i < positions.length; i++) {
+        const value = Math.fround(positions[i]);
+        if (data.array[i] !== value) {
+            data.array[i] = value;
+            changed = true;
+        }
+    }
+    if (changed) {
+        data.needsUpdate = true;
+        geometry.computeBoundingBox();
+        geometry.computeBoundingSphere();
+    }
+    return changed;
+}
+
 // Adjacent capsules share a round join. Give each fragment to the closest
 // segment so alpha coverage is applied once, even on densely sampled tracks.
 export function updateLineJoins(geometry) {

@@ -6,6 +6,8 @@ import {drop} from "../SphericalMath";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {assert} from "../assert";
 import {V3} from "../threeUtils";
+import {installCloudQuadSort, registerTransparentCamera} from "../rendering/CloudSort";
+import {installSoftDepthMaterial} from "../rendering/SoftDepth";
 
 let rng;
 
@@ -101,16 +103,26 @@ export class CNodeDisplayClouds extends CNode3DGroup {
 
         this.group.remove(this.cloudMesh)
         dispose(this.cloudGeometry)
+        this.cloudMesh?.material.dispose();
 
         // now batch the geometry in a single mesh
         const cloudData = this.in.cloudData.v0
         this.altitude = cloudData.altitude;
         this.cloudGeometry = new MultiCloudGeometry(this.w, this.h, this.altitude)
-        this.cloudMesh = new Mesh(this.cloudGeometry, this.in.material.v(0));
+        const original = this.in.material.v(0);
+        const material = original.clone();
+        material.onBeforeCompile = original.onBeforeCompile;
+        material.customProgramCacheKey = original.customProgramCacheKey.bind(original);
+        material.transparent = true;
+        material.depthWrite = false;
+        material.forceSinglePass = true;
+        this.cloudMesh = new Mesh(this.cloudGeometry, installSoftDepthMaterial(material, this.h * 0.15));
+        installCloudQuadSort(this.cloudMesh);
 
         this.cloudMesh.rotateY(-radians(this.in.heading.getHeading()))
 
         this.group.add(this.cloudMesh)
+        registerTransparentCamera(this.cloudMesh);
 
         this.propagateLayerMask()
 
@@ -120,6 +132,7 @@ export class CNodeDisplayClouds extends CNode3DGroup {
 
         this.group.remove(this.cloudMesh)
         dispose(this.cloudGeometry)
+        this.cloudMesh?.material.dispose();
         super.dispose()
     }
 
@@ -137,4 +150,3 @@ export class CNodeDisplayClouds extends CNode3DGroup {
 
 
 }
-

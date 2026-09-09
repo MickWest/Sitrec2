@@ -1,3 +1,4 @@
+import {createContrailMaterial} from "../rendering/ContrailMaterial";
 import {CNode3DGroup} from "./CNode3DGroup";
 import * as THREE from "three";
 import {GlobalDateTimeNode, setRenderOne, Sit} from "../Globals";
@@ -10,7 +11,7 @@ import {radians} from "../utils";
 import * as LAYER from "../LayerMasks";
 
 // CNodeContrail renders a flat horizontal white ribbon trailing behind a track,
-// drifting with wind over time. Rebuilt every frame based on the current playback position.
+// drifting with wind over time. Reuses GPU buffers and skips unchanged samples.
 // If a dataTrack is provided with time-based lookup (getTime/getIndexAtTime),
 // the contrail can extend before the sitch start time into the data track's earlier data.
 export class CNodeContrail extends CNode3DGroup {
@@ -37,13 +38,7 @@ export class CNodeContrail extends CNode3DGroup {
 
         this.mesh = null;
 
-        this.material = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
-            transparent: true,
-            opacity: 0.7,
-            side: THREE.DoubleSide,
-            depthWrite: false,
-        });
+        this.material = createContrailMaterial();
     }
 
     dispose() {
@@ -181,15 +176,13 @@ export class CNodeContrail extends CNode3DGroup {
     }
 
     rebuildRibbon(frame) {
-        this.removeMesh();
-
         const fps = Sit.fps;
         const hasWind = !!(this.in.wind || (this.in.windField && this.in.windField.windU));
 
         // Collect sample points with elapsed time and original track altitude
         const samples = [];
-        const maxOffset = this.duration;
-        const step = this.sampleInterval;
+        const maxOffset = Math.max(0, this.duration);
+        const step = Math.max(0.1, this.sampleInterval);
 
         for (let t = maxOffset; t >= 0; t -= step) {
             const sampleFrame = frame - t * fps;
@@ -218,7 +211,15 @@ export class CNodeContrail extends CNode3DGroup {
             }
         }
 
-        if (samples.length < 2) return;
+        const signature = [this.ribbonWidth, this.spread, this.rampDistance, this.initialWidth];
+        for (const sample of samples) signature.push(sample.pos.x, sample.pos.y, sample.pos.z, sample.elapsed, sample.trackAlt);
+        if (this._ribbonSignature?.length === signature.length
+            && signature.every((value, index) => value === this._ribbonSignature[index])) return;
+        this._ribbonSignature = signature;
+        if (samples.length < 2) {
+            if (this.mesh) this.mesh.visible = false;
+            return;
+        }
 
         // Compute midpoint for float precision
         const mid = V3(0, 0, 0);
@@ -351,19 +352,27 @@ export class CNodeContrail extends CNode3DGroup {
             const rightClamped = this.clampToAltitude(rightWorld, trackAlt);
 
             edges.push({
+                distance: d,
                 left: V3(leftClamped.x - mid.x, leftClamped.y - mid.y, leftClamped.z - mid.z),
                 right: V3(rightClamped.x - mid.x, rightClamped.y - mid.y, rightClamped.z - mid.z),
             });
         }
 
-        if (edges.length < 2) return;
+        if (edges.length < 2) {
+            if (this.mesh) this.mesh.visible = false;
+            return;
+        }
+        this.material.userData.trailLength.value = Math.max(0.001, edges[0].distance);
 
         // Build quads from shared edge positions (seamless, no gaps)
         const vertices = [];
+        const trailCoords = [];
 
         for (let i = 0; i < edges.length - 1; i++) {
             const e1 = edges[i];
             const e2 = edges[i + 1];
+            trailCoords.push(-1, e1.distance, -1, e2.distance, 1, e2.distance,
+                -1, e1.distance, 1, e2.distance, 1, e1.distance);
 
             vertices.push(e1.left.x, e1.left.y, e1.left.z);
             vertices.push(e2.left.x, e2.left.y, e2.left.z);
@@ -376,13 +385,32 @@ export class CNodeContrail extends CNode3DGroup {
 
         if (vertices.length === 0) return;
 
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(vertices), 3));
-        geometry.computeVertexNormals();
-
-        this.mesh = new THREE.Mesh(geometry, this.material);
-        this.mesh.position.set(mid.x, mid.y, mid.z);
-        this.group.add(this.mesh);
-        this.propagateLayerMask();
+        const vertexCount = vertices.length / 3;
+        if (!this.mesh || this.mesh.geometry.getAttribute("position").count < vertexCount) {
+            this.removeMesh();
+            const capacity = 2 ** Math.ceil(Math.log2(Math.max(16, vertexCount)));
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(THREE.DynamicDrawUsage));
+            geometry.setAttribute("trailCoord", new THREE.BufferAttribute(new Float32Array(capacity * 2), 2).setUsage(THREE.DynamicDrawUsage));
+            this.mesh = new THREE.Mesh(geometry, this.material);
+            this.group.add(this.mesh);
+            this.propagateLayerMask();
+        }
+        const geometry = this.mesh.geometry;
+        for (const [name, values] of [["position", vertices], ["trailCoord", trailCoords]]) {
+            const attribute = geometry.getAttribute(name);
+            attribute.array.set(values);
+            attribute.clearUpdateRanges();
+            attribute.addUpdateRange(0, values.length);
+            attribute.needsUpdate = true;
+        }
+        geometry.setDrawRange(0, vertexCount);
+        const bounds = geometry.boundingBox ??= new THREE.Box3();
+        bounds.makeEmpty();
+        const point = new THREE.Vector3();
+        for (let i = 0; i < vertices.length; i += 3) bounds.expandByPoint(point.fromArray(vertices, i));
+        bounds.getBoundingSphere(geometry.boundingSphere ??= new THREE.Sphere());
+        this.mesh.visible = true;
+        this.mesh.position.copy(mid);
     }
 }

@@ -885,6 +885,12 @@ class CNodeView extends CNode {
     }
 
     updateWH() {
+        if (this.overlayView) {
+            const oldWidth = this.widthPx, oldHeight = this.heightPx;
+            this.inheritSize();
+            if (oldWidth !== this.widthPx || oldHeight !== this.heightPx) this.changedSize();
+            return;
+        }
         if (this.updateDockedWH?.()) return;
 
         // Split-tree tiling (optional, see CLayoutManager). When this view is a leaf in the

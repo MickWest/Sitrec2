@@ -81,3 +81,37 @@ test("custom shader early exits retain conditional control flow", () => {
     expect(shader.fragmentShader).toContain("if (gl_FragCoord.x < 1.0) { gl_FragColor.rgb = applyMaterialAtmosphere(gl_FragColor.rgb); return; }");
     expect(shader.vertexShader).toContain("void main(void)");
 });
+
+test("draw-time installation skips hidden and shadow materials and restores nested render hooks", () => {
+    const scene = new Scene();
+    const hidden = new MeshBasicMaterial();
+    scene.add(new Mesh(undefined, hidden));
+    const visible = new MeshBasicMaterial(), depth = new MeshBasicMaterial();
+    const replacement = new MeshBasicMaterial();
+    const u = UniformsUtils.clone(materialAtmosphereUniforms);
+    u.atmoEnabled.value = true;
+    const draw = jest.fn();
+    const renderer = {renderBufferDirect: draw};
+    const traverse = jest.spyOn(scene, "traverse");
+    expect(() => withMaterialAtmosphere(scene, u, () => {
+        const outerDraw = renderer.renderBufferDirect;
+        renderer.renderBufferDirect(null, null, null, depth);
+        renderer.renderBufferDirect(null, scene, null, visible);
+        const version = visible.version;
+        renderer.renderBufferDirect(null, scene, null, visible);
+        expect(visible.version).toBe(version);
+        withMaterialAtmosphere(scene, null, () => {
+            renderer.renderBufferDirect(null, scene, null, replacement);
+            expect(replacement.version).toBe(0);
+        }, renderer);
+        expect(renderer.renderBufferDirect).toBe(outerDraw);
+        renderer.renderBufferDirect(null, scene, null, replacement);
+        expect(replacement.version).toBe(1);
+        throw new Error("nested draw failed");
+    }, renderer)).toThrow("nested draw failed");
+    expect(renderer.renderBufferDirect).toBe(draw);
+    expect(traverse).not.toHaveBeenCalled();
+    expect(hidden.version).toBe(0);
+    expect(depth.version).toBe(0);
+    expect(visible.version).toBe(1);
+});

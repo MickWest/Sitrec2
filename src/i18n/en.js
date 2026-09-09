@@ -1172,6 +1172,9 @@ const en = {
         atmosphere: { label: "Atmosphere", tooltip: "Render a sky gradient and distance haze in the look view. Configure them separately in Atmosphere Tweaks." },
         atmoHaze: { label: "Distance haze", tooltip: "Fade distant surfaces into the atmosphere; disable to keep only the sky gradient." },
         atmoVisibility: { label: "Atmo Visibility (km)", tooltip: "Range where a dark target retains 2% contrast in uniform sea-level air (smaller = thicker haze)" },
+        toneMapping: {label: "Highlight Rolloff", tooltip: "Use filmic tone mapping in the visible look view, independently of sky and haze"},
+        viewExposure: {label: "Look Exposure", tooltip: "Look-view brightness multiplier, combined once with Scene Exposure; works with or without highlight rolloff"},
+        opticsBeforeSensor: {label: "Optics Before Sensor Effects", tooltip: "Apply focus and diffraction glare before highlight rolloff, noise, levels, and other sensor effects. Turn off to preserve the older effect order."},
         atmoHDR: { label: "Atmo HDR", tooltip: "Tone-map HDR highlights and apply exposure to the look view" },
         atmoExposure: { label: "Atmo Exposure", tooltip: "HDR atmosphere tone-mapping exposure multiplier for highlight rolloff" },
         shadowsEnabled: {
@@ -2456,8 +2459,8 @@ const en = {
             tooltip: "Multiplier for sun DirectionalLight intensity (HDR). Increases specular highlight brightness for realistic sun reflections through fog.",
         },
         sceneExposure: {
-            label: "Scene Exposure (HDR)",
-            tooltip: "Exposure compensation for HDR tone mapping. Lower to compensate for higher sun boost.",
+            label: "Scene Exposure",
+            tooltip: "Visible look-view exposure multiplier, independent of atmosphere and highlight rolloff. Lower to compensate for higher sun boost.",
         },
         ambientOnly: {
             label: "Ambient Only",
