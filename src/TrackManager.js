@@ -360,6 +360,17 @@ class CMetaTrack {
     }
 
 
+    // Show or hide the track's own drawing — the line, and the centre helpers drawn along it.
+    //
+    // NOT the 3D object riding the track. `displayTargetSphere` is misleadingly named: for a
+    // loaded track it holds the aircraft MODEL (a CNode3DObject), and hiding the track used to
+    // take the aircraft with it. That is not what a track's visibility switch says it does, and
+    // it made "hide the tracks so I can see the scene" hide the very thing being flown. The
+    // object is a scene object with its own visibility, in its own Objects folder.
+    //
+    // A caller that really does want the whole aircraft gone — the track filter, where excluding
+    // a track means excluding the aircraft — calls showObject() as well. Keeping that explicit is
+    // the point: the two used to be one switch, and only one of the callers ever meant both.
     show(visible=true) {
 
         if (this.displayCenterDataNode) {
@@ -368,13 +379,18 @@ class CMetaTrack {
         if (this.displayCenterNode) {
             this.displayCenterNode.show(visible);
         }
-        if (this.displayTargetSphere) {
-            this.displayTargetSphere.show(visible);
-        }
         if (this.displayCenterSphere) {
             this.displayCenterSphere.show(visible);
         }
 
+    }
+
+    // The 3D object that rides this track (the aircraft model, balloon or marker). Its label
+    // follows it — CNode3DObject.show() takes care of that.
+    showObject(visible=true) {
+        if (this.displayTargetSphere) {
+            this.displayTargetSphere.show(visible);
+        }
     }
 
 }

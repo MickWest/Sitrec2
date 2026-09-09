@@ -742,6 +742,9 @@ export async function showPostLoadFilterDialog() {
                     }
                     if (node.metaTrack !== undefined) {
                         node.metaTrack.show(visible);
+                        // Filtering a track out means the aircraft goes too — this is the one
+                        // caller that means both, so it says so. (CMetaTrack.show, TrackManager.)
+                        node.metaTrack.showObject(visible);
                     }
                 }
             });
