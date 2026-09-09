@@ -7,7 +7,7 @@ import {
     patchTerrestrialRefractionVertexShader,
 } from "../../../atmosphere/terrestrialRefraction";
 
-const CACHE_KEY = "DayNightStandardMaterial.v10watercapture";
+const CACHE_KEY = "DayNightStandardMaterial.v11waterskirts";
 
 // Whether a NEWLY CREATED tile material should carry the water branch.
 //
@@ -207,8 +207,8 @@ ${waterShadeGLSL}
 //      hillside behind the beach and the boats moored off it are all "water" to
 //      it. Height above the sea is what separates them, and it is the only
 //      thing that can.
-//  (c) IT FACES THE SKY. A piling at the waterline passes both tests above and
-//      is still not a water surface.
+//  (c) IT FACES THE SKY, or is a tile skirt filling a mesh seam. A textured
+//      piling at the waterline passes both tests above but is not water.
 //
 // seaPos comes back as the point on the sea surface under the fragment. The
 // photogrammetry's own sea is bumpy by a few metres, and every water quantity
@@ -217,6 +217,11 @@ ${waterShadeGLSL}
 // rather than at the mesh's guess about it. The mesh keeps its own depth, so
 // occlusion by the pier is unaffected.
 float sitrecTileWaterMask(vec3 worldPos, vec3 worldNormal, out vec3 seaPos) {
+    // Evaluate derivatives before the per-fragment mask/height early returns.
+    // A skirt extrudes a tile edge without extending its texture: its UVs
+    // collapse to a line. Real textured walls retain a two-dimensional UV map.
+    vec2 uvDx = dFdx(vDNUv);
+    vec2 uvDy = dFdy(vDNUv);
     seaPos = worldPos;
     if (waterGeoActive < 0.5) return 0.0;
 
@@ -285,10 +290,16 @@ float sitrecTileWaterMask(vec3 worldPos, vec3 worldNormal, out vec3 seaPos) {
     // The reflected camera also sees the vertical walls at tile boundaries.
     // They are part of the noisy water mesh, so exclude them from the capture
     // using the geographic mask and height band, regardless of their slope.
-    // Keep the facing test for the visible surface so walls are never SHADED
-    // as water. Land and geometry above the water band remain in the capture.
+    // In the visible pass, let skirts share the surrounding water's shading;
+    // rejecting their vertical faces leaves bright dashed seams in the lake.
+    // Keep the facing test for textured walls, and require some UV variation
+    // so an untextured face is not mistaken for a skirt. The relative area
+    // test also handles diagonal atlas edges without a screen-size threshold.
     if (waterTileCapture < 0.5) {
-        mask *= smoothstep(0.15, 0.5, dot(worldNormal, up));
+        float uvArea = abs(uvDx.x * uvDy.y - uvDx.y * uvDy.x);
+        bool skirt = max(dot(uvDx, uvDx), dot(uvDy, uvDy)) > 0.0
+                  && uvArea <= 1e-6 * length(uvDx) * length(uvDy);
+        mask *= skirt ? 1.0 : smoothstep(0.15, 0.5, dot(worldNormal, up));
     }
 
     seaPos = worldPos - up * alt;
