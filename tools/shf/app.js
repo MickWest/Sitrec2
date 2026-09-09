@@ -300,9 +300,10 @@ async function locateOrigin() {
     // A geolocated point carries no IANA zone, so times fall back to the browser's own —
     // which for wherever the user is standing is the right one. Writing .value from code
     // fires no "input" event, so clear the location-zone state by hand (the UTC/local
-    // toggle itself is the user's choice and is left alone).
-    formTz = "";
-    updateTzButton();
+    // toggle itself is the user's choice and is left alone). Via setFormTz so the
+    // "inferred from…" note goes with it — a previous search's note left standing here
+    // would caption the browser's own zone as an inference.
+    setFormTz("", "");
   } catch (e) {
     formError(e && e.message ? e.message : "Couldn't get your location.");
   } finally {
@@ -466,7 +467,7 @@ function savePendingRealSearch() {
       date: els.date.value, time: els.time.value,
       origin: els.origin.value, dest: els.dest.value,
       duration: els.duration.value, alt: els.alt.value,
-      tzMode, formTz,
+      tzMode, formTz, formTzNote,
     }));
   } catch (_) { /* private mode / quota — reload will still load real data, just not auto-run */ }
 }
@@ -493,8 +494,7 @@ function restorePendingRealSearch() {
   els.duration.value = s.duration || "";
   els.alt.value = s.alt || "";
   tzMode = s.tzMode === "utc" ? "utc" : "local";
-  formTz = s.formTz || "";
-  updateTzButton();
+  setFormTz(s.formTz, s.formTzNote);
   // Re-run with the freshly loaded real data (requestSubmit fires the submit handler).
   if (els.form.requestSubmit) els.form.requestSubmit();
   else els.form.dispatchEvent(new Event("submit", { cancelable: true }));
