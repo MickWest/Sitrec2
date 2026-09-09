@@ -273,6 +273,21 @@ const ICON_CURRENT_LOS = `<svg viewBox="0 0 16 16" width="15" height="15" aria-h
           opacity="0.45" stroke-linejoin="round"/>
     <path d="M2.4 8 H14.1" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round"/></svg>`;
 
+// Three orthogonal axes, drawn as the isometric trihedron every 3D tool uses for its navigation
+// gizmo — the one glyph that already means "you are moving in space" rather than "something is
+// being displayed". currentColor, not the red/green/blue of an axis helper, because Free Look
+// draws nothing in the scene: it is a MODE, so what it has to say is on/off, which the bar says
+// by lighting the button.
+const ICON_FREE_LOOK = `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+    <g stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <path d="M8 10 V5.1"/><path d="M8 10 L12.67 12.7"/><path d="M8 10 L3.33 12.7"/>
+    </g>
+    <g fill="currentColor">
+        <path d="M8 2.2 L9.3 4.8 L6.7 4.8 Z"/>
+        <path d="M14.75 13.9 L11.85 13.73 L13.15 11.47 Z"/>
+        <path d="M1.25 13.9 L2.85 11.47 L4.15 13.73 Z"/>
+    </g></svg>`;
+
 // A satellite: body between two solar panels. Distinct from the star sparkle next to it, which
 // is what it has to be told apart from.
 const ICON_SATELLITE = `<svg viewBox="0 0 20 16" width="19" height="15" aria-hidden="true">
@@ -357,6 +372,9 @@ const COMMON_3D_ICONS = [
  *   shared — the slot is a sharedMenuKey, one control behind every view's copy of the button.
  *   double — slot of a shared ACTION control to run on a DOUBLE click. The single click still
  *            does the ordinary thing; the double is the blunter version of it.
+ *   peek   — keep a copy of this icon on screen while the header is HIDDEN and its control is
+ *            ON. For a MODE that changes what the view does rather than what it draws: with the
+ *            bar away there would otherwise be nothing at all to say you are in it.
  *
  * A control that means something in two views gets an icon in both. For a per-view slot those
  * are two different controllers behind one name, each bar driving its own; for a `shared` slot
@@ -373,6 +391,12 @@ export const VIEW_UIBAR_ICONS = {
     ],
 
     lookView: [
+        // AHEAD of the common run — the one thing that outranks it. Free Look is not an overlay
+        // you switch on to see more, it is who is flying the camera: while it is on, the Location
+        // and Heading sources are suspended and this view answers to the mouse. It is also the
+        // only icon that stays on screen with the header hidden (`peek`), because a mode you are
+        // inside has to be visible from inside it.
+        {slot: "freeLook", icon: ICON_FREE_LOOK, peek: true},
         ...COMMON_3D_ICONS,
         {slot: "simInfo", icon: ICON_READOUT},      // this view's on-screen readout
     ],
@@ -417,6 +441,7 @@ export function populateViewUIBarIcons(view) {
             html: item.icon,
             action: `icon-${item.slot}`,
             value: item.value,
+            peek: item.peek,
             doubleKey: item.double === undefined ? undefined : sharedMenuKey(item.double),
             label: rowLabel(view.id, item.slot),
             tooltip: item.tip === undefined ? undefined : iconTip(item),

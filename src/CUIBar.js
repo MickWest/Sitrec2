@@ -284,7 +284,7 @@ export class CUIBar {
     //
     // Hidden until its source exists, so a sitch with no lines of sight simply has no LOS icon,
     // and it disappears again if that control is hidden or destroyed.
-    addControlIcon(key, {html, action, label, tooltip, value, doubleKey, left = true} = {}) {
+    addControlIcon(key, {html, action, label, tooltip, value, doubleKey, peek = false, left = true} = {}) {
         let twin = null;                       // filled in by the mirror, possibly much later
         let doubleTwin = null;
         let restore;                           // where a snap icon found the control
@@ -314,12 +314,17 @@ export class CUIBar {
         btn.style.height = '18px';
         // Tighter than the text chrome icons on the right, so a row of them packs.
         btn.style.padding = '0 3px';
+        // The peek reads the CONTROL, not the button, and runs the same action: see _addPeek.
+        if (peek) this._addPeek(btn, html, () => twin
+            ? (value === undefined ? !!twin.getValue() : twin.getValue() === value)
+            : false, click);
         this._toggleHost().addMirror(key, {
             // A new source means a different control (a sitch change, a video reloaded): what
             // the last one was set to is not somewhere to send this one back to.
             onMirror: (t) => {
                 restore = undefined;
-                bindControlIcon(btn, twin = t, {value, label, tooltip});
+                bindControlIcon(btn, twin = t, {value, label, tooltip,
+                    onPaint: () => this._syncPeeks(true)});
             },
         });
         if (doubleKey) this._toggleHost().addMirror(doubleKey, {onMirror: (t) => { doubleTwin = t; }});
@@ -386,6 +391,110 @@ export class CUIBar {
         return btn;
     }
 
+    // ── Peek: one icon that stays on screen while the bar is away ──────────────────────────
+    //
+    // The bar hides by going to opacity 0, and a child can never be more opaque than its parent,
+    // so keeping one button visible cannot be done from inside the bar at all. A peek is a second
+    // copy drawn in the HOST (the view's own div), placed at the real button's offset inside the
+    // bar — so it sits exactly where the button is, and simply stops being drawn the moment the
+    // bar fades in over it.
+    //
+    // It is for a MODE, not an overlay. An overlay you can see for yourself: the labels are
+    // either drawn or they are not. A mode changes what the view DOES — Free Look hands the
+    // camera to the mouse — and with the header hidden there would be nothing at all on screen
+    // to say you are in it, or to say how to get out.
+    //
+    // It is a real BUTTON, and pressing it does what the icon it copies does. That is not a
+    // convenience: the header reveals itself on hover, and hover does not exist on a touch
+    // screen — CNodeView's reveal wants a pointermove with no button held, which a tap never
+    // produces. A picture that cannot be pressed would leave a touch user inside a mode with
+    // the advertised way out under their finger, doing nothing (or worse, falling through to
+    // the camera). Being a <button> is also what keeps the press off the camera: the
+    // interaction router already declines to route a press whose target is native UI, and
+    // `button` is in that list (nativeTarget, src/InteractionRouter.js).
+    //
+    // Stacking is not a worry: a peek is only ever on screen while the bar is not, so the two
+    // buttons are never both present.
+    //
+    // `isOn` reads the CONTROL rather than the button it copies, because the button is not
+    // reliable here. Icons repaint from a polled twin, and that poll only reports a CHANGE — so
+    // a value switched on and then off again between two polls leaves the icon painted the way
+    // it last was. That never showed while the bar was hidden (nothing was on screen to be
+    // wrong, and revealing it repaints first). A peek IS on screen, so it has to read the truth.
+    _addPeek(btn, html, isOn, onClick) {
+        const ghost = document.createElement('button');
+        ghost.type = 'button';
+        ghost.className = 'view-uibar-peek';
+        ghost.innerHTML = html;
+        ghost.addEventListener('pointerdown', (e) => e.stopPropagation());
+        ghost.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+        Object.assign(ghost.style, {
+            position: 'absolute', display: 'none',
+            alignItems: 'center', justifyContent: 'center',
+            border: 'none', padding: '0', font: 'inherit',
+            color: 'var(--sitrec-text, #ebebeb)',
+            // The same lit treatment paintIcon gives the button, so the two are the same object
+            // to look at and the bar fading in over it changes nothing.
+            background: 'var(--sitrec-hover, #4f4f4f)',
+            borderRadius: '3px',
+            // …plus what the bar was providing and no longer is: something to read it against,
+            // over a bright sky as readily as a dark one.
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.55)',
+            cursor: 'pointer',
+            // No double-tap-to-zoom delay swallowing the press on a touch screen.
+            touchAction: 'manipulation',
+            // ABOVE the bar, so the press this advertises is the press it receives. A hidden bar
+            // is pointer-transparent but its icons are not (addIcon sets pointerEvents auto on
+            // each one, which overrides the parent), so the real button is still sitting there
+            // invisible and would otherwise take every tap aimed at this. Nothing is covered:
+            // a peek is only on screen while the bar is not.
+            zIndex: '61',
+        });
+        this.host.appendChild(ghost);
+        (this._peeks ??= []).push({btn, ghost, isOn, showing: false});
+        return ghost;
+    }
+
+    hasPeeks() {
+        return !!this._peeks?.length;
+    }
+
+    // Put every peek where its button is, and show it only when the button is one you would
+    // actually see: its control exists, it is ON, and the bar is not up in front of it.
+    //
+    // Called every frame (see _toggleHost), so the steady state must be one boolean compare —
+    // the measuring below happens only when something actually moved or changed.
+    _syncPeeks(reposition = false) {
+        if (!this._peeks) return;
+        for (const peek of this._peeks) {
+            const {btn, ghost} = peek;
+            const show = !this.shown && btn.style.display !== 'none' && peek.isOn();
+            const changed = show !== peek.showing;
+            if (changed) {
+                peek.showing = show;
+                ghost.style.display = show ? 'flex' : 'none';
+                // Borrowed on the way in rather than at build time: bindControlIcon writes them
+                // when the source turns up, which is normally after the peek was made.
+                if (show) {
+                    ghost.title = btn.title;
+                    ghost.setAttribute('aria-label', btn.getAttribute('aria-label') ?? btn.title);
+                    ghost.setAttribute('aria-pressed', 'true');
+                }
+            }
+            if (!show || !(changed || reposition)) continue;
+            // Measured, not derived: offsetLeft/Top would do, but they are rounded to whole
+            // pixels, and a peek half a pixel off its button shifts as the bar fades in over it.
+            // The bar lays out normally while hidden (opacity, not display), so this is the real
+            // place even if it has never been shown.
+            const box = btn.getBoundingClientRect();
+            const host = this.host.getBoundingClientRect();
+            ghost.style.left = (box.left - host.left) + 'px';
+            ghost.style.top = (box.top - host.top) + 'px';
+            ghost.style.width = box.width + 'px';
+            ghost.style.height = box.height + 'px';
+        }
+    }
+
     // A hairline between two groups of things on the bar — the view's MENU and the view's
     // TOGGLES read as different kinds of control, and abutting them makes the first icon look
     // like part of the title.
@@ -411,7 +520,10 @@ export class CUIBar {
             slot.style.display = 'none';
             this.bar.appendChild(slot);
             this._toggleGui = new GUI({container: slot, autoPlace: false, title: ''});
-            if (this.shown) registerGUIRoot(this._toggleGui);
+            // updateListeners IS the per-frame pass over this host's twins, so it is where a
+            // peek gets to re-read its control (see _addPeek on why it cannot trust the icon).
+            andThen(this._toggleGui, 'updateListeners', () => this._syncPeeks());
+            if (this.shown || this.hasPeeks()) registerGUIRoot(this._toggleGui);
         }
         return this._toggleGui;
     }
@@ -493,9 +605,19 @@ export class CUIBar {
             // are only polled while the bar is up, and lil-gui compares against a value cached
             // from before it went away, so the first frame back would otherwise paint stale
             // state.
-            if (shown) { registerGUIRoot(this._toggleGui); refreshToggleIcons(this._toggleGui); }
-            else unregisterGUIRoot(this._toggleGui);
+            //
+            // A PEEK icon is the exception to "only while the bar is up": it is on screen with
+            // the bar hidden, so it has to keep telling the truth. Free Look can be switched off
+            // from the Camera menu, or by the guard that watches those controls
+            // (src/FreeLookGuard.js), and neither goes anywhere near this controller. Polling
+            // costs a getValue() per listened twin per frame — updateListeners only repaints on
+            // an actual change — which is what a live badge is worth.
+            if (shown || this.hasPeeks()) {
+                registerGUIRoot(this._toggleGui);
+                if (shown) refreshToggleIcons(this._toggleGui);
+            } else unregisterGUIRoot(this._toggleGui);
         }
+        this._syncPeeks();
         if (!shown) this.closeMenus();
     }
 
@@ -520,6 +642,8 @@ export class CUIBar {
             this._toggleGui = null;
         }
         this.shown = false;
+        for (const {ghost} of this._peeks ?? []) ghost.remove();
+        this._peeks = null;
         this.bar.remove();
     }
 }
@@ -544,10 +668,12 @@ function paintIcon(btn, on) {
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
 }
 
-function bindControlIcon(btn, twin, {value, label, tooltip} = {}) {
-    const paint = () => paintIcon(btn,
-        value === undefined ? !!twin.getValue() : twin.getValue() === value);
-    const showHide = () => { btn.style.display = twin._hidden ? 'none' : 'flex'; };
+function bindControlIcon(btn, twin, {value, label, tooltip, onPaint} = {}) {
+    const paint = () => {
+        paintIcon(btn, value === undefined ? !!twin.getValue() : twin.getValue() === value);
+        onPaint?.();
+    };
+    const showHide = () => { btn.style.display = twin._hidden ? 'none' : 'flex'; onPaint?.(); };
 
     // A toggle icon is the shorthand for exactly one control, so it borrows that control's
     // explanation rather than inventing a third wording to translate. The NAME comes from the
@@ -563,7 +689,7 @@ function bindControlIcon(btn, twin, {value, label, tooltip} = {}) {
     // the icon has to repaint from.
     andThen(twin, 'updateDisplay', paint);
     andThen(twin, 'show', showHide);
-    andThen(twin, 'destroy', () => { btn.style.display = 'none'; });
+    andThen(twin, 'destroy', () => { btn.style.display = 'none'; onPaint?.(); });
     showHide();
     paint();
 }

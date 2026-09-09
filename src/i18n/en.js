@@ -2271,11 +2271,16 @@ const en = {
             tooltip: "Fly the look camera by hand, exactly like the main view camera.\n" +
                 "Left-drag moves the world, middle-drag orbits the point under the cursor,\n" +
                 "right-drag looks around, the wheel zooms in and out, and WASD walks.\n" +
-                "While this is on, the Location, Heading and FOV sources are suspended.\n" +
+                "While this is on, the Location and Heading sources are suspended, but not\n" +
+                "the field of view - so you can still frame what you have flown to.\n" +
                 "Where you fly to is written into the camera's Location as you go, so\n" +
                 "turning this off locks the camera in at the new position and heading.\n" +
                 "An 'above ground level' camera keeps its AGL height and only moves horizontally.",
         },
+        // Shown over the look view when a hand edit to Camera > Location or Heading takes the
+        // camera back off the mouse (src/FreeLookGuard.js). Sentence case, because it is a
+        // statement about what just happened, not the name of the control.
+        freeLookDisabled: "Free look disabled",
         snapshotCamera: {
             label: "Snapshot Camera",
             tooltip: "Save the current camera position and heading for use with 'Reset Camera'",
