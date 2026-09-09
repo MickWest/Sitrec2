@@ -23,6 +23,18 @@ function run(command, args, options = {}) {
     return result.stdout;
 }
 
+// BuildKit parses bare image IDs in FROM as registry names. Give the exact
+// local image a content-named alias and verify the alias before using it.
+export function buildReference(reference, docker = args => run('docker', args)) {
+    if (!/^sha256:[a-f0-9]{64}$/.test(reference)) return reference;
+    const inspect = value => JSON.parse(docker(['image', 'inspect', value]))[0];
+    if (inspect(reference).Id !== reference) throw new Error('Local base image identity mismatch');
+    const alias = `sitrec-build-base:${reference.slice(7)}`;
+    docker(['image', 'tag', reference, alias]);
+    if (inspect(alias).Id !== reference) throw new Error('Local base alias identity mismatch');
+    return alias;
+}
+
 export function snapshot(destination, extraFiles = [], root = ROOT) {
     const tracked = run('git', ['ls-files', '-z'], {cwd: root}).split('\0').filter(Boolean);
     const names = [...new Set([...tracked, ...extraFiles])].filter(name => !excluded(name)).sort();
@@ -254,15 +266,26 @@ async function main(args) {
             if (!info.Config.Labels?.['org.sitrec.reviewed-runtime']) throw new Error('Previous image is not a frontend pool');
             if (info.Config.Labels['org.sitrec.reviewed-runtime'] !== args.runtime) {
                 if (record.channel !== 'shipped') throw new Error('Previous image uses a different runtime');
-                retained = `FROM ${args.previous} AS retained\n`;
+                retained = `FROM ${buildReference(args.previous)} AS retained\n`;
             } else base = args.previous;
         }
+        const baseLayers = JSON.parse(run('docker', ['image', 'inspect', base]))[0].RootFS.Layers;
+        base = buildReference(base);
         fs.copyFileSync(path.join(source, 'docker/frontend_server.py'), path.join(context, 'frontend_server.py'));
         fs.writeFileSync(path.join(context, 'Dockerfile'), `${retained}FROM ${base}\nUSER root\n${retained ? 'COPY --from=retained /srv/frontend/builds/ /srv/frontend/builds/\n' : ''}COPY frontend/ /srv/frontend/\nCOPY frontend_server.py /usr/local/lib/sitrec/frontend_server.py\nUSER 33:33\nWORKDIR /srv/frontend\nLABEL org.sitrec.reviewed-runtime="${args.runtime}"\nENTRYPOINT ["python3", "/usr/local/lib/sitrec/frontend_server.py"]\nCMD []\nHEALTHCHECK CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3)"\n`);
         const tag = `sitrec-local:${record.id}`;
-        await phase('package', fd => run('docker', ['buildx', 'build', '--load', '--platform', 'linux/amd64', '-t', tag, context], {stdio: ['ignore', fd, fd]}));
+        let builtImage;
+        await phase('package', fd => {
+            run('docker', ['buildx', 'build', '--load', '--platform', 'linux/amd64', '-t', tag, context], {stdio: ['ignore', fd, fd]});
+            builtImage = JSON.parse(run('docker', ['image', 'inspect', tag]))[0];
+            if (baseLayers.some((layer, i) => builtImage.RootFS.Layers[i] !== layer)) {
+                throw new Error('Packaged image does not retain the pinned base layers');
+            }
+        });
         record.image = tag;
-        record.imageId = JSON.parse(run('docker', ['image', 'inspect', tag]))[0].Id;
+        record.packagerHash = hash(fs.readFileSync(fileURLToPath(import.meta.url)));
+        fs.copyFileSync(fileURLToPath(import.meta.url), path.join(work, 'packager.mjs'));
+        record.imageId = builtImage.Id;
         record.runtime = args.runtime;
         record.artifactFiles = files.length;
         record.artifactHashes = Object.fromEntries(files.map(name => [name, hash(fs.readFileSync(path.join(target, name)))]));
