@@ -267,7 +267,7 @@ module.exports = (env = {}) => ({
         new Dotenv({
             path: sharedEnvFile,
         }),
-        new MiniCssExtractPlugin(),
+        new MiniCssExtractPlugin({chunkFilename: '[name].[contenthash:8].css'}),
         new HtmlWebpackPlugin({
             chunks: ['bootstrap'],
             title: buildBranch && buildBranch !== 'main' ? `${buildBranch}: Sitrec` : 'Sitrec',

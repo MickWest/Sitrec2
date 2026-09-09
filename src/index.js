@@ -9,6 +9,7 @@
  */
 import {ColorManagement, Group, REVISION, Scene, WebGLRenderer,} from "three";
 import {setupVideoFormatEffectsMenu} from "./videoFilters/VideoFormatLayer";
+import {disposeRefractionTool, setupRefractionToolMenu} from "./refraction/RefractionLoader";
 import "./js/uPlot/uPlot.css"
 import {makeDraggable} from "./DragResizeUtils";
 import {
@@ -2053,6 +2054,8 @@ async function initializeOnce() {
     // above, and populated once at init rather than per sitch - it is not a node.
     addGUIFolder("videoFormat", "Video Format Effects", "effects");
     setupVideoFormatEffectsMenu();
+    addGUIFolder("raytracedRefraction", "Ray-traced Refraction", "effects");
+    setupRefractionToolMenu();
     addTranslatedGUIMenu("lighting", "menus.lighting.title", {closeFolders: true})
         .tooltip(t("menus.lighting.tooltip"));
     addTranslatedGUIMenu("contents", "menus.contents.title")
@@ -3339,6 +3342,7 @@ function disposeEverything() {
     console.log("");
 
     Globals.disposing = true;
+    disposeRefractionTool();
 
     // cancel any requested animation frames
     clearScheduledAnimation();

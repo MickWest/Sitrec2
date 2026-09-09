@@ -1,0 +1,45 @@
+.refraction-tool { position: fixed; right: 22px; top: 60px; width: min(816px, 94vw); height: min(780px, 84vh); min-width: 340px; min-height: 300px; resize: both; overflow: hidden; display: flex; flex-direction: column; z-index: 1200; background: #f6f8fa; color: #213642; border: 1px solid #ced9df; border-radius: 14px; box-shadow: 0 16px 65px #00152340; font: 13px/1.45 system-ui, sans-serif; }
+.refraction-tool[hidden], .refraction-tool [hidden] { display: none !important; }
+.refraction-tool * { box-sizing: border-box; }
+.refraction-tool button, .refraction-tool input, .refraction-tool select { font: inherit; color: inherit; }
+.refraction-tool button { cursor: pointer; background: white; border: 1px solid #c9d6dd; border-radius: 7px; padding: 6px 10px; }
+.refraction-tool button:hover { border-color: #007d8d; background: #eaf6f7; }
+.refraction-tool :focus-visible { outline: 2px solid #078b9c; outline-offset: 2px; }
+.rf-header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px 10px; background: white; cursor: move; touch-action: none; }
+.rf-eyebrow { font-size: 10px; font-weight: 750; letter-spacing: .15em; color: #078292; }
+.rf-header h2 { margin: 3px 0; font-size: 21px; font-weight: 650; }
+.refraction-tool .rf-close { border: 0; font-size: 25px; padding: 0 9px; color: #69808a; }
+.rf-toolbar { display: flex; gap: 22px; align-items: center; padding: 8px 20px 12px; background: white; }
+.rf-toolbar .rf-field { flex: 1; flex-direction: row; align-items: center; gap: 10px; }
+.rf-toolbar select { flex: 1; }
+.rf-tabs { display: flex; gap: 5px; padding: 0 20px; background: white; border-bottom: 1px solid #d8e1e6; }
+.refraction-tool .rf-tabs button { border: 0; border-radius: 5px 5px 0 0; padding: 10px 16px; background: transparent; }
+.refraction-tool .rf-tabs button[aria-pressed=true] { color: #007384; background: #e9f5f6; box-shadow: inset 0 -3px #098697; font-weight: 650; }
+.rf-body { flex: 1; overflow: auto; padding: 18px 20px; overscroll-behavior: contain; }
+.rf-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 15px; }
+.rf-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px 18px; }
+.rf-field { display: flex; flex-direction: column; gap: 4px; color: #506775; font-size: 12px; }
+.rf-field input, .rf-field select { width: 100%; min-width: 0; border: 1px solid #cbd8df; background: white; padding: 6px 9px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.rf-field input[type=color] { padding: 2px; height: 33px; }
+.rf-check { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.rf-check input { accent-color: #078595; width: 16px; height: 16px; }
+.rf-hint { font-size: 12px; color: #607784; margin: 14px 0; }
+.rf-chart, .rf-laser { margin-top: 16px; background: white; border: 1px solid #d3dfe5; border-radius: 10px; overflow: hidden; }
+.rf-chart-title { display: flex; align-items: center; justify-content: space-between; padding: 10px 13px; border-bottom: 1px solid #e2e9ed; }
+.rf-chart-title button { font-size: 11px; padding: 4px 8px; }
+.rf-profiles { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.rf-profiles .rf-chart { min-width: 0; }
+.rf-curve { display: block; width: 100%; height: 340px; touch-action: none; }
+.rf-axis { padding: 10px 14px; background: #f8fafb; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.rf-axis input { padding: 4px 6px; }
+.rf-side { width: 100%; height: 320px; border: 1px solid #d3dfe5; border-radius: 8px; margin-bottom: 14px; }
+.rf-observer { font-variant-numeric: tabular-nums; color: #516d7b; }
+.rf-laser > .rf-grid { padding: 13px; }
+.rf-add { margin-top: 14px; }
+.rf-footer { padding: 10px 20px 13px; background: white; border-top: 1px solid #d7e2e7; }
+.rf-status { font-size: 11px; color: #047c8a; font-variant-numeric: tabular-nums; }
+.rf-actions { display: flex; gap: 6px; margin-top: 8px; }
+.rf-actions button { font-size: 11px; }
+@media (max-width: 520px) { .refraction-tool { right: 4px; width: calc(100vw - 8px); min-width: 0; } .rf-body { padding: 12px; } .rf-axis { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+
+@media (max-width: 640px) { .rf-profiles { grid-template-columns: minmax(0,1fr); } }
