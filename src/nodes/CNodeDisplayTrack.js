@@ -1,3 +1,4 @@
+import {triangulateTrackCap} from "../rendering/TrackCap";
 //
 import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {dispose, patchMaterialForLinearOutput} from "../threeExt";
@@ -975,9 +976,8 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         }
 
         if (this.showCap) {
-            // create a fan for the top using linePoints[0] as the center
-            for (let i = 1; i < linePoints.length - 1; i++) {
-                addTriangle(linePoints[0], linePoints[i], linePoints[i + 1]);
+            for (const [a, b, c] of triangulateTrackCap(linePoints, V3(mid.x, mid.y, mid.z))) {
+                addTriangle(linePoints[a], linePoints[b], linePoints[c]);
             }
         }
 
@@ -994,7 +994,8 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         geometry.computeBoundingSphere();
 
         // Make a material for the semi-transparent fill
-        const mat = patchMaterialForLinearOutput(new THREE.MeshPhongMaterial({
+        const FillMaterial = this.showCap ? THREE.MeshPhongMaterial : THREE.MeshBasicMaterial;
+        const mat = patchMaterialForLinearOutput(new FillMaterial({
             color: polyColor,
             transparent: true,
             opacity: polyOpacity,  // TODO - make this a parameter
@@ -1002,6 +1003,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             depthFunc: this.depthFunc,
             // don't write to depth buffer
             depthWrite: this.depthWrite,
+            forceSinglePass: !this.showCap,
         }));
 
         this.trackWall = new THREE.Mesh(geometry, mat);

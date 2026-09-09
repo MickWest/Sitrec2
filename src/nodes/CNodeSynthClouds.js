@@ -1,3 +1,5 @@
+import {CloudSort, registerTransparentCamera} from "../rendering/CloudSort";
+import {installSoftDepthMaterial} from "../rendering/SoftDepth";
 import {registerEditorInteraction} from "../EditorInteraction";
 import {getInteractionRouter} from "../InteractionRouter";
 import {CNode3DGroup} from "./CNode3DGroup";
@@ -5,6 +7,7 @@ import {showConfirm} from "../showError";
 import {
     Color,
     DoubleSide,
+    DynamicDrawUsage,
     InstancedBufferAttribute,
     InstancedBufferGeometry,
     Mesh,
@@ -213,16 +216,15 @@ export class CNodeSynthClouds extends CNode3DGroup {
         }
         
         this.cloudCount = cloudIndex;
-        this.combGap = cloudIndex;
-        this.combIndex = 0;
+        this.cloudSort = new CloudSort(this.instanceOffsets, this.instanceSizes, this.cloudCount);
         
         const baseQuad = new PlaneGeometry(1, 1);
         this.cloudGeometry = new InstancedBufferGeometry();
         this.cloudGeometry.index = baseQuad.index;
         this.cloudGeometry.setAttribute('position', baseQuad.getAttribute('position'));
         this.cloudGeometry.setAttribute('uv', baseQuad.getAttribute('uv'));
-        this.cloudGeometry.setAttribute('instanceOffset', new InstancedBufferAttribute(this.instanceOffsets, 3));
-        this.cloudGeometry.setAttribute('instanceSize', new InstancedBufferAttribute(this.instanceSizes, 2));
+        this.cloudGeometry.setAttribute('instanceOffset', new InstancedBufferAttribute(this.instanceOffsets.slice(), 3).setUsage(DynamicDrawUsage));
+        this.cloudGeometry.setAttribute('instanceSize', new InstancedBufferAttribute(this.instanceSizes.slice(), 2).setUsage(DynamicDrawUsage));
         this.cloudGeometry.instanceCount = this.cloudCount;
         
         const baseColor = Math.min(this.brightness, 1.0);
@@ -289,7 +291,8 @@ export class CNodeSynthClouds extends CNode3DGroup {
                 void main() {
                     vec4 texColor = texture2D(map, vUv);
                     float alpha = texColor.a * opacity;
-                    if (alpha < 0.01) discard;
+                    // Avoid a visible low-alpha contour around the soft texture.
+                    if (alpha <= 0.0) discard;
 
                     vec3 globalNormal = normalize(vWorldPosition - earthCenter);
                     float globalIntensity = max(dot(globalNormal, sunDirection), -0.1);
@@ -319,13 +322,16 @@ export class CNodeSynthClouds extends CNode3DGroup {
                         float z = (log2(max(nearPlane, 1.0 + vDepth)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
                         gl_FragDepthEXT = z * 0.5 + 0.5;
                     }
+                    // soft particle alpha
                 }
             `,
             transparent: true,
             depthWrite: false,
             depthTest: true,
             side: DoubleSide,
+            forceSinglePass: true,
         });
+        installSoftDepthMaterial(cloudMaterial, Math.max(1, this.cloudSize * 0.15));
         installTerrestrialRefractionOnShaderMaterial(cloudMaterial);
         
         this.cloudMesh = new Mesh(this.cloudGeometry, cloudMaterial);
@@ -334,61 +340,11 @@ export class CNodeSynthClouds extends CNode3DGroup {
         this.cloudMesh.userData.ignoreContextMenu = true;  // Allow right-clicks to pass through to ground
         this.group.add(this.cloudMesh);
         
-        this.binSort();
-    }
-    
-    binSort() {
-        const lookCameraNode = NodeMan.get("lookCamera", false);
-        if (!lookCameraNode || !this.instanceOffsets || this.cloudCount < 2) return;
-        
-        const camPos = lookCameraNode.camera.position;
-        const groupPos = this.group.position;
-        const offsets = this.instanceOffsets;
-        const sizes = this.instanceSizes;
-        const n = this.cloudCount;
-        
-        const distances = new Float32Array(n);
-        for (let i = 0; i < n; i++) {
-            const i3 = i * 3;
-            const dx = groupPos.x + offsets[i3] - camPos.x;
-            const dy = groupPos.y + offsets[i3 + 1] - camPos.y;
-            const dz = groupPos.z + offsets[i3 + 2] - camPos.z;
-            distances[i] = dx * dx + dy * dy + dz * dz;
-        }
-
-        // Reorder the puffs FARTHEST-first (back-to-front) for correct alpha
-        // blending. We sort an index permutation and gather, which is guaranteed
-        // LOSSLESS — every puff lands in exactly one slot. (The previous hand-rolled
-        // bucket sort dropped a puff per call, leaving a [0,0,0] hole; because binSort
-        // fires on camera movement, that made the cloud non-deterministic across loads
-        // and slowly shed puffs as the camera panned.) Array.prototype.sort is stable,
-        // so equal-distance puffs keep their build order — fully deterministic.
-        const order = new Array(n);
-        for (let i = 0; i < n; i++) order[i] = i;
-        order.sort((a, b) => distances[b] - distances[a]);
-
-        const newOffsets = new Float32Array(n * 3);
-        const newSizes = new Float32Array(n * 2);
-        for (let dest = 0; dest < n; dest++) {
-            const i = order[dest];
-            const i3 = i * 3, d3 = dest * 3, i2 = i * 2, d2 = dest * 2;
-            newOffsets[d3] = offsets[i3];
-            newOffsets[d3 + 1] = offsets[i3 + 1];
-            newOffsets[d3 + 2] = offsets[i3 + 2];
-            newSizes[d2] = sizes[i2];
-            newSizes[d2 + 1] = sizes[i2 + 1];
-        }
-
-        this.instanceOffsets.set(newOffsets);
-        this.instanceSizes.set(newSizes);
-
-        if (this.cloudGeometry) {
-            this.cloudGeometry.getAttribute('instanceOffset').needsUpdate = true;
-            this.cloudGeometry.getAttribute('instanceSize').needsUpdate = true;
-        }
-
-        // Fully sorted now — the per-frame comb sort only needs to maintain it.
-        this.combGap = 1;
+        this.cloudMesh.userData.prepareTransparentCamera = camera => {
+            this.cloudSort.prepare(camera, this.cloudMesh);
+            this.updateCloudLighting(camera);
+        };
+        registerTransparentCamera(this.cloudMesh);
     }
     
     getWindVector() {
@@ -422,7 +378,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         return wind;
     }
     
-    preRender(view) {
+    updateCloudLighting(camera) {
         if (!this.cloudMesh || !this.cloudMesh.material || !this.cloudMesh.material.uniforms) return;
 
         const uniforms = this.cloudMesh.material.uniforms;
@@ -433,13 +389,12 @@ export class CNodeSynthClouds extends CNode3DGroup {
 
         let effectiveReflectionRadius = 0;
         if (this.sunReflection > 0 && Globals.sunLight && this.localUp) {
-            const lookCameraNode = NodeMan.get("lookCamera", false);
-            if (lookCameraNode && lookCameraNode.camera) {
+            if (camera) {
                 const sunDir = uniforms.sunDirection.value;
                 const planeNormal = this.localUp;
                 const sDotN = sunDir.dot(planeNormal);
                 if (sDotN > 0.001) {
-                    const camPos = lookCameraNode.camera.position;
+                    const camPos = new Vector3().setFromMatrixPosition(camera.matrixWorld);
                     const planePoint = this.group.position;
                     const h = camPos.clone().sub(planePoint).dot(planeNormal);
                     const camMirror = camPos.clone().sub(planeNormal.clone().multiplyScalar(2 * h));
@@ -451,7 +406,9 @@ export class CNodeSynthClouds extends CNode3DGroup {
             }
         }
         uniforms.reflectionRadius.value = effectiveReflectionRadius;
+    }
 
+    preRender(view) {
         if (this.basePosition) {
             if (this.windMode === "No Wind") {
                 this.group.position.copy(this.basePosition);
@@ -464,76 +421,6 @@ export class CNodeSynthClouds extends CNode3DGroup {
             }
         }
         
-        for (let i = 0; i < 10; i++) {
-            if (!this.combSortPass(view)) break;
-        }
-    }
-    
-    combSortPass(view) {
-        if (!view || !view.camera || !this.instanceOffsets || this.cloudCount < 2) return false;
-        if (view.id !== "lookView") return false;
-        
-        const camPos = view.camera.position;
-        
-        if (!this.lastSortCamPos) {
-            this.lastSortCamPos = camPos.clone();
-        } else {
-            const dx = camPos.x - this.lastSortCamPos.x;
-            const dy = camPos.y - this.lastSortCamPos.y;
-            const dz = camPos.z - this.lastSortCamPos.z;
-            const distMoved = dx * dx + dy * dy + dz * dz;
-            if (distMoved > 10000) {
-                this.binSort();
-                this.lastSortCamPos.copy(camPos);
-            }
-        }
-        const groupPos = this.group.position;
-        const offsets = this.instanceOffsets;
-        const sizes = this.instanceSizes;
-        const offsetAttr = this.cloudGeometry.getAttribute('instanceOffset');
-        const sizeAttr = this.cloudGeometry.getAttribute('instanceSize');
-        
-        let swapped = false;
-        const gap = this.combGap;
-        
-        for (let i = 0; i + gap < this.cloudCount; i++) {
-            const j = i + gap;
-            const i3 = i * 3;
-            const j3 = j * 3;
-            
-            const ax = groupPos.x + offsets[i3];
-            const ay = groupPos.y + offsets[i3 + 1];
-            const az = groupPos.z + offsets[i3 + 2];
-            
-            const bx = groupPos.x + offsets[j3];
-            const by = groupPos.y + offsets[j3 + 1];
-            const bz = groupPos.z + offsets[j3 + 2];
-            
-            const distA = (ax - camPos.x) ** 2 + (ay - camPos.y) ** 2 + (az - camPos.z) ** 2;
-            const distB = (bx - camPos.x) ** 2 + (by - camPos.y) ** 2 + (bz - camPos.z) ** 2;
-            
-            if (distA < distB) {
-                const i2 = i * 2;
-                const j2 = j * 2;
-                
-                let tmp = offsets[i3]; offsets[i3] = offsets[j3]; offsets[j3] = tmp;
-                tmp = offsets[i3 + 1]; offsets[i3 + 1] = offsets[j3 + 1]; offsets[j3 + 1] = tmp;
-                tmp = offsets[i3 + 2]; offsets[i3 + 2] = offsets[j3 + 2]; offsets[j3 + 2] = tmp;
-                
-                tmp = sizes[i2]; sizes[i2] = sizes[j2]; sizes[j2] = tmp;
-                tmp = sizes[i2 + 1]; sizes[i2 + 1] = sizes[j2 + 1]; sizes[j2 + 1] = tmp;
-                
-                swapped = true;
-            }
-        }
-        
-        this.combGap = Math.max(1, Math.floor(this.combGap / 1.3));
-        
-        if (swapped) {
-            offsetAttr.needsUpdate = true;
-            sizeAttr.needsUpdate = true;
-        }
-        return swapped || this.combGap > 1;
     }
     
     setupEventListeners() {

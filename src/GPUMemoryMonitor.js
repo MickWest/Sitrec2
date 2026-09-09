@@ -18,15 +18,18 @@ class GPUMemoryMonitor {
         this.renderer = renderer;
         this.scene = scene;
         this.enabled = false;
-        this.updateInterval = 100; // Update every 100ms
-        this.lastUpdate = 0;
+        this.updateInterval = 1000; // Diagnostic totals need at most one scene scan per second.
+        this.lastUpdate = -Infinity;
+        this.lastGUIUpdate = -Infinity;
         
         // Storage for metrics
         this.metrics = {
             geometries: 0,
             textures: 0,
             total: 0,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            triangles: {total: 0, rendered: 0},
+            render: {calls: 0, triangles: 0, points: 0, lines: 0}
         };
         
         // History for graphing (keep last 60 samples)
@@ -50,6 +53,7 @@ class GPUMemoryMonitor {
     
     setScene(scene) {
         this.scene = scene;
+        this.lastUpdate = this.lastGUIUpdate = -Infinity;
     }
 
     // Re-attach to a live renderer after a sitch reload. Without this the
@@ -58,6 +62,7 @@ class GPUMemoryMonitor {
     // info.memory falls back to a dead renderer and reads ~0.
     setRenderer(renderer) {
         this.renderer = renderer;
+        this.lastUpdate = this.lastGUIUpdate = -Infinity;
         this.gpuExtension = null;
         this.detectedGPUMemory = 0;
         this.initGPUExtension();
@@ -379,9 +384,9 @@ class GPUMemoryMonitor {
     /**
      * Update memory metrics by manually calculating from renderer properties
      */
-    updateMetrics() {
+    updateMetrics(force = false) {
         const now = Date.now();
-        if (now - this.lastUpdate < this.updateInterval) {
+        if (!force && now - this.lastUpdate < this.updateInterval) {
             return; // Don't update more frequently than interval
         }
         this.lastUpdate = now;
@@ -607,8 +612,8 @@ class GPUMemoryMonitor {
     /**
      * Get memory stats as formatted object
      */
-    getStats() {
-        this.updateMetrics();
+    getStats(force = false) {
+        this.updateMetrics(force);
         return {
             geometries: this.getMemoryString(this.metrics.geometries),
             textures: this.getMemoryString(this.metrics.textures),
@@ -684,7 +689,8 @@ class GPUMemoryMonitor {
             reset: () => this.reset()
         };
 
-        this.guiFolder.add(this.displayControls, 'enabled').name(t("gpuMonitor.enabled")).perm();
+        this.guiFolder.add(this.displayControls, 'enabled').name(t("gpuMonitor.enabled"))
+            .onChange(() => this.updateGUI(true)).perm();
         this.guiFolder.add(this.displayControls, 'total').name(t("gpuMonitor.total")).listen().disable().perm();
         this.guiFolder.add(this.displayControls, 'geometries').name(t("gpuMonitor.geometries")).listen().disable().perm();
         this.guiFolder.add(this.displayControls, 'textures').name(t("gpuMonitor.textures")).listen().disable().perm();
@@ -699,21 +705,34 @@ class GPUMemoryMonitor {
         this.guiFolder.add(this.displayControls, 'reset').name(t("gpuMonitor.reset")).perm();
         
         this.enabled = true;
+        // Refresh immediately when Debug or this folder opens, including while
+        // the scene is paused. Preserve the menu's existing open/close behavior.
+        const previous = this.guiDebugMenu._onOpenClose;
+        const monitor = this;
+        this.guiDebugMenu.onOpenClose(function(changed) {
+            previous?.call(this, changed);
+            monitor.updateGUI(true);
+        });
     }
     
     /**
      * Update GUI display values
      */
-    updateGUI() {
+    updateGUI(force = false) {
         if (!this.displayControls.enabled || !this.guiFolder) {
             return;
         }
 
-        // Don't gate on folder/menu closed — the user expects the displayed
-        // numbers to reflect current state when they open the menu, not the
-        // last value captured while it was open. updateGUI is cheap.
+        const now = Date.now();
+        if (!force && now - this.lastGUIUpdate < this.updateInterval) return;
+        this.lastGUIUpdate = now;
+        // checkVisibility also handles folders detached into floating windows.
+        // Check only at the sampling cadence, not on every rendered frame.
+        if (this.guiFolder._closed || this.guiFolder._hidden
+            || (this.guiFolder.domElement?.checkVisibility
+                && !this.guiFolder.domElement.checkVisibility())) return;
 
-        const stats = this.getStats();
+        const stats = this.getStats(force);
         this.displayControls.total = stats.total;
         this.displayControls.geometries = stats.geometries;
         this.displayControls.textures = stats.textures;

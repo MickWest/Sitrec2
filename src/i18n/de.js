@@ -745,7 +745,7 @@ const de = {
     view3d: {
         northUp: { label: "Blickansicht nach Norden ausgerichtet", tooltip: "Die Blickansicht nach Norden ausrichten statt nach oben.\nFür Satellitenansichten und Ähnliches, mit Blick senkrecht nach unten.\nGilt nicht im PTZ-Modus" },
         atmosphere: { label: "Atmosphäre", tooltip: "Entfernungsabschwächung, die Gelände und 3D-Objekte zur aktuellen Himmelsfarbe hin überblended" },
-        atmoVisibility: { label: "Atmosphärensicht (km)", tooltip: "Entfernung, bei der der atmosphärische Kontrast auf etwa 50 % fällt (kleiner = dickere Atmosphäre)" },
+        atmoVisibility: { label: "Atmosphärensicht (km)", tooltip: "Entfernung, bei der der atmosphärische Kontrast auf etwa 2 % fällt (kleiner = dickere Atmosphäre)" },
         atmoHDR: { label: "Atmosphäre HDR", tooltip: "Physikalisch basierter HDR-Nebel/Tone-Mapping für helle Sonnenreflexionen durch Dunst" },
         atmoExposure: { label: "Atmosphärenbelichtung", tooltip: "HDR-Atmosphäre Tone-Mapping-Belichtungsmultiplikator für Spitzlichter-Rolloff" },
         startXR: { label: "VR/XR starten", tooltip: "WebXR-Sitzung zum Testen starten (funktioniert mit dem Immersive Web Emulator)" },

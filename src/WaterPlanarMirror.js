@@ -543,7 +543,7 @@ export class CWaterPlanarMirror {
             // Now that the sky is drawn, bend the near plane onto the water so
             // nothing underneath it reaches the reflection.
             if (this.node.mirrorClip) this.applyObliqueClip(cam, plane);
-            renderer.render(GlobalScene, cam);
+            view.renderAtmosphereScene(GlobalScene, cam, {reflectionPlane: plane});
         } finally {
             view.fullscreenQuad.material = savedQuadMaterial;
             renderer.shadowMap.autoUpdate = savedShadowAuto;
