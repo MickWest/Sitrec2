@@ -5,6 +5,11 @@ import {ViewMan} from "../CViewManager";
 import {t} from "../i18n";
 import {linkifyToHTML, hasLinks} from "../linkify";
 
+// Height of the strip the POPPED-OUT notes window carries its mode toggle in. The strip is
+// real reserved space, not an overlay: a button floating over the text would both hide the
+// notes under it and swallow clicks meant for a link.
+const POPOUT_TOOLBAR_H = 26;
+
 class CNodeNotes extends CNodeView {
     constructor(v) {
         // Standard consolidated-window chrome: draggable via the base CUIBar header (which the
@@ -33,6 +38,7 @@ class CNodeNotes extends CNodeView {
 
         this.createTextArea();
         this.setupEventListeners();
+        this.addModeIcon();
 
         guiShowHide.add(this, 'visible')
             .listen()
@@ -76,11 +82,22 @@ class CNodeNotes extends CNodeView {
         
         this.textArea.addEventListener('input', () => {
             this.notesText = this.textArea.value;
+            this.updateModeUI();   // the toggle appears as soon as there is a link to show
             setRenderOne();
         });
 
         this.textArea.addEventListener('blur', () => {
-            this.linkifyContent();
+            // Already showing links — nothing to do (and no re-entry from the blur() in
+            // linkifyContent()).
+            if (this.textArea.style.display === 'none') return;
+            // Ignore a blur that is the whole WINDOW losing focus. Switching to another window
+            // to copy a URL is not "finished editing", and coming back to a read-only panel was
+            // half of how the notes appeared to become uneditable after pasting a link.
+            if (!this.textArea.ownerDocument.hasFocus()) return;
+            // Forced: a blur IS the end of the edit, so it must not be second-guessed by
+            // linkifyContent's "don't interrupt typing" check (browsers differ on whether
+            // document.activeElement has moved on yet when the blur handler runs).
+            this.linkifyContent(true);
         });
 
         this.div.appendChild(this.textArea);
@@ -106,6 +123,39 @@ class CNodeNotes extends CNodeView {
             border-radius: 0 0 8px 8px;
         `;
         this.div.appendChild(this.linkOverlay);
+
+        // The mode toggle for a POPPED-OUT notes window. popOut() moves every child of the view
+        // div EXCEPT the header bar into the popup (CNodeView.popOut) and hides the in-page div
+        // behind it, so the header's toggle is missing exactly when the notes are popped out —
+        // and there the textarea fills the whole window, so there is nothing else to click and no
+        // in-window blur to end the edit either. This strip travels with the content and is shown
+        // only while windowed; in-page the header icon does the same job with no extra chrome.
+        this.popoutToolbar = document.createElement('div');
+        this.popoutToolbar.style.cssText = `
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: ${POPOUT_TOOLBAR_H}px;
+        `;
+        this.editButton = document.createElement('button');
+        this.editButton.type = 'button';
+        this.editButton.style.cssText = `
+            position: absolute;
+            top: 3px;
+            right: 8px;
+            padding: 2px 8px;
+            font: 12px sans-serif;
+            color: #ddd;
+            background-color: rgba(60, 60, 60, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 4px;
+            cursor: pointer;
+        `;
+        this.editButton.addEventListener('click', () => this.toggleEditing());
+        this.popoutToolbar.appendChild(this.editButton);
+        this.div.appendChild(this.popoutToolbar);
     }
 
     setupEventListeners() {
@@ -148,6 +198,80 @@ class CNodeNotes extends CNodeView {
     showTextArea() {
         this.textArea.style.display = 'block';
         this.linkOverlay.style.display = 'none';
+        this.updateModeUI();
+    }
+
+    startEditing() {
+        this.showTextArea();
+        this.textArea.focus();
+        this.scrollToEnd();   // caret at the end, ready to add the next link
+    }
+
+    isEditing() {
+        return !!this.textArea && this.textArea.style.display !== 'none';
+    }
+
+    // The guaranteed way back to editing. Clicking a blank part of the read-only overlay works
+    // too, but notes holding a few source URLs have no blank part left: long URLs wrap edge to
+    // edge, the text overflows the panel, and every pixel is an <a> that opens a link instead.
+    // So the toggle lives in the header bar, where it is reachable whatever the notes contain.
+    addModeIcon() {
+        if (!this.uiBar) return;   // a view that opted out of the header
+        // Left group — the right group is standard window chrome (fullscreen/pop-out/pin/close).
+        this.modeIcon = this.uiBar.addIcon('\u270E', () => this.toggleEditing(), '', 'notes-mode', true);
+        this.updateModeUI();
+    }
+
+    // Keeps both mode controls saying the same thing. Each names the ACTION it performs, not
+    // the state it is already in, and neither appears while the notes hold no link at all —
+    // there is nothing to switch to then.
+    updateModeUI() {
+        // CNodeView's constructor ends with applyEarlyMods() -> modDeserialize(), which runs
+        // INSIDE super(v) — before createTextArea() has made any of this. Nothing to update yet.
+        if (!this.textArea) return;
+
+        const editing = this.isEditing();
+        const links = hasLinks(this.notesText);
+        const tip = editing ? 'Show links (make the URLs clickable)' : 'Edit the notes';
+
+        if (this.modeIcon) {
+            this.modeIcon.style.display = links ? '' : 'none';
+            this.modeIcon.innerHTML = editing ? '\u{1F517}' : '\u270E';
+            this.modeIcon.title = tip;
+            this.modeIcon.setAttribute('aria-label', tip);
+        }
+
+        if (!this.popoutToolbar) return;
+        // Only the popped-out window needs its own toggle, and only there does the content give
+        // up a strip for it — so the in-page panel looks exactly as it did.
+        const windowed = !!this.windowed;
+        this.popoutToolbar.style.display = windowed ? 'block' : 'none';
+        const top = windowed ? `${POPOUT_TOOLBAR_H}px` : 'var(--sitrec-header-h, 26px)';
+        this.textArea.style.top = top;
+        this.linkOverlay.style.top = top;
+        this.editButton.style.display = links ? '' : 'none';
+        this.editButton.textContent = editing ? '\u{1F517} Links' : '\u270E Edit';
+        this.editButton.title = tip;
+    }
+
+    // The header bar does not go to the popup, and comes back when it docks, so the toggles
+    // have to be re-sorted on both transitions.
+    popOut() {
+        super.popOut();
+        this.updateModeUI();
+    }
+
+    dockWindow() {
+        super.dockWindow();
+        this.updateModeUI();
+    }
+
+    toggleEditing() {
+        if (this.isEditing()) {
+            this.linkifyContent(true);
+        } else {
+            this.startEditing();
+        }
     }
 
     toggleVisibility() {
@@ -227,7 +351,13 @@ class CNodeNotes extends CNodeView {
         this.dockedMode = false;
     }
 
-    linkifyContent() {
+    // Swap the editable textarea for the read-only overlay of clickable links. `force` is for
+    // the header toggle: every other caller (blur, show, appendAndShow) must leave an edit in
+    // progress alone rather than take the editor away mid-sentence.
+    linkifyContent(force = false) {
+        const typing = this.textArea.ownerDocument.activeElement === this.textArea;
+        if (typing && !force) { this.updateModeUI(); return; }
+
         if (!this.notesText.trim()) {
             this.showTextArea();
             return;
@@ -242,6 +372,11 @@ class CNodeNotes extends CNodeView {
         this.linkOverlay.innerHTML = linkifyToHTML(this.notesText);
         this.textArea.style.display = 'none';
         this.linkOverlay.style.display = 'block';
+        // A hidden textarea that kept the focus would silently swallow typing (on macOS,
+        // clicking a header button does not move focus), so drop it — after the swap, so the
+        // blur handler sees "already showing links" and does nothing.
+        if (typing) this.textArea.blur();
+        this.updateModeUI();
     }
 
     show(visible = true) {
@@ -319,6 +454,7 @@ class CNodeNotes extends CNodeView {
             if (this.textArea) {
                 this.textArea.value = this.notesText;
             }
+            this.updateModeUI();
         }
     }
 
