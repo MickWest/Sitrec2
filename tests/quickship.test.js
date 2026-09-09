@@ -25,26 +25,43 @@ test('local image IDs get a verified BuildKit reference and mismatched aliases f
 });
 
 test('Beta scope permits display changes and refuses runtime, auth, dependency and backend changes', () => {
-    expect(call(`checkScope(['src/CUIBar.js','src/nodes/CNodeDisplayTrack.js','tests/display.test.js','scripts/quickship.mjs','data/custom/SitCustom.js']);`).status).toBe(0);
+    expect(call(`checkScope(['src/CUIBar.js','src/nodes/CNodeDisplayTrack.js','tests/display.test.js','tests_regression/fast-regression/run.mjs','scripts/quickship.mjs','data/custom/SitCustom.js','tools/shf/app.js','tools/shf/manifest.webmanifest']);`).status).toBe(0);
     for (const name of ['sitrecServer/channels.php', 'src/release/bootstrap.js', 'src/SettingsManager.js',
         'src/SitchProvenance.js', 'src/configUtils.js', 'package-lock.json', 'docker/entrypoint.sh',
         'docker/frontend_server.py', 'scripts/quickship.mjs.bak', 'scripts/deploy.mjs', 'webpack.prod.js',
-        'data/custom/SitCustom.js.bak', 'config/config.js']) {
+        'data/custom/SitCustom.js.bak', 'config/config.js', 'src/release/ChannelUI.js',
+        'tools/shf/package.json', 'tools/shf/tools/build-airports.mjs', 'tools/shf/config.php', 'tools/other/app.js']) {
         expect(call(`checkScope(['scripts/quickship.mjs',${JSON.stringify(name)}]);`).status).not.toBe(0);
     }
+});
+
+test('the local-only channel warning exception requires the exact reviewed hosted behavior', () => {
+    const file='src/release/ChannelUI.js';
+    const source=fs.readFileSync(path.resolve(__dirname,'../'+file),'utf8');
+    const baseline=source.replace("import {isLocal} from '../configUtils';\n",'').replace('    if (isLocal) return true;\n','');
+    const hash=require('node:crypto').createHash('sha256').update(baseline).digest('hex');
+    const target=path.join(directory,file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,source);
+    const check=`checkScope([${JSON.stringify(file)}],{source:${JSON.stringify(directory)},baseline:{${JSON.stringify(file)}:${JSON.stringify(hash)}}});`;
+    expect(call(check).status).toBe(0);
+    fs.appendFileSync(target,'\n// additional channel change\n');
+    expect(call(check).status).not.toBe(0);
 });
 
 test('static packaging includes decoders and loose workers but never backend or private configuration', () => {
     const source = path.join(directory, 'dist'); const target = path.join(directory, 'frontend');
     const names = ['index.html','app-entry.json','build-info.json','index.abc.bundle.js',
         'libs/openjpeg/decoder.wasm','src/workers/Decode.js','data/model.glb',
-        'sitrecServer/config.php','private/note.md','config.json','shared.env.js','.env'];
+        'tools/shf/index.html','tools/shf/flareWorker.js','tools/shf/lib/satellite.es.js',
+        'tools/shf/manifest.webmanifest','tools/src/DeviceOrientationCompass.js',
+        'sitrecServer/config.php','private/note.md','config.json','shared.env.js','.env',
+        'tools/shf/config.php','tools/shf/tools/probe.mjs','tools/shf/package.json',
+        'tools/other/app.js','tools/src/unreviewed.js','tools/root.js'];
     for (const name of names) {
         const file=path.join(source,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'fixture');
     }
     const result=call(`console.log(JSON.stringify(copyFrontend(${JSON.stringify(source)},${JSON.stringify(target)})));`);
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).sort()).toEqual(names.slice(0,7).sort());
+    expect(JSON.parse(result.stdout).sort()).toEqual(names.slice(0,12).sort());
 });
 
 test('a frozen source captures explicit new files without private files or configuration values', () => {

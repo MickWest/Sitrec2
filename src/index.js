@@ -2203,7 +2203,7 @@ async function initializeOnce() {
         // standalone SHF predictor app (tools/shf) — a separate PWA, so it's an external
         // link (opens in a new tab) rather than a sitch button.
         if (sitch === "starlink") {
-            _gui.addExternalLink("SHF App", SITREC_SHARE_APP + "tools/shf/").perm()
+            _gui.addExternalLink("SHF App", SITREC_APP + "tools/shf/index.html").perm()
                 .tooltip("Open the standalone Starlink Horizon Flares (SHF) predictor app");
         }
 

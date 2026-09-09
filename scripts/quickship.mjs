@@ -59,12 +59,20 @@ export function deltaFiles(baseline, candidate) {
         .filter(name => baseline[name] !== candidate[name]).sort();
 }
 
-export function checkScope(changed) {
+export function checkScope(changed, {baseline = {}, source} = {}) {
+    // This exact local-development-only warning change leaves hosted channel
+    // behavior byte-for-byte unchanged. All other channel changes stay blocked.
+    const channelUI = 'src/release/ChannelUI.js';
+    const localWarningOnly = changed.includes(channelUI) && source &&
+        hash(fs.readFileSync(path.join(source, channelUI), 'utf8')
+            .replace("import {isLocal} from '../configUtils';\n", '')
+            .replace('    if (isLocal) return true;\n', '')) === baseline[channelUI];
+    const browserTool = name => /^tools\/shf\/(?!tools\/|package(?:-lock)?\.json$)[^\0]+\.(?:js|css|html|md|json|webmanifest|png|jpg|svg)$/.test(name);
     // Operator packaging fixes may accompany a Beta after delta review. This
     // does not permit changes to the shared runtime or deployment configuration.
     const blocked = changed.filter(name =>
-        (!/^(src|tests|docs)\//.test(name) && !['scripts/quickship.mjs', 'data/custom/SitCustom.js'].includes(name)) ||
-        /^(?:src\/(?:release\/|login\.js|SettingsManager\.js|envUtils\.js|configUtils\.js|runtimeConfig\.js|secureFlags\.js|SitrecObjectResolver\.js|SitchProvenance\.js))/.test(name));
+        (!/^(src|tests|tests_regression|docs)\//.test(name) && !browserTool(name) && !['scripts/quickship.mjs', 'data/custom/SitCustom.js'].includes(name)) ||
+        (/^(?:src\/(?:release\/|login\.js|SettingsManager\.js|envUtils\.js|configUtils\.js|runtimeConfig\.js|secureFlags\.js|SitrecObjectResolver\.js|SitchProvenance\.js))/.test(name) && !(name === channelUI && localWarningOnly)));
     if (blocked.length) throw new Error(`Full ship required for: ${blocked.join(', ')}`);
 }
 
@@ -80,9 +88,13 @@ export function copyFrontend(source, destination) {
             if (entry.isSymbolicLink()) throw new Error(`Artifact symlink: ${name}`);
             if (entry.name.startsWith('.')) continue;
             if (entry.isDirectory()) {
-                if (prefix === '' && !['data', 'assets', 'docs', 'libs', 'src'].includes(entry.name)) continue;
+                if (prefix === '' && !['data', 'assets', 'docs', 'libs', 'src', 'tools'].includes(entry.name)) continue;
+                if (prefix === 'tools/' && !['shf', 'src'].includes(entry.name)) continue;
+                if (prefix === 'tools/shf/' && entry.name === 'tools') continue;
                 walk(path.join(directory, entry.name), name + '/');
             } else if (staticExtensions.has(path.extname(name).toLowerCase())) {
+                if (name.startsWith('tools/') && !name.startsWith('tools/shf/') && name !== 'tools/src/DeviceOrientationCompass.js') continue;
+                if (/^tools\/shf\/package(?:-lock)?\.json$/.test(name)) continue;
                 if (prefix === '' && /^(?:config|shared\.env)/.test(entry.name)) continue;
                 const target = path.join(destination, name);
                 fs.mkdirSync(path.dirname(target), {recursive: true});
@@ -134,7 +146,7 @@ async function main(args) {
             baseline = JSON.parse(fs.readFileSync(args.baseline));
             if (baseline.channel !== 'shipped' || baseline.foundationReviewed !== true) throw new Error('Baseline is not a reviewed Shipped foundation');
             changed = deltaFiles(baseline.files, identity.files);
-            checkScope(changed);
+            checkScope(changed, {baseline: baseline.files, source});
             if (!changed.length) throw new Error('No changes beyond Shipped');
         }
         const builtAt = new Date().toISOString();
@@ -205,7 +217,17 @@ async function main(args) {
         const notices = path.join(source, 'ThirdPartyNotices.txt');
         const originalNotices = fs.existsSync(notices) ? fs.readFileSync(notices) : null;
         await phase('build', fd => {
-            try { run('npm', ['run', 'deploy'], {cwd: source, env, stdio: ['ignore', fd, fd]}); }
+            try {
+                // Isolated snapshots share node_modules. Webpack's persistent
+                // copy cache can otherwise reuse loose files from another build.
+                run('npm', ['run', 'deploy', '--', '--no-cache'], {cwd: source, env, stdio: ['ignore', fd, fd]});
+                for (const name of ['tools/shf/app.js', 'tools/shf/location.js',
+                    'tools/shf/manifest.webmanifest']) {
+                    if (hash(fs.readFileSync(path.join(source, 'dist', name))) !== record.files[name]) {
+                        throw new Error(`Copied frontend differs from frozen source: ${name}`);
+                    }
+                }
+            }
             finally {
                 // The notice generator updates this source-side convenience copy
                 // as well as dist/. Keep the frozen input intact; package dist/.

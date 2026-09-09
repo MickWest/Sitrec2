@@ -5,7 +5,7 @@
   "lang": "en",
   "dir": "ltr",
   "id": "./",
-  "start_url": ".",
+  "start_url": "index.html",
   "scope": "./",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],

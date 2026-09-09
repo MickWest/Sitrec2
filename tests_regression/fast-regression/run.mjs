@@ -450,9 +450,9 @@ export function isPending(s) {
 // the remaining tiles as permanently stuck and proceed, rather than hanging to the
 // maxWait timeout. Their stuck state is identical run-to-run, so capture stays
 // deterministic.
-export async function waitForSettle(page, {maxWaitMs = 60000, stableChecks = 20, minWaitMs = 3000, wantFrame = null, hiResStallChecks = 75} = {}) {
+export async function waitForSettle(page, {maxWaitMs = 60000, stableChecks = 20, minWaitMs = 3000, postSettleMs = 1000, wantFrame = null, hiResStallChecks = 75} = {}) {
     const start = Date.now();
-    let stable = 0, lastSig = '', hiResStall = 0, lastHiRes = -1;
+    let stable = 0, lastSig = '', hiResStall = 0, lastHiRes = -1, settledAt = null;
     while (Date.now() - start < maxWaitMs) {
         const s = await page.evaluate(settleStateFn);
         const sig = `${s.activeVisibleTextureTiles}:${s.visibleTileHash}`;
@@ -470,12 +470,18 @@ export async function waitForSettle(page, {maxWaitMs = 60000, stableChecks = 20,
         // the wrong frame.
         const frameReady = (wantFrame == null) || (s.frame === wantFrame);
         if (isPending(s) || !frameReady || !hiResReady) {
-            stable = 0; lastSig = '';
+            stable = 0; lastSig = ''; settledAt = null;
         } else {
-            if (sig === lastSig) stable++; else { stable = 1; lastSig = sig; }
+            if (sig === lastSig) stable++; else { stable = 1; lastSig = sig; settledAt = null; }
             const elapsed = Date.now() - start;
             if (elapsed >= minWaitMs && stable >= stableChecks) {
-                return {timedOut: false, state: s};
+                // Let late per-render updates finish after loading becomes quiet.
+                // Keep checking readiness during this grace period: a new load or
+                // visible-tile change starts the wait again. An idle sleep alone
+                // cannot advance a scene that renders only on demand.
+                settledAt ??= Date.now();
+                if (Date.now() - settledAt >= postSettleMs) return {timedOut: false, state: s};
+                await renderOneFrame(page);
             }
         }
         await page.waitForTimeout(40);
@@ -489,7 +495,16 @@ export async function waitForSettle(page, {maxWaitMs = 60000, stableChecks = 20,
 // rasterization in flight, producing spurious 1-3px diffs.
 export async function renderOneFrame(page) {
     await page.evaluate(() => new Promise((resolve) => {
-        try { if (window.setRenderOne) window.setRenderOne(true); } catch { /* ignore */ }
+        if (typeof window.setRenderOne === 'function') {
+            window.setRenderOne(true);
+        } else if (window.par && typeof window.__sitrecWakeRenderLoop === 'function') {
+            // Production exposes the loop wake hook, not the module-local
+            // setRenderOne function. Request the frame and wake the sleeping loop.
+            window.par.renderOne = true;
+            window.__sitrecWakeRenderLoop();
+        } else {
+            throw new Error('Regression capture cannot request a render frame');
+        }
         requestAnimationFrame(() => requestAnimationFrame(() => {
             try {
                 const vm = window.ViewMan;

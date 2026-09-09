@@ -431,7 +431,7 @@ async function getTLEText(fileInput, log, epochDate, inRange) {
 async function fetchCurrentTLE() {
   // Strip from "/tools/" onward case-INSENSITIVELY (the tool may be served at /tools/SHF/ on a
   // case-insensitive filesystem), matching sitrecBaseURL(), so the proxy base path is always right.
-  const basePath = window.location.pathname.replace(/\/tools\/.*$/i, "");
+  const basePath = new URL(sitrecBaseURL()).pathname.replace(/\/+$/, "");
   const sources = [basePath + "/sitrecServer/proxy.php?request=CURRENT_STARLINK", CELESTRAK];
   let lastErr;
   for (const url of sources) {
@@ -1182,7 +1182,8 @@ function startReplay(o) {
 // matching only lowercase "shf" left the SHF tool's OWN URL here — which the installed
 // SHF PWA then captured, opening the tool again instead of the Sitrec desktop site.
 function sitrecBaseURL() {
-  const base = window.location.pathname.replace(/\/tools\/.*$/i, "").replace(/\/+$/, "");
+  const base = window.location.pathname.replace(/\/tools\/.*$/i, "")
+    .replace(/\/builds\/[a-z0-9-]+$/i, "").replace(/\/+$/, "");
   return window.location.origin + base + "/";
 }
 
@@ -1216,6 +1217,7 @@ function openInSitrec(req, flares, origin, dest, peakMs) {
   }
 
   const q = new URLSearchParams();
+  if (/\/builds\/beta-[a-z0-9-]+\/tools\//i.test(window.location.pathname)) q.set("channel", "beta");
   q.set("fromapp", "1");
   q.set("mode", dest ? "flight" : "fixed");
   q.set("lat", origin.lat.toFixed(5));

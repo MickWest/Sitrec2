@@ -96,6 +96,17 @@ smoke test and backup restore checks still apply.
 Compatible frontend defaults in `data/custom/SitCustom.js` are also eligible for
 Beta. Review saved-scene compatibility alongside the consuming frontend code.
 
+Isolated quickship builds disable webpack's persistent cache and verify copied
+SHF code against the frozen source before packaging.
+
+The standalone SHF browser app is packaged with each new frontend. Its menu link
+uses that build's assets, while TLE requests and Open in Sitrec use the common
+application entry. Beta handoffs retain a one-load Beta selection. Other tools,
+tool build scripts and tool dependency changes are outside this quickship scope.
+The existing local-development-only channel-warning exemption is accepted only
+when removing that import and early return exactly reproduces reviewed Shipped;
+other channel machinery changes still require full ship.
+
 Keep the current Shipped, current Beta and rollback artifacts reachable, including
 workers requested by older open tabs. Retain recovery images and source identities
 in verified backups before pruning. An image/channel rollback changes code only;
