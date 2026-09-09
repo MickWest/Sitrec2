@@ -1848,13 +1848,9 @@ export const setupMethods = {
                         "Multiplier on satellite brightness while NVG is on (an intensifier shows satellites the eye cannot)"),
                 });
 
-                // Diffraction glare. It takes no sliders here: everything it needs lives on
-                // the CAMERA (Camera > Camera Tweaks > Diffraction Glare), because the PSF
-                // describes the optics rather than the view. Last in the chain so the spikes
-                // are drawn on the finished sensor image, which is where a real optic puts
-                // them - the diffraction happens at the aperture, ahead of everything the
-                // earlier passes are simulating, but those passes model the SENSOR, and the
-                // spikes reach the sensor. It self-skips while no PSF is imported.
+                // The camera owns the PSF controls. New color pipelines run glare
+                // with the optical passes before sensor clipping; saved scenes can
+                // retain this historical insertion order. Skips without a PSF.
                 insertSensorEffect("DiffractionGlare", "Custom_DiffractionGlare", "NightVision", {});
             }
         }

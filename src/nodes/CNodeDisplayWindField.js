@@ -202,7 +202,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             uMaxSpeed:  {value: this.maxWindSpeed},
         });
         this.material.vertexShader = this.material.vertexShader.replace(
-            "void main() {", VERT_DECLARATIONS + "\nvoid main() {\n" + VERT_BODY);
+            "void main() {", VERT_DECLARATIONS + "\nvoid main() {").replace(
+            "// scene line attributes", VERT_BODY);
         this.material.fragmentShader = this.material.fragmentShader.replace(
             "void main() {", FRAG_DECLARATIONS + "\nvoid main() {").replace(
             "#include <color_fragment>", "#include <color_fragment>\n" + FRAG_BODY);
@@ -2588,13 +2589,13 @@ const VERT_DECLARATIONS = /* glsl */ `
 `;
 
 const VERT_BODY = /* glsl */ `
-    vec4 wind = position.y < 0.5 ? instanceWindStart : instanceWindEnd;
+    vec4 wind = mix(instanceWindStart, instanceWindEnd, lineVertexFraction);
     vProgress = wind.x;
     vSpeed = wind.y;
     vCoverage = wind.z;
     vId = instanceWindStart.w;
     vLod = instanceWindEnd.w;
-    vec3 endpoint = position.y < 0.5 ? instanceStart : instanceEnd;
+    vec3 endpoint = mix(instanceStart, instanceEnd, lineVertexFraction);
     vCamDist = length((modelViewMatrix * vec4(endpoint, 1.0)).xyz);
     vec3 windWorldPos = (modelMatrix * vec4(endpoint, 1.0)).xyz;
     vBackFace = dot(normalize(windWorldPos), normalize(windWorldPos - cameraPosition));

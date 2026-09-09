@@ -480,6 +480,8 @@ export class CWaterPlanarMirror {
         const savedMirrorGate = sharedUniforms.waterMirror.value;
         const savedOceanGate = sharedUniforms.waterOcean.value;
         const savedReflectionGate = sharedUniforms.waterReflection.value;
+        const savedGeoGate = sharedUniforms.waterGeoActive.value;
+        const savedTileCapture = sharedUniforms.waterTileCapture.value;
         sharedUniforms.waterMirror.value = 0.0;
         sharedUniforms.waterOcean.value = 0.0;
         sharedUniforms.waterReflection.value = 0.0;
@@ -542,8 +544,17 @@ export class CWaterPlanarMirror {
             // --- the world ---
             // Now that the sky is drawn, bend the near plane onto the water so
             // nothing underneath it reaches the reflection.
-            if (this.node.mirrorClip) this.applyObliqueClip(cam, plane);
-            renderer.render(GlobalScene, cam);
+            if (this.node.mirrorClip) {
+                this.applyObliqueClip(cam, plane);
+                // Photogrammetric water is not flat: tile edges can protrude
+                // above the clip plane and reflect as dark lines. Remove only
+                // the mapped water within its height band, without raising the
+                // clip plane through the shoreline and its real reflections.
+                sharedUniforms.waterGeoActive.value = 0.0;
+                this.node.applyTileWater(plane);
+                sharedUniforms.waterTileCapture.value = sharedUniforms.waterGeoActive.value;
+            }
+            view.renderAtmosphereScene(GlobalScene, cam, {reflectionPlane: plane});
         } finally {
             view.fullscreenQuad.material = savedQuadMaterial;
             renderer.shadowMap.autoUpdate = savedShadowAuto;
@@ -552,6 +563,8 @@ export class CWaterPlanarMirror {
             sharedUniforms.waterMirror.value = savedMirrorGate;
             sharedUniforms.waterOcean.value = savedOceanGate;
             sharedUniforms.waterReflection.value = savedReflectionGate;
+            sharedUniforms.waterGeoActive.value = savedGeoGate;
+            sharedUniforms.waterTileCapture.value = savedTileCapture;
         }
 
         return target.texture;

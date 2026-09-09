@@ -69,7 +69,9 @@ and lazy-chunk URLs remain within their immutable build directory.
 `quickship.json` inside an isolated work directory. Its commands are:
 
 - `prepare`: select a numeric version/channel and explicitly include new files.
-  Beta requires the reviewed Shipped baseline and refuses infrastructure changes.
+  Beta requires the reviewed Shipped baseline. Reviewed changes to the local
+  quickship packaging tool are eligible; runtime, backend, authentication,
+  dependency and deployment configuration changes require the full release process.
 - `units`: run the unit suite against that source snapshot.
 - `build`: build production output once with its final identity, generate notices
   and check the resulting browser bundle for secrets.
@@ -85,6 +87,14 @@ Host transfer, candidate browser smoke, atomic promotion and verified backup fol
 packaging. Each deployment adapter must verify all required results and artifact
 identities before activation. These commands never create commits, release tags or
 GitHub pushes. A locally built beta does not have a GitHub build attestation.
+
+When the quickship tool changes, review its effect on the resulting artifact and
+exercise the changed packaging behavior. Retain the exact packager with the build
+record. The pinned runtime, inherited image layers, container isolation, candidate
+smoke test and backup restore checks still apply.
+
+Compatible frontend defaults in `data/custom/SitCustom.js` are also eligible for
+Beta. Review saved-scene compatibility alongside the consuming frontend code.
 
 Keep the current Shipped, current Beta and rollback artifacts reachable, including
 workers requested by older open tabs. Retain recovery images and source identities

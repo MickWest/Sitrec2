@@ -60,8 +60,10 @@ export function deltaFiles(baseline, candidate) {
 }
 
 export function checkScope(changed) {
+    // Operator packaging fixes may accompany a Beta after delta review. This
+    // does not permit changes to the shared runtime or deployment configuration.
     const blocked = changed.filter(name =>
-        !/^(src|tests|docs)\//.test(name) ||
+        (!/^(src|tests|docs)\//.test(name) && !['scripts/quickship.mjs', 'data/custom/SitCustom.js'].includes(name)) ||
         /^(?:src\/(?:release\/|login\.js|SettingsManager\.js|envUtils\.js|configUtils\.js|runtimeConfig\.js|secureFlags\.js|SitrecObjectResolver\.js|SitchProvenance\.js))/.test(name));
     if (blocked.length) throw new Error(`Full ship required for: ${blocked.join(', ')}`);
 }

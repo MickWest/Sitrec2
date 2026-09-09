@@ -127,8 +127,10 @@ class CViewManager extends CManager {
         // browser window, so it drops out of the layout and its div hides.
         let effective = view.visible && !view.windowed;
 
-        // Overlay children inherit parent visibility (unless separateVisibility)
-        if (view.overlayView && !view.separateVisibility) {
+        // An overlay shares its parent's div. Its own visibility toggle can
+        // hide its canvas independently, but cannot show a hidden parent div.
+        // Treating that canvas as visible also caused repeated zero-size resizes.
+        if (view.overlayView) {
             effective = effective && this._computeEV(view.overlayView);
         }
 

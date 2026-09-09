@@ -147,6 +147,21 @@ select {
 input[type="date"], input[type="time"] {
   color-scheme: dark;
 }
+/* The browser renders <input type="time"> in its OWN locale's hour cycle, which the page
+   cannot read or override (the `lang` attribute has no effect in Chromium). So the same
+   field reads "5:02 PM" on a 12-hour browser and "17:02" on a 24-hour one — and Edge on
+   Windows has been seen showing a 24-hour field over a 12-hour spinner whose AM/PM column
+   is untranslated. This line is the app's own unambiguous echo of the entered value, in
+   BOTH cycles, so whichever half the widget is missing is still on screen. min-height
+   keeps the row from jumping when the field is cleared. */
+.time-echo {
+  min-height: 1.05rem;
+  font-size: 0.78rem;
+  line-height: 1.05rem;
+  color: var(--muted);          /* --muted, not --faint: this line resolves an ambiguity */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.01em;
+}
 
 /* "Time" label and its zone-toggle button sit on one line above the input, so the
    button is a short chip beside the label rather than a tall box beside the field. */

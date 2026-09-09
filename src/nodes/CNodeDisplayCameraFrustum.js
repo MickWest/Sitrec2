@@ -1,8 +1,8 @@
 import {radians, tan, unitsToMeters} from "../utils";
-import {LineGeometry} from "../SceneLineGeometry";
+import {LineGeometry, updateLineSegmentPositions} from "../SceneLineGeometry";
 import {Line2} from "three/addons/lines/Line2.js";
 import {CNode3DGroup} from "./CNode3DGroup";
-import {DebugArrow, dispose, removeDebugArrow} from "../threeExt";
+import {DebugArrow, removeDebugArrow} from "../threeExt";
 import {Globals, guiMenus, guiShowHide, NodeMan, setRenderOne, Units} from "../Globals";
 import {disposeMatLine, makeMatLine} from "../MatLines";
 import {LineSegmentsGeometry} from "three/addons/lines/LineSegmentsGeometry.js";
@@ -360,9 +360,6 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         }
 
 
-        this.group.remove(this.line)
-        dispose(this.FrustumGeometry)
-
         const fov = this.camera.renderedFOV || this.camera.fov;
         var h = this.radius * tan(radians(fov/2))
         assert(!isNaN(h), "h is NaN, fov="+fov+" radius="+this.radius+" aspect="+this.camera.aspect+" units="+this.units+" step="+this.step);
@@ -378,6 +375,15 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
                 effectiveAspect = this.videoAspect;
             }
         }
+        const shape = [fov, effectiveAspect, this.radius, this.step, this.units, this.showFrustum];
+        if (!this.showQuad && !this.showVideoOnGround && this._lastFrustumShape
+            && shape.every((value, i) => value === this._lastFrustumShape[i])) {
+            if (this.line) this.line.material = this.matLine;
+            return;
+        }
+        // Ground footprints still recompute as streamed terrain arrives. The
+        // ordinary camera-local frustum changes only with its shape, not pose.
+        this._lastFrustumShape = this.showQuad || this.showVideoOnGround ? null : shape;
         var w = h * effectiveAspect;
         var d = (this.radius - 2)
 //        console.log("REBUILDING FRUSTUM h="+h+" w="+w+" d="+d);
@@ -524,17 +530,21 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         }
 
         if (this.showFrustum) {
-            this.FrustumGeometry = new LineSegmentsGeometry();
-            this.FrustumGeometry.setPositions(line_points);
-            this.line = new Line2(this.FrustumGeometry, this.matLine);
-            this.line.computeLineDistances();
-            this.line.scale.setScalar(1);
-            this.group.add(this.line)
-            // Flat Earth rendering: this Line2 is new on every update, so it
-            // would be frustum-culled at its globe-space bounds until the
-            // scenario's periodic sweep happened to catch it (seen as the
-            // frustum flickering in for single frames). Prepare it now.
-            Globals.flatEarthPrepareObject?.(this.line);
+            this.FrustumGeometry ??= new LineSegmentsGeometry();
+            const changed = updateLineSegmentPositions(this.FrustumGeometry, line_points);
+            if (!this.line) {
+                this.line = new Line2(this.FrustumGeometry, this.matLine);
+                // Initializing a freshly-created helper must not request the
+                // NEXT frame from inside the current frame's node update.
+                this.line.layers.mask = this.group.layers.mask;
+                this.group.add(this.line);
+                Globals.flatEarthPrepareObject?.(this.line);
+            }
+            this.line.material = this.matLine;
+            this.line.visible = true;
+            if (changed) this.line.computeLineDistances();
+        } else if (this.line) {
+            this.line.visible = false;
         }
         this.propagateLayerMask();
         this.lastFOV = this.camera.fov;
@@ -669,5 +679,4 @@ function sphereCollideCameraRelative(sphere, camera, localPos) {
     return null;
 
 }
-
 

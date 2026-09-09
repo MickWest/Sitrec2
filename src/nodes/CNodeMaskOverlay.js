@@ -163,9 +163,11 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
     
     loadMask() {
         if (this.maskData) {
+            const maskData = this.maskData;
             const img = new Image();
             img.onload = () => {
-                if (this.maskCanvas) {
+                // Loading can finish after a reset, resize or another mask restore.
+                if (this.maskCanvas && this.maskCtx && this.maskData === maskData) {
                     // SCALED to the canvas, not drawn at the image's own size. The saved mask is
                     // encoded at a capped width (see encodeMaskForSave), so it is usually smaller
                     // than the video it belongs to - drawing it 1:1 puts a shrunken copy in the
@@ -176,7 +178,7 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
                     this.updateMaskImageData();
                 }
             };
-            img.src = this.maskData;
+            img.src = maskData;
         }
     }
 
@@ -272,12 +274,7 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
             this.maskCtx.drawImage(tempCanvas, 0, 0, width, height);
             this.updateMaskImageData();
         } else if (this.maskData) {
-            const img = new Image();
-            img.onload = () => {
-                this.maskCtx.drawImage(img, 0, 0, width, height);
-                this.updateMaskImageData();
-            };
-            img.src = this.maskData;
+            this.loadMask();
         }
     }
     

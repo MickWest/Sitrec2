@@ -6,7 +6,7 @@ import {Line2} from "three/addons/lines/Line2.js";
 import {makeMatLine} from "../MatLines";
 import {perpendicularVector, V3} from "../threeUtils";
 import {Globals, guiShowHide, setRenderOne} from "../Globals";
-import {BufferAttribute, BufferGeometry, Mesh, MeshBasicMaterial} from "three";
+import {BufferAttribute, BufferGeometry, DoubleSide, Mesh, MeshBasicMaterial} from "three";
 import {t} from "../i18n";
 
 /**
@@ -51,6 +51,8 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
         this.penumbraConeMesh = null;
         this.penumbraConeGeometry = null;
         
+        this.showThroughTerrain = v.showThroughTerrain ?? false;
+
         // Materials
         this.umbraMaterial = makeMatLine(this.umbraColor, 2); // Light blue
         this.penumbraMaterial = makeMatLine(this.penumbraColor, 2); // Darker blue
@@ -59,18 +61,18 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
             wireframe: false,
             transparent: true,
             opacity: 0.2,
-            depthTest: false,
+            depthTest: !this.showThroughTerrain,
             depthWrite: false,
-            side: 0 // THREE.FrontSide
+            side: DoubleSide,
         });
         this.penumbraConeMaterial = new MeshBasicMaterial({
             color: this.penumbraColor,
             wireframe: false,
             transparent: true,
             opacity: 0.2,
-            depthTest: false,
+            depthTest: !this.showThroughTerrain,
             depthWrite: false,
-            side: 0 // THREE.FrontSide
+            side: DoubleSide,
         });
 
 
@@ -89,14 +91,38 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
             .name(t("misc.earthShadowAltitude.label"))
             .tooltip(t("misc.earthShadowAltitude.tooltip"));
 
-        this.addSimpleSerial("altitude")
+        this.gui.add(this, "showThroughTerrain").name("Shadow Through Terrain").listen()
+            .tooltip("Show the shadow diagram through Earth and terrain")
+            .onChange(() => { this.applyDepthPolicy(); setRenderOne(true); });
+        this.addSimpleSerial("altitude");
+        this.addSimpleSerial("showThroughTerrain");
+        this.applyDepthPolicy();
 
         this.rebuild();
     }
 
     dispose() {
         this.removeCircles();
+        for (const material of [this.umbraMaterial, this.penumbraMaterial, this.umbraConeMaterial, this.penumbraConeMaterial]) material.dispose();
         super.dispose();
+    }
+
+    applyDepthPolicy() {
+        for (const material of [this.umbraMaterial, this.penumbraMaterial, this.umbraConeMaterial, this.penumbraConeMaterial]) {
+            material.depthTest = !this.showThroughTerrain;
+            material.userData.atmosphere = false;
+        }
+    }
+
+    modSerialize() {
+        return {...super.modSerialize(), shadowAppearanceVersion: 1};
+    }
+
+    modDeserialize(value) {
+        super.modDeserialize(value);
+        // Existing saved diagrams intentionally showed the far side of Earth.
+        if (!value.shadowAppearanceVersion && value.showThroughTerrain === undefined) this.showThroughTerrain = true;
+        this.applyDepthPolicy();
     }
 
     removeCircles() {
@@ -258,6 +284,11 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
     }
 
     rebuild() {
+        const signature = [this.visible, this.altitude, this.fromSun.x, this.fromSun.y, this.fromSun.z,
+            Globals.equatorRadius, Globals.sunPos?.length()];
+        if (this._geometrySignature?.length === signature.length
+            && signature.every((value, index) => value === this._geometrySignature[index])) return;
+        this._geometrySignature = signature;
         this.removeCircles();
         if (!this.visible) {
             return;

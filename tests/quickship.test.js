@@ -25,10 +25,12 @@ test('local image IDs get a verified BuildKit reference and mismatched aliases f
 });
 
 test('Beta scope permits display changes and refuses runtime, auth, dependency and backend changes', () => {
-    expect(call(`checkScope(['src/CUIBar.js','src/nodes/CNodeDisplayTrack.js','tests/display.test.js']);`).status).toBe(0);
+    expect(call(`checkScope(['src/CUIBar.js','src/nodes/CNodeDisplayTrack.js','tests/display.test.js','scripts/quickship.mjs','data/custom/SitCustom.js']);`).status).toBe(0);
     for (const name of ['sitrecServer/channels.php', 'src/release/bootstrap.js', 'src/SettingsManager.js',
-        'src/SitchProvenance.js', 'src/configUtils.js', 'package-lock.json', 'docker/entrypoint.sh']) {
-        expect(call(`checkScope([${JSON.stringify(name)}]);`).status).not.toBe(0);
+        'src/SitchProvenance.js', 'src/configUtils.js', 'package-lock.json', 'docker/entrypoint.sh',
+        'docker/frontend_server.py', 'scripts/quickship.mjs.bak', 'scripts/deploy.mjs', 'webpack.prod.js',
+        'data/custom/SitCustom.js.bak', 'config/config.js']) {
+        expect(call(`checkScope(['scripts/quickship.mjs',${JSON.stringify(name)}]);`).status).not.toBe(0);
     }
 });
 

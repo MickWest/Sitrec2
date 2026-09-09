@@ -16,7 +16,7 @@
 // builds everything stays cached. See VERSION below, reused for the Worker URL.
 const VERSION = new URL(import.meta.url).search; // e.g. "?v=1716998400000" (or "")
 const [
-  { resolveLocation, searchAirports, loadAirports, reverseGeocode },
+  { resolveLocation, searchAirports, loadAirports, reverseGeocode, ensureTz },
   { compass16, greatCircleDistanceKm },
   { equatorialToAltAz, planetEquatorial, moonEquatorial, sunEquatorial },
   { BRIGHT_STARS },
@@ -40,7 +40,7 @@ const els = {
   origin: $("origin"), dest: $("dest"),
   originSug: $("origin-suggestions"), destSug: $("dest-suggestions"),
   originLocate: $("origin-locate"),
-  date: $("date"), time: $("time"), tzbtn: $("tzbtn"),
+  date: $("date"), time: $("time"), tzbtn: $("tzbtn"), timeEcho: $("time-echo"),
   duration: $("duration"), alt: $("alt"),
   tlefile: $("tlefile"), fetchtle: $("fetchtle"), tlestatus: $("tlestatus"),
   status: $("status"), results: $("results"),
@@ -234,13 +234,15 @@ async function resolveField(input) {
   if (input._geoOrigin) return input._geoOrigin;
   if (input._resolved) {
     const r = input._resolved;
-    return {
+    // 593 airport records carry no zone; ensureTz infers one from the nearest that does,
+    // rather than letting it fall through to the browser's.
+    return await ensureTz({
       lat: r.lat, lon: r.lon,
       altKm: (r.alt || 0) / 1000,
       name: r.name || (r.iata || r.icao || q),
       short: (r.iata || r.icao || "") + (r.city ? ", " + r.city : ""),
       tz: r.tz || "", source: "airport",
-    };
+    }, r.country);
   }
   return await resolveLocation(q);
 }
@@ -298,9 +300,10 @@ async function locateOrigin() {
     // A geolocated point carries no IANA zone, so times fall back to the browser's own —
     // which for wherever the user is standing is the right one. Writing .value from code
     // fires no "input" event, so clear the location-zone state by hand (the UTC/local
-    // toggle itself is the user's choice and is left alone).
-    formTz = "";
-    updateTzButton();
+    // toggle itself is the user's choice and is left alone). Via setFormTz so the
+    // "inferred from…" note goes with it — a previous search's note left standing here
+    // would caption the browser's own zone as an inference.
+    setFormTz("", "");
   } catch (e) {
     formError(e && e.message ? e.message : "Couldn't get your location.");
   } finally {
@@ -464,7 +467,7 @@ function savePendingRealSearch() {
       date: els.date.value, time: els.time.value,
       origin: els.origin.value, dest: els.dest.value,
       duration: els.duration.value, alt: els.alt.value,
-      tzMode, formTz,
+      tzMode, formTz, formTzNote,
     }));
   } catch (_) { /* private mode / quota — reload will still load real data, just not auto-run */ }
 }
@@ -491,8 +494,7 @@ function restorePendingRealSearch() {
   els.duration.value = s.duration || "";
   els.alt.value = s.alt || "";
   tzMode = s.tzMode === "utc" ? "utc" : "local";
-  formTz = s.formTz || "";
-  updateTzButton();
+  setFormTz(s.formTz, s.formTzNote);
   // Re-run with the freshly loaded real data (requestSubmit fires the submit handler).
   if (els.form.requestSubmit) els.form.requestSubmit();
   else els.form.dispatchEvent(new Event("submit", { cancelable: true }));
@@ -537,6 +539,14 @@ function parseDateTime() {
 // The little button after the Time field shows the active zone and toggles it.
 let tzMode = "local";          // "local" | "utc"
 let formTz = "";               // origin location's IANA tz when known ("" = browser local)
+let formTzNote = "";           // how we got it, when it was inferred rather than known
+
+// Set the pair together — a stale note beside a fresh zone would be worse than none.
+function setFormTz(tz, note) {
+  formTz = tz || "";
+  formTzNote = formTz ? (note || "") : "";
+  updateTzButton();
+}
 
 // IANA zone the entered time is read in, given the current mode/location.
 function formInterpTz() { return tzMode === "utc" ? "UTC" : (formTz || ""); }
@@ -548,13 +558,37 @@ function enteredMs() {
   return dt ? wallClockToUTCms(dt.y, dt.mo, dt.d, dt.h, dt.mi, formInterpTz()) : Date.now();
 }
 
+// Both hour cycles for a wire-format "HH:MM" (an <input type="time"> .value is ALWAYS
+// 24-hour regardless of how the widget draws it) — e.g. "17:02" -> "17:02 · 5:02 pm".
+// Arithmetic, not Intl, so the echo is identical on every browser and locale: an echo that
+// inherited the browser's hour cycle would be blank exactly where the widget already is.
+function bothHourCycles(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec((hhmm || "").trim());
+  if (!m) return "";
+  const h = +m[1], mm = m[2];
+  if (h > 23 || +mm > 59) return "";
+  return `${String(h).padStart(2, "0")}:${mm} · ${h % 12 || 12}:${mm} ${h < 12 ? "am" : "pm"}`;
+}
+
+// Restate the entered time under the field. Rides the same refresh funnel as the zone chip,
+// since both describe what the Time field currently means.
+function updateTimeEcho() {
+  if (els.timeEcho) els.timeEcho.textContent = bothHourCycles(els.time.value);
+}
+
 function updateTzButton() {
+  updateTimeEcho();
   if (!els.tzbtn) return;
   const label = tzMode === "utc" ? "UTC" : zoneAbbrev(formTz, enteredMs());
+  // Say so when the zone was INFERRED from a nearby airport rather than read off the
+  // location: it is right ~98% of the time, and the 2% sit on zone boundaries, so a user
+  // near one should be able to see that it is a guess and switch to UTC.
+  const note = (tzMode !== "utc" && formTzNote) ? ` — inferred from the ${formTzNote}` : "";
   els.tzbtn.textContent = label;
   els.tzbtn.classList.toggle("utc", tzMode === "utc");
+  els.tzbtn.title = `Time zone: ${label}${note}. Tap to switch between local time and UTC.`;
   els.tzbtn.setAttribute("aria-label",
-    `Time zone: ${label}. Tap to switch to ${tzMode === "utc" ? "local time" : "UTC"}.`);
+    `Time zone: ${label}${note}. Tap to switch to ${tzMode === "utc" ? "local time" : "UTC"}.`);
 }
 
 // Write a UTC instant into the Date/Time fields as the wall-clock for zone `tz`
@@ -1707,7 +1741,7 @@ async function onSubmit(e) {
     // Interpret the entered wall-clock in the chosen zone (UTC if toggled, else the
     // location's zone when known, else browser local); sync the button for a later Edit.
     const interpTz = tzMode === "utc" ? "UTC" : (origin.tz || "");
-    if (tzMode !== "utc") { formTz = origin.tz || ""; updateTzButton(); }
+    if (tzMode !== "utc") setFormTz(origin.tz, origin.tzSource);
 
     // The real current TLE is only accurate within ~a week of "now". Within that window
     // we use it; beyond it we fall back to a synthetic constellation anchored to the
@@ -2073,16 +2107,19 @@ function init() {
   loadAirports();   // fire-and-forget; searchAirports degrades gracefully until ready
   // Origin picks set the time-zone button to that location's zone; destination doesn't
   // affect the observer's zone, so it has no onPick.
-  wireAutocomplete(els.origin, els.originSug, (rec) => { formTz = rec.tz || ""; updateTzButton(); });
+  // A suggestion is an airport record. Most carry a zone; the rest are filled in at
+  // submit time by ensureTz, so leave the chip on the browser's zone until then.
+  wireAutocomplete(els.origin, els.originSug, (rec) => setFormTz(rec.tz, ""));
   wireAutocomplete(els.dest, els.destSug);
   // Time-zone button: tap toggles local ↔ UTC. Typing a new origin clears the known
   // zone (back to browser-local) until it's picked or resolved; changing the date/time
   // refreshes the abbreviation in case it crosses a DST boundary.
   els.tzbtn.addEventListener("click", toggleTimeZone);
   if (els.originLocate) els.originLocate.addEventListener("click", locateOrigin);
-  els.origin.addEventListener("input", () => { formTz = ""; updateTzButton(); });
+  els.origin.addEventListener("input", () => setFormTz("", ""));
   els.date.addEventListener("change", updateTzButton);
   els.time.addEventListener("change", updateTzButton);
+  els.time.addEventListener("input", updateTimeEcho);
   updateTzButton();
   wireTLEControls();
   // Delegated: the synthetic-data note is re-rendered as a button on each result; one

@@ -7,7 +7,7 @@ import {
     patchTerrestrialRefractionVertexShader,
 } from "../../../atmosphere/terrestrialRefraction";
 
-const CACHE_KEY = "DayNightStandardMaterial.v9tilewater";
+const CACHE_KEY = "DayNightStandardMaterial.v10watercapture";
 
 // Whether a NEWLY CREATED tile material should carry the water branch.
 //
@@ -184,6 +184,7 @@ ${waterUniformsGLSL}
 // Where the water is, for a mesh that carries neither map imagery nor a tile
 // UV — the two things the terrain uses to answer this. See WaterMaskGeo.js.
 uniform float waterGeoActive;
+uniform float waterTileCapture;
 uniform sampler2D waterGeoMask;
 uniform vec4 waterGeoRect;
 uniform vec3 waterPlaneOrigin;
@@ -281,7 +282,14 @@ float sitrecTileWaterMask(vec3 worldPos, vec3 worldNormal, out vec3 seaPos) {
     // Deliberately generous. Google's sea is photogrammetry and its triangles
     // wander by tens of degrees, so a tight test speckles the water; a piling
     // or a hull side is near enough vertical to fail this anyway.
-    mask *= smoothstep(0.15, 0.5, dot(worldNormal, up));
+    // The reflected camera also sees the vertical walls at tile boundaries.
+    // They are part of the noisy water mesh, so exclude them from the capture
+    // using the geographic mask and height band, regardless of their slope.
+    // Keep the facing test for the visible surface so walls are never SHADED
+    // as water. Land and geometry above the water band remain in the capture.
+    if (waterTileCapture < 0.5) {
+        mask *= smoothstep(0.15, 0.5, dot(worldNormal, up));
+    }
 
     seaPos = worldPos - up * alt;
     return mask;
@@ -377,11 +385,13 @@ if (abs(tileOutputGamma - 1.0) > 0.0001) {
 // half-float srgb-linear targets and the copy-to-screen shader does the
 // encoding, so <colorspace_fragment> above was a no-op. That is the same space
 // the terrain adds its reflection in, which is why one chunk serves both.
-if (waterReflection > 0.0) {
+if (waterReflection > 0.0 || waterTileCapture > 0.5) {
     vec3 seaPos;
     vec3 waterWorldNormal = inverseTransformDirection(normal, viewMatrix);
     float tileWaterMask = sitrecTileWaterMask(vWorldPositionDN, waterWorldNormal, seaPos);
-    if (tileWaterMask > 0.0) {
+    if (waterTileCapture > 0.5) {
+        if (tileWaterMask > 0.5) discard;
+    } else if (tileWaterMask > 0.0) {
         gl_FragColor.rgb = sitrecWaterShade(gl_FragColor.rgb, tileWaterMask, seaPos);
     }
 }

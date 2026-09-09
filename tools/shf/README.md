@@ -115,12 +115,19 @@ top-left to change your inputs):
 ## Inputs
 
 - **Origin** — an airport (IATA / ICAO / name) or any place name (geocoded). Required.
+  Times are shown in the **origin's own zone**. Airport records mostly carry one; a geocoded
+  place (and the 593 airport records that have no zone) gets the zone of the nearest airport
+  that does — right ~98% of the time, so the zone chip's tooltip says when it was inferred.
 - **Destination** *(optional)* — turns the prediction into a **flight path**. Flares are evaluated
   along the great-circle route at cruise altitude.
 - **Flight duration** *(optional)* — defaults to roughly **distance ÷ 875 km/h + 30 min**.
 - **Cruise altitude** — default **37 000 ft**.
 - **Date / time** — the moment to search *from* (fixed location) or the **departure** (flight).
-  Defaults to **now**, interpreted in the **location's local time**.
+  Defaults to **now**, interpreted in the **location's local time**. The browser draws
+  `<input type="time">` in its own hour cycle, which the page can neither read nor override, so
+  the line under the field restates the entered time in **both** cycles (`17:02 · 5:02 pm`) —
+  whichever half the widget leaves out is still on screen. Everything the app *reports* is
+  24-hour.
 - **Advanced** — satellite data source only:
   - **Fetch current TLE** — download the live Starlink elements (for real-data accuracy near "now").
   - **…or load your own .tle file** — use an element set you supply, in either CCSDS OMM CSV
@@ -144,7 +151,9 @@ top-left to change your inputs):
   Legacy TLE files still load. A fetched set is
   cached (~1 day) so small date/time tweaks don't re-fetch. (The engine also drops any satellite a
   stale TLE propagates outside a LEO sanity band, so old elements can't conjure phantom flares.)
-- **Geocoding** — [OpenStreetMap Nominatim](https://nominatim.openstreetmap.org/).
+- **Geocoding** — [OpenStreetMap Nominatim](https://nominatim.openstreetmap.org/), asked for
+  English (`accept-language=en`) so the place name and the country — which selects the time
+  zone — do not vary with the browser's language.
 - **Airports** — the [OpenFlights](https://openflights.org/data.html) dataset, bundled as
   `airports.json`. Regenerate it with `tools/shf/tools/build-airports.mjs` (see that file's header for the
   exact `npm pack airport-data` steps).
@@ -193,7 +202,7 @@ look-ahead limit. A query made at midday therefore skips ahead to the next dusk 
 | `astro.js` | Sun direction (ECI), GMST, subsolar point, solar elevation, equatorial→alt/az (for stars). |
 | `stars.js` | Catalogue of the ~30 brightest stars (J2000 RA/Dec + magnitude) for the horizon view. |
 | `flareEngine.js` | Flare physics, the two-pass scan, and the `scanForward` next-session search. |
-| `location.js` | Origin/destination resolution: airport lookup and Nominatim geocoding. |
+| `location.js` | Origin/destination resolution: airport lookup, Nominatim geocoding, and nearest-airport time-zone inference. |
 | `skyview.js` | SVG builders for the compass rose and the horizon view. |
 | `app.js` | Two-screen UI (form ↔ results), inputs, and result presentation; drives the worker. |
 | `flareWorker.js` | Web Worker that propagates TLEs and runs the flare scan off the main thread. |

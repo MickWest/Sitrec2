@@ -85,6 +85,9 @@ export const sharedUniforms = {
     // the ground. Like every other water uniform it is shared BY REFERENCE with
     // every material, so pop() lowering it is what keeps mainView clean.
     waterGeoActive: {value: 0.0},
+    // Exclude the photogrammetric water mesh (including its tile-edge walls)
+    // while capturing a planar reflection. Scoped to that capture only.
+    waterTileCapture: {value: 0.0},
     // Coverage mask over a square of ground, indexed by the fragment's own
     // latitude and longitude rather than by any UV.
     waterGeoMask: {value: null},

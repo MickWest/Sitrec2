@@ -53,3 +53,29 @@ test("fixed-view point scaling has no hidden split-view resolution multiplier", 
         split.mockRestore();
     }
 });
+
+test("an overlay uses its shared div dimensions without repeating fractional resizes", () => {
+    const view = {overlayView: {width: -.5, height: .8, top: 0, left: 0},
+        div: {clientWidth: 791, clientHeight: 445, offsetTop: 24, offsetLeft: 950},
+        widthPx: 0, heightPx: 0, changedSize: jest.fn(), inheritSize: CNodeView.prototype.inheritSize};
+    for (let i = 0; i < 5; i++) CNodeView.prototype.updateWH.call(view);
+    expect(view.widthPx).toBe(791);
+    expect(view.heightPx).toBe(445);
+    expect(view.changedSize).toHaveBeenCalledTimes(1);
+    view.div.clientWidth = 792;
+    CNodeView.prototype.updateWH.call(view);
+    expect(view.changedSize).toHaveBeenCalledTimes(2);
+});
+
+test("separately toggled overlays cannot render inside a hidden parent div", () => {
+    const parent = {visible: false, in: {}};
+    const overlay = {visible: true, separateVisibility: true, overlayView: parent, in: {}};
+    const manager = {_computeEV: ViewMan._computeEV, fullscreenView: null};
+    expect(manager._computeEV(overlay)).toBe(false);
+    parent.visible = true;
+    parent._evComputed = overlay._evComputed = false;
+    expect(manager._computeEV(overlay)).toBe(true);
+    overlay.visible = false;
+    parent._evComputed = overlay._evComputed = false;
+    expect(manager._computeEV(overlay)).toBe(false);
+});

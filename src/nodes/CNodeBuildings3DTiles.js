@@ -32,6 +32,7 @@ import {
     resolveTerrestrialK,
 } from "../atmosphere/terrestrialRefraction";
 import {currentTerrestrialLiftContext} from "../atmosphere/refractionSettings";
+import {TileViewErrorCache} from "../rendering/TileViewErrorCache";
 
 const DEG2RAD = Math.PI / 180;
 
@@ -162,7 +163,19 @@ const _trLiftMatrix = new Matrix4();
 let _trScratchOBB = null;
 
 class FlatAwareTilesRenderer extends TilesRenderer {
+    prepareForTraversal() {
+        super.prepareForTraversal();
+        this._viewErrorCache ??= new TileViewErrorCache();
+        this._viewErrorCache.begin(this, this._terrLiftCtx, !!Globals.flatEarthWarpSphere);
+    }
+
     calculateTileViewError(tile, target) {
+        if (this._viewErrorCache?.read(tile, target)) return;
+        this._calculateTileViewError(tile, target);
+        this._viewErrorCache?.write(tile, target);
+    }
+
+    _calculateTileViewError(tile, target) {
         const warpSphere = Globals.flatEarthWarpSphere;
         if (!warpSphere) {
             super.calculateTileViewError(tile, target);
@@ -195,7 +208,7 @@ class FlatAwareTilesRenderer extends TilesRenderer {
         }
 
         // Back into the tiles-group frame the cached cameraInfo lives in.
-        _feInvGroup.copy(this.group.matrixWorld).invert();
+        _feInvGroup.copy(this.group.matrixWorldInverse);
         _feFlatSphere.copy(_feWorldSphere).applyMatrix4(_feInvGroup);
 
         // The AEP magnifies the mesh along with its bound — scale the
@@ -373,7 +386,7 @@ class FlatAwareTilesRenderer extends TilesRenderer {
         if (!(liftCenter > 0 || pad > 0)) return;
 
         // Lift vector in the tiles-group frame the cached cameraInfo lives in.
-        _trInvGroup.copy(this.group.matrixWorld).invert();
+        _trInvGroup.copy(this.group.matrixWorldInverse);
         _trGroupLifted.copy(_trLiftedCenter).applyMatrix4(_trInvGroup);
         _trGroupCenter.copy(_trWorldSphere.center).applyMatrix4(_trInvGroup);
         _trLiftVec.subVectors(_trGroupLifted, _trGroupCenter);
@@ -701,73 +714,44 @@ class PerViewTiles {
 
     _updateWithCurrentCamera(view) {
 
-        // TilesRenderer.update() re-traverses the whole tileset every call to
-        // recompute screen-space error / LOD, allocating tens of KB each time
-        // (~119KB/frame across both views on a Google-photorealistic scene).
-        // When the camera is static AND the tileset is fully settled (nothing
-        // downloading / parsing / fading), re-running it changes nothing but
-        // churns ~7MB/s of garbage at 60fps — a primary GC/CPU sink even while
-        // paused. Skip it once settled; any camera move resumes immediately,
-        // and a short grace window covers fades/late tiles after the camera
-        // stops. Resolution (aspect) is folded into the fingerprint so a
-        // window resize also re-triggers an LOD pass.
         const cam = view.camera;
-        const e = cam.matrixWorld.elements;
-        // Fold in projection-matrix terms as well as the world pose: a projection
-        // change with a static camera (orthographic toggle, near-plane change,
-        // ortho-scale change as the camera dollies) must re-traverse the tile LOD.
-        // Keying on pose + fov/zoom/aspect alone missed those (ortho toggling
-        // leaves the world matrix and fov/zoom/aspect untouched), leaving stale
-        // tiles until the camera moved. p[0]/p[5] track ortho/persp scale,
-        // p[10]/p[14] track near/far.
-        const p = cam.projectionMatrix.elements;
-        // The refraction coefficient is folded in because tile selection
-        // compensates for the refraction lift (_terrestrialRefractionRetest):
-        // toggling refraction or editing k changes the LOD answer with a
-        // static camera, and without this term a settled tileset would stay
-        // stale until the camera next moved.
-        const fp = e[0] + e[5] + e[10] + e[12] + e[13] + e[14]
-            + cam.fov + cam.zoom + (cam.aspect || 0)
-            + p[0] + p[5] + p[10] + p[14]
-            + (Sit.terrestrialRefraction ? resolveTerrestrialK(Sit) : 0);
-
-        // The asymmetric frustum SHIFT (video pan) and the render resolution are compared
-        // separately, and exactly, rather than folded into the sum above.
-        //
-        // Separately, because a pure pan changes ONLY p[8]/p[9] — none of the summed terms move,
-        // so before this a pan could not wake a settled tileset at all: measured, a pan that slid
-        // the frustum from -1.209 to -1.906 left the fingerprint identical to the last digit. The
-        // dropout was therefore state-dependent, persisting until something else disturbed the
-        // camera.
-        //
-        // Exactly, because a sum can cancel: pan right and up by matching amounts and p[8] + p[9]
-        // is unchanged while the frustum has moved diagonally.
+        const group = this.renderer.group;
+        group.updateWorldMatrix(true, false);
         const size = view.renderer.getSize(_tilesSizeTmp);
-        const shiftX = p[8], shiftY = p[9];
-        const moved = fp !== this._lastCamFingerprint
-            || shiftX !== this._lastProjShiftX
-            || shiftY !== this._lastProjShiftY
-            // Screen-space error is per-pixel, so a same-aspect resize changes the LOD answer
-            // while leaving every camera term alone.
-            || size.x !== this._lastResW
-            || size.y !== this._lastResH;
+        const refractionK = Sit.terrestrialRefraction ? resolveTerrestrialK(Sit) : 0;
+        // Compare complete matrices: sums can cancel during a diagonal move or
+        // rotation. The projection includes video pan, compression and ortho mode.
+        const moved = !this._lastCamMatrix
+            || !this._lastCamMatrix.equals(cam.matrixWorld)
+            || !this._lastProjectionMatrix.equals(cam.projectionMatrix)
+            || !this._lastGroupMatrix.equals(group.matrixWorld)
+            || refractionK !== this._lastRefractionK
+            || size.x !== this._lastResW || size.y !== this._lastResH
+            || !!Globals.flatEarthWarpSphere !== this._lastFlatMode;
         if (moved) {
-            this._lastCamFingerprint = fp;
-            this._lastProjShiftX = shiftX;
-            this._lastProjShiftY = shiftY;
+            (this._lastCamMatrix ??= new Matrix4()).copy(cam.matrixWorld);
+            (this._lastProjectionMatrix ??= new Matrix4()).copy(cam.projectionMatrix);
+            (this._lastGroupMatrix ??= new Matrix4()).copy(group.matrixWorld);
+            this._lastRefractionK = refractionK;
+            this._lastFlatMode = !!Globals.flatEarthWarpSphere;
             this._lastResW = size.x;
             this._lastResH = size.y;
-            this._updateGraceFrames = 60; // keep updating ~1s after camera stops
+            this._updateGraceFrames = 2;
         } else if (this._updateGraceFrames > 0) {
             this._updateGraceFrames--;
         }
-        if ((this._updateGraceFrames ?? 0) <= 0 && !this._isUpdatePending() && !this._needsLibUpdate) {
-            return; // static camera + settled tileset: nothing to recompute
-        }
-        // Consume the late-arrival signal: this update() will traverse and display
-        // whatever async work just completed. If it queues further work, the normal
-        // grace/pending path below keeps the loop alive until truly settled.
+        const now = performance.now();
+        const fading = (this.fadePlugin?.fadingTiles || 0) > 0;
+        // The library queues run independently. Waiting on network/Draco work
+        // doesn't require re-selecting tens of thousands of unchanged tiles at
+        // display rate. Arrivals wake immediately through needs-update. A slow
+        // fallback pass also handles load failures, shared-cache eviction and
+        // final queue bookkeeping that don't always emit that event.
+        const pollPending = this._isUpdatePending() && now - (this._lastTraversalAt ?? -Infinity) >= 500;
+        if (!moved && !this._needsLibUpdate && !fading
+            && (this._updateGraceFrames ?? 0) <= 0 && !pollPending) return;
         this._needsLibUpdate = false;
+        this._lastTraversalAt = now;
 
         // Observer-relative lift context for _terrestrialRefractionRetest,
         // resolved once per traversal from this view's camera. Null when
@@ -1435,7 +1419,7 @@ export class CNodeBuildings3DTiles extends CNode {
         for (const [viewId, pv] of Object.entries(this._perView)) {
             const view = NodeMan.get(viewId, false);
             pv.update(view);
-            if ((pv._updateGraceFrames ?? 0) > 0 || pv._isUpdatePending()) active = true;
+            if (view?.visible && ((pv._updateGraceFrames ?? 0) > 0 || pv._isUpdatePending())) active = true;
             // Tree flattening runs even when the camera is static + tileset
             // settled (pv.update may early-return), so tiles that finished
             // loading after the camera stopped still get processed.

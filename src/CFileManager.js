@@ -2107,20 +2107,11 @@ export class CFileManager extends CManager {
                     }
                 }
 
-                // The bases above only cover an app served at "/sitrec/". A BRANCH or
-                // worktree build is served at "/<branch>/" (see config-install.js), so a
-                // sitch saved from one embeds e.g.
-                //   https://local.metabunk.org/shadows/data/nightsky/constellations.lines.astrometry.json
-                // which matches no base, is never rewritten, and then 404s on every other
-                // install — permanently, once that branch build is deleted. Measured: that
-                // exact URL 404s while the identical file serves fine from "/sitrec/data/".
-                //
-                // For app DATA the identity of the asset is the part from "data/" onwards;
-                // the app path in front of it is an artefact of wherever it happened to be
-                // saved, and carries no information this install needs. So re-root any
-                // ".../data/..." URL onto this install's SITREC_APP. Gated on a known dev
-                // HOST (with any path) so a third-party URL that merely contains "/data/"
-                // is never touched.
+                // Saved bundled assets belong to the current install, including its
+                // selected release build. Restore both dev/worktree URLs and production
+                // /sitrec/[builds/<id>/]data/ URLs against SITREC_APP. Otherwise production
+                // saves trigger cross-origin fetch failures when opened locally.
+                // Keep other hosts, uploads, videos and service endpoints unchanged.
                 if (!resolvedFilename.startsWith(SITREC_APP)) {
                     try {
                         const parsed = new URL(resolvedFilename);
@@ -2129,10 +2120,12 @@ export class CFileManager extends CManager {
                         // Compare against host (with port) AND hostname, since LOCALHOST
                         // may or may not carry a port.
                         const isDevHost = devHosts.some(h => parsed.host === h || parsed.hostname === h);
+                        const isProductionAsset = ["www.metabunk.org", "metabunk.org"].includes(parsed.hostname)
+                            && /^\/sitrec\/(?:builds\/[^/]+\/)?data\//.test(parsed.pathname);
                         const dataAt = parsed.pathname.indexOf("/data/");
-                        if (isDevHost && dataAt >= 0) {
+                        if ((isDevHost || isProductionAsset) && dataAt >= 0) {
                             const rewritten = SITREC_APP + parsed.pathname.slice(dataAt + 1) + parsed.search;
-                            console.log("Redirecting branch-build asset URL to " + rewritten);
+                            console.log("Redirecting bundled asset URL to " + rewritten);
                             resolvedFilename = rewritten;
                         }
                     } catch (e) {
@@ -2469,10 +2462,12 @@ export class CFileManager extends CManager {
         // Store the loading promise in the map and return it
         this.#loadingPromises.set(loadingKey, loadingPromise);
         
-        // Add a finally handler to clean up the loading promise map
-        loadingPromise.finally(() => {
+        // Handle both outcomes: an ignored finally() promise would reject again
+        // even when the caller handles the original loading failure.
+        const clearLoadingPromise = () => {
             this.#loadingPromises.delete(loadingKey);
-        });
+        };
+        loadingPromise.then(clearLoadingPromise, clearLoadingPromise);
         
         return loadingPromise;
     }

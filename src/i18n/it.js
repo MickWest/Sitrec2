@@ -745,7 +745,7 @@ const it = {
     view3d: {
         northUp: { label: "Vista Nord in Alto", tooltip: "Imposta la vista di osservazione con il nord in alto, invece del mondo in alto.\nPer viste satellitari e simili, guardando direttamente in basso.\nNon si applica in modalità PTZ" },
         atmosphere: { label: "Atmosfera", tooltip: "Attenuazione per distanza che fonde terreno e oggetti 3D verso il colore del cielo corrente" },
-        atmoVisibility: { label: "Visibilità Atmosferica (km)", tooltip: "Distanza in cui il contrasto atmosferico scende a circa il 50% (minore = atmosfera più densa)" },
+        atmoVisibility: { label: "Visibilità Atmosferica (km)", tooltip: "Distanza in cui il contrasto atmosferico scende a circa il 2% (minore = atmosfera più densa)" },
         atmoHDR: { label: "HDR Atmosferico", tooltip: "Nebbia/tone mapping HDR fisicamente basato per riflessi solari brillanti attraverso la foschia" },
         atmoExposure: { label: "Esposizione Atmosferica", tooltip: "Moltiplicatore di esposizione del tone mapping HDR atmosferico per l'attenuazione delle alte luci" },
         startXR: { label: "Avvia VR/XR", tooltip: "Avvia sessione WebXR per test (funziona con Immersive Web Emulator)" },

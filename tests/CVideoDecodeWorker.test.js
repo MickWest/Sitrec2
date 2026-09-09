@@ -15,14 +15,22 @@ beforeAll(() => {
     }
 });
 
-function worker() {
+function worker({queueOnly = false} = {}) {
     const messages = [], bitmaps = [], timers = [];
+    let decoder;
     const self = {postMessage: m => messages.push(m)};
     class Decoder {
-        constructor(callbacks) { this.output = callbacks.output; this.state = "unconfigured"; this.decodeQueueSize = 0; }
+        constructor(callbacks) { decoder = this; this.output = callbacks.output; this.state = "unconfigured"; this.decodeQueueSize = 0; this.queued = []; }
         configure() { this.state = "configured"; }
-        decode(chunk) { this.output({timestamp: chunk.timestamp, close() {}}); }
-        flush() { return Promise.resolve(); }
+        decode(chunk) {
+            if (queueOnly) { this.queued.push(chunk); this.decodeQueueSize++; }
+            else this.output({timestamp: chunk.timestamp, close() {}});
+        }
+        drainQueue() { this.decodeQueueSize = 0; this.ondequeue?.(); }
+        flush() {
+            if (queueOnly) for (const chunk of this.queued) this.output({timestamp: chunk.timestamp, close() {}});
+            return Promise.resolve();
+        }
         reset() {}
         close() { this.state = "closed"; }
     }
@@ -31,7 +39,7 @@ function worker() {
         setTimeout: (...args) => { const timer = setTimeout(...args); timers.push(timer); return timer; }, clearTimeout});
     const send = data => self.onmessage({data});
     const group = id => send({type: "decodeGroup", groupId: id, chunks: [{timestamp: id, data: []}], timestampMap: [{timestamp: id, frameNumber: id}]});
-    return {messages, bitmaps, send, group, cleanup: () => timers.forEach(clearTimeout)};
+    return {messages, bitmaps, send, group, get decoder() { return decoder; }, cleanup: () => timers.forEach(clearTimeout)};
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const bitmap = () => ({width: 640, height: 480, close: jest.fn()});
@@ -65,4 +73,26 @@ test("a bitmap completing after reset cannot leak into the next group", async ()
         await tick();
         expect(w.messages.filter(m => m.type === "frame" || m.type === "groupFlushed").map(m => m.groupId)).toEqual([2, 2]);
     } finally { w.cleanup(); }
+});
+
+test("decoder queue progress unblocks input even before any bitmap is produced", async () => {
+    const w = worker({queueOnly: true});
+    try {
+        await w.send({type: "configure", codec: "avc1.test"});
+        const chunks = Array.from({length: 26}, (_, i) => ({timestamp: i, data: []}));
+        const pending = w.send({type: "decodeGroup", groupId: 7, chunks,
+            timestampMap: chunks.map(c => ({timestamp: c.timestamp, frameNumber: c.timestamp}))});
+        await tick();
+        expect(w.decoder.queued).toHaveLength(13);
+        expect(w.bitmaps).toHaveLength(0);
+        w.decoder.drainQueue();
+        await tick();
+        expect(w.decoder.queued).toHaveLength(26);
+        await pending;
+        expect(w.bitmaps).toHaveLength(26);
+        for (const resolve of w.bitmaps) resolve(bitmap());
+        await tick();
+        expect(w.messages.filter(m => m.type === "frame")).toHaveLength(26);
+        expect(w.messages.filter(m => m.type === "groupFlushed").map(m => m.groupId)).toEqual([7]);
+    } finally { await w.send({type: "reset"}); w.cleanup(); }
 });

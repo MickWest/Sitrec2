@@ -271,7 +271,11 @@ export const serializeMethods = {
                     buildingsFlatColor: terrainModel.buildingsFlatColor,
                 }
             }
+        }
 
+        // Modified built-in scenes can also import models, tracks and overlays.
+        // Their node mods alone cannot restore those assets without these links.
+        if (Sit.isCustom || Sit.canMod) {
             // the files object is the rehosted files
             // files will be reference in sitches using their original file names
             // we have rehosted them, so we need to create a new "files" object

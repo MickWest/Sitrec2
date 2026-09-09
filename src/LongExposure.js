@@ -671,17 +671,10 @@ async function renderLongExposure(mgr) {
         const c = i / 255;
         srgbLut[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
     }
-    // mirrors useAtmosphereHDR in CNodeView3D.renderTargetAndEffects — when the
-    // look view tone-maps the whole frame with ACES, invert it exactly.
-    // (The non-HDR sky-only ACES pass on GlobalDaySkyScene sitches is NOT
-    // inverted — documented approximation; the night sky it affects is dark.)
-    const useACES = !!(lookView.useLookViewHDR && lookView.atmosphereEnabled && lookView.atmosphereHDR && lookView.hdrToneMappingPass);
-    let acesExposure = 1;
-    if (useACES) {
-        const skyExposure = NodeMan.get("theSky", false)?.effectController?.exposure ?? 1.0;
-        const sceneExposure = NodeMan.get("lighting", false)?.sceneExposure ?? 1.0;
-        acesExposure = skyExposure * (lookView.atmosphereExposure ?? 1.0) * sceneExposure;
-    }
+    // Use the same output policy as the visible view, including IR/XR gates.
+    const colorPolicy = lookView.getColorPolicy();
+    const useACES = !!colorPolicy.toneMapping;
+    const acesExposure = colorPolicy.exposure;
 
     // ---- HDR background: temporary lighting boost ----
     // A night scene's lit content may land in just a few 8-bit codes (ambient

@@ -13,7 +13,8 @@ const ACESFilmicToneMappingShader = {
     uniforms: {
 
         'tDiffuse': { value: null },
-        'exposure': { value: 1.0 }
+        'exposure': { value: 1.0 },
+        'toneMappingEnabled': { value: true }
 
     },
 
@@ -35,6 +36,7 @@ const ACESFilmicToneMappingShader = {
 		uniform sampler2D tDiffuse;
 
 		uniform float exposure;
+		uniform bool toneMappingEnabled;
 
 		varying vec2 vUv;
 
@@ -78,9 +80,10 @@ const ACESFilmicToneMappingShader = {
 
 			vec4 tex = texture2D( tDiffuse, vUv );
 
-			tex.rgb *= exposure / 0.6; // pre-exposed, outside of the tone mapping function
-
-			gl_FragColor = vec4( ACESFilmicToneMapping( tex.rgb ), tex.a );
+			tex.rgb *= exposure;
+			// Exposure also works with highlight rolloff disabled. Keep linear
+			// radiance intact until a selected tone mapper or the display clips it.
+			gl_FragColor = vec4(toneMappingEnabled ? ACESFilmicToneMapping(tex.rgb / 0.6) : tex.rgb, tex.a);
 
 		}`
 

@@ -59,6 +59,9 @@ function createDecoder() {
             recoverDecoder();
         }
     });
+    // Input can be consumed before a frame/bitmap is emitted. Backpressure
+    // waits on both queues, so either kind of progress must wake the producer.
+    decoder.ondequeue = wakeDrainWaiters;
     configured = false;
 }
 

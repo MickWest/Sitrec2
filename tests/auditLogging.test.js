@@ -109,7 +109,9 @@ serveGPCached(dirname(__DIR__) . '/cache/sample.csv', '/fallback.csv', 60, 'sitr
         await new Promise((resolve, reject) => { listener.once('error', reject); listener.listen(0, '127.0.0.1', resolve); });
         port = listener.address().port;
         await new Promise(resolve => listener.close(resolve));
-        server = spawn('php', ['-d', 'display_errors=0', '-d', 'log_errors=1', '-d', `error_log=${logs}`,
+        // Fixtures are replaced during this suite. The built-in server can use
+        // OPcache even with enable_cli=0, so never cache those temporary scripts.
+        server = spawn('php', ['-d', 'opcache.enable=0', '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', `error_log=${logs}`,
             '-d', `sys_temp_dir=${tmp}`, '-S', `127.0.0.1:${port}`, '-t', tmp],
             {cwd: web, env: {...process.env, AUDIT_LOG_ENABLED: 'true'}, stdio: ['ignore', 'ignore', 'pipe']});
         await new Promise((resolve, reject) => {

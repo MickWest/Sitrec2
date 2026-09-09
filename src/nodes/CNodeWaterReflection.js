@@ -1208,6 +1208,7 @@ export class CNodeWaterReflection extends CNode {
         // reference exactly as the terrain's do, so this is what stops mainView
         // — which renders the same tiles — from shading water too.
         sharedUniforms.waterGeoActive.value = 0.0;
+        sharedUniforms.waterTileCapture.value = 0.0;
         sharedUniforms.waterGeoMask.value = null;
         // Every gate and every SAMPLER the ocean path installs has to come back
         // off here, not just the scalars. Terrain materials are cloned per view and
@@ -1320,6 +1321,12 @@ export class CNodeWaterReflection extends CNode {
 
         const skyBrightness = sunNode ? sunNode.calculateSkyBrightness(view.camera.position) : 0;
         const skyFactor = Math.max(0, 1 - skyBrightness);
+
+        // The tile mask needs geodetic up during the mirror capture too,
+        // before the visible water surface is shaded.
+        const a = Globals.equatorRadius;
+        const b = Globals.polarRadius;
+        sharedUniforms.waterUpSquash.value = (a && b) ? (a * a) / (b * b) : 1.0;
 
         const oceanMode = this.mode === "ocean";
         if (this.mode === "mirror" || oceanMode) {
@@ -1442,12 +1449,6 @@ export class CNodeWaterReflection extends CNode {
         sharedUniforms.waterWaveLength.value = this.waveLength;
         sharedUniforms.waterWaveTime.value = this.waveTime;
         sharedUniforms.waterWaveOrigin.value.copy(this.waveOrigin);
-
-        // Geodetic up correction for the active earth model — 1.0 if it is a
-        // sphere, (a/b)^2 for the WGS84 ellipsoid.
-        const a = Globals.equatorRadius;
-        const b = Globals.polarRadius;
-        sharedUniforms.waterUpSquash.value = (a && b) ? (a * a) / (b * b) : 1.0;
 
         const camera = view.camera;
         if (camera.__sitrecOrthoMatrixActive) {
