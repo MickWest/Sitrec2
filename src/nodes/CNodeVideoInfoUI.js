@@ -10,6 +10,13 @@ import {viewMenuKey} from "../ViewUIBarMenus";
 const DEFAULT_X = 50;
 const DEFAULT_Y = 8;
 
+// Where the one item a readout switches itself on with goes: top right, clear of the middle,
+// where a video's own burned-in markings and the OSD frames live. Percent of the frame — and NOT
+// flush to the edge, because the text is drawn CENTRED on the point: at 88 a short clock ran
+// half off the right of the view, which looks exactly like the button doing nothing.
+const DEFAULT_ITEM_X = 84;
+const DEFAULT_ITEM_Y = DEFAULT_Y;
+
 export class CNodeVideoInfoUI extends CNodeViewUI {
 
     constructor(v) {
@@ -150,13 +157,67 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         return controller && controller.getVisibleTracks().length > 0;
     }
 
+    // The master switch, as a property the subclasses can redirect: the video readout has its
+    // own serialized flag, the sim readout uses a global.
+    get infoMasterSwitch() { return this.showInfo; }
+    set infoMasterSwitch(on) { this.showInfo = on; }
+
     shouldBeVisible() {
-        if (!this.showInfo) return false;
+        if (!this.infoMasterSwitch) return false;
         return this.hasAnyInfoItem() || this.hasAnyOSDDataSeries();
     }
 
+    // What the "Show Readout" switch actually reports and does.
+    //
+    // The master flag alone is not the answer to "is the readout on": with the flag set and no
+    // items ticked the readout draws NOTHING, so a switch bound straight to the flag sits there
+    // looking on over a view with nothing on it. This reads as on only when something is really
+    // being drawn — and turning it on with nothing configured switches one useful item on rather
+    // than leaving the press with no visible effect at all.
+    //
+    // Once the user has ticked anything of their own, hasAnyInfoItem() is true from then on and
+    // this is simply the flag, which is what makes the switch behave ordinarily thereafter.
+    get readoutShown() {
+        // Strictly boolean: lil-gui picks the controller type from typeof, and the flag chains
+        // below can hand back an undefined if nothing has been initialised yet.
+        return !!this.shouldBeVisible();
+    }
+
+    set readoutShown(on) {
+        if (on && !this.hasAnyInfoItem() && !this.hasAnyOSDDataSeries()) this.enableDefaultItem();
+        this.infoMasterSwitch = on;
+        this.updateVisibility();
+    }
+
+    // The item to switch on when the readout is asked to show and has nothing to show. Left
+    // where the user put it if they have moved it — turning a readout on is not a reason to
+    // rearrange their layout.
+    defaultItemId() {
+        return 'frameCounter';
+    }
+
+    enableDefaultItem() {
+        const id = this.defaultItemId();
+        const showProp = this.getShowProp(id);
+        if (!showProp) return;
+        this[showProp] = true;
+        if (this.isItemMoved(id)) return;
+        const pos = this.getElementPos(id);
+        if (pos) { this[pos[0]] = DEFAULT_ITEM_X; this[pos[1]] = DEFAULT_ITEM_Y; }
+    }
+
     updateVisibility() {
-        this.show(this.shouldBeVisible());
+        const visible = this.shouldBeVisible();
+        this.show(visible);
+        // renderCanvas() is what CLEARS this canvas, and the render loop skips a view that is
+        // not visible — so for an overlay sharing its host's div (the look view's readout) the
+        // last thing drawn just stays on the screen, and the switch looks like it did nothing.
+        // Clear it on the way out instead of relying on a frame that will never come.
+        if (!visible && this.ctx) {
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        }
+        // Sitrec is render-on-demand: without this the host view has no reason to repaint.
+        setRenderOne(true);
     }
 
     isVideoReady() {
@@ -635,7 +696,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         this.drawInfoToContext(this.ctx, this.widthPx, this.heightPx, rect, frame, this.in.relativeTo);
     }
 
-    // Draws every enabled Video Info Display item plus the OSD Data Series
+    // Draws every enabled Video Readout item plus the OSD Data Series
     // readouts into an arbitrary 2D context. Used both by the live overlay
     // (this.renderCanvas) and by the stabilized-video exporter, so the
     // exported video shows the same overlays the user configured in the UI.
@@ -940,10 +1001,11 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         const folder = parentFolder.addFolder(t("videoInfo.folderTitle.label")).close()
             .tooltip(t("videoInfo.folderTitle.tooltip"));
 
-        folder.add(this, "showInfo").name(t("videoInfo.showVideoInfo.label"))
+        // Bound to readoutShown, not to the raw flag: see the accessor. `updateVisibility` is
+        // the setter's job now, so there is nothing left for onChange to do.
+        folder.add(this, "readoutShown").name(t("videoInfo.showVideoInfo.label"))
             .tooltip(t("videoInfo.showVideoInfo.tooltip"))
             .listen()
-            .onChange(() => this.updateVisibility())
             .shareAs(viewMenuKey("video", "videoInfo"));
 
         folder.add(this, "showFilename").name(t("videoInfo.filename.label"))

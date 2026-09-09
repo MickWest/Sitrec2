@@ -12,7 +12,8 @@
 
 window.matchMedia = window.matchMedia || (() => ({matches: false, addListener() {}, removeListener() {}}));
 
-import {hudClipPath} from "../src/CUIBar";
+import "../src/lil-gui-extras";      // installs GUI.addMirror, which the icons go through
+import {CUIBar, hudClipPath} from "../src/CUIBar";
 
 // A look view at (1000, 400), 800x400, with a 26px header bar.
 const BAR_BOTTOM = 426;
@@ -47,5 +48,80 @@ describe("hudClipPath", () => {
 
     test("a companion to the right of the menu column still loses the bar strip", () => {
         expect(hudClipPath(open, box(1400, 400, 400, 400))).toBe("inset(26px 0 0 0)");
+    });
+});
+
+// --- isBlankAt --------------------------------------------------------------------------------
+//
+// Double-clicking the header strip fullscreens the view. That has to stop at the things ON the
+// strip: the view's menu tab, its toggle icons, the pin and the close button all do something
+// else, and a fullscreen fired underneath them is a click the user did not ask for. The
+// fullscreen icon is the exception — it toggles fullscreen anyway.
+//
+// jsdom lays nothing out, so the rects are stubbed: this is testing the hit rule, not a browser.
+
+describe("isBlankAt", () => {
+    let host, bar;
+
+    // Place an element at [x, x+width) across the full 26px height of the strip.
+    const place = (el, x, width) => {
+        el.getBoundingClientRect = () => ({left: x, right: x + width, top: 0, bottom: 26,
+                                           x, y: 0, width, height: 26});
+    };
+
+    beforeEach(() => {
+        host = document.createElement("div");
+        document.body.appendChild(host);
+        bar = new CUIBar(host, {title: "Main"});
+        place(bar.bar, 0, 600);
+        place(bar.left, 0, 75);
+        place(bar.titleMenu.domElement.parentElement, 0, 50);      // the menu SLOT
+        place(bar.addControlIcon("view:mainView:labels", {html: "L", action: "icon-labels"}), 54, 21);
+        place(bar.addIcon("⛶", () => {}, "Toggle fullscreen", "fullscreen"), 560, 20);
+        place(bar.addPinIcon(() => {}), 580, 20);
+    });
+
+    afterEach(() => { bar.dispose(); host.remove(); });
+
+    test("the empty middle of the strip is blank", () => {
+        expect(bar.isBlankAt(300, 13)).toBe(true);
+    });
+
+    test("the menu tab, a toggle icon and the pin are not", () => {
+        expect(bar.isBlankAt(25, 13)).toBe(false);      // "Main"
+        expect(bar.isBlankAt(60, 13)).toBe(false);      // the Labels icon
+        expect(bar.isBlankAt(590, 13)).toBe(false);     // 📌
+    });
+
+    test("the fullscreen icon counts as blank — it does the same thing", () => {
+        expect(bar.isBlankAt(570, 13)).toBe(true);
+    });
+
+    test("a point off the strip is not on it", () => {
+        expect(bar.isBlankAt(300, 40)).toBe(false);
+        expect(bar.isBlankAt(700, 13)).toBe(false);
+    });
+
+    // A narrow view cannot fit a dozen toggle icons. Something has to give, and it must not be
+    // the close button: the icons clip, the window chrome does not move.
+    test("the icons clip; the window chrome keeps its place", () => {
+        expect(getComputedStyle(bar.leftIcons).overflow).toBe("hidden");
+        expect(bar.leftIcons.style.flex).toBe("0 1 auto");
+        expect(bar.right.style.flex).toBe("0 0 auto");
+        // …and not `left` itself, which the title menu's dropdown hangs out of.
+        expect(getComputedStyle(bar.left).overflow).not.toBe("hidden");
+    });
+
+    // An icon whose control this sitch does not have is display:none, and a browser measures
+    // that as 0x0 at the PAGE ORIGIN — not at the place it would have occupied. Counted, it
+    // would quietly claim the top-left pixel of any view docked at (0, 0).
+    test("a hidden icon reserves nothing, at the origin or anywhere else", () => {
+        const ghost = bar.addControlIcon("view:mainView:nothingRegistersThis", {html: "?"});
+        expect(ghost.style.display).toBe("none");
+        // A collapsed rect is a POINT, so without the guard it would still claim the pixel it
+        // collapsed onto — the page origin in a browser, here the middle of the strip.
+        ghost.getBoundingClientRect = () => ({left: 300, right: 300, top: 13, bottom: 13,
+                                              x: 300, y: 13, width: 0, height: 0});
+        expect(bar.isBlankAt(300, 13)).toBe(true);
     });
 });

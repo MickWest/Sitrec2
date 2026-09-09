@@ -51,7 +51,7 @@ import {CNodeViewUI} from "./CNodeViewUI";
 import {CNodeViewEphemeris} from "./CNodeViewEphemeris";
 import {CNodeSkyPlotView} from "./CNodeSkyPlotView";
 import {CNodeStarChartView} from "./CNodeStarChartView";
-import {viewMenuKey} from "../ViewUIBarMenus";
+import {sharedMenuKey, viewMenuKey} from "../ViewUIBarMenus";
 //import { eci_to_geodetic } from '../../pkg/eci_convert';
 // npm install satellite.js --save-dev
 // installed with
@@ -457,16 +457,25 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             },
         ];
 
+        let showSatellitesController = null;
         satelliteOptions.forEach(option => {
             const ctrl = satGUI.add(option.object, option.key).listen().onChange(() => {
                 setRenderOne(true);
                 option.action();
             }).name(option.name);
             if (option.tip) ctrl.tooltip(option.tip);
+            if (option.key === "showSatellites") showSatellitesController = ctrl;
             // All satellite properties now have getters/setters on NightSkyNode
             // so they should be serialized directly (not with satellites. prefix)
             this.addSimpleSerial(option.key);
         });
+
+        // The satellites are ONE group in the world scene, drawn in whichever views can see it,
+        // so the master switch is a SHARED control rather than one per view: both 3D header
+        // menus and both header bars surface the same switch. Published out here rather than
+        // from the table above so it reads as an ordinary .shareAs() chain, which is also what
+        // tests/ViewUIBarMenus.test.js scans for.
+        showSatellitesController.shareAs(sharedMenuKey("showSatellites"));
 
         // ── TLE Filter buttons ──
         this._tleFilterDialog = null; // reference to open dialog element

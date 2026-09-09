@@ -96,7 +96,8 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         this.showQuad = v.showQuad ?? false;
 
         this.showFrustum = v.showFrustum ?? true;
-        this.showHider(t("showHiders.cameraViewFrustum.label"), undefined, t("showHiders.cameraViewFrustum.tooltip"));
+        this.showHider(t("showHiders.cameraViewFrustum.label"), undefined, t("showHiders.cameraViewFrustum.tooltip"))
+            .shareAs(viewMenuKey("mainView", "frustum"));
         this.guiToggle("showQuad", t("cameraFrustum.frustumGroundQuad.label"), t("cameraFrustum.frustumGroundQuad.tooltip"))
 
         this.showVideoInFrustum = false;

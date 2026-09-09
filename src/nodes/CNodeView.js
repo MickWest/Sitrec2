@@ -14,7 +14,7 @@ import {ViewMan} from "../CViewManager";
 import {LayoutMan} from "../CLayoutManager";
 import {makeDraggable, makeResizable, removeDraggable, removeResizable, VIEW_EDIT_KEY, clampBelowMenuBar} from "../DragResizeUtils";
 import {CUIBar, hudClipPath} from "../CUIBar";
-import {FRIENDLY_VIEW_NAMES, populateViewUIBarMenu} from "../ViewUIBarMenus";
+import {FRIENDLY_VIEW_NAMES, populateViewUIBarIcons, populateViewUIBarMenu} from "../ViewUIBarMenus";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {par} from "../par";
 import {getDocumentTitle} from "../utils";
@@ -401,6 +401,9 @@ class CNodeView extends CNode {
         // A no-op for views with no registry entry, and order-independent: controls created
         // later in the sitch load (night sky, video) drop in when they appear.
         populateViewUIBarMenu(this);
+        // …and the shortcut form of the most-used of those same controls, as icons beside the
+        // title. Same slots, same controllers — the icon and the row cannot disagree.
+        populateViewUIBarIcons(this);
         bar.onMenuStateChange = () => this._updateHeaderShown();
 
         // The header bar is a DRAG HANDLE: drag it to move the view (no modifier — the bar is
@@ -452,7 +455,17 @@ class CNodeView extends CNode {
             }
         };
         const hideReveal = () => { if (!this.headerPinned && !this._headerDragging && this._headerHovering) { this._headerHovering = false; this._updateHeaderShown(); } };
-        this.div.addEventListener('pointermove', updateReveal);
+        // The MOVE listener goes on the document, in the capture phase, rather than on the
+        // view's own div. A HUD companion stacked over a view — the video readout, the compass,
+        // an OSD frame — is a SIBLING div with a higher z-index, so the moment one of them takes
+        // pointer events (the readout does exactly that while you drag an item, and keeps it
+        // while the pointer is still over one) the view's div stops hearing about the pointer
+        // and its header can never reveal itself again. The decision here is purely geometric —
+        // is the pointer inside the bar's rect, with no button held — so it has no business
+        // depending on what happens to be painted on top. Leaving the window is still the div's
+        // job, since no move event arrives to notice it.
+        document.addEventListener('pointermove', updateReveal, true);
+        this._removeRevealListener = () => document.removeEventListener('pointermove', updateReveal, true);
         this.div.addEventListener('pointerleave', hideReveal);
         this.div.addEventListener('pointercancel', hideReveal);
     }
@@ -641,6 +654,11 @@ class CNodeView extends CNode {
             clearTimeout(this._resizeTimeout);
             this._resizeTimeout = null;
         }
+
+        // The header's hover-reveal listens on the document (see createViewHeader), so unlike the
+        // div listeners it does NOT go away with the div.
+        this._removeRevealListener?.();
+        this._removeRevealListener = null;
 
         // Dispose the per-view header/UI bar (destroys its hosted lil-gui menus) so they
         // don't leak on sitch reload. Owns its own DOM removal; null it so nothing reuses it.

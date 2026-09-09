@@ -231,7 +231,7 @@ A few things that make more difference than the settings do:
    Speeding playback up past 1× caps the output at 60 fps (dropping frames rather than
    producing an unplayable rate); slowing it down gives you a slow-motion file, which is
    usually what you want for a fast event.
-5. **Consider the burned-in readouts.** The Video Info Display and Sim Info Display put
+5. **Consider the burned-in readouts.** The Video Readout and Look View Readout put
    altitude, range, speed and time into the frame, so the numbers travel with the picture
    instead of living in a caption someone will crop off.
 

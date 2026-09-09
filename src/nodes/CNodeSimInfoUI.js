@@ -5,13 +5,14 @@ import {altitudeHAE, getLocalUpVector} from "../SphericalMath";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {getTilesPointBelow} from "../threeExt";
+import {viewMenuKey} from "../ViewUIBarMenus";
 
 // Keep in sync with the same-named constants in CNodeVideoInfoUI so a freshly
 // enabled item starts at the shared default position (and isItemMoved works).
 const DEFAULT_X = 50;
 const DEFAULT_Y = 8;
 
-// Sim Info Display: a date/time text overlay for the look view (or any non-video
+// Look View Readout: a date/time text overlay for the look view (or any non-video
 // view it is attached to). It reuses ALL of CNodeVideoInfoUI's drawing, dragging
 // and auto-positioning machinery, but exposes ONLY the simulation date/time
 // readouts plus a set of Traverse readouts (speed / g-force / altitude) and font
@@ -153,12 +154,19 @@ export class CNodeSimInfoUI extends CNodeVideoInfoUI {
         return false;
     }
 
-    // The master "Show Sim Info" toggle is a GLOBAL (Globals.showSimInfo), like
+    // The master "Show Look View Readout" toggle is a GLOBAL (Globals.showSimInfo), like
     // the other Show-menu master toggles, rather than the per-node showInfo the
-    // base class uses. So gate visibility on the global here.
-    shouldBeVisible() {
-        if (!Globals.showSimInfo) return false;
-        return this.hasAnyInfoItem();
+    // base class uses. Redirecting the accessor is all it takes: shouldBeVisible
+    // and the readoutShown switch both go through it.
+    get infoMasterSwitch() { return Globals.showSimInfo; }
+    set infoMasterSwitch(on) { Globals.showSimInfo = on; }
+
+    // No frame number here — this overlay has only the simulation date/time and the traverse
+    // figures — so the one it switches itself on with is the clock. The TIME rather than the
+    // date and time: it is the closest thing this overlay has to a frame counter, and it is
+    // short enough to sit in the top-right corner without running off the edge.
+    defaultItemId() {
+        return 'timeUTC';
     }
 
     drawOSDDataSeries(c, widthPx, heightPx, padding) {
@@ -317,14 +325,23 @@ export class CNodeSimInfoUI extends CNodeVideoInfoUI {
     }
 
     setupMenu(parentFolder) {
+        // Whichever 3D view this overlay was attached to — the look view in every sitch that
+        // builds one, but read rather than assumed, the same way the time display does it.
+        const viewId = this.overlayView?.id ?? "lookView";
+
         const folder = parentFolder.addFolder(t("simInfo.folderTitle.label")).close()
             .tooltip(t("simInfo.folderTitle.tooltip"));
 
         if (Globals.showSimInfo === undefined) Globals.showSimInfo = true;
-        folder.add(Globals, "showSimInfo").name(t("simInfo.showSimInfo.label"))
+        // Bound to readoutShown (see CNodeVideoInfoUI), which writes Globals.showSimInfo through
+        // infoMasterSwitch above — so the flag, and everything that reads it, is unchanged.
+        folder.add(this, "readoutShown").name(t("simInfo.showSimInfo.label"))
             .tooltip(t("simInfo.showSimInfo.tooltip"))
             .listen()
-            .onChange(() => this.updateVisibility());
+            // The look view's readout, published to that view's header menu and bar icon. Per
+            // view, not shared: the video view has its own readout (CNodeVideoInfoUI), and the
+            // two are separate overlays with separate flags.
+            .shareAs(viewMenuKey(viewId, "simInfo"));
 
         // Date/time rows reuse the videoInfo i18n strings (identical labels).
         folder.add(this, "showDateLocal").name(t("videoInfo.dateLocal.label"))

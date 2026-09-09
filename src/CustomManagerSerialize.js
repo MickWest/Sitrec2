@@ -538,6 +538,7 @@ export const serializeMethods = {
             "showFeaturesMain",
             "showFeaturesLook",
             "objectScale",
+            "objectScaleMain",
             "showAllTracksInLook",
             "showTimeDisplay",          // the UTC/local clock overlaid on the look view
         ]

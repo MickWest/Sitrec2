@@ -101,6 +101,10 @@ export class CNode3DGroup extends CNode3D {
 
     // Similar to showHider in KeyboardHandler.js
     // but more specific to modern objects, not using the legacy "par" object
+    //
+    // Returns the controller, so a call site that wants this toggle to ALSO appear somewhere
+    // else can chain onto it — `.shareAs(viewMenuKey("mainView", "los"))` publishes it to the
+    // view header menus and icons (src/ViewUIBarMenus.js) without duplicating the flag.
     showHider(name, key, tip) {
         // "key" is the keystroke to show/hide the object
         this.visible = this.group.visible;
@@ -114,6 +118,7 @@ export class CNode3DGroup extends CNode3D {
             toggles[key] = hider;
         }
 
+        return hider;
     }
 
     // the "visible" flag is serialized by default, but we need to

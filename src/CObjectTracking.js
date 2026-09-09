@@ -3022,7 +3022,7 @@ function getStabilizationBounds() {
 }
 
 // Controls whether the "Render Stabilized Video" exports include the
-// Video Info Display readouts (frame counters, timestamps, etc.) and the
+// Video Readout items (frame counters, timestamps, etc.) and the
 // OSD Tracker data series. Toggled from the Auto Tracking menu.
 let includeVideoInfoOnExport = false;
 
@@ -3146,8 +3146,8 @@ async function renderStabilizedVideo(expanded = false) {
             drawAttributionOnCanvas(compositeCtx, width, height);
 
             if (includeVideoInfoOnExport) {
-                // Reuse the live Video Info Display draw path so anything
-                // enabled in the Video Info Display menu (frame counter,
+                // Reuse the live Video Readout draw path so anything
+                // enabled in the Video Readout menu (frame counter,
                 // timecode, dates) AND any visible OSD Tracker data series
                 // is composited into the export at native resolution.
                 const videoInfo = NodeMan.get("videoInfo", false);

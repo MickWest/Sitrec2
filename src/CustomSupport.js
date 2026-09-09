@@ -1135,8 +1135,8 @@ export class CCustomManager {
         videoInfo.setupMenu(guiMenus.video);
     }
 
-    // Sim Info Display: a date/time overlay on the look view, added under the
-    // "Show" menu. Independent of the Video Info Display (separate node + flags).
+    // Look View Readout: a date/time overlay on the look view, added under the
+    // "Show" menu. Independent of the Video Readout (separate node + flags).
     // Attached via overlayView (not relativeTo) so it shares the look view's div
     // and behaves as a plain percent-of-canvas overlay (see CNodeSimInfoUI).
     setupSimInfoMenu() {
@@ -1743,6 +1743,98 @@ export class CCustomManager {
 
     }
 
+
+    // Every CNodeDisplayTrack in the sitch, which is what "all tracks" means here.
+    displayTracks() {
+        const tracks = [];
+        NodeMan.iterate((id, node) => {
+            if (node instanceof CNodeDisplayTrack) tracks.push(node);
+        });
+        return tracks;
+    }
+
+    // Track visibility over EVERY track, as one switch — the counterpart to the per-track
+    // checkbox in each track's own folder.
+    //
+    // "Any track showing" rather than "all of them", because it is a SHOW switch: a sitch with
+    // one track hidden on purpose is still showing tracks, and reading it as off would make the
+    // first press hide the rest rather than reveal the one.
+    get showAllTracks() {
+        const tracks = this.displayTracks();
+        return tracks.some(track => track.visible);
+    }
+
+    // Turning it OFF is the destructive direction here (the default is visible), so that is the
+    // one that remembers: hide everything, and putting it back restores which tracks were
+    // showing rather than revealing ones somebody deliberately hid.
+    set showAllTracks(on) {
+        if (!on) {
+            this.trackVisibilityWas = new Map(
+                this.displayTracks().map(track => [track.id, !!track.visible]));
+            this.applyTrackVisibility(() => false);
+        } else {
+            const was = this.trackVisibilityWas;
+            this.applyTrackVisibility(track => was?.get(track.id) ?? true);
+        }
+    }
+
+    applyTrackVisibility(valueFor) {
+        for (const track of this.displayTracks()) {
+            const visible = !!valueFor(track);
+            if (track.visible === visible) continue;
+            // The same three things the track's own checkbox does — the data track and the
+            // meta track are separate nodes drawn as part of the same track.
+            track.visible = visible;
+            track.show(visible);
+            if (track.in.dataTrackDisplay !== undefined) {
+                track.in.dataTrackDisplay.visible = visible;
+                track.in.dataTrackDisplay.show(visible);
+            }
+            track.metaTrack?.show(visible);
+        }
+        setRenderOne(true);
+    }
+
+    // "Extend to Ground" over EVERY track, as one switch.
+    //
+    // READING it asks a question about the tracks rather than remembering an answer, so it is
+    // right whoever last changed them — a single track's own checkbox, a sitch load, the [E]
+    // toggle below.
+    get allTracksExtendToGround() {
+        const tracks = this.displayTracks();
+        return tracks.length > 0 && tracks.every(track => track.extendToGround);
+    }
+
+    // WRITING true extends them all and remembers what each one was; writing false puts that
+    // mixture back rather than clearing everything. That is what makes it a switch you can flick
+    // and un-flick over a sitch you did not build — most sitches have a few tracks deliberately
+    // extended and the rest not, and losing which were which is not undoable.
+    set allTracksExtendToGround(on) {
+        if (on) {
+            this.extendToGroundWas = new Map(
+                this.displayTracks().map(track => [track.id, !!track.extendToGround]));
+            this.applyExtendToGround(() => true);
+        } else {
+            const was = this.extendToGroundWas;
+            this.applyExtendToGround(track => was?.get(track.id) ?? false);
+        }
+    }
+
+    // The blunt version, for when the remembered mixture is not what you want back.
+    clearAllExtendToGround() {
+        this.extendToGroundWas = null;          // nothing left to go back to
+        this.applyExtendToGround(() => false);
+    }
+
+    applyExtendToGround(valueFor) {
+        for (const track of this.displayTracks()) {
+            const value = !!valueFor(track);
+            if (track.extendToGround === value) continue;
+            track.extendToGround = value;
+            track.recalculate();
+        }
+        setRenderOne(true);
+    }
 
     toggleExtendToGround() {
         console.log("Toggle Extend to Ground");

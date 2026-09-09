@@ -62,15 +62,48 @@ These layout changes are stored with the sitch when you save it (**File → Save
 
 ## The View Header
 
-Move the mouse to the top edge of a view and a thin header bar fades in, with the view's name on the left and a few icons on the right (fullscreen, pop out, 📌 pin, and ✕ close). Pin it if you would rather it stayed put. The header is also the drag handle: drag it to move the view, no `Q` needed.
+Move the mouse to the top edge of a view and a thin header bar fades in, with the view's name on the left and a few icons on the right (fullscreen, pop out, 📌 pin, and ✕ close). Pin it if you would rather it stayed put. The header is also the drag handle: drag it to move the view, no `Q` needed. Double-clicking an **empty** part of the bar toggles fullscreen, the same as the ⛶ icon — double-clicking the name or any of the buttons does that button's own job instead.
 
 The name on the left is a menu, and it holds the controls that only affect *that* view:
 
-- **Main** — Measurements, Labels, Features, Field of View, Y-Compress, and a Night Sky group (star names, planet labels, equatorial grid).
-- **Look** — the same first three plus All Tracks, North Up and Y-Compress, a Night Sky group (star names, planet labels, equatorial grid, celestial vectors), and a Video Overlay group (transparency, colour key, ground video).
-- **Video** — Zoom, Rotation, Video Info, Grid, Annotations, EXIF/Metadata, an Adjustments group (effects, brightness, contrast) and a Masking group.
+- **Main** — Measurements, Labels, Pins, Lines of Sight, Current LOS, Camera Frustum, Show Tracks, Extend Tracks to Ground, Compass, Time Display, Object Scale, Field of View, Y-Compress, and a Night Sky group (satellites, star names, planet labels, equatorial grid).
+- **Look** — Free Look, Measurements, Labels, Pins, All Tracks, Show Tracks, Extend Tracks to Ground, Compass, Time Display, Readout, North Up, Y-Compress, a Night Sky group (satellites, star names, planet labels, equatorial grid, celestial vectors), and a Video Overlay group (transparency, colour key, ground video).
+- **Video** — Zoom, Rotation, Readout, Grid, Annotations, EXIF/Metadata, an Adjustments group (effects, brightness, contrast) and a Masking group.
+
+A **readout** is the panel of figures drawn over a view — whichever of the date, time, frame number, timecode, speeds and altitudes you have switched on. Each view has its own: the look view's is the **Look View Readout** and the video view's is the **Video Readout** (Show ▸ Look View Readout and Video ▸ Video Readout, where you choose which figures appear). Switching one on before you have chosen anything gives you something to see — the frame number on the video, the UTC clock on the look view — placed top right. In a view's own menu the row is just **Readout**, because the menu you opened already says which view it is.
 
 These are the *same* controls as the ones in the Show, View and Video menus, not copies: changing one changes the other, and only one of them is saved with the sitch. The header simply puts them where they apply, under short names — "Measurements in Look" is just "Measurements" under **Look**, and the original wording is still in the tooltip. An item that does not apply to the current sitch (no video loaded, no night sky) is left out rather than shown greyed.
+
+Next to the name, the busiest of those are repeated as one-click icons.
+
+**Main** and **Look** open with the same run, in the same order, so a glance along either bar reads the same way:
+
+| Icon | Control |
+|---|---|
+| struck-through eye | Declutter |
+| **L** | Labels |
+| map pin | Pins |
+| green dimension line | Measurements |
+| a track | Show Tracks |
+| a track with a curtain under it | Extend Tracks to Ground |
+| a satellite | Satellites |
+| a star and an **S** | Star Names |
+| compass rose | Compass |
+| clock face | Time Display |
+
+**Main** then adds the three things only it draws: red parallel lines for Lines of Sight, a white line down a greyed-out frustum for Current LOS, and a cyan triangle for the Camera Frustum.
+
+**Look** and **Video** each add one more: a data panel for that view's readout.
+
+**Video** also has **100%**, which sets the video zoom to 1:1 and stays lit while it is there. It remembers the zoom it took you away from, so pressing it again puts the video back exactly where it was.
+
+An icon whose control is off is drained of colour and dimmed, so a glance along the header tells you what the view is showing. They are the same controls again, not a third copy — click the icon or the menu row, it makes no difference — and an icon whose control does not exist in this sitch (no compass, no night sky) is simply absent.
+
+**Declutter** is the first icon, and it is the whole run in one press: it hides every overlay in that view — labels, pins, measurements, tracks, star names, lines of sight, the frustum, the compass, the clock and the readout — and lights up to say the view is clear. Press it again and exactly the ones that were showing come back. If you switch something back on by hand in between, Declutter re-arms, and the next press clears the view again from wherever it now stands.
+
+**Show Tracks** and **Extend Tracks to Ground** work over every track at once, and both remember what they found: turning Show Tracks back on reveals the tracks that were showing rather than every track, and turning Extend Tracks to Ground back off restores the ones that were extended. **Double-clicking** Extend Tracks to Ground is the blunt version — it clears it on every track and forgets the mixture.
+
+**Object Scale** in the Main menu is an extra size multiplier for 3D objects that applies *only* in the main view, on top of Objects ▸ Global Scale. It is for finding a small object from far out without changing what the look view — the camera's own view — would really see.
 
 ## Per-view controls
 

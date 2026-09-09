@@ -2,6 +2,16 @@ import GUI from "./js/lil-gui.esm";
 import {Globals} from "./Globals";
 import {registerGUIRoot, unregisterGUIRoot} from "./GUIRootRegistry";
 
+// Everything on a bar that is a thing in its own right rather than backdrop. A menu SLOT (not
+// the lil-gui root inside it) because the slot is the tab's box; the dropdown hangs outside it
+// and below the strip, so it never widens this.
+const BAR_HIT_TARGETS = '.view-uibar-menuslot, .view-uibar-icon, .view-uibar-label';
+
+// How long a button with a double action waits before committing to the single one. A double
+// click always delivers its two clicks FIRST, so a button that has both has no way to know which
+// it is looking at until the window closes. Only such buttons pay the delay.
+const DOUBLE_CLICK_MS = 250;
+
 const DROPDOWN_MARGIN_PX = 8;    // breathing room between the menu and the window edge
 const DROPDOWN_MIN_PX = 80;      // never squash a low-docked view's menu to nothing
 
@@ -19,6 +29,7 @@ const DROPDOWN_MIN_PX = 80;      // never squash a low-docked view's menu to not
  *     name ("Main", "Look", "Video", "Assistant", …).
  *   - addMenu(title)            — host another lil-gui menu as a tab.
  *   - addIcon(html,onClick,tip,action) — an icon button (appended right, in call order).
+ *   - addControlIcon(key, ...)  — an icon bound to a control that lives elsewhere (see below).
  *   - addPinIcon / addCloseIcon — the standard chrome icons.
  */
 export class CUIBar {
@@ -50,10 +61,25 @@ export class CUIBar {
         });
         this.bar = bar;
 
-        // Left section (title menu + extra menus), elastic spacer, right section (icons).
+        // Left section (title menu + extra menus, then the view's own icons), elastic spacer,
+        // right section (window chrome).
         this.left = section('flex-start');
+        // The left side may SHRINK; the right side may not. A narrow view cannot fit a dozen
+        // toggle icons, and if something has to give it must not be the close button.
+        this.left.style.flex = '0 1 auto';
+        this.left.style.minWidth = '0';
+        // The icons live in their own box, which is the thing that clips — `left` itself must
+        // not, because the title menu's dropdown is a descendant of it that deliberately paints
+        // outside the strip. Clipped icons are still reachable: every one of them is also a row
+        // in the menu right beside them (src/ViewUIBarMenus.js).
+        this.leftIcons = section('flex-start');
+        this.leftIcons.style.flex = '0 1 auto';
+        this.leftIcons.style.minWidth = '0';
+        this.leftIcons.style.overflow = 'hidden';
+        this.left.appendChild(this.leftIcons);
         this.spacer = document.createElement('div');
         this.spacer.style.flex = '1 1 auto';
+        this.spacer.style.minWidth = '0';
         this.right = section('flex-end');
         bar.append(this.left, this.spacer, this.right);
         host.appendChild(bar);
@@ -130,7 +156,7 @@ export class CUIBar {
         slot.style.pointerEvents = 'auto';
         // NOTE: the slot does NOT stop pointerdown — the whole bar (title included) is a drag
         // handle. Only the dropdown ITEMS block dragging (below).
-        this.left.appendChild(slot);
+        this.left.insertBefore(slot, this.leftIcons);
 
         const gui = new GUI({ container: slot, autoPlace: false, title, closeFolders: false });
         gui.domElement.style.position = 'relative';
@@ -195,7 +221,9 @@ export class CUIBar {
     // action: optional stable identifier set as data-uibar-action (for tests / per-view
     // control wiring) so behaviour doesn't depend on the user-facing tooltip string.
     // left: place the icon in the LEFT section (next to the title) instead of the right.
-    addIcon(html, onClick, tooltip, action, left = false) {
+    // onDoubleClick: an optional second, blunter action. Giving one makes the SINGLE click wait
+    //   DOUBLE_CLICK_MS to find out which it was — see the constant.
+    addIcon(html, onClick, tooltip, action, left = false, onDoubleClick = null) {
         const btn = document.createElement('button');
         btn.className = 'view-uibar-icon';
         btn.type = 'button';
@@ -207,13 +235,210 @@ export class CUIBar {
             cursor: 'pointer', font: '13px sans-serif', padding: '0 6px',
             opacity: '0.7', pointerEvents: 'auto', borderRadius: '3px',
         });
-        btn.addEventListener('pointerenter', () => { btn.style.opacity = '1'; });
-        btn.addEventListener('pointerleave', () => { btn.style.opacity = btn.dataset.uibarPinned === 'true' ? '1' : '0.7'; });
+        btn.addEventListener('pointerenter', () => { btn._uibarHover = true; btn.style.opacity = '1'; });
+        btn.addEventListener('pointerleave', () => { btn._uibarHover = false; btn.style.opacity = idleOpacity(btn); });
         btn.addEventListener('pointerdown', (e) => e.stopPropagation());
-        btn.addEventListener('click', (e) => { e.stopPropagation(); if (onClick) onClick(e); });
-        (left ? this.left : this.right).appendChild(btn);
+        let pending = null;
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (!onDoubleClick) { onClick?.(e); return; }
+            if (pending) return;                    // the second of a pair; dblclick takes it
+            pending = setTimeout(() => { pending = null; onClick?.(); }, DOUBLE_CLICK_MS);
+        });
+        if (onDoubleClick) {
+            btn.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                if (pending) { clearTimeout(pending); pending = null; }
+                onDoubleClick(e);
+            });
+        }
+        (left ? this.leftIcons : this.right).appendChild(btn);
         this.icons.push(btn);
         return btn;
+    }
+
+    // An icon bound to a control that lives somewhere ELSE — the Show menu's "Lines of Sight",
+    // the sky overlay's "Star Names", the View menu's "Video Zoom %". It is not a second
+    // control: it mirrors the same slot as the header-menu row beside it (src/MenuMirror.js),
+    // so the flag, the global menu row, the header row and the icon are four faces of one
+    // value, and nothing downstream can tell which of them the user clicked.
+    //
+    // Two shapes, from one option:
+    //   no `value`  — a TOGGLE. Clicking inverts a boolean; the icon lights when it is true.
+    //   with `value`— a SNAP, and still a toggle: the first press remembers where the control
+    //                 was and moves it to `value`; the next press puts it back where it was.
+    //                 The icon lights while the control is at `value`, so "100%" also reads as
+    //                 "am I at 1:1?". Pressing it twice must leave the view exactly as it was
+    //                 found — which is why the old value is remembered rather than assumed.
+    //
+    // `doubleKey` names a second, mirrored ACTION control to run on a DOUBLE click — the blunt
+    // version of what the single click does ("really, all of them, off"). It is mirrored like
+    // everything else here, so it is a real control with a real label somewhere in the menus,
+    // not a gesture that only exists on this button.
+    //
+    // Bound through a real (hidden) TWIN rather than by reading the source directly, because a
+    // twin is what MenuMirror already keeps correct on every path into the value: a click on
+    // any other copy, a rename, a hide — and, since a twin inherits the source's `.listen()`
+    // and this host is a polled GUI root while the bar is up (src/GUIRootRegistry.js), a sitch
+    // load, the API or a script writing the value with no controller involved at all.
+    //
+    // Hidden until its source exists, so a sitch with no lines of sight simply has no LOS icon,
+    // and it disappears again if that control is hidden or destroyed.
+    addControlIcon(key, {html, action, label, tooltip, value, doubleKey, left = true} = {}) {
+        let twin = null;                       // filled in by the mirror, possibly much later
+        let doubleTwin = null;
+        let restore;                           // where a snap icon found the control
+        const click = () => {
+            if (!twin) return;
+            if (value === undefined) return twin.setValue(!twin.getValue());
+            if (twin.getValue() !== value) {
+                restore = twin.getValue();
+                twin.setValue(value);
+            } else if (restore !== undefined) {
+                twin.setValue(restore);
+            }
+            // Already at `value` with nothing remembered: the control is where the button would
+            // put it and there is nowhere to go back to, so the press does nothing.
+        };
+        // A lil-gui function controller IS its bound function, so running it is calling that.
+        const doublePress = doubleKey
+            ? () => doubleTwin?.object?.[doubleTwin.property]?.()
+            : null;
+        const btn = this.addIcon(html, click, null, action, left, doublePress);
+        btn.style.display = 'none';
+        btn.style.alignItems = 'center';
+        btn.style.justifyContent = 'center';
+        // One height for all of them, so the "on" highlight is the same band whether the icon
+        // is a 15px drawing or an 11px line of text. WIDTH is left to the content: an icon that
+        // says "100%" is wider than the bar is tall, which is the point of writing it out.
+        btn.style.height = '18px';
+        // Tighter than the text chrome icons on the right, so a row of them packs.
+        btn.style.padding = '0 3px';
+        this._toggleHost().addMirror(key, {
+            // A new source means a different control (a sitch change, a video reloaded): what
+            // the last one was set to is not somewhere to send this one back to.
+            onMirror: (t) => {
+                restore = undefined;
+                bindControlIcon(btn, twin = t, {value, label, tooltip});
+            },
+        });
+        if (doubleKey) this._toggleHost().addMirror(doubleKey, {onMirror: (t) => { doubleTwin = t; }});
+        return btn;
+    }
+
+    // One icon over MANY mirrored controls: "Declutter" turns off every overlay this view draws
+    // and, pressed again, puts back exactly the ones that were on. It cannot be an addControlIcon
+    // because there is no single control behind it — but each of its targets is one, so it works
+    // the same way, through the same twins, and stays right when any of them is changed
+    // elsewhere.
+    //
+    // It lights when the group is CLEAR (every target off), which is the state the button puts
+    // you in — so a lit Declutter reads as "this view is decluttered", not "press me".
+    //
+    // Targets that this sitch does not have are skipped rather than counted as "already off":
+    // otherwise a sitch with no night sky and no compass would show Declutter lit before anyone
+    // touched it.
+    addGroupIcon(keys, {html, action, tooltip, left = true} = {}) {
+        const twins = new Map();               // key -> twin, as each source turns up
+        let restore = null;                    // what was on when the group was last cleared
+
+        const live = () => [...twins].filter(([, twin]) => !twin._hidden);
+        const clear = () => live().every(([, twin]) => !twin.getValue());
+        const repaint = () => {
+            const targets = live();
+            btn.style.display = targets.length ? 'flex' : 'none';
+            paintIcon(btn, targets.length > 0 && clear());
+        };
+
+        const click = () => {
+            const targets = live();
+            if (!targets.length) return;
+            if (clear()) {
+                if (!restore) return;           // already clear, nothing to come back to
+                for (const [key, twin] of targets) {
+                    const was = restore.get(key);
+                    if (was !== undefined && twin.getValue() !== was) twin.setValue(was);
+                }
+            } else {
+                restore = new Map(targets.map(([key, twin]) => [key, twin.getValue()]));
+                for (const [, twin] of targets) if (twin.getValue()) twin.setValue(false);
+            }
+            repaint();
+        };
+
+        const btn = this.addIcon(html, click, tooltip, action, left);
+        btn.style.display = 'none';
+        btn.style.alignItems = 'center';
+        btn.style.justifyContent = 'center';
+        btn.style.height = '18px';
+        btn.style.padding = '0 3px';
+        for (const key of keys) {
+            this._toggleHost().addMirror(key, {
+                onMirror: (twin) => {
+                    twins.set(key, twin);
+                    andThen(twin, 'updateDisplay', repaint);
+                    andThen(twin, 'show', repaint);
+                    andThen(twin, 'destroy', () => { twins.delete(key); repaint(); });
+                    repaint();
+                },
+            });
+        }
+        return btn;
+    }
+
+    // A hairline between two groups of things on the bar — the view's MENU and the view's
+    // TOGGLES read as different kinds of control, and abutting them makes the first icon look
+    // like part of the title.
+    addSeparator(left = false) {
+        const el = document.createElement('div');
+        el.className = 'view-uibar-sep';
+        Object.assign(el.style, {
+            width: '1px', alignSelf: 'center', height: '60%', margin: '0 4px',
+            background: 'var(--sitrec-border-area, rgba(255,255,255,0.18))',
+            pointerEvents: 'none', flex: '0 0 auto',
+        });
+        (left ? this.leftIcons : this.right).appendChild(el);
+        return el;
+    }
+
+    // The hidden lil-gui that owns those twins. A real GUI because the mirror registry deals in
+    // lil-gui controllers, and a real controller is what carries the `.listen()` polling. Never
+    // shown — the icons ARE its display — and deliberately NOT in `this.menus`, which is the
+    // list of things the bar treats as openable tabs.
+    _toggleHost() {
+        if (!this._toggleGui) {
+            const slot = document.createElement('div');
+            slot.style.display = 'none';
+            this.bar.appendChild(slot);
+            this._toggleGui = new GUI({container: slot, autoPlace: false, title: ''});
+            if (this.shown) registerGUIRoot(this._toggleGui);
+        }
+        return this._toggleGui;
+    }
+
+    // Is (x, y) on the BLANK part of this bar — inside the strip, but clear of everything on it
+    // that is itself clickable? The menu tab, the toggle icons and the window chrome all have
+    // their own jobs, and a double-click landing on one must do that job (or nothing) rather
+    // than the strip's own action of toggling fullscreen. The fullscreen icon is the one
+    // exception, because that IS the strip's action: a double-click there is two toggles, which
+    // is how a button behaves.
+    //
+    // Tested by RECT rather than by an event's target, so the answer does not depend on whether
+    // the bar happens to be taking pointer events at that instant — a hover-revealed bar is
+    // mid-fade at exactly the moment a caller asks.
+    isBlankAt(x, y) {
+        const strip = this.bar.getBoundingClientRect();
+        if (x < strip.left || x > strip.right || y < strip.top || y > strip.bottom) return false;
+        for (const el of this.bar.querySelectorAll(BAR_HIT_TARGETS)) {
+            if (el.dataset.uibarAction === 'fullscreen') continue;
+            const r = el.getBoundingClientRect();
+            // An icon whose control does not exist in this sitch is display:none, which measures
+            // 0x0 AT THE PAGE ORIGIN — not where it would have been. Left in, it would claim the
+            // top-left pixel of a view docked at (0, 0).
+            if (r.width === 0 || r.height === 0) continue;
+            if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return false;
+        }
+        return true;
     }
 
     // A read-only strip of text in the bar. Not an icon and not a menu: it reports state
@@ -231,7 +456,7 @@ export class CUIBar {
             overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '45%',
             pointerEvents: 'none', userSelect: 'none',
         });
-        (left ? this.left : this.right).appendChild(el);
+        (left ? this.leftIcons : this.right).appendChild(el);
         return el;
     }
 
@@ -263,6 +488,14 @@ export class CUIBar {
         // a full tree walk per frame for nothing, and it catches up the frame it reappears.
         if (shown) this.menus.forEach(registerGUIRoot);
         else this.menus.forEach(unregisterGUIRoot);
+        if (this._toggleGui) {
+            // Same argument for the icons' hidden twins — plus one repaint on the way in: they
+            // are only polled while the bar is up, and lil-gui compares against a value cached
+            // from before it went away, so the first frame back would otherwise paint stale
+            // state.
+            if (shown) { registerGUIRoot(this._toggleGui); refreshToggleIcons(this._toggleGui); }
+            else unregisterGUIRoot(this._toggleGui);
+        }
         if (!shown) this.closeMenus();
     }
 
@@ -281,8 +514,77 @@ export class CUIBar {
         this.menus.forEach(unregisterGUIRoot);
         for (const g of this.menus) { try { g.destroy(); } catch (e) { /* best effort */ } }
         this.menus.length = 0;          // nothing is open once the bar is gone
+        if (this._toggleGui) {
+            unregisterGUIRoot(this._toggleGui);
+            try { this._toggleGui.destroy(); } catch (e) { /* best effort */ }
+            this._toggleGui = null;
+        }
         this.shown = false;
         this.bar.remove();
+    }
+}
+
+// What an icon fades back to when the pointer leaves it. A toggle icon owns its idle level (that
+// is how "on" reads at a glance); everything else uses the pin's convention.
+function idleOpacity(btn) {
+    return btn._uibarIdleOpacity ?? (btn.dataset.uibarPinned === 'true' ? '1' : '0.7');
+}
+
+// Wire one icon to its twin. Everything the icon shows is READ FROM the twin — value, label,
+// tooltip, whether it exists at all — so there is no second copy of any of it to fall out of
+// step, and a source that is renamed, hidden or replaced takes its icon with it.
+// How an icon shows that its control is on: lit and coloured, or dim and drained. The colour is
+// half the message — the red lines of sight and the cyan frustum say what they are, and taking
+// that away says which of them are actually being drawn, with no second badge to read.
+function paintIcon(btn, on) {
+    btn._uibarIdleOpacity = on ? '1' : '0.4';
+    btn.style.opacity = btn._uibarHover ? '1' : btn._uibarIdleOpacity;
+    btn.style.background = on ? 'var(--sitrec-hover, #4f4f4f)' : 'transparent';
+    btn.style.filter = on ? 'none' : 'grayscale(1)';
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+function bindControlIcon(btn, twin, {value, label, tooltip} = {}) {
+    const paint = () => paintIcon(btn,
+        value === undefined ? !!twin.getValue() : twin.getValue() === value);
+    const showHide = () => { btn.style.display = twin._hidden ? 'none' : 'flex'; };
+
+    // A toggle icon is the shorthand for exactly one control, so it borrows that control's
+    // explanation rather than inventing a third wording to translate. The NAME comes from the
+    // caller when it has one — the menu row's short label — because some controls are named for
+    // their internals ("compassMain"), which is no use over a button. A SNAP icon does something
+    // the control's own label does not describe ("Video Zoom %" is not what a 100% button does),
+    // so those bring their own line and use it for both.
+    const name = tooltip ?? label ?? twin._name ?? '';
+    btn.title = tooltip ?? (twin._tooltip ? `${name} — ${twin._tooltip}` : name);
+    if (name) btn.setAttribute('aria-label', name);
+
+    // updateDisplay is the one call every path into the value ends at, so it is the one place
+    // the icon has to repaint from.
+    andThen(twin, 'updateDisplay', paint);
+    andThen(twin, 'show', showHide);
+    andThen(twin, 'destroy', () => { btn.style.display = 'none'; });
+    showHide();
+    paint();
+}
+
+// Run `after` whenever `method` is called on `controller`, keeping the original behaviour and
+// its return value.
+function andThen(controller, method, after) {
+    const inherited = controller[method].bind(controller);
+    controller[method] = (...args) => {
+        const result = inherited(...args);
+        after();
+        return result;
+    };
+}
+
+// Repaint every icon from its bound value, defeating lil-gui's "unchanged since last time"
+// guard — used when the bar reappears after a spell of not being polled.
+function refreshToggleIcons(gui) {
+    for (const controller of gui.controllers) {
+        controller._lastDisplayedValue = undefined;
+        controller.updateDisplay();
     }
 }
 
