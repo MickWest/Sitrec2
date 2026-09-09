@@ -153,8 +153,8 @@ export function getPendingWorkDescriptions() {
 }
 
 // Returns the user's render-scale multiplier from settings, clamped to [0.25, 1].
-// Used to scale both the renderer pixel ratio and the offscreen render target
-// dimensions, giving a single knob for hi-DPI / slow-GPU users to trade visual
+// Applied through the renderer pixel ratio; offscreen targets follow its drawing
+// buffer dimensions, giving a single knob for hi-DPI / slow-GPU users to trade visual
 // fidelity for fps. Returns 1 when settings are not yet initialised.
 export function getEffectiveRenderScale() {
     const rs = Globals.settings && Globals.settings.renderScale;

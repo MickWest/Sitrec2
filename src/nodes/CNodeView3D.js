@@ -61,6 +61,7 @@ import {
     SRGBColorSpace,
     TextureLoader,
     UnsignedByteType,
+    Vector2,
     Vector3,
     WebGLRenderer,
     WebGLRenderTarget
@@ -90,6 +91,7 @@ import {cloneTerrainDayNightMaterialForView} from "../js/map33/material/TerrainD
 import {installStableShadowReceivers, setStableShadowReceiverLight} from "../StableShadowReceiver";
 import {getLocalUpVector} from "../SphericalMath";
 import {viewMenuKey} from "../ViewUIBarMenus";
+import {createSceneRenderTarget, resizeRenderTargetsToDrawingBuffer} from "../ViewRenderTargets";
 
 
 function linearToSrgb(color) {
@@ -1837,8 +1839,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         // 960x1022 for lookView), so anything reading widthPx during construction got whichever
         // the timing happened to produce — which is how the hidden WescamMXUI view, sized
         // relativeTo lookView, ended up with a rect of [1600,925] in some runs and [960,1022]
-        // in others. preRenderCameraUpdate() already treats widthPx as layout pixels ("Skip
-        // this for canvasWidth mode where dimensions intentionally differ"), so layout pixels
+        // in others. preRenderCameraUpdate() treats widthPx as layout pixels, so layout pixels
         // is the meaning the rest of the code expects.
         //
         // This does NOT make the meaning uniform everywhere: for a view that actually renders,
@@ -1855,16 +1856,6 @@ export class CNodeView3D extends CNodeViewCanvas {
         } else {
             canvasWidthPx = this.widthDiv * window.devicePixelRatio;
             canvasHeightPx = this.heightDiv * window.devicePixelRatio;
-        }
-
-        // Apply resolution scaling for side-by-side rendering on integrated GPU
-        // Reduces internal rendering resolution by ~70% when both views are visible
-        // This dramatically improves performance on Windows integrated graphics
-        // while maintaining visual quality (CSS scaling blurs imperceptibly)
-        if (ViewMan.isSideBySideMode()) {
-            const sideBySideResolutionScale = 0.7; // ~50% pixel reduction (0.7^2 ≈ 0.49)
-            canvasWidthPx = Math.floor(canvasWidthPx * sideBySideResolutionScale);
-            canvasHeightPx = Math.floor(canvasHeightPx * sideBySideResolutionScale);
         }
 
         this.canvas.width = canvasWidthPx;
@@ -2168,7 +2159,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 this.cameraNode.northUp = this.northUp;
 
 
-                let currentRenderTarget = null; // if no effects, we render directly to the canvas
+                let currentRenderTarget;
 
                 //if (this.effectsEnabled) {
                 let width, height;
@@ -2181,13 +2172,6 @@ export class CNodeView3D extends CNodeViewCanvas {
                     } else {
                         height = long;
                         width = Math.floor(long * this.widthPx / this.heightPx);
-                    }
-
-                    // Apply side-by-side resolution scaling to render targets as well
-                    if (ViewMan.isSideBySideMode()) {
-                        const sideBySideResolutionScale = 0.7;
-                        width = Math.floor(width * sideBySideResolutionScale);
-                        height = Math.floor(height * sideBySideResolutionScale);
                     }
 
                 } else {
@@ -2288,6 +2272,12 @@ export class CNodeView3D extends CNodeViewCanvas {
                     return;
                 }
 
+                // A very narrow pane at a reduced pixel ratio still needs one
+                // physical pixel; Three floors the drawing-buffer dimensions.
+                const minLogicalPixel = 1 / this.renderer.getPixelRatio();
+                width = Math.max(width, minLogicalPixel);
+                height = Math.max(height, minLogicalPixel);
+
                 // CRITICAL: Sync renderer size with current dimensions EVERY FRAME
                 // This prevents race conditions where resize gestures cause frames to render
                 // before the 100ms deferred resize completes. Deduping avoids redundant WebGL calls.
@@ -2297,48 +2287,23 @@ export class CNodeView3D extends CNodeViewCanvas {
                     this._lastSyncedRendererHeight = height;
                 }
 
-                // Apply user-controlled performance render scale to the offscreen
-                // render targets only. The renderer's canvas backing store is
-                // shrunk separately via setPixelRatio() in setupRenderer; we must
-                // NOT pass scaled dims to renderer.setSize() here because three.js
-                // multiplies by pixelRatio internally — that would double-scale
-                // and leave the look view's GL viewport mismatched with its
-                // canvas.style dimensions.
-                let rtWidth = width;
-                let rtHeight = height;
-                {
-                    const rs = getEffectiveRenderScale();
-                    if (rs !== 1) {
-                        rtWidth = Math.max(1, Math.floor(width * rs));
-                        rtHeight = Math.max(1, Math.floor(height * rs));
-                    }
-                }
+                // setPixelRatio already includes render scale (and DPR for layout-sized
+                // views). Derive physical target pixels from Three, never scale twice or
+                // resize its canvas behind its back. Size inactive effect targets too so
+                // enabling a pass at an unchanged window size cannot leave a tiny target.
+                const targetSize = resizeRenderTargetsToDrawingBuffer(this.renderer,
+                    [this.renderTargetAntiAliased, this.renderTargetA, this.renderTargetB],
+                    this._renderTargetSize ??= new Vector2());
+                const rtWidth = targetSize.x;
+                const rtHeight = targetSize.y;
 
-                // Resize render targets to match final renderer dimensions
-                // Note: renderer.setSize() is deferred 100ms, but widthPx/heightPx are current
-                // So render targets use the current dimensions and will match once renderer catches up
-                // Deduping prevents redundant GPU memory allocations during resize gestures
-                if (rtWidth !== this.lastRenderTargetWidth || rtHeight !== this.lastRenderTargetHeight) {
-
-                    this.renderTargetAntiAliased.setSize(rtWidth, rtHeight);
-                    if (this.effectsEnabled || this.useLookViewHDR || this.effectiveAerialPerspective) {
-                        this.renderTargetA.setSize(rtWidth, rtHeight);
-                        this.renderTargetB.setSize(rtWidth, rtHeight);
-                    }
-                    this.lastRenderTargetWidth = rtWidth;
-                    this.lastRenderTargetHeight = rtHeight;
-
-                    // CRITICAL: Update canvas dimensions to match render target
-                    // Otherwise canvas stays at init size and render target render at wrong resolution
-                    if (this.in.canvasWidth !== undefined) {
-                        this.canvas.width = rtWidth;
-                        this.canvas.height = rtHeight;
-                    }
-                }
-
-                currentRenderTarget = this.effectiveAerialPerspective ? this.renderTargetA : this.renderTargetAntiAliased;
-                this.renderer.setRenderTarget(currentRenderTarget);
                 const useAtmosphereHDR = this.useLookViewHDR && this.atmosphereEnabled && this.atmosphereHDR && this.hdrToneMappingPass !== null;
+                // A legacy day sky is tone-mapped before world geometry. Draw that sky
+                // into scratch A, then tone-map onto the scene target. All world geometry,
+                // including the aerial-perspective path, stays multisampled until resolve.
+                currentRenderTarget = GlobalDaySkyScene !== undefined && !useAtmosphereHDR
+                    ? this.renderTargetA : this.renderTargetAntiAliased;
+                this.renderer.setRenderTarget(currentRenderTarget);
                 if (!this.effectiveAerialPerspective && this._aerialPerspectiveWasActive) {
                     this.disposeAerialPerspectiveResources();
                 }
@@ -2525,20 +2490,19 @@ export class CNodeView3D extends CNodeViewCanvas {
                     // For non-HDR pipelines, tone-map sky now.
                     // HDR lookView with atmosphere tone-maps once at the end.
                     if (!useAtmosphereHDR) {
-                        const acesFilmicToneMappingPass = new ShaderPass(ACESFilmicToneMappingShader);
+                        const acesFilmicToneMappingPass = this.daySkyToneMappingPass ??=
+                            new ShaderPass(ACESFilmicToneMappingShader);
                         const lightingNodeSky = NodeMan.get("lighting", true);
                         const sceneExposureSky = lightingNodeSky?.sceneExposure ?? 1.0;
                         acesFilmicToneMappingPass.uniforms['exposure'].value = NodeMan.get("theSky").effectController.exposure * sceneExposureSky;
                         acesFilmicToneMappingPass.uniforms['tDiffuse'].value = currentRenderTarget.texture;
 
-                        // flip the render targets
-                        const useRenderTarget = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
-                        this.renderer.setRenderTarget(useRenderTarget);
+                        this.renderer.setRenderTarget(this.renderTargetAntiAliased);
                         this.fullscreenQuad.material = acesFilmicToneMappingPass.material;
                         this.renderer.render(this.fullscreenQuadScene, this.fullscreenQuadCamera);
                         this.renderer.clearDepth();
 
-                        currentRenderTarget = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
+                        currentRenderTarget = this.renderTargetAntiAliased;
                     }
                 }
                 if (globalProfiler) globalProfiler.pop();
@@ -3772,6 +3736,8 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.skyGradientMaterial = null;
         if (this.hdrToneMappingPass?.material) this.hdrToneMappingPass.material.dispose();
         this.hdrToneMappingPass = null;
+        this.daySkyToneMappingPass?.dispose();
+        this.daySkyToneMappingPass = null;
         if (this.fullscreenQuadGeometry) this.fullscreenQuadGeometry.dispose();
 
         super.dispose();
@@ -3788,18 +3754,14 @@ export class CNodeView3D extends CNodeViewCanvas {
 
     createRenderTargets() {
         const renderTargetType = this.useLookViewHDR ? HalfFloatType : UnsignedByteType;
-        const aaSamples = this.useLookViewHDR ? 0 : getEffectiveMSAASamples();
+        const requestedSamples = getEffectiveMSAASamples();
 
         // Per-view render targets to avoid thrashing GPU memory in split-screen mode
         // Each view maintains its own render targets instead of sharing globals
-        this.renderTargetAntiAliased = new WebGLRenderTarget(256, 256, {
-            format: RGBAFormat,
-            type: renderTargetType,
-            colorSpace: LinearSRGBColorSpace,
-            minFilter: NearestFilter,
-            magFilter: NearestFilter,
-            samples: aaSamples,
-        });
+        this.renderTargetAntiAliased = createSceneRenderTarget(this.renderer, renderTargetType, requestedSamples);
+        if (this.renderTargetAntiAliased.samples !== requestedSamples) {
+            console.warn(`[Render] ${this.id}: requested ${requestedSamples} MSAA samples; using ${this.renderTargetAntiAliased.samples} for ${this.useLookViewHDR ? "RGBA16F" : "RGBA8"}`);
+        }
 
         this.renderTargetA = new WebGLRenderTarget(256, 256, {
             minFilter: NearestFilter,
@@ -3817,10 +3779,6 @@ export class CNodeView3D extends CNodeViewCanvas {
             colorSpace: LinearSRGBColorSpace,
         });
 
-        // Reset cached dims so the next frame's size-sync re-applies setSize()
-        // (otherwise the new 256x256 targets stay tiny until the canvas resizes).
-        this.lastRenderTargetWidth = 256;
-        this.lastRenderTargetHeight = 256;
     }
 
     disposeRenderTargets() {

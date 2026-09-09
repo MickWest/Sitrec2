@@ -738,29 +738,10 @@ class CNodeView extends CNode {
 
     preRenderCameraUpdate() {
         const newAspect = this.widthPx / this.heightPx;
-        
-        // Ensure WebGL canvas backing store matches the intended dimensions before rendering.
-        // This fixes a race condition when view presets change rapidly:
-        // - widthPx/heightPx update immediately when preset changes
-        // - But changedSize() uses a 100ms debounce before calling renderer.setSize()
-        //   (the debounce prevents flickering during continuous window resize drag)
-        // - If presets change faster than 100ms, the canvas has stale dimensions
-        // - Result: camera aspect is correct but canvas backing store is wrong size,
-        //   causing CSS to scale the mismatched canvas and distort the view
-        // Solution: Check dimensions before render and fix any mismatch immediately.
-        // Note: Skip this for canvasWidth mode where dimensions intentionally differ.
-        if (this.renderer && !this.in.canvasWidth) {
-            const pixelRatio = this.renderer.getPixelRatio();
-            const canvasW = this.renderer.domElement.width;
-            const canvasH = this.renderer.domElement.height;
-            const expectedW = Math.floor(this.widthPx * pixelRatio);
-            const expectedH = Math.floor(this.heightPx * pixelRatio);
-            if (canvasW !== expectedW || canvasH !== expectedH) {
-                this.renderer.setSize(this.widthPx, this.heightPx);
-                this._lastRendererWidth = this.widthPx;
-                this._lastRendererHeight = this.heightPx;
-            }
-        }
+
+        // CNodeView3D sizes the renderer and targets together before drawing.
+        // This method also runs inside sky rendering: resizing here would undo
+        // letterboxing or minimum-pixel sizing in the middle of that frame.
         
         this.camera.aspect = newAspect;
         this.camera.updateProjectionMatrix();
@@ -1017,10 +998,8 @@ class CNodeView extends CNode {
         // CNodeTerrainUI). Gated by an actual dimension change above, so no continuous render.
         setRenderOne(true);
         if (this.renderer) {
-            // For WebGL renderers: debounce renderer.setSize() to avoid flickering
-            // Problem: During window resize drag gestures, widthPx/heightPx change 1-2 pixels every frame
-            // Without debounce: renderer.setSize() called dozens of times/sec, clearing canvas each time -> flicker
-            // Solution: Defer the actual resize 100ms, accumulating changes until gesture settles
+            // Schedule a final redraw after the resize gesture settles. Canvas
+            // resizing itself belongs to the per-frame 3D target-sizing path.
             if (this._resizeTimeout) {
                 clearTimeout(this._resizeTimeout);
             }
@@ -1037,58 +1016,11 @@ class CNodeView extends CNode {
 
     deferredResizeWebGL() {
         if (!this.renderer) return;
-        
-        // Called via 100ms debounce after resize gesture settles
-        // Calculates final renderer dimensions and applies resize with deduping to avoid redundant calls
-        
-        if (this.in.canvasWidth) {
-            // Custom canvas resolution mode: scale proportionally to maintain aspect ratio
-            let long = Math.floor(this.in.canvasWidth.v0);
 
-            if (this.widthPx > this.heightPx) {
-                var width = long;
-                var height = Math.floor(long * this.heightPx / this.widthPx);
-            } else {
-                var height = long;
-                var width = Math.floor(long * this.widthPx / this.heightPx);
-            }
-
-            // Side-by-side resolution reduction must mirror the per-frame
-            // size-sync block in CNodeView3D.renderCanvas — otherwise the two
-            // paths set the renderer to different sizes for the same canvas.
-            // The per-frame block writes canvas.width = rtWidth (with the 0.7
-            // factor), while three.js's internal _width stays at the value
-            // last setSize'd here (without 0.7). Result: GL viewport (= _width
-            // × pixelRatio) extends past the canvas drawingBuffer and
-            // canvasWidth-mode views (e.g. lookView) render off-center.
-            if (ViewMan.isSideBySideMode()) {
-                const sideBySideResolutionScale = 0.7;
-                width = Math.floor(width * sideBySideResolutionScale);
-                height = Math.floor(height * sideBySideResolutionScale);
-            }
-
-            // Only call setSize() if dimensions actually changed (avoids redundant WebGL calls)
-            if (width !== this._lastRendererWidth || height !== this._lastRendererHeight) {
-                this.renderer.setSize(width, height, false);
-                this._lastRendererWidth = width;
-                this._lastRendererHeight = height;
-                // Keep the per-frame size-sync's dedup state aligned so the
-                // next render doesn't skip its own setSize believing the
-                // renderer is already at the per-frame computed width.
-                this._lastSyncedRendererWidth = width;
-                this._lastSyncedRendererHeight = height;
-            }
-        } else {
-            // Normal mode: resize to match container dimensions
-            const width = this.widthPx;
-            const height = this.heightPx;
-            
-            if (width !== this._lastRendererWidth || height !== this._lastRendererHeight) {
-                this.renderer.setSize(width, height);
-                this._lastRendererWidth = width;
-                this._lastRendererHeight = height;
-            }
-        }
+        // Resizing the canvas after a paused frame clears the image and can
+        // disagree with the pipeline's fixed resolution or video aspect. Let
+        // the next render apply one authoritative size to canvas and targets.
+        setRenderOne(true);
     }
 
     getRenderTargetHeight() {
@@ -1105,11 +1037,6 @@ class CNodeView extends CNode {
             rtHeight = Math.floor(long * height / width);
         } else {
             rtHeight = long;
-        }
-        
-        if (ViewMan.isSideBySideMode()) {
-            const sideBySideResolutionScale = 0.7;
-            rtHeight = Math.floor(rtHeight * sideBySideResolutionScale);
         }
         
         return rtHeight;
