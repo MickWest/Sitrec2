@@ -745,7 +745,7 @@ const zh = {
     view3d: {
         northUp: { label: "观察视图朝北", tooltip: "将观察视图设为朝北而非世界向上方向。\n适用于卫星视图及类似的垂直俯瞰场景。\n不适用于 PTZ 模式" },
         atmosphere: { label: "大气", tooltip: "将地形和 3D 对象向当前天空颜色混合的距离衰减效果" },
-        atmoVisibility: { label: "大气能见度 (km)", tooltip: "大气对比度降至约 50% 的距离（越小 = 大气越浓密）" },
+        atmoVisibility: { label: "大气能见度 (km)", tooltip: "大气对比度降至约 2% 的距离（越小 = 大气越浓密）" },
         atmoHDR: { label: "大气 HDR", tooltip: "基于物理的 HDR 雾/色调映射，用于透过雾霾的强烈阳光反射" },
         atmoExposure: { label: "大气曝光", tooltip: "HDR 大气色调映射曝光乘数，用于高光渐弱" },
         startXR: { label: "启动 VR/XR", tooltip: "启动 WebXR 会话进行测试（与 Immersive Web Emulator 配合使用）" },

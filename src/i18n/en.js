@@ -1169,9 +1169,10 @@ const en = {
     },
     view3d: {
         northUp: { label: "Look View North Up", tooltip: "Set the look view to be north up, instead of world up.\nfor Satellite views and similar, looking straight down.\nDoes not apply in PTZ mode" },
-        atmosphere: { label: "Atmosphere", tooltip: "Render the atmosperic-based sky and physically based aerial haze. Distant terrain and objects fade through the same line-of-sight atmosphere model as the sky." },
-        atmoVisibility: { label: "Atmo Visibility (km)", tooltip: "Meteorological visibility control (smaller = thicker atmosphere)" },
-        atmoHDR: { label: "Atmo HDR", tooltip: "Physically-based HDR fog/tone mapping for bright sun reflections through haze" },
+        atmosphere: { label: "Atmosphere", tooltip: "Render a sky gradient and distance haze in the look view. Configure them separately in Atmosphere Tweaks." },
+        atmoHaze: { label: "Distance haze", tooltip: "Fade distant surfaces into the atmosphere; disable to keep only the sky gradient." },
+        atmoVisibility: { label: "Atmo Visibility (km)", tooltip: "Range where a dark target retains 2% contrast in uniform sea-level air (smaller = thicker haze)" },
+        atmoHDR: { label: "Atmo HDR", tooltip: "Tone-map HDR highlights and apply exposure to the look view" },
         atmoExposure: { label: "Atmo Exposure", tooltip: "HDR atmosphere tone-mapping exposure multiplier for highlight rolloff" },
         shadowsEnabled: {
             label: "Shadows",

@@ -745,7 +745,7 @@ const nl = {
     view3d: {
         northUp: { label: "Kijkweergave noord boven", tooltip: "De kijkweergave instellen op noord boven in plaats van wereld boven.\nVoor satellietweergaven en vergelijkbaar, recht naar beneden kijkend.\nGeldt niet in PTZ-modus" },
         atmosphere: { label: "Atmosfeer", tooltip: "Afstandsdemping die terrein en 3D-objecten mengt naar de huidige luchtkleur" },
-        atmoVisibility: { label: "Atmosfeerzicht (km)", tooltip: "Afstand waar het atmosferisch contrast tot ongeveer 50% daalt (kleiner = dikkere atmosfeer)" },
+        atmoVisibility: { label: "Atmosfeerzicht (km)", tooltip: "Afstand waar het atmosferisch contrast tot ongeveer 2% daalt (kleiner = dikkere atmosfeer)" },
         atmoHDR: { label: "Atmosfeer HDR", tooltip: "Fysisch gebaseerde HDR-mist/tonemapping voor heldere zonreflecties door nevel" },
         atmoExposure: { label: "Atmosfeerbelichting", tooltip: "HDR-atmosfeer tonemapping-belichtingsmultiplicator voor highlight-rolloff" },
         startXR: { label: "VR/XR starten", tooltip: "WebXR-sessie starten voor testen (werkt met Immersive Web Emulator)" },

@@ -98,6 +98,7 @@ sitch = {
     },
 
     lookView: {
+        atmosphere: {desktopDefault: true, haze: true, skyGradient: true, visibilityKm: 250, hdr: true},
 //        left: 0.5, top: 0.5, width: -1.7927, height: 0.5,
         left: 0.5, top: 0, width: 0.5, height: 1,
 

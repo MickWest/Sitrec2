@@ -745,7 +745,7 @@ const ja = {
     view3d: {
         northUp: { label: "ルックビュー北向き", tooltip: "ルックビューをワールドアップではなく北向きに設定。\n衛星ビューなど、真下を見下ろす場合に使用。\nPTZモードでは適用されません" },
         atmosphere: { label: "大気", tooltip: "地形と3Dオブジェクトを現在の空の色にブレンドする距離減衰" },
-        atmoVisibility: { label: "大気視程 (km)", tooltip: "大気コントラストが約50%に低下する距離（小さい = より濃い大気）" },
+        atmoVisibility: { label: "大気視程 (km)", tooltip: "大気コントラストが約2%に低下する距離（小さい = より濃い大気）" },
         atmoHDR: { label: "大気HDR", tooltip: "ヘイズを通した明るい太陽反射のための物理ベースHDRフォグ/トーンマッピング" },
         atmoExposure: { label: "大気露出", tooltip: "ハイライトロールオフのためのHDR大気トーンマッピング露出倍率" },
         startXR: { label: "VR/XRを開始", tooltip: "テスト用WebXRセッションを開始（Immersive Web Emulatorで動作）" },
