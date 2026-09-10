@@ -1,4 +1,4 @@
-import {betaSuperseded, cleanBuild, entryFiles, selectBuild, validateManifest} from './channelModel';
+import {cleanBuild, entryFiles, selectBuild, validateManifest} from './channelModel';
 
 const appBase = new URL('./', window.location.href).href;
 const scriptBase = new URL('./', document.currentScript?.src || appBase).href;
@@ -44,10 +44,6 @@ async function start() {
                 if (!state.preferenceAvailable) notice('Your Beta preference is unavailable. Opening Shipped unless explicitly selected.');
                 if ((preference || params.get('channel') === 'beta') && !manifest.beta) {
                     notice('Beta is unavailable. Opening Shipped.');
-                }
-                const override = params.get('channel');
-                if (preference && override !== 'beta' && override !== 'shipped' && betaSuperseded(manifest)) {
-                    notice(`Shipped ${manifest.shipped.version} is newer than Beta ${manifest.beta.version}b. Opening Shipped.`);
                 }
             }
         } catch (error) {

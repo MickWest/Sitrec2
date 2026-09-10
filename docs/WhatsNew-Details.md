@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.157.2 (2026-09-09)
+
+### Bug Fixes
+
+- **Fixed a 63 px black band between the menu bar and the views, pushing the whole application down, for every logged-in member since 2.157.1** (`src/release/bootstrap.js`). 2.157.1's channel bootstrap called `notice()` — which appends a `<p role="status">` to `document.body` — whenever a Beta preference was redirected to a newer Shipped (`preference && override !== 'beta' && override !== 'shipped' && betaSuperseded(manifest)`). Beta is the default preference for logged-in members and Shipped 2.157.1 is newer than Beta 2.156.4b, so that fired on every member's load; an anonymous visitor was affected only if they had turned **Use Beta updates** on (stored in `localStorage` as `sitrec.betaProgram`). The paragraph is black text on the page's black body, so it is invisible, but it sits in normal flow above the application and, measured on the live site, displaced the views downward by 63 px (20 px top offset + 23 px line + 20 px bottom margin). The fix removes that `notice()` call and the now-unused `betaSuperseded` import from `bootstrap.js`. The `notice()` helper and `selectBuild` / `betaSuperseded` in `src/release/channelModel.js` are unchanged, so a Beta preference still opens the newer Shipped exactly as 2.157.1 describes — now silently: the 2.157.1 entry's "says so on the startup page" no longer applies. The **Use Beta updates** tooltip (Sitrec → Settings) still states the rule — *When a full release is newer than the current Beta, Beta users get that release until a Beta at least as new is available.* No test or doc referenced the removed message.
+
 ## Version 2.157.1 (2026-09-09)
 
 ### Bug Fixes

@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.157.2 (2026-09-09)
+
+### Bug Fixes
+
+- Fixed a black band between the menu bar and the views, with everything pushed 63 px down the page, for every logged-in member since 2.157.1 (and for a visitor who had turned Use Beta updates on). The startup message that 2.157.1 added when a Beta preference opens the newer Shipped is removed; the Beta preference still opens Shipped whenever Shipped is newer, but no longer says so on the startup page. The Use Beta updates tooltip (Sitrec → Settings) still states the rule.
+
 ## Version 2.157.1 (2026-09-09)
 
 ### Bug Fixes
