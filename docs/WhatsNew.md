@@ -9,6 +9,45 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.157.0 (2026-09-09)
+
+### New Features
+
+- **Ray-traced atmospheric refraction** (Effects → Ray-traced Refraction): trace light through an atmosphere you draw yourself and see the mirages, folds and horizon shifts it produces in a chosen 3D view. Start from one of eleven temperature profiles, drag the temperature and humidity curves, add up to eight laser beams to see where they really go, and read the bending figures each trace produced. Profiles export and import as files, and save with the sitch.
+- **Free Look button** (Look view header bar): a three-axis button at the left of the Look view's header turns hand-flying on and off, and stays on screen while the header is hidden so there is always a way out of the mode. Reaching for anything under Camera → Location or Heading, or pressing C to drop the camera under the cursor, now leaves Free Look first and says so briefly over the view, instead of appearing to do nothing.
+- **Toggle icons on the view header bars** (Main, Look and Video): the most-used switches of each view now sit as icons beside the view's name — labels, pins, measurements, tracks, extend to ground, satellites, star names, compass, clock and the view's own readout, plus lines of sight and camera frustum in Main, and a 100% snap button in Video. Each is the same switch as the menu row beside it, and an icon is drained of color while its control is off.
+- **Declutter** (Main and Look header bars): hides every overlay in that view with one press, and puts back exactly the ones that were showing when you press it again.
+- **Show Tracks and Extend Tracks to Ground** (Contents): two switches over all tracks at once. Each remembers the mixture it found, so switching back restores which tracks were showing or extended rather than flattening them. Double-click the extend icon on a header bar to clear it outright.
+- **Main View Scale** (Objects): enlarges 3D objects in the main view only, on top of Global Scale, so you can find a small object from far out without changing what the look view sees.
+
+### Improvements
+
+- Tooltips appear after a quarter of a second instead of the browser's one second, and appear instantly while moving along a row of controls.
+- **Star Tracker** (Video → Star Tracker): a blind solve now reports which stage and quad it is on, in the menu and over the video, so a long search is no longer indistinguishable from a hang, and a failure says how close it came and which check refused it. It retries with nine different sets of the brightest detected stars instead of two, so it solves fields it used to give up on, held to exactly the same standard of proof.
+- **Fade at completion** (Video → Star Tracker): retires the quad lines, circles and catalog numbers after a successful solve, always leaving at least twelve labels on screen. Sync Camera to Star Field also restores the previous heading and field of view when you switch it off.
+- Sky, distance haze, look-view brightness and highlight rolloff are now separate controls (Lighting → Atmosphere Tweaks and Lighting → Look View Output), so haze can be turned off while keeping the sky gradient, and brightness no longer changes when you change the atmosphere.
+- Distance haze is now drawn by the surfaces themselves, so transparency, terrain shaping, bright highlights and the shape of the displayed camera projection all stay aligned with it, and reflections carry their own haze.
+- Clouds and contrails fade where they meet terrain and other objects instead of cutting a hard edge, and clouds now sort correctly in every view, including reflections.
+- Sitrec no longer redraws the scene over and over while paused, and terrain, line and diagnostic work is skipped when it cannot change anything.
+- Every line in the scene — tracks, lines of sight, outlines, editor guides, celestial lines, arrows and wind streamlines — now draws through one path, with smooth edges at any width and no bright spots where dense track segments meet.
+- Features are now called Pins, the Sim Info Display is the Look View Readout and the Video Info Display is the Video Readout. Switching a readout on when nothing is chosen adds one item, so the press has a visible effect.
+- **Starlink Horizon Flares tool**: a searched location now takes its time zone from the nearest airport that has one instead of falling back to your browser's, so an airfield abroad is no longer scanned in your own local hours; the chip's tooltip says which airport it came from.
+- **Starlink Horizon Flares tool**: the entered time is restated below the field in both 24-hour and 12-hour form, because a browser draws the time field in its own hour cycle and the page cannot change it.
+
+### Bug Fixes
+
+- Fixed the 3D views rendering at reduced resolution in side-by-side mode, and antialiasing being lost in the look view with high dynamic range switched on.
+- Fixed solid lines of sight and camera frustum lines breaking into dots when zoomed in close to the camera.
+- Fixed ground overlays draping one copy per zoom level, with 28 km deep skirts, over photorealistic 3D tiles.
+- Fixed the terrain Manual Remove brush being saved with a sitch, where it would swallow the first drag of whoever opened it (Terrain → Remove Geometry).
+- Fixed hiding a track also hiding the aircraft or object flying it.
+- Fixed bright dashed seams and vertical tile edges appearing in water reflections.
+- Fixed videos that arrive in fragments being rejected as incomplete after downloading, and their slot being dropped.
+- Fixed the filled roof of an imported map polygon spilling outside its own outline when the outline curves back on itself.
+- Fixed the Notes panel becoming impossible to type in again after pasting links; a new pencil button in its header switches between editing and clickable links, and leaving Sitrec to copy a URL no longer ends the edit.
+- Fixed pressing C to place the camera sometimes leaving no undo step.
+- Fixed the Starlink Horizon Flares tool captioning your browser's own time zone as a guess from a distant airport after using Current Location.
+
 ## Version 2.156.0 (2026-09-08)
 
 ### New Features
