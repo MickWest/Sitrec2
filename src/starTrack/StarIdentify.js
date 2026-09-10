@@ -139,6 +139,16 @@ export const STAR_IDENTIFY_DEFAULTS = {
     scalePriorTolerance: 0.35,
 };
 
+/**
+ * How often the hypothesis search comes up for air to report progress and yield.
+ *
+ * 100 ms is chosen from both ends: it is fast enough that a counter visibly moves (ten updates
+ * a second reads as motion, not as a stalled number), and slow enough that the yields cost
+ * almost nothing - a 3000-hypothesis tier that takes 3 s pays 30 of them, against the 94 the
+ * old every-32nd rule paid whether or not any time had passed.
+ */
+const PROGRESS_INTERVAL_MS = 100;
+
 // ---------------------------------------------------------------------------------------------
 // Catalog file parsing
 // ---------------------------------------------------------------------------------------------
@@ -572,6 +582,9 @@ function invertSim(T) {
  *   attaches a `diag` record of the solve's internals to the result (see newDiag).
  *   `onYield` is awaited periodically through the hypothesis search so a caller can keep the
  *   page responsive; omit it and the search runs straight through as one burst.
+ *   `onProgress({tried, maxHypotheses, candidates, quadsDone, quadsTotal})` is called on the
+ *   same beat, before the yield, so a caller can show that the search is alive and how far
+ *   through its budget it is. Both are called at most every PROGRESS_INTERVAL_MS.
  *   `onCandidate({points, mirrored, matched, nImage, fraction})` is called for each hypothesis
  *   that survives verification, with `points` the four quad stars in image coordinates.
  * @returns {Promise<{ok: boolean, reason?: string} | {ok: true, matches, centerRaDeg,
@@ -729,14 +742,28 @@ async function solveFieldInner(imageStars, catalog, indexes, opts) {
 
     const candidates = [];
     let tried = 0;
+    // Progress bookkeeping: which image quad the search is on, and when it last came up for
+    // air. Both are reported through onProgress so a caller can show that the search is
+    // ALIVE - a blind solve is seconds of silence otherwise, and silence is indistinguishable
+    // from a hang.
+    let quadsDone = 0;
+    let lastBreath = performance.now();
+    // The strongest provisional evidence anything reached, for the failure message.
+    const best = {matches: 0, needed: 0, needFraction: 0, needChance: 0, expected: 0,
+        nProjected: 0};
 
     for (const index of indexes) {
         const codeTol = index.tier?.codeTolerance ?? O.codeTolerance;
         const tierDiag = DIAG && {codes: index.n, tier: index.tier, codeTol, hits: 0, tried: 0,
             candidates: 0};
         if (tierDiag) DIAG.tiers.push(tierDiag);
+        // Per tier, so "quad 142 of 3404" stays true when a caller passes several indexes to
+        // one solve. The hypothesis budget is shared across them, so `tried` deliberately is
+        // not reset - it is progress against the thing that actually ends the search.
+        quadsDone = 0;
         for (const iq of imageQuads) {
             if (tried >= O.maxHypotheses) break;
+            quadsDone++;
             const hits = lookupCode(index, iq.code, codeTol);
             if (tierDiag) tierDiag.hits += hits.length;
             for (const h of hits) {
@@ -748,7 +775,24 @@ async function solveFieldInner(imageStars, catalog, indexes, opts) {
                 // Batched rather than per-hypothesis: most hypotheses are rejected within a few
                 // microseconds by the cheap gates below, and awaiting on each would cost more
                 // than the search itself.
-                if (O.onYield && tried % 32 === 0) await O.onYield();
+                //
+                // The batch is a TIME interval, not a fixed count. Hypothesis cost varies by
+                // orders of magnitude - one rejected by the scale prior costs a few
+                // microseconds, one that reaches full verification projects the whole catalog -
+                // so any fixed count is simultaneously too eager on a cheap stretch (a
+                // setTimeout(0) clamped to 4 ms is then most of the run) and too slow on an
+                // expensive one. The modulo survives as a cheap guard so the clock is read
+                // once per 32 hypotheses rather than on every one.
+                if (tried % 32 === 0) {
+                    const now = performance.now();
+                    if (now - lastBreath >= PROGRESS_INTERVAL_MS) {
+                        lastBreath = now;
+                        O.onProgress?.({tried, maxHypotheses: O.maxHypotheses,
+                            candidates: candidates.length,
+                            quadsDone, quadsTotal: imageQuads.length});
+                        if (O.onYield) await O.onYield();
+                    }
+                }
 
                 // Hypothesis: similarity from image px (in this parity) to the tangent plane
                 // about the catalog quad's anchor star.
@@ -790,7 +834,7 @@ async function solveFieldInner(imageStars, catalog, indexes, opts) {
                 }
 
                 const cand = verifyHypothesis(imageStars, iq.mirrored, T, c0, b0, P, catStars,
-                    catalog, deep, deepVec, tolPx, width, centerPx, bounds, O);
+                    catalog, deep, deepVec, tolPx, width, centerPx, bounds, O, best);
                 if (!cand) continue;
                 if (tierDiag) tierDiag.candidates++;
                 // A quad that got this far passed the code lookup, the scale prior, the
@@ -820,7 +864,16 @@ async function solveFieldInner(imageStars, catalog, indexes, opts) {
 
     if (DIAG) { DIAG.tried = tried; DIAG.candidates = candidates.length; }
     if (!candidates.length) {
-        return {ok: false, reason: `no verified match (${tried} hypotheses tried)`};
+        // Say how close the best one came, and to WHICH bar. The chance figure is the
+        // informative one on an over-detected image: `expected` scales with the number of
+        // detections, so junk detections raise the bar they contribute no matches towards.
+        const near = best.matches
+            ? ` - best matched ${best.matches} of ${best.needed} needed`
+                + ` (${best.needChance} to beat coincidence, ${best.needFraction} for consensus,`
+                + ` against ${best.nProjected} catalog stars in view)`
+            : "";
+        return {ok: false, reason: `no verified match (${tried} hypotheses tried)${near}`,
+            best};
     }
     // Finalise candidates BEST-FIRST until one carries the full consensus. Refinement is the
     // stricter judge, and the best provisional is occasionally a lucky wrong one - discarding
@@ -987,8 +1040,13 @@ function consensusDetail(O, nImage, nMatches, nProjected, expected) {
  * carries tens of pixels of pure projection distortion and dies here, never reaching the
  * refinement that would have re-centred it. About the right tangent point the model is exact,
  * for any field of view.
+ *
+ * `best` is an optional accumulator recording the strongest provisional evidence any
+ * hypothesis reached, so a search that verifies NOTHING can still say how close it came and
+ * against what bar. Without it "no verified match" is one sentence covering every cause from
+ * a wrong field to an over-detected one.
  */
-function verifyHypothesis(imageStars, mirrored, T, c0, b0, P, catQ, catalog, deep, deepVec, tolPx, width, centerPx, bounds, O) {
+function verifyHypothesis(imageStars, mirrored, T, c0, b0, P, catQ, catalog, deep, deepVec, tolPx, width, centerPx, bounds, O, best) {
     // Where does this hypothesis put the image centre? Re-anchor there and refit the quad.
     const cPlane = applySim(T, centerPx[0], mirrored ? -centerPx[1] : centerPx[1]);
     const c1 = unGnomonic(cPlane[0], cPlane[1], c0, b0);
@@ -1006,6 +1064,21 @@ function verifyHypothesis(imageStars, mirrored, T, c0, b0, P, catQ, catalog, dee
     if (!pm) return null;                                  // projectAndMatch counted its own
     const {matches} = pm;
     diagMax("provisionalMatches", matches.length);
+    // The bar this particular hypothesis faced: the flat floor, the fraction of what its own
+    // projection could have matched, and the count coincidence alone would have produced
+    // against that projection. Recorded together, because which of the three binds is exactly
+    // what distinguishes "the field is wrong" from "the star list is too polluted to clear the
+    // chance margin".
+    if (best && matches.length > best.matches) {
+        best.matches = matches.length;
+        best.needFraction = Math.ceil(
+            consensusNeeded(imageStars.length, pm.nProjected, O.provisionalMatchFraction));
+        best.needChance = Math.ceil(
+            pm.expected + Math.max(O.chanceMarginMin, O.chanceSigmas * Math.sqrt(pm.expected)));
+        best.needed = Math.max(O.minMatches, best.needFraction, best.needChance);
+        best.expected = pm.expected;
+        best.nProjected = pm.nProjected;
+    }
     if (matches.length < O.minMatches) { diagCount("rej.minMatches"); return null; }
     if (!chanceOK(O, matches.length, pm.expected)) {
         diagCount("rej.provisionalChance");

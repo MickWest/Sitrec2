@@ -167,6 +167,10 @@ const params = {
     // the solver's quad lines are three independent layers over the same stars.
     showStars: true,
     showStarNames: true,
+    // The Bayer and HIP-number fallback labels, gated separately from the proper names. Nearly
+    // every match carries one and only a minority have a real name, so these are the bulk of the
+    // label clutter - and they are what the completion fade drops to leave the names alone.
+    showHipNumbers: true,
     showQuadLines: true,
     showMoving: true,
     showClusters: true,
@@ -180,6 +184,18 @@ const params = {
     // adjusted frame is the honest thing to measure.
     applyAdjustments: true,
     chartTracks: true,
+    // Hand the look camera to the solve when it succeeds: "Star Track" selected for both the
+    // heading and the FOV, so the rendered sky matches the footage's pointing and framing. As a
+    // FLAG rather than a button because the sync is a state, not an event - clearing it has to
+    // put the camera back where the user had it, which a button has no way to express.
+    syncCameraToStars: true,
+    // Retire the solver's working annotation by itself once it has succeeded: the quad lines,
+    // then the circles shrinking into their stars while the names slide out to the offset the
+    // night sky uses, then the catalog-number labels. What is left is what the user wanted all
+    // along - named stars over their own footage - and it arrives without them hunting three
+    // checkboxes to get there. Only on SUCCESS: a failed run's annotation is the evidence for
+    // what went wrong and must stay on screen.
+    fadeAtCompletion: true,
     status: "not run",
 };
 
@@ -258,6 +274,24 @@ async function ensureIdentifyData() {
  */
 function yieldToBrowser() {
     return new Promise((r) => setTimeout(r, 0));
+}
+
+/**
+ * Set the status readout and ask for a frame.
+ *
+ * The status has TWO displays with different refresh rules. The menu row polls itself (lil-gui
+ * `.listen()`), so a bare assignment reaches it. The copy drawn on the video overlay exists
+ * only on a RENDERED frame, and Sitrec renders on demand - so on a paused still, with no
+ * candidates to draw and no playhead moving, nothing requests a frame and the overlay line
+ * silently keeps whatever it last said. That is the exact failure the overlay line was added to
+ * prevent, so every status written DURING a run goes through here.
+ *
+ * `setRenderOne` coalesces against an already-pending request, so calling this on every
+ * progress beat costs a boolean test.
+ */
+function setStatus(text) {
+    params.status = text;
+    setRenderOne();
 }
 
 /** The video view node, or null when the sitch has no video. */
@@ -1470,6 +1504,8 @@ export function syncCameraToStarTrack() {
         params.status = "no star track controller in this sitch";
         return;
     }
+    // Before anything is selected, so clearing the flag has somewhere to go back to.
+    rememberCameraChoices();
     // A fisheye run with a catalog lens fit syncs the LENS as well as the pose: the render's
     // FOV and centre are set from the stars, the projection type and the drawn circle kept.
     const lensChange = applyFittedLensToFisheye(result);
@@ -1505,6 +1541,49 @@ export function syncCameraToStarTrack() {
                     + `centre (${lensChange.before.centerX.toFixed(1)}, ${lensChange.before.centerY.toFixed(1)}) -> `
                     + `(${lensChange.after.centerX.toFixed(1)}, ${lensChange.after.centerY.toFixed(1)}) %`
                 : "");
+    setRenderOne();
+}
+
+/**
+ * What the camera switches were set to before the star track took them over.
+ *
+ * Held so that clearing "Sync camera to star field" returns the camera to the source the user
+ * had chosen, rather than leaving it on a dropdown entry they never picked. Captured once per
+ * sync, so a re-identify that re-syncs does not overwrite the original pre-sync state with
+ * "Star Track".
+ */
+let cameraSyncPrev = null;
+
+/** Record the heading and FOV sources, unless we are already holding a set. */
+function rememberCameraChoices() {
+    if (cameraSyncPrev) return;
+    cameraSyncPrev = {
+        heading: NodeMan.get("CameraLOSController", false)?.choice ?? null,
+        fov: NodeMan.get("fovSwitch", false)?.choice ?? null,
+    };
+}
+
+/**
+ * Put the heading and FOV switches back to what they were before the sync.
+ *
+ * A switch the user has since moved somewhere else themselves is left alone - the flag governs
+ * the star track's claim on the camera, not the user's later choices. A switch that was ALREADY
+ * on Star Track when the sync happened (a reloaded sitch that saved it there) has no earlier
+ * choice to return to, so it takes the first other source rather than sitting on one the flag
+ * now says is off.
+ */
+function restoreCameraChoices() {
+    const prev = cameraSyncPrev;
+    cameraSyncPrev = null;
+    if (!prev) return;
+    for (const [id, was] of [["CameraLOSController", prev.heading], ["fovSwitch", prev.fov]]) {
+        const sw = NodeMan.get(id, false);
+        if (!sw || sw.choice !== "Star Track") continue;
+        const target = (was && was !== "Star Track" && sw.inputs[was])
+            ? was
+            : Object.keys(sw.inputs).find((k) => k !== "Star Track");
+        if (target) sw.selectOption(target);
+    }
     setRenderOne();
 }
 
@@ -1568,6 +1647,10 @@ export async function identifyStars(opts = {}) {
     const myResult = result;
     const generation = myResult.generation;
     liveQuads = [];
+    // A previous completion fade left the circles, lines and catalog numbers switched off. This
+    // run is about to draw all three again, so put back whatever the fade retired - otherwise a
+    // second identify appears to do nothing at all.
+    resetCompletionFade();
     // Freshness includes the VIDEO's identity: replacing the video in the same view does not
     // change the result object or the generation, and an identification of the old sky must
     // not attach to (or report status over) the new one.
@@ -1575,7 +1658,7 @@ export async function identifyStars(opts = {}) {
         && Globals.loadGeneration === generation
         && videoView()?.videoData === myResult.videoData;
     try {
-        params.status = "loading star catalog";
+        setStatus("loading star catalog");
         await yieldToBrowser();
         const {catalog, names} = await ensureIdentifyData();
         if (!fresh()) return;
@@ -1652,11 +1735,31 @@ export async function identifyStars(opts = {}) {
 
         // Everything below may run several solves - a windowed clip runs one per window - and
         // they all share the same scale prior and live-display options.
+        // What the search is currently working through, for the progress line. Each stage sets
+        // it before its own solve; the solver supplies the numbers, the stage supplies the
+        // name, because only the caller knows whether this is tier 2, a 12-star retry or the
+        // fourth window of a pan.
+        let searchLabel = "matching";
         const commonSolveOpts = {
             ...(scalePrior ? {scalePrior} : {}),
             ...(sphereChart ? {verifyPixelFraction: SPHERE_CHART_VERIFY_FRACTION} : {}),
+            // Yielding and progress are NOT gated on showDuringAnalysis - that toggle governs
+            // the live quad DRAWING, not whether the page stays alive and says what it is
+            // doing. With it off the hypothesis search used to run as one uninterruptible
+            // block: several seconds of frozen page under a status line that had not changed
+            // since the tier began, which is indistinguishable from a hang.
+            onYield: yieldToBrowser,
+            onProgress: ({tried, maxHypotheses, candidates, quadsDone, quadsTotal}) => {
+                if (!fresh()) return;
+                // setStatus, not a bare assignment: the overlay copy of this line only exists
+                // on a rendered frame, and a paused still that verifies no candidates requests
+                // none. Without the render request the one line that proves the search is
+                // alive would be the one thing on screen that never moves.
+                setStatus(`${searchLabel}: quad ${quadsDone}/${quadsTotal}, `
+                    + `tried ${tried}/${maxHypotheses}, ${candidates} candidate`
+                    + (candidates === 1 ? "" : "s"));
+            },
             ...(params.showDuringAnalysis ? {
-                onYield: yieldToBrowser,
                 onCandidate: (q) => {
                     // Best-last, so the strongest quad paints on top of the others.
                     liveQuads.push(q);
@@ -1668,7 +1771,7 @@ export async function identifyStars(opts = {}) {
         };
         const ensureIndex = async (tier) => {
             if (!quadIndexes[tier]) {
-                params.status = `building star geometry index (tier ${tier + 1})`;
+                setStatus(`building star geometry index (tier ${tier + 1})`);
                 await yieldToBrowser();
                 quadIndexes[tier] = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[tier]);
             }
@@ -1696,6 +1799,15 @@ export async function identifyStars(opts = {}) {
             // camera the user synced from a whole clip onto it would swing their view for every
             // candidate a search tries, and leave it pointing at the last one.
             if (scoring) return;
+            // With the sync flag set, a successful identify TAKES the camera - that is what the
+            // flag means, and it is why the flag replaced a button. syncCameraToStarTrack does
+            // the bake, the attach and the option selection, and writes its own status; the
+            // caller's "identified N/M stars" line lands after it and wins the readout, which is
+            // the right way round.
+            if (params.syncCameraToStars) {
+                syncCameraToStarTrack();
+                return;
+            }
             // A previously-synced camera keeps driving from its BAKE, so a re-identification
             // (say, after toggling stars off) must RE-BAKE it whole. Refreshing only the live
             // FOV array - the old behaviour - left the heading and the serialized vfovDeg/
@@ -1746,7 +1858,8 @@ export async function identifyStars(opts = {}) {
                 totalFrames: transforms.length,
                 solveOpts: commonSolveOpts,
                 onWindowStatus: (k, n) => {
-                    params.status = `matching window ${k}/${n}`;
+                    searchLabel = `window ${k}/${n}`;
+                    setStatus(`matching window ${k}/${n}`);
                 },
                 shouldStop: () => !fresh(),
             });
@@ -1779,10 +1892,11 @@ export async function identifyStars(opts = {}) {
                     + `/${stars.length} stars in ${win.surviving.length}`
                     + `/${win.windows.length} windows${uncovered}`
                     + (spread > 0.02 ? " - zoom varies across the pan" : "");
+                if (!scoring) startCompletionFade();
                 setRenderOne();
                 return;
             }
-            params.status = "no window solved - trying the whole chart";
+            setStatus("no window solved - trying the whole chart");
             await yieldToBrowser();
         }
 
@@ -1790,7 +1904,8 @@ export async function identifyStars(opts = {}) {
         for (const tier of tierOrder) {
             await ensureIndex(tier);
             if (!fresh()) return;
-            params.status = `matching against ${quadIndexes[tier].n} catalog quads (tier ${tier + 1})`;
+            searchLabel = `tier ${tier + 1}`;
+            setStatus(`matching against ${quadIndexes[tier].n} catalog quads (tier ${tier + 1})`);
             await yieldToBrowser();
             // The reference frame is frame-0 pixels, but a panning clip carries the star map
             // far beyond the frame-0 rectangle - stars that entered the view later live at
@@ -1831,17 +1946,18 @@ export async function identifyStars(opts = {}) {
                     bounds: [bx0 - 12, by0 - 12, bx1 + 12, by1 + 12],
                 };
             };
-            for (const cap of [12, 11]) {
+            for (const cap of RESCUE_CAPS) {
                 if (stars.length <= cap) continue;
                 const view = [...stars]
                     .sort((a, b) => b.n - a.n || a.mag - b.mag || a.index - b.index)
                     .slice(0, cap);
-                params.status = `identify failed - retrying with the ${cap} most persistent stars`;
+                setStatus(`identify failed - retrying with the ${cap} most persistent stars`);
                 await yieldToBrowser();
                 let attempt = null;
                 for (const tier of tierOrder) {
                     await ensureIndex(tier);
                     if (!fresh()) return;
+                    searchLabel = `${cap}-star retry, tier ${tier + 1}`;
                     attempt = await solveField(view, catalog, [quadIndexes[tier]], {
                         ...(myResult.videoW ? boundsOpts(view) : {}),
                         ...commonSolveOpts,
@@ -1880,6 +1996,10 @@ export async function identifyStars(opts = {}) {
             + `Dec ${solved.centerDecDeg.toFixed(1)} deg, rms ${solved.rmsPx.toFixed(1)} px`
             + (solved.certifiedFromCap
                 ? ` (rescued from a ${solved.certifiedFromCap}-star retry, certified)` : "");
+        // Not on a scoring run: that solve exists to produce one number for a search and is
+        // discarded moments later, so animating the user's overlay for it would be three
+        // seconds of motion advertising a result nobody asked to see.
+        if (!scoring) startCompletionFade();
         setRenderOne();
     } catch (e) {
         // Only while this run still owns the state - a failure surfacing after a sitch change
@@ -2034,6 +2154,9 @@ async function runStarTrackerAtResolution(opts) {
     // The previous identification's quads describe the previous solve. A new analysis replaces
     // the map they were drawn against, so they go now rather than lingering over fresh results.
     liveQuads = [];
+    // Same reasoning for the completion fade's end state: it hid the annotation this run is
+    // about to produce.
+    resetCompletionFade();
     // Set once the analysis has produced a result, so the finally can tell "finished" (park on the
     // first analysed frame, which is what the overlay now describes) from "aborted or failed"
     // (put the user back where they were, since nothing was produced to look at).
@@ -2803,7 +2926,15 @@ const COLORS = {
     quad: "#4db8ff",
     lens: "#ff5edb",
     sphere: "#7cf6ff",
+    // The status line. Deliberately neutral: it describes the RUN, not anything on screen, so it
+    // must not read as a verdict about a circle near it.
+    status: "#e6e6e6",
 };
+
+// How many wrapped lines of status the overlay will draw before it gives up and elides. Three at
+// 15 px is 45 px of a frame - enough for the long failure lines, short of curtaining the footage
+// the overlay exists to annotate.
+const STATUS_MAX_LINES = 3;
 
 // One light colour per drawn quad, so five overlapping four-star shapes can be told apart - they
 // share stars and cross each other, and in a single colour they read as one tangle. Green and red
@@ -2899,6 +3030,7 @@ function drawLiveDetections() {
     overlayCtx.fillStyle = COLORS.star;
     overlayCtx.font = "bold 13px sans-serif";
     overlayCtx.fillText(`${liveDetections.sources.length} detected`, 10, 20);
+    drawOverlayStatus(38);
 }
 
 /**
@@ -2918,6 +3050,277 @@ function drawLiveDetections() {
 function clearOverlayCanvas() {
     if (overlay && overlayCtx) overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
     overlayStarHits = [];
+}
+
+// ---------------------------------------------------------------------------------------------
+// The completion fade
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * View sizes the identification failure ladder retries on, in the order it tries them.
+ *
+ * The ladder exists because a blind solve can fail with a perfectly solvable field: the 3000
+ * hypotheses are spent on quads anchored in noise, and the TRUE hypothesis is never generated.
+ * Retrying on a handful of the most persistent stars gets the real ones a turn at forming a
+ * quad. When it works the difference is not marginal - on the reference still the main solve
+ * peaks at 58-78 matches against a bar of 62-87 and refuses, while the rescued pose explains
+ * 102 of 175 stars at 2.4 px rms.
+ *
+ * Which is exactly why TWO view sizes was too few. Whether 12 brightest detections happen to
+ * contain four real stars the index shares a quad family with is close to a coin toss, and it
+ * showed: over detect thresholds 13-20 on the reference still, only sigma 16 and 18 solved,
+ * with 17 refusing at 58 matches of 62 between two neighbours that both succeeded. The response
+ * was not monotone in anything - it was luck.
+ *
+ * Widening the ladder does NOT lower the bar. Every rescue still passes certifySolve, which
+ * re-verifies the pose against the FULL star set with the full set's own bounds, tolerance,
+ * consensus fraction and chance gate - the identical standard the main solve is held to. More
+ * caps buy more STARTING POINTS, not more leniency: a wrong pose fails certification however
+ * many views proposed it.
+ *
+ * 12 and 11 lead, unchanged, so every input that solves today takes exactly the path it takes
+ * today and returns exactly the same answer. The rest are only ever reached by an input that
+ * has already failed outright. Larger views come before smaller ones because they carry more
+ * real stars; the floor is 8, below which four points barely constrain a similarity.
+ */
+const RESCUE_CAPS = [12, 11, 14, 16, 18, 20, 10, 9, 8];
+
+/** One second per stage. */
+const FADE_MS = 1000;
+
+/**
+ * The stages, in order. Each fades one layer out over FADE_MS and then switches that layer's
+ * own display flag off.
+ *
+ * Retiring through the REAL flag rather than an internal animation state is the point: when the
+ * fade has finished, the menu says exactly what is drawn, the user can put any layer back with
+ * the checkbox they already know, and nothing downstream has to learn about fading. The end
+ * state is one a user could have reached by hand.
+ */
+const FADE_STAGES = [
+    {key: "lines", flag: "showQuadLines"},
+    {key: "circles", flag: "showStars"},
+    {key: "hip", flag: "showHipNumbers"},
+];
+
+/**
+ * The fewest labels the completion fade will leave on screen.
+ *
+ * The last stage retires the Bayer and HIP-number labels on the assumption they are clutter over
+ * the real answer. That holds when a solve names plenty of stars and is badly wrong when it does
+ * not: on a 15 deg field in Draco the identification SUCCEEDED with 26 stars of which exactly
+ * three - Eltanin, Rastaban, Alruba - carry proper names, so retiring the other 23 took 92% of
+ * the overlay with it (measured: 19271 lit pixels down to 1637) and left a correct, confident
+ * result looking like a failed one.
+ *
+ * So the stage no longer hides ALL of them. It keeps the brightest catalog-numbered stars needed
+ * to bring the labelled total up to this many, which reads as an annotated sky rather than an
+ * empty one whatever the field happens to contain. A solve with twelve or more proper names pads
+ * with nothing and fades exactly as before.
+ */
+const FADE_MIN_LABELS = 12;
+
+/**
+ * Track indices of the catalog-numbered stars the current fade is keeping as padding.
+ *
+ * Belongs to the FADE, not to the `showHipNumbers` flag: a user who unticks that box has asked
+ * for the numbers gone and gets them gone. This only softens what the fade does on its own.
+ */
+let fadeKeptHip = new Set();
+
+/**
+ * Choose the padding: every proper name, then the brightest catalog-numbered stars until there
+ * are FADE_MIN_LABELS labels, by CATALOG magnitude - the brightest stars are both the most
+ * recognisable and the ones a reader can check against the sky.
+ */
+function chooseFadePadding() {
+    fadeKeptHip = new Set();
+    const identified = result?.identify?.identified;
+    if (!identified) return;
+    const others = [];
+    let proper = 0;
+    for (const [index, v] of identified) {
+        if (v.named) proper++; else others.push([index, v.mag ?? Infinity]);
+    }
+    const need = FADE_MIN_LABELS - proper;
+    if (need <= 0) return;
+    others.sort((a, b) => a[1] - b[1]);
+    for (const [index] of others.slice(0, need)) fadeKeptHip.add(index);
+}
+
+/** The run in progress: {stage, t0, stages}, or null. `stages` is the subset of FADE_STAGES
+ * this particular run will play - see startCompletionFade. */
+let fadeRun = null;
+/** The interval driving it. See startCompletionFade for why this is not driven by the draw. */
+let fadeTimer = null;
+/**
+ * The flags THIS feature switched off, so the next run can put back exactly those and nothing
+ * else. Restoring all three unconditionally would override a user who had turned the circles
+ * off by hand before pressing Analyze.
+ */
+let fadeRetired = [];
+
+/** How often the fade advances its own clock and asks for a frame - 30 a second, which is
+ * smooth for an opacity ramp and half the wake-ups of matching the display. */
+const FADE_TICK_MS = 33;
+
+/** Where a name sits once its marker is gone: the offset CNodeDisplaySkyOverlay uses for star
+ * names in the look view, so a faded-out star tracker label lands exactly where the night sky
+ * puts the same star's name. */
+const NAME_OFFSET_X = 5, NAME_OFFSET_Y = -5;
+
+function stopFadeTimer() {
+    if (fadeTimer !== null) {
+        clearInterval(fadeTimer);
+        fadeTimer = null;
+    }
+}
+
+/**
+ * Begin the completion fade. Called only on a successful, non-scoring identify.
+ *
+ * Driven by a TIMER, and deliberately not by the drawing pass.
+ *
+ * The obvious implementation - advance the animation inside the overlay draw and have it ask
+ * for the next frame - does not survive this render model. The overlay is drawn from
+ * `view.renderCanvas`, which runs only when the render loop runs a pass, and under
+ * render-on-demand the loop parks whenever nothing has asked for one. The sequence then
+ * advances only as long as something ELSE keeps requesting frames, and the moment that dries up
+ * it stops dead. Measured here: it stranded after two stages of three, leaving the quad lines
+ * and circles retired, the catalog numbers still on, and nothing to tell the user why. A
+ * half-applied end state is worse than no fade at all.
+ *
+ * On a timer the STATE is right whatever the renderer does - every stage completes and every
+ * flag lands - and setRenderOne on each tick keeps the picture with it whenever the loop is
+ * alive. The draw becomes a pure function of the clock, which is what it should have been.
+ */
+function startCompletionFade() {
+    if (!params.fadeAtCompletion) return;
+    stopFadeTimer();
+    // Which catalog-numbered labels survive the last stage, so it can never empty the screen.
+    chooseFadePadding();
+    fadeRun = {stage: 0, t0: performance.now(), stages: FADE_STAGES};
+    fadeTimer = setInterval(advanceCompletionFade, FADE_TICK_MS);
+    setRenderOne();
+}
+
+/** One tick: retire the current stage if its second is up, and keep the picture current. */
+function advanceCompletionFade() {
+    if (!fadeRun) {
+        stopFadeTimer();
+        return;
+    }
+    if (performance.now() - fadeRun.t0 >= FADE_MS) {
+        const {flag} = fadeRun.stages[fadeRun.stage];
+        // Guarded: a layer the user switched off by hand mid-sequence was not retired BY the
+        // fade, so the next run must not switch it back on.
+        if (params[flag]) {
+            params[flag] = false;
+            fadeRetired.push(flag);
+        }
+        fadeRun = fadeRun.stage + 1 < fadeRun.stages.length
+            ? {stage: fadeRun.stage + 1, t0: performance.now(), stages: fadeRun.stages}
+            : null;
+        if (!fadeRun) stopFadeTimer();
+    }
+    setRenderOne();
+}
+
+/**
+ * Abandon any fade and restore what it retired.
+ *
+ * Called when a new run starts, and by Clear: the fade's end state hides the very annotation
+ * the new run is about to produce, so without this a second analysis draws nothing and looks
+ * broken.
+ */
+function resetCompletionFade() {
+    stopFadeTimer();
+    fadeRun = null;
+    fadeKeptHip = new Set();
+    for (const flag of fadeRetired) params[flag] = true;
+    fadeRetired = [];
+}
+
+/**
+ * The opacity of the one layer currently mid-fade, read from the clock. Pure - the timer owns
+ * the state.
+ *
+ * ONLY the stage in progress gets a value below 1. A COMPLETED stage deliberately gets none:
+ * it ended by switching its own display flag off, and that flag is the single authority on
+ * whether the layer draws. Holding a completed layer at zero here would make its checkbox lie -
+ * tick "Show star markers" back on after a fade and nothing would appear, while the circles'
+ * click targets went on being registered all the same, leaving invisible hit areas over the
+ * video. Switching a layer back on, during the sequence or after it, must simply show it.
+ *
+ * @returns {{lines: number, circles: number, hip: number}} 1 = full strength, 0..1 mid-fade.
+ */
+function completionFadeOpacities() {
+    const out = {lines: 1, circles: 1, hip: 1};
+    if (fadeRun) {
+        out[fadeRun.stages[fadeRun.stage].key] =
+            1 - Math.min(1, (performance.now() - fadeRun.t0) / FADE_MS);
+    }
+    return out;
+}
+
+
+/**
+ * Draw the Star Tracker's status line on the overlay, under whatever caption the current
+ * drawing pass wrote above it.
+ *
+ * EVERY pass that owns the overlay calls this, not only the one with quads to show. The menu's
+ * Status row is usually behind a collapsed folder, or scrolled off, while the user is watching
+ * the video - and the run that most needs to say what it is doing is a blind solve that
+ * verifies nothing, which draws no quads and so leaves no other mark on screen at all. Without
+ * this, a search working normally is indistinguishable from a hung one. That is not
+ * hypothetical: Full Analysis calls hideProgress() before identifyStars(), so the modal
+ * progress bar disappears and the longest stage of the run has the screen to itself.
+ *
+ * Wrapped rather than truncated - a failure line now carries the arithmetic that explains it
+ * ("best matched 221 of 289 needed...") and the tail is the useful half - but capped at
+ * STATUS_MAX_LINES so it cannot curtain the frame.
+ *
+ * @param {number} y - baseline for the first line.
+ */
+function drawOverlayStatus(y) {
+    const text = params.status;
+    if (!text || text === "not run") return;
+    overlayCtx.font = "12px sans-serif";
+
+    // Greedy wrap on spaces. A word too long for the line is left to overhang rather than
+    // broken: these strings are prose and numbers, never long unbroken tokens, so hyphenation
+    // logic would be code that never runs.
+    const maxWidth = Math.max(80, overlay.width - 20);
+    const lines = [];
+    let line = "";
+    for (const word of text.split(" ")) {
+        const next = line ? `${line} ${word}` : word;
+        if (line && overlayCtx.measureText(next).width > maxWidth) {
+            lines.push(line);
+            line = word;
+        } else {
+            line = next;
+        }
+    }
+    if (line) lines.push(line);
+    if (lines.length > STATUS_MAX_LINES) {
+        lines.length = STATUS_MAX_LINES;
+        lines[STATUS_MAX_LINES - 1] += " ...";
+    }
+
+    // Haloed, unlike the short captions above it. This is a long run of small text landing on
+    // whatever the sky is doing - bright cloud on the image this was written for, black sky on
+    // the next - and a stroke behind the fill is what keeps it readable on both.
+    overlayCtx.lineJoin = "round";
+    overlayCtx.lineWidth = 3;
+    overlayCtx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    overlayCtx.fillStyle = COLORS.status;
+    for (const l of lines) {
+        overlayCtx.strokeText(l, 10, y);
+        overlayCtx.fillText(l, 10, y);
+        y += 15;
+    }
+    overlayCtx.lineWidth = 1;
 }
 
 function drawLiveStage() {
@@ -2982,6 +3385,7 @@ function drawLiveStage() {
         overlayCtx.fillText(settled ? "lens fitted" : "fitting camera lens", 10, 20);
         overlayCtx.font = "12px sans-serif";
         overlayCtx.fillText(bits.join("  -  "), 10, 38);
+        drawOverlayStatus(56);
         return;
     }
 
@@ -2999,18 +3403,24 @@ function drawLiveStage() {
             liveStage.phase ? `phase: ${liveStage.phase}` : null,
         ].filter(Boolean).join("  -  "), 10, 38);
 
+        // Both detail rows are conditional, so the status' baseline is TRACKED rather than
+        // constant - a fixed y would land it on top of the step line on the runs that have one.
+        let y = 56;
         if (Number.isFinite(liveStage.rms)) {
             const from = Number.isFinite(liveStage.first) && liveStage.first !== liveStage.rms
                 ? ` (from ${liveStage.first.toFixed(3)})` : "";
-            overlayCtx.fillText(`residual ${liveStage.rms.toFixed(4)} px${from}`, 10, 56);
+            overlayCtx.fillText(`residual ${liveStage.rms.toFixed(4)} px${from}`, 10, y);
+            y += 18;
         }
         if (Number.isFinite(liveStage.step) && Number.isFinite(liveStage.tolerance)) {
             const done = liveStage.step < liveStage.tolerance;
             overlayCtx.fillStyle = done ? COLORS.star : COLORS.sphere;
             overlayCtx.fillText(
                 `step ${liveStage.step.toExponential(1)} `
-                + `${done ? "<" : "vs"} ${liveStage.tolerance.toExponential(0)} to stop`, 10, 74);
+                + `${done ? "<" : "vs"} ${liveStage.tolerance.toExponential(0)} to stop`, 10, y);
+            y += 18;
         }
+        drawOverlayStatus(y);
     }
 }
 
@@ -3036,9 +3446,16 @@ export function drawStarTrackerOverlay() {
     // screen empty, and an empty screen must not keep last frame's invisible circles clickable.
     overlayStarHits = [];
 
+    // Read once, so every layer in this frame agrees on where the sequence has got to. The
+    // timer owns the state; this only reports it.
+    const fade = completionFadeOpacities();
+
     const i = Math.round(par.frame) - result.frame0;
     const T = result.solved.transforms[i];
-    if (!T) return;
+    // A frame outside the analysed range has no transform, so nothing else on this overlay can
+    // be placed - but the status still can, and an empty screen with no word on it is the exact
+    // thing this is here to prevent.
+    if (!T) { drawOverlayStatus(20); return; }
 
     // The analysis lives in the DECODED pixel space of its run - and the decode size is a user
     // setting (Settings > Performance Tweaks > Max Resolution), so a 4K source may have been
@@ -3170,41 +3587,67 @@ export function drawStarTrackerOverlay() {
         // with the markers hidden there is nothing to aim at, and a registered hit would toggle a
         // star out of the working set on a click that appeared to land on empty sky.
         const drawMarker = c.klass !== "star" || params.showStars;
-        if (c.klass === "star" && drawMarker) {
-            overlayStarHits.push({x: px, y: py, r: radius, index: c.index});
+        // The completion fade shrinks a star's circle INTO its star as it goes, so the marker
+        // collapses onto the thing it marks instead of dissolving where it stands. Movers and
+        // the rejected classes are untouched: `showStars` governs star markers alone, and a
+        // mover's circle is a FINDING, not the solver's scaffolding.
+        const starFade = c.klass === "star" ? fade.circles : 1;
+        // The hit follows the DRAWN circle, mid-fade included - the same rule the hidden-marker
+        // case already follows, and for the same reason: a hit target larger than what is on
+        // screen toggles a star out of the working set on a click that appeared to land on
+        // empty sky. Below a couple of pixels there is nothing left to aim at, so nothing is
+        // registered.
+        const hitRadius = radius * starFade;
+        if (c.klass === "star" && drawMarker && hitRadius >= 2) {
+            overlayStarHits.push({x: px, y: py, r: hitRadius, index: c.index});
         }
         const alpha = disabled
             ? (faint ? 0.15 : 0.3)
             : (faint ? 0.25 : c.klass === "moving" ? 0.5 : 1);
-        if (alpha !== 1) overlayCtx.globalAlpha = alpha;
 
-        if (drawMarker) {
+        if (drawMarker && starFade > 0) {
+            overlayCtx.globalAlpha = alpha * starFade;
             overlayCtx.beginPath();
-            overlayCtx.arc(px, py, radius, 0, Math.PI * 2);
+            overlayCtx.arc(px, py, radius * starFade, 0, Math.PI * 2);
             overlayCtx.strokeStyle = COLORS[c.klass] || "#888";
             overlayCtx.lineWidth = c.klass === "moving" ? 3 : faint ? 1 : 1.8;
             overlayCtx.setLineDash(c.klass === "incoherent" ? [4, 4] : []);
             overlayCtx.stroke();
+            overlayCtx.globalAlpha = 1;
         }
 
         if (c.klass === "moving") {
+            overlayCtx.globalAlpha = alpha;
             overlayCtx.setLineDash([]);
             overlayCtx.fillStyle = COLORS.moving;
             overlayCtx.font = "bold 13px sans-serif";
             overlayCtx.fillText(`moves ${c.totalDrift.toFixed(0)} px vs stars`, px + radius + 6, py + 4);
+            overlayCtx.globalAlpha = 1;
         }
 
         // Identified stars carry their catalog names. A star with a PROPER name reads a
-        // touch larger and in white; Bayer and HIP-number fallbacks stay quiet.
-        if (params.showStarNames && identifiedStar) {
+        // touch larger and in white; Bayer and HIP-number fallbacks stay quiet, and are gated
+        // separately so the completion fade can drop them and leave the names.
+        // A padded label is exempt from the HIP stage entirely - it neither fades nor goes when
+        // the stage sets the flag, because it IS part of the result the fade is revealing.
+        const keptLabel = properlyNamed || (identifiedStar && fadeKeptHip.has(c.index));
+        const labelFade = keptLabel ? 1 : (params.showHipNumbers ? fade.hip : 0);
+        if (params.showStarNames && identifiedStar && labelFade > 0) {
+            // Where the name sits, relative to its star. With a marker drawn it clears the
+            // circle; with none it takes the offset the night sky gives star names. The fade
+            // interpolates between the two AS THE CIRCLE SHRINKS, so the name reaches the sky
+            // view's offset at the instant the circle reaches nothing - one continuous move,
+            // with no jump when the flag finally flips.
+            const slide = drawMarker ? 1 - starFade : 1;
+            const lx = px + (radius + 4) * (1 - slide) + NAME_OFFSET_X * slide;
+            const ly = py + 4 * (1 - slide) + NAME_OFFSET_Y * slide;
+            overlayCtx.globalAlpha = alpha * labelFade;
             overlayCtx.setLineDash([]);
             overlayCtx.fillStyle = properlyNamed ? "#fff" : "#9fdcb0";
             overlayCtx.font = properlyNamed ? "12px sans-serif" : "11px sans-serif";
-            // Clear of the circle when there is one; a bright star's circle is 24 px, and holding
-            // that offset with the markers hidden would strand the name far from its star.
-            overlayCtx.fillText(identifiedStar.label, px + (drawMarker ? radius + 4 : 6), py + 4);
+            overlayCtx.fillText(identifiedStar.label, lx, ly);
+            overlayCtx.globalAlpha = 1;
         }
-        if (alpha !== 1) overlayCtx.globalAlpha = 1;
     }
 
     // Light clusters - several lights moving together, no one of them trackable on its own.
@@ -3252,6 +3695,7 @@ export function drawStarTrackerOverlay() {
     // thickness by quad residual would draw every candidate the same. A wrong quad explains a
     // handful of stars and stays hairline; the winning one explains most of the field and is
     // unmistakable.
+    let quadCaption = false;
     if (params.showQuadLines && liveQuads.length) {
         liveQuads.forEach((q, qi) => {
             const sChart = result.sphereChart?.chart;
@@ -3279,7 +3723,8 @@ export function drawStarTrackerOverlay() {
             overlayCtx.strokeStyle =
                 QUAD_COLORS[(liveQuads.length - 1 - qi) % QUAD_COLORS.length];
             overlayCtx.lineWidth = 0.8 + 5 * Math.min(1, Math.max(0, q.fraction));
-            overlayCtx.globalAlpha = 0.55 + 0.45 * Math.min(1, Math.max(0, q.fraction));
+            overlayCtx.globalAlpha = (0.55 + 0.45 * Math.min(1, Math.max(0, q.fraction)))
+                * fade.lines;
             overlayCtx.setLineDash([]);
             // The quad as a closed shape through its four stars, plus both diagonals - the code
             // is built from the two most separated of them, and the diagonals make which pair
@@ -3301,12 +3746,20 @@ export function drawStarTrackerOverlay() {
         // What the strongest quad actually explains, so the number the thickness encodes is
         // legible and not merely suggestive.
         const best = liveQuads[liveQuads.length - 1];
+        overlayCtx.globalAlpha = fade.lines;
         overlayCtx.fillStyle = QUAD_COLORS[0];
         overlayCtx.font = "bold 13px sans-serif";
         overlayCtx.fillText(`${liveQuads.length} best matching quad`
             + `${liveQuads.length > 1 ? "s" : ""} - `
             + `strongest explains ${best.matched}/${best.nImage} stars`, 10, 20);
+        overlayCtx.globalAlpha = 1;
+        quadCaption = true;
     }
+
+    // Under the quad caption when there is one, in its place when there is not. A blind solve
+    // that verifies nothing never draws a quad, and that is precisely the run whose progress
+    // and whose failure reason the user has no other way to see while watching the video.
+    drawOverlayStatus(quadCaption ? 38 : 20);
 
     overlayCtx.setLineDash([]);
 }
@@ -3330,6 +3783,13 @@ export function resetStarTracker() {
     // The quads are evidence for a solve that no longer exists, and they are placed through its
     // transforms - keeping them would draw the old identification over whatever comes next.
     liveQuads = [];
+    // Clear puts the tracker back to how it started, and that includes undoing the display flags
+    // a completion fade switched off - otherwise Clear leaves the user with three layers
+    // silently disabled and no solve left to explain why.
+    resetCompletionFade();
+    // detachStarTrackCamera above has already taken the Star Track options off the switches, so
+    // there is nothing left to restore TO - just drop the record.
+    cameraSyncPrev = null;
     params.status = "not run";
     // The Camera menu's Lens folder described THAT solve's optics; with the solve gone it would
     // be stating a measurement nothing in the app still holds.
@@ -3393,8 +3853,10 @@ async function runFullStarTracker() {
     const analyzed = await runStarTracker();
     setRenderOne();
     if (!analyzed) return;
+    // No sync call here any more: identifyStars does it whenever "Sync camera to star field"
+    // is set, so the one-click path and the Identify button now agree, and clearing the flag
+    // means Full Analysis leaves the camera alone rather than quietly taking it anyway.
     await identifyStars();
-    if (analyzed.identify?.solved?.ok) syncCameraToStarTrack();
 }
 
 /**
@@ -3416,6 +3878,26 @@ export function setupStarTrackerMenu() {
 
     folder.add({all: () => { runFullStarTracker(); }}, "all")
         .name("Full Analysis");
+    // Directly under Full Analysis, not down in Tweaks. Full Analysis syncs the camera itself on
+    // success, so this is the button for the case where it did NOT - a run that had to be tuned
+    // by hand, or one whose sync was undone by moving the camera afterwards. That is a
+    // main-folder action following a main-folder action, not a tweak.
+    folder.add(params, "syncCameraToStars").name("Sync Camera to Star Field")
+        .onChange((v) => { if (v) syncCameraToStarTrack(); else restoreCameraChoices(); })
+        .tooltip("Point the look camera with the solve: \"Star Track\" selected as both the "
+            + "heading and the FOV source, so the rendered sky matches the footage's pointing "
+            + "and framing. Applied whenever an identification succeeds. Clearing it puts both "
+            + "back to the sources they were on before - it does not merely stop updating "
+            + "them - so you can compare the solved pointing against your own and switch "
+            + "between them.");
+    folder.add(params, "fadeAtCompletion").name("Fade at completion")
+        .tooltip("When an identification SUCCEEDS, retire the solver's working annotation by "
+            + "itself - the quad lines, then the circles shrinking into their stars while the "
+            + "names slide out to where the night sky puts star names, then the catalog-number "
+            + "labels. One second each. What is left is the named stars over your footage. The "
+            + "display switches below are turned off as each layer goes, so nothing is hidden "
+            + "behind an invisible setting and any layer can be switched back on. A FAILED run "
+            + "never fades - its annotation is the evidence for what went wrong.");
     // The same optimization the Video Adjustments folder offers, reachable from here as well: it
     // tunes the picture FOR this analysis, so this is where somebody about to run one looks for it.
     // The builder adds its own Enough / Abort / status alongside, so a run started here can also be
@@ -3477,14 +3959,24 @@ export function setupStarTrackerMenu() {
     folder.add(params, "lensStatus").name("Lens").listen().disable();
     // The overlay switches, in the order they are reached for: the circles, the names beside
     // them, the solver's quad lines, then the less-used classes. Each gates exactly one layer.
-    folder.add(params, "showStars").name("Show star markers").onChange(setRenderOne)
+    // The three the completion fade retires are .listen()ed, because it turns them off from
+    // code and a checkbox that still reads "on" over a layer that is gone is worse than no
+    // checkbox at all. lil-gui polls the value, and the poll reaches the menu-bar mirror twins
+    // the same way the Status row's does.
+    folder.add(params, "showStars").name("Show star markers").onChange(setRenderOne).listen()
         .tooltip("Draw the circle round each identified star. Only the circles - the catalog "
             + "names and the quad lines have their own switches, so the names can be read over "
             + "clean video with every circle hidden.");
     folder.add(params, "showStarNames").name("Show star names").onChange(setRenderOne)
         .tooltip("Label each identified star with its catalog name. Works whether or not the "
             + "star markers are drawn.");
-    folder.add(params, "showQuadLines").name("Show quad lines").onChange(setRenderOne)
+    folder.add(params, "showHipNumbers").name("Show HIP star numbers").onChange(setRenderOne)
+        .listen()
+        .tooltip("Include the stars whose catalog entry has no proper name - Bayer designations "
+            + "(Alpha Cas) and bare HIP numbers. Most matches are these, so they are most of the "
+            + "labelling; turning them off leaves the named stars - Deneb, Schedar - on their "
+            + "own. Needs Show star names.");
+    folder.add(params, "showQuadLines").name("Show quad lines").onChange(setRenderOne).listen()
         .tooltip("Draw the four-star shapes the blind solve matched against the catalog, with "
             + "line weight showing how much of the field each one explains. They are the visible "
             + "evidence for the identification; turn them off once you trust it.");
@@ -3540,8 +4032,7 @@ export function setupStarTrackerMenu() {
         .name("Find Candidate Stars");
     tweaks.add({identify: () => { identifyStars(); }}, "identify")
         .name("Identify Stars (catalog)");
-    tweaks.add({sync: () => { syncCameraToStarTrack(); }}, "sync")
-        .name("Sync Camera to Star Field");
+    // Sync Camera to Star Field lives in the MAIN folder, under Full Analysis.
     tweaks.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)");
 
     folder.add({clear: () => { resetStarTracker(); setRenderOne(); }}, "clear").name("Clear");
