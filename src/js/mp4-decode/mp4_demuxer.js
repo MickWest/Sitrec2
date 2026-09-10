@@ -98,44 +98,7 @@ export class MP4Source {
       }
     }
     
-    // Get duration from video or audio track
-    var durationTrack = videoTrack || info.tracks.find(track => track.type === 'audio');
-    
-    if (durationTrack) {
-      var duration = durationTrack.movie_duration; // Duration in timescale units
-      var timescale = durationTrack.movie_timescale; // Timescale (units per second)
-      this.durationInSeconds = duration / timescale;
-      this.duration = (duration / timescale) * 1000000; // Convert to microseconds for audio-only duration calculation
-
-      console.log('Duration: ', duration, 'Timescale: ', timescale);
-      console.log('Duration in seconds = ' + this.durationInSeconds);
-    }
-    
-    if (videoTrack) {
-      // var frameRate = videoTrack.video.sample_entries[0].sample_rate || calculateFrameRate(videoTrack);
-      //
-      // var totalFrames = (frameRate * duration) / timescale;
-
-      this.totalFrames = videoTrack.nb_samples;
-      console.log('Estimated Number of Frames: ', this.totalFrames);
-      
-      this._expectedVideoSamples = videoTrack.nb_samples;
-
-      var framesPerSecond = this.totalFrames / this.durationInSeconds;
-      // we want whole numbers like 30,60,50,25,24, or NTSC 29.97
-      // so round to nearest 0.01
-      framesPerSecond = Math.round(framesPerSecond * 100) / 100;
-
-        console.log('Frames Per Second: ', framesPerSecond);
-
-      // is it something reasonable?
-        if (framesPerSecond > 0 && framesPerSecond <= 240) {
-            this.fps = framesPerSecond;
-        } else {
-            console.warn('Invalid frame rate: ', framesPerSecond, " setting to 30");
-            this.fps = 30;
-        }
-    }
+    this.updateTiming(info);
 
     // Find all audio tracks
     var audioTracks = info.tracks.filter(track => track.type === 'audio');
@@ -192,6 +155,34 @@ export class MP4Source {
       this._info_resolver = resolver; 
       console.log('[MP4Source.getInfo] Promise created and resolver stored');
     });
+  }
+
+  // Fragmented files add samples after onReady, so its info is only a snapshot.
+  // Call again with the final sample table once all bytes have been parsed.
+  updateTiming(info) {
+    this.info = info;
+    const videoTrack = info.tracks.find(track => track.type === 'video');
+    const durationTrack = videoTrack || info.tracks.find(track => track.type === 'audio');
+    if (durationTrack) {
+      const sampleDuration = durationTrack.samples_duration / durationTrack.timescale;
+      this.durationInSeconds = (info.isFragmented && info.fragment_duration / info.timescale) ||
+        durationTrack.movie_duration / durationTrack.movie_timescale || sampleDuration;
+      this.duration = this.durationInSeconds * 1000000;
+
+      if (videoTrack) {
+        this.totalFrames = videoTrack.nb_samples;
+        this._expectedVideoSamples = this.totalFrames;
+        // A fragment's sample count must be paired with its own duration,
+        // even when the header declares the duration of the entire movie.
+        const fpsDuration = info.isFragmented ? sampleDuration : this.durationInSeconds;
+        const fps = Math.round(this.totalFrames / fpsDuration * 100) / 100;
+        this.fps = fps > 0 && fps <= 240 ? fps : 30;
+      }
+    }
+    if (this.audioTrack) {
+      this.audioTrack = info.tracks.find(track => track.id === this.audioTrack.id);
+      this._expectedAudioSamples = this.audioTrack.nb_samples;
+    }
   }
 
   getCodecConfigBox() {
