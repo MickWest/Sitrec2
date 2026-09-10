@@ -71,6 +71,8 @@ AGENTS.md
 # JetBrains IDE project state (bot.iml, workspace.xml and friends). Per-user
 # and per-machine, so it belongs to whoever opened the repo, not to the repo.
 .idea/
+# Vim swap files, left beside a file while an editor has it open.
+*.swp
 
 
 # Local code-review / audit reports (not part of the codebase)
