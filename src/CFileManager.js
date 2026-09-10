@@ -2070,9 +2070,12 @@ export class CFileManager extends CManager {
             var isUrl = isHttpOrHttps(resolvedFilename);
             if (!isUrl && !isResolvableRef) {
                 // legacy sitches have videos specified as: "../sitrec-videos/public/2 - Gimbal-WMV2PRORES-CROP-428x428.mp4"
-                // and in that case it's relative to SITREC_APP wihtout the data folder
+                // That is relative to the channel-neutral app root (/sitrec/ → /sitrec-videos/),
+                // NOT to SITREC_APP: on a channel install SITREC_APP is the immutable build
+                // directory /sitrec/builds/<id>/, and "../" from there lands on the missing
+                // /sitrec/builds/sitrec-videos/. Same value on every non-channel install.
                 if (resolvedFilename.startsWith("../sitrec-videos/")) {
-                    resolvedFilename = SITREC_APP + resolvedFilename;
+                    resolvedFilename = SITREC_SHARE_APP + resolvedFilename;
                 } else {
                     // if it's not a url, then redirect to the data folder
                     resolvedFilename = SITREC_APP + "data/" + resolvedFilename;

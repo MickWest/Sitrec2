@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.157.3 (2026-09-09)
+
+### Bug Fixes
+
+- Fixed the built-in legacy sitches — Gimbal, GoFast, FLIR1, Chilean, Aguadilla, Nellis and the others with a bundled video — opening with no video on Metabunk since 2.156.0 (2026-09-08). Only Metabunk's update-channel installation was affected; the rest of each sitch loaded normally.
+
+### Improvements
+
+- Startup messages about the Shipped and Beta channels now appear only when a link explicitly asks for Beta, and as a small dialog with an OK button that never moves the page. Everyone else simply gets the build the rule picks, with no message. If Sitrec cannot start at all, the message says so without mentioning channels; the "open Shipped" link is offered only when Beta was explicitly asked for.
+
 ## Version 2.157.2 (2026-09-09)
 
 ### Bug Fixes

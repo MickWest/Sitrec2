@@ -12,7 +12,9 @@ const loaderSource = declaration.body.body
     .filter(node => node.key?.name === 'loadAsset' || node.key?.id?.name === 'loadingPromises')
     .map(node => source.slice(node.start, node.end)).join('\n');
 
-function createLoader(appBase, localhost = '') {
+// shareBase is the channel-neutral app root (SITREC_SHARE_APP); it equals appBase
+// everywhere except a channel install, where appBase is the immutable build directory.
+function createLoader(appBase, localhost = '', shareBase = appBase) {
     const Globals = {parsing: 0, pendingActions: 0};
     const LoadingManager = {registerLoading: jest.fn(), completeLoading: jest.fn()};
     const fileSystemFetch = jest.fn().mockResolvedValue({
@@ -20,7 +22,7 @@ function createLoader(appBase, localhost = '') {
     });
     const bindings = {
         Globals, LoadingManager, fileSystemFetch, asyncOperationRegistry,
-        SITREC_APP: appBase, isConsole: false, versionString: 'test',
+        SITREC_APP: appBase, SITREC_SHARE_APP: shareBase, isConsole: false, versionString: 'test',
         process: {env: {LOCALHOST: localhost}}, getEnv: (_key, fallback) => fallback,
         isHttpOrHttps: url => /^https?:\/\//i.test(url),
         isResolvableSitrecReference: url => url.startsWith('sitrec://'),
@@ -96,6 +98,19 @@ test.each([
     const {manager, fileSystemFetch} = createLoader('https://current.example/app/');
     await manager.loadAsset(url, 'asset');
     expect(fileSystemFetch).toHaveBeenCalledWith(url + '?v=1test', expect.any(Object));
+});
+
+// Legacy sitches name their videos "../sitrec-videos/...", one level above the app
+// root. On a channel install the app's assets live in /sitrec/builds/<id>/, and 2.156.0
+// resolved the prefix from there, so every legacy video 404'd at /sitrec/builds/sitrec-videos/.
+test.each([
+    ['https://www.metabunk.org/sitrec/', 'https://www.metabunk.org/sitrec/'],
+    ['https://www.metabunk.org/sitrec/builds/current-build/', 'https://www.metabunk.org/sitrec/'],
+    ['https://local.metabunk.org/render/', 'https://local.metabunk.org/render/'],
+])('legacy ../sitrec-videos/ paths resolve against the app root, not the build directory (%s)', async (appBase, shareBase) => {
+    const {manager, fileSystemFetch} = createLoader(appBase, '', shareBase);
+    await manager.loadAsset('../sitrec-videos/public/video.mp4', 'video');
+    expect(fileSystemFetch).toHaveBeenCalledWith(shareBase + '../sitrec-videos/public/video.mp4?v=1test', expect.any(Object));
 });
 
 test('object references still use object resolution', async () => {
