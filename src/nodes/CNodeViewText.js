@@ -1,6 +1,6 @@
 import {CNodeView} from "./CNodeView";
 import {EventManager} from "../CEventManager";
-import {makeDraggable} from "../DragResizeUtils";
+import {blockViewEvents, makeDraggable} from "../DragResizeUtils";
 
 const THEMES = {
     light: {
@@ -44,6 +44,13 @@ export class CNodeViewText extends CNodeView {
         this.alwaysOnTop = true;
         this.div.id = (v.idPrefix || 'text-view') + '-' + v.id;
         // Keep the absolute positioning from base class - don't override to relative
+
+        // The panel is DOM text, not a scene. The InteractionRouter hit-tests views by screen
+        // rectangle, and this view has no onMouseDown to claim a press, so a press on the log
+        // went to the 3D view underneath: the camera dragged, the wheel zoomed instead of
+        // scrolling, and no text could be selected. blockViewEvents makes the panel a native
+        // boundary, so presses, wheel and selection stay with the browser, as in Notes.
+        blockViewEvents(this.div);
 
         // Default theme
         this.theme = v.theme || 'dark';

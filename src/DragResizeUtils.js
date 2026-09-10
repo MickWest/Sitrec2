@@ -362,11 +362,21 @@ export function updateAllHandlePositions() {
  */
 
 /**
- * Prevent mouse and wheel events from propagating through a floating panel
- * to the 3D views underneath. Pointer events are intentionally NOT blocked
- * because makeDraggable relies on document-level pointerup to end drags.
+ * Make a floating panel an input boundary: presses, wheel and text selection inside it belong
+ * to the panel, never to the 3D views underneath.
+ *
+ * The data-interaction-native flag is what keeps the InteractionRouter out. The router
+ * hit-tests views by screen rectangle, so without it a press on a panel's plain text or blank
+ * space (the Assistant's log, the Notes link display) started a camera drag behind the panel
+ * and cancelled the selection. Tools a panel registers with registerSurfaceInteraction still
+ * get their gestures, because those adapters are allowNative.
+ *
+ * The listeners stop legacy mouse and wheel events bubbling to document handlers. Pointer
+ * events are intentionally NOT blocked because makeDraggable relies on document-level
+ * pointerup to end drags.
  */
 export function blockViewEvents(element) {
+    element.dataset.interactionNative = "";
     for (const type of ["mousedown", "mouseup", "click", "dblclick", "wheel", "contextmenu"]) {
         element.addEventListener(type, (e) => e.stopPropagation());
     }

@@ -6,8 +6,9 @@ satellites that were up that night, point at Jupiter, or change a menu setting, 
 the thing rather than telling you where the control is.
 
 Open it with **Help → AI Assistant**, or press **Tab**. It is an ordinary Sitrec window, so you
-can drag it, resize it, and scroll the log with the wheel. **Tab** again, or the **X**, hides
-it. The up arrow recalls what you last typed, and the **+** in its header starts a fresh
+can drag it, resize it, scroll the log with the wheel, and select and copy text from the log.
+Click outside it to give the keyboard back to Sitrec's shortcuts. **Tab** again, or the **X**,
+hides it. The up arrow recalls what you last typed, and the **+** in its header starts a fresh
 conversation.
 
 ## What it can do

@@ -41,6 +41,17 @@ function nativeTarget(e) {
     return e.target?.closest?.("input,textarea,select,button,a,dialog,[contenteditable=true],#menuBar,.lil-gui,.view-uibar,.resize-handle,[data-interaction-native]");
 }
 
+// consume() cancels the pointerdown's default action, and moving the focus is part of that
+// default. Without this, a click that started a camera drag left the caret in whatever text
+// field had it (the Assistant's input, the Notes editor), and KeyBoardHandler ignores every
+// shortcut while a text field is focused. Focus on or around the pressed element is kept, so
+// a focused editor panel still owns its keys while a gesture runs inside it.
+function releaseFocus(doc, e) {
+    const active = doc?.activeElement;
+    if (!active || active === doc.body || active.contains?.(e.target)) return;
+    active.blur?.();
+}
+
 export class InteractionRouter {
     constructor(doc) {
         this.document = doc;
@@ -183,6 +194,7 @@ export class InteractionRouter {
                         session.contextOwner.contextMenu(e);
                     }, 500);
                 }
+                releaseFocus(this.document, e);
                 this.consume(e);
                 return owner;
             } catch (error) {

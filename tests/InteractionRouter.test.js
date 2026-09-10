@@ -1,5 +1,11 @@
 /** @jest-environment jsdom */
 import {InteractionRouter, acquireControlLease} from "../src/InteractionRouter";
+import {blockViewEvents} from "../src/DragResizeUtils";
+
+// DragResizeUtils is loaded only for blockViewEvents; its other dependencies are not exercised.
+jest.mock("../src/SurfaceInteraction", () => ({registerSurfaceInteraction: jest.fn()}));
+jest.mock("../src/KeyBoardHandler", () => ({isKeyHeld: () => false}));
+jest.mock("../src/CViewManager", () => ({ViewMan: {iterate() {}}}));
 
 let router, canvas;
 const event = (type, x = 100, extra = {}) => ({type, clientX: x, clientY: 100, pointerId: 1,
@@ -216,6 +222,50 @@ test("disposing a host view completes a 3D editor attached to it", () => {
     expect(router.session).toBeNull();
 });
 
+
+test("a gesture takes focus off a text field, as the click it cancels would have", () => {
+    const nav = adapter("camera", 0, {navigation: true});
+    router.register(nav);
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    try {
+        input.focus();
+        router.down(event("pointerdown"));
+        expect(nav.begin).toHaveBeenCalledTimes(1);
+        expect(document.activeElement).toBe(document.body);
+    } finally { input.remove(); }
+});
+
+test("a focused panel keeps focus for a gesture inside it", () => {
+    const curve = adapter("curve", 70);
+    router.register(curve);
+    const panel = document.createElement("div");
+    panel.tabIndex = 0;
+    panel.appendChild(canvas);
+    document.body.appendChild(panel);
+    try {
+        panel.focus();
+        router.down(event("pointerdown"));
+        expect(curve.begin).toHaveBeenCalledTimes(1);
+        expect(document.activeElement).toBe(panel);
+    } finally { panel.remove(); }
+});
+
+test("a panel given blockViewEvents keeps presses on its text for selection", () => {
+    const nav = adapter("camera", 0, {navigation: true});
+    router.register(nav);
+    const panel = document.createElement("div");
+    blockViewEvents(panel);
+    const line = document.createElement("div");
+    panel.appendChild(line);
+    document.body.appendChild(panel);
+    try {
+        const down = event("pointerdown", 100, {target: line});
+        router.down(down);
+        expect(nav.begin).not.toHaveBeenCalled();
+        expect(down.preventDefault).not.toHaveBeenCalled();
+    } finally { panel.remove(); }
+});
 
 test("rotating or resizing a device finishes a drag at its last valid location", () => {
     const tool = adapter("height", 70);
