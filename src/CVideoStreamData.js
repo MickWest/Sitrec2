@@ -84,9 +84,14 @@ export class CVideoStreamData extends CVideoWebCodecBase {
             } else {
                 this.mp4.file.flush();
                 if (this.configuring) await this.configuring;
+                if (this.mp4.info) this.mp4.updateTiming(this.mp4.file.getInfo());
                 if (!this.config || this.chunks.length !== this.mp4.totalFrames) {
                     throw new Error('Video ended before all frames could be read');
                 }
+                this.frames = this.mp4.totalFrames;
+                this.originalFps = this.mp4.fps;
+                if (this.audioHandler) this.audioHandler.originalFps = this.originalFps;
+                if (this.mp4.audioTrack) this.audioHandler.setExpectedAudioSamples(this.mp4.audioTrack.nb_samples);
                 if (this.audioHandler?.audioDecoder?.state === 'configured') {
                     await this.audioHandler.audioDecoder.flush();
                     this.audioHandler.streamAudio.complete = true;
@@ -170,14 +175,16 @@ export class CVideoStreamData extends CVideoWebCodecBase {
     async configureMP4() {
         const config = await this.demuxer.getConfig();
         if (this.disposed) return;
-        this.frames = this.mp4.totalFrames;
+        // A fragmented MP4 has no complete sample table until EOF. Retain the
+        // saved timeline while downloading instead of using a fragment's count.
+        if (!this.mp4.info.isFragmented) this.frames = this.mp4.totalFrames;
         this.originalFps = this.mp4.fps;
         this.metadataRotation = getRotationAngleFromVideoMatrix(this.demuxer.videoTrack.matrix);
         const samples = this.mp4.file.getTrackSamplesInfo(this.demuxer.videoTrack.id);
         const timestamps = samples.map(sample => Math.round(sample.cts * 1e6 / sample.timescale)).sort((a, b) => a - b);
         // The sample table describes the entire presentation timeline before
         // media bytes arrive. Timing repair can use it without waiting for EOF.
-        if (timestamps.length === this.frames && timestamps.every(Number.isFinite)) {
+        if (!this.mp4.info.isFragmented && timestamps.length === this.frames && timestamps.every(Number.isFinite)) {
             this.completeFramePTSus = timestamps;
         }
         await this.configureVideo(config);
