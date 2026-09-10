@@ -35,9 +35,26 @@ export function validateManifest(value, appBase) {
         beta: value.beta && value.betaEnabled !== false ? parse(value.beta, 'beta') : null};
 }
 
+export function compareVersions(a, b) {
+    const left = a.split('.').map(Number), right = b.split('.').map(Number);
+    for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
+    return 0;
+}
+
+// A full release can overtake the current Beta: Shipped 2.157.0 beside Beta
+// 2.156.4b. Both builds carry a validated numeric version, so "newer" means the
+// version, not the build time. Equal versions are not superseded.
+export function betaSuperseded(manifest) {
+    return !!manifest.beta && compareVersions(manifest.shipped.version, manifest.beta.version) > 0;
+}
+
 export function selectBuild(manifest, preference, override) {
-    const beta = override === 'beta' || (override !== 'shipped' && preference === true);
-    return beta && manifest.beta ? manifest.beta : manifest.shipped;
+    if (override === 'beta') return manifest.beta || manifest.shipped;
+    if (override === 'shipped' || preference !== true || !manifest.beta) return manifest.shipped;
+    // A Beta preference means "the newest build", never older code than a
+    // visitor gets. The explicit ?channel=beta above still opens that exact
+    // Beta, which is what a Beta-saved sitch's handoff relies on.
+    return betaSuperseded(manifest) ? manifest.shipped : manifest.beta;
 }
 
 export function betaSaveNeedsWarning(sitch, current, manifest) {

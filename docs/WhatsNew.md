@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.157.1 (2026-09-09)
+
+### Bug Fixes
+
+- Fixed Beta users being kept on an older Beta build after a newer full release was shipped, so a member on Beta could be running older code than a visitor. When Shipped is newer than the current Beta, the Beta preference (Sitrec → Settings → Use Beta updates) now opens Shipped and says so on the startup page, until a Beta at least as new is available. Choosing Open in Beta on the Sitrec version dialog, or a link that explicitly asks for Beta, still opens that exact Beta.
+
 ## Version 2.157.0 (2026-09-09)
 
 ### New Features

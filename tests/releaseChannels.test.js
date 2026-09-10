@@ -1,4 +1,4 @@
-import {betaSaveNeedsWarning, buildLabel, cleanBuild, entryFiles, selectBuild, validateManifest} from '../src/release/channelModel';
+import {betaSaveNeedsWarning, betaSuperseded, buildLabel, cleanBuild, compareVersions, entryFiles, selectBuild, validateManifest} from '../src/release/channelModel';
 const {channelBuild} = require('../scripts/channelBuild');
 
 const shipped = {id: 'shipped-example', channel: 'shipped', version: '2.155.2', builtAt: '2026-09-09T00:00:00Z', assetBase: '/sitrec/builds/shipped-example/'};
@@ -13,6 +13,26 @@ describe('release channel selection', () => {
         expect(selectBuild(manifest, true, 'shipped').id).toBe(shipped.id);
         expect(selectBuild(manifest, false, 'beta').id).toBe(beta.id);
         expect(selectBuild({...manifest, beta: null}, true).id).toBe(shipped.id);
+    });
+    test('a Beta preference never runs older code than Shipped', () => {
+        const newer = {...shipped, version: '2.156.0'};
+        const overtaken = {...manifest, shipped: newer};
+        expect(selectBuild(overtaken, true).id).toBe(newer.id);
+        expect(selectBuild(overtaken, false).id).toBe(newer.id);
+        // An explicit one-load Beta still opens that exact Beta: a Beta-saved
+        // sitch's handoff depends on reaching the build that saved it.
+        expect(selectBuild(overtaken, true, 'beta').id).toBe(beta.id);
+        expect(selectBuild(overtaken, false, 'beta').id).toBe(beta.id);
+        // Equal versions keep the preference; a newer Beta is still Beta.
+        expect(selectBuild(manifest, true).id).toBe(beta.id);
+        expect(selectBuild({...manifest, beta: {...beta, version: '2.155.3'}}, true).id).toBe(beta.id);
+        expect(betaSuperseded(overtaken)).toBe(true);
+        expect(betaSuperseded(manifest)).toBe(false);
+        expect(betaSuperseded({...manifest, beta: null})).toBe(false);
+        // Numeric, not lexical: 2.10.0 is newer than 2.9.9.
+        expect(compareVersions('2.10.0', '2.9.9')).toBe(1);
+        expect(compareVersions('2.9.9', '2.10.0')).toBe(-1);
+        expect(compareVersions('2.9.9', '2.9.9')).toBe(0);
     });
     test('kill switch excludes beta and keeps shipped available', () => {
         const result = validateManifest({...manifest, betaEnabled: false}, base);

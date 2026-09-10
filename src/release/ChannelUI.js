@@ -82,7 +82,7 @@ export function addChannelSettings(folder) {
     if (!state) return;
     const settings = {betaProgram: state.preference};
     const control = folder.add(settings, 'betaProgram').name('Use Beta updates')
-        .tooltip('On by default for logged-in Metabunk members; off for visitors. Turn off to use the fully reviewed Shipped version. Switching versions reloads Sitrec.')
+        .tooltip('On by default for logged-in Metabunk members; off for visitors. Turn off to use the fully reviewed Shipped version. When a full release is newer than the current Beta, Beta users get that release until a Beta at least as new is available. Switching versions reloads Sitrec.')
         .onChange(async value => {
             try {
                 if (state.userID > 0) {

@@ -9,8 +9,12 @@ changes use the full release process.
 On Metabunk, logged-in members default to Beta. Turn off **Sitrec → Settings →
 Use Beta updates** to stay on Shipped. Anonymous visitors default to Shipped and
 can explicitly select Beta on that browser. A missing or disabled Beta falls back
-to Shipped. Choosing a version for a single shared file does not change the saved
-preference. Changing the preference does not immediately reload unsaved work.
+to Shipped. When a full release is newer than the current Beta, a Beta preference
+opens that release instead, so a Beta user never runs older code than a visitor;
+an explicit one-load Beta selection still opens the exact Beta, which a Beta-saved
+sitch's handoff relies on. Choosing a version for a single shared file does not
+change the saved preference. Changing the preference does not immediately reload
+unsaved work.
 
 Beta labels include `b`, a UTC build time and a unique internal build ID. Saved
 files retain the creating build's metadata separately from their numeric migration
