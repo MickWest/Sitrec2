@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.157.4 (2026-09-10)
+
+### New Features
+
+- **True heading in the traverse analysis results** (Traverse → *Analyze Traverse Methods...*): every candidate card, its Details pane and the full report gain a *True heading (mean / range)* line — the compass direction the candidate moves over the ground, wind included, so a drifting balloon reads as the direction it drifts. The range is highlighted yellow when wider than 30° and red when wider than 45°; a candidate that turns through every direction reads "full circle", and one whose headings cancel out (circling or back-and-forth) reads "no mean direction". The air-relative heading behind turn rate and the search itself is unchanged.
+
+### Improvements
+
+- The quarter-second tooltips introduced in 2.157.0 now apply only to the icon buttons in a view's header bar (and the copies that stay on screen while the bar is hidden). Menu items and every other control show the browser's own tooltip again, as before 2.157.0.
+
+### Bug Fixes
+
+- Fixed the AI Assistant (Help → AI Assistant), Debug Console (Help → Debug Console) and Satellite Ephemeris windows — and the Notes window's link display — passing clicks and the mouse wheel through to the 3D view behind them, so their text could not be selected or scrolled. Clicking on a 3D view now also takes the keyboard back from a text field, so the keyboard shortcuts work again after typing in the Assistant or the Notes editor.
+
 ## Version 2.157.3 (2026-09-09)
 
 ### Bug Fixes
