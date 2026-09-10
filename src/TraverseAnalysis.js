@@ -44,10 +44,11 @@ export const KNOTS_TO_MS = 0.514444;
 export const METERS_PER_NM = 1852;
 const G_ACCEL = 9.81;
 
-// Minimum horizontal air speed (m/s) for a heading — and therefore a turn rate
-// — to mean anything. See the note in trackMetrics: below this, atan2 returns
-// numerical noise and its frame-to-frame difference becomes a large fictitious
-// turn rate that feeds straightFlightScore, i.e. the search objective.
+// Minimum horizontal speed (m/s), through the air or over the ground, for a
+// heading — and therefore a turn rate — to mean anything. See the note in
+// trackMetrics: below this, atan2 returns numerical noise and its frame-to-frame
+// difference becomes a large fictitious turn rate that feeds
+// straightFlightScore, i.e. the search objective.
 // Deliberately much lower than compareTrackToTruth's 0.5 m/s display guard,
 // because a threshold that high erases real wander on genuinely slow objects
 // and makes them read as implausibly straight.
@@ -102,6 +103,7 @@ export function trackMetrics(dataset, track, options = {}) {
 
     const groundSpeed = new Float64Array(n), airSpeed = new Float64Array(n);
     const heading = new Float64Array(n), verticalSpeed = new Float64Array(n);
+    const groundHeading = new Float64Array(n);
     const altitude = new Float64Array(n), range = new Float64Array(n);
     for (let f = 0; f < n; f++) {
         const vg = vel(track, f), va = vel(air, f);
@@ -124,6 +126,15 @@ export function trackMetrics(dataset, track, options = {}) {
         const horizAir = Math.hypot(va[0], va[1]);
         heading[f] = horizAir > HEADING_MIN_HORIZ_SPEED
             ? Math.atan2(va[0], va[1]) * 180 / Math.PI
+            : NaN;
+        // The same direction over the ground: the object's absolute horizontal
+        // motion, wind included. This is the True heading the analysis
+        // reports, because a wind drifter (a balloon) has no heading through
+        // the air but a clear one over the ground. Display only: turn rate,
+        // and so the search objective, stays on the air heading above.
+        const horizGround = Math.hypot(vg[0], vg[1]);
+        groundHeading[f] = horizGround > HEADING_MIN_HORIZ_SPEED
+            ? Math.atan2(vg[0], vg[1]) * 180 / Math.PI
             : NaN;
         const x = track[f * 3], y = track[f * 3 + 1];
         // Geodetic altitude, not raw ENU z: the tangent plane sits ABOVE the
@@ -199,9 +210,59 @@ export function trackMetrics(dataset, track, options = {}) {
         gLoad: stat(gLoad, lo, hi),
         turnRate: turnRateStat,
         headingValidFrac: headingTotal > 0 ? headingValid / headingTotal : 0,
+        groundHeading: headingStats(groundHeading, lo, hi),
         altitude: stat(altitude, lo, hi),
         range: stat(range, lo, hi),
-        series: {groundSpeed, airSpeed, heading, verticalSpeed, gLoad, turnRate, altitude, range},
+        series: {groundSpeed, airSpeed, heading, groundHeading, verticalSpeed, gLoad, turnRate, altitude, range},
+    };
+}
+
+/**
+ * Circular mean and range of a compass-heading series, in degrees, over
+ * frames [lo, hi). NaN frames (no horizontal motion) are skipped.
+ *
+ * Headings wrap at 360, so the ordinary mean and min/max are wrong for a path
+ * that crosses north: 350° and 010° would average to 180° and span 340°. The
+ * mean here is the direction of the summed unit vectors, and the range comes
+ * from each frame's signed offset from that mean, wrapped to ±180°, so a
+ * heading that wanders across north reads as the narrow band it is.
+ *
+ * Returns {mean, min, max, spread, resultant, validFrac}: mean/min/max are
+ * compass headings in [0, 360), spread is the width of the range in degrees,
+ * and resultant is the length of the mean unit vector, from 0 to 1 — at
+ * constant speed, the net travel as a share of the path length. Near 1 the
+ * headings agree; near 0 they cancel out (a circling or back-and-forth
+ * object), the mean is whatever direction the rounding left, and a caller
+ * must not show it as a direction of travel. validFrac is the share of the
+ * frames that had a heading. All but validFrac are NaN when no frame has one.
+ */
+export function headingStats(heading, lo, hi) {
+    let sumE = 0, sumN = 0, count = 0;
+    for (let f = lo; f < hi; f++) {
+        if (!isFinite(heading[f])) continue;
+        const rad = heading[f] * Math.PI / 180;
+        sumE += Math.sin(rad);
+        sumN += Math.cos(rad);
+        count++;
+    }
+    if (count === 0) return {mean: NaN, min: NaN, max: NaN, spread: NaN, resultant: NaN, validFrac: 0};
+    const mean = Math.atan2(sumE, sumN) * 180 / Math.PI;
+    let lowOffset = Infinity, highOffset = -Infinity;
+    for (let f = lo; f < hi; f++) {
+        if (!isFinite(heading[f])) continue;
+        let offset = heading[f] - mean;
+        offset -= 360 * Math.round(offset / 360);
+        if (offset < lowOffset) lowOffset = offset;
+        if (offset > highOffset) highOffset = offset;
+    }
+    const compass = (deg) => ((deg % 360) + 360) % 360;
+    return {
+        mean: compass(mean),
+        min: compass(mean + lowOffset),
+        max: compass(mean + highOffset),
+        spread: highOffset - lowOffset,
+        resultant: Math.hypot(sumE, sumN) / count,
+        validFrac: count / (hi - lo),
     };
 }
 
@@ -1185,6 +1246,7 @@ export function summarizeMetrics(m) {
         turnRate: pick(m.turnRate),
         altitude: pick(m.altitude),
         range: pick(m.range),
+        groundHeading: {...m.groundHeading},
     };
 }
 

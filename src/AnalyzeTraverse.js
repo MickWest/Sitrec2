@@ -252,6 +252,7 @@ const HEAT_STOPS = ["#10141c", "#0d366b", "#1c5cab", "#3987e5", "#86b6ef", "#cde
 // ---------------------------------------------------------------------------
 const fpm0 = (ms) => (ms * MS_TO_FPM).toFixed(0);
 const ft0 = (m) => (m / 0.3048).toFixed(0);          // ENU-up meters -> feet
+const hdg3 = (deg) => `${String(Math.round(deg) % 360).padStart(3, "0")}°`;   // compass: 5 -> "005°"
 
 // compact numeric label: strips trailing zeros, sensible precision
 function fmtNum(v) {
@@ -3031,7 +3032,52 @@ function analyzeSolutionSpace(results) {
     return {geo, conv, degenerate: narrow && flat, narrow, flat};
 }
 
-// The six headline stats for one hypothesis (shared by tile and Details pane).
+// Heading range above which the True heading line is highlighted: a straight
+// path holds its heading, so a wide range marks a candidate that turns or
+// wanders over the clip.
+const HEADING_RANGE_CAUTION_DEG = 30;
+const HEADING_RANGE_FAIL_DEG = 45;
+// Below this mean resultant length the headings cancel out (a circling or
+// back-and-forth path) and the mean is noise (see headingStats). Measured on
+// the Agua sitch: every card's true heading is 0.61 or more; the Quadcopter's
+// heading through its own solved wind, which circles, is 0.08.
+const HEADING_MIN_RESULTANT = 0.25;
+
+// The True heading line: circular mean and range of the direction of the
+// object's horizontal velocity over the ground — its absolute motion, wind
+// included, so a drifting balloon heads where it drifts — clockwise from true
+// north at the clip's mean sensor position. See headingStats in
+// TraverseAnalysis.js.
+function headingStatRow(m) {
+    const label = "True heading (mean / range)";
+    const hd = m.groundHeading;
+    if (!isFinite(hd.mean)) return [label, "n/a — no horizontal motion"];
+    // Threshold the DISPLAYED (rounded) width, so the color always agrees
+    // with the number the reader sees.
+    const width = Math.round(hd.spread);
+    // At a full circle both ends name the same compass point ("171°–171°")
+    const range = width >= 360 ? "full circle (360°)" : `${hdg3(hd.min)}–${hdg3(hd.max)} (${width}°)`;
+    const partial = hd.validFrac < 1
+        ? ` · defined on ${Math.floor(hd.validFrac * 100)}% of frames` : "";
+    const mean = hd.resultant >= HEADING_MIN_RESULTANT ? hdg3(hd.mean) : "no mean direction";
+    const text = `${mean} / ${range}${partial}`;
+    const limit = width > HEADING_RANGE_FAIL_DEG ? HEADING_RANGE_FAIL_DEG
+        : width > HEADING_RANGE_CAUTION_DEG ? HEADING_RANGE_CAUTION_DEG : null;
+    if (limit === null) return [label, text];
+    const color = limit === HEADING_RANGE_FAIL_DEG ? CRITERION_COLORS.fail : CRITERION_COLORS.caution;
+    // print-color-adjust keeps the highlight when the full report is printed
+    const html = `${escapeHtml(mean)} / `
+        + `<span style="background:${color}; color:#0d0f12; padding:0 4px; border-radius:3px; `
+        + `-webkit-print-color-adjust:exact; print-color-adjust:exact" `
+        + `title="${escapeHtml(`Heading range ${width}° is wider than ${limit}°`)}">${escapeHtml(range)}</span>`
+        + escapeHtml(partial);
+    return [label, text, html];
+}
+
+// The headline stats for one hypothesis (shared by tile, Details pane and the
+// full report). Each row is [label, text] or [label, text, html]: the optional
+// html is the same value with a highlight, already escaped, and renderers use
+// it in place of escaping the text.
 function hypothesisStats(h, dataset = null) {
     const m = h.metricsFull;
     // Always show the raw residual. The old "≤ reference fit" replacement hid
@@ -3045,6 +3091,7 @@ function hypothesisStats(h, dataset = null) {
         ["Slant range (min–max)", `${nm1(m.range.min)}–${nm1(m.range.max)} NM`],
         [h.params?.motionFrame === "ground" ? "Ground speed (mean / max)" : "Air speed (mean / max)",
             `${kt1(m.airSpeed.mean)} / ${kt1(m.airSpeed.max)} kt`],
+        headingStatRow(m),
         ["Altitude (geodetic)", `${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft`],
         ["Climb", `${fpm0(m.verticalSpeed.mean)} fpm`],
         [dataset ? `Max kinematic accel (${(4 * metricSmoothingWindow(dataset.n, dataset.fps) / dataset.fps).toFixed(2)}\u00a0s)`
@@ -3942,9 +3989,9 @@ function windProfileComparisonHTML(h) {
 function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = false) {
     const {ss} = ctx;
     const stats = hypothesisStats(h, ctx?.dataset);
-    const statsHTML = stats.map(([k, v]) =>
+    const statsHTML = stats.map(([k, v, html]) =>
         `<div class="tg-d-st"><div class="tg-d-stk">${escapeHtml(k)}</div>` +
-        `<div class="tg-d-stv">${escapeHtml(v)}</div></div>`).join("");
+        `<div class="tg-d-stv">${html ?? escapeHtml(v)}</div></div>`).join("");
 
     const prose = detailProse(h, r, ss);
     const spaceHTML = solutionSpaceHTML(h, ss);
@@ -5310,9 +5357,9 @@ function showResultGallery(results, uiState = null) {
         const badges = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r), ...windEvidenceBadges(h)];
         const badgesHTML = badges.map((badge) =>
             `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
-        const statsHTML = hypothesisStats(h, dataset).map(([k, v]) =>
+        const statsHTML = hypothesisStats(h, dataset).map(([k, v, html]) =>
             `<div class="tg-st"><div class="tg-stk">${escapeHtml(k)}</div>` +
-            `<div class="tg-stv">${escapeHtml(v)}</div></div>`).join("");
+            `<div class="tg-stv">${html ?? escapeHtml(v)}</div></div>`).join("");
         const tieText = tied ? " · display-score tie" : "";
 
         const tile = document.createElement("div");
@@ -6329,9 +6376,9 @@ function minRegion(profile, factor = 1.5) {
 
 function buildReportHypothesisDetails(dataset, rankedHyps, ss) {
     return rankedHyps.map(({h, r, tied, category, groupIndex, groupSize}) => {
-        const statsHTML = hypothesisStats(h, dataset).map(([k, v]) =>
+        const statsHTML = hypothesisStats(h, dataset).map(([k, v, html]) =>
             `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
-            `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
+            `<div class="stv">${html ?? escapeHtml(v)}</div></div>`).join("");
         const prose = detailProse(h, r, ss);
         const spaceHTML = solutionSpaceHTML(h, ss);
         const badgesHTML = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r)].map((badge) =>
@@ -6617,9 +6664,9 @@ function buildReportHTML(ctx) {
     const cardsHTML = rankedGroups.map((group) => {
         const cards = group.items.map(({h, r, tied, groupIndex, groupSize}) => {
             const thumb = hypothesisThumbnail(dataset, h);
-            const statsHTML = hypothesisStats(h, dataset).map(([k, v]) =>
+            const statsHTML = hypothesisStats(h, dataset).map(([k, v, html]) =>
                 `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
-                `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
+                `<div class="stv">${html ?? escapeHtml(v)}</div></div>`).join("");
             const badgesHTML = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r)].map((badge) =>
                 `<span class="pill" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
             const tieText = tied ? " · display-score tie" : "";
