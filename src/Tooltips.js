@@ -1,4 +1,4 @@
-// Faster tooltips.
+// Faster tooltips for the view header-bar buttons (CUIBar).
 //
 // Sitrec's tooltips are all plain `title` attributes — Controller.prototype.tooltip in
 // lil-gui-extras.js sets domElement.title, and the hand-built panels write title="..."
@@ -6,18 +6,25 @@
 // second in Chrome) and no CSS property or JS setting can shorten it. The only lever is
 // to suppress the native tooltip and draw our own.
 //
-// This does that globally, without touching any of the ~900 call sites: one delegated
-// listener borrows the hovered element's `title` (removing the attribute is what stops
-// the browser drawing its own), shows a styled div after TOOLTIP_DELAY_MS, and hands the
-// attribute back on the way out.
+// That is done ONLY for the header-bar buttons: glyphs with no words, where the tooltip is
+// the only way to learn what a button does. Everything else, menu items included, keeps
+// the browser's own tooltip.
+//
+// One delegated listener borrows the hovered button's `title` (removing the attribute is
+// what stops the browser drawing its own), shows a styled div after TOOLTIP_DELAY_MS, and
+// hands the attribute back on the way out.
 
-// How long the pointer must rest on a control before its tooltip appears.
+// How long the pointer must rest on a button before its tooltip appears.
 export const TOOLTIP_DELAY_MS = 250;
 
-// Once a tooltip has been shown, moving to another control within this window shows the
-// next one with no delay at all. This is the usual desktop-UI behaviour, and it is what
-// actually makes a menu feel fast when you scan along a row of controls.
+// Once a tooltip has been shown, moving to another button within this window shows the
+// next one with no delay at all. This is the usual desktop-UI behavior, and it is what
+// actually makes the bar feel fast when you scan along its row of buttons.
 export const TOOLTIP_WARM_MS = 600;
+
+// The elements that get the fast tooltip: CUIBar's icon buttons, and the "peek" copies of
+// them that stand in while the bar is hidden.
+const FAST_TOOLTIP_SELECTOR = ".view-uibar-icon, .view-uibar-peek";
 
 let tipEl = null;
 let showTimer = null;
@@ -56,9 +63,8 @@ function borrow(el, text) {
 
 function giveBack() {
     if (hostEl !== null) {
-        // Only restore if nothing has set a title in the meantime: several buttons swap
-        // their own title as they toggle (the fullscreen and zoom buttons in
-        // AnalyzeTraverse), and that newer text must win.
+        // Only restore if nothing has set a title in the meantime: a toggle button can swap
+        // its own title as it changes state, and that newer text must win.
         if (!hostEl.hasAttribute("title")) hostEl.setAttribute("title", hostText);
         if (addedAria) hostEl.removeAttribute("aria-label");
     }
@@ -67,19 +73,14 @@ function giveBack() {
     addedAria = false;
 }
 
-// The nearest ancestor of `node` carrying a non-empty title.
+// The header-bar button under `node`, if it has a tooltip to show.
 function findHost(node) {
-    let el = (node && node.closest) ? node.closest("[title]") : null;
-    while (el !== null && el.getAttribute("title").trim() === "") {
-        el = el.parentElement ? el.parentElement.closest("[title]") : null;
-    }
-    // We removed the borrowed element's title, so a search starting inside it walks
-    // straight past it to an ancestor. While the pointer is still inside it, and no
-    // deeper control has a tooltip of its own, it is still the host.
-    if (hostEl !== null && hostEl.contains(node) && (el === null || el.contains(hostEl))) {
-        return hostEl;
-    }
-    return el;
+    const el = (node && node.closest) ? node.closest(FAST_TOOLTIP_SELECTOR) : null;
+    if (el === null) return null;
+    // The button whose title we borrowed has none while its tip is up; it is still the host.
+    if (el === hostEl) return el;
+    const title = el.getAttribute("title");
+    return (title !== null && title.trim() !== "") ? el : null;
 }
 
 function position() {
@@ -153,7 +154,7 @@ function onOver(e) {
 function onMove(e) {
     mouseX = e.clientX;
     mouseY = e.clientY;
-    // lil-gui rebuilds menus wholesale, so the host can vanish with no mouseout to tell
+    // A bar is torn down with its view, so the host can vanish with no mouseout to tell
     // us. Without this the tooltip would sit there until the next hover.
     if (hostEl !== null && !hostEl.isConnected) hide();
 }

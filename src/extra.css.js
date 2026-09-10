@@ -432,8 +432,9 @@ html, body {
     color: var(--sitrec-text-dim);
 }
 
-/* Fast tooltips (src/Tooltips.js). These replace the browser's native title-attribute
-   tooltip, whose ~1s delay the page cannot change. Note this whole file is a JS
+/* Fast tooltips for the view header-bar buttons (src/Tooltips.js). These replace the
+   browser's native title-attribute tooltip there, whose ~1s delay the page cannot change.
+   Everything else keeps the native tooltip. Note this whole file is a JS
    template literal: no backticks and no dollar-brace in here.
    pointer-events:none matters - the tip is drawn under the cursor and must never
    swallow a click. */
