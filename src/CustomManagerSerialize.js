@@ -101,6 +101,7 @@ import {
 } from "./GimbalCustomSetup";
 import {Color} from "three";
 import {currentBuild} from './release/ChannelUI';
+import {restoreRefractionTool} from "./refraction/RefractionLoader";
 
 export const serializeMethods = {
     getCustomSitchString(local = false) {
@@ -533,6 +534,7 @@ export const serializeMethods = {
             "terrestrialLapseRate",
             "terrestrialRefractionOverrideK",
             "terrestrialRefractionK",
+            "raytracedRefraction",
         ]
 
         const globalsNeeded = [
@@ -1804,6 +1806,9 @@ export const serializeMethods = {
 
         refreshLabelsAfterLoading();
         this.refreshLookViewTracks();
+
+        await restoreRefractionTool();
+        if (Globals.loadGeneration !== myGeneration) return;
 
         if (sitchData.guiMenus) {
             Globals.menuBar.modDeserialize(sitchData.guiMenus);

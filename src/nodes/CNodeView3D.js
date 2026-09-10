@@ -2111,6 +2111,24 @@ export class CNodeView3D extends CNodeViewCanvas {
 
 
     renderTargetAndEffects() {
+        const refraction = this.raytracedRefraction;
+        if (!refraction) return this.renderTargetAndEffectsInternal();
+        const restore = refraction.begin();
+        try {
+            return this.renderTargetAndEffectsInternal(refraction);
+        } finally {
+            restore();
+        }
+    }
+
+    getPendingLoadState(viewIds = null) {
+        if (!this.raytracedRefraction || (viewIds && !viewIds.includes(this.id))) return null;
+        const pass = this.raytracedRefraction;
+        const pending = !!(pass.busy || pass.queued || pass.previewBusy || pass.previewQueued);
+        return {hasPending: pending, perView: {[this.id]: {refraction: pending}}};
+    }
+
+    renderTargetAndEffectsInternal(refraction) {
         {
 
             if (this.visible) {
@@ -2301,6 +2319,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     this._renderTargetSize ??= new Vector2());
                 const rtWidth = targetSize.x;
                 const rtHeight = targetSize.y;
+                refraction?.attachDepth(this.renderTargetAntiAliased);
                 setLineViewHeight(this.renderer, this.heightPx * this.letterboxScaleY);
 
                 const colorPolicy = this.getColorPolicy();
@@ -2622,6 +2641,10 @@ export class CNodeView3D extends CNodeViewCanvas {
                             sharedUniforms.cameraFocalLength.value = focalLength;
                         }
 
+                        // Capture the exact projection, including render-scoped pan,
+                        // zoom and anamorphic adjustments, before they are restored.
+                        refraction?.capture(this);
+                        refraction?.captureBackground(this, currentRenderTarget);
                         this.renderAtmosphereScene(GlobalScene, this.camera);
                     }
                 } finally {
@@ -2663,6 +2686,10 @@ export class CNodeView3D extends CNodeViewCanvas {
                         NodeMan.get("lighting").setIR(false);
                     }
                 }
+
+                // Refraction warps scene radiance before optical integration,
+                // exposure and sensor effects in the unified colour pipeline.
+                if (refraction) currentRenderTarget = refraction.render(this, currentRenderTarget);
 
                 if (globalProfiler) globalProfiler.push('#bebada', 'effectsPasses');
                 const effects = this.effectsEnabled && Globals.renderDebugFlags.dbg_renderEffects
@@ -3252,6 +3279,10 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     dispose() {
+        // Also covers individual view removal outside a full sitch teardown.
+        if (this.raytracedRefraction) {
+            this.raytracedRefraction.tool.releasePass();
+        }
         // Remove our WebGL context-loss listeners FIRST, while this.canvas still
         // exists. super.dispose() (CNodeViewCanvas.dispose) nulls this.canvas, and
         // the later renderer.forceContextLoss() asynchronously dispatches a

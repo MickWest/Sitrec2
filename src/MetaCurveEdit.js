@@ -325,9 +325,10 @@ class MetaBezierCurveEditor {
         this.dynamicY = p.dynamicY
         this.dynamicX = p.dynamicX
 
-        this.keepYOrder = false;  // if this is true then don't let the user drag points verticaly past adjacent points
+        this.independentAxis = p.independentAxis ?? "x";
+        this.keepYOrder = this.independentAxis === "y";
 
-        this.clampXEnds = true
+        this.clampXEnds = this.independentAxis !== "y";
 
 
         this.noVerticalLines = p.noVerticalLines ?? false;
@@ -463,16 +464,19 @@ class MetaBezierCurveEditor {
         this.unregisterInteraction = registerSurfaceInteraction(this.c, {
             profile: "legacyCurve",
             model: this, view: p.view, buttons: [0, 2],
-            hitTest: e => { const at = local(e); return this.insideGraph(at.layerX, at.layerY) ? {} : null; },
+            // Handles can extend into the canvas margins. The whole canvas
+            // owns input so they remain selectable and clicks cannot reach a view below.
+            hitTest: () => ({}),
             begin: e => {
                 const at = local(e);
                 this.interactionRadius = e.pointerType === "touch" ? HANDLE_STYLE.touchRadius : 10;
                 this.lastMouseX = at.layerX; this.lastMouseY = at.layerY;
+                p.onEditStart?.();
                 this.mouseDown(at);
             },
             move: e => this.mouseMove(local(e)),
             hover: e => { if (e) this.mouseMove(local(e)); },
-            end: e => this.mouseFinished(local(e)), contextMenu: () => {},
+            end: e => { this.mouseFinished(local(e)); p.onEditEnd?.(); }, contextMenu: () => {},
             snapshot: () => this.getProfile().slice(),
             restore: state => { this.selectedPoint = null; this.setPointsFromFlatArray(state); this.onChange(); this.dirty = true; },
             undo: "Edit curve points",
@@ -711,7 +715,7 @@ class MetaBezierCurveEditor {
                 ctx.stroke();
             }
 
-            ctx.fillText("" + x, this.D2CX(x), this.D2CY(this.min.y) + 15);
+            ctx.fillText(this.p.tickFormat?.(x) ?? "" + x, this.D2CX(x), this.D2CY(this.min.y) + 15);
 
         }
 
@@ -730,7 +734,7 @@ class MetaBezierCurveEditor {
 
             const y2 = parseFloat(y.toFixed(2))
 
-            ctx.fillText("" + y2, this.D2CX(this.min.x) - 2, this.D2CY(y) + 6);
+            ctx.fillText(this.p.tickFormat?.(y) ?? "" + y2, this.D2CX(this.min.x) - 2, this.D2CY(y) + 6);
 
 
         }
@@ -796,9 +800,12 @@ class MetaBezierCurveEditor {
         if (this.curve.ps.length > 0) {
             ctx.strokeStyle = valueColor;
             ctx.beginPath();
-            for (let x = this.min.x; x < this.max.x; x += (this.max.x - this.min.x) / 100) {
-                const y = this.getY(x)
-                ctx.lineTo(this.D2CX(x), this.D2CY(y));
+            if (this.independentAxis === "y") {
+                for (let y = this.min.y; y < this.max.y; y += (this.max.y - this.min.y) / 100) {
+                    ctx.lineTo(this.D2CX(this.getX(y)), this.D2CY(y));
+                }
+            } else for (let x = this.min.x; x < this.max.x; x += (this.max.x - this.min.x) / 100) {
+                ctx.lineTo(this.D2CX(x), this.D2CY(this.getY(x)));
             }
             ctx.stroke();
 
@@ -978,10 +985,6 @@ class MetaBezierCurveEditor {
         // we use shift key to drag the window, so ignore mouse down if shift pressed
      //   if (e.shiftKey) return;
 
-        // only allow clicking if inside the graph area
-        if (!this.insideGraph(e.layerX, e.layerY)) return;
-
-
         this.mouseIsDown = true;
         if (!this.curve.override && !this.disable) {
             this.selectPointAt(e.layerX, e.layerY);
@@ -1011,9 +1014,13 @@ class MetaBezierCurveEditor {
                     return;
                 }
 
+                // Existing handles are selectable in the margins, but new
+                // points must start inside the plotted domain.
+                if (!this.insideGraph(e.layerX, e.layerY)) return;
+
                 this.curve.ps.push(new Point(this.C2DX(e.layerX), this.C2DY(e.layerY)));
                 this.curve.ps.push(new Point(this.C2DX(e.layerX), this.C2DY(e.layerY + 25)));
-                sortPointsX(this.curve.ps);
+                this.sortPoints();
                 this.recalculate()
                 this.onChange();
                 this.dirty = true;
@@ -1023,6 +1030,10 @@ class MetaBezierCurveEditor {
         }
 
 
+    }
+
+    sortPoints() {
+        return this.independentAxis === "y" ? sortPointsY(this.curve.ps) : sortPointsX(this.curve.ps);
     }
 
     mouseFinished(e) {
@@ -1097,7 +1108,7 @@ class MetaBezierCurveEditor {
 
                 //     if (!this.keepYOrder) {
                 // after we move we may need re-sort the points and re-select the one we were dragging
-                if (sortPointsX(this.curve.ps)) {
+                if (this.sortPoints()) {
 
                     this.selectedPoint = null;
                     this.selectPointAt(e.layerX, e.layerY);
