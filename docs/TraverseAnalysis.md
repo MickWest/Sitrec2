@@ -438,6 +438,23 @@ Notes on the gallery tiles:
 - `Max kinematic acceleration (g)` is the change in smoothed air-relative
   velocity divided by gravitational acceleration. It is not aircraft load
   factor and does not include the ordinary 1 g supporting level flight.
+- **True heading** is the compass direction of the candidate's horizontal
+  velocity over the ground — its absolute motion, wind included — measured
+  clockwise from true north. It is not the air-relative direction behind the
+  speed line: a drifting balloon has no motion through the air, but it heads
+  where the wind carries it. Its mean and range are circular, so a heading
+  that wanders across north reads as the narrow band it is, and they use the
+  same frames as the other lines (the smoothing window is trimmed at each
+  end). The range is highlighted yellow when it is wider than 30° and red
+  when it is wider than 45°: a straight path holds its heading, so a wide
+  range marks a candidate that turns or wanders; one that turns through every
+  direction reads "full circle". When the headings cancel out (a circling or
+  back-and-forth path, where the unit heading vectors add up to less than a
+  quarter of their count), the mean reads "no mean direction" instead of a
+  direction that rounding happened to leave. Frames with no horizontal motion have no
+  heading and are skipped; the line gives the share of frames that had one
+  when that is not all of them, and reads "n/a" when none did (a stationary
+  or ground object).
 - **Constant Altitude** searches the altitude band and scores each candidate
   on the smoothed path plus its LOS residual; if the sightlines are
   near-horizontal (they never cross a constant-altitude plane) the tile

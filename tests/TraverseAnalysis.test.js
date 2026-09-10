@@ -10,6 +10,7 @@
 import {
     compareTrackToTruth,
     trackMetrics,
+    headingStats,
     meanAngularError,
     traverseConstSpeed,
     traverseConstAltitude,
@@ -110,6 +111,46 @@ describe("TraverseAnalysis core", () => {
         expect(m.gLoad.max).toBeLessThan(0.02);
         expect(m.turnRate.std).toBeLessThan(0.1);
         expect(meanAngularError(dataset, target)).toBeLessThan(1e-7);
+    });
+
+    test("trackMetrics reports the true heading over the ground, not through the air", () => {
+        // A crosswind, so the air heading (074°) and ground heading (063°) differ
+        const {dataset, target, targetVel} = makeDataset({windMs: [0, 20, 0]});
+        const m = trackMetrics(dataset, target);
+        const groundHeading = Math.atan2(targetVel[0], targetVel[1]) * 180 / Math.PI;
+        expect(m.groundHeading.mean).toBeCloseTo(groundHeading, 1);
+        expect(m.groundHeading.spread).toBeLessThan(0.5);
+        expect(m.groundHeading.resultant).toBeCloseTo(1, 6);
+    });
+
+    test("trackMetrics: a pure wind drifter has no air heading but a true heading downwind", () => {
+        const {dataset, target} = makeDataset({windMs: [6, -6, 0], targetVel: [6, -6, -0.6]});
+        const m = trackMetrics(dataset, target);
+        expect(m.headingValidFrac).toBe(0);
+        expect(m.groundHeading.mean).toBeCloseTo(135, 1);
+        expect(m.groundHeading.validFrac).toBe(1);
+    });
+
+    test("headingStats averages and ranges headings the short way across north", () => {
+        const s = headingStats(Float64Array.from([340, 350, NaN, 0, 10]), 0, 5);
+        expect(s.mean).toBeCloseTo(355, 6);
+        expect(s.min).toBeCloseTo(340, 6);
+        expect(s.max).toBeCloseTo(10, 6);
+        expect(s.spread).toBeCloseTo(30, 6);
+        expect(s.validFrac).toBeCloseTo(0.8, 9);
+    });
+
+    test("headingStats: an object that turns through every direction spans the full circle and has no mean", () => {
+        const s = headingStats(Float64Array.from({length: 360}, (_, i) => i - 180), 0, 360);
+        expect(s.spread).toBeGreaterThan(358);
+        expect(s.resultant).toBeLessThan(1e-9);   // headings cancel: the mean is not a direction
+    });
+
+    test("headingStats reads invalid, not zero, when no frame has a heading", () => {
+        const s = headingStats(Float64Array.from([NaN, NaN, NaN]), 0, 3);
+        expect(s.mean).toBeNaN();
+        expect(s.spread).toBeNaN();
+        expect(s.validFrac).toBe(0);
     });
 
     test("trackMetrics uses a physical-time differentiation window across frame rates", () => {
