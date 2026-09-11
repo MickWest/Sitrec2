@@ -43,6 +43,7 @@ import {
     CNodeLOSTraverseWind
 } from "./nodes/CNodeLOSTraverseStraightLine";
 import {CNodeLOSTraverseConstantAltitude} from "./nodes/CNodeLOSTraverseConstantAltitude";
+import {CNodeLOSTraverseUseRange} from "./nodes/CNodeLOSTraverseUseRange";
 import {CNodeLOSTraversePerspective} from "./nodes/CNodeLOSTraversePerspective";
 import {CNodeLOSFitCV} from "./nodes/CNodeLOSFitCV";
 import {CNodeLOSFitCA} from "./nodes/CNodeLOSFitCA";
@@ -636,6 +637,8 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
 //             guiMenus.traverse),
 //     })
 
+
+    new CNodeLOSTraverseUseRange({id: "LOSTraverseUseRange" + idExtra, LOS: los}, guiMenus.traverse);
 
     new CNodeLOSTraverse({
         id: "LOSTraverseConstantDistance"+idExtra,

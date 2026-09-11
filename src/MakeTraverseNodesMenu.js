@@ -3,7 +3,7 @@
 // We pass in which ones of the above we want, plue any extra ones
 // (For example in Agua we add the ufoSplineEditor node)
 import {CNodeSwitch} from "./nodes/CNodeSwitch";
-import {guiMenus, Sit} from "./Globals";
+import {guiMenus, NodeMan, Sit} from "./Globals";
 import {addAnalyzeButton, addAnalyzeTweaks} from "./AnalyzeTraverse";
 import {EventManager} from "./CEventManager";
 
@@ -58,6 +58,8 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
         },
 
     }, guiMenus.traverse)
+
+    NodeMan.get("LOSTraverseUseRange" + idExtra, false)?.bindTraverseSwitch(nodeMenu);
 
     // One-button multi-method analysis of the LOS (report + best solutions)
     addAnalyzeButton(guiMenus.traverse);

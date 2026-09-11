@@ -102,7 +102,7 @@ const GIMBAL_PIPELINE_NODE_IDS = [
     "cloudAltitude", "cloudAltitudeGUI",
     // SetupTraverseNodes / CreateTraverseNodes
     "startDistance", "speedScaled",
-    "LOSTraverseConstantDistance",
+    "LOSTraverseConstantDistance", "LOSTraverseUseRange",
     "LOSTraverseConstantSpeed", "LOSTraverseConstantAirSpeed",
     "LOSTraverseStraightLine", "LOSTraverseStraightConstantAir",
     "LOSTraverseConstantAltitude",
@@ -560,7 +560,7 @@ export function gimbalStepCore(config = {}) {
 export function gimbalStepTraverse(defaultTraverse = "Const Air Spd") {
     clearGimbalPipelineNodes([
         "startDistance", "speedScaled",
-        "LOSTraverseConstantDistance",
+        "LOSTraverseConstantDistance", "LOSTraverseUseRange",
         "LOSTraverseConstantSpeed", "LOSTraverseConstantAirSpeed",
         "LOSTraverseStraightLine", "LOSTraverseStraightConstantAir",
         "LOSTraverseConstantAltitude",

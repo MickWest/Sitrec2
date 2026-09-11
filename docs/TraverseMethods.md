@@ -33,6 +33,7 @@ Sitrec offers two families of traverse:
 
 | Method | Key Parameters | What It Does | You must assume | It does NOT establish |
 |--------|---------------|--------------|-----------------|-----------------------|
+| **Use Range** | Range Source | Applies a loaded MISB range column, in metres, along the current LOS. Appears when range data is loaded. | The selected range belongs to the observed target and has the correct units | Range calibration or target identity. Ground Range is applied directly, without conversion to slant range |
 | **Constant Distance** | Start Distance | Places the target at a fixed distance along each LOS ray. Distance interpolates linearly from start to end if both are given. | The range | Anything. The range is 100 % your input, and every speed, size and acceleration scales with it |
 | **Constant Ground Speed** | Start Distance, Target Speed | Finds the point on each LOS ray that maintains a fixed ground speed from the previous frame. | The speed, the start range, and that every earlier frame was right | The speed (you supplied it) or the range. Errors compound forward and never self-correct |
 | **Constant Air Speed** | Start Distance, Target Speed, Wind | Same as ground speed, but subtracts wind to maintain constant airspeed. | All of the above **plus** that the wind field is right at the target's unknown altitude | The same — and wind error and range error are confounded, so you cannot separate them from sightlines alone |
@@ -88,6 +89,14 @@ using a live Global Fit.
 ---
 
 ## In Depth
+
+### Use Range
+
+Load a MISB source with **Slant Range** (tag 21) or **Ground Range** (tag 57), then choose **Use Range** in the LOS Traverse Method menu. **Range Source** lists every populated range field by track name. The source choice is saved with the sitch, and the list updates as tracks are imported or removed. With no populated range column the method is not offered.
+
+The target position is `camera position + unit LOS direction × range in metres`. The current camera/LOS selection supplies the direction; choosing a range source does not switch the camera or its angles. Ranges follow the imported track’s timestamp alignment, including timing offsets and video pairing. Between valid records, values are interpolated linearly without angle wrapping or additional smoothing. Jumps in per-frame range data are retained.
+
+Ground Range is used directly as an along-LOS distance, as selected; no ground-to-slant conversion is inferred. Missing, negative or nonfinite readings hold the previous valid range; leading gaps hold the first valid reading. **Range Data** reports how many scene frames use held values. Endpoints are held rather than extrapolated into negative distances. Range-based placement does not independently validate the sensor return or identify its target.
 
 ### How LOS Works
 
