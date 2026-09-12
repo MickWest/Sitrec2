@@ -51,6 +51,12 @@ const HEADER_DRAG_DOCK_THRESHOLD = 60;
 // a free-floating window (Blender-style detach). Larger than the move threshold so a small
 // nudge doesn't accidentally tear a tile out of the layout.
 const HEADER_DRAG_DETACH_THRESHOLD = 30;
+// An UNPINNED header does not appear the instant the pointer touches its strip: sweeping across
+// a view's top edge on the way somewhere else should leave the view alone. It appears once the
+// pointer has been on the strip for DWELL ms (however much it moved), or has STOPPED there for
+// SETTLE ms — whichever comes first. See _armHeaderReveal.
+const HEADER_REVEAL_DWELL_MS = 250;
+const HEADER_REVEAL_SETTLE_MS = 100;
 function friendlyViewName(v, id) {
     if (FRIENDLY_VIEW_NAMES[id]) return FRIENDLY_VIEW_NAMES[id];
     if (v && v.menuName) return v.menuName;
@@ -442,19 +448,33 @@ class CNodeView extends CNode {
         // appear while interacting with view content, nor while a drag passes over the strip
         // (button held). Leaving the strip hides it; mid-strip with a button held leaves the
         // state unchanged (so a header-drag-in-progress isn't hidden out from under itself).
+        //
+        // Being on the strip is necessary but not sufficient. Two further tests have to pass:
+        // the pointer must have stayed there long enough to mean it (_armHeaderReveal), and it
+        // must have a clear line to the strip with nothing painted over it (_headerRevealClear).
         const updateReveal = (e) => {
             // While dragging the bar it acts as if pinned (see _setHeaderDragging): don't let a
             // fast drag that briefly moves the pointer off the (moving) strip hide it mid-drag.
             if (this.headerPinned || this._headerDragging) return;
-            const r = bar.bar.getBoundingClientRect();
-            const inBar = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-            if (!inBar) {
+            // Remembered because a reveal is decided by a TIMER, which fires with no event of
+            // its own to read a position from.
+            this._revealX = e.clientX;
+            this._revealY = e.clientY;
+            if (!bar.containsPoint(e.clientX, e.clientY) || !this._headerRevealClear(e.clientX, e.clientY)) {
+                this._cancelHeaderReveal();
                 if (this._headerHovering) { this._headerHovering = false; this._updateHeaderShown(); }
-            } else if (e.buttons === 0 && !this._headerHovering) {
-                this._headerHovering = true; this._updateHeaderShown();
+            } else if (e.buttons !== 0) {
+                // A drag crossing the strip is not a hover: stop counting, but don't hide a bar
+                // that is already up (that is the header-drag case the early return covers).
+                this._cancelHeaderReveal();
+            } else if (!this._headerHovering) {
+                this._armHeaderReveal();
             }
         };
-        const hideReveal = () => { if (!this.headerPinned && !this._headerDragging && this._headerHovering) { this._headerHovering = false; this._updateHeaderShown(); } };
+        const hideReveal = () => {
+            this._cancelHeaderReveal();
+            if (!this.headerPinned && !this._headerDragging && this._headerHovering) { this._headerHovering = false; this._updateHeaderShown(); }
+        };
         // The MOVE listener goes on the document, in the capture phase, rather than on the
         // view's own div. A HUD companion stacked over a view — the video readout, the compass,
         // an OSD frame — is a SIBLING div with a higher z-index, so the moment one of them takes
@@ -468,6 +488,80 @@ class CNodeView extends CNode {
         this._removeRevealListener = () => document.removeEventListener('pointermove', updateReveal, true);
         this.div.addEventListener('pointerleave', hideReveal);
         this.div.addEventListener('pointercancel', hideReveal);
+    }
+
+    // Two clocks decide when an unpinned header comes up, and the first to finish wins:
+    //
+    //   DWELL  — the pointer has been on the strip for HEADER_REVEAL_DWELL_MS, however much it
+    //            moved while it was there.
+    //   SETTLE — the pointer is on the strip and has STOPPED: no movement for
+    //            HEADER_REVEAL_SETTLE_MS.
+    //
+    // SETTLE is the everyday case (you arrive and stop, and the bar is up almost at once).
+    // DWELL covers arriving and carrying on moving — running along the icons, or crossing the
+    // strip slowly enough that you plainly mean to be on it. Between them, a pointer merely
+    // SWEEPING across a view's top edge on its way elsewhere never raises the bar.
+    //
+    // Only SETTLE is restarted by movement. Restarting DWELL too would let a pointer that never
+    // quite stops keep the bar away for as long as it kept moving.
+    _armHeaderReveal() {
+        if (this._revealDwellTimer == null) {
+            this._revealDwellTimer = setTimeout(() => {
+                this._revealDwellTimer = null;
+                this._tryHeaderReveal();
+            }, HEADER_REVEAL_DWELL_MS);
+        }
+        if (this._revealSettleTimer != null) clearTimeout(this._revealSettleTimer);
+        this._revealSettleTimer = setTimeout(() => {
+            this._revealSettleTimer = null;
+            this._tryHeaderReveal();
+        }, HEADER_REVEAL_SETTLE_MS);
+    }
+
+    _cancelHeaderReveal() {
+        if (this._revealDwellTimer != null) { clearTimeout(this._revealDwellTimer); this._revealDwellTimer = null; }
+        if (this._revealSettleTimer != null) { clearTimeout(this._revealSettleTimer); this._revealSettleTimer = null; }
+    }
+
+    // A clock ran out. Everything is re-tested from the last known pointer position rather than
+    // trusted from the moment the clock was armed: nothing guarantees a pointermove in between,
+    // so a menu that opened over the strip meanwhile would otherwise go unnoticed.
+    _tryHeaderReveal() {
+        this._cancelHeaderReveal();
+        if (this.headerPinned || this._headerDragging || this._headerHovering) return;
+        if (!this.uiBar || this._revealX === undefined) return;
+        if (!this.uiBar.containsPoint(this._revealX, this._revealY)) return;
+        if (!this._headerRevealClear(this._revealX, this._revealY)) return;
+        this._headerHovering = true;
+        this._updateHeaderShown();
+    }
+
+    // Does the pointer have a CLEAR line to the strip — is the header the thing it is pointing
+    // AT, rather than something that happens to be behind whatever is under the cursor? A menu
+    // (in the menu bar, torn out and floating, or docked in a sidebar), another window, another
+    // view's open dropdown: each of those declines the reveal instead of fading the bar in
+    // underneath it.
+    //
+    // The topmost pointer-taking element is the whole test, and it reports the REAL paint order
+    // rather than a guess assembled from z-indexes. Two things found under the pointer still
+    // count as the header:
+    //   - anything inside this view's own div: the bar, one of its icons (a hidden bar is
+    //     pointer-transparent but its icons are not), a peek ghost, or simply the canvas that
+    //     the hidden strip sits over, which is the usual answer;
+    //   - a HUD companion of this view (compass, OSD frame, video readout). A companion never
+    //     occludes the header — the header's shape is clipped straight out of it, see
+    //     _clipHUDsBelowHeader — so the bar will paint over it.
+    _headerRevealClear(x, y) {
+        if (!this.div) return false;
+        const el = (this.div.ownerDocument ?? document).elementFromPoint(x, y);
+        if (!el) return false;
+        if (this.div.contains(el)) return true;
+        let companion = false;
+        ViewMan.iterate((id, view) => {
+            if (companion || view.in?.relativeTo !== this) return;
+            if (view.div?.contains(el)) companion = true;
+        });
+        return companion;
     }
 
     _updateHeaderShown() {
@@ -508,11 +602,14 @@ class CNodeView extends CNode {
     // position (the strip may have moved) so the bar settles into the right revealed state.
     _setHeaderDragging(dragging, event) {
         this._headerDragging = dragging;
+        // The bar is forced shown for the whole gesture, so any reveal clock still counting down
+        // has nothing left to decide.
+        this._cancelHeaderReveal();
         if (!dragging && event && this.uiBar) {
-            const r = this.uiBar.bar.getBoundingClientRect();
+            // No delay on the way out of a drag: the bar was already up, and the pointer has
+            // plainly been on the strip for the whole gesture.
             this._headerHovering = !this.headerPinned
-                && event.clientX >= r.left && event.clientX <= r.right
-                && event.clientY >= r.top && event.clientY <= r.bottom;
+                && this.uiBar.containsPoint(event.clientX, event.clientY);
         }
         this._updateHeaderShown();
     }
@@ -656,9 +753,11 @@ class CNodeView extends CNode {
         }
 
         // The header's hover-reveal listens on the document (see createViewHeader), so unlike the
-        // div listeners it does NOT go away with the div.
+        // div listeners it does NOT go away with the div. Its pending reveal clocks would also
+        // outlive it.
         this._removeRevealListener?.();
         this._removeRevealListener = null;
+        this._cancelHeaderReveal();
 
         // Dispose the per-view header/UI bar (destroys its hosted lil-gui menus) so they
         // don't leak on sitch reload. Owns its own DOM removal; null it so nothing reuses it.
@@ -1279,10 +1378,14 @@ class CNodeView extends CNode {
         this.visible = visible;
 
         // Hiding a view (display:none) suppresses the pointerleave that would normally
-        // clear the hover state, so the header would pop up unprompted on re-show. Clear it.
-        if (!visible && this._headerHovering) {
-            this._headerHovering = false;
-            this._updateHeaderShown();
+        // clear the hover state, so the header would pop up unprompted on re-show. Clear it,
+        // and any reveal clock counting down towards the same thing.
+        if (!visible) {
+            this._cancelHeaderReveal();
+            if (this._headerHovering) {
+                this._headerHovering = false;
+                this._updateHeaderShown();
+            }
         }
 
         // Immediate DOM update for responsiveness.

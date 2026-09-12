@@ -528,6 +528,15 @@ export class CUIBar {
         return this._toggleGui;
     }
 
+    // Is a page point inside the strip? Measured live, so it answers the same whether the bar
+    // is up or not: the bar hides with opacity and pointerEvents, never display, so it keeps
+    // laying out and keeps its rect. That is what lets the hover-reveal decide, from geometry
+    // alone, that a hidden bar should come up.
+    containsPoint(x, y) {
+        const r = this.bar.getBoundingClientRect();
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    }
+
     // Is (x, y) on the BLANK part of this bar — inside the strip, but clear of everything on it
     // that is itself clickable? The menu tab, the toggle icons and the window chrome all have
     // their own jobs, and a double-click landing on one must do that job (or nothing) rather
@@ -539,8 +548,7 @@ export class CUIBar {
     // the bar happens to be taking pointer events at that instant — a hover-revealed bar is
     // mid-fade at exactly the moment a caller asks.
     isBlankAt(x, y) {
-        const strip = this.bar.getBoundingClientRect();
-        if (x < strip.left || x > strip.right || y < strip.top || y > strip.bottom) return false;
+        if (!this.containsPoint(x, y)) return false;
         for (const el of this.bar.querySelectorAll(BAR_HIT_TARGETS)) {
             if (el.dataset.uibarAction === 'fullscreen') continue;
             const r = el.getBoundingClientRect();

@@ -62,7 +62,7 @@ These layout changes are stored with the sitch when you save it (**File → Save
 
 ## The View Header
 
-Move the mouse to the top edge of a view and a thin header bar fades in, with the view's name on the left and a few icons on the right (fullscreen, pop out, 📌 pin, and ✕ close). Pin it if you would rather it stayed put. The header is also the drag handle: drag it to move the view, no `Q` needed. Double-clicking an **empty** part of the bar toggles fullscreen, the same as the ⛶ icon — double-clicking the name or any of the buttons does that button's own job instead.
+Move the mouse to the top edge of a view and a thin header bar fades in, with the view's name on the left and a few icons on the right (fullscreen, pop out, 📌 pin, and ✕ close). It waits for you to mean it: stop on the strip and it is there almost at once, or keep moving along it and it arrives a moment later — either way, sweeping the pointer across the top of a view on the way somewhere else leaves it alone. It also stays away while anything is in front of it, so an open menu hanging over the strip does not get a header fading in underneath it. Pin it if you would rather it stayed put. The header is also the drag handle: drag it to move the view, no `Q` needed. Double-clicking an **empty** part of the bar toggles fullscreen, the same as the ⛶ icon — double-clicking the name or any of the buttons does that button's own job instead.
 
 The name on the left is a menu, and it holds the controls that only affect *that* view:
 
