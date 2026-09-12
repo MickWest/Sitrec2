@@ -61,8 +61,64 @@ function fillBanked(pos, n, times, fps, x0, y0, z, speedMS, psi0, bankAtT) {
     return minRadius;
 }
 
+/**
+ * The timing of a "racetrack" holding pattern: leg, turn, leg, turn, in
+ * seconds, from the spec's speed, bank and leg length. The turn rate is the
+ * coordinated-turn rate at the bank, psiDot = g tan(bank) / v, so a 180 degree
+ * turn lasts pi / psiDot.
+ */
+export function racetrackSchedule(spec) {
+    const v = spec.speedMS ?? 100;
+    const bankRad = (spec.bankDeg ?? 25) * DEG;
+    const legSeconds = spec.legSeconds ?? 90;
+    const psiDot = (G / v) * Math.tan(bankRad);
+    const turnSeconds = Math.PI / psiDot;
+    const period = 2 * legSeconds + 2 * turnSeconds;
+    return {v, bankRad, legSeconds, turnSeconds, psiDot, period,
+        turnDir: spec.turnDir === -1 ? -1 : 1,
+        headingRad: (spec.headingDeg ?? 0) * DEG,
+        phaseSeconds: ((spec.phaseSeconds ?? 0) % period + period) % period};
+}
+
+/**
+ * Where the pattern is at pattern time tau (seconds from the start of the
+ * inbound leg): which segment, the heading, and the bank in force. Heading is
+ * compass radians (0 = north, clockwise positive), the convention fillBanked
+ * integrates.
+ */
+export function racetrackState(spec, tau) {
+    const s = racetrackSchedule(spec);
+    const t = ((tau % s.period) + s.period) % s.period;
+    const dir = s.turnDir;
+    if (t < s.legSeconds) {
+        return {segment: "leg1", headingRad: s.headingRad, bankRad: 0, tau: t};
+    }
+    if (t < s.legSeconds + s.turnSeconds) {
+        const dt = t - s.legSeconds;
+        return {segment: "turn1", headingRad: s.headingRad + dir * s.psiDot * dt, bankRad: dir * s.bankRad, tau: t};
+    }
+    if (t < 2 * s.legSeconds + s.turnSeconds) {
+        return {segment: "leg2", headingRad: s.headingRad + dir * Math.PI, bankRad: 0, tau: t};
+    }
+    const dt = t - (2 * s.legSeconds + s.turnSeconds);
+    return {segment: "turn2", headingRad: s.headingRad + dir * Math.PI + dir * s.psiDot * dt,
+        bankRad: dir * s.bankRad, tau: t};
+}
+
+/** The fraction of a clip of `durationSeconds` spent in the two turns. */
+export function racetrackTurnFraction(spec, durationSeconds, step = 0.1) {
+    const s = racetrackSchedule(spec);
+    let turning = 0, total = 0;
+    for (let t = 0; t < durationSeconds; t += step) {
+        total++;
+        if (racetrackState(spec, s.phaseSeconds + t).bankRad !== 0) turning++;
+    }
+    return total ? turning / total : 0;
+}
+
 // spec: {kind, speedMS=70, altitudeAGL=3000, rangeErrorFactor?, bankDeg?,
-//        bankAmplitudeDeg?, bankPeriodSeconds?}
+//        bankAmplitudeDeg?, bankPeriodSeconds?, and for "racetrack":
+//        legSeconds?, phaseSeconds?, headingDeg?, turnDir?}
 // Returns {positionENU: Float64Array(3n), feasibility}.
 export function generatePlatformPath(spec, n, times, fps, initialHorizontalRangeM) {
     const v = spec.speedMS ?? 70;
@@ -127,6 +183,23 @@ export function generatePlatformPath(spec, n, times, fps, initialHorizontalRange
             }
             actualMinRadius = Infinity;
             break;
+
+        case "racetrack": {
+            // A standard holding pattern, entered at a random point: two
+            // straight legs of legSeconds joined by two 180 degree turns at a
+            // fixed bank, flown level. The clip is the window
+            // [phaseSeconds, phaseSeconds + duration) of that pattern, so a
+            // short clip may be all leg, all turn, or both, which is the
+            // point of the kind: the platform's own motion decides how much
+            // range information the clip carries, and a set that draws the
+            // phase at random samples that honestly. Standard holds turn
+            // right; turnDir -1 gives the non-standard left-hand hold.
+            const st = racetrackSchedule(spec);
+            const psi0 = racetrackState(spec, st.phaseSeconds).headingRad;
+            actualMinRadius = fillBanked(pos, n, times, fps, 0, -R, z, v, psi0,
+                (t) => racetrackState(spec, st.phaseSeconds + t).bankRad);
+            break;
+        }
 
         case "s-curve-toward":
         case "s-curve-perp": {

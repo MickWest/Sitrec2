@@ -629,6 +629,19 @@ That has its own page: **[BOTBench Scenario Files](BOTBenchScenarios.md)** —
 the curated interchange set, the swept botsets and what each was built to
 answer, the sealed-release commitment, and the commands that build them.
 
+## Charting the results
+
+The table answers "what happened to this file". To see what happened across the
+whole set — how accuracy moves with clip length and pointing error, what the
+verdict actually concluded, and how much the blind ranking cost — press
+**Charts** in the toolbar above. It opens the same rows as interactive figures,
+and exports SVG or a 300 dpi PNG for a paper.
+
+That has its own page too: **[BOTBench Result Charts](BOTBenchCharts.md)** — the
+nine figures and what each answers, how to read a box whose whiskers use Tukey's
+rule in log space, why the confidence intervals are wider than the usual ones,
+and the optional command-line renderer.
+
 ## One number worth remembering
 
 Because BOTBench measures the shipping pipeline end to end, its aggregate

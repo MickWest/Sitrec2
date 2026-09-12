@@ -99,7 +99,10 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
     // --- wind ------------------------------------------------------------
     const refAltAGL = spec.target.parameters?.startAGL
         ?? (spec.target.kind === "hab-stable" ? 18000 : 500);
-    const wind = makeWind(spec.wind.kind, refAltAGL + site.groundElevationMSL);
+    // The whole wind spec, not just its kind: a set may carry its own wind
+    // numbers in the spec (wind.js windConfigFor), and those must reach the
+    // sampler — and, because they sit in the spec, the truth key.
+    const wind = makeWind(spec.wind, refAltAGL + site.groundElevationMSL);
 
     // --- platform ---------------------------------------------------------
     const R = spec.initialHorizontalRangeM;

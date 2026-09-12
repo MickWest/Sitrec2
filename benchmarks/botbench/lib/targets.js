@@ -373,6 +373,14 @@ export function generateTargetTruth(targetSpec, {site, n, fps, seed, windSeed, w
                 const {generateRealSegmentTruth} = require("./realSegments");
                 return generateRealSegmentTruth(targetSpec, {n, fps});
             }
+            if (targetSpec.family === "drone") {
+                // Small fixed-wing drone patterns flown as ground tracks
+                // (rockTargets.js); kept out of the common path like the
+                // maneuver taxonomy.
+                // eslint-disable-next-line global-require
+                const {generateDroneTruth} = require("./rockTargets");
+                return generateDroneTruth(targetSpec, {n, fps});
+            }
             if (targetSpec.family === "maneuver") {
                 // MANEUVER-CLASS track types (shape taxonomy, first pass) live
                 // in their own module; this dispatcher stays the single entry.

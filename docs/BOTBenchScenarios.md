@@ -195,6 +195,70 @@ multiples of every truth track, an animated scene player, a speed-versus-peak-g
 scatter and the realized pointing error — plus a registry and an index page
 covering every set visualized so far.
 
+## rock_v3 — one fixed set of 300 tracks at every length and rung
+
+```bash
+npm run bench-bot-rock-v3                                   # the whole set, one worker thread per folder
+node benchmarks/botbench/run-rock-v3.mjs --durations 20,60 --rungs 0.0deg   # a few folders only
+```
+
+writes `benchmarks/botbench/results/rock_v3/`: 300 tracks, each written at
+seven clip lengths and all nine pointing-error rungs, 18,900 scenarios and
+94,500 files (about 10 GB). The set is meant to be cut into subsets later,
+so nothing in it is arranged to make any one subset easy. A full run starts
+from a clean slate and stops if the old tree cannot be removed. The root
+`manifest.json` is rebuilt from what is on disk after every run, full or
+partial: it lists every folder present with its track count and the
+definition hash its rows were written under, flags a folder written by an
+older definition as stale, and says whether the set is `complete`. A partial
+run records itself in `timing-partial.json` and leaves `timing.json`, the
+last full run, alone.
+
+```
+results/rock_v3/
+    manifest.json               the 300 track definitions, every drawn number, and this layout
+    timing.json
+    batch_<D>sec/               D in 20, 40, 60, 120, 180, 240, 300
+        <E>deg/                 E in 0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0
+            Input/  Truth/  All/  meta/  manifest.json
+                balloon_001 ... balloon_100
+                drone_001 ... drone_100
+                weather_balloon_001 ... weather_balloon_100
+```
+
+The three classes, 100 tracks each:
+
+| Name | What it is |
+|---|---|
+| `balloon_NNN` | a party balloon of random buoyancy (vertical rate -1.5 to +3.5 m/s) starting 150 m to 3 km up, in a random uniform wind of 0 to 15 m/s |
+| `drone_NNN` | a small fixed-wing drone flying a racetrack, a circle or a square as a ground track at 15 to 30 m/s, 80 m to 1.2 km up, turn radius from a 40 degree bank floor to 400 m |
+| `weather_balloon_NNN` | a random segment of a sounding-balloon release: the clip starts 300 m to 26 km up, rising 4.2 to 6 m/s through a sheared, veering wind of 4 to 30 m/s |
+
+The platform is the same for every class: level flight between 15,000 and
+20,000 ft above the ground at 95 to 120 m/s, on a standard holding pattern
+(1.5 minute legs, 25 degree bank, right-hand seven times in ten), entered at a
+random point of the pattern. A 20 s clip is therefore a straight leg, a turn,
+or both, and a 300 s clip is most of a pattern. The target starts due north of
+the platform at a random horizontal range drawn per class (party balloons 1.5
+to 25 km, drones 1 to 12 km, weather balloons 4 to 40 km, log-uniform). The
+folder manifest records, for every track, the slant range at frame 0 and its
+clip mean, the depression angle, the parallax aperture, the pattern segment
+the clip starts and ends in, and the fraction of the clip spent turning.
+
+Every random number is a function of the track's name alone, so `balloon_017`
+is the same flight in every batch folder and at every rung. A longer batch is
+the same flight observed for longer: the shorter batch's rows, truth, sensor
+and observed sightlines alike, are the first rows of the longer batch's,
+because the flights carry no gusts and each track draws one operator wobble
+per rung that every clip length shares. A higher rung is the same flight
+observed through a worse operator (the ladder in `lib/botsetErrors.js`, one
+3 degree field of view for the whole set, widened only where a rung needs it),
+with its own wobble draw. The set uses its own scenario seed (805), the site
+`central-valley`, 10 Hz, and the v1.2 interchange files with both sidecars in
+`meta/`. The design lives in `lib/rockV3.js`; the holding-pattern platform is
+the `racetrack` kind in `lib/platforms.js`, and the drone patterns are
+`lib/rockTargets.js`.
+
 ## Sealed releases
 
 ```bash

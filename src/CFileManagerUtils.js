@@ -99,23 +99,28 @@ export function showLocalFolderAccessUnsupportedMessage() {
  * @returns {Promise<Array<{name, relativePath, getFile, dirHandle, dirPath}>>} unsorted
  */
 export async function walkDirectoryForFiles(directoryHandle,
-                                            {accept = null, recursive = false, basePath = "", onFound = null} = {}) {
+                                            {accept = null, recursive = false, basePath = "", onFound = null,
+                                                parentHandle = null} = {}) {
     const files = [];
     for await (const [name, handle] of directoryHandle.entries()) {
         const relativePath = basePath ? `${basePath}/${name}` : name;
         if (handle.kind === "file") {
             if (!accept || accept(name)) {
+                // parentHandle is carried because a FileSystemDirectoryHandle knows
+                // nothing about what is above it, and a sibling folder of the one
+                // holding the file — SitrecImage beside All — is only reachable
+                // through the parent that was walked to get here.
                 const entry = {
                     name, relativePath,
                     getFile: () => handle.getFile(),
-                    dirHandle: directoryHandle, dirPath: basePath,
+                    dirHandle: directoryHandle, dirPath: basePath, parentHandle,
                 };
                 files.push(entry);
                 onFound?.(entry);
             }
         } else if (recursive && handle.kind === "directory") {
             files.push(...await walkDirectoryForFiles(handle,
-                {accept, recursive, basePath: relativePath, onFound}));
+                {accept, recursive, basePath: relativePath, onFound, parentHandle: directoryHandle}));
         }
     }
     return files;

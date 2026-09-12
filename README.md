@@ -62,6 +62,7 @@ assistant — so if you add a doc, add it there.
 - [Traverse Analysis and the Verdict - The Analyze button, the gallery, and what it licenses](docs/TraverseAnalysis.md)
 - [BOTBench - Evaluating bearings-only tracking methods against known truth](docs/BOTBench.md)
 - [BOTBench Scenarios - Provenance and regeneration of benchmark scenarios](docs/BOTBenchScenarios.md)
+- [BOTBench Result Charts - Interactive charts of a result set, and figures for a paper](docs/BOTBenchCharts.md)
 - [Camera Modes - Normal (Az/El) and Satellite (quaternion) view modes](docs/satcam.md)
 - [Fisheye and All-Sky Lenses](docs/Fisheye.md)
 - [Recreating Starlink Situations - Horizon Flares](docs/Starlink.md)

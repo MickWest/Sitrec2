@@ -38,6 +38,7 @@ import {isProbeableTrackName, probeTrackFile, summarizeTrackFile, trackFileTrack
 import {botBenchExplicitFileRole, botBenchScenarioBase} from "./analysis/BotBenchIngest";
 import {VIZ} from "./TraverseHypotheses";
 import {openBotBenchWithEntries} from "./analysis/BotBenchUI";
+import {imageDirFor, imageNameFor, IMAGE_DIR} from "./analysis/BotBenchImageCapture";
 
 // Track colors by resolved role. Truth is checked before role, so a BOT truth
 // sub-track (role "target", ground truth) reads as the answer key rather than as
@@ -196,6 +197,16 @@ export class CTrackBrowser {
         // Overlaid by default: browsing is about telling scenarios apart, and the
         // true geometry of a bearings-only scenario is a line and a dot.
         this.overlayTracks = true;
+        // Show the rendered scene from a SitrecImage folder instead of the plan
+        // view. Off until a scan finds at least one, so the control does not
+        // offer something that would blank every card.
+        this.useSitrecImages = false;
+        this.hasSitrecImages = false;
+        // key -> small canvas. Thumbnail-sized, NOT the decoded image: three
+        // hundred 1024px bitmaps is about a gigabyte, three hundred thumbnails
+        // is about forty megabytes.
+        this._imageThumbs = new Map();
+        this._imageMisses = new Set();
         this.entries = [];          // multi-track files, each with its summary
         this.filtered = [];
         this.skippedCount = 0;      // probed, but fewer than two tracks
@@ -346,6 +357,9 @@ export class CTrackBrowser {
         this._refreshControls();
         this._setStatus(this._scanSummaryText(candidates.length));
         if (this.filtered.length && !this.selectedKey) this.select(this.filtered[0].key);
+        // After the listing, not during: it costs a handle probe per folder and
+        // the answer only changes the visibility of one control.
+        this._detectSitrecImages().catch(() => { /* no images, no toggle */ });
     }
 
     stopScan() {
@@ -355,6 +369,7 @@ export class CTrackBrowser {
         this._finishScanRender();
         this._refreshControls();
         this._setStatus(`Stopped. ${this.entries.length} multi-track file(s) found so far.`);
+        this._detectSitrecImages().catch(() => { /* no images, no toggle */ });
     }
 
     _scanSummaryText(candidateCount) {
@@ -688,6 +703,19 @@ export class CTrackBrowser {
             + "tracks is to scale.";
         viewBar.appendChild(overlayToggle);
 
+        this._imageToggle = this._makeCheckbox("Sitrec image", this.useSitrecImages, (on) => {
+            this.useSitrecImages = on;
+            this.renderCards();
+            this.updatePreview();
+        });
+        this._imageToggle.title = `On: show the rendered 3D scene saved in each scenario's `
+            + `${IMAGE_DIR} folder — the sensor track, the target track and the fan of `
+            + `sightlines over the terrain. Off: the plotted plan view.\n`
+            + `BOTBench writes these when "Scenario screenshots" is ticked on a folder run. `
+            + `A track with no saved image falls back to the plan view.`;
+        this._imageToggle.style.display = "none";      // shown once a scan finds one
+        viewBar.appendChild(this._imageToggle);
+
         viewBar.appendChild(this._makeLabel("Sort:"));
         viewBar.appendChild(this._makeSelect([
             ["path_asc", "Path (A-Z)"],
@@ -919,6 +947,100 @@ export class CTrackBrowser {
     // card scrolls into view: the summaries are already in memory, so this is
     // about the canvases, not the parsing — several hundred backing stores
     // allocated up front is what makes a big folder stutter.
+    /**
+     * The saved scene image for one entry, as a canvas already scaled to
+     * thumbnail size, or null when there is none.
+     *
+     * Decoding is deferred to the same point the plan view is drawn — when the
+     * card scrolls into view — and the result is kept at thumbnail size, so a
+     * folder of several hundred costs tens of megabytes rather than a gigabyte.
+     * A miss is remembered too: a folder with no images must not re-probe the
+     * file system on every redraw.
+     */
+    async _sitrecImageThumb(entry, boxW, boxH) {
+        const cached = this._imageThumbs.get(entry.key);
+        if (cached) return cached;
+        if (this._imageMisses.has(entry.key)) return null;
+        const walked = this._walked?.find(c => c.relativePath === entry.relativePath);
+        if (!walked) { this._imageMisses.add(entry.key); return null; }
+        let bitmap = null;
+        try {
+            const dir = await imageDirFor(walked, {create: false});
+            if (!dir) { this._imageMisses.add(entry.key); return null; }
+            const fh = await dir.getFileHandle(imageNameFor(entry.name));
+            bitmap = await createImageBitmap(await fh.getFile());
+        } catch (e) {
+            this._imageMisses.add(entry.key);
+            return null;
+        }
+        const scale = Math.min(boxW / bitmap.width, boxH / bitmap.height);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close?.();
+        this._imageThumbs.set(entry.key, canvas);
+        this.hasSitrecImages = true;
+        return canvas;
+    }
+
+    /** Paint a prepared image into a card or preview canvas, letterboxed. */
+    _paintImage(canvas, image) {
+        const dpr = window.devicePixelRatio || 1;
+        const cssW = canvas.clientWidth || parseInt(canvas.style.width) || 200;
+        const cssH = canvas.clientHeight || parseInt(canvas.style.height) || 150;
+        canvas.width = Math.round(cssW * dpr);
+        canvas.height = Math.round(cssH * dpr);
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#12121c";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const scale = Math.min(canvas.width / image.width, canvas.height / image.height);
+        const w = image.width * scale, h = image.height * scale;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(image, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+    }
+
+    /**
+     * Draw one entry into a canvas: the saved scene when the option is on and
+     * one exists, the plan view otherwise. The plan view is drawn FIRST either
+     * way, so a card is never blank while its image decodes.
+     */
+    _drawEntry(canvas, entry, planOptions) {
+        drawPlanView(canvas, entry?.summary ?? null, planOptions);
+        if (!this.useSitrecImages || !entry) return;
+        this._sitrecImageThumb(entry, 512, 512).then((image) => {
+            // The grid may have been rebuilt while this decoded; a canvas no
+            // longer in the document must not be painted into.
+            if (image && canvas.isConnected && this.useSitrecImages) this._paintImage(canvas, image);
+        }).catch(() => { /* fall back to the plan view already drawn */ });
+    }
+
+    /**
+     * Probe a handful of entries for a SitrecImage folder and reveal the toggle
+     * if any has one. Called once per scan: the control is pointless in a folder
+     * of plain track files, and a checkbox that blanks every card is worse than
+     * no checkbox.
+     */
+    async _detectSitrecImages() {
+        if (!this._imageToggle) return;
+        this._imageThumbs.clear();
+        this._imageMisses.clear();
+        this.hasSitrecImages = false;
+        for (const entry of this.entries.slice(0, 8)) {
+            const walked = this._walked?.find(c => c.relativePath === entry.relativePath);
+            if (!walked) continue;
+            try {
+                const dir = await imageDirFor(walked, {create: false});
+                if (!dir) continue;
+                await dir.getFileHandle(imageNameFor(entry.name));
+                this.hasSitrecImages = true;
+                break;
+            } catch (e) { /* this one has none; try the next */ }
+        }
+        this._imageToggle.style.display = this.hasSitrecImages ? "" : "none";
+        if (!this.hasSitrecImages) this.useSitrecImages = false;
+    }
+
     _ensureThumbObserver() {
         if (this._thumbObserver) return;
         this._thumbObserver = new IntersectionObserver((observed) => {
@@ -926,7 +1048,8 @@ export class CTrackBrowser {
                 if (!item.isIntersecting) continue;
                 const card = item.target;
                 if (!card._drawn) {
-                    drawPlanView(card._canvas, card._summary, {overlay: this.overlayTracks, lineWidth: 1.5});
+                    this._drawEntry(card._canvas, card._entry ?? {summary: card._summary, key: card._key},
+                        {overlay: this.overlayTracks, lineWidth: 1.5});
                     card._drawn = true;
                 }
                 this._thumbObserver.unobserve(card);
@@ -941,6 +1064,7 @@ export class CTrackBrowser {
         // cards — a mousedown on a card is a click, on the gap it starts a band.
         card.dataset.trackCard = "1";
         card._summary = entry.summary;
+        card._entry = entry;
         card._drawn = false;
         Object.assign(card.style, {
             backgroundColor: "#22222e", border: "2px solid #2f2f42",
@@ -1127,8 +1251,32 @@ export class CTrackBrowser {
     _drawPreview() {
         if (!this._previewCanvas) return;
         const entry = this.filtered.find(e => e.key === this.selectedKey);
+        // The preview gets its own full-size decode rather than the thumbnail
+        // cache's small copy, and only ever holds the one on screen.
         drawPlanView(this._previewCanvas, entry?.summary ?? null,
             {overlay: this.overlayTracks, lineWidth: 2.5, padding: 24});
+        if (!this.useSitrecImages || !entry) return;
+        const wanted = entry.key;
+        this._loadFullImage(entry).then((image) => {
+            if (image && this.selectedKey === wanted && this.useSitrecImages) {
+                this._paintImage(this._previewCanvas, image);
+            }
+            this._previewFullImage?.close?.();
+            this._previewFullImage = image;
+        }).catch(() => { /* keep the plan view */ });
+    }
+
+    async _loadFullImage(entry) {
+        const walked = this._walked?.find(c => c.relativePath === entry.relativePath);
+        if (!walked) return null;
+        try {
+            const dir = await imageDirFor(walked, {create: false});
+            if (!dir) return null;
+            const fh = await dir.getFileHandle(imageNameFor(entry.name));
+            return await createImageBitmap(await fh.getFile());
+        } catch (e) {
+            return null;
+        }
     }
 
     // ==================== CONTROL STATE ====================

@@ -31,12 +31,30 @@ export const WIND_CONFIGS = {
     "hab-steady":   {u: 20, v: 8, variabilityPct: 0},
 };
 
+/**
+ * The configuration a wind spec resolves to. A spec is either a string naming
+ * one of WIND_CONFIGS, an object {kind} naming one, or an object that carries
+ * its own numbers ({kind: "custom", u, v, variabilityPct?, shearPerM?,
+ * kinkAltM?, veerDeg?, veerSpanM?}), which is how a set with a random wind per
+ * scenario keeps the wind inside the spec, and so inside the truth key.
+ */
+export function windConfigFor(spec) {
+    const kind = typeof spec === "string" ? spec : spec?.kind;
+    const named = WIND_CONFIGS[kind];
+    if (named) return {...named};
+    if (spec && typeof spec === "object" && Number.isFinite(spec.u) && Number.isFinite(spec.v)) {
+        const {kind: _k, ...numbers} = spec;
+        return {variabilityPct: 0, ...numbers};
+    }
+    throw new Error(`botbench: unknown wind kind "${kind}"`);
+}
+
 // Build the wind sampler for a config. refAltMSL is the altitude the layered
 // profile is anchored to (the target's start altitude) — shear/veer are
 // relative to it, matching the balloon-recovery test's construction.
-export function makeWind(kind, refAltMSL = 0) {
-    const cfg = WIND_CONFIGS[kind];
-    if (!cfg) throw new Error(`botbench: unknown wind kind "${kind}"`);
+export function makeWind(kindOrSpec, refAltMSL = 0) {
+    const kind = typeof kindOrSpec === "string" ? kindOrSpec : kindOrSpec?.kind;
+    const cfg = windConfigFor(kindOrSpec);
 
     const meanAt = (altMSL) => {
         let u = cfg.u, v = cfg.v;

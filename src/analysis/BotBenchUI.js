@@ -28,7 +28,8 @@ import {setRenderOne} from "../Globals";
 import {
     isAbortLikeError, showLocalFolderAccessUnsupportedMessage, supportsDirectoryPicker,
 } from "../CFileManagerUtils";
-import {showError} from "../showError";
+import {showError, showConfirm} from "../showError";
+import {openResultChartsForEntries} from "./charts/RockV3ChartsUI";
 import {showTimingAnalysis} from "../showTimingAnalysis";
 import {isLocal} from "../configUtils";
 import {par} from "../par";
@@ -45,6 +46,10 @@ import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBen
 import {botBenchConcurrency, runBotBenchQueue} from "./BotBenchWorkerPool";
 import {BotBenchAnalysisPool} from "./BotBenchAnalysisPool";
 import {packForCache, unpackFromCache} from "./BotBenchCacheCodec";
+import {
+    runImageCapture, captureScenarioImage, captureViewBlob, waitForSettle, clearImportedTracks,
+    captureEntryImage, createCaptureQueue, captureQueueIdle, imageDirFor, imageNameFor, imageStaleness,
+} from "./BotBenchImageCapture";
 import {botENUToLLA} from "../TrackFiles/CTrackFileBOT";
 import {
     candidateNotes, handoffCandidateCSVs, lookCameraFraming, openHandoffWindow,
@@ -1020,6 +1025,86 @@ async function saveDirCache(rec) {
 // reusable — see the section note above.
 const APP_VERSION = process.env.BUILD_VERSION_STRING ?? "dev";
 
+// ---------------------------------------------------------------------------
+// adopting a cache written by an older build
+// ---------------------------------------------------------------------------
+//
+// Any new build changes APP_VERSION and so invalidates every cached fit, and a
+// large folder then re-runs every optimizer. Most builds do not touch the
+// fitting at all, so most of that work is wasted.
+//
+// So: before a big run whose cache is stale ONLY on the version, actually FIT a
+// random sample and check that today's code lands on the same row the stored fit
+// does. If every one matches, offer to adopt the rest.
+//
+// The sample has to be a real fit, not a replay. The replay's own self-check
+// (further down) asks "does the STORED fit still produce the STORED row under
+// today's post-processing" — which says nothing about whether today's FITTER
+// would find that fit. Only running the optimizers answers that, which is why
+// this is a sample and not a per-file check.
+//
+// Adopting is recorded: the entry keeps the version it was really fitted under
+// in `adoptedFrom`, and carries `adopted: true` forever after, so a cache that
+// has been carried across builds never passes itself off as a fresh one.
+const CACHE_ADOPT_MIN_FILES = 20;
+const CACHE_ADOPT_SAMPLE = 10;
+
+/** Every entry whose cache is good except that another build wrote it. */
+async function findVersionStaleEntries(state, found, options) {
+    const stale = [];
+    for (const source of found) {
+        try {
+            const probe = {...source};
+            const hashes = await entryFileHashes(probe);
+            const dirCache = await loadDirCache(state, probe);
+            const hit = dirCache?.data.results[probe.name];
+            if (!hit || !hit.battery) continue;
+            if (hit.hash !== combinedHash(hashes)) continue;
+            if (JSON.stringify(hit.options ?? null) !== JSON.stringify(options ?? null)) continue;
+            if ((hit.appVersion ?? null) === APP_VERSION) continue;
+            stale.push({source, hashes, dirCache, hit});
+        } catch (e) { /* unreadable cache: it will simply re-run */ }
+    }
+    return stale;
+}
+
+/** Deterministic-shuffle sample, so the choice is spread over the folder. */
+function sampleN(items, n) {
+    const copy = items.slice();
+    for (let i = copy.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy.slice(0, n);
+}
+
+/**
+ * Fit a sample for real and compare each result with its cached row.
+ *
+ * @returns {Promise<{checked: number, matched: number, mismatched: string[]}>}
+ */
+async function probeCacheAdoption(state, stale, options, pool, {onProgress = null} = {}) {
+    const sample = sampleN(stale, Math.min(CACHE_ADOPT_SAMPLE, stale.length));
+    const result = {checked: 0, matched: 0, mismatched: []};
+    for (const candidate of sample) {
+        if (state.cancelled) break;
+        try {
+            const record = await ingestBotBenchEntry({...candidate.source});
+            const {row} = await pool.run(record, {...options, isCancelled: () => state.cancelled});
+            row.fileSha256 = candidate.hashes;
+            result.checked++;
+            if (JSON.stringify(packForCache(row)) === JSON.stringify(candidate.hit.row)) result.matched++;
+            else result.mismatched.push(candidate.source.relativePath ?? candidate.source.name);
+        } catch (e) {
+            // A file that will not fit today tells us nothing about the cache.
+            console.warn("BotBench cache probe skipped", candidate.source.name, e);
+        }
+        onProgress?.(result);
+    }
+    return result;
+}
+
+
 // Content-addressed over ALL THREE input hashes, not just the first.
 //
 // combinedHash is "<csv>|<sidecar>|<truth>" and the csv part alone is 64 hex
@@ -1123,6 +1208,88 @@ function collectFsEntry(fsEntry, basePath, out, recursive, depth = 0) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// naming where the files came from
+// ---------------------------------------------------------------------------
+//
+// A browser will not tell a page where a chosen folder is on disk. The File
+// System Access API exposes only the handle's own NAME, deliberately: the full
+// path is considered identifying, and there is no API that returns it. So this
+// reports the best thing available and says which it is, rather than printing a
+// folder name that looks like a path and is not one.
+//
+// Two cases do better:
+//   * the desktop build, where a File carries a real absolute `path`;
+//   * a drop, where webkitGetAsEntry gives a fullPath relative to the drop root,
+//     which at least recovers the folders between the root and each file.
+
+/** The folder part of a file path, with either separator. */
+function parentPath(filePath) {
+    const cut = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+    return cut > 0 ? filePath.slice(0, cut) : filePath;
+}
+
+/**
+ * Describe the source of a set of entries.
+ * @returns {Promise<{text: string, exact: boolean, title: string}>}
+ */
+export async function describeEntrySource(entries, {folderName = null} = {}) {
+    const count = entries?.length ?? 0;
+    if (!count) return {text: "No folder chosen", exact: false, title: ""};
+
+    // The desktop build hands out real paths; a browser does not.
+    let absolute = null;
+    try {
+        const first = entries[0];
+        const file = await first.getFile();
+        const real = typeof file?.path === "string" && file.path ? file.path : null;
+        if (real) {
+            const rel = String(first.relativePath ?? first.name ?? "");
+            absolute = rel && real.endsWith(rel)
+                ? real.slice(0, real.length - rel.length).replace(/[/\\]$/, "")
+                : parentPath(real);
+        }
+    } catch (e) { /* no path available: fall through */ }
+
+    if (absolute) {
+        return {text: absolute, exact: true,
+            title: `The folder these ${count} file(s) were read from.`};
+    }
+
+    // No real path, so show the most of one that IS knowable: the chosen folder's
+    // own name, followed by the deepest folder every entry shares. Choosing
+    // rock_v3 with Recursive on gives "rock_v3/batch_120sec/0.0deg/All", which
+    // identifies the set; choosing the rung folder itself gives "0.0deg/All".
+    const dirs = (entries ?? []).map((e) => {
+        const parts = String(e.relativePath ?? e.name ?? "").split("/");
+        parts.pop();                              // drop the file name
+        return parts;
+    });
+    let common = dirs[0] ?? [];
+    for (const parts of dirs) {
+        let i = 0;
+        while (i < common.length && i < parts.length && common[i] === parts[i]) i++;
+        common = common.slice(0, i);
+    }
+    const shown = [folderName, ...common].filter(Boolean).join("/");
+    const text = shown ? `${shown}/  \u2014 chosen folder` : `${count} file(s), no folder`;
+    return {
+        text, exact: false,
+        title: `The chosen folder and the deepest sub-folder all ${count} file(s) share.\n`
+            + "This is not the full path: a browser will not tell a web page where on disk a "
+            + "folder you picked actually is, only its own name. The desktop build shows the "
+            + "real path, and so does a run started from the command line.",
+    };
+}
+
+/** Put a source description under the dialog title. */
+export function setDialogSource(state, description) {
+    if (!state?.sourceLine || !description) return;
+    state.sourceLine.textContent = description.text;
+    state.sourceLine.title = description.title || description.text;
+    state.sourceLine.style.color = description.exact ? "#3a6b3a" : "#52514e";
+}
+
 async function entriesFromDataTransfer(dataTransfer, recursive) {
     const out = [];
     const items = dataTransfer.items ? Array.from(dataTransfer.items) : [];
@@ -1145,21 +1312,25 @@ async function entriesFromDataTransfer(dataTransfer, recursive) {
 
 // The CHOSEN folder is always read; `recursive` governs its subfolders only —
 // the same rule as the drop path above.
-async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", onFound = null} = {}) {
+async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", onFound = null, parentHandle = null} = {}) {
     const files = [];
     for await (const [name, handle] of directoryHandle.entries()) {
         const relativePath = basePath ? `${basePath}/${name}` : name;
         if (handle.kind === "file") {
             if (isCollectable(name)) {
                 // The containing (leaf) directory handle travels with the
-                // entry so the result cache can live beside the files.
+                // entry so the result cache can live beside the files. The
+                // PARENT travels too, because there is no way up from a handle
+                // and the scenario screenshots belong beside the All folder
+                // rather than inside it.
                 const entry = {name, relativePath, getFile: () => handle.getFile(),
-                    dirHandle: directoryHandle, dirPath: basePath};
+                    dirHandle: directoryHandle, dirPath: basePath, parentHandle};
                 files.push(entry);
                 onFound?.(entry);
             }
         } else if (recursive && handle.kind === "directory") {
-            files.push(...await walkDirectoryHandle(handle, {recursive, basePath: relativePath, onFound}));
+            files.push(...await walkDirectoryHandle(handle,
+                {recursive, basePath: relativePath, onFound, parentHandle: directoryHandle}));
         }
     }
     return files;
@@ -1271,9 +1442,22 @@ function createDialog() {
         + "anywhere onto this window.";
     title.style.cssText = "margin: 0; color: #1976d2; font-size: 18px; flex: 0 0 auto;";
 
+    // Where the files came from, under the title. Long paths get an ellipsis at
+    // the START, because the tail of a path is the part that identifies it.
+    const sourceLine = document.createElement("div");
+    sourceLine.style.cssText = "margin: 3px 0 0; color: #52514e; font-size: 12px; "
+        + "font-family: ui-monospace, Menlo, Consolas, monospace; direction: rtl; text-align: left; "
+        + "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext;";
+    sourceLine.textContent = "No folder chosen";
+
+    const titleBlock = document.createElement("div");
+    titleBlock.style.cssText = "min-width: 0; flex: 1 1 auto;";
+    titleBlock.appendChild(title);
+    titleBlock.appendChild(sourceLine);
+
     const header = document.createElement("div");
-    header.style.cssText = "display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px;";
-    header.appendChild(title);
+    header.style.cssText = "display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px;";
+    header.appendChild(titleBlock);
     const closeButton = makeButton("Close", "#757575");
     header.appendChild(closeButton);
 
@@ -1291,6 +1475,13 @@ function createDialog() {
     const mcSweep = labelledCheckbox("Monte Carlo sweep",
         "Add the two Monte Carlo curve-fit strategies across polynomial orders. A method "
         + "diagnostic; adds 10 candidates per file and is the bulk of the sweep's cost.", false);
+    const screenshots = labelledCheckbox("Scenario screenshots",
+        "Also save a picture of each scenario into a SitrecImage folder beside it, so the Track "
+        + "Browser can show the real scene instead of a plotted plan view. Each file is imported "
+        + "into the live 3D view, framed and captured, which REPLACES what is currently loaded in "
+        + "Sitrec. An existing picture is kept unless it is older than its scenario file. Needs a "
+        + "folder chosen with write access; about a second per file, on the main thread, so it "
+        + "runs alongside the fits rather than instead of them.", false);
 
     const anchorLabel = document.createElement("label");
     anchorLabel.title = "The start range the search bracket is centred on, in nautical miles — "
@@ -1318,11 +1509,15 @@ function createDialog() {
     const exportJsonButton = makeButton("Export JSON", "#455a64");
     const exportCsvButton = makeButton("Export CSV", "#455a64");
     const summaryButton = makeButton("Summary", "#00695c");
+    const chartsButton = makeButton("Charts", "#5c6bc0",
+        "Open the result charts for the rows in this table: accuracy against clip length and "
+        + "pointing error, what the verdict concluded, and what ranking blind cost. Exports SVG "
+        + "or a 300 dpi PNG for a paper.");
 
-    for (const el of [recursive.label, families.label, mcSweep.label, anchorLabel,
+    for (const el of [recursive.label, families.label, mcSweep.label, screenshots.label, anchorLabel,
         chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
         cancelButton, clearButton,
-        flushCacheButton, exportJsonButton, exportCsvButton, summaryButton]) {
+        flushCacheButton, exportJsonButton, exportCsvButton, summaryButton, chartsButton]) {
         controls.appendChild(el);
     }
 
@@ -1454,15 +1649,16 @@ function createDialog() {
     document.body.appendChild(overlay);
 
     const state = {
-        overlay, modal, dropHint,
+        overlay, modal, dropHint, sourceLine,
         recursiveInput: recursive.input,
         familiesInput: families.input,
         mcSweepInput: mcSweep.input,
+        screenshotsInput: screenshots.input,
         anchorInput,
         chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
         cancelButton, clearButton,
         flushCacheButton,
-        closeButton, exportJsonButton, exportCsvButton, summaryButton,
+        closeButton, exportJsonButton, exportCsvButton, summaryButton, chartsButton,
         status, progress, summary, tbody,
         entries: [],
         nextRowId: 0,
@@ -2127,9 +2323,12 @@ function refreshControls(state) {
     setButtonDisabled(state.exportJsonButton, running || !has);
     setButtonDisabled(state.exportCsvButton, running || !has);
     setButtonDisabled(state.summaryButton, running || !has);
+    setButtonDisabled(state.chartsButton, running
+        || !state.entries.some((e) => e.status === "done"));
     state.recursiveInput.disabled = running;
     state.familiesInput.disabled = running;
     state.mcSweepInput.disabled = running;
+    state.screenshotsInput.disabled = running;
     state.anchorInput.disabled = running;
 }
 
@@ -2198,6 +2397,31 @@ async function analyzeEntries(state, found) {
     refreshControls(state);
 
     const options = runOptions(state);
+    // Deliberately NOT part of runOptions: those options are hashed into the cache
+    // key, and whether a picture was taken has no bearing on the numbers. A run
+    // with screenshots on must still hit the cache written by a run with them off.
+    const wantShots = state.screenshotsInput.checked;
+    const shotStats = {written: 0, skipped: 0, failed: 0};
+    // The queue is held on the state so Cancel Run can stop it: captures are queued
+    // as each analysis finishes, so a cancelled run can otherwise have hundreds
+    // still to go, at about a second each.
+    //
+    // drainingShots says who owns the status line. It is NOT state.running, which
+    // stays true until the finally block — that is AFTER the drain, so guarding on
+    // it froze the count at whatever it read when the drain began.
+    let drainingShots = false;
+    const shotQueue = createCaptureQueue({
+        onProgress: (q) => {
+            if (drainingShots) {
+                state.progress.value = q.total ? q.done / q.total : 1;
+                state.status.textContent = `Finishing scenario screenshots… ${q.done} of ${q.total}`
+                    + (q.current ? ` — ${q.current}` : "");
+            } else {
+                updateProgress();       // the fits still own the line; fold the backlog in
+            }
+        },
+    });
+    state.shotQueue = shotQueue;
     const yieldToDOM = makeYield();
 
     const concurrency = typeof Worker === "undefined" ? 1 : botBenchConcurrency(found.length);
@@ -2207,12 +2431,66 @@ async function analyzeEntries(state, found) {
     const fractions = new Float64Array(found.length);
     const updateProgress = () => {
         state.progress.value = fractions.reduce((sum, f) => sum + f, 0) / found.length;
+        // The captures run one at a time beside the fits and are much slower, so
+        // their backlog is worth showing rather than appearing as a wait at the end.
+        const shots = wantShots && shotQueue.total
+            ? `, screenshots ${shotQueue.done} of ${shotQueue.total}` : "";
         state.status.textContent = `Analysing ${completed} of ${found.length} complete`
-            + (pool.workers && !pool.workers.closed ? ` (${concurrency} workers)` : "") + (state.memoryNote ?? "");
+            + (pool.workers && !pool.workers.closed ? ` (${concurrency} workers)` : "")
+            + shots + (state.memoryNote ?? "");
     };
     const fitEntry = (record, onProgress) => pool.run(record, {
         ...options, onProgress, isCancelled: () => state.cancelled, yieldToDOM,
     });
+
+    // Before anything else: is this whole run about to re-fit a cache that is
+    // stale only because the build changed? Worth ten real fits to find out.
+    let adoptCache = false;
+    let adoptNote = "";
+    if (found.length > CACHE_ADOPT_MIN_FILES) {
+        try {
+            state.status.textContent = "Checking the cache…";
+            await yieldToDOM();
+            const stale = await findVersionStaleEntries(state, found, options);
+            if (stale.length >= CACHE_ADOPT_SAMPLE) {
+                const fitted = stale[0].hit.appVersion ?? "an earlier build";
+                state.status.textContent = `Cache written by ${fitted}: fitting `
+                    + `${CACHE_ADOPT_SAMPLE} of ${stale.length} files to see whether it still holds…`;
+                await yieldToDOM();
+                const probe = await probeCacheAdoption(state, stale, options, pool, {
+                    onProgress: (r) => {
+                        state.progress.value = r.checked / CACHE_ADOPT_SAMPLE;
+                        state.status.textContent = `Checking the cache: ${r.checked} of `
+                            + `${CACHE_ADOPT_SAMPLE} fitted, ${r.matched} identical…`;
+                    },
+                });
+                state.progress.value = 0;
+                if (!state.cancelled && probe.checked > 0 && probe.mismatched.length === 0) {
+                    adoptCache = await showConfirm(
+                        `${stale.length} of the ${found.length} files have a cached analysis that `
+                        + `this build would normally discard, because it was fitted by ${fitted} `
+                        + `and this is ${APP_VERSION}.\n\n`
+                        + `${probe.checked} of them were just re-fitted for real, and all `
+                        + `${probe.matched} produced exactly the row the cache holds. The fitting `
+                        + `has not changed.\n\n`
+                        + `Reuse those cached fits? Every statistic, verdict and display is still `
+                        + `recomputed by today's code — only the fitted solution tracks are reused. `
+                        + `The cache entries are stamped with this build and marked as adopted, so `
+                        + `they never read as a fresh run.`,
+                        {title: "Reuse the cache from an earlier build?",
+                            yesLabel: `Reuse ${stale.length} cached fits`, noLabel: "Re-fit everything"});
+                    adoptNote = adoptCache
+                        ? ` Adopted ${stale.length} cached fit(s) from ${fitted} after checking ${probe.checked}.`
+                        : "";
+                } else if (probe.mismatched.length) {
+                    console.log("BotBench: not offering cache adoption; these differ under this build:",
+                        probe.mismatched);
+                }
+            }
+        } catch (probeError) {
+            console.warn("BotBench cache probe failed; re-fitting normally.", probeError);
+        }
+    }
 
     try {
         await runBotBenchQueue(found, concurrency, async (source, i) => {
@@ -2236,8 +2514,8 @@ async function analyzeEntries(state, found) {
                 hashes = await entryFileHashes(entry);
                 dirCache = await loadDirCache(state, entry);
                 const hit = dirCache?.data.results[entry.name];
-                if (hit && hit.hash === combinedHash(hashes) && hit.battery
-                    && (hit.appVersion ?? null) === APP_VERSION
+                const versionOk = (hit?.appVersion ?? null) === APP_VERSION || adoptCache;
+                if (hit && hit.hash === combinedHash(hashes) && hit.battery && versionOk
                     && JSON.stringify(hit.options ?? null) === JSON.stringify(entry.options ?? null)) {
                     setRowStatus(entry, "cached", "Replaying the cached analysis…");
                     await yieldToDOM();
@@ -2273,14 +2551,33 @@ async function analyzeEntries(state, found) {
                         entry.status = "done";
                         entry.fromCache = true;
                         cachedHit = true;
+                        // Carried across a build: keep the version that really fitted
+                        // it, stamp today's, and mark it adopted for good. An entry
+                        // adopted twice keeps the ORIGINAL adoptedFrom, because that
+                        // is the build whose optimizers produced the numbers.
+                        const wasAdopted = (hit.appVersion ?? null) !== APP_VERSION;
+                        if (wasAdopted && dirCache.writable) {
+                            hit.adoptedFrom = hit.adoptedFrom ?? hit.appVersion ?? "unknown";
+                            hit.adopted = true;
+                            hit.adoptedAt = new Date().toISOString();
+                            hit.appVersion = APP_VERSION;
+                            try { await writeDirCache(dirCache); }
+                            catch (e) { console.warn("BotBench: could not re-stamp the adopted cache", e); }
+                        }
+                        entry.cacheAdopted = hit.adopted === true;
+                        entry.cacheAdoptedFrom = hit.adoptedFrom ?? null;
                         fillRow(state, entry);
-                        setRowStatus(entry, "cached",
-                            `Reused from ${CACHE_FILENAME} (saved ${hit.savedAt ?? "?"}, `
-                            + `app ${dirCache.data.appVersion ?? "?"}).\n`
-                            + `Input hashes, analysis options and app version all match this `
-                            + `file's cached run, and the replayed row reproduces the stored `
-                            + `one exactly.\nThe fit was reused; everything else was `
-                            + `recomputed, so Gallery, Report and Open in Sitrec all work.`);
+                        setRowStatus(entry, entry.cacheAdopted ? "adopted" : "cached",
+                            `Reused from ${CACHE_FILENAME} (saved ${hit.savedAt ?? "?"}).\n`
+                            + (entry.cacheAdopted
+                                ? `The FIT was made by ${hit.adoptedFrom}, not by this build. It was `
+                                  + `adopted after a random sample was re-fitted under this build and `
+                                  + `reproduced the cached rows exactly.\n`
+                                : `Input hashes, analysis options and app version all match this `
+                                  + `file's cached run, and the replayed row reproduces the stored `
+                                  + `one exactly.\n`)
+                            + `The fit was reused; everything else was recomputed, so Gallery, `
+                            + `Report and Open in Sitrec all work.`);
                     }
                 }
             } catch (cacheError) {
@@ -2352,6 +2649,24 @@ async function analyzeEntries(state, found) {
                 entry.error = error?.message || String(error);
                 setRowError(entry, entry.error);
             }
+            // The picture, once the numbers are in and whether they came from the
+            // cache or from a fresh fit. Queued rather than awaited: captures run
+            // one at a time because they drive the single live 3D view, while the
+            // fits carry on in their workers.
+            if (wantShots && entry.status === "done" && entry.dirHandle) {
+                shotQueue.add(entry.name, async () => {
+                    try {
+                        const shot = await captureEntryImage(entry);
+                        if (shot.written) shotStats.written++; else shotStats.skipped++;
+                        entry.screenshot = shot;
+                    } catch (shotError) {
+                        shotStats.failed++;
+                        entry.screenshot = {written: false, reason: String(shotError?.message ?? shotError)};
+                        console.warn("BotBench screenshot failed for", entry.relativePath, shotError);
+                    }
+                });
+            }
+
             fractions[i] = 1;
             completed++;
             updateProgress();
@@ -2369,6 +2684,21 @@ async function analyzeEntries(state, found) {
             }
             await yieldToDOM();
         }, () => state.cancelled);
+        // The fits finish first; the captures are one-at-a-time on the main thread
+        // and are normally still going. Drain them before the run calls itself done,
+        // so the status line's count is the real one.
+        if (wantShots) {
+            if (state.cancelled) {
+                shotQueue.cancel();
+            } else if (shotQueue.remaining || shotQueue.running) {
+                drainingShots = true;
+                state.status.textContent = `Finishing scenario screenshots… `
+                    + `${shotQueue.done} of ${shotQueue.total}`;
+                await yieldToDOM();
+                await shotQueue.idle();
+                drainingShots = false;
+            }
+        }
     } finally {
         pool?.dispose();
         state.workerPool = null;
@@ -2380,9 +2710,15 @@ async function analyzeEntries(state, found) {
     state.progress.value = state.cancelled ? state.progress.value : 1;
     const done = state.entries.filter((e) => e.status === "done").length;
 
+    const shotNote = wantShots
+        ? ` Screenshots: ${shotStats.written} written, ${shotStats.skipped} already current`
+          + (shotStats.failed ? `, ${shotStats.failed} failed` : "")
+          + (shotQueue.skipped ? `, ${shotQueue.skipped} skipped on cancel` : "") + "."
+        : "";
+    state.shotQueue = null;
     state.status.textContent = (state.cancelled
         ? `Cancelled. ${done} result(s) in the table.`
-        : `Done. ${done} result(s) in the table.`) + (state.memoryNote ?? "");
+        : `Done. ${done} result(s) in the table.`) + adoptNote + shotNote + (state.memoryNote ?? "");
     state.running = false;
     refreshControls(state);
     updateSummary(state);
@@ -2414,6 +2750,7 @@ async function runFolderScan(state, mode) {
         });
         for (const e of raw) e.cacheWritable = (mode === "readwrite");
         found = await pairSidecars(raw);
+        setDialogSource(state, await describeEntrySource(found, {folderName: directoryHandle?.name}));
     } catch (error) {
         state.status.textContent = error.message || String(error);
         return;
@@ -2449,6 +2786,7 @@ async function runChooseFiles(state) {
             + "or a STANAG 4676 .xml).";
         return;
     }
+    setDialogSource(state, await describeEntrySource(found));
     await analyzeEntries(state, found);
 }
 
@@ -2482,6 +2820,7 @@ function wireDragAndDrop(state) {
         let found = [];
         try {
             found = await entriesFromDataTransfer(e.dataTransfer, state.recursiveInput.checked);
+            setDialogSource(state, await describeEntrySource(found));
         } catch (error) {
             showError(error);
             return;
@@ -2533,6 +2872,7 @@ export function openBotBenchDialog() {
     state.closeButton.onclick = () => {
         state.cancelled = true;
         state.workerPool?.dispose();
+        state.shotQueue?.cancel();
         releaseAnalysisPauseLock(state);
         disposeScatterView(state);
         if (state.overlay.parentNode) document.body.removeChild(state.overlay);
@@ -2541,6 +2881,9 @@ export function openBotBenchDialog() {
     state.cancelButton.onclick = () => {
         state.cancelled = true;
         state.workerPool?.dispose();
+        // Without this the run still waits for every queued screenshot, which is
+        // about a second each and looks like a hang.
+        state.shotQueue?.cancel();
         state.status.textContent = "Cancelling active analyses...";
         setButtonDisabled(state.cancelButton, true);
     };
@@ -2576,6 +2919,7 @@ export function openBotBenchDialog() {
         saveAs(new Blob([resultsToCsv(state.entries)], {type: "text/csv;charset=utf-8"}),
             "sitrec-botbench.csv");
     };
+    state.chartsButton.onclick = () => openResultChartsForEntries(state.entries);
     state.summaryButton.onclick = () => {
         showTimingAnalysis(buildSummaryReport(state.entries, runOptions(state)),
             "sitrec-botbench-summary.txt", "BOTBench Run Summary");
@@ -2611,7 +2955,20 @@ export function addBotBenchMenu(fileAnalysisFolder) {
             // The cache codec, so the fit-reuse round trip can be exercised
             // without a directory picker (which needs a user gesture).
             packForCache, unpackFromCache,
+            describeEntrySource, setDialogSource,
             get state() { return activeDialog; },
+        };
+    }
+    // Scenario screenshots: import each All CSV, let the app frame it, and read
+    // the main view back as an image. Separate global from _botBench because it
+    // drives the LIVE scene rather than the worker pool, so the two must not run
+    // at the same time.
+    if (isLocal && !window._botImages) {
+        window._botImages = {
+            run: runImageCapture, capture: captureScenarioImage,
+            captureView: captureViewBlob, waitForSettle, clearTracks: clearImportedTracks,
+            captureEntry: captureEntryImage, queueIdle: captureQueueIdle, createQueue: createCaptureQueue,
+            imageDirFor, imageNameFor, imageStaleness,
         };
     }
     botBenchController = fileAnalysisFolder.add({botBench: openBotBenchDialog}, "botBench")

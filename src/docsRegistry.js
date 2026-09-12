@@ -287,6 +287,11 @@ export const helpDocs = [
         chatDesc: "Where BOTBench's scenario files come from: how the BOT benchmark scenarios are generated in the Sitrec source repository rather than shipped with it, the curated interchange set (bench-bot-interchange) versus the swept botsets and the single question each set was built to answer, the Input/Truth/All folder layout with its index.json and MANIFEST.json, sealed releases and their hash commitment, and the npm commands that build and export each set. Read for 'where do the bot-NNNN.input.csv files come from', 'how do I regenerate the benchmark scenarios', 'what is a botset', or 'what is a sealed release'.",
     },
     {
+        file: "docs/BOTBenchCharts", labelKey: "menus.help.documentation.botBenchCharts",
+        section: "analysis", menuId: "file", role: "reference",
+        chatDesc: "The Result Charts window (File \u2192 File Analysis \u2192 Result Charts...): interactive charts of a BOTBench result set, and the same figures exported for a paper. Covers the nine figures and what each answers, how to get data in (drop a joined results JSONL, or open it from a finished run), how to read a box plot whose whiskers use Tukey's rule applied in log space, why the exact Clopper-Pearson confidence intervals are wider than the usual ones, exporting SVG or a 300 dpi PNG from the browser with no extra tool, and the optional command-line renderer (npm run bot-charts) with every option. Read for 'how do I chart the BOTBench results', 'what do the whiskers mean', 'how do I export a figure for a paper', or 'why is the chart library downloaded separately'.",
+    },
+    {
         file: "docs/satcam", labelKey: "menus.help.documentation.cameraModes",
         section: "analysis", menuId: "camera", role: "reference",
         chatDesc: "Look-camera orientation modes (Normal vs Satellite PTZ) — how the camera points and how the look angle is defined. Also the two spellings of Pan (Az): signed -180..180 by default, or a 0-360 compass bearing via the 'Use 0-360 for Pan' checkbox, which changes the display only. Read for 'why is my pan negative', 'can I enter a heading of 270', or 'how do I show pan as a compass bearing'.",

@@ -81,7 +81,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import {WIND_CONFIGS} from "./wind";
+import {windConfigFor} from "./wind";
 import {angularDiameterMaxDeg, SENSOR_PIXELS} from "./angularSize";
 
 export const INTERCHANGE_SPEC_VERSION = "1.2";
@@ -643,7 +643,7 @@ export function buildTruthJson(scenario, trackId,
         // alone would penalise a solver that correctly recovers the profile.
         windTruth: {
             note: "mid-clip sample of the base wind; see config for shear/veer/gusts",
-            config: WIND_CONFIGS[scenario.spec.wind.kind ?? scenario.spec.wind] ?? null,
+            config: windConfigFor(scenario.spec.wind),
             kind: scenario.spec.wind.kind ?? scenario.spec.wind,
             sampledVelocityENUMidClip: [
                 scenario.wind.sampledVelocityENU[(scenario.n >> 1) * 3],
