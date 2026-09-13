@@ -735,17 +735,18 @@ export async function showPostLoadFilterDialog() {
             NodeMan.iterate((nodeId, node) => {
                 if (node instanceof CNodeDisplayTrack && node.in.track && node.in.track.id === id) {
                     node.visible = visible;
-                    node.show(visible);
                     if (node.in.dataTrackDisplay !== undefined) {
                         node.in.dataTrackDisplay.visible = visible;
-                        node.in.dataTrackDisplay.show(visible);
                     }
-                    if (node.metaTrack !== undefined) {
-                        node.metaTrack.show(visible);
-                        // Filtering a track out means the aircraft goes too — this is the one
-                        // caller that means both, so it says so. (CMetaTrack.show, TrackManager.)
-                        node.metaTrack.showObject(visible);
-                    }
+                    // The node's OWN applyVisibility (not this function): it writes what the
+                    // flag just set leaves actually drawn, which is this flag AND the global
+                    // Show Tracks gate. Calling show() here instead would draw a kept track
+                    // while the gate is off.
+                    node.applyVisibility();
+                    // Filtering a track out means the aircraft goes too — this is the one
+                    // caller that means both, so it says so. (CMetaTrack.showObject,
+                    // TrackManager.) The object is not gated: the gate is about TRACKS.
+                    node.metaTrack?.showObject(visible);
                 }
             });
         }

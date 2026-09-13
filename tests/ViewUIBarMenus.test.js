@@ -26,6 +26,7 @@ import {
     VIEW_UIBAR_ICONS,
     VIEW_UIBAR_MENUS,
     sharedMenuKey,
+    viewIconItems,
     viewMenuKey,
 } from "../src/ViewUIBarMenus";
 import {CUIBar} from "../src/CUIBar";
@@ -115,6 +116,15 @@ function collectRegistrations() {
     return calls;
 }
 
+// The action slots the BUTTONS reach but no menu row names — read through viewIconItems, so a
+// gesture defined as a per-view override counts exactly like one on the shared entry.
+function iconActionSlots() {
+    return Object.keys(VIEW_UIBAR_ICONS)
+        .flatMap(viewIconItems)
+        .flatMap(item => [item.double, item.press])
+        .filter(Boolean);
+}
+
 describe("registry vs. registrations", () => {
     const registrations = collectRegistrations();
 
@@ -124,11 +134,12 @@ describe("registry vs. registrations", () => {
         // rather than call counts is the real invariant — one call site can serve several views
         // when the view id is an expression (`this.id`, `this.overlayView.id`).
         const scanned = new Set(registrations.map(r => r.slot));
-        // Menu rows, plus the ACTION slots that only an icon's double click reaches — those are
-        // published the same way and would otherwise look like orphans.
+        // Menu rows, plus the ACTION slots that only an icon's gesture reaches — a double click,
+        // or the extra action one view hangs on a single click. Those are published the same way
+        // and would otherwise look like orphans.
         const listed = new Set([
             ...allItems.map(i => i.slot),
-            ...Object.values(VIEW_UIBAR_ICONS).flat().map(i => i.double).filter(Boolean),
+            ...iconActionSlots(),
         ]);
         expect([...scanned].sort()).toEqual([...listed].sort());
     });
@@ -148,12 +159,11 @@ describe("registry vs. registrations", () => {
 
     test.each(registrations.map(r => [`${r.file} ${r.shared ? "<shared>" : r.view ?? "<dynamic>"}:${r.slot}`, r]))(
         "%s is listed in the registry", (label, reg) => {
-            const asDoubleAction = Object.values(VIEW_UIBAR_ICONS).flat()
-                .some(i => i.double === reg.slot);
+            const asIconAction = iconActionSlots().includes(reg.slot);
             const listed = (reg.shared || reg.view === null)
                 ? allItems.some(i => i.slot === reg.slot)
                 : (VIEW_UIBAR_MENUS[reg.view] ?? []).some(i => i.slot === reg.slot);
-            expect(listed || asDoubleAction).toBe(true);
+            expect(listed || asIconAction).toBe(true);
         });
 });
 

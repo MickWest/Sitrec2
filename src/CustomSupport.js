@@ -65,6 +65,7 @@ import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL, intersectSurface} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
+import * as LAYER from "./LayerMasks";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
 import {showError, showConfirm, showChoice} from "./showError";
@@ -1744,45 +1745,78 @@ export class CCustomManager {
         return tracks;
     }
 
-    // Track visibility over EVERY track, as one switch — the counterpart to the per-track
-    // checkbox in each track's own folder.
+    // Whether tracks are drawn at all — the GLOBAL gate, and a flag in its own right rather
+    // than a write over every track's own checkbox. Three flags decide whether you see a track:
+    // this one, the track's own `visible`, and its "Show in look view" (which views draw it).
     //
-    // "Any track showing" rather than "all of them", because it is a SHOW switch: a sitch with
-    // one track hidden on purpose is still showing tracks, and reading it as off would make the
-    // first press hide the rest rather than reveal the one.
-    get showAllTracks() {
-        const tracks = this.displayTracks();
-        return tracks.some(track => track.visible);
+    // Being a separate flag is what makes it cheap to use: flicking it off and back on leaves
+    // each track exactly as its owner had it, with nothing to remember and nothing to restore.
+    // It used to write all the per-track flags and keep a map of what they were, which meant a
+    // press could not be undone by another press once anything else had changed in between.
+    get showTracks() {
+        return Globals.showTracks !== false;
     }
 
-    // Turning it OFF is the destructive direction here (the default is visible), so that is the
-    // one that remembers: hide everything, and putting it back restores which tracks were
-    // showing rather than revealing ones somebody deliberately hid.
-    set showAllTracks(on) {
-        if (!on) {
-            this.trackVisibilityWas = new Map(
-                this.displayTracks().map(track => [track.id, !!track.visible]));
-            this.applyTrackVisibility(() => false);
-        } else {
-            const was = this.trackVisibilityWas;
-            this.applyTrackVisibility(track => was?.get(track.id) ?? true);
-        }
+    set showTracks(on) {
+        Globals.showTracks = !!on;
+        this.applyTrackGate();
+    }
+
+    // Hand the gate to every track. Each one works out for itself what that leaves it showing
+    // (CNodeDisplayTrack.applyVisibility), so this is also the call a sitch load makes once the
+    // saved per-track flags are back in place.
+    applyTrackGate() {
+        for (const track of this.displayTracks()) track.applyVisibility();
+        setRenderOne(true);
+    }
+
+    // The blunt version, for the DOUBLE click on the main view's Show Tracks button: show the
+    // tracks, and put every track's own checkbox back on as well. The gate alone cannot reveal
+    // a track somebody hid one at a time — that is the whole point of it being a separate flag
+    // — so "no, really, all of them" has to be a press that says so.
+    showEveryTrack() {
+        Globals.showTracks = true;
+        this.applyTrackVisibility(() => true);
     }
 
     applyTrackVisibility(valueFor) {
         for (const track of this.displayTracks()) {
-            const visible = !!valueFor(track);
-            if (track.visible === visible) continue;
-            // The same three things the track's own checkbox does — the data track and the
-            // meta track are separate nodes drawn as part of the same track.
-            track.visible = visible;
-            track.show(visible);
+            // Written even where it already holds that value, because the GATE may be what
+            // changed: the flag can be right while the track is still hidden.
+            track.visible = !!valueFor(track);
+            // The data track is the same track drawn from the unsmoothed data, and the track's
+            // own checkbox treats the two as one.
             if (track.in.dataTrackDisplay !== undefined) {
-                track.in.dataTrackDisplay.visible = visible;
-                track.in.dataTrackDisplay.show(visible);
+                track.in.dataTrackDisplay.visible = track.visible;
             }
-            track.metaTrack?.show(visible);
+            track.applyVisibility();
         }
+        setRenderOne(true);
+    }
+
+    // "Show in look view" over every track that is SHOWING, set to match the gate — what the
+    // look view's Show Tracks button does on top of toggling it. A track hidden by its own
+    // checkbox is left alone: it is not drawn in any view, so there is nothing to say yet about
+    // which views it would be drawn in, and saying it anyway would quietly rewrite a setting the
+    // user cannot even see at the time.
+    syncTracksInLook() {
+        const on = this.showTracks;
+        TrackManager.iterate((id, trackOb) => {
+            const display = trackOb.trackDisplayNode ?? trackOb.displayTrack;
+            if (!display?.visible) return;
+            // Two flavours, from two eras of this code: an IMPORTED track keeps the flag on its
+            // GUI node, while a synthetic or balloon track keeps it on the track object itself.
+            // Both mean the same thing and both end in the same layer bit.
+            if (trackOb.gui instanceof CNodeTrackGUI) {
+                trackOb.gui.showTrackInLook = on;
+                trackOb.gui.setTrackVisibility(on);
+            } else if (trackOb.showInLook !== undefined) {
+                trackOb.showInLook = on;
+                display.setLayerBit?.(LAYER.LOOK, on);
+            }
+        });
+        // "All Tracks in Look" is an override rather than a fourth flag, so it gets the last word.
+        this.refreshLookViewTracks();
         setRenderOne(true);
     }
 

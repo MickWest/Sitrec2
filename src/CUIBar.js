@@ -276,6 +276,12 @@ export class CUIBar {
     // everything else here, so it is a real control with a real label somewhere in the menus,
     // not a gesture that only exists on this button.
     //
+    // `pressKey` names one to run straight AFTER the single click, for a button whose copies on
+    // two bars mean slightly different things. The look view's Show Tracks toggles the same
+    // global gate as the main view's — same control, same state on both bars — and then syncs
+    // which tracks the LOOK view draws, because that is what the button means over there. Like
+    // doubleKey it is a real control with a real label in the menus.
+    //
     // Bound through a real (hidden) TWIN rather than by reading the source directly, because a
     // twin is what MenuMirror already keeps correct on every path into the value: a click on
     // any other copy, a rename, a hide — and, since a twin inherits the source's `.listen()`
@@ -284,14 +290,18 @@ export class CUIBar {
     //
     // Hidden until its source exists, so a sitch with no lines of sight simply has no LOS icon,
     // and it disappears again if that control is hidden or destroyed.
-    addControlIcon(key, {html, action, label, tooltip, value, doubleKey, peek = false, left = true} = {}) {
+    addControlIcon(key, {html, action, label, tooltip, value, doubleKey, pressKey, peek = false, left = true} = {}) {
         let twin = null;                       // filled in by the mirror, possibly much later
         let doubleTwin = null;
+        let pressTwin = null;
         let restore;                           // where a snap icon found the control
+        // A lil-gui function controller IS its bound function, so running it is calling that.
+        const run = (t) => t?.object?.[t.property]?.();
         const click = () => {
             if (!twin) return;
-            if (value === undefined) return twin.setValue(!twin.getValue());
-            if (twin.getValue() !== value) {
+            if (value === undefined) {
+                twin.setValue(!twin.getValue());
+            } else if (twin.getValue() !== value) {
                 restore = twin.getValue();
                 twin.setValue(value);
             } else if (restore !== undefined) {
@@ -299,11 +309,11 @@ export class CUIBar {
             }
             // Already at `value` with nothing remembered: the control is where the button would
             // put it and there is nowhere to go back to, so the press does nothing.
+            //
+            // AFTER the value is written, so the action sees the state the press just produced.
+            if (pressKey) run(pressTwin);
         };
-        // A lil-gui function controller IS its bound function, so running it is calling that.
-        const doublePress = doubleKey
-            ? () => doubleTwin?.object?.[doubleTwin.property]?.()
-            : null;
+        const doublePress = doubleKey ? () => run(doubleTwin) : null;
         const btn = this.addIcon(html, click, null, action, left, doublePress);
         btn.style.display = 'none';
         btn.style.alignItems = 'center';
@@ -328,6 +338,7 @@ export class CUIBar {
             },
         });
         if (doubleKey) this._toggleHost().addMirror(doubleKey, {onMirror: (t) => { doubleTwin = t; }});
+        if (pressKey) this._toggleHost().addMirror(pressKey, {onMirror: (t) => { pressTwin = t; }});
         return btn;
     }
 

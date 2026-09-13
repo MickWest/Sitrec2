@@ -356,6 +356,43 @@ const COMMON_3D_ICONS = [
     {slot: "timeDisplay", icon: ICON_CLOCK},
 ];
 
+// Where ONE of the two 3D views wants an extra gesture on a button the two otherwise share.
+// Kept here rather than by splitting COMMON_3D_ICONS in half around it, so the ORDER of the run
+// is still written once — the two bars are read as a pair, and a button in both has to be in the
+// same place in both.
+//
+// Show Tracks is the one such button. Both bars drive the same global gate, and a plain click on
+// either just toggles it. What differs is the blunter thing each view wants next to it:
+//   Main — a DOUBLE click also puts every track's own checkbox back on, which the gate cannot do.
+//   Look — a click also sets "Show in look view" on every showing track to match the gate, since
+//          over there the question the button answers is what the LOOK view draws.
+const ICON_OVERRIDES = {
+    mainView: {
+        showTracks: {double: "showEveryTrack",
+            tip: "Show Tracks — every track at once, leaving each track's own setting alone;"
+                + " double-click to switch every track back on as well"},
+    },
+    lookView: {
+        showTracks: {press: "syncTracksInLook",
+            tip: "Show Tracks — every track at once, and show the ones that are on in this view too"},
+    },
+};
+
+/**
+ * One view's icons AS ITS BAR WILL BUILD THEM: each registry entry with that view's override (if
+ * any) folded in. The one place that resolves the two tables, so a reader — or the test that
+ * checks every mirrored slot is reachable from somewhere — never has to know that a button's
+ * gestures can come from either.
+ *
+ * @param {string} viewId
+ * @returns {object[]} resolved items in bar order; empty for a view with no icons
+ */
+export function viewIconItems(viewId) {
+    const items = VIEW_UIBAR_ICONS[viewId];
+    if (!items) return [];
+    return items.map(item => ({...item, ...ICON_OVERRIDES[viewId]?.[item.slot]}));
+}
+
 /**
  * Which slots get an icon on which view's bar, in bar order (left to right, after the title).
  *
@@ -372,6 +409,9 @@ const COMMON_3D_ICONS = [
  *   shared — the slot is a sharedMenuKey, one control behind every view's copy of the button.
  *   double — slot of a shared ACTION control to run on a DOUBLE click. The single click still
  *            does the ordinary thing; the double is the blunter version of it.
+ *   press  — slot of a shared ACTION control to run straight AFTER the single click, where one
+ *            view needs the same control to mean a little more than it does on the other bar.
+ *            Usually set per view in ICON_OVERRIDES rather than here.
  *   peek   — keep a copy of this icon on screen while the header is HIDDEN and its control is
  *            ON. For a MODE that changes what the view does rather than what it draws: with the
  *            bar away there would otherwise be nothing at all to say you are in it.
@@ -419,9 +459,9 @@ export const VIEW_UIBAR_ICONS = {
  * @returns {number} how many icons were requested
  */
 export function populateViewUIBarIcons(view) {
-    const items = VIEW_UIBAR_ICONS[view?.id];
+    const items = viewIconItems(view?.id);
     const bar = view?.uiBar;
-    if (!items || typeof bar?.addControlIcon !== "function") return 0;
+    if (!items.length || typeof bar?.addControlIcon !== "function") return 0;
 
     // Left section, so they sit next to the view's own menu — these belong to the view, unlike
     // the window chrome (fullscreen, pop out, pin, close) gathered on the right. A hairline
@@ -443,6 +483,7 @@ export function populateViewUIBarIcons(view) {
             value: item.value,
             peek: item.peek,
             doubleKey: item.double === undefined ? undefined : sharedMenuKey(item.double),
+            pressKey: item.press === undefined ? undefined : sharedMenuKey(item.press),
             label: rowLabel(view.id, item.slot),
             tooltip: item.tip === undefined ? undefined : iconTip(item),
             left: true,

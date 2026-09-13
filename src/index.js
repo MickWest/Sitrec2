@@ -3387,6 +3387,14 @@ function disposeEverything() {
     Globals.cameraMotionData = undefined;
     Globals.cameraMotionRaw = undefined;
 
+    // The global Show Tracks gate is per-SITCH: a save carries it (globalsNeeded in
+    // CustomManagerSerialize), and anything else starts with tracks shown. Left alone it would
+    // follow the user into the next sitch, which is worse than it sounds — a sitch that does not
+    // include the custom manager has no Show Tracks button, so a gate left off there hides every
+    // track with nothing on screen to turn them back on. Reset here rather than in the custom
+    // manager's setup, which those sitches never run.
+    Globals.showTracks = true;
+
     // Every undo/redo action closes over nodes, tracks and GUI folders belonging to
     // the sitch we are tearing down. Carrying the stacks across a sitch load meant
     // Ctrl-Z in the NEW sitch ran the OLD sitch's undo: at best a no-op logging

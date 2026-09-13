@@ -1515,12 +1515,34 @@ export const setupMethods = {
             .listen()
             .shareAs(sharedMenuKey("extendToGround"));
 
-        guiMenus.contents.add(this, "showAllTracks")
+        // The GLOBAL Show Tracks gate. One control, mirrored onto both 3D views' header bars,
+        // so a press on either is the same press. What differs is what each BAR does around it:
+        // the main view's button offers Show Every Track on a double click, and the look view's
+        // also syncs "Show in look view" — see ICON_OVERRIDES in src/ViewUIBarMenus.js.
+        //
+        // The i18n key keeps its old name (the property was showAllTracks) so the nine
+        // translations of the label stay attached to it.
+        if (Globals.showTracks === undefined) Globals.showTracks = true;
+        guiMenus.contents.add(this, "showTracks")
             .name(t("custom.showHide.showAllTracks.label"))
             .moveToFirst()
             .tooltip(t("custom.showHide.showAllTracks.tooltip"))
             .listen()
             .shareAs(sharedMenuKey("showTracks"));
+
+        // The two blunter things the header-bar buttons reach for. Real rows with real labels,
+        // because a gesture that exists only on a button is one nobody can find.
+        guiMenus.contents.add(this, "showEveryTrack")
+            .name(t("custom.showHide.showEveryTrack.label"))
+            .moveToFirst()
+            .tooltip(t("custom.showHide.showEveryTrack.tooltip"))
+            .shareAs(sharedMenuKey("showEveryTrack"));
+
+        guiMenus.contents.add(this, "syncTracksInLook")
+            .name(t("custom.showHide.syncTracksInLook.label"))
+            .moveToFirst()
+            .tooltip(t("custom.showHide.syncTracksInLook.tooltip"))
+            .shareAs(sharedMenuKey("syncTracksInLook"));
 
         guiMenus.contents.add(this, "clearAllExtendToGround")
             .name(t("custom.showHide.clearAllExtendToGround.label"))

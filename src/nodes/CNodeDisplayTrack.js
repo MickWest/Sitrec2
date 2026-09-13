@@ -174,15 +174,13 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
             // toggle for visibility with optional linked data track
             this.guiFolder.add(this, "visible").tooltip(t("displayTrack.visible.tooltip")).listen().onChange(() => {
-                this.show(this.visible);
+                // The data track is the same track drawn from the unsmoothed data, so this one
+                // checkbox is its checkbox too.
                 if (this.in.dataTrackDisplay !== undefined) {
                     this.in.dataTrackDisplay.visible = this.visible
-                    this.in.dataTrackDisplay.show(this.visible)
                 }
-
-                if (this.metaTrack !== undefined) {
-                    this.metaTrack.show(this.visible)
-                }
+                // Not show() — what is DRAWN is this flag and the global gate together.
+                this.applyVisibility()
             })
 
             // // toggle for visibility of the mesh (vertical semi-transparent polygons
@@ -421,6 +419,31 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         this.simpleSerials.push("contrailRampDistance")
 
         this.recalculate()
+        // A track built while the global gate is OFF must not appear just because it is new.
+        this.applyVisibility()
+    }
+
+    // Whether this track is drawn, from the TWO flags that decide it: the global Show Tracks
+    // gate (every track at once — the header-bar button, CCustomManager.showTracks) and this
+    // track's own `visible` checkbox. The effective state is the AND of them, and it is written
+    // to the Three.js group ONLY, never back into `visible`. That is what lets the gate go off
+    // and come back on leaving each track exactly as its owner had it — the gate has nothing to
+    // remember and nothing to restore.
+    //
+    // The third flag a track has, "Show in look view", is a LAYER bit rather than a visibility
+    // flag: it says which VIEWS draw the track, so it is independent of this and survives both.
+    applyVisibility() {
+        const on = Globals.showTracks !== false && !!this.visible;
+        this.group.visible = on;
+        this.noteShadowCasterState?.("visibility");
+        const data = this.in.dataTrackDisplay;
+        if (data !== undefined) {
+            data.group.visible = on;
+            data.noteShadowCasterState?.("visibility");
+        }
+        // The centre helpers drawn along the line. NOT the object riding the track — see
+        // CMetaTrack.show, which is careful about exactly that.
+        this.metaTrack?.show(on);
     }
 
     gotoTrack() {
@@ -557,7 +580,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
 
         this.visible = v.visible;
-        this.show(this.visible);
+        this.applyVisibility();
         
         // Restore time offset if it was saved
         if (v.timeOffset !== undefined) {

@@ -9,6 +9,26 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.158.0 (2026-09-13)
+
+### New Features
+
+- **Use Range traverse** (Traverse → LOS Traverse Method → *Use Range*): places the target at the range recorded in a loaded MISB track (Slant Range or Ground Range) along the current line of sight. *Range Source* picks the track and field, and the choice is saved with the sitch. The method is offered only while range data is loaded. Ground Range is used as it is, not converted to slant range.
+- **Result Charts** (File → File Analysis → *Result Charts...*, or the *Charts* button in BOTBench): interactive charts of a BOTBench result set — error against clip length, pointing error, sensor turn and geometry, error by solver, the share within tolerance, what the verdict concluded and what blind ranking cost. Choose whose error and which unit to plot, open it from a finished run or drop a results file on the window, and export SVG or a 300 dpi PNG for a paper.
+- **Scenario screenshots** (File → File Analysis → *BOTBench...*): a new *Scenario screenshots* option saves a picture of each scenario in a SitrecImage folder beside it. It loads each scenario into the 3D view, so it replaces what you have open. The Track Browser can show these pictures instead of its plan view (*Sitrec image*), and the result charts show them when you hover over a track.
+
+### Improvements
+
+- **Show Tracks** (Contents, and the Show Tracks button on the main and look view header bars) now hides or shows all tracks without changing any track's own setting, and is saved with the sitch. Turning it back on always shows the same tracks as before. The new *Show Every Track* (also a double-click on the main view's Show Tracks button) switches every track back on. The new *Match Look View to Show Tracks* (also what the look view's Show Tracks button does) sets *Show in look view* on every showing track to match.
+- The header bar of an unpinned view no longer pops up when the pointer only crosses the top edge of the view. It appears when the pointer stops there or stays there, and it stays hidden while a menu or another window covers that edge.
+- BOTBench handles large folders better (File → File Analysis → *BOTBench...*): the results table draws only the rows on screen, memory use stays flat, and cached results show at once. After an update, a large run checks 10 files and offers to reuse the cached results from the earlier build. A folder holding All, Input and Truth copies of the same scenarios is analysed once, from All. The window also shows the chosen folder under its title.
+- When you drop or paste in a TLE and none of its satellites would show with the current filters, Sitrec turns on *Other Satellites* (Satellites menu) so they do. Saved sitches and the Satellites menu downloads leave the filters alone.
+
+### Bug Fixes
+
+- Fixed geostationary satellites never being shown.
+- Fixed TLE files that do not use the exact TLE columns — for example single spaces between fields, or no international designator — failing to load with error dialogs. They are now read field by field, like pasted TLE text.
+
 ## Version 2.157.4 (2026-09-10)
 
 ### New Features

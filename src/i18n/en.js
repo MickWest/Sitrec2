@@ -1089,7 +1089,9 @@ const en = {
         showHide: {
             keyboardShortcuts: { label: "[K]eyboard Shortcuts", tooltip: "Show or hide the keyboard shortcuts overlay" },
             toggleExtendToGround: { label: "Toggle ALL [E]xtend To Ground", tooltip: "Toggle 'Extend to Ground' for all tracks\nWill set all off if any are on\nWill set all on if none are on" },
-            showAllTracks: { label: "Show Tracks", tooltip: "Show or hide every track.\nTurning it back on restores whichever tracks were showing before" },
+            showAllTracks: { label: "Show Tracks", tooltip: "Show or hide every track at once.\nEach track's own setting is left alone, so turning it back on shows the same tracks as before" },
+            showEveryTrack: { label: "Show Every Track", tooltip: "Show every track, including ones switched off one at a time.\nAlso the double-click of Show Tracks on the main view's header bar" },
+            syncTracksInLook: { label: "Match Look View to Show Tracks", tooltip: "Show or hide the tracks in the look view to match Show Tracks.\nOnly tracks that are showing are changed.\nAlso what Show Tracks does on the look view's header bar" },
             allTracksExtendToGround: { label: "Extend Tracks to Ground", tooltip: "Extend every track down to the ground.\nTurning it back off restores whichever tracks were extended before" },
             clearAllExtendToGround: { label: "Clear Extend to Ground", tooltip: "Turn 'Extend to Ground' off for every track, and forget what it was" },
             showAllTracksInLook: { label: "All Tracks in Look", tooltip: "Display all aircraft tracks in the look/camera view" },

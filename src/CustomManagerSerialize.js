@@ -547,6 +547,7 @@ export const serializeMethods = {
             "objectScale",
             "objectScaleMain",
             "showAllTracksInLook",
+            "showTracks",               // the global Show Tracks gate (CCustomManager.showTracks)
             "showTimeDisplay",          // the UTC/local clock overlaid on the look view
         ]
 
@@ -1768,6 +1769,11 @@ export const serializeMethods = {
                 Globals[key] = sitchData.globals[key];
             }
         }
+
+        // The global Show Tracks gate is a flag of its own, so the tracks have to be told about
+        // it — their own saved visibility is back in place by now, and what they DRAW is the two
+        // together (CNodeDisplayTrack.applyVisibility).
+        this.applyTrackGate?.();
 
         // and Sit
         if (sitchData.Sit) {

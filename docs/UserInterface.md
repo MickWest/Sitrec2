@@ -109,7 +109,11 @@ Because those sources are suspended, touching any of them switches Free Look off
 
 Camera ▸ FOV (Zoom) is the exception, because the field of view is not part of the pose and is never suspended. Zoom, HFOV, the 35mm equivalent and Shift + the wheel all keep working while you fly, so you can frame what you have flown to without leaving the mode.
 
-**Show Tracks** and **Extend Tracks to Ground** work over every track at once, and both remember what they found: turning Show Tracks back on reveals the tracks that were showing rather than every track, and turning Extend Tracks to Ground back off restores the ones that were extended. **Double-clicking** Extend Tracks to Ground is the blunt version — it clears it on every track and forgets the mixture.
+**Show Tracks** is a switch of its own rather than a write over every track: it decides whether tracks are drawn at all, and each track keeps its own setting underneath it. So you can turn it off to clear the view and turn it back on to find exactly the tracks you had showing — nothing is remembered because nothing was changed. To go further and switch every track back on, including the ones you turned off one at a time, **double-click** it on the main view's header bar (or use **Show Every Track** in the Contents menu).
+
+On the **look view's** header bar the same button means a little more, because that view has a second question to answer: which tracks appear in it. Pressing it there also sets **Show in look view** on every track that is showing, to match. Tracks you have hidden are left alone — they are not drawn anywhere, so there is nothing yet to say about which views would draw them.
+
+**Extend Tracks to Ground** works over every track at once and does remember what it found: turning it back off restores the ones that were extended. **Double-clicking** it is the blunt version — it clears it on every track and forgets the mixture.
 
 **Object Scale** in the Main menu is an extra size multiplier for 3D objects that applies *only* in the main view, on top of Objects ▸ Global Scale. It is for finding a small object from far out without changing what the look view — the camera's own view — would really see.
 
