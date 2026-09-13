@@ -1,6 +1,7 @@
 import {assert} from "./assert";
 import * as satellite from 'satellite.js';
 import {showError} from "./showError";
+import {readTLERecords} from "./TLEGrammar";
 
 interface SatRec {
     epochyr: number;
@@ -118,7 +119,11 @@ export function dateToTLE(date: Date): string {
 const tleComboFieldEnds1 = [1, 8, 17, 32, 43, 52, 61, 63, 69]
 const tleComboFieldEnds2 = [1, 7, 16, 25, 33, 42, 51, 69]
 
-function fixTLELine(line: string, ends: number[]): string {
+// Returns null when the fields cannot be placed on the fixed columns — most
+// often a line 1 written without its optional international designator, which
+// has one field fewer than the layout. parseTLELines then reads the block by
+// field grammar instead (TLEGrammar.js).
+function fixTLELine(line: string, ends: number[]): string | null {
 
     assert(line !== undefined, "TLE line is undefined");
 
@@ -138,23 +143,13 @@ function fixTLELine(line: string, ends: number[]): string {
     let fields = line.split(/\s+/)
 
 
-//     if (fields.length < expectedFields) {
-// // possibly missing the second field,
-// //         0 TBA - TO BE ASSIGNED
-// //         1 81078U          24333.88851049 +.00000363 +00000+0 +12052-1 0  9994
-// //         2 81078  65.1110 138.6809 0185351  89.7284  63.0761 11.22232541452104
-//         // so just patch it in
-//
-//         const line2 = line.slice(0,9) + '24001A'.padEnd(8) + line.slice(17);
-//         fields = line2.split(/\s+/)
-//
-//
-//     }
-
-
-    // if we have expectedFields, we are good
     if (expectedFields === 9) {
         // line 1
+        // Without its designator a line 1 has 8 fields, and every field after
+        // the gap would land one slot early.
+        if (fields.length !== expectedFields) {
+            return null
+        }
         // pad field 2 (the third) with spaces to 8 characters
         fields[2] = fields[2].padEnd(8, " ")
     } else {
@@ -162,15 +157,14 @@ function fixTLELine(line: string, ends: number[]): string {
         // however there might be a space in the last one which would make it 9
         // if so, we need to combine the last two fields
         // including enough spaces to make it the last field 6 charters
-        if (fields.length > 8) {
-            // only one extra allowed, so assert before we pop it
-            assert(fields.length === 9, "TLE line 2 has too many fields: " + line + " " + fields.length + " " + expectedFields);
+        if (fields.length === 9) {
             fields[7] = fields[7] + fields[8].padStart(6, " ");
             fields.pop() // remove the last field
         }
+        if (fields.length !== expectedFields) {
+            return null
+        }
     }
-
-    assert(fields.length === expectedFields, "TLE line does not have the right number of fields: " + line + " " + fields.length + " " + expectedFields)
 
 
     // make a new line so the ENDS of the fields are on the 1-indexed boundaries we want
@@ -186,9 +180,9 @@ function fixTLELine(line: string, ends: number[]): string {
             // add expectedLength-actualLength spaces to the start of the field
             field = " ".repeat(expectedLength - actualLength) + field
         }
-        // if it's too long, that's an error
+        // if it's too long, the fields are not where the layout puts them
         if (actualLength > expectedLength) {
-            showError("TLE field " + i + " is too long: " + field)
+            return null
         }
         newLine += field
         assert(newLine.length === expectedLength, "TLE field " + i + " is not the right length: " + newLine)
@@ -198,6 +192,20 @@ function fixTLELine(line: string, ends: number[]): string {
     return newLine
 }
 
+
+// Can every record in this TLE block be laid out on the fixed columns? Walks the
+// records with the same stride parseTLELines uses: two lines per record, or
+// three when each has a name line.
+function fixedColumnsReconcile(lines: string[], named: boolean): boolean {
+    const first = named ? 1 : 0;
+    for (let i = 0; i + first + 1 < lines.length; i += first + 2) {
+        if (fixTLELine(lines[i + first], tleComboFieldEnds1) === null
+            || fixTLELine(lines[i + first + 1], tleComboFieldEnds2) === null) {
+            return false;
+        }
+    }
+    return true;
+}
 
 function tleEpochToDate(epochYr: number, epochDays: number): Date {
     // Convert 2-digit year to 4-digit year
@@ -691,9 +699,20 @@ export class CTLEData {
 
     // Parse the legacy fixed-width TLE / 2LE / 3LE formats.
     private parseTLELines(lines: string[], satDataByKey: Record<string | number, SatData>): void {
-        let satrecName: string | null = null;
         // determine if it's a two line element (no names, lines are labeled 1 and 2) or three (line 0 = name)
-        if (lines.length < 3 || !lines[1].startsWith("1") || !lines[2].startsWith("2")) {
+        const named = !(lines.length < 3 || !lines[1].startsWith("1") || !lines[2].startsWith("2"));
+
+        // The fixed columns are the fast path, and the one every well-formed
+        // catalogue takes. If any line will not go on them, read the whole block
+        // by field grammar — which also recovers a block whose stride of two or
+        // three lines per record has slipped.
+        if (!fixedColumnsReconcile(lines, named)) {
+            this.parseTLEByGrammar(lines, satDataByKey);
+            return;
+        }
+
+        let satrecName: string | null = null;
+        if (!named) {
             for (let i = 0; i < lines.length; i += 2) {
                 const tleLine1 = lines[i + 0];
                 const tleLine2 = lines[i + 1];
@@ -730,8 +749,9 @@ export class CTLEData {
 
                 if (lines[i + 1] !== undefined && lines[i + 2] !== undefined) {
                     //console.log(lines[i])
-                    const tleLine1 = fixTLELine(lines[i + 1], tleComboFieldEnds1);
-                    const tleLine2 = fixTLELine(lines[i + 2], tleComboFieldEnds2);
+                    // Not null: fixedColumnsReconcile() checked every line.
+                    const tleLine1 = fixTLELine(lines[i + 1], tleComboFieldEnds1)!;
+                    const tleLine2 = fixTLELine(lines[i + 2], tleComboFieldEnds2)!;
 
                     const satrec = satellite.twoline2satrec(tleLine1, tleLine2) as unknown as SatRec;
                     // The name line is padded to a fixed width in TLE files.
@@ -772,6 +792,38 @@ export class CTLEData {
             }
         }
 
+    }
+
+    // Read a TLE block field by field (TLEGrammar.js), for a block whose lines
+    // cannot be laid out on the fixed columns.
+    private parseTLEByGrammar(lines: string[], satDataByKey: Record<string | number, SatData>): void {
+        const {records, errors} = readTLERecords(lines.join("\n"));
+
+        if (records.length === 0 && errors.length > 0) {
+            // It plainly is a TLE, and none of it could be read: say why.
+            this.loadError = "Could not read the TLE data: " + errors[0];
+            showError(this.loadError);
+        } else if (errors.length > 0) {
+            // Usually a satellite name that reads like an element line, which
+            // costs nothing — but it is also what one damaged record among good
+            // ones looks like, so it should not vanish in silence.
+            console.warn("CTLEData: part of the TLE data looked like a record but could not be read: " + errors[0]);
+        }
+
+        for (const record of records) {
+            const satrec = satellite.twoline2satrec(record.line1, record.line2) as unknown as SatRec;
+            const satrecNumber = parseInt(satrec.satnum);
+            if (satDataByKey[satrecNumber] === undefined) {
+                satDataByKey[satrecNumber] = {
+                    name: record.name,
+                    number: satrecNumber,
+                    visible: true,
+                    satrecs: [satrec]
+                };
+            } else {
+                satDataByKey[satrecNumber].satrecs.push(satrec);
+            }
+        }
     }
 
     // Common post-processing for both formats: flatten the by-NORAD map into an
@@ -818,7 +870,8 @@ export class CTLEData {
         if (this.satData.length === 0) {
             const preview = fileData.substring(0, 200).replace(/\n/g, ' ');
             console.warn("CTLEData: No satellites loaded from TLE data. Preview: " + preview);
-            this.loadError = "No satellites loaded from TLE data";
+            // Keep the more specific reason if parsing already recorded one.
+            this.loadError = this.loadError ?? "No satellites loaded from TLE data";
         }
 
     }

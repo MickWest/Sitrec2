@@ -1484,18 +1484,20 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
      * Public wrapper for loading TLE data - called from DragDropHandler and other places
      * Delegates to this.satellites
      */
-    replaceTLE(tle) {
-        this.satellites.replaceTLE(tle);
+    replaceTLE(tle, {revealImported = false} = {}) {
+        const imported = this.satellites.replaceTLE(tle);
         // Add satellites to the scene
         this.satellites.addSatellites(this.satelliteGroup, 1);
         this.satellites.filterSatellites();
+        if (revealImported) this.satellites.revealImportedSatellites(imported);
     }
 
-    mergeTLE(tle) {
-        this.satellites.mergeTLE(tle);
+    mergeTLE(tle, {revealImported = false} = {}) {
+        const imported = this.satellites.mergeTLE(tle);
         // Rebuild the scene with merged satellite data
         this.satellites.addSatellites(this.satelliteGroup, 1);
         this.satellites.filterSatellites();
+        if (revealImported) this.satellites.revealImportedSatellites(imported);
     }
 
     openTLEFilterDialog() {

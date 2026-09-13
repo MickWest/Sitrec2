@@ -19,6 +19,9 @@ import {CPointLightCloud} from "./CPointLightCloud";
 import {t} from "../i18n";
 import {applyRefractionFromObserver, REFRACTION_DEFAULTS} from "../atmosphere/refraction";
 
+// The Earth's rotation rate, rad/s, about the ECEF z axis.
+const EARTH_ROTATION_RATE = 7.292115e-5;
+
 /**
  * CSatellite handles all satellite-related functionality
  * including TLE data loading, positioning calculations, rendering, and flare detection
@@ -703,6 +706,7 @@ export class CSatellite {
 
     /**
      * Replace/load TLE data
+     * @returns {CTLEData} the data just loaded
      */
     replaceTLE(tle) {
         this.removeSatellites();
@@ -725,11 +729,13 @@ export class CSatellite {
             this.exportTLEButton = guiMenus.file.add(obj, 'exportTLE').name(t("misc.exportTLE.label"));
         }
 
+        return this.TLEData;
     }
 
     /**
      * Merge new TLE data into the existing TLEData, combining by NORAD number.
      * Rebuilds the light cloud since the satellite count may change.
+     * @returns {CTLEData} the data parsed from `tle`
      */
     mergeTLE(tle) {
         assert(this.TLEData !== undefined, "mergeTLE requires existing TLEData");
@@ -759,6 +765,40 @@ export class CSatellite {
             }
         };
         this.exportTLEButton = guiMenus.file.add(obj, 'exportTLE').name(t("misc.exportTLE.label"));
+        return newData;
+    }
+
+    /**
+     * Make sure satellites the user dropped or pasted in can be seen.
+     *
+     * The category filters exist to thin out downloaded catalogues. A TLE
+     * brought in for one object — a geostationary rocket body, say — usually
+     * matches no category, so with "Other Satellites" off (the default) it
+     * would load and show nothing. If none of the imported satellites is
+     * visible, turn "Other Satellites" on (a listened menu control, so the
+     * checkbox follows), and keep that only if it reveals one of them.
+     *
+     * @param {CTLEData} imported the data that was just loaded
+     */
+    revealImportedSatellites(imported) {
+        if (!this.showSatellites || this.showOtherSatellites) return;
+
+        const numbers = new Set(imported.satData.map(sat => sat.number));
+        const importedVisible = () =>
+            this.TLEData.satData.some(sat => sat.visible && numbers.has(sat.number));
+        if (numbers.size === 0 || importedVisible()) return;
+
+        this.showOtherSatellites = true;
+        this.filterSatellites();
+        if (!importedVisible()) {
+            // Starlink or ISS elements with their own category switched off:
+            // "Other Satellites" does not cover them, so leave it as it was.
+            this.showOtherSatellites = false;
+            this.filterSatellites();
+            return;
+        }
+        console.log('Turned on "Other Satellites" so the imported satellites are visible');
+        setRenderOne(true);
     }
 
     removeSatellites() {
@@ -1112,7 +1152,17 @@ export class CSatellite {
             }
 
             if (satData.ecefA !== null && satData.ecefB !== null) {
-                const velocity = satData.ecefB.clone().sub(satData.ecefA).multiplyScalar(1000 / (satData.timeB - satData.timeA)).length();
+                // The positions are Earth-fixed, so their difference is speed
+                // relative to the rotating Earth. The limits below are about
+                // ORBITAL (inertial) speed, so add the Earth's rotation back
+                // (omega x r, about the ECEF z axis). Without it a geostationary
+                // satellite, nearly still over the ground, reads a few hundred m/s
+                // and is rejected, though its orbital speed is about 3,075 m/s.
+                const dt = (satData.timeB - satData.timeA) / 1000;
+                const velocity = Math.hypot(
+                    (satData.ecefB.x - satData.ecefA.x) / dt - EARTH_ROTATION_RATE * satData.ecefA.y,
+                    (satData.ecefB.y - satData.ecefA.y) / dt + EARTH_ROTATION_RATE * satData.ecefA.x,
+                    (satData.ecefB.z - satData.ecefA.z) / dt);
 
                 if (velocity < 2500 || velocity > 11000) {
                     satData.invalidPosition = true;
@@ -1442,7 +1492,9 @@ export class CSatellite {
         // Use FileManager.parseResult to handle unzipping, parsing, and routing
         // The proxyStarlink returns zipped TLE data
         FileManager.remove(id);
-        FileManager.parseResult(id + ".tle", buffer, null)
+        // "downloaded": not a user import, so the satellite filters are left as
+        // they are (see handleParsedFile).
+        FileManager.parseResult(id + ".tle", buffer, null, {trackOptions: {downloaded: true}})
             .then(results => {
                 // parseResult returns an array of results
                 // Mark the files as dynamic links (not static URLs)

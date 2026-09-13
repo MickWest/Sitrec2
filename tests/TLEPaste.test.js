@@ -9,7 +9,7 @@
 
 import { strict as assert } from "assert";
 import * as satellite from "satellite.js";
-import { parsePastedTLE, tleChecksum } from "../src/TLEPaste";
+import { parsePastedTLE, tleChecksum } from "../src/TLEGrammar";
 
 // A real Starlink TLE, correctly formatted, checksums valid.
 const NAME_44713 = "STARLINK-1007";

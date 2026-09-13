@@ -753,12 +753,17 @@ export const parseMethods = {
 
             fileManagerEntry.isTLE = true;
 
+            // A TLE the user dropped or pasted in. A saved sitch reloading its
+            // files and a TLE refresh both pass a tleAction, and the Satellite
+            // menu's own downloads mark themselves as downloaded.
+            const revealImported = !trackOptions.tleAction && !trackOptions.downloaded;
+
             if (action === "merge" && hasExisting) {
                 fileManagerEntry.tleMerged = true;
-                nightSky.mergeTLE(parsedFile);
+                nightSky.mergeTLE(parsedFile, {revealImported});
             } else {
                 this.deleteIf(file => file.isTLE && file !== fileManagerEntry);
-                nightSky.replaceTLE(parsedFile);
+                nightSky.replaceTLE(parsedFile, {revealImported});
                 this._tleReplacedInBatch = true;
             }
             return true;
