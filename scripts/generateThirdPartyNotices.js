@@ -629,6 +629,7 @@ function collectNpmDeps(statsPath) {
         // harmless, since `bundled` is a Set.
         const COPIED_NOT_IMPORTED = [
             "@cornerstonejs/codec-openjpeg",   // libs/openjpeg — JPEG 2000 WASM decoder
+            "plotly.js-cartesian-dist-min",    // libs/plotly-cartesian-<version>.min.js — result charts
         ];
         for (const pkgName of COPIED_NOT_IMPORTED) bundled.add(pkgName);
 

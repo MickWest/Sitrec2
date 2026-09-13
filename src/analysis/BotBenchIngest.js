@@ -161,6 +161,30 @@ export function botBenchPairingKeys(relativePath = "", name = null) {
     };
 }
 
+/**
+ * Which subfolders of one folder a BOTBench walk leaves out, given all their names.
+ *
+ * The interchange layout keeps each scenario three times, side by side: Input/
+ * holds what an analyst is given, Truth/ the answer key, and All/ both in one
+ * file. A folder holding all three is that layout, and All/ alone carries every
+ * scenario once, with its truth. A walk that read Input/ too analysed every
+ * scenario twice: a run over 2,700 scenarios came back as 5,400 rows, and the
+ * Input half could never be scored. So Input/ and Truth/ are skipped there.
+ *
+ * meta/ is still walked, for the sidecars. A folder with only some of the three
+ * keeps all of them: an Input/ folder on its own is a challenge release, and with
+ * no All/ nothing stands in for it. Names match in any case.
+ *
+ * @param {string[]} folderNames  the names of the folder's subfolders
+ * @returns {Set<string>} the names to skip, spelled as given
+ */
+export function interchangeFoldersToSkip(folderNames) {
+    const byLower = new Map();
+    for (const name of folderNames ?? []) byLower.set(String(name).toLowerCase(), name);
+    if (!(byLower.has("all") && byLower.has("input") && byLower.has("truth"))) return new Set();
+    return new Set([byLower.get("input"), byLower.get("truth")]);
+}
+
 
 // ---------------------------------------------------------------------------
 // CSV
@@ -360,6 +384,7 @@ const PLATFORM_WORDS = {
     "straight": "straight line",
     "s-curve-toward": "S-turns, toward",
     "s-curve-perp": "S-turns, across",
+    "centered-turn": "straight, one turn, straight",
     "static": "stationary",
     "hover": "hovering",
 };
@@ -399,7 +424,9 @@ function describeScene(labels) {
         const words = PLATFORM_WORDS[p.kind] ?? String(p.kind);
         // Speed and altitude are read straight off the sensor columns by any
         // reader, so quoting them costs nothing and saves a lookup.
+        // The heading change is measurable from the same columns.
         const bits = [];
+        if (Number.isFinite(p.turnDeg)) bits.push(`turns ${p.turnDeg}°`);
         if (Number.isFinite(p.speedMS)) bits.push(`${Math.round(p.speedMS)} m/s`);
         if (Number.isFinite(p.altitudeAGL)) bits.push(`${Math.round(p.altitudeAGL)} m`);
         out.platformDescription = bits.length ? `${words}, ${bits.join(", ")}` : words;

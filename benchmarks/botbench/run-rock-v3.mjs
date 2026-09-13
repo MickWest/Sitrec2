@@ -11,10 +11,9 @@
  * lib/rockV3Batch.js and is deterministic per (spec, seed), so this driver's
  * output tree is byte-identical to a sequential run; only timing.json differs.
  *
- * Without --durations / --rungs the run is the whole set, and the existing
- * results/rock_v3/ is removed first; if that delete cannot complete the run
- * stops rather than write into a half-deleted tree. With a filter, only the
- * requested folders are rewritten. After every run the master manifest.json is
+ * Without --durations / --rungs the run is the whole set: the existing
+ * results/rock_v3/ is renamed aside and deleted, and the set is written into a
+ * new, empty folder. With a filter, only the requested folders are rewritten. After every run the master manifest.json is
  * rebuilt from what is ON DISK: every folder present, its track count, and the
  * definition hash its rows were written under, with any folder from an older
  * definition flagged stale and `complete` false. timing.json records the last
@@ -126,23 +125,28 @@ async function main() {
         + `concurrency ${conc2}, worker bundle in ${buildMs} ms`);
 
     const setDir = path.join(RESULTS, AXES.dirName);
-    if (!partial && !keep) {
-        // A full run starts from a clean slate. A recursive delete under a
-        // syncing folder (Dropbox) can fail with ENOTEMPTY while the sync
-        // client re-creates entries it is still indexing, so retry with
-        // growing waits. If the tree still stands after that, STOP: a run
-        // that carried on would overwrite the fixed names and leave any file
-        // the definition no longer has, and the result would look complete.
+    if (!partial && !keep && fs.existsSync(setDir)) {
+        // A full run starts from a clean slate. Deleting the old tree where it
+        // stands fails under a syncing folder: the sync client, and the
+        // .DS_Store files an open Finder window writes, re-create entries while
+        // the delete runs, and it stops with ENOTEMPTY (on 2026-09-13 it stopped
+        // with 270,000 files left after every retry). So the old tree is first
+        // renamed aside, one atomic step that fails before anything is written,
+        // and the set goes into a new folder that nothing else has open. The
+        // renamed tree is then deleted with retries; if it still stands, the run
+        // says where it is and carries on, since it is no longer part of the set.
+        const aside = `${setDir}.old-${process.pid}`;
+        fs.renameSync(setDir, aside);
         let lastError = null;
-        for (let attempt = 1; attempt <= 6 && fs.existsSync(setDir); attempt++) {
-            try { fs.rmSync(setDir, {recursive: true, force: true}); } catch (e) {
+        for (let attempt = 1; attempt <= 6 && fs.existsSync(aside); attempt++) {
+            try { fs.rmSync(aside, {recursive: true, force: true}); } catch (e) {
                 lastError = e;
                 await new Promise((r) => setTimeout(r, 500 * attempt));
             }
         }
-        if (fs.existsSync(setDir)) {
-            throw new Error(`[rock_v3] could not remove ${setDir} (${lastError?.code ?? "still present"}); `
-                + `wait for the folder to go quiet and run again, or pass --keep to overwrite in place`);
+        if (fs.existsSync(aside)) {
+            console.warn(`[rock_v3] the previous tree is renamed to ${aside} but could not be deleted `
+                + `(${lastError?.code ?? "still present"}); delete it once the folder is quiet`);
         }
     }
     fs.mkdirSync(setDir, {recursive: true});
@@ -206,6 +210,11 @@ async function main() {
     const staleFolders = folders.filter((f) => f.stale).map((f) => `${f.batch}/${f.rung}`);
     const incomplete = folders.filter((f) => !f.complete).map((f) => `${f.batch}/${f.rung}`);
     const complete = folders.length === expectedFolders && incomplete.length === 0;
+    const tracks = rockTrackTable();
+    // How many tracks of each class fly each turn level: 25 of 100 at every level.
+    const tracksPerTurnLevel = Object.fromEntries(DATASET.platform.turnLevelsDeg.map((turnDeg) => [turnDeg,
+        Object.fromEntries(DATASET.classes.map((c) => [c,
+            tracks.filter((r) => r.class === c && r.platform.turnDeg === turnDeg).length]))]));
     const master = {
         dataset: DATASET.name,
         writtenAt: timing.generatedAt, ...provenance,
@@ -230,17 +239,28 @@ async function main() {
         design: {
             fps: DATASET.fps, fovFullDeg: DATASET.fovFullDeg, epochISO: DATASET.epochISO,
             errorLadderDeg: AXES.errorLabels.map((l) => parseFloat(l)),
-            platform: {...DATASET.platform, kind: "racetrack",
-                note: "level flight on a standard holding pattern, entered at a random point; the target starts due north at the drawn horizontal range"},
+            platform: {...DATASET.platform, kind: "centered-turn",
+                note: "level flight: straight for the first quarter of the clip, one constant-rate turn through the "
+                    + "track's turn level over the middle half, straight for the last quarter, so a track flies the "
+                    + "same shape at every clip length; one path per track number, turn level included, shared by "
+                    + "the three classes; within each turn level the start headings are spread evenly around the "
+                    + "first sightline and neighbouring headings turn opposite ways; the target starts due north at "
+                    + "the drawn horizontal range"},
+            tracksPerTurnLevel,
             rangeM: DATASET.rangeM,
             classes: {
                 balloon: "party balloon, vertical rate -1.5 to +3.5 m/s, start height 150 to 3000 m, uniform wind 0 to 15 m/s",
                 drone: "small fixed-wing drone on a racetrack, circle or square ground track, 15 to 30 m/s, 80 to 1200 m, turn radius from a 40 degree bank floor to 400 m",
                 weather_balloon: "random segment of a sounding-balloon release: start height 300 m to 26 km, rise 4.2 to 6 m/s, sheared and veering wind 4 to 30 m/s",
             },
-            nesting: "every track's spec is identical across clip lengths except durationSeconds, and the flights are deterministic, so a shorter clip is the first part of the longer one",
+            nesting: "every track's spec is identical across clip lengths except durationSeconds and the observation "
+                + "section, and the target flights are deterministic, so a shorter clip's target truth is the first "
+                + "part of the longer one; a turning sensor path is not, because a longer clip flies the same shape "
+                + "larger; each track draws one operator wobble per rung, shared by every clip length",
+            firstVersion: "the targets, ranges, winds and wobble draws are those of the first rock_v3 (definition "
+                + "b9c49c0c), which flew a holding pattern entered at a random point; only the sensor path changed",
         },
-        tracks: rockTrackTable(),
+        tracks,
     };
     fs.writeFileSync(path.join(setDir, "manifest.json"), JSON.stringify(master, null, 2));
 

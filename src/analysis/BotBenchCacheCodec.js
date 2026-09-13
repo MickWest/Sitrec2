@@ -121,6 +121,30 @@ export function packForCache(value, path = "$") {
     return out;
 }
 
+/**
+ * Whether a freshly fitted result row is the row a cache already holds.
+ *
+ * A fit is deterministic with one exception: `elapsedMs`, the wall-clock time the
+ * fit took, is different every time. So that one field is taken from the stored
+ * row before comparing, and every other field must match exactly. Comparing it
+ * too made every such check fail: the probe that decides whether an earlier
+ * build's fits can be reused never matched once, so every rebuild re-fitted every
+ * file.
+ *
+ * Compared through this codec, so NaN and Infinity are seen as themselves and not
+ * as the null that plain JSON.stringify would turn them into.
+ *
+ * @param row        a row as the analysis returns it, not packed
+ * @param storedRow  a row as the cache stores it, packed
+ */
+export function sameFittedRow(row, storedRow) {
+    if (!row || !storedRow || typeof storedRow !== "object") return false;
+    // Spread keeps elapsedMs where it was in the row, so the key order still matches.
+    const aligned = "elapsedMs" in storedRow
+        ? {...row, elapsedMs: unpackFromCache(storedRow.elapsedMs)} : row;
+    return JSON.stringify(packForCache(aligned)) === JSON.stringify(storedRow);
+}
+
 /** The inverse of packForCache. */
 export function unpackFromCache(value) {
     if (value === null || typeof value !== "object") return value;

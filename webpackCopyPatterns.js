@@ -215,6 +215,19 @@ patterns.push({
     to: './libs/jsfeat.js'
 });
 
+// Copy Plotly for the result charts; src/analysis/charts/PlotlyLoader.js loads it.
+// The name carries Plotly's version and nothing from the build. A webpack chunk is
+// renamed on every build and the old file deleted, so a page left open across a
+// rebuild could no longer load its charts; this name survives a rebuild, and only a
+// Plotly upgrade changes it. tests/PlotlyLoader.test.js holds this name and the
+// loader's together. Uses require.resolve, which follows a symlinked node_modules.
+const plotlyMain = require.resolve('plotly.js-cartesian-dist-min');
+const plotlyVersion = require(path.join(path.dirname(plotlyMain), 'package.json')).version;
+patterns.push({
+    from: plotlyMain,
+    to: `./libs/plotly-cartesian-${plotlyVersion}.min.js`
+});
+
 // Copy MediabunnyExporter for tools/flowgen.html
 patterns.push({
     from: './src/MediabunnyExporter.js',

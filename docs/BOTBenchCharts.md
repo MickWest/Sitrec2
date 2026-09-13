@@ -19,20 +19,43 @@ pipeline writes. Each line carries the analysis result together with the
 generation-side inputs it is being judged against, so the charts can group by
 target class, clip length and pointing-error rung.
 
-**Open it from a finished BOTBench run.** The rows are adapted from the run in
-memory. A little less is available this way, because the offline pipeline joins
-against the scenario generator's manifest and the app only has the file, its
-result and its truth sidecar. A figure that needs a field that is missing simply
-leaves those rows out rather than drawing something wrong.
+**Open it from a finished BOTBench run** with the **Charts** button. The rows are
+built from the run itself: the clip length, the target class, the class outcome
+and the parallax aperture all come from the analysis and the file name, so no
+sidecar is needed for them.
+
+The one thing that does need a sidecar is the pointing error. It is declared in
+the scenario sidecar, and the analysed CSV does not carry it. In the interchange
+layout the sidecars sit in a `meta` folder beside `All`, so choosing `All` on its
+own leaves them behind. The charts still draw, and say the pointing error is
+unstated. Choose the folder above `All`, with Recursive on, to pair them.
 
 ## The figures
 
+Which figures appear depends on the rows. A run over one folder is a single cell,
+one clip length at one pointing error, so it is compared across target classes.
+A set that spans several rungs or clip lengths is compared along them instead, and
+never pooled into a by-class figure that would mix its rungs together.
+
+A figure with one panel per clip length uses the lengths it was designed around
+(20 s and 120 s) when the set has them, and otherwise the lengths the set does
+have. So a sweep of the pointing-error ladder at one clip length still gets its
+rung figures. The figures that compare clip lengths need at least two.
+
 | Figure | What it shows |
 |---|---|
+| Error by target class | One cell: the blind top candidate's error, one box per target class |
+| Within tolerance, by target class | One cell: the share inside 5% and 1% of true range, with exact 95% intervals |
+| What the verdict says, by target class | One cell: true class viable, only other classes viable, or nothing viable |
+| Verdict code, by target class | One cell: the executive verdict mix per class |
+| First-ranked hypothesis, by target class | One cell: which hypothesis family the ranking placed first |
 | Error by clip length | The blind top candidate's error against clip length, one panel per target class and pointing-error rung |
 | Error by pointing error | The same error against the pointing-error ladder, one panel per class and clip length |
+| Error by clip length, per sensor turn | Median error against clip length, one line per sensor-turn level, with quartile bars. A flat line means a longer clip does not help at that amount of turn |
+| Error by sensor turn, per clip length | The same medians against the turn level, one line per clip length |
 | Within tolerance, by length | Share of tracks inside 5% and 1% of true range, against clip length, with exact 95% intervals |
 | Within tolerance, by pointing error | The same shares against the pointing-error rung |
+| Error by solver | Every candidate's error against truth, one box per solver, for each class and pointing-error rung, whether or not the ranking chose it |
 | Error against geometry | Error against parallax aperture and against true range, with a median trend line over equal-count bins |
 | What the verdict says about the class | True class viable, only other classes viable, or nothing viable |
 | Verdict code | The executive verdict by rung, ordered by how far it narrows the answer |
@@ -41,6 +64,35 @@ leaves those rows out rather than drawing something wrong.
 
 Every figure carries its own caption, and every number in that caption is
 computed from the rows on screen rather than written in by hand.
+
+Every error/range axis is labelled in powers of ten, one label per decade.
+
+Hovering a dot that stands for one track names the track. When the run made a
+scenario screenshot for it (**Scenario screenshots** in BOTBench), the screenshot
+shows beside the label. Rows loaded from a JSONL file have no screenshots.
+
+Two choices above the figure apply to every error figure at once:
+
+- **Candidate** picks whose error is plotted: the candidate the blind ranking put
+  first (the default), the candidate closest to truth, which is an oracle pick, or
+  any one solver's candidate on every track.
+- **Error** picks the unit: the mean 3D error as a share of the mean true range (the
+  default), the same distance in metres, or the mean angle between the candidate and
+  the truth as seen from the sensor.
+
+The tolerance figures always use a share of range, for the chosen candidate. The
+solver figure already shows every candidate, so only the unit applies to it. The
+cost of blind ranking compares the chosen candidate with the best one, so it is not
+drawn when the best candidate is the choice. A solver's own error and the angle come
+from the candidate lists a BOTBench run keeps, so rows loaded from a JSONL file offer
+the top and best candidates only, and no angle.
+
+**Turn level** appears above the figure when the rows hold more than one
+sensor-turn level, as rock_v3 does. Choosing one level limits every figure to it,
+and the figure's title and exported file name say which level it shows. The two
+sensor-turn figures always use every level, since comparing the levels is their
+purpose. A row's level comes from its answer key, so rows loaded from a JSONL file
+have none.
 
 ## How to read a box
 
@@ -116,8 +168,9 @@ in-app export. **Prefer the in-app export unless a script has to do the work.**
 |---|---|
 | `src/analysis/charts/ChartStats.js` | The statistics: quantiles, box statistics, Clopper-Pearson intervals, equal-count binning. No charting library, no DOM. |
 | `src/analysis/charts/RockV3ChartSpecs.js` | Each figure as a plain specification object. No charting library import. |
-| `src/analysis/charts/PlotlyLoader.js` | Fetches the charting library on first use, so nothing is downloaded until a chart is opened. |
-| `src/analysis/charts/RockV3ChartsUI.js` | The window, the data adapters and the export buttons. |
+| `src/analysis/charts/PlotlyLoader.js` | Loads the charting library from `libs/` on first use, so nothing is downloaded until a chart is opened. |
+| `src/analysis/charts/BotBenchChartRows.js` | Builds chart rows from a finished run or a JSONL file, including the parallax aperture measured from the run's own positions. No DOM. |
+| `src/analysis/charts/RockV3ChartsUI.js` | The window and the export buttons. |
 | `benchmarks/botbench/render-charts.mjs` | The command-line renderer. |
 
 The specifications are plain data with no library import, which is what lets the
@@ -126,7 +179,10 @@ definition.
 
 The charting library is loaded on demand as its own download of about 1.5 MB. It
 is not part of the main application bundle, so a session that never opens a
-chart never pays for it.
+chart never pays for it. The build copies it to `libs/plotly-cartesian-<version>.min.js`,
+a name that carries only the library's version. So a page that was already open
+when Sitrec was rebuilt or updated can still open its charts; only an upgrade of
+the charting library changes the name.
 
 ## Checking the numbers
 

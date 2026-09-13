@@ -1,22 +1,30 @@
 /**
  * rockV3.test.js — the rock_v3 dataset definition (benchmarks/botbench/lib/rockV3.js)
- * and the two generator pieces it added: the "racetrack" platform kind and the
- * fixed-wing drone patterns.
+ * and the generator pieces it uses: the "centered-turn" platform kind, the
+ * "racetrack" kind the first version flew, and the fixed-wing drone patterns.
  *
- * Pins the properties the set is built on: a track's random draws depend on
- * its name alone (so every batch and rung is the same flight), the flights are
- * deterministic and a shorter clip is the first part of a longer one, the
- * drone loops close and run at constant speed, and the holding pattern is
- * feasible at the bank cap.
+ * Pins the properties the set is built on: a track's target depends on its name
+ * alone and is the target of the first version; its sensor path, turn level
+ * included, depends on its number alone; 25 tracks of every class fly each of the
+ * four turn levels, with start headings spread evenly and turn directions
+ * balanced; a track turns by exactly its level, as the same shape at every clip
+ * length; the target flights are deterministic, so a shorter clip's truth is the
+ * first part of a longer one; and one operator wobble per rung is shared by every
+ * clip length.
  */
 
 import {setSit} from "../../src/Globals";
 import {generateScenario} from "../../benchmarks/botbench/lib/generateScenario";
-import {generatePlatformPath, racetrackSchedule, racetrackState, racetrackTurnFraction}
-    from "../../benchmarks/botbench/lib/platforms";
+import {
+    generatePlatformPath, racetrackSchedule, racetrackState, racetrackTurnFraction,
+    centeredTurnSchedule, centeredTurnState,
+} from "../../benchmarks/botbench/lib/platforms";
 import {generateDroneTruth, dronePatternGeometry} from "../../benchmarks/botbench/lib/rockTargets";
-import {ROCK_V3, ROCK_V3_ERROR_LEVELS, rockBasename, rockDraws, rockSpec, rockTrackTable, rockDefinitionHash}
-    from "../../benchmarks/botbench/lib/rockV3";
+import {
+    ROCK_V3, ROCK_V3_ERROR_LEVELS, rockBasename, rockDraws, rockPlatform, rockSpec, rockTrackTable,
+    rockDefinitionHash,
+} from "../../benchmarks/botbench/lib/rockV3";
+import {measuredHeadingChange} from "../../benchmarks/botbench/lib/rockV3Batch";
 import {windConfigFor, makeWind} from "../../benchmarks/botbench/lib/wind";
 
 beforeAll(() => {
@@ -25,6 +33,7 @@ beforeAll(() => {
 
 const CLEAN = ROCK_V3_ERROR_LEVELS.find((e) => e.label === "0.0deg");
 const times = (n, fps) => Float64Array.from({length: n}, (_, f) => f / fps);
+const TRACK_NUMBERS = Array.from({length: 100}, (_, i) => i + 1);
 
 describe("racetrack platform", () => {
     const spec = {kind: "racetrack", speedMS: 100, altitudeAGL: 5000, bankDeg: 25,
@@ -64,6 +73,69 @@ describe("racetrack platform", () => {
         expect(both).toBeGreaterThan(0);
         expect(both).toBeLessThan(1);
         expect(racetrackTurnFraction(spec, 300)).toBeGreaterThan(0.3);                  // most of a pattern
+    });
+});
+
+describe("centered-turn platform", () => {
+    const R = 9000;
+    const spec = {kind: "centered-turn", speedMS: 110, altitudeAGL: 5000, headingDeg: 30, turnDeg: 20, turnDir: 1,
+        turnStartFraction: 0.25, turnEndFraction: 0.75};
+    const fly = (s, seconds) => {
+        const n = seconds * 10 + 1;
+        return {n, path: generatePlatformPath(s, n, times(n, 10), 10, R)};
+    };
+
+    test("straight, one turn through exactly the level, straight", () => {
+        const {n, path} = fly(spec, 120);
+        const m = measuredHeadingChange(path.positionENU, n);
+        expect(m.totalDeg).toBeCloseTo(20, 6);
+        expect(m.netDeg).toBeCloseTo(20, 6);
+        // the chord heading moves across the middle half, plus a half step at each end
+        expect(m.changedChords).toBe((n - 1) / 2 + 1);
+        const left = fly({...spec, turnDir: -1}, 120).path.positionENU;
+        expect(measuredHeadingChange(left, n).netDeg).toBeCloseTo(-20, 6);
+        expect(centeredTurnState(spec, 120, 10).segment).toBe("before");
+        expect(centeredTurnState(spec, 120, 60).segment).toBe("turn");
+        expect(centeredTurnState(spec, 120, 100).headingRad).toBeCloseTo(50 * Math.PI / 180, 12);
+    });
+
+    test("starts at [0, -R], level, constant speed, and feasible at the tightest turn in the set", () => {
+        // 20 degrees in the middle 10 s of a 20 s clip at the top speed
+        const fast = {...spec, speedMS: 120};
+        const {n, path} = fly(fast, 20);
+        const p = path.positionENU;
+        expect(path.feasibility.valid).toBe(true);
+        expect(p[0]).toBe(0);
+        expect(p[1]).toBe(-R);
+        for (let f = 0; f < n; f++) expect(p[f * 3 + 2]).toBe(5000);
+        for (let f = 1; f < n; f++) {
+            const chord = Math.hypot(p[f * 3] - p[(f - 1) * 3], p[f * 3 + 1] - p[(f - 1) * 3 + 1]);
+            expect(Math.abs(chord - 12)).toBeLessThan(1e-3);
+        }
+        expect(centeredTurnSchedule(fast, 20).bankRad * 180 / Math.PI).toBeCloseTo(23.1, 1);
+    });
+
+    test("a longer clip flies the same shape, enlarged", () => {
+        const short = fly(spec, 20).path.positionENU;
+        const long = fly(spec, 300).path.positionENU;
+        for (let f = 0; f <= 200; f++) {
+            expect(long[f * 15 * 3]).toBeCloseTo(15 * short[f * 3], 6);
+            expect(long[f * 15 * 3 + 1] + R).toBeCloseTo(15 * (short[f * 3 + 1] + R), 6);
+        }
+        expect(measuredHeadingChange(long, 3001).totalDeg).toBeCloseTo(20, 6);
+    });
+
+    test("no turn is a straight line, and a left turn mirrors a right turn", () => {
+        const flat = fly({...spec, turnDeg: 0}, 60);
+        expect(measuredHeadingChange(flat.path.positionENU, flat.n).totalDeg).toBeLessThan(1e-6);
+        expect(measuredHeadingChange(flat.path.positionENU, flat.n).changedChords).toBe(0);
+        const north = {...spec, headingDeg: 0};
+        const right = fly(north, 60).path.positionENU;
+        const left = fly({...north, turnDir: -1}, 60).path.positionENU;
+        for (let f = 0; f < flat.n; f++) {
+            expect(left[f * 3]).toBeCloseTo(-right[f * 3], 6);
+            expect(left[f * 3 + 1]).toBeCloseTo(right[f * 3 + 1], 6);
+        }
     });
 });
 
@@ -130,25 +202,66 @@ describe("rock_v3 definition", () => {
         expect(rockBasename(ROCK_V3.classes[2], 100)).toBe("weather_balloon_100");
     });
 
-    test("draws depend on the name alone: same spec at every length and rung", () => {
+    test("the targets are those of the first version of the set", () => {
+        // Values from that version's master manifest (definition b9c49c0c). Its
+        // holding-pattern draws are still taken, so every later draw lands where it did.
+        const balloon = rockDraws("balloon", 17);
+        expect(balloon.rangeM).toBe(23755);
+        expect(balloon.target.parameters).toEqual({startAGL: 1267, ascentRate: 3.47});
+        expect(balloon.wind).toEqual({kind: "custom", u: 0.224, v: 14.288, variabilityPct: 0});
+        const drone = rockDraws("drone", 5);
+        expect(drone.rangeM).toBe(1354);
+        expect(drone.target.kind).toBe("drone-circle");
+        expect(drone.target.parameters).toMatchObject({speedMS: 26.3, radiusM: 206, headingDeg: 50.9,
+            phaseFraction: 0.5749, turnDir: -1});
+        const weather = rockDraws("weather_balloon", 100);
+        expect(weather.rangeM).toBe(39447);
+        expect(weather.target.parameters).toEqual({startAGL: 11541, ascentRate: 5.57});
+        expect(weather.wind).toMatchObject({shearPerM: 0.0001926, veerDeg: 27.1});
+    });
+
+    test("one sensor path per track number, turn level included, shared by the three classes", () => {
+        for (const index of [1, 17, 100]) {
+            const paths = ROCK_V3.classes.map((c) => rockDraws(c.key, index).platform);
+            expect(paths[1]).toEqual(paths[0]);
+            expect(paths[2]).toEqual(paths[0]);
+            expect(paths[0].kind).toBe("centered-turn");
+        }
+        expect(rockPlatform(3).platform).not.toEqual(rockPlatform(4).platform);
+    });
+
+    test("four turn levels, flown by 25 tracks of every class each", () => {
+        expect(ROCK_V3.platform.turnLevelsDeg).toEqual([0, 5, 10, 20]);
         for (const cls of ROCK_V3.classes) {
-            const a = rockSpec(cls.key, 17, 20, CLEAN).spec;
-            const b = rockSpec(cls.key, 17, 300, ROCK_V3_ERROR_LEVELS[5]).spec;
-            const strip = (s) => ({...s, durationSeconds: null, observation: null});
-            expect(strip(a)).toEqual(strip(b));
-            expect(rockDraws(cls.key, 17)).toEqual(rockDraws(cls.key, 17));
-            expect(rockDraws(cls.key, 17).rangeM).not.toBe(rockDraws(cls.key, 18).rangeM);
+            const levels = TRACK_NUMBERS.map((i) => rockDraws(cls.key, i).platform.turnDeg);
+            for (const turnDeg of ROCK_V3.platform.turnLevelsDeg) {
+                expect([cls.key, turnDeg, levels.filter((t) => t === turnDeg).length]).toEqual([cls.key, turnDeg, 25]);
+            }
+        }
+    });
+
+    test("in each turn level the start headings cover the circle evenly and the turn directions alternate", () => {
+        const platforms = TRACK_NUMBERS.map((i) => rockPlatform(i).platform);
+        expect(platforms.filter((p) => p.turnDir === 1)).toHaveLength(50);
+        for (const turnDeg of ROCK_V3.platform.turnLevelsDeg) {
+            const level = platforms.filter((p) => p.turnDeg === turnDeg).sort((a, b) => a.headingDeg - b.headingDeg);
+            // one start heading in every 14.4 degree span of the circle
+            expect(new Set(level.map((p) => Math.floor(p.headingDeg / 14.4))).size).toBe(25);
+            // neighbouring headings turn opposite ways
+            for (let k = 1; k < level.length; k++) expect(level[k].turnDir).toBe(-level[k - 1].turnDir);
         }
     });
 
     test("draws stay inside their declared ranges", () => {
         for (const cls of ROCK_V3.classes) {
-            for (let i = 1; i <= 100; i++) {
+            for (const i of TRACK_NUMBERS) {
                 const d = rockDraws(cls.key, i);
                 expect(d.platform.altitudeAGL).toBeGreaterThanOrEqual(15000 * 0.3048 - 1);
                 expect(d.platform.altitudeAGL).toBeLessThanOrEqual(20000 * 0.3048 + 1);
                 expect(d.platform.speedMS).toBeGreaterThanOrEqual(95);
                 expect(d.platform.speedMS).toBeLessThanOrEqual(120);
+                expect(d.platform.headingDeg).toBeGreaterThanOrEqual(0);
+                expect(d.platform.headingDeg).toBeLessThan(360);
                 const [lo, hi] = ROCK_V3.rangeM[cls.key];
                 expect(d.rangeM).toBeGreaterThanOrEqual(lo);
                 expect(d.rangeM).toBeLessThanOrEqual(hi);
@@ -162,20 +275,43 @@ describe("rock_v3 definition", () => {
                 }
             }
         }
+        // the tightest turn in the set, 20 degrees in 10 s, stays well inside the generator's bank limit
+        for (const i of TRACK_NUMBERS) {
+            const s = centeredTurnSchedule({...rockPlatform(i).platform, turnDeg: 20}, 20);
+            expect(s.bankRad * 180 / Math.PI).toBeLessThan(23.2);
+        }
     });
 
-    test.each(ROCK_V3.classes.map((c) => c.key))("%s: one scenario per class generates clean, starts at the origin, and nests 20 s inside 60 s", (clsKey) => {
-        const s20 = generateScenario(rockSpec(clsKey, 5, 20, CLEAN).spec, {scenarioSeed: ROCK_V3.seed});
-        const s60 = generateScenario(rockSpec(clsKey, 5, 60, CLEAN).spec, {scenarioSeed: ROCK_V3.seed});
+    test("a spec differs across lengths and rungs only in the duration and the observation", () => {
+        for (const cls of ROCK_V3.classes) {
+            const a = rockSpec(cls.key, 17, 20, CLEAN).spec;
+            const b = rockSpec(cls.key, 17, 300, ROCK_V3_ERROR_LEVELS[5]).spec;
+            const strip = (s) => ({...s, durationSeconds: null, observation: null});
+            expect(strip(a)).toEqual(strip(b));
+        }
+    });
+
+    test.each(ROCK_V3.classes.map((c) => c.key))("%s: generates clean, turns by its level, and its target truth nests while the sensor path scales", (clsKey) => {
+        const index = TRACK_NUMBERS.find((i) => rockPlatform(i).platform.turnDeg === 10);
+        const make = (seconds, platformChange = {}) => {
+            const {spec} = rockSpec(clsKey, index, seconds, CLEAN);
+            return generateScenario({...spec, platform: {...spec.platform, ...platformChange}}, {scenarioSeed: ROCK_V3.seed});
+        };
+        const s20 = make(20), s60 = make(60), straight20 = make(20, {turnDeg: 0});
         expect(s20.events).toHaveLength(0);
         expect(s20.observation.outOfFrameCount).toBe(0);
         expect(s20.platform.feasibility.valid).toBe(true);
         expect(Math.hypot(s20.target.positionENU[0], s20.target.positionENU[1])).toBeLessThan(1e-6);
         expect(s20.platform.positionENU[1]).toBeCloseTo(-s20.spec.initialHorizontalRangeM, 6);
-        // the shorter clip is the first part of the longer one: truth AND sensor
+        expect(measuredHeadingChange(s20.platform.positionENU, s20.n).totalDeg).toBeCloseTo(10, 6);
+        expect(measuredHeadingChange(s60.platform.positionENU, s60.n).totalDeg).toBeCloseTo(10, 6);
+        // the target does not depend on the sensor path ...
+        expect(Array.from(straight20.target.positionENU)).toEqual(Array.from(s20.target.positionENU));
+        // ... and a shorter clip's target truth is the first part of a longer one
         const n = s20.n;
         expect(Array.from(s60.target.positionENU.subarray(0, n * 3))).toEqual(Array.from(s20.target.positionENU));
-        expect(Array.from(s60.platform.positionENU.subarray(0, n * 3))).toEqual(Array.from(s20.platform.positionENU));
+        // a turning sensor path does not nest: the longer clip flies the same shape, larger
+        expect(Array.from(s60.platform.positionENU.subarray(0, n * 3))).not.toEqual(Array.from(s20.platform.positionENU));
         expect(s20.scenarioId).not.toBe(s60.scenarioId);
     });
 
@@ -190,14 +326,15 @@ describe("rock_v3 definition", () => {
 
     test("the wobble draw is shared across clip lengths and differs across rungs and tracks", () => {
         const r5 = ROCK_V3_ERROR_LEVELS[5], r6 = ROCK_V3_ERROR_LEVELS[6];
-        const s20 = generateScenario(rockSpec("drone", 3, 20, r5).spec, {scenarioSeed: ROCK_V3.seed});
-        const s60 = generateScenario(rockSpec("drone", 3, 60, r5).spec, {scenarioSeed: ROCK_V3.seed});
+        const make = (index, seconds, level) => generateScenario(rockSpec("drone", index, seconds, level).spec,
+            {scenarioSeed: ROCK_V3.seed});
+        const s20 = make(3, 20, r5), s60 = make(3, 60, r5);
         const n = s20.n;
-        expect(Array.from(s60.observation.observedDirectionENU.subarray(0, n * 3)))
-            .toEqual(Array.from(s20.observation.observedDirectionENU));
-        const other = generateScenario(rockSpec("drone", 3, 20, r6).spec, {scenarioSeed: ROCK_V3.seed});
-        const otherTrack = generateScenario(rockSpec("drone", 4, 20, r5).spec, {scenarioSeed: ROCK_V3.seed});
-        expect(other.observation.realizedRmsDegAllFrames).not.toBe(s20.observation.realizedRmsDegAllFrames);
-        expect(Array.from(otherTrack.observation.observedDirectionENU)).not.toEqual(Array.from(s20.observation.observedDirectionENU));
+        expect(Array.from(s60.observation.tangentErrorDeg.subarray(0, n * 2)))
+            .toEqual(Array.from(s20.observation.tangentErrorDeg));
+        const otherRung = make(3, 20, r6);
+        const otherTrack = make(4, 20, r5);
+        expect(otherRung.observation.realizedRmsDegAllFrames).not.toBe(s20.observation.realizedRmsDegAllFrames);
+        expect(Array.from(otherTrack.observation.tangentErrorDeg)).not.toEqual(Array.from(s20.observation.tangentErrorDeg));
     });
 });

@@ -234,30 +234,59 @@ The three classes, 100 tracks each:
 | `drone_NNN` | a small fixed-wing drone flying a racetrack, a circle or a square as a ground track at 15 to 30 m/s, 80 m to 1.2 km up, turn radius from a 40 degree bank floor to 400 m |
 | `weather_balloon_NNN` | a random segment of a sounding-balloon release: the clip starts 300 m to 26 km up, rising 4.2 to 6 m/s through a sheared, veering wind of 4 to 30 m/s |
 
-The platform is the same for every class: level flight between 15,000 and
-20,000 ft above the ground at 95 to 120 m/s, on a standard holding pattern
-(1.5 minute legs, 25 degree bank, right-hand seven times in ten), entered at a
-random point of the pattern. A 20 s clip is therefore a straight leg, a turn,
-or both, and a 300 s clip is most of a pattern. The target starts due north of
-the platform at a random horizontal range drawn per class (party balloons 1.5
-to 25 km, drones 1 to 12 km, weather balloons 4 to 40 km, log-uniform). The
-folder manifest records, for every track, the slant range at frame 0 and its
-clip mean, the depression angle, the parallax aperture, the pattern segment
-the clip starts and ends in, and the fraction of the clip spent turning.
+The platform flies level between 15,000 and 20,000 ft above the ground at 95
+to 120 m/s. Its path is straight for the first quarter of the clip, turns at a
+constant rate through the track's turn level over the middle half, and is
+straight again for the last quarter. Every track has one of four turn levels,
+0, 5, 10 or 20 degrees of heading change, and in each class 25 tracks fly each
+level. The level belongs to the track, so a track turns by the same amount at
+every clip length and rung. The shape is set as a share of the clip, so a
+300 s clip flies the same shape as a 20 s clip, fifteen times larger, and the
+heading change does not grow with the clip length. The tightest turn, 20
+degrees in the middle 10 s of a 20 s clip, needs a 23 degree bank at 120 m/s;
+the same turn over a 300 s clip needs less than 2 degrees. The target starts
+due north of the platform at a random horizontal range drawn per class (party
+balloons 1.5 to 25 km, drones 1 to 12 km, weather balloons 4 to 40 km,
+log-uniform).
 
-Every random number is a function of the track's name alone, so `balloon_017`
-is the same flight in every batch folder and at every rung. A longer batch is
-the same flight observed for longer: the shorter batch's rows, truth, sensor
-and observed sightlines alike, are the first rows of the longer batch's,
-because the flights carry no gusts and each track draws one operator wobble
-per rung that every clip length shares. A higher rung is the same flight
-observed through a worse operator (the ladder in `lib/botsetErrors.js`, one
-3 degree field of view for the whole set, widened only where a rung needs it),
-with its own wobble draw. The set uses its own scenario seed (805), the site
-`central-valley`, 10 Hz, and the v1.2 interchange files with both sidecars in
-`meta/`. The design lives in `lib/rockV3.js`; the holding-pattern platform is
-the `racetrack` kind in `lib/platforms.js`, and the drone patterns are
-`lib/rockTargets.js`.
+The turn level is a factor of its own because a sensor that flies straight at
+constant speed cannot fix the range of a target that moves at constant
+velocity. The first version of this set flew a holding pattern entered at a
+random point, so the clip length decided how far the sensor turned, and a
+longer clip was also a clip with more turn in it. Here a track keeps its turn
+level at every clip length, so the two can be told apart. Each cell of class,
+clip length, rung and turn level holds 25 tracks.
+
+Each track number has one sensor path, turn level included, which the three
+classes share: `balloon_017`, `drone_017` and `weather_balloon_017` fly the same
+path at the same height and speed. Within each turn level the start headings
+are spread evenly around the first sightline, one in every 14.4 degrees, and
+neighbouring headings turn in opposite directions, so turning toward and away
+from the target are balanced. The folder manifest records each track's turn
+level (`turnDeg`).
+
+A longer clip still covers more ground, so at one turn level its path departs
+further from straight flight as the target sees it. The folder manifest records
+that beside the other geometry for every track: the slant range at frame 0 and
+its clip mean, the depression angle, the parallax aperture, the measured heading
+change, the turn rate, bank and radius, how far the sensor flew for each metre
+of mean range (`pathOverRange`), and the RMS distance of the sensor from its
+best-fitting constant-velocity line, perpendicular to the sightline, over the
+mean range (`maneuverStrengthDeg`). Read those beside the error.
+
+Every target number is a function of the track's name alone, so `balloon_017`
+is the same target in every folder, and the targets, ranges and winds are those
+of the first version of the set. The target flights carry no gusts, so a
+shorter clip's target truth is the first part of a longer clip's, row for row.
+A turning sensor path does not nest that way, because a longer clip flies the
+same shape larger. Each track draws one operator wobble per rung, which every
+clip length shares. A higher rung is the same flight observed through
+a worse operator (the ladder in `lib/botsetErrors.js`, one 3 degree field of
+view for the whole set, widened only where a rung needs it), with its own wobble
+draw. The set uses its own scenario seed (805), the site `central-valley`,
+10 Hz, and the v1.2 interchange files with both sidecars in `meta/`. The design
+lives in `lib/rockV3.js`; the platform is the `centered-turn` kind in
+`lib/platforms.js`, and the drone patterns are `lib/rockTargets.js`.
 
 ## Sealed releases
 

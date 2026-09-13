@@ -13,107 +13,27 @@
 // text, or a PNG at three times the layout size, which is past 300 dpi for a
 // full-page figure. Neither needs a browser to be automated, because the reader
 // is already in one.
+//
+// Two choices apply to every error figure at once: whose error (the blind top
+// candidate, the best candidate, or one solver) and in what unit (a share of range,
+// metres, or degrees). See makeMeasure in RockV3ChartSpecs.
+//
+// Hovering a track's dot shows its scenario screenshot beside Plotly's label, when
+// the run made one (see wireHoverImages).
 
-import {buildAllFigures, FIGURES} from "./RockV3ChartSpecs";
+import {
+    buildAllFigures, FIGURES, CLASSES, ERROR_METRICS, SUBJECT_BEST, SUBJECT_TOP, makeMeasure,
+} from "./RockV3ChartSpecs";
 import {drawFigure, purgeFigure, figureToImage, loadPlotly} from "./PlotlyLoader";
 import {showError} from "../../showError";
 import {isLocal} from "../../configUtils";
+import {imageDirFor, imageNameFor} from "../BotBenchImageCapture";
+// The adapter is pure data, kept apart so it can be tested without a DOM. Re-exported
+// for anything that imported it from here.
+import {rowsFromBotBenchEntries, rowsFromJsonl} from "./BotBenchChartRows";
+export {rowsFromBotBenchEntries, rowsFromJsonl};
 
 let activeWindow = null;
-
-// ---------------------------------------------------------------------------
-// adapting a live BOT Bench run
-// ---------------------------------------------------------------------------
-
-/**
- * Flatten BOT Bench entries into the row shape the figures expect.
- *
- * The offline pipeline gets these fields by joining against the generator's
- * manifest; in the app only the entry, its row and its truth sidecar are to
- * hand, so a few come from the interchange path instead. A field that cannot be
- * recovered is left undefined and the figures that need it simply skip those
- * rows, which is why every figure builder filters on `Number.isFinite`.
- *
- * Path shape assumed: <set>/batch_<n>sec/<rung>deg/All/<base>.all.csv
- */
-export function rowsFromBotBenchEntries(entries) {
-    const out = [];
-    for (const entry of entries) {
-        if (!entry?.row) continue;
-        const row = entry.row;
-        const path = String(entry.relativePath ?? entry.name ?? "");
-        const base = String(entry.name ?? "").replace(/\.all\.csv$/i, "");
-        let truth = null;
-        try { truth = entry.labelsText ? JSON.parse(entry.labelsText) : null; } catch (e) { /* absent */ }
-
-        const durationFromPath = Number(path.match(/batch_(\d+)sec/)?.[1]);
-        // The rung is only in the path when the folder ABOVE it was the one chosen.
-        // Pick the rung folder itself and the relative paths start at "All/", so the
-        // fallback is the analysis's own declared sigma, which on a wobble rung IS
-        // the amplitude and is 0 on the clean rung. Without this the whole figure
-        // set is empty for the commonest way of choosing a folder.
-        const rungFromPath = Number(path.match(/(\d+(?:\.\d+)?)deg/)?.[1]);
-        const declared = row.quality?.declaredLosSigmaDeg;
-        const rung = Number.isFinite(rungFromPath) ? rungFromPath
-            : (Number.isFinite(declared) ? declared : null);
-        // The three rock_v3 classes are distinguishable from the target kind:
-        // "party-rising" and "weather-rising" are both objectClass "balloon".
-        const kind = truth?.targetKind ?? "";
-        const cls = kind.startsWith("weather") ? "weather_balloon"
-            : kind.startsWith("drone") ? "drone"
-                : truth?.objectClass === "balloon" ? "balloon"
-                    : (base.match(/^([a-z_]+?)_\d+$/)?.[1] ?? null);
-
-        out.push({
-            base, set: path.split("/")[0] ?? null,
-            d_class: cls,
-            d_durationSeconds: Number.isFinite(durationFromPath) ? durationFromPath
-                : truth?.provenance?.spec?.durationSeconds ?? null,
-            d_errorDeg: rung,
-            d_classCorrect: classCorrect(truth?.objectClass, row.viableClasses),
-            q_frames: row.quality?.frames,
-            q_log10Rcond: row.quality?.log10Rcond,
-            q_noiseEst: row.quality?.noiseEstDeg,
-            r_verdict: row.verdictCode,
-            r_viable: (row.viableClasses ?? []).join("+"),
-            r_topKey: row.top?.key, r_topName: row.top?.name,
-            r_topErr: row.top?.errDeg, r_topRange: row.top?.rangeStartM,
-            r_topBlind: row.topRangeBlind ? 1 : 0,
-            r_topRelSep: row.truthScore?.topRelSep,
-            r_bestRelSep: row.truthScore?.bestRelSep,
-            r_bestName: row.truthScore?.bestName,
-            in_realizedRmsDeg: truth?.realizedNoise?.rmsDegAllFrames,
-            in_objectClass: truth?.objectClass,
-            in_trueRangeMeanM: row.truthScore?.meanTruthRangeM,
-            // The parallax aperture is measured from the All CSV by the offline
-            // join. losSweepDeg is the closest thing the sidecar carries, and it
-            // is the same angle for a straight sensor path, so it stands in.
-            in_apertureDeg: truth?.geometry?.losSweepDeg,
-        });
-    }
-    return out;
-}
-
-const CLASS_KEY = {balloon: "balloon", aircraft: "fixedWing", drone: "fixedWing"};
-function classCorrect(objectClass, viableClasses) {
-    const key = CLASS_KEY[objectClass];
-    if (!key) return null;
-    return (viableClasses ?? []).includes(key);
-}
-
-/** Parse a joined results JSONL, dropping the header line the pipeline writes. */
-export function rowsFromJsonl(text) {
-    const rows = [];
-    for (const line of text.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-            const row = JSON.parse(trimmed);
-            if (!row.header) rows.push(row);
-        } catch (e) { /* one bad line must not lose the file */ }
-    }
-    return rows;
-}
 
 // ---------------------------------------------------------------------------
 // the window
@@ -131,40 +51,162 @@ function makeButton(label, color = "#1976d2") {
     return button;
 }
 
+function makeSelect(title, minWidth) {
+    const select = document.createElement("select");
+    select.title = title;
+    css(select, {fontSize: "13px", padding: "5px 8px", minWidth});
+    return select;
+}
+
 /**
- * Say WHY no figure could be built. Every figure compares cells, so one rung or
- * one clip length leaves nothing to compare, and a reader given a blank panel
- * has no way to tell that from a bug.
+ * Say WHY no figure could be built, from what the rows actually contain.
+ *
+ * A blank window cannot be told apart from a bug, and a wrong reason is worse than
+ * none: an earlier version told a 300-track run it had "no clip lengths" when the
+ * lengths were on every row and the adapter had simply not read them.
  */
 function describeGap(rows) {
     if (!rows.length) {
-        return " Load a joined results JSONL, or run BOTBench over a folder of scenarios and "
-            + "press Charts.";
+        return " Load a joined results JSONL, or run BOTBench over a folder of scenarios and press Charts.";
     }
-    const rungs = [...new Set(rows.map((r) => r.d_errorDeg).filter((v) => Number.isFinite(v)))];
-    const durations = [...new Set(rows.map((r) => r.d_durationSeconds).filter((v) => Number.isFinite(v)))];
-    const classes = [...new Set(rows.map((r) => r.d_class).filter(Boolean))];
     const scored = rows.filter((r) => Number.isFinite(r.r_topRelSep)).length;
+    const classes = [...new Set(rows.map((r) => r.d_class).filter((c) => CLASSES.includes(c)))];
     const parts = [];
-    parts.push(`<br><br>These rows cover <b>${rungs.length || "no"}</b> pointing-error rung`
-        + `${rungs.length === 1 ? ` (${rungs[0]}\u00b0)` : "s"}, `
-        + `<b>${durations.length || "no"}</b> clip length${durations.length === 1 ? ` (${durations[0]} s)` : "s"}, `
-        + `and <b>${classes.length || "no"}</b> target class${classes.length === 1 ? ` (${classes[0]})` : "es"}. `
-        + `${scored} of ${rows.length} have a score against truth.`);
-    if (rungs.length < 2 && durations.length < 2) {
-        parts.push("<br><br>Every figure compares one cell against another, so a single rung at a "
-            + "single clip length leaves nothing to compare. Analyse a folder that spans several "
-            + "rungs or several clip lengths, choosing the folder ABOVE them with Recursive on.");
+    if (!scored) {
+        parts.push("<br><br>None of them has a score against truth, and every figure plots error against "
+            + "truth. BOTBench scores a file only when it carries the true target positions.");
     }
     if (!classes.length) {
-        parts.push("<br><br>No target class could be worked out for any row, which usually means the "
-            + "truth sidecars were not paired with the scenarios.");
+        parts.push("<br><br>No target class could be worked out for any of them. The figures group by class, "
+            + "which comes from the answer-key sidecar or from a file named by class "
+            + `(${CLASSES.map((c) => `${c}_001`).join(", ")}).`);
     }
-    if (!scored) {
-        parts.push("<br><br>No row carries a score against truth, so there is nothing to plot. "
-            + "The scenarios need their truth sidecars.");
+    if (!parts.length) {
+        parts.push(`<br><br>${scored} of ${rows.length} are scored and ${classes.length} class(es) were found, `
+            + "so a figure should have been drawn. That is a fault in the charts, not in the data.");
     }
     return parts.join("");
+}
+
+/** The solver names the rows' candidate lists hold, in order of first appearance. */
+function candidateNames(rows) {
+    const names = [];
+    const seen = new Set();
+    for (const row of rows) {
+        for (const c of row.r_candidates ?? []) {
+            if (c?.name && !seen.has(c.name)) { seen.add(c.name); names.push(c.name); }
+        }
+    }
+    return names;
+}
+
+// ---------------------------------------------------------------------------
+// the screenshot beside the hover label
+// ---------------------------------------------------------------------------
+
+// The image's width in the hover panel, in CSS pixels. Captures are 1024 px wide.
+const HOVER_IMAGE_WIDTH = 320;
+// Object URLs kept per window, most recently used last. Each one keeps a JPEG alive,
+// so a quick sweep of the pointer over thousands of dots must not keep them all.
+const HOVER_IMAGE_CACHE = 60;
+
+/**
+ * The scenario screenshot for a row, as an object URL, or null when there is none.
+ * Only a row made from a BOTBench run over a chosen folder can have one: its image is
+ * read from the SitrecImage folder the run's screenshots were written to.
+ */
+async function hoverImageUrl(state, row) {
+    const entry = row?.entry;
+    if (!entry) return null;
+    const key = entry.relativePath ?? entry.name;
+    if (state.imageUrls.has(key)) {
+        const url = state.imageUrls.get(key);
+        state.imageUrls.delete(key);
+        state.imageUrls.set(key, url);
+        return url;
+    }
+    let url = null;
+    try {
+        const dir = await imageDirFor(entry, {create: false});
+        if (dir) {
+            const file = await (await dir.getFileHandle(imageNameFor(entry.name))).getFile();
+            url = URL.createObjectURL(file);
+        }
+    } catch (e) { /* this scenario has no screenshot */ }
+    state.imageUrls.set(key, url);
+    while (state.imageUrls.size > HOVER_IMAGE_CACHE) {
+        const [oldest, oldUrl] = state.imageUrls.entries().next().value;
+        if (oldUrl) URL.revokeObjectURL(oldUrl);
+        state.imageUrls.delete(oldest);
+    }
+    return url;
+}
+
+/**
+ * Show the scenario screenshot beside Plotly's hover label.
+ *
+ * Plotly's label holds text only, so the image goes in a panel of its own that
+ * follows the pointer. A dot finds its row through `customdata`, which the figure
+ * specifications set to the row's index; a figure whose points are not tracks sets
+ * none, and nothing is shown for it.
+ */
+function wireHoverImages(state, chart) {
+    if (chart.__botHoverImages || typeof chart.on !== "function") return;
+    chart.__botHoverImages = true;
+
+    const panel = document.createElement("div");
+    css(panel, {
+        position: "fixed", zIndex: "10001", pointerEvents: "none", display: "none",
+        background: "#fff", border: "1px solid #c8c8c8", borderRadius: "6px",
+        boxShadow: "0 4px 18px rgba(0,0,0,0.25)", padding: "4px",
+    });
+    const image = document.createElement("img");
+    css(image, {display: "block", width: `${HOVER_IMAGE_WIDTH}px`, height: "auto"});
+    const caption = document.createElement("div");
+    css(caption, {
+        font: "11px system-ui, sans-serif", color: "#333", padding: "3px 2px 0",
+        maxWidth: `${HOVER_IMAGE_WIDTH}px`, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+    });
+    panel.append(image, caption);
+    state.overlay.appendChild(panel);
+
+    let pending = 0;
+    let lastPointer = null;
+    // Beside the pointer, and turned back inside the window near an edge.
+    const place = () => {
+        if (!lastPointer) return;
+        const gap = 18;
+        const rect = panel.getBoundingClientRect();
+        let x = lastPointer.clientX + gap;
+        let y = lastPointer.clientY + gap;
+        if (x + rect.width > window.innerWidth - 4) x = lastPointer.clientX - gap - rect.width;
+        if (y + rect.height > window.innerHeight - 4) y = window.innerHeight - rect.height - 4;
+        panel.style.left = `${Math.max(4, x)}px`;
+        panel.style.top = `${Math.max(4, y)}px`;
+    };
+    // The size is known only once the image has loaded.
+    image.addEventListener("load", place);
+
+    chart.on("plotly_hover", async (event) => {
+        const id = event?.points?.[0]?.customdata;
+        const row = Number.isInteger(id) ? state.rows[id] : null;
+        const mine = ++pending;
+        if (event?.event) lastPointer = {clientX: event.event.clientX, clientY: event.event.clientY};
+        const url = row ? await hoverImageUrl(state, row) : null;
+        if (mine !== pending) return;           // the pointer has already moved on
+        if (!url) {
+            panel.style.display = "none";
+            return;
+        }
+        if (image.src !== url) image.src = url;
+        caption.textContent = row.entry.relativePath ?? row.base ?? "";
+        panel.style.display = "block";
+        place();
+    });
+    chart.on("plotly_unhover", () => {
+        pending++;
+        panel.style.display = "none";
+    });
 }
 
 export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
@@ -191,8 +233,13 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         display: "flex", gap: "8px", alignItems: "center", padding: "10px 12px",
         borderBottom: "1px solid #ddd", flexWrap: "wrap",
     });
-    const picker = document.createElement("select");
-    css(picker, {fontSize: "13px", padding: "5px 8px", minWidth: "300px"});
+    const picker = makeSelect("The figure to show", "300px");
+    const subjectPicker = makeSelect("Whose error the error figures plot: the candidate the blind ranking put "
+        + "first, the candidate closest to truth (an oracle pick, knowable only with truth in hand), or one "
+        + "solver's candidate on every track.", "220px");
+    const metricPicker = makeSelect("The unit of error: a share of the mean true range, the mean 3D distance "
+        + "from truth in metres, or the mean angle between the candidate and the truth as seen from the "
+        + "sensor. The tolerance figures always use a share of range.", "190px");
     const status = document.createElement("div");
     css(status, {fontSize: "12px", color: "#52514e", marginLeft: "auto"});
     const svgButton = makeButton("Export SVG", "#00695c");
@@ -203,7 +250,9 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     const loadButton = makeButton("Load JSONL…", "#5c6bc0");
     loadButton.title = "Open a joined results JSONL, the file the offline pipeline writes.";
     const closeButton = makeButton("Close", "#757575");
-    bar.append(picker, loadButton, svgButton, pngButton, closeButton, status);
+    const turnPicker = makeSelect("Which sensor-turn level the figures use: every level pooled, or one level. "
+        + "The figures that compare turn levels always use every level.", "150px");
+    bar.append(picker, subjectPicker, metricPicker, turnPicker, loadButton, svgButton, pngButton, closeButton, status);
     modal.appendChild(bar);
 
     // plot area
@@ -213,14 +262,84 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     const chart = document.createElement("div");
     plot.appendChild(chart);
 
-    const state = {overlay, rows: rows ?? [], figures: [], current: null, sourceLabel};
+    const state = {
+        overlay, rows: rows ?? [], figures: [], current: null, sourceLabel,
+        imageUrls: new Map(), measure: makeMeasure(), turnDeg: null, turnLevels: [],
+    };
 
     const setStatus = (text) => { status.textContent = text; };
+    const sourceText = () => `${state.rows.length} rows${state.sourceLabel ? ` from ${state.sourceLabel}` : ""}`
+        + (state.measure.isDefault ? "" : ` — ${state.measure.who}, ${state.measure.label.toLowerCase()}`)
+        + (state.turnLevels.length < 2 ? ""
+            : Number.isFinite(state.turnDeg) ? ` — sensor turn ${state.turnDeg}°`
+            : ` — ${state.turnLevels.length} sensor-turn levels pooled`);
+
+    // The choices, filled from what the rows can support. A choice that is no
+    // longer offered falls back to the default rather than drawing empty figures.
+    const fillChoices = () => {
+        const names = candidateNames(state.rows);
+        const subjects = [
+            [SUBJECT_TOP, "Top candidate (blind ranking)"],
+            [SUBJECT_BEST, "Best candidate (oracle)"],
+            ...names.map((name) => [name, name]),
+        ];
+        const keepSubject = subjects.some(([value]) => value === state.measure.subject) ? state.measure.subject : SUBJECT_TOP;
+        subjectPicker.innerHTML = "";
+        for (const [value, label] of subjects) {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = label;
+            subjectPicker.appendChild(option);
+        }
+        subjectPicker.value = keepSubject;
+        // A solver's own error, and any angle, come from the candidate lists, which a
+        // joined JSONL does not carry.
+        const hasLists = names.length > 0;
+        metricPicker.innerHTML = "";
+        for (const [value, spec] of Object.entries(ERROR_METRICS)) {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = spec.label;
+            option.disabled = value === "angDeg" && !hasLists;
+            metricPicker.appendChild(option);
+        }
+        const keepMetric = metricPicker.querySelector(`option[value="${state.measure.metric}"]:not([disabled])`)
+            ? state.measure.metric : "relSep";
+        metricPicker.value = keepMetric;
+        subjectPicker.style.display = state.rows.length ? "" : "none";
+        metricPicker.style.display = state.rows.length ? "" : "none";
+        state.measure = makeMeasure({metric: keepMetric, subject: keepSubject});
+        // A sensor-turn level, offered only when the rows hold more than one.
+        state.turnLevels = [...new Set(state.rows.map((r) => r.d_turnDeg).filter(Number.isFinite))]
+            .sort((a, b) => a - b);
+        const keepTurn = state.turnLevels.includes(state.turnDeg) ? state.turnDeg : null;
+        turnPicker.innerHTML = "";
+        for (const [value, label] of [["all", "All turn levels"],
+            ...state.turnLevels.map((turn) => [String(turn), `Sensor turn ${turn}°`])]) {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = label;
+            turnPicker.appendChild(option);
+        }
+        turnPicker.value = keepTurn === null ? "all" : String(keepTurn);
+        turnPicker.style.display = state.turnLevels.length > 1 ? "" : "none";
+        state.turnDeg = state.turnLevels.length > 1 ? keepTurn : null;
+    };
 
     const rebuild = async () => {
+        const keepKey = state.current?.key ?? null;
         picker.innerHTML = "";
-        state.figures = buildAllFigures(state.rows);
+        // Every row's index, which the figures put on each dot so the hover can find
+        // the row again (see wireHoverImages).
+        state.rows.forEach((row, i) => { row.rowIndex = i; });
+        fillChoices();
+        state.figures = buildAllFigures(state.rows, {measure: state.measure, turnDeg: state.turnDeg});
+        const rungKnown = state.rows.some((r) => Number.isFinite(r.d_errorDeg));
+        const unpaired = state.rows.some((r) => r.in_sidecarPaired === false);
+        state.note = state.rows.length && !rungKnown
+            ? ` — pointing error unstated${unpaired ? " (no scenario sidecars paired)" : ""}` : "";
         if (!state.figures.length) {
+            state.current = null;
             setStatus(`${state.rows.length} row(s), no figure`);
             chart.innerHTML = `<div style='padding:40px;color:#444;max-width:60em;line-height:1.6'>`
                 + `<b>Nothing to draw from these ${state.rows.length} row(s).</b>${describeGap(state.rows)}</div>`;
@@ -233,7 +352,10 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
             option.textContent = meta ? `${meta.group}: ${meta.name}` : figure.key;
             picker.appendChild(option);
         }
-        await show(state.figures[0]);
+        // Stay on the figure being read when a choice changes, if it still builds.
+        const next = state.figures.find((f) => f.key === keepKey) ?? state.figures[0];
+        picker.value = next.key;
+        await show(next);
     };
 
     const show = async (figure) => {
@@ -242,10 +364,11 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
             chart.innerHTML = `<div style='padding:40px;color:#b00'>${figure.key}: ${figure.error}</div>`;
             return;
         }
-        setStatus(`${state.rows.length} rows${state.sourceLabel ? ` from ${state.sourceLabel}` : ""} — drawing…`);
+        setStatus(`${sourceText()} — drawing…`);
         try {
             await drawFigure(chart, figure);
-            setStatus(`${state.rows.length} rows${state.sourceLabel ? ` from ${state.sourceLabel}` : ""}`);
+            wireHoverImages(state, chart);
+            setStatus(sourceText() + (state.note ?? ""));
         } catch (error) {
             setStatus("");
             showError(`Could not draw the chart: ${error?.message ?? error}`);
@@ -256,6 +379,14 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         const figure = state.figures.find((f) => f.key === picker.value);
         if (figure) show(figure);
     });
+    const onChoice = () => {
+        state.measure = makeMeasure({metric: metricPicker.value, subject: subjectPicker.value});
+        state.turnDeg = turnPicker.value === "all" ? null : Number(turnPicker.value);
+        rebuild();
+    };
+    subjectPicker.addEventListener("change", onChoice);
+    metricPicker.addEventListener("change", onChoice);
+    turnPicker.addEventListener("change", onChoice);
 
     const exportAs = async (format) => {
         if (!state.current) return;
@@ -264,7 +395,13 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
             const url = await figureToImage(state.current, {format});
             const link = document.createElement("a");
             link.href = url;
-            link.download = `${state.current.key}.${format}`;
+            // The choice goes in the name, so two exports of one figure do not collide.
+            // A turn level too, except on the figures that always use every level.
+            const choice = (state.measure.isDefault ? ""
+                : `-${state.measure.metric}-${String(state.measure.subject).replace(/[^A-Za-z0-9]+/g, "_")}`)
+                + (Number.isFinite(state.turnDeg) && !FIGURES.find((f) => f.key === state.current.key)?.allTurnLevels
+                    ? `-turn${state.turnDeg}` : "");
+            link.download = `${state.current.key}${choice}.${format}`;
             document.body.appendChild(link);
             link.click();
             link.remove();
@@ -307,6 +444,8 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
 
     const close = () => {
         purgeFigure(chart);
+        for (const url of state.imageUrls.values()) if (url) URL.revokeObjectURL(url);
+        state.imageUrls.clear();
         if (overlay.parentNode) document.body.removeChild(overlay);
         activeWindow = null;
     };
@@ -335,7 +474,8 @@ export function addResultChartsMenu(fileAnalysisFolder) {
     if (isLocal && !window._botCharts) {
         window._botCharts = {
             open: openResultCharts, openForEntries: openResultChartsForEntries,
-            rowsFromJsonl, rowsFromBotBenchEntries, buildAllFigures,
+            rowsFromJsonl, rowsFromBotBenchEntries, buildAllFigures, makeMeasure,
+            get active() { return activeWindow; },
         };
     }
     chartsController = fileAnalysisFolder.add({charts: () => openResultCharts()}, "charts")

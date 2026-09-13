@@ -113,7 +113,13 @@ group.
 
 - **Recursive** — descend into subfolders of a chosen or dropped folder (on by
   default). The folder you explicitly hand over is always scanned; the checkbox
-  only controls whether folders *inside* it are.
+  only controls whether folders *inside* it are. Where a folder holds `All/`,
+  `Input/` and `Truth/` side by side, as the interchange layout does, only `All/`
+  is read. It carries every scenario once, with its truth, while `Input/` repeats
+  the same tracks without truth and `Truth/` holds only the answer key. `meta/` is
+  still read for the sidecars, and the line under the title adds *All tracks
+  only*. Files you pick with **Choose Files**, or send from the Track Browser, are
+  analysed as picked.
 - **Range bands** — after each [physics-model](#physics-models) fit, re-fit the model at a ladder
   of held ranges to find the whole range interval it still admits, exactly as
   the live analysis's solution-families option does. Several extra fits per
@@ -148,6 +154,19 @@ group.
   abandoned at its next checkpoint and its row is marked *cancelled*; rows that
   already finished keep their results, and the files after it stay unanalysed.
 - **Clear Results** — empty the table and start fresh.
+
+A long run keeps every row in the table, but not every row's full analysis. Each
+file's analysis holds its dataset and every candidate's track for every frame,
+which on a large folder runs to gigabytes and makes each file slower than the one
+before. So only the last few finished rows, and any row you open, keep theirs.
+Pressing **Gallery**, **Report** or the file name on an older row rebuilds its
+analysis first, which takes a moment. It replays the cached fit only when that fit
+matches this build and these analysis options and reproduces the row exactly;
+otherwise it fits the file again. Either way the gallery and report belong to the
+row in the table, and the numbers in the table are unaffected. The table itself
+draws only the rows in view. A row is drawn when you scroll to it, and the rows in
+view are updated four times a second, so a run of thousands of files stays as
+responsive as a short one. Exports, the summary and the charts still read every row.
 - **Flush Cache** — delete the cache from every folder this run touched, so the
   next run analyses everything from scratch. Rarely needed: a stale cache
   normally detects itself and re-runs (see below).
@@ -437,6 +456,24 @@ A cache entry is used only when the input hashes, the analysis options **and**
 the app version all match, *and* replaying it reproduces the row it was stored
 with. A stale cache therefore normally re-runs itself; **Flush Cache** is for
 the cases where you want that forced.
+
+Every new build of Sitrec has a new app version, so after an update no entry
+matches on version, even when the fitting code has not changed. Fitting a large
+folder again for that alone would waste most of a run. So on a run of more than
+20 files, BOTBench first fits 10 of the files with an entry from another build,
+chosen at random. If every one reproduces its cached row, it offers to reuse the
+cached fits. The comparison leaves out one field, the time the fit took, because
+no two fits take the same time; every other field must match exactly. Reused
+entries are stamped with the current build and marked as adopted, with the build
+that made the fit kept beside it, and their rows read *adopted*. If any of the 10
+differs, nothing is offered and every file is fitted again.
+
+A cached file is not analysed again at all. Its stored row is shown as it is,
+together with the chart facts cached beside it: the parallax aperture and every
+candidate's error against truth. The full analysis is rebuilt only when
+**Gallery**, **Report** or the file name needs it. An entry written before those
+facts were cached is replayed once, which stores them, and is shown as it is from
+then on.
 
 ---
 

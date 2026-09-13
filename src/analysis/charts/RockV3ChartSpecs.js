@@ -59,7 +59,7 @@ export function formatPercent(v) {
     return `${(v * 100).toPrecision(2)}%`;
 }
 
-export const rungLabel = (e) => `${e}°`;
+export const rungLabel = (e) => (e === null || e === undefined ? "unstated" : `${e}°`);
 
 /** Wrap text at roughly `cols` characters, for a caption annotation. */
 export function wrapText(text, cols = 165) {
@@ -87,9 +87,132 @@ export const durationsOf = (rows) =>
 export const rungsOf = (rows) =>
     RUNGS.filter((e) => rows.some((r) => same(r.d_errorDeg, e)));
 
-/** k of n rows whose `field` is finite and under `tol`; n counts every row. */
-export function withinTolerance(rows, tol, field = "r_topRelSep") {
-    return {k: rows.filter((r) => fin(r[field]) && r[field] < tol).length, n: rows.length};
+/**
+ * k of n rows whose value is finite and under `tol`; n counts every row. `value` is a
+ * row field's name or a function of the row.
+ */
+export function withinTolerance(rows, tol, value = "r_topRelSep") {
+    const read = typeof value === "function" ? value : (r) => r[value];
+    return {k: rows.filter((r) => fin(read(r)) && read(r) < tol).length, n: rows.length};
+}
+
+// ---------------------------------------------------------------------------
+// which error a figure plots
+// ---------------------------------------------------------------------------
+
+export function formatMetres(v) {
+    if (!fin(v)) return "-";
+    if (v < 1) return `${(v * 100).toPrecision(2)} cm`;
+    if (v < 1000) return `${v.toPrecision(3)} m`;
+    return `${(v / 1000).toPrecision(3)} km`;
+}
+
+export function formatDegrees(v) {
+    if (!fin(v)) return "-";
+    return v >= 1 ? `${v.toFixed(2)}°` : `${v.toPrecision(2)}°`;
+}
+
+/**
+ * The units an error can be plotted in. Each names the row fields holding it for the
+ * blind top candidate and for the best candidate, and the field holding it in a row's
+ * candidate list. A null row field means the value is found in the candidate list, by
+ * the name of the top or best candidate.
+ */
+export const ERROR_METRICS = {
+    relSep: {
+        label: "Error / range", noun: "mean 3D error / mean true range", unit: "",
+        floor: FLOOR, tolerance: {value: TOL5, label: "5% of range"}, format: formatPercent,
+        topField: "r_topRelSep", bestField: "r_bestRelSep", candidateField: "relSep",
+    },
+    sepM: {
+        label: "Mean absolute error (m)", noun: "mean 3D error (m)", unit: "m",
+        floor: 0.01, tolerance: null, format: formatMetres,
+        topField: "r_topSepM", bestField: "r_bestSepM", candidateField: "sepM",
+    },
+    angDeg: {
+        label: "Angular error (deg)", noun: "mean angular error seen from the sensor (deg)", unit: "deg",
+        floor: 1e-5, tolerance: null, format: formatDegrees,
+        topField: null, bestField: null, candidateField: "angDeg",
+    },
+};
+
+export const SUBJECT_TOP = "top";
+export const SUBJECT_BEST = "best";
+
+const capitalize = (text) => String(text).charAt(0).toUpperCase() + String(text).slice(1);
+
+/**
+ * WHICH ERROR A FIGURE PLOTS: whose error, and in what unit.
+ *
+ * `subject` is the blind top candidate (the default), the best candidate (an oracle
+ * pick, knowable only with truth in hand), or one solver by name. `metric` is a key of
+ * ERROR_METRICS. Every error figure reads its values, floor, tolerance line and labels
+ * through one of these, so the chart window's two choices change all the figures
+ * together. The default draws every figure exactly as before.
+ */
+export function makeMeasure({metric = "relSep", subject = SUBJECT_TOP} = {}) {
+    const key = ERROR_METRICS[metric] ? metric : "relSep";
+    const m = ERROR_METRICS[key];
+    const fromList = (row, name, field) => (row.r_candidates ?? []).find((c) => c.name === name)?.[field];
+    const read = (row, who, spec) => {
+        let v;
+        if (who === SUBJECT_TOP) v = spec.topField ? row[spec.topField] : fromList(row, row.r_topName, spec.candidateField);
+        else if (who === SUBJECT_BEST) v = spec.bestField ? row[spec.bestField] : fromList(row, row.r_bestName, spec.candidateField);
+        else v = fromList(row, who, spec.candidateField);
+        return fin(v) ? v : null;
+    };
+    const who = subject === SUBJECT_TOP ? "blind top candidate"
+        : subject === SUBJECT_BEST ? "best candidate (oracle)" : shortSolverName(subject);
+    return {
+        metric: key, subject, who,
+        label: m.label, noun: m.noun, unit: m.unit,
+        floor: m.floor, tolerance: m.tolerance, format: m.format,
+        isDefault: key === "relSep" && subject === SUBJECT_TOP,
+        axisTitle: `${capitalize(who)} ${m.noun}`,
+        // Only the top candidate's row says whether it came from the range-blind family.
+        marksBlind: subject === SUBJECT_TOP,
+        /** The subject's error on a row, or null. */
+        value: (row) => read(row, subject, m),
+        /** The best candidate's error on a row, in the same unit. */
+        best: (row) => read(row, SUBJECT_BEST, m),
+        /** One entry of a row's candidate list, in this unit. */
+        candidate: (c) => (fin(c?.[m.candidateField]) ? c[m.candidateField] : null),
+        /** The subject's error as a share of range, which is what a tolerance is set in. */
+        relSep: (row) => read(row, subject, ERROR_METRICS.relSep),
+    };
+}
+
+/**
+ * The pointing-error rungs a figure should panel by.
+ *
+ * The rungs asked for when the rows have them; otherwise whichever rungs the rows
+ * do carry; and when no row carries one at all, a single pooled group drawn as
+ * "unstated". That last case is not rare: choose a scenario's All folder on its
+ * own and its sidecars, which hold the declared pointing error, stay behind in
+ * the sibling meta folder. Before this, such a run drew no figure at all.
+ */
+export function rungGroups(rows, wanted) {
+    const present = [...new Set(rows.map((r) => r.d_errorDeg).filter(fin))].sort((a, b) => a - b);
+    const known = wanted.filter((e) => present.some((value) => same(value, e)));
+    if (known.length) return known;
+    if (present.length) return present.slice(0, 2);
+    return rows.length ? [null] : [];
+}
+
+/**
+ * The clip lengths a figure should panel by: the counterpart of rungGroups.
+ *
+ * The lengths asked for when the rows have them; otherwise the first two lengths
+ * the rows do carry. Without the fallback, a sweep of the pointing-error ladder at
+ * one clip length drew none of the rung figures: a 40 s run over nine rungs got
+ * two figures, because every rung figure asked only for 20 s and 120 s clips, the
+ * two lengths of the first rock_v3 report.
+ */
+export function durationGroups(rows, wanted) {
+    const present = durationsOf(rows);
+    const known = wanted.filter((d) => present.some((value) => same(value, d)));
+    if (known.length) return known;
+    return present.slice(0, 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +241,10 @@ export function boxTrace(positions, stats, color, {axis = "", width = 0.62, floo
         q3: keep.map(([, s]) => clip(s.q3)),
         lowerfence: keep.map(([, s]) => clip(s.lowerFence)),
         upperfence: keep.map(([, s]) => clip(s.upperFence)),
-        fillcolor: hexToRgba(color, 0.25),
+        // A light tint, so the dots, and where they cluster, read through the box. At
+        // 0.25 the fill competed with its own dots; 0.125 sits half as far from the
+        // plot background.
+        fillcolor: hexToRgba(color, 0.125),
         line: {color, width: 1.1},
         marker: {color},
         median_color: INK,
@@ -129,17 +255,26 @@ export function boxTrace(positions, stats, color, {axis = "", width = 0.62, floo
     };
 }
 
-/** Every observation as a jittered dot beside its box. Hollow marks a subset. */
+/**
+ * Every observation as a jittered dot beside its box. Hollow marks a subset.
+ *
+ * A position may carry `id`, the row's index, and `label`, the track's name. The id
+ * rides in `customdata`, which is how the chart window finds the row, and so the
+ * screenshot, for the dot under the pointer.
+ */
 export function stripTrace(positions, color, {axis = "", hollow = false, name = "", size = 5,
-    text = null, seed = 805, amount = 0.26} = {}) {
+    text = null, seed = 805, amount = 0.26, opacity = 1} = {}) {
     const offsets = jitterOffsets(positions.length, amount, seed);
+    const labels = text ?? (positions.some((p) => p.label) ? positions.map((p) => p.label ?? "") : null);
     return {
         type: "scattergl",
         mode: "markers",
         x: positions.map((p, i) => p.x + offsets[i]),
         y: positions.map((p) => p.y),
-        text,
-        hovertemplate: text ? "%{text}<extra></extra>" : "%{y}<extra></extra>",
+        customdata: positions.map((p) => p.id ?? null),
+        text: labels,
+        hovertemplate: labels ? "%{text}<br>%{y:.3g}<extra></extra>" : "%{y}<extra></extra>",
+        opacity,
         marker: hollow
             ? {size: size + 2, color: "rgba(0,0,0,0)", line: {color, width: 1}}
             : {size, color, line: {color: "#ffffff", width: 0.4}},
@@ -243,15 +378,32 @@ export function gridLayout({rows, cols, titles, xTitle, yTitle, tickvals, tickte
     return layout;
 }
 
-/** The standard page furniture: title, caption, paper colors, margins. */
-export function pageLayout(layout, {title, caption, height = 900, width = 1500}) {
+// The height of one legend row, in pixels, at the legend's font size.
+const LEGEND_ROW_PX = 26;
+
+/**
+ * The standard page furniture: title, caption, paper colors, margins, and the legend.
+ *
+ * THE LEGEND GOES UNDER THE PANELS, above the caption, in one row or, past four
+ * entries, two. At the top right it ran into the title, and eight entries crowded
+ * into one line of small type. `legendEntries` is how many entries the figure shows;
+ * zero means no legend.
+ */
+export function pageLayout(layout, {title, caption, height = 900, width = 1500, legendEntries = 0}) {
+    const legendRows = legendEntries > 4 ? 2 : (legendEntries > 0 ? 1 : 0);
+    const perRow = legendRows === 2 ? Math.ceil(legendEntries / 2) : Math.max(1, legendEntries);
+    const legendPx = legendRows ? legendRows * LEGEND_ROW_PX + 14 : 0;
+    const margin = {l: 78, r: 24, t: 52, b: 130 + legendPx};
+    // Paper coordinates span the plot area only, so a pixel offset below it is divided
+    // by that area's height.
+    const plotPx = Math.max(1, height - margin.t - margin.b);
     return {
         ...layout,
         title: {text: title, x: 0.005, xanchor: "left", font: {size: 16, color: INK}},
         annotations: [
             ...(layout.annotations ?? []),
             {
-                x: 0, y: -0.02, xref: "paper", yref: "paper",
+                x: 0, y: -0.02 - legendPx / plotPx, xref: "paper", yref: "paper",
                 text: wrapText(caption), showarrow: false,
                 xanchor: "left", yanchor: "top", align: "left",
                 font: {size: 10.5, color: INK2},
@@ -260,8 +412,14 @@ export function pageLayout(layout, {title, caption, height = 900, width = 1500})
         paper_bgcolor: "#ffffff",
         plot_bgcolor: SURFACE,
         height, width,
-        margin: {l: 78, r: 24, t: 52, b: 130},
-        showlegend: false,
+        margin,
+        showlegend: legendRows > 0,
+        legend: legendRows ? {
+            orientation: "h", x: 0, xanchor: "left", y: -0.02, yanchor: "top",
+            font: {size: 13, color: INK},
+            entrywidth: 1 / perRow, entrywidthmode: "fraction",
+            traceorder: "normal", bgcolor: "rgba(0,0,0,0)",
+        } : undefined,
         hovermode: "closest",
         boxgap: 0.35,
     };
@@ -301,15 +459,34 @@ export const BASE_CONFIG = {
 // figures
 // ---------------------------------------------------------------------------
 
+/** The tolerance line, when the measure has one: 5% of range for error/range, none in metres or degrees. */
+function addTolerance(layout, panelCount, measure) {
+    if (!measure.tolerance) return;
+    const tol = toleranceShapes(panelCount, measure.tolerance.value, measure.tolerance.label);
+    layout.shapes = [...(layout.shapes ?? []), ...tol.shapes];
+    layout.annotations = [...(layout.annotations ?? []), ...tol.annotations];
+}
+
+/** ", in metres" or ", in degrees" for a title, and nothing for error/range. */
+const unitSuffix = (measure) => (measure.unit === "m" ? ", in metres" : measure.unit === "deg" ? ", in degrees" : "");
+
+/** The caption's sentence about hollow dots, which only the top candidate has. */
+const hollowNote = (measure) => (measure.marksBlind
+    ? "Dots: every track; hollow means the top candidate came from the range-blind polynomial family. "
+    : "Dots: every track. ");
+
 /** Error against clip length, one panel per class and rung. */
-export function figErrorByLength(rows, {rungsWanted = [0, 0.2]} = {}) {
+export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMeasure()} = {}) {
     const durations = durationsOf(rows);
-    const rungs = rungsWanted.filter((e) => cell(rows, null, null, e).length);
-    if (!durations.length || !rungs.length) return null;
+    const rungs = rungGroups(rows, rungsWanted);
+    // One clip length is one box per panel, which compares nothing. The
+    // by-class figures below cover that case.
+    if (durations.length < 2 || !rungs.length) return null;
+    const floor = measure.floor;
 
     const data = [];
     const titles = [];
-    let drawn = 0, missing = 0, floored = 0, peak = FLOOR;
+    let drawn = 0, missing = 0, floored = 0, peak = floor;
     const medians = {};
     for (const rung of rungs) {
         for (const cls of CLASSES) {
@@ -318,20 +495,22 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2]} = {}) {
             const stats = [], points = [], hollow = [];
             for (let d = 0; d < durations.length; d++) {
                 const here = cell(rows, cls, durations[d], rung);
-                const values = here.map((r) => r.r_topRelSep).filter(fin);
+                const values = here.map(measure.value).filter(fin);
                 missing += here.length - values.length;
                 drawn += values.length;
-                floored += values.filter((v) => v < FLOOR).length;
+                floored += values.filter((v) => v < floor).length;
                 stats.push(boxStatsLog(values));
                 for (const r of here) {
-                    if (!fin(r.r_topRelSep)) continue;
-                    peak = Math.max(peak, r.r_topRelSep);
-                    (r.r_topBlind ? hollow : points).push({x: d, y: atLeast(r.r_topRelSep, FLOOR)});
+                    const v = measure.value(r);
+                    if (!fin(v)) continue;
+                    peak = Math.max(peak, v);
+                    (measure.marksBlind && r.r_topBlind ? hollow : points)
+                        .push({x: d, y: atLeast(v, floor), id: r.rowIndex ?? null, label: r.base ?? ""});
                 }
                 const box = stats[stats.length - 1];
                 if (box) medians[`${rung}deg/${cls}/${durations[d]}`] = box.median;
             }
-            data.push(boxTrace(durations.map((unused, d) => d), stats, CLASS_HUE[cls], {axis: suffix, floor: FLOOR}));
+            data.push(boxTrace(durations.map((unused, d) => d), stats, CLASS_HUE[cls], {axis: suffix, floor}));
             data.push(stripTrace(points, CLASS_HUE[cls], {axis: suffix}));
             if (hollow.length) data.push(stripTrace(hollow, CLASS_HUE[cls], {axis: suffix, hollow: true, seed: 806}));
             titles.push(`${CLASS_LABEL[cls]}, ${rungLabel(rung)} pointing error`);
@@ -340,14 +519,12 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2]} = {}) {
     const layout = gridLayout({
         rows: rungs.length, cols: 3, titles,
         xTitle: "Clip length (s)",
-        yTitle: "Top candidate mean 3D error / mean true range",
+        yTitle: measure.axisTitle,
         tickvals: durations.map((unused, d) => d),
         ticktext: durations.map(String),
-        yRange: [Math.log10(FLOOR * 0.55), Math.log10(peak * 2.2)],
+        yRange: [Math.log10(floor * 0.55), Math.log10(peak * 2.2)],
     });
-    const tol = toleranceShapes(titles.length, TOL5, "5% of range");
-    layout.shapes = tol.shapes;
-    layout.annotations = [...layout.annotations, ...tol.annotations];
+    addTolerance(layout, titles.length, measure);
 
     const first = durations[0], last = durations[durations.length - 1];
     const parts = [];
@@ -355,23 +532,24 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2]} = {}) {
         for (const cls of CLASSES) {
             const a = medians[`${rung}deg/${cls}/${first}`], b = medians[`${rung}deg/${cls}/${last}`];
             if (fin(a) && fin(b)) {
-                parts.push(`${CLASS_LABEL[cls]} ${rungLabel(rung)}: ${formatPercent(a)} at ${first} s, `
-                    + `${formatPercent(b)} at ${last} s`);
+                parts.push(`${CLASS_LABEL[cls]} ${rungLabel(rung)}: ${measure.format(a)} at ${first} s, `
+                    + `${measure.format(b)} at ${last} s`);
             }
         }
     }
+    const title = `rock_v3: ${measure.who} error by clip length, three target classes${unitSuffix(measure)}`;
     return {
         key: "errorByLength",
-        title: "rock_v3: blind top-candidate error by clip length, three target classes",
+        title,
         data,
         layout: pageLayout(layout, {
-            title: "rock_v3: blind top-candidate error by clip length, three target classes",
+            title,
             height: 420 * rungs.length + 190,
-            caption: `${drawn} tracks drawn (${missing} with no top range are not drawn); 100 tracks per class at `
-                + `every length and rung, the same 300 tracks at every length, so a longer clip extends the same track. `
-                + `Box: quartiles and median on the raw values. Whiskers: Tukey's 1.5 box-heights, computed on log10 so `
-                + `the fence is symmetric on this axis. Dots: every track; hollow means the top candidate came from the `
-                + `range-blind polynomial family. ${floored} values below ${FLOOR} are drawn at the floor. ${parts.join("; ")}.`,
+            caption: `${drawn} tracks drawn (${missing} with no value for the ${measure.who} are not drawn); 100 tracks per `
+                + `class at every length and rung, the same 300 tracks at every length, so a longer clip extends the same `
+                + `track. Box: quartiles and median on the raw values. Whiskers: Tukey's 1.5 box-heights, computed on log10 `
+                + `so the fence is symmetric on this axis. ${hollowNote(measure)}${floored} values below `
+                + `${measure.format(floor)} are drawn at the floor. ${parts.join("; ")}.`,
         }),
         config: BASE_CONFIG,
         stats: medians,
@@ -379,13 +557,14 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2]} = {}) {
 }
 
 /** Error against the pointing-error ladder, one panel per class and clip length. */
-export function figErrorByRung(rows, {durationsWanted = [20, 120]} = {}) {
+export function figErrorByRung(rows, {durationsWanted = [20, 120], measure = makeMeasure()} = {}) {
     const rungs = rungsOf(rows);
-    const durations = durationsWanted.filter((d) => cell(rows, null, d).length);
+    const durations = durationGroups(rows, durationsWanted);
     if (rungs.length < 2 || !durations.length) return null;
+    const floor = measure.floor;
 
     const data = [], titles = [];
-    let drawn = 0, missing = 0, floored = 0, peak = FLOOR;
+    let drawn = 0, missing = 0, floored = 0, peak = floor;
     const medians = {};
     for (const duration of durations) {
         for (const cls of CLASSES) {
@@ -394,20 +573,22 @@ export function figErrorByRung(rows, {durationsWanted = [20, 120]} = {}) {
             const stats = [], points = [], hollow = [];
             for (let e = 0; e < rungs.length; e++) {
                 const here = cell(rows, cls, duration, rungs[e]);
-                const values = here.map((r) => r.r_topRelSep).filter(fin);
+                const values = here.map(measure.value).filter(fin);
                 missing += here.length - values.length;
                 drawn += values.length;
-                floored += values.filter((v) => v < FLOOR).length;
+                floored += values.filter((v) => v < floor).length;
                 const box = boxStatsLog(values);
                 stats.push(box);
                 if (box) medians[`${duration}s/${cls}/${rungs[e]}`] = box.median;
                 for (const r of here) {
-                    if (!fin(r.r_topRelSep)) continue;
-                    peak = Math.max(peak, r.r_topRelSep);
-                    (r.r_topBlind ? hollow : points).push({x: e, y: atLeast(r.r_topRelSep, FLOOR)});
+                    const v = measure.value(r);
+                    if (!fin(v)) continue;
+                    peak = Math.max(peak, v);
+                    (measure.marksBlind && r.r_topBlind ? hollow : points)
+                        .push({x: e, y: atLeast(v, floor), id: r.rowIndex ?? null, label: r.base ?? ""});
                 }
             }
-            data.push(boxTrace(rungs.map((unused, e) => e), stats, CLASS_HUE[cls], {axis: suffix, floor: FLOOR}));
+            data.push(boxTrace(rungs.map((unused, e) => e), stats, CLASS_HUE[cls], {axis: suffix, floor}));
             data.push(stripTrace(points, CLASS_HUE[cls], {axis: suffix}));
             if (hollow.length) data.push(stripTrace(hollow, CLASS_HUE[cls], {axis: suffix, hollow: true, seed: 806}));
             titles.push(`${CLASS_LABEL[cls]}, ${duration} s clips`);
@@ -416,14 +597,12 @@ export function figErrorByRung(rows, {durationsWanted = [20, 120]} = {}) {
     const layout = gridLayout({
         rows: durations.length, cols: 3, titles,
         xTitle: "Pointing-error rung (wobble amplitude)",
-        yTitle: "Top candidate mean 3D error / mean true range",
+        yTitle: measure.axisTitle,
         tickvals: rungs.map((unused, e) => e),
         ticktext: rungs.map(rungLabel),
-        yRange: [Math.log10(FLOOR * 0.55), Math.log10(peak * 2.2)],
+        yRange: [Math.log10(floor * 0.55), Math.log10(peak * 2.2)],
     });
-    const tol = toleranceShapes(titles.length, TOL5, "5% of range");
-    layout.shapes = tol.shapes;
-    layout.annotations = [...layout.annotations, ...tol.annotations];
+    addTolerance(layout, titles.length, measure);
 
     const parts = [];
     for (const duration of durations) {
@@ -431,21 +610,166 @@ export function figErrorByRung(rows, {durationsWanted = [20, 120]} = {}) {
             const a = medians[`${duration}s/${cls}/${rungs[0]}`];
             const b = medians[`${duration}s/${cls}/${rungs[rungs.length - 1]}`];
             if (fin(a) && fin(b)) {
-                parts.push(`${CLASS_LABEL[cls]} ${duration} s: ${formatPercent(a)} at ${rungLabel(rungs[0])}, `
-                    + `${formatPercent(b)} at ${rungLabel(rungs[rungs.length - 1])}`);
+                parts.push(`${CLASS_LABEL[cls]} ${duration} s: ${measure.format(a)} at ${rungLabel(rungs[0])}, `
+                    + `${measure.format(b)} at ${rungLabel(rungs[rungs.length - 1])}`);
             }
         }
     }
+    const title = `rock_v3: ${measure.who} error against the pointing-error ladder${unitSuffix(measure)}`;
     return {
         key: "errorByRung",
-        title: "rock_v3: blind top-candidate error against the pointing-error ladder",
+        title,
         data,
         layout: pageLayout(layout, {
-            title: "rock_v3: blind top-candidate error against the pointing-error ladder",
+            title,
             height: 420 * durations.length + 190,
-            caption: `${drawn} tracks drawn (${missing} with no top range are not drawn). The rung is the operator-wobble `
-                + `amplitude; the realized RMS pointing error is about 0.64 times the rung. Box, whiskers, dots and floor `
-                + `as in the clip-length figure; ${floored} values drawn at the floor. ${parts.join("; ")}.`,
+            caption: `${drawn} tracks drawn (${missing} with no value for the ${measure.who} are not drawn). The rung is the `
+                + `operator-wobble amplitude; the realized RMS pointing error is about 0.64 times the rung. Box, whiskers, `
+                + `dots and floor as in the clip-length figure; ${floored} values drawn at the floor. ${parts.join("; ")}.`,
+        }),
+        config: BASE_CONFIG,
+        stats: medians,
+    };
+}
+
+// Sensor-turn levels and clip lengths as lines, light to dark. One hue each,
+// because both are ordered amounts rather than categories: more turn, or a
+// longer clip, is a darker line.
+const TURN_RAMP = ["#8b80cf", "#6a5cc0", "#4b37a3", "#2e1a78"];
+const LENGTH_RAMP = ["#6fb0a7", "#3f9186", "#227166", "#0c4f46"];
+
+export const turnLevelsOf = (rows) =>
+    [...new Set(rows.map((r) => r.d_turnDeg).filter(fin))].sort((a, b) => a - b);
+
+/** Up to four clip lengths to draw as lines: the wanted ones present, else four spread ones. */
+function pickLengths(durations, wanted) {
+    const known = wanted.filter((d) => durations.some((v) => same(v, d)));
+    if (known.length >= 2) return known;
+    if (durations.length <= 4) return durations;
+    return [0, 1, 2, 3].map((k) => durations[Math.round((k * (durations.length - 1)) / 3)]);
+}
+
+/**
+ * Error against clip length with one line per sensor-turn level (`across: "length"`),
+ * or against the turn level with one line per clip length (`across: "turn"`).
+ *
+ * Each point is the median of its cell's tracks, with a bar from the lower to the
+ * upper quartile. rock_v3 flies every clip length at every turn level, so the two
+ * factors are crossed and a line that stays flat says that factor does not help on
+ * its own. Individual tracks are not drawn: four lines of up to seven cells of 100
+ * tracks each would bury the medians.
+ */
+export function figErrorByTurn(rows, {across = "length", rungsWanted = [0, 0.2], lengthsWanted = [20, 60, 120, 300],
+    measure = makeMeasure()} = {}) {
+    const turns = turnLevelsOf(rows);
+    const durations = durationsOf(rows);
+    if (turns.length < 2 || durations.length < 2) return null;
+    const rungs = rungGroups(rows, rungsWanted);
+    if (!rungs.length) return null;
+    const floor = measure.floor;
+    const byLength = across === "length";
+    const series = byLength ? turns : pickLengths(durations, lengthsWanted);
+    const xs = byLength ? durations : turns;
+    const ramp = byLength ? TURN_RAMP : LENGTH_RAMP;
+    const seriesLabel = (s) => (byLength ? `${s}° turn` : `${s} s clips`);
+    const xLabel = (x) => (byLength ? `${x} s` : `${x}°`);
+
+    const data = [], titles = [];
+    const medians = {};
+    let peak = floor, cells = 0, flooredMedians = 0;
+    for (const rung of rungs) {
+        for (const cls of CLASSES) {
+            const i = titles.length;
+            const suffix = i === 0 ? "" : String(i + 1);
+            series.forEach((s, j) => {
+                const color = ramp[Math.min(j, ramp.length - 1)];
+                // Offset each line a little sideways, so the quartile bars do not overlap.
+                const dx = (j - (series.length - 1) / 2) * 0.09;
+                const points = [];
+                xs.forEach((x, k) => {
+                    const turn = byLength ? s : x, duration = byLength ? x : s;
+                    const values = cell(rows, cls, duration, rung).filter((r) => same(r.d_turnDeg, turn))
+                        .map(measure.value).filter(fin);
+                    const box = boxStatsLog(values);
+                    if (!box) return;
+                    cells++;
+                    if (box.median < floor) flooredMedians++;
+                    medians[`${rung}deg/${cls}/${turn}/${duration}`] = box.median;
+                    peak = Math.max(peak, box.q3);
+                    points.push({x: k + dx, box, n: values.length, where: xLabel(x)});
+                });
+                if (!points.length) return;
+                const drawn = (v) => atLeast(v, floor);
+                data.push({
+                    type: "scatter",
+                    mode: "lines+markers",
+                    x: points.map((p) => p.x),
+                    y: points.map((p) => drawn(p.box.median)),
+                    error_y: {
+                        type: "data", symmetric: false,
+                        array: points.map((p) => drawn(p.box.q3) - drawn(p.box.median)),
+                        arrayminus: points.map((p) => drawn(p.box.median) - drawn(p.box.q1)),
+                        color, thickness: 1, width: 2,
+                    },
+                    text: points.map((p) => `${seriesLabel(s)}, ${p.where}: median ${measure.format(p.box.median)}, `
+                        + `quartiles ${measure.format(p.box.q1)} to ${measure.format(p.box.q3)}, ${p.n} tracks`),
+                    hovertemplate: "%{text}<extra></extra>",
+                    line: {color, width: 1.8},
+                    marker: {color, size: 7},
+                    name: seriesLabel(s),
+                    legendgroup: seriesLabel(s),
+                    showlegend: i === 0,
+                    xaxis: `x${suffix}`, yaxis: `y${suffix}`,
+                });
+            });
+            titles.push(`${CLASS_LABEL[cls]}, ${rungLabel(rung)} pointing error`);
+        }
+    }
+    if (!cells) return null;
+    const layout = gridLayout({
+        rows: rungs.length, cols: 3, titles,
+        xTitle: byLength ? "Clip length (s)" : "Sensor heading change over the clip",
+        yTitle: measure.axisTitle,
+        tickvals: xs.map((unused, k) => k),
+        ticktext: xs.map((x) => (byLength ? String(x) : `${x}°`)),
+        yRange: [Math.log10(floor * 0.55), Math.log10(peak * 2.2)],
+    });
+    addTolerance(layout, titles.length, measure);
+
+    // The caption quotes the first and last line at the first rung, at both ends of the x axis.
+    const rung0 = rungs[0];
+    const first = xs[0], last = xs[xs.length - 1];
+    const parts = [];
+    for (const cls of CLASSES) {
+        const ends = [series[0], series[series.length - 1]].map((s) => {
+            const key = (x) => (byLength ? `${rung0}deg/${cls}/${s}/${x}` : `${rung0}deg/${cls}/${x}/${s}`);
+            const a = medians[key(first)], b = medians[key(last)];
+            return fin(a) && fin(b)
+                ? `${seriesLabel(s)} ${measure.format(a)} at ${xLabel(first)}, ${measure.format(b)} at ${xLabel(last)}` : null;
+        }).filter(Boolean);
+        if (ends.length) parts.push(`${CLASS_LABEL[cls]}: ${ends.join("; ")}`);
+    }
+    const title = byLength
+        ? `rock_v3: ${measure.who} error by clip length at each sensor turn${unitSuffix(measure)}`
+        : `rock_v3: ${measure.who} error by sensor turn at each clip length${unitSuffix(measure)}`;
+    return {
+        key: byLength ? "errorByLengthAndTurn" : "errorByTurn",
+        title,
+        data,
+        layout: pageLayout(layout, {
+            title,
+            height: 420 * rungs.length + 190,
+            legendEntries: series.length,
+            caption: `Each point is the median ${measure.noun} of the tracks in its cell, with a bar from the lower to the `
+                + `upper quartile; the lines sit a little apart so the bars do not overlap. The sensor flies straight, `
+                + `turns at a constant rate through its turn level over the middle half of the clip, and flies straight `
+                + `again, at every clip length, so the heading change does not grow with the clip. `
+                + (byLength
+                    ? "A line that stays flat says a longer clip does not help at that amount of turn. "
+                    : `A line that stays flat says turning does not help at that clip length. Lines for ${series.join(", ")} s clips. `)
+                + `${cells} cells. `
+                + (flooredMedians ? `${flooredMedians} medians below ${measure.format(floor)} are drawn at the floor. ` : "")
+                + `At ${rungLabel(rung0)} pointing error: ${parts.join(". ")}.`,
         }),
         config: BASE_CONFIG,
         stats: medians,
@@ -453,10 +777,12 @@ export function figErrorByRung(rows, {durationsWanted = [20, 120]} = {}) {
 }
 
 /** Share of tracks inside a tolerance, against either axis, with exact intervals. */
-export function figWithinTolerance(rows, {axis = "rung", fixed = [20, 120]} = {}) {
+export function figWithinTolerance(rows, {axis = "rung", fixed = [20, 120], measure = makeMeasure()} = {}) {
     const byRung = axis === "rung";
     const xs = byRung ? rungsOf(rows) : durationsOf(rows);
-    const panels = fixed.filter((f) => (byRung ? cell(rows, null, f).length : cell(rows, null, null, f).length));
+    // The panels hold the other axis fixed: clip lengths for a rung sweep, rungs for a
+    // length sweep. Each uses the values asked for, or else the values the rows carry.
+    const panels = byRung ? durationGroups(rows, fixed) : rungGroups(rows, fixed);
     if (xs.length < 2 || !panels.length) return null;
 
     const data = [], titles = [];
@@ -466,8 +792,10 @@ export function figWithinTolerance(rows, {axis = "rung", fixed = [20, 120]} = {}
             const i = titles.length;
             const suffix = i === 0 ? "" : String(i + 1);
             CLASSES.forEach((cls, ci) => {
+                // A tolerance is a share of range, so this reads the chosen candidate's
+                // error/range whatever unit the other figures are drawn in.
                 const counts = xs.map((x) => withinTolerance(
-                    byRung ? cell(rows, cls, panelValue, x) : cell(rows, cls, x, panelValue), tol));
+                    byRung ? cell(rows, cls, panelValue, x) : cell(rows, cls, x, panelValue), tol, measure.relSep));
                 summary[`${panelValue}/${formatPercent(tol)}/${cls}`] = counts;
                 data.push(proportionTrace(xs.map((unused, k) => k), counts, CLASS_HUE[cls],
                     CLASS_LABEL[cls], {axis: suffix, dx: (ci - 1) * 0.1}));
@@ -495,24 +823,23 @@ export function figWithinTolerance(rows, {axis = "rung", fixed = [20, 120]} = {}
     // One legend, on the first panel only: the same three series repeat in each.
     data.slice(0, 3).forEach((trace) => { trace.showlegend = true; });
 
+    const title = `rock_v3: share of tracks with the ${measure.who} within tolerance, by `
+        + `${byRung ? "pointing error" : "clip length"}`;
     return {
         key: byRung ? "withinByRung" : "withinByLength",
-        title: `rock_v3: share of tracks with the blind top candidate within tolerance, by `
-            + `${byRung ? "pointing error" : "clip length"}`,
+        title,
         data,
         layout: {
             ...pageLayout(layout, {
-                title: `rock_v3: share of tracks with the blind top candidate within tolerance, by `
-                    + `${byRung ? "pointing error" : "clip length"}`,
+                title,
                 height: 380 * panels.length + 190,
                 width: 1300,
-                caption: `Points: k of n tracks (n = 100 per cell) whose top candidate lies within the tolerance; a track `
-                    + `with no top range at all counts as outside. Bars: exact 95% Clopper-Pearson intervals, which are `
-                    + `conservative by construction, so their true coverage is at least 95%.`,
+                caption: `Points: k of n tracks (n = 100 per cell) whose ${measure.who} lies within the tolerance, as a `
+                    + `share of the mean true range; a track with no value for it counts as outside. Bars: exact 95% `
+                    + `Clopper-Pearson intervals, which are conservative by construction, so their true coverage is at `
+                    + `least 95%.`,
+                legendEntries: 3,
             }),
-            showlegend: true,
-            legend: {orientation: "h", x: 1, y: 1.035, xanchor: "right", yanchor: "bottom",
-                font: {size: 11}},
         },
         config: BASE_CONFIG,
         stats: summary,
@@ -535,7 +862,7 @@ export function outcomeOf(row) {
 
 export function figClassOutcome(rows, {durationsWanted = [20, 120]} = {}) {
     const rungs = rungsOf(rows);
-    const durations = durationsWanted.filter((d) => cell(rows, null, d).length);
+    const durations = durationGroups(rows, durationsWanted);
     if (rungs.length < 2 || !durations.length) return null;
 
     const data = [], titles = [];
@@ -594,10 +921,9 @@ export function figClassOutcome(rows, {durationsWanted = [20, 120]} = {}) {
                     + `but not the right one. "nothing viable" is the unresolved verdict, which the analysis states is a `
                     + `safety valve and not an anomaly claim. Separating the last two matters, because a plain class-correct `
                     + `fraction counts them the same.`,
+                legendEntries: OUTCOMES.length,
             }),
             barmode: "stack",
-            showlegend: true,
-            legend: {orientation: "h", x: 1, y: 1.045, xanchor: "right", yanchor: "bottom", font: {size: 11}},
         },
         config: BASE_CONFIG,
         stats: summary,
@@ -605,9 +931,12 @@ export function figClassOutcome(rows, {durationsWanted = [20, 120]} = {}) {
 }
 
 /** What the blind ranking cost, against the best candidate that was on offer. */
-export function figRankingCost(rows, {rungsWanted = [0, 0.2]} = {}) {
-    const rungs = rungsWanted.filter((e) => cell(rows, null, null, e).length);
+export function figRankingCost(rows, {rungsWanted = [0, 0.2], measure = makeMeasure()} = {}) {
+    // The best candidate set against itself is a diagonal line and nothing else.
+    if (measure.subject === SUBJECT_BEST) return null;
+    const rungs = rungGroups(rows, rungsWanted);
     if (!rungs.length) return null;
+    const floor = measure.floor;
     const data = [], titles = [];
     const summary = {};
     let lo = 1, hi = 1e-6;
@@ -616,36 +945,43 @@ export function figRankingCost(rows, {rungsWanted = [0, 0.2]} = {}) {
             const i = titles.length;
             const suffix = i === 0 ? "" : String(i + 1);
             const here = cell(rows, cls, null, rung)
-                .filter((r) => fin(r.r_topRelSep) && fin(r.r_bestRelSep));
-            const xs = here.map((r) => atLeast(r.r_bestRelSep, FLOOR));
-            const ys = here.map((r) => atLeast(r.r_topRelSep, FLOOR));
+                .filter((r) => fin(measure.value(r)) && fin(measure.best(r)));
+            const xs = here.map((r) => atLeast(measure.best(r), floor));
+            const ys = here.map((r) => atLeast(measure.value(r), floor));
             for (const v of xs.concat(ys)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
             const chose = here.filter((r) =>
-                Math.abs(r.r_topRelSep - r.r_bestRelSep) <= 1e-9 * Math.max(1, r.r_bestRelSep)).length;
-            const ratio = median(here.filter((r) => r.r_bestRelSep > 0)
-                .map((r) => r.r_topRelSep / r.r_bestRelSep));
+                Math.abs(measure.value(r) - measure.best(r)) <= 1e-9 * Math.max(1, measure.best(r))).length;
+            const ratio = median(here.filter((r) => measure.best(r) > 0)
+                .map((r) => measure.value(r) / measure.best(r)));
             summary[`${rung}deg/${cls}`] = {n: here.length, topIsBest: chose, medianRatio: ratio};
             data.push({
                 type: "scattergl", mode: "markers", x: xs, y: ys,
                 marker: {size: 4.5, color: CLASS_HUE[cls], opacity: 0.75,
                     line: {color: "#ffffff", width: 0.3}},
                 text: here.map((r) => r.base ?? ""),
+                customdata: here.map((r) => r.rowIndex ?? null),
                 hovertemplate: "%{text}<br>best %{x:.3g}, chosen %{y:.3g}<extra></extra>",
                 showlegend: false, xaxis: `x${suffix}`, yaxis: `y${suffix}`,
             });
-            titles.push(`${CLASS_LABEL[cls]}, ${rungLabel(rung)}: top is the best on ${chose} of ${here.length}`);
+            titles.push(`${CLASS_LABEL[cls]}, ${rungLabel(rung)}: `
+                + `${measure.subject === SUBJECT_TOP ? "top" : shortSolverName(measure.subject)} is the best on `
+                + `${chose} of ${here.length}`);
         }
     }
     const layout = gridLayout({
         rows: rungs.length, cols: 3, titles,
-        xTitle: "Best candidate error / range (an oracle pick)",
-        yTitle: "Blind top candidate error / range",
+        xTitle: `Best candidate ${measure.noun} (an oracle pick)`,
+        yTitle: measure.axisTitle,
         tickvals: undefined, ticktext: undefined,
     });
     layout.shapes = [];
     for (let i = 0; i < titles.length; i++) {
         const suffix = i === 0 ? "" : String(i + 1);
+        // The same number format as the error/range y axes: powers of ten, one label
+        // per decade. Left to Plotly's default, this axis read "100µ, 0.001, 0.01"
+        // beside a y axis reading "10^-4, 10^-3", two notations for one quantity.
         Object.assign(layout[`xaxis${suffix}`], {type: "log", gridcolor: GRID,
+            exponentformat: "power", dtick: 1,
             range: [Math.log10(lo * 0.7), Math.log10(hi * 1.4)]});
         Object.assign(layout[`yaxis${suffix}`], {matches: undefined,
             range: [Math.log10(lo * 0.7), Math.log10(hi * 1.4)]});
@@ -655,17 +991,21 @@ export function figRankingCost(rows, {rungsWanted = [0, 0.2]} = {}) {
             line: {color: MUTED, width: 1, dash: "dot"}, layer: "below",
         });
     }
+    const title = measure.subject === SUBJECT_TOP
+        ? `rock_v3: the cost of blind ranking, chosen candidate against the best on offer${unitSuffix(measure)}`
+        : `rock_v3: the ${measure.who} against the best candidate on offer${unitSuffix(measure)}`;
+    const chosen = measure.subject === SUBJECT_TOP ? "the candidate the blind ranking put first" : `the ${measure.who}`;
     return {
         key: "rankingCost",
-        title: "rock_v3: the cost of blind ranking, chosen candidate against the best on offer",
+        title,
         data,
         layout: pageLayout(layout, {
-            title: "rock_v3: the cost of blind ranking, chosen candidate against the best on offer",
+            title,
             height: 430 * rungs.length + 190,
             caption: `Each dot is one track, all clip lengths pooled. x: the error of the candidate closest to truth, which `
-                + `is an oracle pick only knowable with truth in hand. y: the error of the candidate the blind ranking put `
-                + `first. A dot on the dashed diagonal means the ranking chose the best candidate on offer, and the vertical `
-                + `distance above it is what ranking blind cost on that track. Values below ${FLOOR} are drawn at the floor.`,
+                + `is an oracle pick only knowable with truth in hand. y: the error of ${chosen}. A dot on the dashed `
+                + `diagonal means it was the best candidate on offer, and the vertical distance above the diagonal is what `
+                + `choosing it cost on that track. Values below ${measure.format(floor)} are drawn at the floor.`,
         }),
         config: BASE_CONFIG,
         stats: summary,
@@ -673,9 +1013,11 @@ export function figRankingCost(rows, {rungsWanted = [0, 0.2]} = {}) {
 }
 
 /** Error against the two geometry axes, with a median trend over equal-count bins. */
-export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2]} = {}) {
-    const rungs = rungsWanted.filter((e) => cell(rows, null, null, e).length);
+export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2], measure = makeMeasure()} = {}) {
+    const rungs = rungGroups(rows, rungsWanted);
     if (!rungs.length) return null;
+    const floor = measure.floor;
+    let peak = floor;
     const AXES = [
         {field: "in_apertureDeg", label: "Parallax aperture (deg)", scale: 1},
         {field: "in_trueRangeMeanM", label: "Mean true range (km)", scale: 1e-3},
@@ -688,14 +1030,19 @@ export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2]} = {}) {
             const suffix = i === 0 ? "" : String(i + 1);
             for (const cls of CLASSES) {
                 const here = cell(rows, cls, null, rung).filter((r) =>
-                    fin(r.r_topRelSep) && fin(r[axisSpec.field]) && r[axisSpec.field] > 0);
+                    fin(measure.value(r)) && fin(r[axisSpec.field]) && r[axisSpec.field] > 0);
                 if (!here.length) continue;
                 const xs = here.map((r) => r[axisSpec.field] * axisSpec.scale);
-                const ys = here.map((r) => atLeast(r.r_topRelSep, FLOOR));
+                const ys = here.map((r) => atLeast(measure.value(r), floor));
+                for (const y of ys) peak = Math.max(peak, y);
                 data.push({
                     type: "scattergl", mode: "markers", x: xs, y: ys,
                     marker: {size: 3.5, color: CLASS_HUE[cls], opacity: 0.35},
-                    hoverinfo: "skip", showlegend: false,
+                    // Hoverable, so a dot can name its track and show its screenshot.
+                    text: here.map((r) => r.base ?? ""),
+                    customdata: here.map((r) => r.rowIndex ?? null),
+                    hovertemplate: "%{text}<br>%{y:.3g}<extra></extra>",
+                    showlegend: false,
                     xaxis: `x${suffix}`, yaxis: `y${suffix}`,
                 });
                 const trend = equalCountMedians(xs, ys, {bins: 8, minPerBin: 5});
@@ -716,8 +1063,10 @@ export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2]} = {}) {
     }
     const layout = gridLayout({
         rows: rungs.length, cols: 2, titles,
-        xTitle: "", yTitle: "Blind top candidate error / range",
-        yRange: [Math.log10(FLOOR * 0.55), Math.log10(3)],
+        xTitle: "", yTitle: measure.axisTitle,
+        // Error/range keeps its fixed top at 300% of range, as before; the other units
+        // have no natural top, so the data sets it.
+        yRange: [Math.log10(floor * 0.55), Math.log10(measure.metric === "relSep" ? 3 : peak * 2.2)],
     });
     for (let i = 0; i < titles.length; i++) {
         const suffix = i === 0 ? "" : String(i + 1);
@@ -726,25 +1075,24 @@ export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2]} = {}) {
             title: {text: AXES[i % 2].label, font: {size: 12, color: INK}},
         });
     }
-    const tol = toleranceShapes(titles.length, TOL5, "5% of range");
-    layout.shapes = tol.shapes;
-    layout.annotations = [...layout.annotations, ...tol.annotations];
+    addTolerance(layout, titles.length, measure);
+    const title = `rock_v3: ${measure.who} error against the viewing geometry${unitSuffix(measure)}`;
     return {
         key: "errorVsGeometry",
-        title: "rock_v3: blind top-candidate error against the viewing geometry",
+        title,
         data,
         layout: {
             ...pageLayout(layout, {
-                title: "rock_v3: blind top-candidate error against the viewing geometry",
+                title,
                 height: 430 * rungs.length + 190, width: 1300,
                 caption: `Each faint dot is one track, all clip lengths pooled, so a longer clip sits further right on the `
                     + `aperture axis. The heavy line is that class's median over equal-count bins, at least 5 tracks per `
                     + `point and up to 8 points; the line is what to read and the dots only show the spread. The parallax `
-                    + `aperture is the angle at the target between the first and the last sensor position. Dashed line: `
-                    + `5% of range. Values below ${FLOOR} are drawn at the floor.`,
+                    + `aperture is the angle at the target between the first and the last sensor position. `
+                    + `${measure.tolerance ? "Dashed line: 5% of range. " : ""}Values below ${measure.format(floor)} are `
+                    + `drawn at the floor.`,
+                legendEntries: CLASSES.length,
             }),
-            showlegend: true,
-            legend: {x: 0.005, y: 0.02, xanchor: "left", yanchor: "bottom", font: {size: 11}, bgcolor: HALO},
         },
         config: BASE_CONFIG,
         stats: summary,
@@ -755,7 +1103,7 @@ export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2]} = {}) {
 export function figCategoryMix(rows, {field, key, title, caption, order = null, labels = null,
     durationsWanted = [20, 120], limit = 7} = {}) {
     const rungs = rungsOf(rows);
-    const durations = durationsWanted.filter((d) => cell(rows, null, d).length);
+    const durations = durationGroups(rows, durationsWanted);
     if (rungs.length < 2 || !durations.length) return null;
 
     let keys = order;
@@ -811,10 +1159,8 @@ export function figCategoryMix(rows, {field, key, title, caption, order = null, 
     return {
         key, title, data,
         layout: {
-            ...pageLayout(layout, {title, height: 380 * durations.length + 210, caption}),
+            ...pageLayout(layout, {title, height: 380 * durations.length + 210, caption, legendEntries: keys.length}),
             barmode: "stack",
-            showlegend: true,
-            legend: {orientation: "h", x: 1, y: 1.045, xanchor: "right", yanchor: "bottom", font: {size: 10.5}},
         },
         config: BASE_CONFIG,
     };
@@ -833,20 +1179,414 @@ export function labelMapFrom(rows, keyField, nameField) {
 }
 
 // ---------------------------------------------------------------------------
+// one cell: compare the target classes
+// ---------------------------------------------------------------------------
+//
+// Every figure above compares cells along a sweep, across pointing-error rungs or
+// across clip lengths. That fits a whole scenario grid and nothing smaller: a run
+// over one folder is a single cell, and it drew no figure even with three hundred
+// scored tracks in it. These compare the target classes instead. They build only
+// when the rows ARE one cell, so a sweep never gets a pooled figure that quietly
+// mixes its rungs together.
+
+const distinctFinite = (values) => [...new Set(values.filter(fin))].sort((a, b) => a - b);
+
+/** At most one pointing-error rung and at most one clip length. */
+export function isSingleCell(rows) {
+    return rows.length > 0
+        && distinctFinite(rows.map((r) => r.d_errorDeg)).length <= 1
+        && durationsOf(rows).length <= 1;
+}
+
+export const classesOf = (rows) => CLASSES.filter((cls) => rows.some((r) => r.d_class === cls));
+
+/** "20 s clips, 0.2° pointing error", saying plainly when either is not known. */
+export function cellDescription(rows) {
+    const rungs = distinctFinite(rows.map((r) => r.d_errorDeg));
+    const durations = durationsOf(rows);
+    return `${durations.length === 1 ? `${durations[0]} s clips` : "clip length unstated"}, `
+        + `${rungs.length === 1 ? `${rungs[0]}° pointing error` : "pointing error unstated"}`;
+}
+
+/** The sentence a caption owes the reader when the rung is missing, and why. */
+export function unstatedNote(rows) {
+    if (distinctFinite(rows.map((r) => r.d_errorDeg)).length) return "";
+    const unpaired = rows.some((r) => r.in_sidecarPaired === false);
+    return " The pointing error is unstated"
+        + (unpaired
+            ? ": no scenario sidecar was paired with these files, and the declared pointing error lives in the "
+              + "sidecar. In the interchange layout the sidecars sit in a meta folder beside All, so choosing All "
+              + "on its own leaves them behind. Choose the folder above All, with Recursive on, to pair them."
+            : ".");
+}
+
+const classAxis = (classes) => ({
+    tickvals: classes.map((unused, i) => i),
+    ticktext: classes.map((cls) => CLASS_LABEL[cls]),
+});
+
+const PERCENT_TICKS = {tickvals: [0, 0.25, 0.5, 0.75, 1], ticktext: ["0%", "25%", "50%", "75%", "100%"]};
+
+/** The chosen candidate's error, one box per target class. */
+export function figErrorByClass(rows, {measure = makeMeasure()} = {}) {
+    if (!isSingleCell(rows)) return null;
+    const classes = classesOf(rows);
+    if (!classes.length) return null;
+    const floor = measure.floor;
+    const data = [];
+    const medians = {};
+    let drawn = 0, missing = 0, floored = 0, peak = floor;
+    classes.forEach((cls, i) => {
+        const here = cell(rows, cls);
+        const values = here.map(measure.value).filter(fin);
+        missing += here.length - values.length;
+        drawn += values.length;
+        floored += values.filter((v) => v < floor).length;
+        const box = boxStatsLog(values);
+        if (!box) return;
+        medians[cls] = box.median;
+        const points = [], hollow = [];
+        for (const r of here) {
+            const v = measure.value(r);
+            if (!fin(v)) continue;
+            peak = Math.max(peak, v);
+            (measure.marksBlind && r.r_topBlind ? hollow : points)
+                .push({x: i, y: atLeast(v, floor), id: r.rowIndex ?? null, label: r.base ?? ""});
+        }
+        data.push(boxTrace([i], [box], CLASS_HUE[cls], {floor}));
+        data.push(stripTrace(points, CLASS_HUE[cls], {seed: 805 + i}));
+        if (hollow.length) data.push(stripTrace(hollow, CLASS_HUE[cls], {hollow: true, seed: 905 + i}));
+    });
+    if (!drawn) return null;
+    const title = `This run: ${measure.who} error by target class${unitSuffix(measure)}`;
+    const layout = gridLayout({
+        rows: 1, cols: 1, titles: [cellDescription(rows)],
+        xTitle: "Target class", yTitle: measure.axisTitle,
+        ...classAxis(classes),
+        yRange: [Math.log10(floor * 0.55), Math.log10(peak * 2.2)],
+    });
+    addTolerance(layout, 1, measure);
+    const parts = classes.filter((cls) => fin(medians[cls]))
+        .map((cls) => `${CLASS_LABEL[cls]} median ${measure.format(medians[cls])} over ${cell(rows, cls).length} tracks`);
+    return {
+        key: "errorByClass", title, data,
+        layout: pageLayout(layout, {
+            title, width: 1050, height: 660,
+            caption: `${drawn} tracks drawn (${missing} with no value for the ${measure.who} are not drawn). Box: `
+                + `quartiles and median on the raw values. Whiskers: Tukey's 1.5 box-heights, computed on log10 so the `
+                + `fence is symmetric on this axis. ${hollowNote(measure)}${floored} values below `
+                + `${measure.format(floor)} are drawn at the floor. ${parts.join("; ")}.${unstatedNote(rows)}`,
+        }),
+        config: BASE_CONFIG,
+        stats: medians,
+    };
+}
+
+/** Share of tracks inside 5% and 1% of range, per class, with exact intervals. */
+export function figWithinByClass(rows, {measure = makeMeasure()} = {}) {
+    if (!isSingleCell(rows)) return null;
+    const classes = classesOf(rows);
+    if (!classes.length || !rows.some((r) => fin(measure.relSep(r)))) return null;
+    // One hue in two steps: the series are an ORDERED pair of tolerances, not two
+    // unrelated categories, so darker means stricter.
+    const TOLERANCES = [
+        {tol: TOL5, color: "#6aa9e0", label: "within 5% of range"},
+        {tol: TOL1, color: "#14487f", label: "within 1% of range"},
+    ];
+    const data = [];
+    const summary = {};
+    TOLERANCES.forEach((spec, ti) => {
+        // A tolerance is a share of range, whatever unit the error figures are drawn in.
+        const counts = classes.map((cls) => withinTolerance(cell(rows, cls), spec.tol, measure.relSep));
+        classes.forEach((cls, i) => { summary[`${formatPercent(spec.tol)}/${cls}`] = counts[i]; });
+        const trace = proportionTrace(classes.map((unused, i) => i), counts, spec.color, spec.label,
+            {dx: (ti - 0.5) * 0.18});
+        trace.mode = "markers";
+        trace.marker = {color: spec.color, size: 11, line: {color: "#ffffff", width: 1}};
+        trace.showlegend = true;
+        data.push(trace);
+    });
+    const title = `This run: share of tracks with the ${measure.who} within tolerance, by class`;
+    const layout = gridLayout({
+        rows: 1, cols: 1, titles: [cellDescription(rows)],
+        xTitle: "Target class", yTitle: "Fraction of tracks", ...classAxis(classes), logY: false,
+    });
+    Object.assign(layout.yaxis, {range: [-0.02, 1.04], ...PERCENT_TICKS});
+    const parts = classes.map((cls) => {
+        const five = summary[`${formatPercent(TOL5)}/${cls}`];
+        const one = summary[`${formatPercent(TOL1)}/${cls}`];
+        return `${CLASS_LABEL[cls]} ${five.k} of ${five.n} within 5%, ${one.k} within 1%`;
+    });
+    return {
+        key: "withinByClass", title, data,
+        layout: {
+            ...pageLayout(layout, {
+                title, width: 1050, height: 660,
+                caption: `Points: k of n tracks whose ${measure.who} lies within the tolerance, as a share of the mean `
+                    + `true range; a track with no value for it counts as outside. Bars: exact 95% Clopper-Pearson `
+                    + `intervals, which are conservative by construction. ${parts.join("; ")}.${unstatedNote(rows)}`,
+                legendEntries: data.length,
+            }),
+        },
+        config: BASE_CONFIG,
+        stats: summary,
+    };
+}
+
+/** The verdict's class outcome, one stacked bar per target class. */
+export function figOutcomeByClass(rows) {
+    if (!isSingleCell(rows)) return null;
+    const classes = classesOf(rows);
+    // A track whose true class is not known cannot be sorted into "true" or "only
+    // other", so it is left out and counted in the caption, never scored a miss.
+    const judged = rows.filter((r) => r.d_classCorrect === true || r.d_classCorrect === false);
+    if (!classes.length || !judged.length) return null;
+    const data = [];
+    const summary = {};
+    for (const outcome of OUTCOMES) {
+        const fractions = classes.map((cls) => {
+            const here = judged.filter((r) => r.d_class === cls);
+            const n = here.filter((r) => outcomeOf(r) === outcome).length;
+            summary[`${cls}/${outcome}`] = n;
+            return here.length ? n / here.length : 0;
+        });
+        data.push({
+            type: "bar", x: classes.map((unused, i) => i), y: fractions, name: outcome, width: 0.6,
+            marker: {color: OUTCOME_HUE[outcome], line: {color: "#ffffff", width: 1}},
+            hovertemplate: `${outcome}: %{y:.0%}<extra></extra>`,
+        });
+    }
+    const title = "This run: what the verdict says about the object class";
+    const layout = gridLayout({
+        rows: 1, cols: 1, titles: [cellDescription(rows)],
+        xTitle: "Target class", yTitle: "Share of tracks", ...classAxis(classes), logY: false, topPad: 0.87,
+    });
+    Object.assign(layout.yaxis, {range: [0, 1], ...PERCENT_TICKS, gridcolor: "rgba(0,0,0,0)"});
+    const leftOut = rows.length - judged.length;
+    return {
+        key: "outcomeByClass", title, data,
+        layout: {
+            ...pageLayout(layout, {
+                title, width: 1050, height: 660,
+                caption: `Each bar is every judged track of that class, ${judged.length} of ${rows.length}`
+                    + `${leftOut ? `; ${leftOut} with no known true class are left out` : ""}. "true class viable" means `
+                    + `the verdict's viable list contains the true class: party and weather balloons map to the balloon `
+                    + `class, the drone to the fixed-wing class. "only other classes viable" means it named classes but `
+                    + `not the right one. "nothing viable" is the unresolved verdict, a safety valve and not an anomaly `
+                    + `claim.${unstatedNote(rows)}`,
+                legendEntries: OUTCOMES.length,
+            }),
+            barmode: "stack",
+        },
+        config: BASE_CONFIG,
+        stats: summary,
+    };
+}
+
+/** A 100% stacked mix of a categorical result field, one bar per target class. */
+export function figMixByClass(rows, {field, key, title, caption, order = null, labels = null, limit = 7} = {}) {
+    if (!isSingleCell(rows)) return null;
+    const classes = classesOf(rows);
+    if (!classes.length) return null;
+    let keys = order;
+    if (!keys) {
+        keys = tally(rows, field).map((t) => t.name);
+        if (keys.length > limit) keys = keys.slice(0, limit).concat(["Other"]);
+    } else {
+        const present = new Set(rows.map((r) => String(r[field] ?? "null")));
+        keys = keys.filter((k) => present.has(k));
+    }
+    const hue = {};
+    keys.forEach((k, i) => { hue[k] = k === "Other" ? "#8f8c84" : MIX_HUES[i % MIX_HUES.length]; });
+    const data = keys.map((name) => ({
+        type: "bar",
+        x: classes.map((unused, i) => i),
+        y: classes.map((cls) => {
+            const here = cell(rows, cls);
+            if (!here.length) return 0;
+            const n = name === "Other"
+                ? here.filter((r) => !keys.includes(String(r[field] ?? "null"))).length
+                : here.filter((r) => String(r[field] ?? "null") === name).length;
+            return n / here.length;
+        }),
+        name: labels?.[name] ?? name,
+        width: 0.6,
+        marker: {color: hue[name], line: {color: "#ffffff", width: 1}},
+        hovertemplate: `${labels?.[name] ?? name}: %{y:.0%}<extra></extra>`,
+    }));
+    const layout = gridLayout({
+        rows: 1, cols: 1, titles: [cellDescription(rows)],
+        xTitle: "Target class", yTitle: "Share of tracks", ...classAxis(classes), logY: false, topPad: 0.87,
+    });
+    Object.assign(layout.yaxis, {range: [0, 1], ...PERCENT_TICKS, gridcolor: "rgba(0,0,0,0)"});
+    return {
+        key, title, data,
+        layout: {
+            ...pageLayout(layout, {title, width: 1050, height: 660, caption: caption + unstatedNote(rows),
+                legendEntries: keys.length}),
+            barmode: "stack",
+        },
+        config: BASE_CONFIG,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// every candidate, by solver
+// ---------------------------------------------------------------------------
+
+/** A solver's name, short enough for an axis label. */
+export function shortSolverName(name) {
+    return String(name ?? "?")
+        .replace(/^Global Fit:\s*/i, "")
+        .replace(/\s*\(generic prior\)/i, "")
+        .replace(/Polynomial LSQ \(order (\d+)\)/i, "Polynomial LSQ $1");
+}
+
+/**
+ * Every candidate's error against truth, one box per solver.
+ *
+ * The other error figures follow the candidate the blind ranking put first. This one
+ * scores every candidate each solver produced, chosen or not, which separates a
+ * solver that cannot find the answer from one that finds it and is out-ranked. It
+ * builds only from rows carrying every candidate's error (r_candidates), which a
+ * BOTBench run keeps; a joined JSONL without them gets no figure.
+ */
+export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMeasure()} = {}) {
+    const scored = rows.filter((r) => Array.isArray(r.r_candidates) && r.r_candidates.length);
+    if (!scored.length) return null;
+    const rungs = rungGroups(scored, rungsWanted);
+    if (!rungs.length) return null;
+    const floor = measure.floor;
+    const nameOf = (c) => c.name ?? c.key ?? "?";
+
+    // One order for every panel: by median error over all the rows, best first.
+    const pooled = new Map();
+    for (const r of scored) {
+        for (const c of r.r_candidates) {
+            const v = measure.candidate(c);
+            if (!fin(v)) continue;
+            if (!pooled.has(nameOf(c))) pooled.set(nameOf(c), []);
+            pooled.get(nameOf(c)).push(v);
+        }
+    }
+    const solvers = [...pooled.entries()]
+        .map(([name, values]) => ({name, median: median(values)}))
+        .sort((a, b) => a.median - b.median)
+        .map((s) => s.name);
+    if (!solvers.length) return null;
+    const slot = new Map(solvers.map((name, s) => [name, s]));
+
+    const data = [], titles = [];
+    const medians = {};
+    const lowest = [];
+    let drawn = 0, floored = 0, peak = floor;
+    for (const cls of CLASSES) {
+        for (const rung of rungs) {
+            const i = titles.length;
+            const suffix = i === 0 ? "" : String(i + 1);
+            const values = solvers.map(() => []);
+            const points = [];
+            for (const r of cell(scored, cls, null, rung)) {
+                for (const c of r.r_candidates) {
+                    const s = slot.get(nameOf(c));
+                    const v = measure.candidate(c);
+                    if (s === undefined || !fin(v)) continue;
+                    values[s].push(v);
+                    points.push({x: s, y: atLeast(v, floor), id: r.rowIndex ?? null,
+                        label: `${r.base ?? ""} · ${shortSolverName(nameOf(c))}`});
+                    peak = Math.max(peak, v);
+                    if (v < floor) floored++;
+                    drawn++;
+                }
+            }
+            const stats = solvers.map((name, s) => {
+                const box = boxStatsLog(values[s]);
+                if (box) medians[`${rung}deg/${cls}/${name}`] = box.median;
+                return box;
+            });
+            data.push(boxTrace(solvers.map((unused, s) => s), stats, CLASS_HUE[cls], {axis: suffix, floor}));
+            if (points.length) data.push(stripTrace(points, CLASS_HUE[cls], {axis: suffix, size: 3, opacity: 0.35}));
+            const best = solvers.map((name) => [name, medians[`${rung}deg/${cls}/${name}`]])
+                .filter(([, m]) => fin(m)).sort((a, b) => a[1] - b[1])[0];
+            if (best) {
+                lowest.push(`${CLASS_LABEL[cls]} ${rungLabel(rung)}: ${shortSolverName(best[0])} ${measure.format(best[1])}`);
+            }
+            titles.push(`${CLASS_LABEL[cls]}, ${rungLabel(rung)} pointing error`);
+        }
+    }
+    const layout = gridLayout({
+        rows: CLASSES.length, cols: rungs.length, titles,
+        xTitle: "", yTitle: `Candidate ${measure.noun}`,
+        tickvals: solvers.map((unused, s) => s),
+        ticktext: solvers.map(shortSolverName),
+        vGap: 0.14, bottomPad: 0.1,
+        yRange: [Math.log10(floor * 0.55), Math.log10(peak * 2.2)],
+    });
+    for (let i = 0; i < titles.length; i++) {
+        const suffix = i === 0 ? "" : String(i + 1);
+        Object.assign(layout[`xaxis${suffix}`], {tickangle: -35, tickfont: {size: 10, color: INK2}});
+    }
+    addTolerance(layout, titles.length, measure);
+    const title = `rock_v3: every candidate's error, by solver${unitSuffix(measure)}`;
+    return {
+        key: "errorBySolver", title, data,
+        layout: pageLayout(layout, {
+            title, height: 560 * CLASSES.length + 200,
+            caption: `${drawn} candidate errors from ${scored.length} tracks, all clip lengths pooled. One box per solver: `
+                + `every candidate that solver produced, scored against truth whether or not the blind ranking put it `
+                + `first. A solver with a low box can find the answer; set it beside the blind top candidate's error in `
+                + `the clip-length figure to see what the ranking passed over. Solvers are ordered by their median error `
+                + `over every panel, best first. Box, whiskers and dots as in the clip-length figure; ${floored} values `
+                + `below ${measure.format(floor)} are drawn at the floor. Lowest median per panel: ${lowest.join("; ")}.`
+                + (measure.subject === SUBJECT_TOP ? "" : " The candidate choice does not apply here: every candidate is shown."),
+        }),
+        config: BASE_CONFIG,
+        stats: {solvers, medians},
+    };
+}
+
+// ---------------------------------------------------------------------------
 // the registry both front ends walk
 // ---------------------------------------------------------------------------
 
 export const FIGURES = [
+    {key: "errorByClass", name: "Error by target class", group: "This run",
+        build: (rows, {measure} = {}) => figErrorByClass(rows, {measure})},
+    {key: "withinByClass", name: "Within tolerance, by target class", group: "This run",
+        build: (rows, {measure} = {}) => figWithinByClass(rows, {measure})},
+    {key: "outcomeByClass", name: "What the verdict says, by target class", group: "This run",
+        build: (rows) => figOutcomeByClass(rows)},
+    {key: "verdictByClass", name: "Verdict code, by target class", group: "This run",
+        build: (rows) => figMixByClass(rows, {
+            field: "r_verdict", key: "verdictByClass", order: VERDICT_ORDER,
+            title: "This run: executive verdict code by target class",
+            caption: "Each bar is every track of that class, ordered by how far the verdict narrows the answer: "
+                + "'consistent-one' leaves a single viable interpretation class, 'consistent-several' leaves more "
+                + "than one, and 'unresolved' means no tested conventional model passed the screen.",
+        })},
+    {key: "topCandidateByClass", name: "First-ranked hypothesis, by target class", group: "This run",
+        build: (rows) => figMixByClass(rows, {
+            field: "r_topKey", key: "topCandidateByClass", labels: labelMapFrom(rows, "r_topKey", "r_topName"),
+            title: "This run: which hypothesis the blind ranking puts first, by target class",
+            caption: "Each bar is every track of that class. Sky Lantern / Balloon and Quadcopter are object models; "
+                + "Polynomial LSQ, Constant Altitude and Saddle are curve fits that carry no object claim.",
+        })},
     {key: "errorByLength", name: "Error by clip length", group: "Accuracy",
-        build: (rows) => figErrorByLength(rows)},
+        build: (rows, {measure} = {}) => figErrorByLength(rows, {measure})},
     {key: "errorByRung", name: "Error by pointing error", group: "Accuracy",
-        build: (rows) => figErrorByRung(rows)},
+        build: (rows, {measure} = {}) => figErrorByRung(rows, {measure})},
     {key: "withinByLength", name: "Within tolerance, by length", group: "Accuracy",
-        build: (rows) => figWithinTolerance(rows, {axis: "length", fixed: [0, 0.2]})},
+        build: (rows, {measure} = {}) => figWithinTolerance(rows, {axis: "length", fixed: [0, 0.2], measure})},
     {key: "withinByRung", name: "Within tolerance, by pointing error", group: "Accuracy",
-        build: (rows) => figWithinTolerance(rows, {axis: "rung", fixed: [20, 120]})},
+        build: (rows, {measure} = {}) => figWithinTolerance(rows, {axis: "rung", fixed: [20, 120], measure})},
+    {key: "errorByLengthAndTurn", name: "Error by clip length, per sensor turn", group: "Sensor turn", allTurnLevels: true,
+        build: (rows, {measure} = {}) => figErrorByTurn(rows, {across: "length", measure})},
+    {key: "errorByTurn", name: "Error by sensor turn, per clip length", group: "Sensor turn", allTurnLevels: true,
+        build: (rows, {measure} = {}) => figErrorByTurn(rows, {across: "turn", measure})},
+    {key: "errorBySolver", name: "Error by solver", group: "Accuracy",
+        build: (rows, {measure} = {}) => figErrorBySolver(rows, {measure})},
     {key: "errorVsGeometry", name: "Error against geometry", group: "Geometry",
-        build: (rows) => figErrorVsGeometry(rows)},
+        build: (rows, {measure} = {}) => figErrorVsGeometry(rows, {measure})},
     {key: "classOutcome", name: "What the verdict says about the class", group: "Interpretation",
         build: (rows) => figClassOutcome(rows)},
     {key: "verdictMix", name: "Verdict code", group: "Interpretation",
@@ -868,13 +1608,36 @@ export const FIGURES = [
                 + "Altitude and Saddle are curve fits that carry no object claim.",
         })},
     {key: "rankingCost", name: "Cost of blind ranking", group: "Ranking",
-        build: (rows) => figRankingCost(rows)},
+        build: (rows, {measure} = {}) => figRankingCost(rows, {measure})},
 ];
 
-/** Build every figure the rows can support. Nulls (too little data) are dropped. */
-export function buildAllFigures(rows, {only = null} = {}) {
+/**
+ * Build every figure the rows can support. Nulls (too little data) are dropped.
+ *
+ * measure says whose error the error figures plot, and in what unit. The default
+ * is the blind top candidate as a share of range, which is what every figure drew
+ * before the choice existed.
+ *
+ * turnDeg limits the rows to one sensor-turn level, and each figure's title says so.
+ * The figures that compare turn levels (allTurnLevels) always take every row.
+ */
+export function buildAllFigures(rows, {only = null, measure = makeMeasure(), turnDeg = null} = {}) {
+    const oneLevel = fin(turnDeg) ? rows.filter((r) => same(r.d_turnDeg, turnDeg)) : rows;
     return FIGURES
         .filter((f) => !only || only.includes(f.key))
-        .map((f) => { try { return f.build(rows); } catch (e) { return {key: f.key, error: String(e?.message ?? e)}; } })
+        .map((f) => {
+            try {
+                const figure = f.build(f.allTurnLevels ? rows : oneLevel, {measure});
+                if (figure && !f.allTurnLevels && fin(turnDeg)) markTurnLevel(figure, turnDeg);
+                return figure;
+            } catch (e) { return {key: f.key, error: String(e?.message ?? e)}; }
+        })
         .filter(Boolean);
+}
+
+/** Add to a figure's title the sensor-turn level its rows were limited to. */
+function markTurnLevel(figure, turnDeg) {
+    const note = `, sensor turn ${turnDeg}°`;
+    figure.title = `${figure.title}${note}`;
+    if (figure.layout?.title?.text) figure.layout.title = {...figure.layout.title, text: `${figure.layout.title.text}${note}`};
 }

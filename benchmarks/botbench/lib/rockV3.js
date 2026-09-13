@@ -26,21 +26,40 @@
 //                     26 km, rising 4.2 to 6 m/s through a sheared, veering
 //                     wind
 //
-// THE PLATFORM, the same for every class: level flight between 15,000 and
-// 20,000 ft above the ground, at 95 to 120 m/s, on a standard holding pattern
-// (1.5 minute legs, 25 degree bank, mostly right-hand), entered at a random
-// point of the pattern. So a 20 s clip is straight, or a turn, or both, and a
-// 300 s clip is close to a whole pattern. The target starts due north of the
-// platform at a random horizontal range drawn per class (lib/platforms.js
-// "racetrack" for the path; generateScenario.js for the frame convention).
+// THE PLATFORM: level flight between 15,000 and 20,000 ft above the ground at
+// 95 to 120 m/s on the "centered-turn" path (lib/platforms.js): straight for the
+// first quarter of the clip, one turn at a constant rate through the track's
+// turn level over the middle half, straight for the last quarter. Every track
+// has one of four turn levels, 0, 5, 10 or 20 degrees of heading change, and 25
+// tracks of each class fly each level. The shape is set in clip time, so a
+// track flies the same shape at every clip length, at that length's scale, and
+// its amount of turn does not grow with the length of the clip.
 //
-// EVERY RANDOM NUMBER IS A FUNCTION OF (class, index) ALONE, drawn from one
-// stream seeded by the track's name, so the spec of balloon_017 is identical
-// in every batch and every rung except for durationSeconds and the observation
-// section. The truth key (generateScenario.js) then differs between batches
-// only by duration, and because the flights are deterministic (no gusts:
-// every wind has variabilityPct 0) the 20 s truth is the first 20 s of the
-// 300 s truth, row for row. tests/botbench/rockV3.test.js pins that.
+// WHY. The first version of this set flew a standard holding pattern entered at
+// a random point, so the clip length decided how far the sensor turned: half of
+// its 20 s clips turned less than 5 degrees, and every clip of 180 s or more
+// held a whole 180 degree turn. A sensor flying straight at constant speed
+// cannot fix the range of a target moving at constant velocity, so that set
+// could not tell "a longer clip helps" from "a turning sensor helps". Here each
+// track keeps its turn level at every clip length, so the two can be told apart.
+//
+// THE SENSOR PATH BELONGS TO THE TRACK NUMBER. balloon_017, drone_017 and
+// weather_balloon_017 fly the same path, turn level included, drawn from a
+// stream keyed by the number alone (rockPlatform). The target starts due north
+// of the platform, so a start heading of 0 flies straight at it. Within each
+// turn level the start headings are spread evenly around the circle, and
+// neighbouring headings turn opposite ways, so turning toward or away from the
+// target is balanced (platformSlots).
+//
+// EVERY TARGET NUMBER IS A FUNCTION OF (class, index) ALONE, drawn from one
+// stream seeded by the track's name, so the target of balloon_017 is the same
+// in every batch and every rung. The targets, ranges and winds are exactly those
+// of the first version: its five holding-pattern numbers are still drawn from
+// the stream, and dropped, so every draw after them lands where it did. The
+// target flights are deterministic (no gusts: every wind has variabilityPct 0),
+// so a shorter clip's target truth is the first part of a longer clip's, row for
+// row. The sensor path does not nest that way when it turns: a longer clip flies
+// the same shape, larger. tests/botbench/rockV3.test.js pins both.
 //
 // The draws below are design choices, recorded in results/rock_v3/manifest.json
 // so a reader can see the distributions without this file.
@@ -49,7 +68,6 @@ import {DEFAULT_SITE} from "./generateScenario";
 import {BOTSET_ERROR_LEVELS} from "./botsetErrors";
 import {BALLOON_DIAMETER_M} from "./angularSize";
 import {fnv1a32, makeStream} from "./rng";
-import {racetrackSchedule} from "./platforms";
 import {dronePatternGeometry} from "./rockTargets";
 
 const G = 9.80665;
@@ -76,14 +94,24 @@ export const ROCK_V3 = {
         {key: "weather_balloon", file: "weather_balloon", family: "balloon"},
     ],
     platform: {
-        altitudeFt: [15000, 20000], speedMS: [95, 120], bankDeg: 25, legSeconds: 90,
-        rightHandFraction: 0.7,
+        altitudeFt: [15000, 20000], speedMS: [95, 120],
+        // The sensor's heading change over a clip, degrees: straight, and three
+        // turns small enough to bracket the amount of turn at which range starts
+        // to become observable. An equal share of the tracks flies each level.
+        turnLevelsDeg: [0, 5, 10, 20],
+        // The turn fills the middle half of every clip.
+        turnStartFraction: 0.25, turnEndFraction: 0.75,
     },
     // Horizontal range at frame 0, metres, log-uniform per class.
     rangeM: {balloon: [1500, 25000], drone: [1000, 12000], weather_balloon: [4000, 40000]},
 };
 
 export const ROCK_V3_ERROR_LEVELS = BOTSET_ERROR_LEVELS;
+
+// The first version drew its holding pattern from each track's stream before
+// anything else: altitude, speed, heading, turn direction and entry phase, one
+// uniform number each.
+const FIRST_VERSION_PLATFORM_DRAWS = 5;
 
 export function rockBatchLabel(durationSeconds) {
     return `batch_${durationSeconds}sec`;
@@ -104,9 +132,65 @@ const round = (x, places) => {
     return Math.round(x * k) / k;
 };
 
+let platformSlotTable = null;
+
 /**
- * Every random number for one track, from one stream seeded by its name. The
- * order of the draws is part of the definition: changing it changes the set.
+ * The start-heading sector, turn level and turn direction of each track number.
+ *
+ * Sector k holds the headings from k to k + 1 times 360 / perClass degrees and
+ * flies turn level k mod 4, so each level's start headings are spread evenly
+ * around the circle. Within a level the headings alternate between a right and a
+ * left turn, starting right on the first and third levels and left on the
+ * second and fourth, so the set as a whole turns right and left equally often.
+ * The sectors are dealt to the track numbers in a shuffled order, drawn once
+ * for the set.
+ */
+function platformSlots() {
+    if (platformSlotTable) return platformSlotTable;
+    const n = ROCK_V3.perClass;
+    const levels = ROCK_V3.platform.turnLevelsDeg;
+    const s = makeStream(fnv1a32(`${ROCK_V3.name}|platform-slots`));
+    const order = Array.from({length: n}, (_, k) => k);
+    for (let i = n - 1; i > 0; i--) {
+        const j = Math.floor(s.uniform() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+    }
+    platformSlotTable = order.map((sector) => {
+        const level = sector % levels.length;
+        const place = Math.floor(sector / levels.length);    // this sector's place among its level's sectors
+        return {sector, turnDeg: levels[level], turnDir: (place + level) % 2 === 0 ? 1 : -1};
+    });
+    return platformSlotTable;
+}
+
+/**
+ * The sensor path of track number `index`, turn level included: the same for all
+ * three classes, at every clip length and at every rung.
+ */
+export function rockPlatform(index) {
+    if (!(Number.isInteger(index) && index >= 1 && index <= ROCK_V3.perClass)) {
+        throw new Error(`rockV3: track number ${index} is outside 1..${ROCK_V3.perClass}`);
+    }
+    const {sector, turnDeg, turnDir} = platformSlots()[index - 1];
+    const s = makeStream(fnv1a32(`${ROCK_V3.name}|platform|${index}`));
+    const uni = (a, b) => a + (b - a) * s.uniform();
+    const P = ROCK_V3.platform;
+    const altitudeFt = round(uni(...P.altitudeFt), 0);
+    const speedMS = round(uni(...P.speedMS), 1);
+    // Rounded down to 0.1 degree, so a heading never leaves its sector.
+    const headingDeg = Math.floor(((sector + s.uniform()) * 3600) / ROCK_V3.perClass) / 10;
+    return {
+        platform: {kind: "centered-turn", speedMS, altitudeAGL: round(altitudeFt * FT_M, 0), headingDeg,
+            turnDeg, turnDir, turnStartFraction: P.turnStartFraction, turnEndFraction: P.turnEndFraction},
+        platformInfo: {altitudeFt, headingSector: sector},
+    };
+}
+
+/**
+ * Every random number for one track. The target, range and wind come from one
+ * stream seeded by the track's name, and the order of those draws is part of
+ * the definition: changing it changes the set. The sensor path comes from
+ * rockPlatform.
  */
 export function rockDraws(clsKey, index) {
     const cls = rockClass(clsKey);
@@ -114,17 +198,9 @@ export function rockDraws(clsKey, index) {
     const uni = (a, b) => a + (b - a) * s.uniform();
     const logUni = (a, b) => Math.exp(uni(Math.log(a), Math.log(b)));
 
-    // Platform first, the same recipe for every class.
-    const P = ROCK_V3.platform;
-    const altitudeFt = round(uni(...P.altitudeFt), 0);
-    const speedMS = round(uni(...P.speedMS), 1);
-    const headingDeg = round(uni(0, 360), 1);
-    const turnDir = s.uniform() < P.rightHandFraction ? 1 : -1;
-    const period = racetrackSchedule({speedMS, bankDeg: P.bankDeg, legSeconds: P.legSeconds}).period;
-    const phaseSeconds = round(uni(0, period), 1);
-    const platform = {kind: "racetrack", speedMS, altitudeAGL: round(altitudeFt * FT_M, 0),
-        bankDeg: P.bankDeg, legSeconds: P.legSeconds, headingDeg, turnDir, phaseSeconds};
-    const platformInfo = {altitudeFt, periodSeconds: round(period, 1)};
+    // The first version's holding pattern, drawn and dropped (see the header).
+    for (let k = 0; k < FIRST_VERSION_PLATFORM_DRAWS; k++) s.uniform();
+    const {platform, platformInfo} = rockPlatform(index);
 
     const rangeM = round(logUni(...ROCK_V3.rangeM[cls.key]), 0);
 
@@ -199,9 +275,10 @@ export function rockSpec(clsKey, index, durationSeconds, errorLevel) {
     // generateScenario seeds the observation stream from sharedSeedKey when
     // one is given (and from the scenario id, which includes the duration,
     // when not), and the wobble generator draws frame by frame, so the 20 s
-    // clip's observed sightlines are the first 201 rows of the 300 s clip's.
-    // The key sits inside spec.observation, outside the truth key, and it
-    // carries the rung, so each rung still draws its own wobble.
+    // clip's pointing errors are the first 201 of the 300 s clip's. The key
+    // sits inside spec.observation, outside the truth key, and it carries the
+    // rung, so each rung still draws its own wobble. It is the key the first
+    // version used, so the errors are its errors too.
     const observation = errorLevel.deg > 0
         ? {...errorLevel.observation(ROCK_V3.fovFullDeg),
             sharedSeedKey: `${ROCK_V3.name}|${rockBasename(cls, index)}|${errorLevel.label}`}

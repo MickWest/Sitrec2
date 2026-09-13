@@ -116,9 +116,67 @@ export function racetrackTurnFraction(spec, durationSeconds, step = 0.1) {
     return total ? turning / total : 0;
 }
 
+/**
+ * The timing of a "centered-turn" path over a clip of `durationSeconds`:
+ * straight for the first quarter, one turn at a constant rate through turnDeg
+ * over the middle half, straight for the last quarter. The shape is set in clip
+ * time, so a longer clip flies the same path, enlarged: every distance grows in
+ * proportion to the duration, and the turn rate, turnDeg over the turning time,
+ * falls as 1 / duration. The bank is the coordinated-turn bank for that rate.
+ */
+export function centeredTurnSchedule(spec, durationSeconds) {
+    const v = spec.speedMS ?? 100;
+    const turnRad = (spec.turnDeg ?? 0) * DEG;
+    const t1 = (spec.turnStartFraction ?? 0.25) * durationSeconds;
+    const t2 = (spec.turnEndFraction ?? 0.75) * durationSeconds;
+    const psiDot = turnRad > 0 && t2 > t1 ? turnRad / (t2 - t1) : 0;
+    return {v, turnRad, t1, t2, psiDot,
+        turnDir: spec.turnDir === -1 ? -1 : 1,
+        headingRad: (spec.headingDeg ?? 0) * DEG,
+        radiusM: psiDot > 0 ? v / psiDot : Infinity,
+        bankRad: Math.atan((v * psiDot) / G)};
+}
+
+/** Where a "centered-turn" path is at clip time t: segment, heading and bank. */
+export function centeredTurnState(spec, durationSeconds, t) {
+    const s = centeredTurnSchedule(spec, durationSeconds);
+    if (t < s.t1) return {segment: "before", headingRad: s.headingRad, bankRad: 0};
+    if (t < s.t2) {
+        return {segment: "turn", headingRad: s.headingRad + s.turnDir * s.psiDot * (t - s.t1),
+            bankRad: s.turnDir * s.bankRad};
+    }
+    return {segment: "after", headingRad: s.headingRad + s.turnDir * s.turnRad, bankRad: 0};
+}
+
+// The position at clip time t from the start point [x0, y0]. The turn is a
+// circular arc written out exactly, so no integration error enters the shape.
+function centeredTurnXY(s, t, x0, y0) {
+    const v = s.v, h0 = s.headingRad;
+    const before = Math.min(t, s.t1);
+    let x = x0 + v * before * Math.sin(h0);
+    let y = y0 + v * before * Math.cos(h0);
+    if (t <= s.t1) return [x, y];
+    const w = s.turnDir * s.psiDot;                   // signed turn rate, rad/s
+    const turning = Math.min(t, s.t2) - s.t1;
+    let h = h0;
+    if (w !== 0) {
+        h = h0 + w * turning;
+        x += (v / w) * (Math.cos(h0) - Math.cos(h));
+        y += (v / w) * (Math.sin(h) - Math.sin(h0));
+    } else {
+        x += v * turning * Math.sin(h0);
+        y += v * turning * Math.cos(h0);
+    }
+    if (t <= s.t2) return [x, y];
+    const after = t - s.t2;
+    return [x + v * after * Math.sin(h), y + v * after * Math.cos(h)];
+}
+
 // spec: {kind, speedMS=70, altitudeAGL=3000, rangeErrorFactor?, bankDeg?,
 //        bankAmplitudeDeg?, bankPeriodSeconds?, and for "racetrack":
-//        legSeconds?, phaseSeconds?, headingDeg?, turnDir?}
+//        legSeconds?, phaseSeconds?, headingDeg?, turnDir?, and for
+//        "centered-turn": headingDeg?, turnDeg?, turnDir?, turnStartFraction?,
+//        turnEndFraction?}
 // Returns {positionENU: Float64Array(3n), feasibility}.
 export function generatePlatformPath(spec, n, times, fps, initialHorizontalRangeM) {
     const v = spec.speedMS ?? 70;
@@ -198,6 +256,22 @@ export function generatePlatformPath(spec, n, times, fps, initialHorizontalRange
             const psi0 = racetrackState(spec, st.phaseSeconds).headingRad;
             actualMinRadius = fillBanked(pos, n, times, fps, 0, -R, z, v, psi0,
                 (t) => racetrackState(spec, st.phaseSeconds + t).bankRad);
+            break;
+        }
+
+        case "centered-turn": {
+            // One turn in the middle of the clip, straight flight before and
+            // after it (centeredTurnSchedule). The clip is the whole shape, so
+            // the duration comes from the frame times, and a clip of any length
+            // flies the same shape at its own scale.
+            const s = centeredTurnSchedule(spec, n > 1 ? times[n - 1] - times[0] : 0);
+            for (let f = 0; f < n; f++) {
+                const [x, y] = centeredTurnXY(s, times[f] - times[0], 0, -R);
+                pos[f * 3] = x;
+                pos[f * 3 + 1] = y;
+                pos[f * 3 + 2] = z;
+            }
+            actualMinRadius = s.radiusM;
             break;
         }
 

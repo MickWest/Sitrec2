@@ -30,13 +30,14 @@ import {
 } from "../CFileManagerUtils";
 import {showError, showConfirm} from "../showError";
 import {openResultChartsForEntries} from "./charts/RockV3ChartsUI";
+import {apertureFromPositions, candidateErrorsFrom, sensorTurnFromPositions} from "./charts/BotBenchChartRows";
 import {showTimingAnalysis} from "../showTimingAnalysis";
 import {isLocal} from "../configUtils";
 import {par} from "../par";
 import {showTraverseGallery} from "../AnalyzeTraverse";
 import {METERS_PER_NM} from "../TraverseAnalysis";
 import {
-    botBenchExplicitFileRole, botBenchFileRole, botBenchPairingKeys,
+    botBenchExplicitFileRole, botBenchFileRole, botBenchPairingKeys, interchangeFoldersToSkip,
     buildScenarioNotes, ingestBotBenchEntry, srtHasPointing,
     ingestMISBRecords, sourceQualityGrade,
 } from "./BotBenchIngest";
@@ -45,7 +46,7 @@ import {putFileHandoff} from "../FileHandoff";
 import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBenchRunner";
 import {botBenchConcurrency, runBotBenchQueue} from "./BotBenchWorkerPool";
 import {BotBenchAnalysisPool} from "./BotBenchAnalysisPool";
-import {packForCache, unpackFromCache} from "./BotBenchCacheCodec";
+import {packForCache, unpackFromCache, sameFittedRow} from "./BotBenchCacheCodec";
 import {
     runImageCapture, captureScenarioImage, captureViewBlob, waitForSettle, clearImportedTracks,
     captureEntryImage, createCaptureQueue, captureQueueIdle, imageDirFor, imageNameFor, imageStaleness,
@@ -56,6 +57,7 @@ import {
 } from "../TraverseHandoff";
 import {CNodeCustomGraphView} from "../nodes/CNodeCustomGraphView";
 import {NodeMan} from "../Globals";
+import {WindowedTableBody} from "./WindowedTableBody";
 
 let activeDialog = null;
 let botBenchController = null;
@@ -193,18 +195,16 @@ function updateScatterHeaders(state) {
 }
 
 // Mirror a scatter-dot hover onto the table: outline the row (the grade
-// background stays untouched underneath) and scroll it into view.
+// background stays untouched underneath) and scroll it into view. The outline is
+// recorded against the ENTRY and drawn by paintTableRow, because a row element is
+// reused for other entries as the table scrolls and would carry the outline to them.
 function highlightScatterRow(state, entry) {
-    const tr = entry?.tr ?? null;
-    if (state.scatterHighlightTr && state.scatterHighlightTr !== tr) {
-        state.scatterHighlightTr.style.outline = "";
-        state.scatterHighlightTr = null;
-    }
-    if (tr) {
-        tr.style.outline = "2px solid #1976d2";
-        tr.style.outlineOffset = "-2px";
-        tr.scrollIntoView({block: "nearest"});
-        state.scatterHighlightTr = tr;
+    const previous = state.scatterHighlightEntry ?? null;
+    state.scatterHighlightEntry = entry ?? null;
+    if (previous && previous !== entry) state.rowView?.refreshRow(previous.rowIndex);
+    if (entry) {
+        state.rowView?.scrollToIndex(entry.rowIndex);
+        if (entry !== previous) state.rowView?.refreshRow(entry.rowIndex);
     }
 }
 
@@ -280,6 +280,18 @@ function updateScatterPlot(state) {
 // every cell on ONE line, which is what makes the table scannable; on a wide
 // display the percentages take over and nothing scrolls.
 const TABLE_MIN_WIDTH_PX = 1660;
+
+// Every results row is exactly this tall. The table draws only the rows in view
+// (see WindowedTableBody), which turns a row index into a pixel offset by
+// multiplication, so a row one pixel taller would put every row below it in the
+// wrong place. Cells therefore have no vertical padding and one line of content,
+// and the tallest thing a row holds, the 20 px Gallery button, fits inside it.
+const ROW_HEIGHT_PX = 28;
+
+// Rows drawn beyond the viewport on each side, so a scroll shows rows that are
+// already in the page. With twenty to thirty rows in view the table holds about
+// 60-70 rows, some 1,500 elements, however many files the run has.
+const ROW_OVERSCAN = 20;
 
 /**
  * The verdict headline, shortened for a table cell.
@@ -1005,9 +1017,39 @@ async function loadDirCache(state, entry) {
     return rec.loading;
 }
 
+// THE CACHE INDEX IS WRITTEN IN BATCHES. It is one JSON file per folder holding a
+// row for every file in that folder, so rewriting it after each file made every
+// completion cost as much as all the earlier ones in that folder put together. A
+// folder's index is now written after CACHE_WRITE_BATCH changes or
+// CACHE_WRITE_DELAY_MS, whichever comes first, and every folder is written when the
+// run ends, cancelled or not. The fit blobs are still written per file and first, so
+// a tab lost mid-run costs at most one batch of index entries, and those files
+// simply re-fit next time.
+const CACHE_WRITE_BATCH = 25;
+const CACHE_WRITE_DELAY_MS = 3000;
+
 function writeDirCache(rec) {
+    rec.pendingChanges = (rec.pendingChanges ?? 0) + 1;
+    if (rec.pendingChanges >= CACHE_WRITE_BATCH) return flushDirCache(rec);
+    if (!rec.flushTimer) {
+        rec.flushTimer = setTimeout(() => {
+            flushDirCache(rec).catch((e) => console.warn("BotBench cache write failed", e));
+        }, CACHE_WRITE_DELAY_MS);
+    }
+    return Promise.resolve();
+}
+
+function flushDirCache(rec) {
+    if (rec.flushTimer) { clearTimeout(rec.flushTimer); rec.flushTimer = null; }
+    if (!rec.pendingChanges) return rec.writing ?? Promise.resolve();
+    rec.pendingChanges = 0;
     rec.writing = (rec.writing ?? Promise.resolve()).catch(() => {}).then(() => saveDirCache(rec));
     return rec.writing;
+}
+
+async function flushAllDirCaches(state) {
+    await Promise.all((state.dirCaches ?? []).map((rec) =>
+        flushDirCache(rec).catch((e) => console.warn("BotBench cache write failed", e))));
 }
 
 async function saveDirCache(rec) {
@@ -1018,6 +1060,193 @@ async function saveDirCache(rec) {
     const writable = await fh.createWritable();
     await writable.write(JSON.stringify(rec.data, null, 1));
     await writable.close();
+}
+
+// ---------------------------------------------------------------------------
+// the memory and main-thread cost of a long run
+// ---------------------------------------------------------------------------
+//
+// MEASURED 2026-09-13 on the whole rock_v3 folder, 37,800 files: with 837 finished
+// the dialog was holding 15.1 M candidate-frames, the page's JavaScript heap read
+// 5.3 GB against a 4.2 GB limit, and throughput kept falling. Two causes, both
+// growing with the number of files already done:
+//   * every row kept its FULL analysis — the dataset, every candidate's track for
+//     every frame, and the report builder that closes over all of it;
+//   * each completion re-scanned every earlier row (summary medians, a memory
+//     total, the progress fraction) and rewrote its folder's whole cache index.
+// Garbage collection work rises with the live heap, so the first cause alone makes
+// each file slower than the one before.
+//
+// So a finished row keeps its row and a few small facts. The full analysis is held
+// only for the last LIVE_RESULTS rows and for rows the user opens, and is rebuilt
+// on demand otherwise: replayed from the folder cache when that holds this file's
+// fit, re-fitted in a one-off worker when it does not.
+
+/**
+ * Whether a cache index entry may stand in for a fresh fit of this file under
+ * these options: the file's bytes, the build and the analysis options all match,
+ * and a fit is actually stored.
+ *
+ * THE ONE PLACE THIS RULE LIVES. The run and the on-demand rebuild both ask it.
+ * They once held separate copies, and the rebuild's copy checked only the bytes,
+ * so a read-only folder's stale entry, left on disk after the run had correctly
+ * re-fitted the file, could be replayed into an older row's Gallery or Report.
+ *
+ * This is necessary, not sufficient: a caller replaying the fit must still check
+ * that the replay reproduces the row it is standing in for.
+ *
+ * @param allowOtherVersion accept a fit written by another build: true when the
+ *        user adopted the cache, or when this very row was already built from it
+ */
+function cacheHitUsable(hit, {hashes, options, allowOtherVersion = false}) {
+    return !!hit && !!hit.battery && !!hashes
+        && hit.hash === combinedHash(hashes)
+        && ((hit.appVersion ?? null) === APP_VERSION || allowOtherVersion)
+        && JSON.stringify(hit.options ?? null) === JSON.stringify(options ?? null);
+}
+
+// THE CHART FACTS, CACHED BESIDE THE ROW. The charts need three things from a file
+// that its row does not hold: the parallax aperture, every candidate's error against
+// truth, and how far the sensor turned. All come from the full analysis, which a long
+// run releases once a row is done and a cached run no longer rebuilds, so they are
+// taken while the analysis exists and stored with the cache entry. Bump the version
+// whenever what is taken changes: an entry with another version is replayed once and
+// stored again.
+const CHART_DATA_VERSION = 1;
+
+/** Take the chart facts from an entry's analysis, while it still has one. */
+function captureChartData(entry) {
+    entry.apertureDeg ??= apertureFromPositions(entry.results?.dataset?.S,
+        entry.results?.truth?.track, entry.results?.truth?.valid);
+    entry.candidateErrors ??= candidateErrorsFrom(entry.results);
+    entry.sensorTurnDeg ??= sensorTurnFromPositions(entry.results?.dataset?.S);
+}
+
+function chartDataFrom(entry) {
+    return {version: CHART_DATA_VERSION, apertureDeg: entry.apertureDeg ?? null,
+        candidateErrors: entry.candidateErrors ?? null, sensorTurnDeg: entry.sensorTurnDeg ?? null};
+}
+
+/** Whether a usable hit's row can be shown as it is: it carries the chart facts this build takes. */
+function storedRowUsable(hit) {
+    return !!hit?.row && hit.chartData?.version === CHART_DATA_VERSION;
+}
+
+/** Finished rows that keep their full analysis: enough that the ones just
+ * finished open instantly, few enough that memory stays flat however long the run. */
+const LIVE_RESULTS = 6;
+
+/** Put an entry's analysis in the live set, releasing the oldest beyond the cap. */
+function holdResults(state, entry) {
+    if (!entry?.results) return;
+    state.liveResults ??= [];
+    const at = state.liveResults.indexOf(entry);
+    if (at >= 0) state.liveResults.splice(at, 1);
+    state.liveResults.push(entry);
+    while (state.liveResults.length > LIVE_RESULTS) {
+        const released = state.liveResults.shift();
+        if (released !== entry) released.results = null;
+    }
+    state.heldFrames = state.liveResults.reduce((sum, e) =>
+        sum + (e.results?.dataset?.n ?? 0) * (e.results?.hypotheses?.length ?? 0), 0);
+}
+
+/**
+ * The full analysis for a finished row, rebuilding it if it was released.
+ *
+ * The result must be the analysis that produced THE ROW IN THE TABLE, never merely
+ * one for the same file. So a cached fit is replayed only when cacheHitUsable
+ * accepts it, and then kept only if the replayed row equals the table's row;
+ * anything else is discarded and the file is re-fitted in a one-off worker, which
+ * keeps the page responsive. Concurrent requests share one rebuild.
+ */
+async function ensureResults(state, entry) {
+    if (entry.results) {
+        holdResults(state, entry);
+        return entry.results;
+    }
+    if (entry.status !== "done") throw new Error("this row has no finished analysis");
+    if (!entry.rebuilding) {
+        entry.rebuilding = (async () => {
+            const record = await ingestBotBenchEntry(entry);
+            const options = entry.options ?? runOptions(state);
+            let results = null;
+            const hashes = entry.row?.fileSha256;
+            // Compared through the codec, as the run's own self-check is, so NaN and
+            // Infinity are seen as themselves rather than flattened to null.
+            const tableRow = entry.row ? packForCache(entry.row) : null;
+            // elapsedMs is left out of the comparison: it is the wall-clock time the
+            // analysis took, so no fresh fit can ever match it. Measured on a 120 s
+            // scenario: the table row, a re-fit and a second re-fit agreed on every
+            // other field bit for bit, and differed only there (8099, 4979 and 4901 ms).
+            // sameFittedRow holds that rule for every comparison of this kind.
+            const matchesTable = (row) => {
+                if (!row || !tableRow) return false;
+                if (hashes) row.fileSha256 = hashes;
+                return sameFittedRow(row, tableRow);
+            };
+            const dirCache = entry.dirHandle && hashes ? await loadDirCache(state, entry) : null;
+            const hit = dirCache?.data?.results?.[entry.name];
+            // Another build's fit is acceptable only for a row that was itself built
+            // from this cache; the equality check below still has the last word.
+            if (cacheHitUsable(hit, {hashes, options, allowOtherVersion: entry.fromCache === true})) {
+                try {
+                    const battery = await readBatteryBlob(dirCache, hit.battery);
+                    const replay = await runBotBenchAnalysis(record,
+                        {...options, battery, elapsedMs: hit.elapsedMs ?? null});
+                    if (matchesTable(replay.row)) {
+                        results = replay.results;
+                    } else {
+                        console.warn("BotBench: the cached fit does not reproduce this row; re-fitting",
+                            entry.relativePath);
+                    }
+                } catch (e) {
+                    console.warn("BotBench: could not replay the cached fit, re-fitting", entry.relativePath, e);
+                }
+            }
+            if (!results) {
+                const pool = new BotBenchAnalysisPool(1);
+                let fitted;
+                try { fitted = await pool.run(record, options); }
+                finally { pool.dispose(); }
+                // A fresh fit of the same bytes under the same options should reproduce
+                // the row exactly. Say so loudly if it does not, rather than show a
+                // gallery that quietly disagrees with its own table row.
+                if (!matchesTable(fitted.row)) {
+                    console.warn("BotBench: re-fitting did not reproduce this row exactly; the gallery "
+                        + "may differ from the table", entry.relativePath);
+                }
+                results = fitted.results;
+            }
+            entry.results = results;
+            holdResults(state, entry);
+            return results;
+        })().finally(() => { entry.rebuilding = null; });
+    }
+    return entry.rebuilding;
+}
+
+/**
+ * Run fn at most once per intervalMs: at once when the interval has passed, and
+ * otherwise once more at its end, so the last update is never lost. `flush` runs a
+ * pending call now; `cancel` drops it.
+ */
+function makeThrottle(fn, intervalMs) {
+    let last = -Infinity;
+    let timer = null;
+    const run = () => { timer = null; last = performance.now(); fn(); };
+    const throttled = () => {
+        const wait = intervalMs - (performance.now() - last);
+        if (wait <= 0) {
+            if (timer) { clearTimeout(timer); timer = null; }
+            run();
+        } else if (!timer) {
+            timer = setTimeout(run, wait);
+        }
+    };
+    throttled.flush = () => { if (timer) { clearTimeout(timer); run(); } };
+    throttled.cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    return throttled;
 }
 
 // The build that produced a cache entry. A replay runs TODAY's ingest and
@@ -1093,7 +1322,9 @@ async function probeCacheAdoption(state, stale, options, pool, {onProgress = nul
             const {row} = await pool.run(record, {...options, isCancelled: () => state.cancelled});
             row.fileSha256 = candidate.hashes;
             result.checked++;
-            if (JSON.stringify(packForCache(row)) === JSON.stringify(candidate.hit.row)) result.matched++;
+            // Not a whole-row comparison: a fresh fit's elapsedMs never equals the
+            // cached one, and comparing it made this probe fail on every file.
+            if (sameFittedRow(row, candidate.hit.row)) result.matched++;
             else result.mismatched.push(candidate.source.relativePath ?? candidate.source.name);
         } catch (e) {
             // A file that will not fit today tells us nothing about the cache.
@@ -1147,7 +1378,13 @@ async function flushCaches(state) {
         // one of them and silently leave the other's cache in place.
         if (e.dirHandle) dirs.set(e.dirHandle, e.dirHandle);
     }
-    for (const rec of state.dirCaches ?? []) dirs.set(rec.handle, rec.handle);
+    for (const rec of state.dirCaches ?? []) {
+        dirs.set(rec.handle, rec.handle);
+        // Index writes are batched, so one may still be pending. Drop it: written
+        // after the delete below, it would put back the index this just removed.
+        if (rec.flushTimer) { clearTimeout(rec.flushTimer); rec.flushTimer = null; }
+        rec.pendingChanges = 0;
+    }
     if (!dirs.size) {
         state.status.textContent = "No cacheable folders in this session — "
             + "caching needs Choose Folder (drag-and-drop folders are read-only).";
@@ -1186,7 +1423,7 @@ function fsEntryToFile(fsEntry) {
  * read is not a setting, it is a dead end with no way to reach the files short
  * of guessing that the checkbox is at fault.
  */
-function collectFsEntry(fsEntry, basePath, out, recursive, depth = 0) {
+function collectFsEntry(fsEntry, basePath, out, recursive, depth = 0, onSkip = null) {
     return new Promise((resolve) => {
         const rel = basePath ? `${basePath}/${fsEntry.name}` : fsEntry.name;
         if (fsEntry.isFile) {
@@ -1195,12 +1432,30 @@ function collectFsEntry(fsEntry, basePath, out, recursive, depth = 0) {
             }
             resolve();
         } else if (fsEntry.isDirectory && (recursive || depth === 0)) {
+            // Every child is read before any is followed, because whether a subfolder
+            // is walked depends on which folders sit beside it (see
+            // interchangeFoldersToSkip). A read error ends the listing; what was read
+            // before it is still walked, as it always was.
             const reader = fsEntry.createReader();
-            const readBatch = () => reader.readEntries(async (batch) => {
-                if (!batch.length) { resolve(); return; }
-                for (const child of batch) await collectFsEntry(child, rel, out, recursive, depth + 1);
+            const children = [];
+            const walkChildren = async () => {
+                const skip = recursive
+                    ? interchangeFoldersToSkip(children.filter((c) => c.isDirectory).map((c) => c.name))
+                    : new Set();
+                for (const child of children) {
+                    if (child.isDirectory && skip.has(child.name)) {
+                        onSkip?.(`${rel}/${child.name}`);
+                        continue;
+                    }
+                    await collectFsEntry(child, rel, out, recursive, depth + 1, onSkip);
+                }
+                resolve();
+            };
+            const readBatch = () => reader.readEntries((batch) => {
+                if (!batch.length) { walkChildren(); return; }
+                children.push(...batch);
                 readBatch();
-            }, () => resolve());
+            }, () => walkChildren());
             readBatch();
         } else {
             resolve();
@@ -1290,7 +1545,7 @@ export function setDialogSource(state, description) {
     state.sourceLine.style.color = description.exact ? "#3a6b3a" : "#52514e";
 }
 
-async function entriesFromDataTransfer(dataTransfer, recursive) {
+async function entriesFromDataTransfer(dataTransfer, recursive, {onSkip = null} = {}) {
     const out = [];
     const items = dataTransfer.items ? Array.from(dataTransfer.items) : [];
     const fsEntries = items
@@ -1298,7 +1553,16 @@ async function entriesFromDataTransfer(dataTransfer, recursive) {
         .map((it) => it.webkitGetAsEntry())
         .filter(Boolean);
     if (fsEntries.length) {
-        for (const fe of fsEntries) await collectFsEntry(fe, "", out, recursive);
+        // Dropping All, Input and Truth together is the same layout as dropping the
+        // folder that holds them, so the same rule keeps All.
+        const skip = interchangeFoldersToSkip(fsEntries.filter((fe) => fe.isDirectory).map((fe) => fe.name));
+        for (const fe of fsEntries) {
+            if (fe.isDirectory && skip.has(fe.name)) {
+                onSkip?.(fe.name);
+                continue;
+            }
+            await collectFsEntry(fe, "", out, recursive, 0, onSkip);
+        }
     }
     if (!out.length) {
         for (const file of Array.from(dataTransfer.files || [])) {
@@ -1311,10 +1575,20 @@ async function entriesFromDataTransfer(dataTransfer, recursive) {
 }
 
 // The CHOSEN folder is always read; `recursive` governs its subfolders only —
-// the same rule as the drop path above.
-async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", onFound = null, parentHandle = null} = {}) {
+// the same rule as the drop path above. Where a folder holds All, Input and Truth
+// side by side, Input and Truth are left out (see interchangeFoldersToSkip) and
+// `onSkip` is told the path of each one.
+async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", onFound = null, parentHandle = null,
+    onSkip = null} = {}) {
     const files = [];
-    for await (const [name, handle] of directoryHandle.entries()) {
+    // Every child is listed before any is followed, because whether a subfolder is
+    // walked depends on which folders sit beside it.
+    const children = [];
+    for await (const child of directoryHandle.entries()) children.push(child);
+    const skip = recursive
+        ? interchangeFoldersToSkip(children.filter(([, handle]) => handle.kind === "directory").map(([name]) => name))
+        : new Set();
+    for (const [name, handle] of children) {
         const relativePath = basePath ? `${basePath}/${name}` : name;
         if (handle.kind === "file") {
             if (isCollectable(name)) {
@@ -1329,8 +1603,12 @@ async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", o
                 onFound?.(entry);
             }
         } else if (recursive && handle.kind === "directory") {
+            if (skip.has(name)) {
+                onSkip?.(relativePath);
+                continue;
+            }
             files.push(...await walkDirectoryHandle(handle,
-                {recursive, basePath: relativePath, onFound, parentHandle: directoryHandle}));
+                {recursive, basePath: relativePath, onFound, parentHandle: directoryHandle, onSkip}));
         }
     }
     return files;
@@ -1670,7 +1948,19 @@ function createDialog() {
         // Column-scatter selections (header clicks) + the floating graph view.
         scatter: {x: null, y: null, size: null, view: null},
         scatterThs,
+        scatterHighlightEntry: null,
     };
+    // The table body draws only the rows in view, straight from state.entries. Every
+    // result stays in state.entries, so exports, the summary and the charts see all of
+    // them; only the page's copy of the table is limited to what can be seen.
+    state.rowView = new WindowedTableBody({
+        tbody, scroller: tableWrap, header: thead, columnCount: TABLE_COLUMNS.length,
+        rowHeight: ROW_HEIGHT_PX, overscan: ROW_OVERSCAN,
+        getCount: () => state.entries.length,
+        getItem: (index) => state.entries[index],
+        createRow: () => createTableRow(state),
+        paintRow: (row, entry) => paintTableRow(state, row, entry),
+    });
     acquireAnalysisPauseLock(state);
     activeDialog = state;
     return state;
@@ -1751,17 +2041,75 @@ function updateSummary(state) {
     }
 }
 
-function makeRow(state, entry) {
+// ---------------------------------------------------------------------------
+// The results table. The DATA is state.entries, every entry of the run; the PAGE
+// holds only the rows in view (see WindowedTableBody). So nothing below writes to a
+// cell when the data changes. It records the change on the entry and asks for that
+// row to be drawn, which happens in the next batch and only if the row is in view:
+// a file that finishes off screen costs the table nothing.
+//
+// This is what stopped a long run slowing down. A table with one row per file lays
+// out every row whenever any cell changes: at 4,191 rows one status edit cost
+// 380-480 ms of layout, and the page spent more than half its time on layout.
+// ---------------------------------------------------------------------------
+
+/**
+ * Add an entry to the table's data. Its index is fixed here, together with the
+ * push, so the two can never disagree.
+ */
+function addRow(state, entry) {
+    entry.rowIndex = state.entries.length;
+    entry.statusText = "Queued";
+    entry.statusTitle = "";
+    state.entries.push(entry);
+    state.rowView?.countChanged();
+    return entry;
+}
+
+/** Ask for an entry's row to be drawn again, in the next batch, if it is in view. */
+function invalidateRow(state, entry) {
+    if (Number.isInteger(entry?.rowIndex)) state.rowView?.invalidate(entry.rowIndex);
+}
+
+// Progress and state changes update the entry at once; the row follows in the
+// next batch.
+function setRowStatus(state, entry, text, tooltip = "") {
+    entry.statusText = text;
+    if (tooltip) entry.statusTitle = tooltip;
+    invalidateRow(state, entry);
+}
+
+// A short-lived state the user has just caused: a gallery being rebuilt, a report
+// being built, a window being opened. Kept on the entry rather than on the button,
+// because by the time the work finishes that button may be showing another entry.
+// Drawn at once rather than in the next batch, since it answers a click.
+function setRowBusy(state, entry, key, value) {
+    const busy = {...entry.busy};
+    if (value) busy[key] = value;
+    else delete busy[key];
+    entry.busy = Object.keys(busy).length ? busy : null;
+    if (Number.isInteger(entry.rowIndex)) state.rowView?.refreshRow(entry.rowIndex);
+}
+
+/**
+ * One reusable row. It is built once and shows whichever entry scrolls into its
+ * place, so nothing here may capture an entry; paintTableRow writes one in.
+ */
+function createTableRow(state) {
     const tr = document.createElement("tr");
-    tr.style.cssText = "border-bottom: 1px solid #eee;";
+    tr.style.height = `${ROW_HEIGHT_PX}px`;
     const cells = [];
     for (let i = 0; i < TABLE_COLUMNS.length; i++) {
         const td = document.createElement("td");
         // One line, always. Anything too long is clipped with an ellipsis and
         // carries its full text in the cell's title — a wrapped cell costs
-        // every OTHER column in the row its height.
-        td.style.cssText = "padding: 4px 5px; vertical-align: middle; white-space: nowrap; "
-            + "overflow: hidden; text-overflow: ellipsis;";
+        // every OTHER column in the row its height. No vertical padding either:
+        // the row must be exactly ROW_HEIGHT_PX tall (see there). The rule under
+        // the row is a shadow, not a border, because a collapsed border can add
+        // to a row's height and a shadow cannot.
+        td.style.cssText = `padding: 0 5px; height: ${ROW_HEIGHT_PX}px; vertical-align: middle; `
+            + "white-space: nowrap; overflow: hidden; text-overflow: ellipsis; "
+            + "box-shadow: inset 0 -1px 0 #eee;";
         cells.push(td);
         tr.appendChild(td);
     }
@@ -1770,15 +2118,40 @@ function makeRow(state, entry) {
     // "let me look at it" — which meant finding the file on disk and dragging
     // it in by hand. See openInNewSitrec for why this cannot be a plain href.
     const link = document.createElement("a");
-    link.textContent = entry.relativePath;
     link.href = "#";
     link.style.cssText = "color: #1565c0; text-decoration: none; cursor: pointer;";
     link.onmouseenter = () => { link.style.textDecoration = "underline"; };
     link.onmouseleave = () => { link.style.textDecoration = "none"; };
-    link.onclick = (ev) => { ev.preventDefault(); openInNewSitrec(entry, link); };
+    const row = {tr, cells, link, item: null};
+    // The entry is looked up when the link is clicked, since the row shows others.
+    link.onclick = (ev) => {
+        ev.preventDefault();
+        if (row.item) openInNewSitrec(state, row.item);
+    };
     cells[COL.file].appendChild(link);
-    cells[COL.file].title = entry.relativePath
-        + "\n\nClick to open this scenario in a new Sitrec window.";
+    cells[COL.file].style.textAlign = "left";
+    return row;
+}
+
+/**
+ * Write one entry into a reused row. The row may have shown any other entry last,
+ * so every property a branch below can set is cleared first: a color or a tooltip
+ * left over from the previous entry would be read as belonging to this one.
+ */
+function paintTableRow(state, row, entry) {
+    const {tr, cells: c, link} = row;
+    tr.style.background = "";
+    tr.style.outline = "";
+    for (let i = 0; i < c.length; i++) {
+        const td = c[i];
+        if (i !== COL.file) td.textContent = "";
+        td.title = "";
+        td.style.color = "";
+        td.style.fontWeight = "";
+        td.style.fontStyle = "";
+    }
+
+    const r = entry.row;
     // WHICH END TO CLIP. A deep relative path is identified by its tail, so
     // clipping the front is right for `.../2026-run/sub/bot-0042.csv`. It is
     // exactly wrong for a flat folder of generated scenarios, whose names share
@@ -1786,45 +2159,63 @@ function makeRow(state, entry) {
     // the identical "…_wzero_white0p03deg_s901.all.csv" and the column carried
     // no information at all. So clip the end only when there is a directory to
     // identify the file by.
-    const deepPath = entry.relativePath.includes("/");
-    cells[COL.file].style.direction = deepPath ? "rtl" : "ltr";
-    cells[COL.file].style.textAlign = "left";
-    cells[COL.status].textContent = "Queued";
-    state.tbody.appendChild(tr);
-    entry.tr = tr;
-    entry.cells = cells;
-    return entry;
-}
+    c[COL.file].style.direction = entry.relativePath.includes("/") ? "rtl" : "ltr";
+    // An answer-key sidecar carries the human-meaningful scenario name; show it in
+    // place of the opaque filename, keeping the path in the tooltip. Challenge
+    // files (no name) keep showing their path.
+    link.textContent = entry.busy?.link ?? r?.displayName ?? entry.relativePath;
+    c[COL.file].title = (r?.displayName ? `${r.displayName}\n` : "") + entry.relativePath
+        + "\n\nClick to open this scenario in a new Sitrec window.";
 
-function setRowStatus(entry, text, tooltip = "") {
-    if (!entry.cells) return;
-    entry.cells[COL.status].textContent = text;
-    if (tooltip) entry.cells[COL.status].title = tooltip;
+    if (entry.filled && r) paintResultCells(state, entry, c, tr);
+
+    c[COL.status].textContent = entry.statusText ?? "Queued";
+    c[COL.status].title = entry.statusTitle ?? "";
+    if (entry.rowError != null) {
+        c[COL.verdict].textContent = entry.rowError;
+        c[COL.verdict].title = entry.rowError;
+        tr.style.background = "#fff5f5";
+    }
+    if (state.scatterHighlightEntry === entry) {
+        tr.style.outline = "2px solid #1976d2";
+        tr.style.outlineOffset = "-2px";
+    }
 }
 
 // Shade a source-quality cell so a scan down the column shows where the data
 // stops supporting the question, without needing to read the numbers.
 const GRADE_COLOURS = {good: "#2e7d32", fair: "#f9a825", hard: "#ef6c00", weak: "#c62828"};
 
+/**
+ * A finished analysis has landed on this entry. Only the data changes here. The
+ * row is drawn by paintResultCells, in the next batch, if it is in view.
+ */
 function fillRow(state, entry) {
-    const c = entry.cells;
     const r = entry.row;
     if (!r) return;
+    entry.filled = true;
+    entry.statusText = "done";
+    entry.statusTitle = r.warnings.length ? r.warnings.join("\n") : "";
+    invalidateRow(state, entry);
+
+    // A completed row may extend the open column-scatter plot. Throttled: the plot
+    // redraws every row, and this runs once per finished file.
+    if (state.scatter?.x && state.scatter?.y) {
+        state.scatterThrottle ??= makeThrottle(() => {
+            if (state.scatter?.x && state.scatter?.y) updateScatterPlot(state);
+        }, 1000);
+        state.scatterThrottle();
+    }
+}
+
+/**
+ * Draw a finished analysis into a row's cells. Called only by paintTableRow, which
+ * has already cleared the row and draws the file link, status and error itself.
+ */
+function paintResultCells(state, entry, c, tr) {
+    const r = entry.row;
     const q = r.quality;
     const grade = sourceQualityGrade(q);
-
-    // An answer-key sidecar carries the human-meaningful scenario name;
-    // show it in place of the opaque filename, keeping the path in the
-    // tooltip. Challenge files (no name) keep showing their path.
-    // The cell holds a link element, so the descriptive name replaces the link
-    // TEXT — writing textContent on the cell would delete the anchor and with
-    // it the click handler, leaving a name that looks clickable and is not.
-    if (r.displayName) {
-        const link = c[COL.file].firstChild;
-        if (link) link.textContent = r.displayName;
-        c[COL.file].title = `${r.displayName}\n${entry.relativePath}`
-            + "\n\nClick to open this scenario in a new Sitrec window.";
-    }
 
     // WHAT THE ANSWER WAS. An anomalous scenario is marked, because "the
     // analysis found nothing conventional" is a correct result on one of these
@@ -1857,8 +2248,6 @@ function fillRow(state, entry) {
             + `${fmtMetres(q.sensorAltSpanM)}.`;
     }
 
-    c[COL.status].textContent = "done";
-    c[COL.status].title = r.warnings.length ? r.warnings.join("\n") : "";
     c[COL.n].textContent = n0(q.frames);
     c[COL.dur].textContent = n1(q.durationS);
     // Rate lost its own column to Target/Platform; it is duration and frames
@@ -2090,34 +2479,43 @@ function fillRow(state, entry) {
     // analysis. A cached row HAS one — the cache stores the fit and the run is
     // replayed around it — so these are live for cached rows too; they are
     // disabled only for a row that has no results at all, which now means an
-    // error or a cancelled run.
-    c[COL.actions].innerHTML = "";
-    const galleryButton = smallButton("Gallery", "#1976d2", BUTTON_TOOLTIPS["Gallery"]);
-    galleryButton.onclick = () => {
+    // error or a cancelled run. A button reads "\u2026" while the work it started is
+    // under way; that state lives on the entry, not the button (see setRowBusy).
+    const galleryButton = smallButton(entry.busy?.gallery ? "\u2026" : "Gallery", "#1976d2",
+        BUTTON_TOOLTIPS["Gallery"]);
+    galleryButton.onclick = async () => {
+        // A released analysis is rebuilt first, which takes a moment; say so.
+        const rebuilding = !entry.results;
+        if (rebuilding) setRowBusy(state, entry, "gallery", true);
         try {
-            showTraverseGallery(entry.results);
+            showTraverseGallery(await ensureResults(state, entry));
         } catch (e) {
             showError("Could not open the gallery for this result: " + (e && e.message), e);
+        } finally {
+            if (rebuilding) setRowBusy(state, entry, "gallery", false);
         }
     };
     c[COL.actions].appendChild(galleryButton);
-    const reportButton = smallButton("Report", "#455a64", BUTTON_TOOLTIPS["Report"]);
+    const reportButton = smallButton(entry.busy?.report ? "\u2026" : "Report", "#455a64",
+        BUTTON_TOOLTIPS["Report"]);
     reportButton.style.marginLeft = "3px";
-    reportButton.onclick = () => openReport(entry, reportButton);
+    reportButton.onclick = () => openReport(state, entry);
     c[COL.actions].appendChild(reportButton);
-    if (!entry.results) {
+    // Only a row with no finished analysis is disabled. A finished row whose full
+    // analysis was released to save memory rebuilds it when either button is used.
+    if (entry.status !== "done") {
         for (const b of [galleryButton, reportButton]) {
             setButtonDisabled(b, true);
-            b.title = "This row has no analysis in memory — the run errored or was "
+            b.title = "This row has no finished analysis \u2014 the run errored or was "
                 + "cancelled before it finished.";
         }
+    } else {
+        if (entry.busy?.gallery) setButtonDisabled(galleryButton, true);
+        if (entry.busy?.report) setButtonDisabled(reportButton, true);
     }
 
-    entry.tr.style.background = grade.grade === "weak" ? "#fff5f5"
+    tr.style.background = grade.grade === "weak" ? "#fff5f5"
         : grade.grade === "hard" ? "#fffaf0" : "#f7fff7";
-
-    // A completed row may extend the open column-scatter plot.
-    if (state.scatter?.x && state.scatter?.y) updateScatterPlot(state);
 }
 
 /**
@@ -2154,9 +2552,10 @@ function fillRow(state, entry) {
  * reason openReport does it: window.open is only honoured while the click's
  * transient activation is live, and an await drops it.
  */
-function openInNewSitrec(entry, link) {
-    const original = link.textContent;
-    link.textContent = "opening…";
+function openInNewSitrec(state, entry) {
+    // The row's link may show another entry by the time the window opens, so
+    // "opening…" is kept on the entry, not written into the link.
+    setRowBusy(state, entry, "link", "opening…");
     openHandoffWindow({
         buildFiles: async () => {
             const file = await entry.getFile();
@@ -2177,18 +2576,23 @@ function openInNewSitrec(entry, link) {
             // botENUToLLA, the SCENARIO'S OWN conversion, and MSL rather than
             // HAE — see the note on consistentTrackCSVs for why a general
             // ENU->ECEF->LLA is wrong on a BOT file in two compounding ways.
-            const origin = entry.results?.botOrigin;
+            // The candidates need the full analysis. A released one is rebuilt;
+            // a row that never finished opens without candidates, as before.
+            let results = null;
+            try { results = entry.status === "done" ? await ensureResults(state, entry) : null; }
+            catch (e) { console.warn("BotBench: opening without candidates", entry.relativePath, e); }
+            const origin = results?.botOrigin;
             const csvOpts = origin ? {
                 toLLA: (x, y, z) => botENUToLLA(x, y, z, origin),
                 altitudeIsHAE: false,
-                startMs: entry.results.clipStartMs,
+                startMs: results.clipStartMs,
             } : null;
 
             // Consistent if there are any, weak in their place if there are
             // not — handoffCandidateCSVs owns that rule and the reasoning for
             // it. A bench row has ONE link, so it decides; the live gallery
             // offers the same choice as two buttons instead.
-            const candidates = csvOpts ? handoffCandidateCSVs(entry.results, csvOpts) : [];
+            const candidates = csvOpts ? handoffCandidateCSVs(results, csvOpts) : [];
 
             return {
                 files: [file, ...candidates.map((c) =>
@@ -2198,7 +2602,7 @@ function openInNewSitrec(entry, link) {
                     // The scenario CSV already carries the sensor and truth
                     // tracks, so unlike the gallery this sends no context
                     // tracks — adding them would import each one twice.
-                    lookCameraFraming: lookCameraFraming(entry.results, candidates),
+                    lookCameraFraming: lookCameraFraming(results, candidates),
                     // WHICH TRACKS ARE RECONSTRUCTIONS, stated rather than
                     // inferred. The receiver puts the camera on the SCENARIO's
                     // own sensor track, and the only thing separating that from
@@ -2247,12 +2651,11 @@ function openInNewSitrec(entry, link) {
             url.searchParams.set("handoff", key);
             return url.toString();
         },
-        onDone: () => { link.textContent = original; },
+        onDone: () => setRowBusy(state, entry, "link", null),
     });
 }
 
-function openReport(entry, button) {
-    const original = button.textContent;
+function openReport(state, entry) {
 
     // OPEN THE WINDOW FIRST, SYNCHRONOUSLY IN THE CLICK.
     //
@@ -2275,10 +2678,11 @@ function openReport(entry, button) {
         + "<body style=\"font:14px system-ui;padding:24px;background:#12161c;color:#cfd8e3\">"
         + "Building the traverse analysis report…");
 
-    button.textContent = "…";
-    setButtonDisabled(button, true);
+    // The button shows "…" until the report is written. Kept on the entry, since
+    // the button may be showing another entry by then (see setRowBusy).
+    setRowBusy(state, entry, "report", true);
     // Yield once so the placeholder paints before the build locks the thread.
-    setTimeout(() => {
+    setTimeout(async () => {
         try {
             // NOT cached on the entry. The report is ~10 MB of string per file,
             // and a bulk run holds every row for the lifetime of the dialog —
@@ -2286,7 +2690,7 @@ function openReport(entry, button) {
             // megabytes retained for no benefit, since the window keeps the
             // copy it was handed. Rebuilding costs a few seconds on the rare
             // second look.
-            const html = entry.results.buildHtml();
+            const html = (await ensureResults(state, entry)).buildHtml();
             w.document.open();
             w.document.write(html);
             w.document.close();
@@ -2294,19 +2698,18 @@ function openReport(entry, button) {
             try { w.close(); } catch (_) { /* already gone */ }
             showError("Could not build the report: " + (e && e.message), e);
         } finally {
-            button.textContent = original;
-            setButtonDisabled(button, false);
+            setRowBusy(state, entry, "report", false);
         }
     }, 0);
 }
 
-function setRowError(entry, message) {
-    const c = entry.cells;
-    c[COL.status].textContent = "error";
-    c[COL.status].title = message;
-    c[COL.verdict].textContent = message;
-    c[COL.verdict].title = message;
-    entry.tr.style.background = "#fff5f5";
+// The file could not be analysed. Recorded on the entry; the row shows the message
+// in its Verdict cell when it is drawn.
+function setRowError(state, entry, message) {
+    entry.rowError = message;
+    entry.statusText = "error";
+    entry.statusTitle = message;
+    invalidateRow(state, entry);
 }
 
 function refreshControls(state) {
@@ -2335,9 +2738,11 @@ function refreshControls(state) {
 function clearResults(state) {
     if (state.running) return;
     state.entries = [];
+    state.liveResults = [];
     state.heldFrames = 0;
     state.memoryNote = "";
-    state.tbody.innerHTML = "";
+    state.scatterHighlightEntry = null;
+    state.rowView?.reset();
     state.progress.value = 0;
     state.status.textContent = "Cleared. Choose a folder or drag one onto this window.";
     // The selections survive a clear (the next run plots straight into them);
@@ -2429,8 +2834,18 @@ async function analyzeEntries(state, found) {
     state.workerPool = pool;
     let completed = 0;
     const fractions = new Float64Array(found.length);
-    const updateProgress = () => {
-        state.progress.value = fractions.reduce((sum, f) => sum + f, 0) / found.length;
+    // A running sum, not a reduce over every file: the progress callback fires many
+    // times per file, and summing 37,800 fractions on each call was steady main-thread
+    // load from the very first file.
+    let fractionSum = 0;
+    const setFraction = (i, f) => { fractionSum += f - fractions[i]; fractions[i] = f; };
+    // Throttled: it runs on every progress tick of every worker, and a DOM write per
+    // tick is work no reader can see.
+    const updateProgress = makeThrottle(() => {
+        // A trailing throttled call can land after the run has ended, and would
+        // overwrite the final "Done" or "Cancelled" line with a stale count.
+        if (!state.running) return;
+        state.progress.value = fractionSum / found.length;
         // The captures run one at a time beside the fits and are much slower, so
         // their backlog is worth showing rather than appearing as a wait at the end.
         const shots = wantShots && shotQueue.total
@@ -2438,7 +2853,11 @@ async function analyzeEntries(state, found) {
         state.status.textContent = `Analysing ${completed} of ${found.length} complete`
             + (pool.workers && !pool.workers.closed ? ` (${concurrency} workers)` : "")
             + shots + (state.memoryNote ?? "");
-    };
+    }, 250);
+    // The summary tiles take medians over EVERY finished row, so recomputing them
+    // after each file made each file cost more than the last. Once a second is plenty,
+    // and the run ends with a full recompute.
+    const updateSummaryThrottled = makeThrottle(() => updateSummary(state), 1000);
     const fitEntry = (record, onProgress) => pool.run(record, {
         ...options, onProgress, isCancelled: () => state.cancelled, yieldToDOM,
     });
@@ -2501,8 +2920,7 @@ async function analyzeEntries(state, found) {
             // mixed comparison look uniform, which is the one thing it must not do.
             const entry = {...source, key: state.nextRowId++, status: "queued", row: null,
                 results: null, options: {...options}};
-            state.entries.push(entry);
-            makeRow(state, entry);
+            addRow(state, entry);
             updateProgress();
             await yieldToDOM();
 
@@ -2510,44 +2928,72 @@ async function analyzeEntries(state, found) {
             // cache file) falls through to a normal run rather than an error row.
             let hashes = null, dirCache = null, cachedHit = false;
             try {
-                setRowStatus(entry, "hashing");
+                setRowStatus(state, entry, "hashing");
                 hashes = await entryFileHashes(entry);
                 dirCache = await loadDirCache(state, entry);
                 const hit = dirCache?.data.results[entry.name];
-                const versionOk = (hit?.appVersion ?? null) === APP_VERSION || adoptCache;
-                if (hit && hit.hash === combinedHash(hashes) && hit.battery && versionOk
-                    && JSON.stringify(hit.options ?? null) === JSON.stringify(entry.options ?? null)) {
-                    setRowStatus(entry, "cached", "Replaying the cached analysis…");
-                    await yieldToDOM();
-                    const battery = await readBatteryBlob(dirCache, hit.battery);
-                    // The SAME ingest and the SAME runner a fresh analysis uses —
-                    // only the fit is handed in rather than computed. Nothing here
-                    // reconstructs a result; the result is built by the code that
-                    // builds every other result.
-                    const record = await ingestBotBenchEntry(entry);
-                    const {results, row} = await runBotBenchAnalysis(record, {
-                        ...options, battery, elapsedMs: hit.elapsedMs ?? null,
-                        isCancelled: () => state.cancelled,
-                    });
-                    // Before the comparison, not after: the stored row carries the
-                    // hashes too, and a row that is complete on one side of the
-                    // check and not the other fails it every single time.
-                    if (hashes) row.fileSha256 = hashes;
-                    // THE CACHE CHECKS ITSELF. The row was stored when the fit ran;
-                    // this one was just rebuilt from it. They can only differ if
-                    // something the three keys do not cover has moved underneath —
-                    // so a mismatch discards the entry and runs the file properly,
-                    // rather than showing a number no current code would produce.
-                    // Compared through the codec because a row can hold NaN and
-                    // Infinity, and plain stringify flattens both to null, which
-                    // would hide exactly the differences worth catching.
-                    if (JSON.stringify(packForCache(row)) !== JSON.stringify(hit.row)) {
-                        console.warn("BotBench: cached analysis for", entry.relativePath,
-                            "no longer reproduces its stored row — re-analysing.");
-                        delete dirCache.data.results[entry.name];
+                if (cacheHitUsable(hit, {hashes, options: entry.options, allowOtherVersion: adoptCache})) {
+                    let reused = false;
+                    if (storedRowUsable(hit)) {
+                        // THE STORED ROW, USED AS IT IS. A replay rebuilds the whole analysis
+                        // around the cached fit and then checks its row against this one,
+                        // and on a hit the two cannot differ. Under this build the stored
+                        // row IS what this code makes from these inputs, because the analysis
+                        // is deterministic apart from its timing. Under another build the
+                        // cache was adopted only after a random sample was re-fitted in full
+                        // and reproduced its stored rows exactly. So a replay here would only
+                        // rebuild the full analysis, and that is rebuilt on demand instead,
+                        // when Gallery, Report or Open in Sitrec needs it (ensureResults). The
+                        // chart facts the analysis would give are cached beside the row.
+                        entry.row = unpackFromCache(hit.row);
+                        entry.apertureDeg = hit.chartData.apertureDeg ?? null;
+                        entry.candidateErrors = hit.chartData.candidateErrors ?? null;
+                        entry.sensorTurnDeg = hit.chartData.sensorTurnDeg ?? null;
+                        entry.rowReused = true;
+                        reused = true;
                     } else {
-                        entry.results = results;
-                        entry.row = row;
+                        setRowStatus(state, entry, "cached", "Replaying the cached analysis…");
+                        await yieldToDOM();
+                        const battery = await readBatteryBlob(dirCache, hit.battery);
+                        // The SAME ingest and the SAME runner a fresh analysis uses —
+                        // only the fit is handed in rather than computed. Nothing here
+                        // reconstructs a result; the result is built by the code that
+                        // builds every other result.
+                        const record = await ingestBotBenchEntry(entry);
+                        const {results, row} = await runBotBenchAnalysis(record, {
+                            ...options, battery, elapsedMs: hit.elapsedMs ?? null,
+                            isCancelled: () => state.cancelled,
+                        });
+                        // Before the comparison, not after: the stored row carries the
+                        // hashes too, and a row that is complete on one side of the
+                        // check and not the other fails it every single time.
+                        if (hashes) row.fileSha256 = hashes;
+                        // THE CACHE CHECKS ITSELF. The row was stored when the fit ran;
+                        // this one was just rebuilt from it. They can only differ if
+                        // something the three keys do not cover has moved underneath —
+                        // so a mismatch discards the entry and runs the file properly,
+                        // rather than showing a number no current code would produce.
+                        // Compared through the codec because a row can hold NaN and
+                        // Infinity, and plain stringify flattens both to null, which
+                        // would hide exactly the differences worth catching.
+                        if (!sameFittedRow(row, hit.row)) {
+                            console.warn("BotBench: cached analysis for", entry.relativePath,
+                                "no longer reproduces its stored row — re-analysing.");
+                            delete dirCache.data.results[entry.name];
+                        } else {
+                            entry.results = results;
+                            entry.row = row;
+                            // Stored beside the row, so the next run can use the row as it is.
+                            captureChartData(entry);
+                            if (dirCache.writable) {
+                                hit.chartData = chartDataFrom(entry);
+                                try { await writeDirCache(dirCache); }
+                                catch (e) { console.warn("BotBench: could not store the chart data", e); }
+                            }
+                            reused = true;
+                        }
+                    }
+                    if (reused) {
                         entry.status = "done";
                         entry.fromCache = true;
                         cachedHit = true;
@@ -2567,17 +3013,19 @@ async function analyzeEntries(state, found) {
                         entry.cacheAdopted = hit.adopted === true;
                         entry.cacheAdoptedFrom = hit.adoptedFrom ?? null;
                         fillRow(state, entry);
-                        setRowStatus(entry, entry.cacheAdopted ? "adopted" : "cached",
+                        setRowStatus(state, entry, entry.cacheAdopted ? "adopted" : "cached",
                             `Reused from ${CACHE_FILENAME} (saved ${hit.savedAt ?? "?"}).\n`
                             + (entry.cacheAdopted
                                 ? `The FIT was made by ${hit.adoptedFrom}, not by this build. It was `
                                   + `adopted after a random sample was re-fitted under this build and `
                                   + `reproduced the cached rows exactly.\n`
                                 : `Input hashes, analysis options and app version all match this `
-                                  + `file's cached run, and the replayed row reproduces the stored `
-                                  + `one exactly.\n`)
-                            + `The fit was reused; everything else was recomputed, so Gallery, `
-                            + `Report and Open in Sitrec all work.`);
+                                  + `file's cached run.\n`)
+                            + (entry.rowReused
+                                ? `The stored row was used as it is. The full analysis is rebuilt when `
+                                  + `Gallery, Report or Open in Sitrec needs it.`
+                                : `The fit was reused and everything else recomputed, and the replayed `
+                                  + `row reproduces the stored one exactly.`));
                     }
                 }
             } catch (cacheError) {
@@ -2585,13 +3033,13 @@ async function analyzeEntries(state, found) {
             }
 
             if (!cachedHit) try {
-                setRowStatus(entry, "reading");
+                setRowStatus(state, entry, "reading");
                 await yieldToDOM();
                 const record = await ingestBotBenchEntry(entry);
 
                 const {results, row, battery, elapsedMs} = await fitEntry(record, (frac, label) => {
-                    setRowStatus(entry, `${Math.round(frac * 100)}%`, label);
-                    fractions[i] = frac;
+                    setRowStatus(state, entry, `${Math.round(frac * 100)}%`, label);
+                    setFraction(i, frac);
                     updateProgress();
                 });
                 if (state.cancelled) throw new Error("cancelled");
@@ -2621,6 +3069,9 @@ async function analyzeEntries(state, found) {
                             entry.relativePath, writeError);
                     }
                     if (stored) {
+                        // Taken now, while the analysis exists, so a later run can show
+                        // this row as it is (see CHART_DATA_VERSION).
+                        captureChartData(entry);
                         dirCache.data.results[entry.name] = {
                             hash, hashes,
                             savedAt: new Date().toISOString(),
@@ -2631,6 +3082,7 @@ async function analyzeEntries(state, found) {
                             // comparison has to see NaN and Infinity as themselves.
                             row: packForCache(row),
                             elapsedMs, battery: name,
+                            chartData: chartDataFrom(entry),
                         };
                         try { await writeDirCache(dirCache); }
                         catch (writeError) {
@@ -2642,13 +3094,20 @@ async function analyzeEntries(state, found) {
             } catch (error) {
                 if (state.cancelled) {
                     entry.status = "cancelled";
-                    setRowStatus(entry, "cancelled");
+                    setRowStatus(state, entry, "cancelled");
                     return;
                 }
                 entry.status = "error";
                 entry.error = error?.message || String(error);
-                setRowError(entry, entry.error);
+                setRowError(state, entry, entry.error);
             }
+            // KEEP THE ROW, RELEASE THE ANALYSIS. The aperture is the one fact the charts
+            // need from the full analysis, so it is taken now, while the positions exist.
+            if (entry.status === "done") {
+                captureChartData(entry);
+                holdResults(state, entry);
+            }
+
             // The picture, once the numbers are in and whether they came from the
             // cache or from a fresh fit. Queued rather than awaited: captures run
             // one at a time because they drive the single live 3D view, while the
@@ -2667,21 +3126,10 @@ async function analyzeEntries(state, found) {
                 });
             }
 
-            fractions[i] = 1;
+            setFraction(i, 1);
             completed++;
             updateProgress();
-            updateSummary(state);
-            // EVERY ROW HOLDS ITS FULL RESULTS — that is what makes "Gallery"
-            // instant, and it means memory grows with files x frames x candidates.
-            // Checked EVERY FILE, not once at the end: a warning that arrives after
-            // the batch arrives after the browser has already struggled. Shown in
-            // the visible status line rather than a tooltip nobody hovers.
-            state.heldFrames = state.entries.reduce((sum, e) =>
-                sum + (e.results?.dataset?.n ?? 0) * (e.results?.hypotheses?.length ?? 0), 0);
-            if (state.heldFrames > 2e6) {
-                state.memoryNote = ` — holding ~${(state.heldFrames / 1e6).toFixed(1)}M `
-                    + `candidate-frames; use Clear Results before another large batch`;
-            }
+            updateSummaryThrottled();
             await yieldToDOM();
         }, () => state.cancelled);
         // The fits finish first; the captures are one-at-a-time on the main thread
@@ -2700,6 +3148,11 @@ async function analyzeEntries(state, found) {
             }
         }
     } finally {
+        updateProgress.cancel();
+        updateSummaryThrottled.cancel();
+        // The cache indexes are written in batches during a run; write what is left,
+        // on a cancel too, since every file finished so far has its fit on disk.
+        await flushAllDirCaches(state);
         pool?.dispose();
         state.workerPool = null;
         yieldToDOM.dispose?.();
@@ -2722,6 +3175,27 @@ async function analyzeEntries(state, found) {
     state.running = false;
     refreshControls(state);
     updateSummary(state);
+    state.scatterThrottle?.flush();
+}
+
+/**
+ * Say on the line under the title that Input and Truth copies were left out, so a
+ * run over an interchange tree is not read as one that lost half its files. The
+ * tooltip says why, and lists the folders.
+ */
+function noteSkippedCopies(description, skippedFolders) {
+    if (!description || !skippedFolders?.length) return description;
+    const parents = new Set(skippedFolders.map((p) => (p.includes("/") ? p.replace(/\/[^/]*$/, "") : "")));
+    const listed = skippedFolders.slice(0, 20).join("\n")
+        + (skippedFolders.length > 20 ? `\n… and ${skippedFolders.length - 20} more` : "");
+    const note = `${parents.size} folder(s) hold All, Input and Truth side by side. Only All was read there: `
+        + "it carries every scenario once, with its truth, while Input repeats the same tracks without "
+        + `truth and Truth holds only the answer key. Left out:\n${listed}`;
+    return {
+        ...description,
+        text: `${description.text}  ·  All tracks only`,
+        title: [description.title, note].filter(Boolean).join("\n\n"),
+    };
 }
 
 // mode "read": existing caches are still REUSED (reading needs no write
@@ -2743,14 +3217,17 @@ async function runFolderScan(state, mode) {
     state.status.textContent = "Scanning folder...";
     let count = 0;
     let found = [];
+    const skippedFolders = [];
     try {
         const raw = await walkDirectoryHandle(directoryHandle, {
             recursive: state.recursiveInput.checked,
             onFound: () => { state.status.textContent = `Found ${++count} file(s)...`; },
+            onSkip: (path) => skippedFolders.push(path),
         });
         for (const e of raw) e.cacheWritable = (mode === "readwrite");
         found = await pairSidecars(raw);
-        setDialogSource(state, await describeEntrySource(found, {folderName: directoryHandle?.name}));
+        setDialogSource(state, noteSkippedCopies(
+            await describeEntrySource(found, {folderName: directoryHandle?.name}), skippedFolders));
     } catch (error) {
         state.status.textContent = error.message || String(error);
         return;
@@ -2818,9 +3295,11 @@ function wireDragAndDrop(state) {
         }
         state.status.textContent = "Reading dropped items...";
         let found = [];
+        const skippedFolders = [];
         try {
-            found = await entriesFromDataTransfer(e.dataTransfer, state.recursiveInput.checked);
-            setDialogSource(state, await describeEntrySource(found));
+            found = await entriesFromDataTransfer(e.dataTransfer, state.recursiveInput.checked,
+                {onSkip: (path) => skippedFolders.push(path)});
+            setDialogSource(state, noteSkippedCopies(await describeEntrySource(found), skippedFolders));
         } catch (error) {
             showError(error);
             return;
@@ -2873,6 +3352,7 @@ export function openBotBenchDialog() {
         state.cancelled = true;
         state.workerPool?.dispose();
         state.shotQueue?.cancel();
+        state.rowView?.dispose();
         releaseAnalysisPauseLock(state);
         disposeScatterView(state);
         if (state.overlay.parentNode) document.body.removeChild(state.overlay);
@@ -2956,6 +3436,13 @@ export function addBotBenchMenu(fileAnalysisFolder) {
             // without a directory picker (which needs a user gesture).
             packForCache, unpackFromCache,
             describeEntrySource, setDialogSource,
+            // The walk a picked folder goes through, so the All/Input/Truth rule can be
+            // checked on a folder built in the browser's private storage.
+            walkDirectoryHandle, noteSkippedCopies, interchangeFoldersToSkip,
+            // The results table's data functions, so the windowed table can be
+            // checked at thousands of rows without analysing thousands of files.
+            rows: {add: addRow, fill: fillRow, setStatus: setRowStatus, setError: setRowError,
+                highlight: highlightScatterRow},
             get state() { return activeDialog; },
         };
     }

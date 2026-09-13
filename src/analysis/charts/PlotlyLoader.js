@@ -1,35 +1,68 @@
 // PlotlyLoader.js — fetch Plotly only when a chart is actually wanted.
 //
 // plotly.js-cartesian-dist-min is 1.49 MB, which is far too much to carry in the
-// main bundle for a view most sessions never open. The dynamic import below
-// makes webpack emit it as its own chunk, named so it is recognisable in a build
-// report, and nothing downloads until the first call.
+// main bundle for a view most sessions never open, so nothing downloads until the
+// first call.
+//
+// WHY A SCRIPT TAG, NOT import(). A dynamic import made webpack emit Plotly as a
+// chunk, and every build renames every chunk: the name carries the build's unique
+// id, and the build deletes the previous files. A page that was open during a
+// rebuild then asked for a chunk that no longer existed, and Charts failed with
+// "Loading chunk plotly failed" after a 5,400-file BOTBench run that existed only
+// in that tab's memory. So the build copies Plotly to libs/ under a name that
+// carries only Plotly's version (webpackCopyPatterns.js), and this loads that file
+// the same way OpenCV and jsfeat are loaded. A rebuild keeps the name; only a
+// Plotly upgrade changes it.
 //
 // The cartesian bundle is the right one: it is where the `box` trace lives, and
 // box, scatter, scattergl and bar are the only trace types the figures use. The
 // full plotly.js-dist-min is over twice the size and adds 3D, maps and finance.
+
+import {buildAssetURL} from "../../release/assetURL";
+import plotlyPackage from "plotly.js-cartesian-dist-min/package.json";
+
+/**
+ * Where the build puts Plotly, relative to the app. webpackCopyPatterns.js writes
+ * the same name from the same package version, and tests/PlotlyLoader.test.js
+ * holds the two together.
+ */
+export const PLOTLY_SCRIPT = `./libs/plotly-cartesian-${plotlyPackage.version}.min.js`;
 
 let plotlyPromise = null;
 let plotly = null;
 
 /**
  * The Plotly namespace, downloading it on first use.
- * Concurrent callers share one download.
+ * Concurrent callers share one download, and a failed download can be retried.
  */
 export function loadPlotly() {
     if (plotly) return Promise.resolve(plotly);
     if (!plotlyPromise) {
-        plotlyPromise = import(/* webpackChunkName: "plotly" */ "plotly.js-cartesian-dist-min")
-            .then((module) => {
-                // The dist build is UMD, so webpack may hand it back either bare or
-                // under `default` depending on how it was consumed.
-                plotly = module.default ?? module;
-                return plotly;
-            })
-            .catch((error) => {
-                plotlyPromise = null;      // let a later attempt retry
-                throw error;
-            });
+        plotlyPromise = new Promise((resolve, reject) => {
+            if (window.Plotly) {
+                resolve(window.Plotly);
+                return;
+            }
+            const script = document.createElement("script");
+            script.src = buildAssetURL(PLOTLY_SCRIPT);
+            script.async = true;
+            script.onload = () => {
+                if (window.Plotly) resolve(window.Plotly);
+                else reject(new Error(`${PLOTLY_SCRIPT} loaded but did not define Plotly`));
+            };
+            script.onerror = () => {
+                // Removed, so a retry adds a fresh tag instead of waiting on a dead one.
+                script.remove();
+                reject(new Error(`${PLOTLY_SCRIPT} did not load`));
+            };
+            document.head.appendChild(script);
+        }).then((lib) => {
+            plotly = lib;
+            return lib;
+        }, (error) => {
+            plotlyPromise = null;      // let a later attempt retry
+            throw error;
+        });
     }
     return plotlyPromise;
 }
