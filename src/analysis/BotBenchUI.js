@@ -1114,7 +1114,7 @@ async function removeBlob(rec, name) {
 // run releases once a row is done and a remembered row never rebuilds, so they are
 // taken while the analysis exists and stored with the row. Bump the version whenever
 // what is taken changes: a row stored with another version is rebuilt once.
-const CHART_DATA_VERSION = 1;
+const CHART_DATA_VERSION = 2;
 
 /** Take the chart facts from an entry's analysis, while it still has one. */
 function captureChartData(entry) {

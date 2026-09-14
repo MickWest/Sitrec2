@@ -138,9 +138,47 @@ describe("every candidate's error, for the solver figure", () => {
             hypothesis("constAlt", "Constant Altitude", {comparable: true, score: 500, meanTruthRange: 5000}),
         ]});
         expect(errors).toEqual([
-            {key: "lantern", name: "Sky Lantern / Balloon", relSep: 0.01, sepM: 50, angDeg: null, losDeg: null},
-            {key: "constAlt", name: "Constant Altitude", relSep: 0.1, sepM: 500, angDeg: null, losDeg: null},
+            {key: "lantern", name: "Sky Lantern / Balloon", relSep: 0.01, sepM: 50, angDeg: null, losDeg: null,
+                headingDeg: null, velocityMS: null},
+            {key: "constAlt", name: "Constant Altitude", relSep: 0.1, sepM: 500, angDeg: null, losDeg: null,
+                headingDeg: null, velocityMS: null},
         ]);
+    });
+    test("with positions and a frame rate, adds the heading and velocity errors", () => {
+        // Truth goes east at 10 m/s for four frames at 10 Hz; three candidates.
+        const fps = 10;
+        const truth = [0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0];
+        const north = [0, 0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0];          // north at 10 m/s
+        const fast = [0, 0, 0, 1.2, 0, 0, 2.4, 0, 0, 3.6, 0, 0];      // east at 12 m/s
+        const still = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5];           // does not move
+        const comparison = {comparable: true, score: 1, meanTruthRange: 1000};
+        const errors = candidateErrorsFrom({
+            dataset: {S: new Array(12).fill(0), fps}, truth: {track: truth, valid: null},
+            hypotheses: [
+                {key: "a", name: "North", track: north, truthComparison: comparison},
+                {key: "b", name: "Fast", track: fast, truthComparison: comparison},
+                {key: "c", name: "Still", track: still, truthComparison: comparison},
+            ],
+        });
+        expect(errors[0].headingDeg).toBeCloseTo(90, 9);
+        expect(errors[0].velocityMS).toBeCloseTo(Math.hypot(10, 10), 9);
+        expect(errors[1].headingDeg).toBeCloseTo(0, 9);
+        expect(errors[1].velocityMS).toBeCloseTo(2, 9);
+        // A track that does not move has no heading, and its velocity error is the truth's speed.
+        expect(errors[2].headingDeg).toBeNull();
+        expect(errors[2].velocityMS).toBeCloseTo(10, 9);
+    });
+    test("the heading error wraps around north and skips frames the truth marks invalid", () => {
+        const {meanMotionErrors} = require("../src/analysis/charts/BotBenchChartRows");
+        // Truth heads 10 degrees east of north; the candidate 10 degrees west of north: 20 apart, not 340.
+        const fps = 1, s = Math.sin(10 * Math.PI / 180), c = Math.cos(10 * Math.PI / 180);
+        const truth = [0, 0, 0, s, c, 0, 2 * s, 2 * c, 0];
+        const cand = [0, 0, 0, -s, c, 0, -2 * s, 2 * c, 0];
+        expect(meanMotionErrors(cand, truth, null, fps).headingDeg).toBeCloseTo(20, 9);
+        // With the middle frame invalid no pair of consecutive frames is valid, so nothing counts.
+        expect(meanMotionErrors(cand, truth, [1, 0, 1], fps)).toEqual({headingDeg: null, velocityMS: null});
+        // No frame rate, no motion.
+        expect(meanMotionErrors(cand, truth, null, null)).toEqual({headingDeg: null, velocityMS: null});
     });
     test("with positions, adds the angle to truth and the sightline residual", () => {
         // Sensor at the origin, truth 1 km north, the candidate 1 km north and 100 m east.

@@ -296,8 +296,8 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     };
     const lengthToggle = makeToggle("Area by clip length",
         "Give each track dot an area in proportion to its clip length, on one scale for every figure.");
-    const straightToggle = makeToggle("Straight as red squares",
-        "Draw a track whose sensor flew straight (turn level 0, or a turn under 1 degree) as a dark red square "
+    const straightToggle = makeToggle("Straight as black squares",
+        "Draw a track whose sensor flew straight (turn level 0, or a turn under 1 degree) as a black square "
         + "with the same area as a circle.");
     const fullButton = makeButton("Full size", "#455a64");
     fullButton.title = "Show this figure alone, drawn to fill the browser window, with only the choices it reads. "
@@ -389,7 +389,7 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
             const option = document.createElement("option");
             option.value = value;
             option.textContent = spec.label;
-            option.disabled = value === "angDeg" && !hasLists;
+            option.disabled = !!spec.needsLists && !hasLists;
             metricPicker.appendChild(option);
         }
         const keepMetric = metricPicker.querySelector(`option[value="${state.measure.metric}"]:not([disabled])`)

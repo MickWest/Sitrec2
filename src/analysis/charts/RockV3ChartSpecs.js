@@ -21,7 +21,7 @@
 //     Plotly does not wrap annotation text.
 
 import {
-    boxStatsLog, clopperPearson, equalCountMedians, jitterOffsets, median, tally, finiteSorted,
+    boxStatsLinear, boxStatsLog, clopperPearson, equalCountMedians, jitterOffsets, median, tally, finiteSorted,
 } from "./ChartStats";
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ const trackLabel = (r) => r.path ?? r.base ?? "";
 // how the dots are marked
 // ---------------------------------------------------------------------------
 
-export const STRAIGHT_MARK_COLOR = "#8b1a1a";
+export const STRAIGHT_MARK_COLOR = "#111111";
 // Without a turn level, a track counts as straight when its sensor turned less than this, degrees.
 export const STRAIGHT_TURN_DEG = 1;
 // A square of side d * sqrt(pi) / 2 has the area of a circle of diameter d.
@@ -80,7 +80,7 @@ export function isStraightTrack(r) {
  * Off by default: every dot is a circle of the figure size, in its class color.
  * sizeByLength gives each dot an area in proportion to its clip length, on one scale for
  * all the rows, with the middle clip length at the figure size. markStraight draws a track
- * whose sensor flew straight as a dark red square with the area a circle would have, so
+ * whose sensor flew straight as a black square with the area a circle would have, so
  * the shape and color change and the area does not.
  */
 export function makeMarks({sizeByLength = false, markStraight = false} = {}, rows = []) {
@@ -90,7 +90,7 @@ export function makeMarks({sizeByLength = false, markStraight = false} = {}, row
     const active = byLength || markStraight;
     const notes = [];
     if (markStraight) {
-        notes.push(`Dark red squares are tracks whose sensor flew straight (turn level 0, or a turn under `
+        notes.push(`Black squares are tracks whose sensor flew straight (turn level 0, or a turn under `
             + `${STRAIGHT_TURN_DEG}°); circles turned.`);
     }
     if (byLength) {
@@ -187,12 +187,19 @@ export function formatDegrees(v) {
     return v >= 1 ? `${v.toFixed(2)}°` : `${v.toPrecision(2)}°`;
 }
 
+export function formatSpeed(v) {
+    if (!fin(v)) return "-";
+    return v >= 100 ? `${v.toFixed(0)} m/s` : v >= 1 ? `${v.toFixed(1)} m/s` : `${v.toPrecision(2)} m/s`;
+}
+
 /**
  * The units an error can be plotted in. Each names the row fields holding it for the
  * blind top candidate and for the best candidate, and the field holding it in a row's
  * candidate list. A null row field means the value is found in the candidate list, by
  * the name of the top or best candidate. The floor and the ceiling are drawing limits:
  * a value outside them is drawn at the limit, and every statistic uses the value itself.
+ * `needsLists` marks a unit found only in the candidate lists, which a joined JSONL
+ * does not carry; the chart window offers it only when the rows have them.
  */
 export const ERROR_METRICS = {
     relSep: {
@@ -209,7 +216,20 @@ export const ERROR_METRICS = {
     angDeg: {
         label: "Angular error (deg)", noun: "mean angular error seen from the sensor (deg)", unit: "deg",
         floor: 1e-5, ceiling: 180, ceilingLabel: "180°", tolerance: null, format: formatDegrees,
-        topField: null, bestField: null, candidateField: "angDeg",
+        topField: null, bestField: null, candidateField: "angDeg", needsLists: true,
+    },
+    headingDeg: {
+        label: "Mean 2D heading error (deg)", noun: "mean 2D heading error (deg)", unit: "deg",
+        // A heading error is bounded, 0 to 180, so it gets a fixed LINEAR axis rather than
+        // the log axis the open-ended units need, and no drawing floor.
+        floor: 0, ceiling: 180, ceilingLabel: "180°", tolerance: null, format: formatDegrees,
+        axis: {type: "linear", range: [0, 180], dtick: 25},
+        topField: null, bestField: null, candidateField: "headingDeg", needsLists: true,
+    },
+    velocityMS: {
+        label: "Mean 3D velocity error (m/s)", noun: "mean 3D velocity error (m/s)", unit: "m/s",
+        floor: 0.01, ceiling: 1e4, ceilingLabel: "10 km/s", tolerance: null, format: formatSpeed,
+        topField: null, bestField: null, candidateField: "velocityMS", needsLists: true,
     },
 };
 
@@ -242,7 +262,20 @@ export function makeMeasure({metric = "relSep", subject = SUBJECT_TOP} = {}) {
         : subject === SUBJECT_BEST ? "best candidate (oracle)" : shortSolverName(subject);
     return {
         metric: key, subject, who,
-        label: m.label, noun: m.noun, unit: m.unit,
+        label: m.label, noun: m.noun, unit: m.unit, needsLists: !!m.needsLists,
+        /** A fixed linear y axis (type, range, dtick), or null for the shared log axis. */
+        axis: m.axis ?? null,
+        /** The y range for a figure whose data peaks at `peak`: the fixed axis, or the log range above the floor. */
+        yRange: (peak) => (m.axis ? m.axis.range : [Math.log10(m.floor * 0.55), Math.log10(peak * 2.2)]),
+        /** Box statistics in the space the axis is drawn in, so the whiskers are Tukey's on that axis. */
+        boxStats: (values) => (m.axis ? boxStatsLinear(values) : boxStatsLog(values)),
+        /** The caption's sentence on the whiskers, matching boxStats. */
+        fenceNote: m.axis ? "Whiskers: Tukey's 1.5 box-heights on the values themselves."
+            : "Whiskers: Tukey's 1.5 box-heights, computed on log10 so the fence is symmetric on this axis.",
+        /** The caption's sentence on the floor, given a count or the word "Values"; nothing on a fixed axis. */
+        floorNote: (floored) => (m.axis ? "" : (typeof floored === "number"
+            ? `${floored} values below ${m.format(m.floor)} are drawn at the floor. `
+            : `Values below ${m.format(m.floor)} are drawn at the floor. `)),
         floor: m.floor, ceiling: m.ceiling, ceilingLabel: m.ceilingLabel, tolerance: m.tolerance, format: m.format,
         isDefault: key === "relSep" && subject === SUBJECT_TOP,
         axisTitle: `${capitalize(who)} ${m.noun}`,
@@ -418,7 +451,7 @@ function hexToRgba(hex, alpha) {
  */
 export function gridLayout({rows, cols, titles, xTitle, yTitle, tickvals, ticktext,
     logY = true, shareY = true, hGap = 0.055, vGap = 0.11, topPad = 0.9, bottomPad = 0.16,
-    yRange = null}) {
+    yRange = null, yAxis = null}) {
     const layout = {};
     const panelW = (1 - hGap * (cols - 1)) / cols;
     const plotTop = topPad, plotBottom = bottomPad;
@@ -451,8 +484,11 @@ export function gridLayout({rows, cols, titles, xTitle, yTitle, tickvals, tickte
                 // range is short, which on a six-decade stack of small panels is
                 // more ink than information.
                 dtick: logY ? 1 : undefined,
-                range: logY && yRange ? yRange : undefined,
+                range: yRange ?? undefined,
                 matches: shareY && i > 0 ? "y" : undefined,
+                // A unit with a fixed axis (the heading error's 0 to 180) sets its own type,
+                // range and tick step over the defaults above.
+                ...(yAxis ?? {}),
             };
             if (titles?.[i]) {
                 layout.annotations.push({
@@ -556,7 +592,8 @@ function addTolerance(layout, panelCount, measure) {
 }
 
 /** ", in metres" or ", in degrees" for a title, and nothing for error/range. */
-const unitSuffix = (measure) => (measure.unit === "m" ? ", in metres" : measure.unit === "deg" ? ", in degrees" : "");
+const unitSuffix = (measure) => (measure.unit === "m" ? ", in metres" : measure.unit === "deg" ? ", in degrees"
+    : measure.unit === "m/s" ? ", in metres per second" : "");
 
 /** The caption's sentence about hollow dots, which only the top candidate has. */
 const hollowNote = (measure) => (measure.marksBlind
@@ -587,7 +624,7 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
                 missing += here.length - values.length;
                 drawn += values.length;
                 floored += values.filter((v) => v < floor).length;
-                stats.push(boxStatsLog(values));
+                stats.push(measure.boxStats(values));
                 for (const r of here) {
                     const v = measure.value(r);
                     if (!fin(v)) continue;
@@ -610,7 +647,7 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
         yTitle: measure.axisTitle,
         tickvals: durations.map((unused, d) => d),
         ticktext: durations.map(String),
-        yRange: [Math.log10(floor * 0.55), Math.log10(peak * 2.2)],
+        yRange: measure.yRange(peak), logY: !measure.axis, yAxis: measure.axis,
     });
     addTolerance(layout, titles.length, measure);
 
@@ -635,9 +672,8 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
             height: 420 * rungs.length + 190,
             caption: `${drawn} tracks drawn (${missing} with no value for the ${measure.who} are not drawn); 100 tracks per `
                 + `class at every length and rung, the same 300 tracks at every length, so a longer clip extends the same `
-                + `track. Box: quartiles and median on the raw values. Whiskers: Tukey's 1.5 box-heights, computed on log10 `
-                + `so the fence is symmetric on this axis. ${hollowNote(measure)}${floored} values below `
-                + `${measure.format(floor)} are drawn at the floor. ${parts.join("; ")}.`,
+                + `track. Box: quartiles and median on the raw values. ${measure.fenceNote} ${hollowNote(measure)}`
+                + `${measure.floorNote(floored)}${parts.join("; ")}.`,
         }),
         config: BASE_CONFIG,
         stats: medians,
@@ -665,7 +701,7 @@ export function figErrorByRung(rows, {durationsWanted = [20, 120], measure = mak
                 missing += here.length - values.length;
                 drawn += values.length;
                 floored += values.filter((v) => v < floor).length;
-                const box = boxStatsLog(values);
+                const box = measure.boxStats(values);
                 stats.push(box);
                 if (box) medians[`${duration}s/${cls}/${rungs[e]}`] = box.median;
                 for (const r of here) {
@@ -688,7 +724,7 @@ export function figErrorByRung(rows, {durationsWanted = [20, 120], measure = mak
         yTitle: measure.axisTitle,
         tickvals: rungs.map((unused, e) => e),
         ticktext: rungs.map(rungLabel),
-        yRange: [Math.log10(floor * 0.55), Math.log10(peak * 2.2)],
+        yRange: measure.yRange(peak), logY: !measure.axis, yAxis: measure.axis,
     });
     addTolerance(layout, titles.length, measure);
 
@@ -713,7 +749,8 @@ export function figErrorByRung(rows, {durationsWanted = [20, 120], measure = mak
             height: 420 * durations.length + 190,
             caption: `${drawn} tracks drawn (${missing} with no value for the ${measure.who} are not drawn). The rung is the `
                 + `operator-wobble amplitude; the realized RMS pointing error is about 0.64 times the rung. Box, whiskers, `
-                + `dots and floor as in the clip-length figure; ${floored} values drawn at the floor. ${parts.join("; ")}.`,
+                + `dots and floor as in the clip-length figure${measure.axis ? "" : `; ${floored} values drawn at the floor`}. `
+                + `${parts.join("; ")}.`,
         }),
         config: BASE_CONFIG,
         stats: medians,
@@ -778,7 +815,7 @@ export function figErrorByTurn(rows, {across = "length", rungsWanted = [0, 0.2],
                     const turn = byLength ? s : x, duration = byLength ? x : s;
                     const values = cell(rows, cls, duration, rung).filter((r) => same(r.d_turnDeg, turn))
                         .map(measure.value).filter(fin);
-                    const box = boxStatsLog(values);
+                    const box = measure.boxStats(values);
                     if (!box) return;
                     cells++;
                     if (box.median < floor) flooredMedians++;
@@ -820,7 +857,7 @@ export function figErrorByTurn(rows, {across = "length", rungsWanted = [0, 0.2],
         yTitle: measure.axisTitle,
         tickvals: xs.map((unused, k) => k),
         ticktext: xs.map((x) => (byLength ? String(x) : `${x}°`)),
-        yRange: [Math.log10(floor * 0.55), Math.log10(peak * 2.2)],
+        yRange: measure.yRange(peak), logY: !measure.axis, yAxis: measure.axis,
     });
     addTolerance(layout, titles.length, measure);
 
@@ -1069,14 +1106,16 @@ export function figRankingCost(rows, {rungsWanted = [0, 0.2], measure = makeMeas
         // The same number format as the error/range y axes: powers of ten, one label
         // per decade. Left to Plotly's default, this axis read "100µ, 0.001, 0.01"
         // beside a y axis reading "10^-4, 10^-3", two notations for one quantity.
-        Object.assign(layout[`xaxis${suffix}`], {type: "log", gridcolor: GRID,
-            exponentformat: "power", dtick: 1,
-            range: [Math.log10(lo * 0.7), Math.log10(hi * 1.4)]});
-        Object.assign(layout[`yaxis${suffix}`], {matches: undefined,
-            range: [Math.log10(lo * 0.7), Math.log10(hi * 1.4)]});
+        // Both axes carry the same unit, so a fixed axis applies to both.
+        const [from, to] = measure.axis ? measure.axis.range : [lo * 0.7, hi * 1.4];
+        const shared = measure.axis
+            ? {...measure.axis, gridcolor: GRID}
+            : {type: "log", gridcolor: GRID, exponentformat: "power", dtick: 1, range: [Math.log10(from), Math.log10(to)]};
+        Object.assign(layout[`xaxis${suffix}`], shared);
+        Object.assign(layout[`yaxis${suffix}`], {...shared, matches: undefined});
         layout.shapes.push({
             type: "line", xref: `x${suffix}`, yref: `y${suffix}`,
-            x0: lo * 0.7, y0: lo * 0.7, x1: hi * 1.4, y1: hi * 1.4,
+            x0: from, y0: from, x1: to, y1: to,
             line: {color: MUTED, width: 1, dash: "dot"}, layer: "below",
         });
     }
@@ -1094,7 +1133,7 @@ export function figRankingCost(rows, {rungsWanted = [0, 0.2], measure = makeMeas
             caption: `Each dot is one track, all clip lengths pooled. x: the error of the candidate closest to truth, which `
                 + `is an oracle pick only knowable with truth in hand. y: the error of ${chosen}. A dot on the dashed `
                 + `diagonal means it was the best candidate on offer, and the vertical distance above the diagonal is what `
-                + `choosing it cost on that track. Values below ${measure.format(floor)} are drawn at the floor.`,
+                + `choosing it cost on that track. ${measure.floorNote("Values")}`.trimEnd(),
         }),
         config: BASE_CONFIG,
         stats: summary,
@@ -1155,7 +1194,7 @@ export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2], measure = make
         xTitle: "", yTitle: measure.axisTitle,
         // Error/range keeps its fixed top at 300% of range, as before; the other units
         // have no natural top, so the data sets it.
-        yRange: [Math.log10(floor * 0.55), Math.log10(measure.metric === "relSep" ? 3 : peak * 2.2)],
+        yRange: measure.yRange(measure.metric === "relSep" ? 3 / 2.2 : peak), logY: !measure.axis, yAxis: measure.axis,
     });
     for (let i = 0; i < titles.length; i++) {
         const suffix = i === 0 ? "" : String(i + 1);
@@ -1178,8 +1217,7 @@ export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2], measure = make
                     + `aperture axis. The heavy line is that class's median over equal-count bins, at least 5 tracks per `
                     + `point and up to 8 points; the line is what to read and the dots only show the spread. The parallax `
                     + `aperture is the angle at the target between the first and the last sensor position. `
-                    + `${measure.tolerance ? "Dashed line: 5% of range. " : ""}Values below ${measure.format(floor)} are `
-                    + `drawn at the floor.`,
+                    + `${measure.tolerance ? "Dashed line: 5% of range. " : ""}${measure.floorNote("Values")}`.trimEnd(),
                 legendEntries: CLASSES.length,
             }),
         },
@@ -1331,7 +1369,7 @@ export function figErrorByClass(rows, {measure = makeMeasure(), marks = makeMark
         missing += here.length - values.length;
         drawn += values.length;
         floored += values.filter((v) => v < floor).length;
-        const box = boxStatsLog(values);
+        const box = measure.boxStats(values);
         if (!box) return;
         medians[cls] = box.median;
         const points = [], hollow = [];
@@ -1352,7 +1390,7 @@ export function figErrorByClass(rows, {measure = makeMeasure(), marks = makeMark
         rows: 1, cols: 1, titles: [cellDescription(rows)],
         xTitle: "Target class", yTitle: measure.axisTitle,
         ...classAxis(classes),
-        yRange: [Math.log10(floor * 0.55), Math.log10(peak * 2.2)],
+        yRange: measure.yRange(peak), logY: !measure.axis, yAxis: measure.axis,
     });
     addTolerance(layout, 1, measure);
     const parts = classes.filter((cls) => fin(medians[cls]))
@@ -1362,9 +1400,8 @@ export function figErrorByClass(rows, {measure = makeMeasure(), marks = makeMark
         layout: pageLayout(layout, {
             title, width: 1050, height: 660,
             caption: `${drawn} tracks drawn (${missing} with no value for the ${measure.who} are not drawn). Box: `
-                + `quartiles and median on the raw values. Whiskers: Tukey's 1.5 box-heights, computed on log10 so the `
-                + `fence is symmetric on this axis. ${hollowNote(measure)}${floored} values below `
-                + `${measure.format(floor)} are drawn at the floor. ${parts.join("; ")}.${unstatedNote(rows)}`,
+                + `quartiles and median on the raw values. ${measure.fenceNote} ${hollowNote(measure)}`
+                + `${measure.floorNote(floored)}${parts.join("; ")}.${unstatedNote(rows)}`,
         }),
         config: BASE_CONFIG,
         stats: medians,
@@ -1596,7 +1633,7 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
                 }
             }
             const stats = solvers.map((name, s) => {
-                const box = boxStatsLog(values[s]);
+                const box = measure.boxStats(values[s]);
                 if (box) medians[`${rung}deg/${cls}/${name}`] = box.median;
                 return box;
             });
@@ -1616,7 +1653,7 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
         tickvals: solvers.map((unused, s) => s),
         ticktext: solvers.map(shortSolverName),
         vGap: 0.14, bottomPad: 0.1,
-        yRange: [Math.log10(floor * 0.55), Math.log10(peak * 2.2)],
+        yRange: measure.yRange(peak), logY: !measure.axis, yAxis: measure.axis,
     });
     for (let i = 0; i < titles.length; i++) {
         const suffix = i === 0 ? "" : String(i + 1);
@@ -1632,10 +1669,10 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
                 + `every candidate that solver produced, scored against truth whether or not the blind ranking put it `
                 + `first. A solver with a low box can find the answer; set it beside the blind top candidate's error in `
                 + `the clip-length figure to see what the ranking passed over. Solvers are ordered by their median error `
-                + `over every panel, best first. Box, whiskers and dots as in the clip-length figure; ${floored} values `
-                + `below ${measure.format(floor)} are drawn at the floor`
-                + (capped ? `, and ${capped} above ${measure.ceilingLabel} at the ceiling, where the hover label gives `
-                    + "the value itself" : "")
+                + `over every panel, best first. Box, whiskers and dots as in the clip-length figure`
+                + (measure.axis ? "" : `; ${floored} values below ${measure.format(floor)} are drawn at the floor`)
+                + (capped ? `${measure.axis ? ";" : ", and"} ${capped} above ${measure.ceilingLabel} at the ceiling, where the `
+                    + "hover label gives the value itself" : "")
                 + `. Lowest median per panel: ${lowest.join("; ")}.`
                 + (measure.subject === SUBJECT_TOP ? "" : " The candidate choice does not apply here: every candidate is shown."),
         }),

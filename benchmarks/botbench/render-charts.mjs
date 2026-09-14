@@ -23,7 +23,7 @@
 //   --only <keys>      comma-separated figure keys; default all
 //   --turn <deg>       limit the figures to one sensor-turn level (the sensor-turn
 //                      figures always use every level), as the window's Turn level does
-//   --marks <list>     dot marks, comma-separated: area (by clip length), straight (as red squares)
+//   --marks <list>     dot marks, comma-separated: area (by clip length), straight (as black squares)
 //   --suffix <text>    added to every file name, so variants of one figure can sit side by side
 //   --index            also write an index.html that shows them all
 //   --list             print the figure keys and exit

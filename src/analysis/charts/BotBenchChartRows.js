@@ -133,21 +133,27 @@ export function sensorTurnFromPositions(S, {minStepM = 0.5} = {}) {
  * comparable, which excludes a hypothesis at infinity. That is the rule the row's own
  * best-candidate error uses, so the two agree.
  *
- *   sepM    mean 3D separation from truth, metres: the truth scoring's own score
- *   relSep  sepM over the mean true range
- *   angDeg  mean angle, seen from the sensor, between the candidate and the truth
- *   losDeg  the candidate's mean line-of-sight residual against the measured sightlines
+ *   sepM        mean 3D separation from truth, metres: the truth scoring's own score
+ *   relSep      sepM over the mean true range
+ *   angDeg      mean angle, seen from the sensor, between the candidate and the truth
+ *   losDeg      the candidate's mean line-of-sight residual against the measured sightlines
+ *   headingDeg  mean difference between the candidate's and the truth's horizontal
+ *               heading, degrees (see meanMotionErrors)
+ *   velocityMS  mean magnitude of the difference between the candidate's and the
+ *               truth's 3D velocity, metres per second
  *
- * @returns {Array<{key, name, relSep, sepM, angDeg, losDeg}>|null}
+ * @returns {Array<{key, name, relSep, sepM, angDeg, losDeg, headingDeg, velocityMS}>|null}
  */
 export function candidateErrorsFrom(results) {
     const S = results?.dataset?.S;
+    const fps = results?.dataset?.fps;
     const T = results?.truth?.track;
     const valid = results?.truth?.valid ?? null;
     const out = [];
     for (const h of results?.hypotheses ?? []) {
         const c = h?.truthComparison;
         if (!c || !c.comparable || !fin(c.score) || !(c.meanTruthRange > 0)) continue;
+        const motion = meanMotionErrors(h.track, T, valid, fps);
         out.push({
             key: h.key ?? null,
             name: h.name ?? null,
@@ -155,9 +161,58 @@ export function candidateErrorsFrom(results) {
             sepM: c.score,
             angDeg: meanAngleToTruth(S, h.track, T, valid),
             losDeg: fin(h.errDeg) ? h.errDeg : null,
+            headingDeg: motion.headingDeg,
+            velocityMS: motion.velocityMS,
         });
     }
     return out.length ? out : null;
+}
+
+/**
+ * A track slower than this across the ground has no heading to compare. A hovering
+ * drone, a stationary candidate and a balloon in still air all sit under it.
+ */
+export const HEADING_SPEED_FLOOR_MS = 0.5;
+
+/**
+ * How a candidate's motion compares with the truth's, frame by frame.
+ *
+ * Velocities are the differences between consecutive positions, times the frame
+ * rate; a frame counts when it and the next are both valid. The velocity error is
+ * the mean magnitude of the 3D velocity difference, in metres per second. The
+ * heading error is the mean absolute difference between the two horizontal
+ * headings (clockwise from north, east and north being the first two axes), from
+ * 0 to 180 degrees, over the frames where BOTH tracks move faster than
+ * HEADING_SPEED_FLOOR_MS across the ground; a slower track has no heading. Null
+ * where no frame qualifies.
+ *
+ * A range error along the sightline scales a track's speed with its distance, so
+ * the velocity error carries the range error as well as the shape; the heading
+ * error does not, which is what makes it a shape-only comparison.
+ */
+export function meanMotionErrors(track, T, valid = null, fps = null) {
+    const none = {headingDeg: null, velocityMS: null};
+    if (!track || !T || !fin(fps) || !(fps > 0)) return none;
+    const n = Math.min(Math.floor(track.length / 3), Math.floor(T.length / 3));
+    let velSum = 0, velCount = 0, headSum = 0, headCount = 0;
+    for (let f = 0; f + 1 < n; f++) {
+        if (valid && (!valid[f] || !valid[f + 1])) continue;
+        const a = f * 3, b = a + 3;
+        const cx = (track[b] - track[a]) * fps, cy = (track[b + 1] - track[a + 1]) * fps, cz = (track[b + 2] - track[a + 2]) * fps;
+        const tx = (T[b] - T[a]) * fps, ty = (T[b + 1] - T[a + 1]) * fps, tz = (T[b + 2] - T[a + 2]) * fps;
+        if (![cx, cy, cz, tx, ty, tz].every(fin)) continue;
+        velSum += Math.hypot(cx - tx, cy - ty, cz - tz);
+        velCount++;
+        if (Math.hypot(cx, cy) < HEADING_SPEED_FLOOR_MS || Math.hypot(tx, ty) < HEADING_SPEED_FLOOR_MS) continue;
+        let diff = Math.abs(Math.atan2(cx, cy) - Math.atan2(tx, ty)) * DEG;
+        if (diff > 180) diff = 360 - diff;
+        headSum += diff;
+        headCount++;
+    }
+    return {
+        headingDeg: headCount ? headSum / headCount : null,
+        velocityMS: velCount ? velSum / velCount : null,
+    };
 }
 
 /**

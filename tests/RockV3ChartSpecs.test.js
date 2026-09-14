@@ -208,6 +208,36 @@ describe("whose error, and in what unit", () => {
     test("the top candidate's angle is the angle of the candidate the ranking put first", () => {
         const measure = makeMeasure({metric: "angDeg"});
         expect(measure.value(rows[3])).toBe(rows[3].r_candidates[0].angDeg);
+        // The two motion units read the candidate list the same way, and say they need it.
+        for (const [metric, field] of [["headingDeg", "headingDeg"], ["velocityMS", "velocityMS"]]) {
+            const rowsWithMotion = rows.map((r) => ({...r, r_candidates: (r.r_candidates ?? []).map((c) =>
+                ({...c, headingDeg: 12.5, velocityMS: 3.25}))}));
+            const m = makeMeasure({metric});
+            expect(m.needsLists).toBe(true);
+            expect(m.value(rowsWithMotion[3])).toBe(rowsWithMotion[3].r_candidates[0][field]);
+            expect(m.candidate({[field]: 7})).toBe(7);
+            expect(m.ceiling).toBeGreaterThan(m.floor);
+        }
+        expect(ERROR_METRICS.velocityMS.format(3.25)).toBe("3.3 m/s");
+        // The heading error is bounded, so it gets a fixed linear axis and no floor.
+        const heading = makeMeasure({metric: "headingDeg"});
+        expect(heading.axis).toEqual({type: "linear", range: [0, 180], dtick: 25});
+        expect(heading.yRange(50)).toEqual([0, 180]);
+        expect(heading.floorNote(3)).toBe("");
+        expect(makeMeasure({metric: "sepM"}).axis).toBeNull();
+        const headingRows = rows.map((r, i) => ({...r, r_candidates: (r.r_candidates ?? []).map((c) =>
+            ({...c, headingDeg: 10 + (i % 7) * 20}))}));
+        const byLength = figErrorByLength(headingRows, {measure: heading});
+        expect(byLength.layout.yaxis).toMatchObject({type: "linear", range: [0, 180], dtick: 25});
+        expect(byLength.layout.yaxis2).toMatchObject({type: "linear", range: [0, 180], dtick: 25});
+        expect(byLength.layout.annotations.at(-1).text).toMatch(/on the values themselves/);
+        expect(byLength.layout.annotations.at(-1).text).not.toMatch(/log10|drawn at the floor/);
+        const box = byLength.data.find((tr) => tr.type === "box");
+        expect(box.median.every((v) => v >= 0 && v <= 180)).toBe(true);
+        const bySolver = figErrorBySolver(headingRows, {measure: heading});
+        expect(bySolver.layout.yaxis).toMatchObject({type: "linear", range: [0, 180]});
+        expect(ERROR_METRICS.velocityMS.format(250)).toBe("250 m/s");
+        expect(makeMeasure({metric: "relSep"}).needsLists).toBe(false);
         expect(measure.best(rows[3])).toBe(0.005);
     });
     test("the tolerance figures keep a share of range, for whichever candidate is chosen", () => {
@@ -343,7 +373,7 @@ describe("dot marks: area by clip length, straight tracks as squares", () => {
         expect(isStraightTrack({})).toBeNull();
     });
 
-    test("straight tracks are dark red squares with the area of the circle they replace", () => {
+    test("straight tracks are black squares with the area of the circle they replace", () => {
         const marks = makeMarks({markStraight: true}, rows);
         const straight = marks.style({d_turnDeg: 0}, 5, "#2a78d6");
         const curved = marks.style({d_turnDeg: 10}, 5, "#2a78d6");
@@ -369,8 +399,8 @@ describe("dot marks: area by clip length, straight tracks as squares", () => {
         const figures = buildAllFigures(rows, {marks: {sizeByLength: true, markStraight: true}});
         const byLength = figures.find((f) => f.key === "errorByLength");
         expect(byLength.layout.annotations.at(-1).text.replace(/<br>/g, " "))
-            .toMatch(/Dark red squares .* area in proportion to its clip length, from 20 s to 300 s/);
+            .toMatch(/Black squares .* area in proportion to its clip length, from 20 s to 300 s/);
         const within = figures.find((f) => f.key === "withinByLength");
-        expect(within.layout.annotations.at(-1).text).not.toMatch(/Dark red squares/);
+        expect(within.layout.annotations.at(-1).text).not.toMatch(/Black squares/);
     });
 });

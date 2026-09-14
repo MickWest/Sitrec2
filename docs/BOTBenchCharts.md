@@ -79,15 +79,29 @@ Two choices above the figure apply to every error figure at once:
   first (the default), the candidate closest to truth, which is an oracle pick, or
   any one solver's candidate on every track.
 - **Error** picks the unit: the mean 3D error as a share of the mean true range (the
-  default), the same distance in metres, or the mean angle between the candidate and
-  the truth as seen from the sensor.
+  default), the same distance in metres, the mean angle between the candidate and
+  the truth as seen from the sensor, the mean 2D heading error in degrees, or the
+  mean 3D velocity error in metres per second. The two motion units compare the
+  tracks frame by frame: velocities are the differences between consecutive
+  positions times the frame rate, the velocity error is the mean magnitude of the
+  3D velocity difference, and the heading error is the mean absolute difference
+  between the two horizontal headings, 0 to 180 degrees, over the frames where both
+  tracks move faster than 0.5 m/s across the ground (a slower track has no heading).
+  A range error along the sightline scales a track's speed with its distance, so the
+  velocity error carries the range error; the heading error does not, which makes it
+  a comparison of shape alone. The heading error is bounded, so its figures use a
+  fixed linear axis from 0 to 180 degrees in steps of 25, with the box whiskers
+  computed on the values themselves; the other units use a log axis that the data
+  sets, with a drawing floor.
 
 The tolerance figures always use a share of range, for the chosen candidate. The
 solver figure already shows every candidate, so only the unit applies to it. The
 cost of blind ranking compares the chosen candidate with the best one, so it is not
-drawn when the best candidate is the choice. A solver's own error and the angle come
-from the candidate lists a BOTBench run keeps, so rows loaded from a JSONL file offer
-the top and best candidates only, and no angle.
+drawn when the best candidate is the choice. A solver's own error, the angle and the
+two motion units come from the candidate lists a BOTBench run keeps, so rows loaded
+from a JSONL file offer the top and best candidates only, in a share of range or in
+metres. A run cached before these units existed rebuilds its rows once, from the
+stored fits, to add them.
 
 **Turn level** appears above the figure when the rows hold more than one
 sensor-turn level, as rock_v3 does. Choosing one level limits every figure to it,
@@ -102,8 +116,8 @@ start off, when every dot is a circle of one size in its target class color.
 - **Area by clip length** gives each dot an area in proportion to its clip length.
   The scale is set once from all the rows, so a 300 s dot has 15 times the area of
   a 20 s dot in every figure, and the middle clip length keeps the usual size.
-- **Straight as red squares** draws a track whose sensor flew straight as a dark
-  red square: its turn level is 0, or, without a level, its sensor turned less
+- **Straight as black squares** draws a track whose sensor flew straight as a
+  black square: its turn level is 0, or, without a level, its sensor turned less
   than 1 degree. A square has the same area as the circle it replaces, so only
   the shape and color change. Tracks that turned keep their circles.
 
@@ -186,7 +200,7 @@ npm run bot-charts -- --input <joined-results.jsonl> --out-dir <dir> --format bo
 | `--only <keys>` | Comma-separated figure keys. Defaults to all. |
 | `--index` | Also write an `index.html` showing every figure. |
 | `--turn <deg>` | Limit the figures to one sensor-turn level, as the window's Turn level does; the sensor-turn figures always use every level. |
-| `--marks area,straight` | The dot marks: area by clip length, straight tracks as red squares. |
+| `--marks area,straight` | The dot marks: area by clip length, straight tracks as black squares. |
 | `--suffix <text>` | Added to every file name, so variants of one figure can sit side by side. |
 | `--list` | Print the figure keys and exit. |
 
