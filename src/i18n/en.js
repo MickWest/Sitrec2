@@ -2299,6 +2299,7 @@ const en = {
                 "the camera's position, heading, tilt and field of view, and hangs the frame in\n" +
                 "front of you — so you can check Sitrec's camera against Google's terrain,\n" +
                 "imagery and 3D buildings.\n" +
+                "If the sitch has a traverse, its whole path is included as a yellow line.\n" +
                 "With no video frame available it writes a plain .kml with just the camera viewpoint.",
         },
         showMoonShadow: {

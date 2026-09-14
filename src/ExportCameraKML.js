@@ -12,6 +12,10 @@
 // The image can't be a data: URI (Google Earth won't fetch those), so the output is a
 // KMZ: a zip whose root doc.kml refers to the JPEG by relative path.
 //
+// When the sitch has a traverse, the document also carries the traverse's whole path,
+// every frame of it, as a line — so the solution the camera is looking at can be seen
+// against the same terrain the photo is checked against.
+//
 // GEOMETRY NOTES, since three separate conventions meet here:
 //
 //   Altitude — KML <altitude> with altitudeMode "absolute" is height above MEAN SEA
@@ -25,6 +29,11 @@
 //   local east axis), then roll (about the view axis), with heading positive clockwise.
 //   Working that through, positive roll tips the camera's up vector toward the camera's
 //   RIGHT (a right bank). extractRoll() below measures exactly that.
+//   In the PhotoOverlay that roll goes into <rotation> NEGATED, and the <Camera>'s own
+//   <roll> is written as 0. <rotation> turns the photo counterclockwise, while a right
+//   bank turns the scene in the frame counterclockwise too, so undoing it needs a
+//   clockwise turn (checked in Google Earth Pro). The camera-only Placemark has no
+//   <rotation>, so it keeps the roll on its <Camera>.
 //
 //   Field of view — camera.fov is the vertical angle subtended by the FULL video frame
 //   (not by the look view, which is widened by fovCoverage when the video letterboxes).
@@ -63,6 +72,7 @@ import {showError} from "./showError";
 const PHOTO_WIDTH_M = 10;
 
 // Trim to a sane number of decimals. Lat/lon get 8 (about a millimetre), angles 4.
+// Used outside the PhotoOverlay only; inside it every value is written by fullPrecision.
 // "-0.0000" is a legal but confusing way to write zero, and it is what a camera pointing
 // exactly level or exactly north produces, so strip the sign off values that round to zero.
 const fx = (v, d) => {
@@ -75,6 +85,37 @@ const fx = (v, d) => {
 // it reads as a full turn and trips readers that validate heading < 360. Round first, then
 // wrap, so that case lands on 0 where it belongs.
 const fxHeading = (v) => fx((Number(Number(v).toFixed(4)) % 360 + 360) % 360, 4);
+
+/**
+ * A number at full double precision: the shortest decimal that reads back as exactly the
+ * same double (what String() gives), but always in plain positional notation. String()
+ * switches to exponent form below 1e-6, and a camera that is level to within rounding
+ * error has a roll like 1.9e-15, which not every KML reader parses.
+ */
+export function fullPrecision(v) {
+    const s = String(Number(v));
+    const e = s.indexOf("e");
+    if (e < 0) return s;
+    const sign = s[0] === "-" ? "-" : "";
+    const [int, frac = ""] = s.slice(sign.length, e).split(".");
+    const digits = int + frac;
+    const point = int.length + Number(s.slice(e + 1));   // decimal point's index in digits
+    if (point <= 0) return sign + "0." + "0".repeat(-point) + digits;
+    if (point >= digits.length) return sign + digits + "0".repeat(point - digits.length);
+    return sign + digits.slice(0, point) + "." + digits.slice(point);
+}
+
+// Heading wrapped into 0..360 at full precision. A tiny negative heading wraps to
+// 360 - 1e-14, which rounds to exactly 360 in a double, so that case lands on 0.
+const fullHeading = (v) => {
+    const h = (Number(v) % 360 + 360) % 360;
+    return fullPrecision(h >= 360 ? 0 : h);
+};
+
+// How cameraXML writes its numbers: trimmed for the camera-only Placemark, every digit
+// for the PhotoOverlay.
+const TRIMMED = {num: fx, heading: fxHeading};
+const FULL = {num: fullPrecision, heading: fullHeading};
 
 /**
  * Roll of a camera about its own view axis, in the KML sense: positive when the
@@ -271,63 +312,161 @@ const CAMERA_STYLE = `\t<Style id="${CAMERA_STYLE_ID}">
 // gx:altitudeMode "relativeToSeaFloor" in its own saves, which over land means height
 // above the TERRAIN; feeding an MSL altitude into that would lift the camera by the ground
 // elevation beneath it (hundreds of metres in most sitches).
-function cameraXML(pose, indent) {
+function cameraXML(pose, indent, {roll = pose.roll, format = TRIMMED} = {}) {
     const i = indent;
+    const {num, heading} = format;
     return `${i}<Camera>
-${i}\t<longitude>${fx(pose.lon, 8)}</longitude>
-${i}\t<latitude>${fx(pose.lat, 8)}</latitude>
-${i}\t<altitude>${fx(pose.altMSL, 3)}</altitude>
-${i}\t<heading>${fxHeading(pose.heading)}</heading>
-${i}\t<tilt>${fx(pose.tilt, 4)}</tilt>
-${i}\t<roll>${fx(pose.roll, 4)}</roll>
+${i}\t<longitude>${num(pose.lon, 8)}</longitude>
+${i}\t<latitude>${num(pose.lat, 8)}</latitude>
+${i}\t<altitude>${num(pose.altMSL, 3)}</altitude>
+${i}\t<heading>${heading(pose.heading)}</heading>
+${i}\t<tilt>${num(pose.tilt, 4)}</tilt>
+${i}\t<roll>${num(roll, 4)}</roll>
 ${i}\t<altitudeMode>absolute</altitudeMode>
 ${i}</Camera>`;
 }
 
+/**
+ * The node whose per-frame positions are the traverse solution, or null when the sitch
+ * has no traverse. Custom sitches smooth the selected method into traverseSmoothedTrack,
+ * which is what the traverse line on screen draws (see TraverseOutput.js). Aguadilla
+ * smooths its method switch the same way, into LOSTraverseSelectSmoothed (its Traverse
+ * Smooth Window); other legacy jet sitches have only the switch, LOSTraverseSelect.
+ */
+function getTraverseTrack() {
+    return NodeMan.get("traverseSmoothedTrack", false)
+        ?? NodeMan.get("LOSTraverseSelectSmoothed", false)
+        ?? NodeMan.get("LOSTraverseSelectTrack", false)
+        ?? NodeMan.get("LOSTraverseSelect", false)
+        ?? null;
+}
+
+/**
+ * Sample a traverse track at every frame. Returns one {lat, lon, altMSL} per frame, or
+ * null for a frame with no usable position — a constant-altitude traverse, for one, has
+ * no solution where the line of sight never comes down to that altitude.
+ */
+export function sampleTraversePath(track, frames) {
+    const points = [];
+    for (let f = 0; f < frames; f++) {
+        const value = track.v(f);
+        const position = value?.position ?? value;
+        if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)
+            || !Number.isFinite(position.z)) {
+            points.push(null);
+            continue;
+        }
+        const lla = ECEFToLLAVD_radii(position);
+        const altMSL = lla.z - meanSeaLevelOffset(lla.x, lla.y);
+        points.push(Number.isFinite(altMSL) ? {lat: lla.x, lon: lla.y, altMSL} : null);
+    }
+    return points;
+}
+
+// Yellow, like the traverse object in the 3D views. KML colors are aabbggrr.
+const TRAVERSE_STYLE_ID = "sitrec-traverse";
+const TRAVERSE_STYLE = `\t<Style id="${TRAVERSE_STYLE_ID}">
+\t\t<LineStyle>
+\t\t\t<color>ff00ffff</color>
+\t\t\t<width>3</width>
+\t\t</LineStyle>
+\t</Style>`;
+
+/**
+ * A Placemark drawing the traverse path as absolute-altitude lines, or "" when there are
+ * fewer than two valid points. Frames with no position break the line rather than join
+ * across the gap, so each unbroken run becomes its own LineString.
+ */
+export function traversePathPlacemarkXML(points, name) {
+    const runs = [];
+    let run = [];
+    for (const point of points) {
+        if (point) {
+            run.push(`${fx(point.lon, 8)},${fx(point.lat, 8)},${fx(point.altMSL, 3)}`);
+        } else {
+            if (run.length > 1) runs.push(run);
+            run = [];
+        }
+    }
+    if (run.length > 1) runs.push(run);
+    if (runs.length === 0) return "";
+
+    const lineStrings = runs.map(coords => `\t\t\t<LineString>
+\t\t\t\t<altitudeMode>absolute</altitudeMode>
+\t\t\t\t<coordinates>
+\t\t\t\t\t${coords.join("\n\t\t\t\t\t")}
+\t\t\t\t</coordinates>
+\t\t\t</LineString>`).join("\n");
+
+    return `\t<Placemark>
+\t\t<name>${escapeXML(name)}</name>
+\t\t<styleUrl>#${TRAVERSE_STYLE_ID}</styleUrl>
+\t\t<MultiGeometry>
+${lineStrings}
+\t\t</MultiGeometry>
+\t</Placemark>
+`;
+}
+
+/**
+ * The whole traverse path as a Placemark, plus a line for the description balloon.
+ * Both are "" when the sitch has no traverse or it has no valid positions.
+ */
+function traversePathForExport() {
+    const track = getTraverseTrack();
+    if (!track) return {placemark: "", note: ""};
+    const frames = track.frames ?? Sit.frames;
+    const points = sampleTraversePath(track, frames);
+    const placemark = traversePathPlacemarkXML(points, `${Sit?.name ?? "Sitrec"} traverse path`);
+    if (!placemark) return {placemark: "", note: ""};
+    const valid = points.filter(Boolean).length;
+    return {placemark, note: `Traverse path: ${valid} of ${frames} frames`};
+}
+
 // Child order here is the order the KML schema requires — Google Earth is forgiving
 // about it, but other readers validate against the sequence.
-function photoOverlayKML({name, description, pose, imageHref, viewVolume, near}) {
+export function photoOverlayKML({name, description, pose, imageHref, viewVolume, near, traversePlacemark = ""}) {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
 <Document>
 \t<name>${escapeXML(name)}</name>
 ${CAMERA_STYLE}
-\t<PhotoOverlay>
+${traversePlacemark ? TRAVERSE_STYLE + "\n" : ""}\t<PhotoOverlay>
 \t\t<name>${escapeXML(name)}</name>
 \t\t<description><![CDATA[${description}]]></description>
 \t\t<visibility>1</visibility>
 \t\t<styleUrl>#${CAMERA_STYLE_ID}</styleUrl>
-${cameraXML(pose, "\t\t")}
+${cameraXML(pose, "\t\t", {roll: 0, format: FULL})}
 \t\t<Icon>
 \t\t\t<href>${escapeXML(imageHref)}</href>
 \t\t</Icon>
-\t\t<rotation>0</rotation>
+\t\t<rotation>${fullPrecision(-pose.roll)}</rotation>
 \t\t<ViewVolume>
-\t\t\t<leftFov>${fx(viewVolume.leftFov, 6)}</leftFov>
-\t\t\t<rightFov>${fx(viewVolume.rightFov, 6)}</rightFov>
-\t\t\t<bottomFov>${fx(viewVolume.bottomFov, 6)}</bottomFov>
-\t\t\t<topFov>${fx(viewVolume.topFov, 6)}</topFov>
-\t\t\t<near>${fx(near, 3)}</near>
+\t\t\t<leftFov>${fullPrecision(viewVolume.leftFov)}</leftFov>
+\t\t\t<rightFov>${fullPrecision(viewVolume.rightFov)}</rightFov>
+\t\t\t<bottomFov>${fullPrecision(viewVolume.bottomFov)}</bottomFov>
+\t\t\t<topFov>${fullPrecision(viewVolume.topFov)}</topFov>
+\t\t\t<near>${fullPrecision(near)}</near>
 \t\t</ViewVolume>
 \t\t<Point>
 \t\t\t<altitudeMode>absolute</altitudeMode>
-\t\t\t<coordinates>${fx(pose.lon, 8)},${fx(pose.lat, 8)},${fx(pose.altMSL, 3)}</coordinates>
+\t\t\t<coordinates>${fullPrecision(pose.lon)},${fullPrecision(pose.lat)},${fullPrecision(pose.altMSL)}</coordinates>
 \t\t</Point>
 \t\t<shape>rectangle</shape>
 \t</PhotoOverlay>
-</Document>
+${traversePlacemark}</Document>
 </kml>
 `;
 }
 
 // No video to hang in front of the viewpoint, so export the viewpoint alone: a
 // placemark whose <Camera> puts Google Earth exactly where Sitrec's camera is.
-function cameraPlacemarkKML({name, description, pose}) {
+export function cameraPlacemarkKML({name, description, pose, traversePlacemark = ""}) {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
 <Document>
 \t<name>${escapeXML(name)}</name>
-\t<Placemark>
+${traversePlacemark ? TRAVERSE_STYLE + "\n" : ""}\t<Placemark>
 \t\t<name>${escapeXML(name)}</name>
 \t\t<description><![CDATA[${description}]]></description>
 ${cameraXML(pose, "\t\t")}
@@ -336,7 +475,7 @@ ${cameraXML(pose, "\t\t")}
 \t\t\t<coordinates>${fx(pose.lon, 8)},${fx(pose.lat, 8)},${fx(pose.altMSL, 3)}</coordinates>
 \t\t</Point>
 \t</Placemark>
-</Document>
+${traversePlacemark}</Document>
 </kml>
 `;
 }
@@ -385,17 +524,21 @@ export async function exportCameraAsKML() {
         ? renderVideoFrameToCanvas(videoView, frame)
         : null;
 
+    const traverse = traversePathForExport();
+
     if (!rendered) {
         // Nothing to photograph — export the viewpoint on its own rather than a
         // PhotoOverlay with no photo, which Google Earth shows as an empty frame.
         const kml = cameraPlacemarkKML({
             name: `${Sit?.name ?? "Sitrec"} camera`,
             description: describe(pose, frame, "No video frame was available, so this is the " +
-                "camera viewpoint only."),
+                "camera viewpoint only." + (traverse.note ? "<br/>\n" + traverse.note : "")),
             pose,
+            traversePlacemark: traverse.placemark,
         });
         saveAs(new Blob([kml], {type: "application/vnd.google-earth.kml+xml"}), baseName + ".kml");
-        console.log(`Exported camera-only KML (no video frame): ${baseName}.kml`);
+        console.log(`Exported camera-only KML (no video frame): ${baseName}.kml` +
+            (traverse.note ? ` — ${traverse.note}` : ""));
         return {kml};
     }
 
@@ -422,6 +565,7 @@ export async function exportCameraAsKML() {
 
     const description = describe(pose, frame,
         `Image FOV: ${fx(hFOV, 3)}° x ${fx(vFOVUsed, 3)}°  (${canvas.width} x ${canvas.height} px)` +
+        (traverse.note ? "<br/>\n" + traverse.note : "") +
         (notes.length ? "<br/>\n" + notes.map(escapeXML).join("<br/>\n") : ""));
 
     const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.92));
@@ -438,6 +582,7 @@ export async function exportCameraAsKML() {
         imageHref,
         viewVolume,
         near,
+        traversePlacemark: traverse.placemark,
     });
 
     const {default: JSZip} = await import("jszip");
@@ -450,7 +595,8 @@ export async function exportCameraAsKML() {
     console.log(`Exported PhotoOverlay KMZ: ${baseName}.kmz — ` +
         `${fx(pose.lat, 6)}, ${fx(pose.lon, 6)} @ ${fx(pose.altMSL, 1)}m MSL, ` +
         `heading ${fxHeading(pose.heading)}°, tilt ${fx(pose.tilt, 2)}°, roll ${fx(pose.roll, 2)}°, ` +
-        `FOV ${fx(hFOV, 2)}° x ${fx(vFOVUsed, 2)}°, near ${fx(near, 0)}m`);
+        `FOV ${fx(hFOV, 2)}° x ${fx(vFOVUsed, 2)}°, near ${fx(near, 0)}m` +
+        (traverse.note ? `, ${traverse.note}` : ""));
     notes.forEach(n => console.warn("Export Camera as KML: " + n));
 
     return {kml, viewVolume, pose, near};
