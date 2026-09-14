@@ -470,6 +470,15 @@ export function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, win
 export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured,
     quad, satellite, slowProfile, slowOpts, originLat, originLon, provenance = null,
     failures = null, windPrior = null, mcSweep = null, droneCtl = null,
+    // The Kalman smoother fit the battery seeds the physics models from. It
+    // becomes a candidate of its own only when `kalmanCandidate` is set: the live
+    // analysis already reads that candidate off its Kalman method node, and a
+    // second copy would compete with the first.
+    kalman = null, kalmanCandidate = false,
+    // The candidate keys to build, as a Set, or null for every one. A key that
+    // is not in the set is left out entirely — no tile, no failure tile — as if
+    // that solver had never been run. Sweep tiles are keyed `<strategy>:<order>`.
+    include = null,
     // GUI state, previously read from the enclosing module.
     aoFixedPoint = true, groundMode = "Airborne (any)",
     // Absolute clip start, in epoch ms. Previously read from
@@ -513,6 +522,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     const dateForDatasetFrame = clipStartMs == null ? null
         : (f) => clipFrameDate(clipStartMs, dataset, f);
     const list = [];
+    const has = (key) => !include || include.has(key);
     // Surface motion is constrained relative to Earth, not the air mass. Use a
     // zero-wind metric view so road speed, acceleration/g and headings are
     // ground-relative; otherwise a head/tailwind changes the vehicle verdict.
@@ -549,7 +559,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     //    (their internal scores use different priors/smoothing and must never
     //    be compared raw), and keep the fast pick unless the slow candidate
     //    wins DECISIVELY (see slowRegimeWins).
-    {
+    if (has("constAir") && sweep) {
         const regimePick = pickConstAirRegime(dataset, sweep, slowProfile);
         const fastTrack = regimePick.fast.track;
         const fastScored = regimePick.fast.scored;
@@ -634,7 +644,9 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     //    The displayed track is the lightly SMOOTHED ray-rider (honest small
     //    errDeg); near-horizontal sightlines never cross a constant-altitude
     //    plane, in which case the fit reports failure and gets a null tile.
-    if (ca && !ca.failed) {
+    if (!has("constAlt")) {
+        // not asked for
+    } else if (ca && !ca.failed) {
         const track = ca.track;
         list.push({
             key: "constAlt",
@@ -666,7 +678,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     // 3. Least-maneuvering plausible path — smoothest ray-riding trajectory.
     //    Two-stage: geometry-decisive scenes pick the range purely by
     //    smoothness; narrow-baseline scenes fall back to the soft speed target.
-    {
+    if (has("plausible") && plausible && plausible.track) {
         const track = plausible.track;
         list.push({
             key: "plausible",
@@ -713,7 +725,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     //     of least LOS motion (a sensor orbiting a slow object). Represents the
     //     "it's a mundane slow thing and the motion is parallax" reading, and
     //     the family (range band) that the low-motion geometry leaves open.
-    {
+    if (has("saddle")) {
         const saddle = computeSaddle(dataset, slowProfile, slowOpts);
         if (saddle) {
             const m = trackMetrics(dataset, saddle.track);
@@ -761,7 +773,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     }
 
     // 4. Fixed-wing aircraft model — parametric fit with a small residual error.
-    if (aircraft && aircraft.track) {
+    if (has("aircraft") && aircraft && aircraft.track) {
         const track = aircraft.track;
         const aircraftMetrics = trackMetrics(dataset, track);
         // Only locally load-bearing bounds demote the model. Coordinates that
@@ -820,7 +832,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     //    are not equally good evidence, so the label says which one it was.
     const windMeasured = windPrior ? windPrior.measured : false;
     const pinnedWindLabel = windMeasured ? "measured wind" : "sitch wind";
-    list.push(lanternHypothesis(lantern, dataset, errFloor, {
+    if (has("lantern")) list.push(lanternHypothesis(lantern, dataset, errFloor, {
         key: "lantern",
         name: lanternMeasured ? "Sky Lantern / Balloon (free wind)" : "Sky Lantern / Balloon",
         // The free fit's solved wind is the only balloon wind that can be
@@ -832,7 +844,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
             + "sink; altitude-sheared wind) fit to the sightlines with the wind INFERRED, not assumed. "
             + "The inferred wind is what a plausible balloon here would require.",
     }));
-    if (lanternMeasured) {
+    if (has("lantern") && lanternMeasured) {
         const windDesc = windPrior && windPrior.statusText ? ` (${windPrior.statusText})` : "";
         list.push(lanternHypothesis(lanternMeasured, dataset, errFloor, {
             key: "lantern",
@@ -857,7 +869,9 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     // 5b. Quadcopter (multirotor drone) physics model — a hover-capable
     //     near-field object. Its range is capped at 20 km, so far-field
     //     scenes give a poor (correctly implausible) fit. Degrade gracefully.
-    if (quad && quad.positions) {
+    if (!has("quadcopter")) {
+        // not asked for
+    } else if (quad && quad.positions) {
         const track = quad.positions;
         const range0 = Math.hypot(track[0] - S[0], track[1] - S[1], track[2] - S[2]);
         const solved = quad.params.solved || {};
@@ -944,13 +958,15 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     //     Plausibility is priced in the control effort, so nothing is
     //     foreclosed: an aggressive manoeuvre is affordable if the sightlines
     //     genuinely demand it, and only motion that buys nothing is priced out.
-    if (droneCtl && droneCtl.positions) {
+    if (has("droneControl") && droneCtl && droneCtl.positions) {
         const track = droneCtl.positions;
-        const m = droneCtl.model;
-        const pv = droneCtl.solvedVector || [];
+        // The battery took these off the model when it fitted: the knot count, the
+        // description, the heading travel and the seed clamping. A stored unit
+        // carries them where a class instance could not travel.
+        const described = typeof droneCtl.description === "string";
         const dm = trackMetrics(dataset, track);
         const range0 = Math.hypot(track[0] - S[0], track[1] - S[1], track[2] - S[2]);
-        const headingTravel = m ? m.headingTravelDeg(pv) : NaN;
+        const headingTravel = Number.isFinite(droneCtl.headingTravelDeg) ? droneCtl.headingTravelDeg : NaN;
         // The comparison that makes this hypothesis mean something: how much
         // better the UNCONSTRAINED multirotor did. A small gap says an ordinary
         // flight explains the sightlines as well as any contortion; a large one
@@ -966,7 +982,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
         // tile and mark it incomplete/ineligible. Seed clamping is independently
         // incomplete because it means refinement began somewhere unintended.
         const dcOpt = droneCtl.params.optimizer || null;
-        const dcClamp = m && typeof m.seedClamping === "function" ? m.seedClamping() : null;
+        const dcClamp = droneCtl.seedClamping ?? null;
         const droneWarnings = localFitCompletionWarnings(dcOpt);
         if (dcClamp) {
             droneWarnings.push(`seed clamped to bounds (${dcClamp.intervals} interval(s), worst ${dcClamp.worstExcessDeg.toFixed(0)}° over) — fit started off the intended seed`);
@@ -974,7 +990,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
         list.push({
             key: "droneControl",
             name: "Drone (flown inputs)",
-            subtitle: m ? m.describe(pv) : "Control-input fit",
+            subtitle: described ? droneCtl.description : "Control-input fit",
             color: "#7fc4d0",
             track,
             metricsFull: dm,
@@ -983,7 +999,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
             params: {
                 range: range0,
                 headingTravelDeg: headingTravel,
-                knots: m ? m.K : DRONE_CONTROL_KNOTS,
+                knots: Number.isFinite(droneCtl.knots) ? droneCtl.knots : DRONE_CONTROL_KNOTS,
                 freeModelErrDeg: freeErr,
                 plausibleVsPossibleGapDeg: gap,
                 priors: droneCtl.params.priors,
@@ -991,7 +1007,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
                 seedClamping: dcClamp,
                 errFloor,
             },
-            notes: (m ? `Fitted as the control inputs a drone would be flown with — ${m.describe(pv)}. ` : "")
+            notes: (described ? `Fitted as the control inputs a drone would be flown with — ${droneCtl.description}. ` : "")
                 + "Seeded from the best geometric path (Kalman smoother or least-manoeuvring track), "
                 + "inverted into the speed, heading and climb history needed to fly it, then refined "
                 + "against the sightlines. "
@@ -1023,26 +1039,44 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     //    (terrain where loaded, sea level over ocean — localGroundZ), not raw
     //    ENU z=0: over land a z=0 pin sits below the terrain and was wrongly
     //    auto-flagged Underground. Always runs; cheap closed-form fit.
-    if (localGroundZ) {
+    //    Rejected, as the Ground Vehicle is, when the fitted point could not
+    //    be seen: behind the sensor or beyond its horizon. Sightlines that keep
+    //    one bearing near the horizon otherwise run the point out to 1e20 m and
+    //    more, and its truth comparison then carries that onto the charts.
+    if (has("ground") && localGroundZ) {
         const groundZ0 = localGroundZ(dataset, originLat, originLon);
         const ground = fitGroundPoint(dataset, groundZ0);
-        list.push({
-            key: "ground",
-            name: "Ground Object",
-            subtitle: "A fixed light on the surface",
-            color: "#8a6f4a",
-            track: ground.track,
-            metricsFull: trackMetrics(groundMetricDataset, ground.track),
-            errDeg: ground.errDeg,
-            params: {distance: ground.distance, groundZ: groundZ0, motionFrame: "ground"},
-            notes: "A stationary light on the local surface; high LOS error means the sightlines don't converge on a ground point.",
-        });
+        if (ground.visibleFraction >= 0.98) {
+            list.push({
+                key: "ground",
+                name: "Ground Object",
+                subtitle: "A fixed light on the surface",
+                color: "#8a6f4a",
+                track: ground.track,
+                metricsFull: trackMetrics(groundMetricDataset, ground.track),
+                errDeg: ground.errDeg,
+                params: {distance: ground.distance, groundZ: groundZ0, motionFrame: "ground"},
+                notes: "A stationary light on the local surface; high LOS error means the sightlines don't converge on a ground point.",
+            });
+        } else {
+            list.push({
+                key: "ground",
+                name: "Ground Object",
+                subtitle: "A fixed light on the surface",
+                color: "#8a6f4a",
+                track: null, metricsFull: null, errDeg: NaN,
+                params: {groundZ: groundZ0, visibleFraction: ground.visibleFraction},
+                notes: `The best-fitting surface point could be seen on only ${(100 * ground.visibleFraction).toFixed(0)}% `
+                    + "of frames; on the rest it lies behind the sensor or beyond the horizon. No light on the ground "
+                    + "can make these sightlines, so this candidate is rejected.",
+            });
+        }
     }
 
     // 7. Fixed point in space — a stationary object at an unknown location, or a
     //    fixed (parallax-free / astronomical) direction if very distant. Cheap;
     //    gated only so the user can hide it (default on).
-    if (aoFixedPoint) {
+    if (has("fixedPoint") && aoFixedPoint) {
         const fixedPt = fitFixedPoint(dataset, {});
         const fixedDir = fitFixedDirection(dataset);
         // A stationary object is either a finite point (sightlines converge on
@@ -1071,7 +1105,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
 
     // 7b. Satellite (LEO pass) — a real catalogued object propagated by SGP4,
     //     the best match out of the whole LEO catalogue for the sitch's date.
-    if (satellite && satellite.best && dateForDatasetFrame) {
+    if (has("satellite") && satellite && satellite.best && dateForDatasetFrame) {
         const b = satellite.best;
         const track = satelliteTrackENU(b.satrec, dataset.n, dateForDatasetFrame, originLat, originLon);
         const midF = Math.floor(dataset.n / 2);
@@ -1107,6 +1141,48 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
         }
     }
 
+    // The Kalman smoother as a candidate, where the live analysis's method-node
+    // version sits in the order. Same shape as that version: a curve fit through
+    // the sightlines, judged like the other global fits, with the CV-family
+    // conditioning note and the non-physical flag a hand-set method would carry.
+    if (kalmanCandidate && has("gfKalman") && kalman && kalman.positions) {
+        const track = Float64Array.from(kalman.positions);
+        const m = trackMetrics(dataset, track);
+        const errDeg = meanAngularError(dataset, track) * 180 / Math.PI;
+        const nonPhysical = !isFinite(m.airSpeed.mean)
+            || m.airSpeed.mean / KNOTS_TO_MS > 20000 || !(m.gLoad.max < 2000);
+        const ranges = new Float64Array(dataset.n);
+        for (let f = 0; f < dataset.n; f++) {
+            ranges[f] = Math.hypot(track[f * 3] - S[f * 3],
+                track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
+        }
+        const sortedR = Array.from(ranges).sort((a, b) => a - b);
+        const linearConditioning = assessLinearFitConditioning(dataset, {positions: track});
+        const collapsedNote = !linearConditioning?.collapse ? ""
+            : linearConditioning.collapseReason === "near-camera-weak-geometry"
+                ? " CAUTION: near-camera result under poor CV-family conditioning — "
+                    + "high artifact risk; treat its range and speed as unreliable."
+                : " CAUTION: this fit has collapsed onto the sensor path — its "
+                    + "range and speed are artifacts, not measurements.";
+        list.push({
+            key: "gfKalman",
+            name: "Global Fit: Kalman Smoother",
+            subtitle: "Kalman-smoothed LOS fit",
+            color: "#57a8c6",
+            track, metricsFull: m, errDeg, nonPhysical, linearConditioning,
+            // errFloor rides along as it does on the fitted candidates, so a run
+            // of this candidate alone is graded on the same scene residual scale.
+            params: {range: sortedR[Math.floor(dataset.n / 2)], methodLabel: "Global Fit: Kalman Smoother",
+                activeCount: kalman.activeCount ?? null, errFloor},
+            notes: "A constant-velocity Kalman filter run forward over the sightlines and smoothed "
+                + "backward (Rauch-Tung-Striebel), seeded from the least-squares constant-velocity fit "
+                + "with a range floor. It penalises acceleration rather than assuming an object, and it "
+                + "is the seed the balloon and drone-control fits start from. A curve fit through the "
+                + "sightlines carries no independent range information, so read it as a method "
+                + "comparison, not as an object hypothesis." + collapsedNote,
+        });
+    }
+
 
     // ---- Curve-fit polynomial-order sweep tiles ---------------------------
     // Each fitting strategy is swept over polynomial order and every order gets
@@ -1137,6 +1213,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     {
         const mcTrials = mcSweep?.numTrials;
         for (const {variant, order, result: res} of (mcSweep?.results ?? [])) {
+            if (!variant || !has(`${variant.key}:${order}`)) continue;
             {
                 const track = Float64Array.from(res.positions);
                 const m = trackMetrics(dataset, track);
@@ -1218,7 +1295,7 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
     // local terrain height. A moving ground point, distinct from the stationary
     // Ground Object. Offered when the analysis is constrained to on-ground
     // solutions; only meaningful if most sightlines actually reach the ground.
-    if (groundMode === "On the ground" && localGroundZ) {
+    if (has("groundVehicle") && groundMode === "On the ground" && localGroundZ) {
         const groundZ = localGroundZ(dataset, originLat, originLon);
         const gv = fitGroundVehicle(dataset, groundZ);
         if (gv.fracValid >= 0.98) {

@@ -32,6 +32,9 @@ import {setSit} from "../../src/Globals";
 import {ingestMISBRecords} from "../../src/analysis/BotBenchIngest";
 import {runBotBenchAnalysis} from "../../src/analysis/BotBenchRunner";
 import {packForCache, unpackFromCache} from "../../src/analysis/BotBenchCacheCodec";
+import {legacyUnitsFromBattery, packUnitBlob, readUnitBlob, sameUnitResult} from "../../src/analysis/BotBenchCacheIndex";
+import {planUnits} from "../../src/analysis/BotBenchSolvers";
+import {unitsFromTexts} from "../../src/analysis/BotBenchUnitTexts";
 import {MISB, MISBFields} from "../../src/MISBFields";
 
 jest.setTimeout(600000);
@@ -210,5 +213,92 @@ describe("a replayed analysis equals a fresh one", () => {
                 + `  fresh:    ...${a.slice(Math.max(0, i - 90), i + 90)}\n`
                 + `  replayed: ...${b.slice(Math.max(0, i - 90), i + 90)}`);
         }
+    });
+});
+
+/**
+ * THE PER-UNIT STORE MUST NOT BE A SECOND CODE PATH EITHER. The folder cache now
+ * stores each fit unit on its own and rebuilds the candidate set, the verdict and
+ * the row from them. So the same record is run three ways: fresh, from every unit
+ * stored and read back as blob text, and from a schema-2 battery blob split into
+ * units with the cheap units fitted again. All three must agree field by field.
+ */
+describe("a row built from stored units equals a fresh one", () => {
+    let fresh, fromUnits, fromLegacy, texts;
+
+    beforeAll(async () => {
+        fresh = await runBotBenchAnalysis(ingest(), {});
+        // Every unit the run fitted, packed as the cache writes it and read as the
+        // worker reads it.
+        texts = {plan: planUnits(null), cached: {}, legacy: null, legacyUnits: [], legacyElapsedMs: null};
+        for (const [unitId, rec] of Object.entries(fresh.units)) {
+            texts.cached[unitId] = {text: packUnitBlob({unitId, failures: rec.failures}, rec.result)};
+        }
+        const {cached} = unitsFromTexts(texts);
+        fromUnits = await runBotBenchAnalysis(ingest(), {units: {cached}, elapsedMs: fresh.elapsedMs});
+
+        // A schema-2 blob: the whole battery through JSON, split into the units it
+        // holds; the rest (constant altitude, the smoother, drone control, the
+        // polynomial sweep) is fitted again from those.
+        const legacyText = JSON.stringify(packForCache(fresh.battery));
+        const legacy = unitsFromTexts({plan: planUnits(null), cached: {}, legacy: legacyText,
+            legacyUnits: ["constAir", "profiles", "aircraft", "plausible", "lantern", "quadcopter", "families"],
+            legacyElapsedMs: fresh.elapsedMs});
+        fromLegacy = await runBotBenchAnalysis(ingest(), {units: {cached: legacy.cached}, elapsedMs: fresh.elapsedMs});
+    });
+
+    test("every unit the battery fitted survives its blob, and compares equal to itself", () => {
+        expect(Object.keys(fresh.units).sort()).toEqual(planUnits(null).sort());
+        for (const [unitId, rec] of Object.entries(fresh.units)) {
+            const back = readUnitBlob(texts.cached[unitId].text);
+            expect(diff(rec.result, back.result, `units.${unitId}`)).toBeNull();
+            expect(sameUnitResult(rec.result, texts.cached[unitId].text)).toBe(true);
+        }
+    });
+
+    test("the row, every hypothesis and the results are identical when every unit is stored", () => {
+        expect(fromUnits.units).toEqual({});
+        expect(diff(fresh.row, fromUnits.row, "row")).toBeNull();
+        expect(fromUnits.results.hypotheses.length).toBe(fresh.results.hypotheses.length);
+        for (let i = 0; i < fresh.results.hypotheses.length; i++) {
+            expect(diff(fresh.results.hypotheses[i], fromUnits.results.hypotheses[i],
+                `hypotheses[${i}](${fresh.results.hypotheses[i].key})`)).toBeNull();
+        }
+        const strip = ({buildHtml, ...rest}) => rest;
+        expect(diff(strip(fresh.results), strip(fromUnits.results), "results")).toBeNull();
+    });
+
+    test("a schema-2 blob split into units gives the same row, with the cheap units refitted", () => {
+        expect(Object.keys(fromLegacy.units).sort()).toEqual(["constAlt", "droneControl", "kalman", "polySweep"]);
+        expect(diff(fresh.row, fromLegacy.row, "row")).toBeNull();
+        for (let i = 0; i < fresh.results.hypotheses.length; i++) {
+            expect(diff(fresh.results.hypotheses[i], fromLegacy.results.hypotheses[i],
+                `hypotheses[${i}](${fresh.results.hypotheses[i].key})`)).toBeNull();
+        }
+        const split = legacyUnitsFromBattery(unpackFromCache(JSON.parse(JSON.stringify(packForCache(fresh.battery)))));
+        expect(Object.keys(split).sort()).toEqual(["aircraft", "constAir", "lantern", "plausible", "profiles", "quadcopter"]);
+    });
+
+    test("the Kalman smoother is a candidate of its own, and a subset run keeps only its solvers", async () => {
+        const names = fresh.results.hypotheses.map((h) => h.key);
+        expect(names).toContain("gfKalman");
+        expect(names.indexOf("gfKalman")).toBeLessThan(names.indexOf("gfPolyALS"));
+        const {cached} = unitsFromTexts(texts);
+        const only = await runBotBenchAnalysis(ingest(), {solvers: ["gfKalman"], units: {cached}});
+        expect(only.results.hypotheses.map((h) => h.key)).toEqual(["gfKalman"]);
+        expect(only.row.top.key).toBe("gfKalman");
+        expect(only.row.topRangeBlind).toBe(true);
+        expect(only.units).toEqual({});
+        const kalmanFresh = fresh.results.hypotheses.find((h) => h.key === "gfKalman");
+        expect(diff(kalmanFresh, only.results.hypotheses[0], "kalman")).toBeNull();
+        // Without the sweep there is still a row, and a report that says why it is short.
+        expect(only.results.buildHtml()).toContain("without the constant-air-speed sweep");
+    });
+
+    test("a subset fitted from nothing fits only the units it needs", async () => {
+        const out = await runBotBenchAnalysis(ingest(), {solvers: ["gfKalman", "quadcopter"]});
+        expect(Object.keys(out.units).sort()).toEqual(["kalman", "quadcopter"]);
+        expect(out.results.hypotheses.map((h) => h.key)).toEqual(["quadcopter", "gfKalman"]);
+        expect(diff(out.units.quadcopter.result, fresh.units.quadcopter.result, "quadcopter")).toBeNull();
     });
 });

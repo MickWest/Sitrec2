@@ -3,6 +3,7 @@ import {buildHypotheses as buildCoreHypotheses, flatTerrainProbes, trackGroundSt
     UNDERGROUND_TOL} from "../TraverseHypotheses";
 import {kinematicFamilyScreen, runTraverseBattery} from "../TraverseBattery";
 import {KNOTS_TO_MS, METERS_PER_NM} from "../TraverseAnalysis";
+import {includeSetFor, planUnits} from "./BotBenchSolvers";
 
 export const DEFAULT_ANCHOR_M = 20 * METERS_PER_NM;
 export const SPEED_TARGET_MS = 380 * KNOTS_TO_MS;
@@ -75,10 +76,17 @@ export function validateBotBenchRecord({dataset}) {
 
 export async function fitBotBenchRecord(record, {
     anchorM = DEFAULT_ANCHOR_M, solutionFamilies = false, mcOrderSweep = false,
+    // The solvers wanted (BotBenchSolvers ids; null for all) and, optionally,
+    // stored fit units to use in place of fitting: {cached: {unitId: {result,
+    // failures}}, onUnit}. The plan of units is derived from the solvers here,
+    // so a caller never has to know which unit serves which candidate.
+    solvers = null, units = null,
     onProgress = null, isCancelled = () => false,
 } = {}) {
     const {dataset, originLat, originLon, groundZ} = record;
     validateBotBenchRecord(record);
+    const include = includeSetFor(solvers, {mcOrderSweep});
+    const plan = planUnits(solvers, {solutionFamilies});
 
     // Mirrors the live path's phase(base, span, label) contract, minus the
     // overlay: the caller gets a fraction and a label for its own row.
@@ -181,6 +189,10 @@ export async function fitBotBenchRecord(record, {
             groundMode: "Airborne (any)",
             clipStartMs: record.clipStartMs ?? null,
             ...terrainProbes,
+            // Only the selected candidates, and the smoother as one of them:
+            // there is no method node here to read it off.
+            include,
+            kalmanCandidate: true,
         }),
         // No wind field, no satellite catalogue, no scene to read Kalman
         // sliders off — the battery's own defaults apply.
@@ -190,6 +202,7 @@ export async function fitBotBenchRecord(record, {
         afterHypotheses: null,
         phase,
         isCancelled,
+        units: {plan, cached: units?.cached ?? {}, onUnit: units?.onUnit ?? null},
     });
 
 }
@@ -201,6 +214,9 @@ export function cacheableBotBenchBattery(battery) {
         hypotheses, sweep, resolvedRanges, fastProfile, slowProfile,
         slowOpts, aircraft, families, executiveAssessment, failures,
         provenance: battery.provenance,
+        // Which seed the physics fits started from, and whether that is the
+        // seed a full battery would have used (see TraverseBattery).
+        seedSource: battery.seedSource ?? null, seedComplete: battery.seedComplete ?? true,
         // The resolved search brackets, quoted by the manifest below.
         fitRangeMin: battery.fitRangeMin, fitRangeMax: battery.fitRangeMax,
         caRangeMin: battery.caRangeMin, caRangeMax: battery.caRangeMax,

@@ -57,7 +57,9 @@ import {describeMeasuredPlatform, RAYLEIGH_MEAN, RAYLEIGH_SD} from "./BotBenchIn
 // file returned the SAME separation from truth to four significant figures,
 // which is the signature of a family whose range comes from the anchor rather
 // than from the data.
-const DIAGNOSTIC_FAMILY_KEYS = new Set(SWEEP_VARIANTS.map((v) => v.key));
+// The Kalman smoother candidate is the same kind of thing: a curve fit through
+// the sightlines, seeded from the constant-velocity fit, with no range of its own.
+const DIAGNOSTIC_FAMILY_KEYS = new Set([...SWEEP_VARIANTS.map((v) => v.key), "gfKalman"]);
 
 /**
  * What a bulk run cannot produce, named as data so the report and the table can
@@ -69,7 +71,8 @@ export const ABSENT_HYPOTHESES = [
     // — nothing supplied a wind to pin it to — and runTraverseBattery now says
     // so per run, with the reason. Naming it in both places would state one
     // fact twice and let the two copies drift apart.
-    "Drone (flown control inputs) is fitted, but the interactive scene's LOS-fit methods are not",
+    "Drone (flown control inputs) and the Kalman smoother are fitted, but the interactive scene's other "
+        + "LOS-fit methods (constant velocity, constant acceleration, straight line) are not",
     "Astronomical (current time / best time)",
     "Catalogued satellite pass",
     "independent balloon wind evidence",
@@ -87,6 +90,11 @@ export async function runBotBenchAnalysis(record, {
     anchorM = DEFAULT_ANCHOR_M,
     solutionFamilies = false,
     mcOrderSweep = false,
+    // The solvers to run, as BotBenchSolvers names them; null for every one.
+    solvers = null,
+    // Per-unit fitting for the battery (TraverseBattery `units`): which fit
+    // units to have and which stored results to use. Passed through untouched.
+    units = null,
     onProgress = null,
     isCancelled = () => false,
     // A battery output restored from the folder's result cache. Supplying it
@@ -114,12 +122,16 @@ export async function runBotBenchAnalysis(record, {
             + `is reported against the declared limit — expect them all to violate it.`);
     }
     const battery = cachedBattery ?? await fitBotBenchRecord(record, {
-        anchorM, solutionFamilies, mcOrderSweep, onProgress, isCancelled,
+        anchorM, solutionFamilies, mcOrderSweep, solvers, units, onProgress, isCancelled,
     });
     const provenance = battery.provenance;
 
     const {hypotheses, sweep, resolvedRanges, fastProfile, slowProfile,
         slowOpts, aircraft, families, executiveAssessment, failures} = battery;
+    // A run whose solvers need no constant-air sweep has no search grid to draw
+    // and no range profiles to quote. The row is built as usual; the report
+    // says what it cannot show.
+    const searched = !!(sweep && fastProfile && slowProfile);
 
     // EXACTLY WHAT A CACHED RUN NEEDS, and deliberately a named subset rather
     // than the whole battery. runTraverseBattery also returns the physics
@@ -215,8 +227,8 @@ export async function runBotBenchAnalysis(record, {
     const directionScore = record.directionTruth
         ? scoreDirectionTruth(dataset, hypotheses, record.directionTruth) : null;
 
-    const series = traverseReportSeries({
-        dataset, sweep, resolvedRanges, hypotheses, slowProfile, slowOpts});
+    const series = searched ? traverseReportSeries({
+        dataset, sweep, resolvedRanges, hypotheses, slowProfile, slowOpts}) : null;
 
     const windText = record.meta?.windEstimate
         ? `sidecar analyst estimate: E ${record.meta.windEstimate.E.toFixed(1)}, `
@@ -249,11 +261,13 @@ export async function runBotBenchAnalysis(record, {
             // The two things a reader must not have to infer.
             surfaceModel: record.meta?.surfaceModel ?? null,
             rangeAnchorM: anchorM,
+            // The solvers this row was built from, as the run selected them.
+            solvers: solvers ? solvers.slice() : null,
         },
         searchBounds: {
             userSpecified: false,
             constantAirRangeM: [resolvedRanges[0], resolvedRanges[resolvedRanges.length - 1]],
-            constantAirSpeedMS: [sweep.speeds[0], sweep.speeds[sweep.speeds.length - 1]],
+            constantAirSpeedMS: sweep ? [sweep.speeds[0], sweep.speeds[sweep.speeds.length - 1]] : null,
             aircraftRangeM: [battery.fitRangeMin, battery.fitRangeMax],
             constantAltitudeRangeM: [battery.caRangeMin, battery.caRangeMax],
             minimumAccelerationRangeM: [battery.plausRangeMin, battery.plausRangeMax],
@@ -269,9 +283,9 @@ export async function runBotBenchAnalysis(record, {
             basinReseeded: f.basinCheck?.reseeded ?? [],
         })) : null,
         completeness: {
-            constantAirBoundaryAxes: sweep.boundaryAxes,
-            fastProfileBoundaryLimited: !!fastProfile.boundaryLimited,
-            slowProfileBoundaryLimited: !!slowProfile.boundaryLimited,
+            constantAirBoundaryAxes: sweep?.boundaryAxes ?? null,
+            fastProfileBoundaryLimited: !!fastProfile?.boundaryLimited,
+            slowProfileBoundaryLimited: !!slowProfile?.boundaryLimited,
             minimumAccelerationBoundaryLimited: !!battery.plausible?.boundaryLimited,
         },
         optimizers: {
@@ -318,7 +332,7 @@ export async function runBotBenchAnalysis(record, {
         } : null,
     });
 
-    const buildHtml = () => buildTraverseReportHTML({
+    const buildHtml = () => (searched ? buildTraverseReportHTML({
         sitName: `BOTBench: ${record.label}`,
         dataset, windText, speedTarget: SPEED_TARGET_MS,
         sweep, fastProfile, slowProfile, aircraft,
@@ -329,7 +343,12 @@ export async function runBotBenchAnalysis(record, {
         hypotheses, provenance: battery.provenance, failures, manifest,
         truth, terrainChangedDuringRun: false,
         executiveAssessment,
-    });
+    }) : `<!doctype html><meta charset="utf-8"><title>BOTBench: ${record.label}</title>`
+        + `<body style="font:15px/1.5 system-ui,sans-serif;margin:24px;max-width:60em">`
+        + `<h2>BOTBench: ${record.label}</h2><p>This row was built from ${hypotheses.length} candidate(s) `
+        + `without the constant-air-speed sweep, so there is no search grid or range profile to report. `
+        + `Run it again with the Constant Air Speed solver selected for the full report.</p>`
+        + `<ul>${hypotheses.map((h) => `<li>${h.name}: ${Number.isFinite(h.errDeg) ? h.errDeg.toFixed(3) + "°" : "no track"}</li>`).join("")}</ul></body>`);
 
     const results = {
         // The file's own local ENU frame and epoch. Carried because a candidate
@@ -345,7 +364,8 @@ export async function runBotBenchAnalysis(record, {
             groundElevationMSL: record.meta.siteElevationMSL ?? 0,
         } : null,
         dataset, sweep, fastProfile, slowProfile, aircraft,
-        best: sweep.best, bestMetrics: series.bestMetrics, slowBestRow: series.slowBestRow,
+        best: sweep?.best ?? null, bestMetrics: series?.bestMetrics ?? null,
+        slowBestRow: series?.slowBestRow ?? null,
         hypotheses, families, truth,
         buildHtml, html: null,
         provenance: battery.provenance, failures, manifest,
@@ -374,6 +394,9 @@ export async function runBotBenchAnalysis(record, {
         // Handed back so the caller can cache it. Nothing in the analysis reads
         // it again.
         battery: cacheableBattery,
+        // The fit units this call made, for a per-unit store: {unitId: {result,
+        // elapsedMs, failures, cacheable}}. Empty when the battery was handed in.
+        units: battery.units ?? {},
         elapsedMs,
     };
 }

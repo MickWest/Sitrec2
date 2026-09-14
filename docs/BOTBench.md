@@ -129,6 +129,14 @@ group.
   polynomial fits are to their order), adds ten candidates per file, and is the
   bulk of the sweep's cost. Leave it off unless you are studying the methods
   themselves.
+- **Rebuild rows** — do not show a remembered row as it is; rebuild every row
+  from the stored fits, which takes a fraction of a second a file. The fits
+  themselves are still reused. Use it after a change to the candidates, the
+  ranking or the verdict, which the cache cannot see (see
+  [the result cache](#the-result-cache)).
+- **Solvers…** — choose which [solvers](#choosing-the-solvers) the next run fits
+  and ranks. The button shows the current choice, and every run started from
+  the window opens the same dialog first.
 - **Range anchor … NM** — the start distance the search bracket is centred on,
   identical for **every file in the run** (default 20 [NM](#nautical-mile-nm),
   clamped to 0.3–90 NM). The interactive analysis anchors its bracket on the *Tgt Start
@@ -160,16 +168,56 @@ file's analysis holds its dataset and every candidate's track for every frame,
 which on a large folder runs to gigabytes and makes each file slower than the one
 before. So only the last few finished rows, and any row you open, keep theirs.
 Pressing **Gallery**, **Report** or the file name on an older row rebuilds its
-analysis first, which takes a moment. It replays the cached fit only when that fit
-matches this build and these analysis options and reproduces the row exactly;
-otherwise it fits the file again. Either way the gallery and report belong to the
+analysis first, which takes a moment. It reads the row's fits from the folder
+cache where they are stored and fits the rest, and it checks that the rebuilt
+row is the row in the table. Either way the gallery and report belong to the
 row in the table, and the numbers in the table are unaffected. The table itself
 draws only the rows in view. A row is drawn when you scroll to it, and the rows in
 view are updated four times a second, so a run of thousands of files stays as
 responsive as a short one. Exports, the summary and the charts still read every row.
 - **Flush Cache** — delete the cache from every folder this run touched, so the
-  next run analyses everything from scratch. Rarely needed: a stale cache
-  normally detects itself and re-runs (see below).
+  next run fits everything from scratch. It first counts what it would delete —
+  folders, fitted units, bytes, and the fitting time the cache records — and asks
+  you to type **Flush** before it does anything; folders opened read-only are
+  listed as skipped. Rarely needed: a stale cache normally detects itself and
+  re-runs (see below).
+
+### Choosing the solvers
+
+A run starts with a dialog listing the sixteen solvers, one checkbox each,
+grouped as the candidates are: the sightline fits (Constant Air Speed,
+Constant Altitude, Minimum Acceleration, Minimum Speed), the object models
+(Fixed-Wing Aircraft, Sky Lantern / Balloon, Quadcopter, Drone with flown
+inputs), the geometry checks (Ground Object, the stationary point), and the
+curve fits (the Kalman smoother and the five polynomial orders). The last
+choice is remembered, so the usual answer is one click.
+
+Only the ticked solvers are fitted, and only their candidates are ranked, so
+the top candidate, the verdict and every truth score are those of the
+selection. A run of one solver gives a table whose top candidate is that
+solver on every file, which is the direct way to measure one method.
+
+Some solvers need a fit that another one produces. The sightline fits and the
+fixed-wing model search inside the range bracket the constant-air-speed sweep
+resolves, so selecting any of them runs (or reads) that sweep; the balloon and
+drone-control fits start from the Kalman smoother's track, so selecting either
+runs (or reads) the smoother. Those supporting fits are made and stored, but
+their own candidates appear only when they are selected too. A run whose
+solvers need no sweep still builds a row; its report says what it cannot show.
+The **Monte Carlo sweep** and **Range bands** options stay options: the Monte
+Carlo tiles are added to whichever polynomial orders are selected, and range
+bands are traced for whichever object models are.
+
+The Kalman smoother is the same Rauch-Tung-Striebel smoother the live
+analysis offers as *Global Fit: Kalman Smoother*, seeded from the
+least-squares constant-velocity fit with a range floor. It is graded as a
+curve fit: a row it wins is marked range-blind, like a polynomial win. A
+selection made only of curve fits and geometry checks carries no generic
+reference residual, so its candidates are graded on the absolute ladder
+rather than as multiples of the scene's own reference.
+
+The selection is recorded with each row (`optSolvers` in the CSV, `solvers` in
+the JSON option set), and the summary report names it.
 - **Export JSON** — save every row's measurements and conclusions (not the
   fitted tracks) for machine consumption.
 - **Export CSV** — one row per file, for a spreadsheet. The export is built from
@@ -248,8 +296,12 @@ disappoints.
   sensor track, the truth track and the analysis's own consistent candidates,
   loaded as ordinary tracks so you can look at them in 3D. See
   [Opening a row in Sitrec](#opening-a-row-in-sitrec).
-- **Status** — progress while running, then the final state (`done`, `cached`,
-  or an error; hover for detail).
+- **Status** — progress while running, then the final state: `done` (every fit
+  made in this run), `partly cached` (some fits read from the folder cache,
+  the rest made now), `rebuilt` (every fit read from the cache and the row
+  built from them), `cached` (a remembered row shown as it is), `adopted` (a
+  remembered row from an earlier build, shown after a checked sample), or an
+  error; hover for detail.
 - **Target** — what the object **actually was and what it was doing**, read from
   the answer-key sidecar. A flag marks a scenario *declared anomalous*, where
   "unresolved" is the correct outcome and used to look identical to failure. A
@@ -437,8 +489,15 @@ internal handoff store instead, and the new window loads:
   angles and field of view once the sensor track exists, rather than by
   whichever track won the parse race.
 
-The sidecars travel as **Notes**, not as files. The conversion from the
-scenario's local frame back to latitude/longitude uses the interchange
+The sidecars travel as **Notes**, not as files. The new window therefore dates
+and places the scenario from the interchange format's defaults (epoch
+2025-02-01T20:00:00Z, the default site), whatever the sidecar declares, and the
+candidates are written on that same clock and at that same site so that they
+line up with it. When the sidecar declared something else, the notes say what
+was ignored. (Written from the sidecar's own epoch, as they once were, the
+candidates for a set generated at another date arrived outside the sitch's time
+window, so their markers sat still while the truth moved.) The conversion from
+the scenario's local frame back to latitude/longitude uses the interchange
 format's own flat-plane rule — using the general tangent-frame conversion
 instead put candidates 40 m from a truth track the analysis had scored at 2.8 m,
 which is the geoid separation plus curvature almost exactly.
@@ -447,33 +506,66 @@ which is the geoid separation plus curvature almost exactly.
 
 Choosing a folder with **Folder (Caching)** lets a run store its work in the
 folder itself: a `.botbench-cache.json` index per leaf folder, plus a
-`.botbench-cache/` folder holding one fitted battery per file. On a later run an
-unchanged file skips the optimizers — the expensive part — and everything
-downstream of the fit is **replayed** rather than restored, so a cached row is
-identical to a fresh one and Gallery, Report and Open-in-Sitrec all work.
+`.botbench-cache/` folder of fits. **What is stored is each fit, one per
+solver**, not the finished answer. The expensive part of a run is the
+battery's fits, the optimizers; everything after them, the candidate set, its
+grading, the verdict, the truth scores and the row, is cheap arithmetic that
+a later run rebuilds from the stored fits in the same worker, by the same
+code. So:
 
-A cache entry is used only when the input hashes, the analysis options **and**
-the app version all match, *and* replaying it reproduces the row it was stored
-with. A stale cache therefore normally re-runs itself; **Flush Cache** is for
-the cases where you want that forced.
+- a run that selects more solvers than the last one fits only the units it
+  lacks, and a run that selects fewer reads what it needs;
+- a change to one solver's code invalidates that unit and nothing else;
+- a new build never fits again what it can show it reproduces.
 
-Every new build of Sitrec has a new app version, so after an update no entry
-matches on version, even when the fitting code has not changed. Fitting a large
-folder again for that alone would waste most of a run. So on a run of more than
-20 files, BOTBench first fits 10 of the files with an entry from another build,
-chosen at random. If every one reproduces its cached row, it offers to reuse the
-cached fits. The comparison leaves out one field, the time the fit took, because
-no two fits take the same time; every other field must match exactly. Reused
-entries are stamped with the current build and marked as adopted, with the build
-that made the fit kept beside it, and their rows read *adopted*. If any of the 10
-differs, nothing is offered and every file is fitted again.
+The stored units are the constant-air-speed sweep, the two range profiles,
+the fixed-wing, constant-altitude and minimum-acceleration fits, the Kalman
+smoother, the balloon, quadcopter and drone-control fits, the polynomial
+sweep, and the range bands when that option is on. The Ground Object and the
+stationary point are closed-form fits made while the candidates are built and
+need nothing stored. Each unit is a blob of its own, self-describing, so an
+index line lost between the batched index writes is recovered from the blob
+on the next run.
 
-A cached file is not analysed again at all. Its stored row is shown as it is,
-together with the chart facts cached beside it: the parallax aperture and every
-candidate's error against truth. The full analysis is rebuilt only when
-**Gallery**, **Report** or the file name needs it. An entry written before those
-facts were cached is replayed once, which stores them, and is shown as it is from
-then on.
+A stored unit is used only when the input hashes, the unit's version and the
+options that shape it (the range anchor, and its own option where it has
+one) all match. Every new build of Sitrec has a new app version, and fitting
+code can change without its unit version being bumped, so on a run of more
+than 20 files whose stored units come from another build, BOTBench first
+fits 10 of those files for real and compares each unit with its stored copy.
+A unit that reproduces on every sampled file is reused everywhere; one that
+differs is fitted again for every file, and the others are still reused. The
+comparison allows floating-point noise and nothing else: a fit is
+deterministic, but the same code on another build of the JavaScript engine
+lands a few units in the last place apart, and a fit stopped at an iteration
+cap can turn that into centimetres, which no reader could see. The wall time
+is kept beside the unit rather than inside it. The dialog names the units it
+will reuse and the ones it will refit. Reused records are stamped with the current build and
+marked as adopted, with the build that made the fit kept beside them.
+
+The finished row is remembered too, under the solver selection and options
+that produced it, for the last few selections of each file. A remembered row
+is shown as it is when this build made it, or when the same sample of ten
+files showed the rebuilt rows identical; otherwise the row is rebuilt from
+the fits, which takes a fraction of a second a file. The chart facts (the
+parallax aperture, every candidate's error against truth, the sensor turn)
+are kept with the row, so the charts open on a remembered run without opening
+a blob. A change to the candidates, the ranking or the verdict cannot be seen
+by the cache; the **Rebuild rows** option rebuilds every row from the stored
+fits when such a change is known.
+
+A cache written before fits were stored per unit (one blob per file holding
+the whole battery) is still read. The first run over such a folder splits each
+old blob into the units it holds, fits the four cheap units it does not (the
+constant-altitude fit, the smoother, the drone control fit and the polynomial
+sweep, about three percent of a file's time), writes them all as units, and
+removes the old blob. Nothing that took hours is fitted again on account of
+the change of layout. A folder opened read-only is read the same way, and
+nothing is written.
+
+The row's fit time counts every stored unit's own time, from whichever run
+made it, plus this run's assembly; a unit split from an old blob carries that
+blob's whole time once.
 
 ---
 

@@ -48,12 +48,21 @@ import {botBenchConcurrency, runBotBenchQueue} from "./BotBenchWorkerPool";
 import {BotBenchAnalysisPool} from "./BotBenchAnalysisPool";
 import {packForCache, unpackFromCache, sameFittedRow} from "./BotBenchCacheCodec";
 import {
+    SOLVERS, allSolverIds, describeSolvers, isEverySolver, normalizeSolvers, planUnits, selectionKey,
+    unitVersionsFor,
+} from "./BotBenchSolvers";
+import {
+    CACHE_BLOB_DIR, CACHE_FILENAME, CACHE_SCHEMA, LEGACY_UNITS, adoptRecord, combinedHash, emptyIndex,
+    isLegacyEntry, legacyUnitsFromBattery, normalizeIndex, packUnitBlob, recordRowMemo, recordUnit,
+    rowMemoUsable, unitBlobName, unitMetaFromBlob, unitRecord, unitRecordFromMeta,
+    unitRecordUsable, unitResultAgrees, valuesAgree, elapsedFromUnits, describeDuration, formatBytes, measureCacheOnDisk, recordedFitMs,
+} from "./BotBenchCacheIndex";
+import {
     runImageCapture, captureScenarioImage, captureViewBlob, waitForSettle, clearImportedTracks,
     captureEntryImage, createCaptureQueue, captureQueueIdle, imageDirFor, imageNameFor, imageStaleness,
 } from "./BotBenchImageCapture";
-import {botENUToLLA} from "../TrackFiles/CTrackFileBOT";
 import {
-    candidateNotes, handoffCandidateCSVs, lookCameraFraming, openHandoffWindow,
+    botHandoffFrame, candidateNotes, handoffCandidateCSVs, lookCameraFraming, openHandoffWindow,
 } from "../TraverseHandoff";
 import {CNodeCustomGraphView} from "../nodes/CNodeCustomGraphView";
 import {NodeMan} from "../Globals";
@@ -69,7 +78,8 @@ const BUTTON_TOOLTIPS = {
     "Choose Files": "Pick individual files to run. Without their .scenario.json sidecars, BOT files fall back to the shipped set's default origin, with the rate read from the CSV's own Time column.",
     "Cancel Run": "Stop the run. The file currently being analysed is abandoned and marked cancelled; completed rows keep their results.",
     "Clear Results": "Remove every result from the table and start fresh.",
-    "Flush Cache": "Delete the .botbench-cache.json index and the .botbench-cache/ analyses from every folder in the current run, so the next run analyses every file from scratch. A cached result is reused only when the input hashes, the analysis options AND the app version all match, and only if replaying it still reproduces the row it was stored with — so a stale cache normally re-runs itself rather than needing this.",
+    "Flush Cache": "Delete the .botbench-cache.json index and the .botbench-cache/ fits from every folder in the current run, so the next run fits every file from scratch. Fits are stored per solver and reused only when the input hashes, the unit's version and the analysis options all match, and a new build reuses a unit only after re-fitting a sample of files reproduces it — so a stale cache normally re-runs itself rather than needing this. It first counts what it would delete and asks you to type Flush before it does.",
+    "Solvers…": "Choose which solvers the next run fits and ranks. Fits are stored per solver, so a run with more solvers than the last one fits only the missing ones.",
     "Export JSON": "Save every row's measurements and conclusions (not the fitted tracks).",
     "Export CSV": "Save one row per file for spreadsheet analysis.",
     "Summary": "Open a combined overview: what the run covered, how the source data scored, and where the analysis landed.",
@@ -377,7 +387,7 @@ export const CSV_COLUMNS = [
     "ordTopSizeOneSided",
     "ordMin", "ordMinClass", "ordMinName", "ordMinErrDeg",
     "declaredMaxRangeM", "maxRangeViolationCount", "topViolatesMaxRange",
-    "optAnchorNM", "optRangeBands", "optMcSweep",
+    "optAnchorNM", "optRangeBands", "optMcSweep", "optSolvers",
     "probeGeometryPinned", "probeSpeedOverride", "probeRangeM",
     "probeDecisiveness", "probeValleyWidthLog",
     "topKey", "topName", "topTier", "topErrDeg", "topRangeM", "topSpeedKt",
@@ -438,6 +448,9 @@ export function rowToCsvRecord(entry) {
         optAnchorNM: entry.options ? (entry.options.anchorM / METERS_PER_NM).toFixed(2) : "",
         optRangeBands: entry.options ? entry.options.solutionFamilies : "",
         optMcSweep: entry.options ? entry.options.mcOrderSweep : "",
+        // The solvers the row was built from: "all", or the ids joined with +.
+        optSolvers: entry.options ? (isEverySolver(entry.options.solvers) ? "all"
+            : normalizeSolvers(entry.options.solvers).join("+")) : "",
         declaredMaxRangeM: r?.declaredMaxRangeM,
         maxRangeViolationCount: r?.maxRangeViolations?.length ?? "",
         topViolatesMaxRange: r ? (r.maxRangeViolations ?? []).some((v) => v.key === r.top?.key
@@ -534,7 +547,8 @@ function buildSummaryReport(entries, options) {
             const o = JSON.parse(set);
             L.push(`    anchor ${(o.anchorM / METERS_PER_NM).toFixed(1)} NM, `
                 + `bands ${o.solutionFamilies ? "on" : "off"}, `
-                + `MC sweep ${o.mcOrderSweep ? "on" : "off"}`);
+                + `MC sweep ${o.mcOrderSweep ? "on" : "off"}, `
+                + describeSolvers(o.solvers));
         }
     } else {
         const o = optionSets.length ? JSON.parse(optionSets[0]) : options;
@@ -542,6 +556,8 @@ function buildSummaryReport(entries, options) {
             + `(the same for every file — see the note below)`);
         L.push(`  Range bands:             ${o.solutionFamilies ? "on" : "off"}`);
         L.push(`  Monte Carlo order sweep: ${o.mcOrderSweep ? "on" : "off"}`);
+        L.push(`  Solvers:                 ${describeSolvers(o.solvers)}`
+            + (isEverySolver(o.solvers) ? "" : ` — ${normalizeSolvers(o.solvers).join(", ")}`));
     }
     L.push("");
     L.push("  A bulk run has no loaded scene, so the following are ABSENT from every");
@@ -924,49 +940,41 @@ function isExplicitlyCollectable(name) {
 //
 // A `.botbench-cache.json` in each LEAF folder holds, per scenario filename,
 // the sha256 of every input that shaped the result (the CSV bytes, the
-// .scenario.json sidecar, the .truth.json answer key), the analysis options and
-// app version it ran under, the finished row, and a pointer to the analysis
-// itself. The hashes also ride on every row (row.fileSha256), so an Export JSON
-// records exactly which bytes produced each result.
+// .scenario.json sidecar, the .truth.json answer key), one record per FIT UNIT
+// stored for it, and the finished row of the last few solver selections. The
+// units themselves are blobs under `.botbench-cache/`, one per unit. The rules
+// — what is stored, when a stored unit or row may be used, how a schema-2 blob
+// is split into units — live in BotBenchCacheIndex.js; this file owns the folder
+// handles and the run. The hashes also ride on every row (row.fileSha256), so an
+// Export JSON records exactly which bytes produced each result.
 //
-// WHAT IS CACHED IS THE FIT, NOT THE ANSWER. The expensive part of a run is
-// runTraverseBattery — the optimizers. Everything after it (truth scoring,
-// range compliance, the report series, the manifest, the row) is cheap
-// arithmetic over the battery's output. So the cache stores the BATTERY, and a
-// cache hit re-ingests the file and replays runBotBenchAnalysis with that
-// battery handed in. Every line below the fit then runs exactly as it does on a
-// fresh analysis, which is what makes a cached row indistinguishable from a
-// fresh one — Gallery, Report and Open in Sitrec all work, because `results` is
-// built by the same code that would have built it anyway.
+// WHAT IS CACHED IS THE FIT, NOT THE ANSWER. The expensive part of a run is the
+// battery's fits — the optimizers. Everything after them (the candidate set, its
+// grading, the verdict, truth scoring, the row) is cheap arithmetic, and it is
+// rebuilt from the stored units by the same code that builds it on a fresh
+// analysis, in the same worker. So a run that selects more solvers than the last
+// one fits only the units it lacks; a change to one fitter invalidates one unit;
+// and a new build costs a rebuild of the rows, never the fits it can show it
+// reproduces.
 //
-// The alternative — serializing the finished `results` — was rejected: it
-// cannot carry buildHtml (a closure over values that never reach `results`),
-// and every field added to the analysis afterwards would have to be remembered
-// in a second place or be silently missing from cached rows.
-//
-// THREE THINGS MAKE A HIT SAFE, and all three are checked:
+// THREE THINGS MAKE A UNIT SAFE TO REUSE, and all three are checked:
 //   - the input hashes, so a changed file or sidecar misses;
-//   - the analysis options, so a run at another anchor misses;
-//   - THE APP VERSION, because a replay re-runs today's ingest and today's
-//     post-processing against yesterday's fit. When the analysis code changes
-//     those no longer belong together, and the only honest answer is to
-//     re-analyse. (This is new in schema 2; a row-only cache could tolerate a
-//     stale entry because nothing was recomputed from it.)
-// On top of that the replayed row is compared against the stored one, so even a
-// change none of the three keys noticed is caught before the row is shown.
+//   - the unit's version and the options that shape it, so a changed fitter or
+//     another anchor misses;
+//   - THE APP VERSION, because fitting code can change without its version being
+//     bumped. Before a big run under a new build a sample of files is fitted for
+//     real, and each unit is reused only where every fresh fit reproduces the
+//     stored one (the adoption section below).
+// A stored ROW is shown as it is only under the build that made it, or after the
+// same sample has shown the rebuilt rows identical; otherwise it is rebuilt from
+// the units, which takes a fraction of a second a file.
 //
-// The battery is large — every candidate track, at 8 bytes a coordinate — so it
-// lives in its own file under `.botbench-cache/`, named by content hash, rather
-// than in the index. The index is rewritten after every file, and inlining
-// megabytes into it would make a folder of N scenarios cost O(N^2) of writing.
-//
-// Writing needs a directory handle, so the cache is read/write for Choose
-// Folder (picked with readwrite permission) and inert for drag-and-drop, whose
-// FileSystemEntry API is read-only.
+// Every blob repeats its index record as `meta`, so an index line lost between
+// batched writes is recovered from the blob on disk and the fit is not made
+// twice. Writing needs a directory handle, so the cache is read/write for
+// Choose Folder (picked with readwrite permission) and inert for drag-and-drop,
+// whose FileSystemEntry API is read-only.
 // ---------------------------------------------------------------------------
-const CACHE_FILENAME = ".botbench-cache.json";
-const CACHE_BLOB_DIR = ".botbench-cache";
-const CACHE_SCHEMA = 2;
 
 async function sha256Hex(data) {
     const buf = typeof data === "string" ? new TextEncoder().encode(data) : data;
@@ -984,8 +992,6 @@ async function entryFileHashes(entry) {
     if (entry.labelsText != null) hashes.truth = await sha256Hex(entry.labelsText);
     return hashes;
 }
-
-const combinedHash = (h) => [h.csv, h.sidecar ?? "-", h.truth ?? "-"].join("|");
 
 // One memoized cache record per leaf folder for the life of the dialog.
 //
@@ -1005,11 +1011,10 @@ async function loadDirCache(state, entry) {
         writable: entry.cacheWritable !== false};
     state.dirCaches.push(rec);
     rec.loading = (async () => {
-        let data = {schema: CACHE_SCHEMA, results: {}};
+        let data = emptyIndex();
         try {
             const fh = await entry.dirHandle.getFileHandle(CACHE_FILENAME);
-            const parsed = JSON.parse(await (await fh.getFile()).text());
-            if (parsed?.schema === CACHE_SCHEMA && parsed.results) data = parsed;
+            data = normalizeIndex(JSON.parse(await (await fh.getFile()).text()));
         } catch (e) { /* absent or unreadable — start fresh */ }
         rec.data = data;
         return rec;
@@ -1022,9 +1027,9 @@ async function loadDirCache(state, entry) {
 // completion cost as much as all the earlier ones in that folder put together. A
 // folder's index is now written after CACHE_WRITE_BATCH changes or
 // CACHE_WRITE_DELAY_MS, whichever comes first, and every folder is written when the
-// run ends, cancelled or not. The fit blobs are still written per file and first, so
-// a tab lost mid-run costs at most one batch of index entries, and those files
-// simply re-fit next time.
+// run ends, cancelled or not. The unit blobs are still written per file and first, so
+// a tab lost mid-run costs at most one batch of index entries — and those are
+// recovered from the blobs' own meta on the next run.
 const CACHE_WRITE_BATCH = 25;
 const CACHE_WRITE_DELAY_MS = 3000;
 
@@ -1062,6 +1067,27 @@ async function saveDirCache(rec) {
     await writable.close();
 }
 
+async function readBlobText(rec, name) {
+    const dir = await rec.handle.getDirectoryHandle(CACHE_BLOB_DIR);
+    const fh = await dir.getFileHandle(name);
+    return (await fh.getFile()).text();
+}
+
+async function writeBlobText(rec, name, text) {
+    const dir = await rec.handle.getDirectoryHandle(CACHE_BLOB_DIR, {create: true});
+    const fh = await dir.getFileHandle(name, {create: true});
+    const writable = await fh.createWritable();
+    await writable.write(text);
+    await writable.close();
+}
+
+async function removeBlob(rec, name) {
+    try {
+        const dir = await rec.handle.getDirectoryHandle(CACHE_BLOB_DIR);
+        await dir.removeEntry(name);
+    } catch (e) { /* already gone, or a read-only grant */ }
+}
+
 // ---------------------------------------------------------------------------
 // the memory and main-thread cost of a long run
 // ---------------------------------------------------------------------------
@@ -1079,39 +1105,15 @@ async function saveDirCache(rec) {
 //
 // So a finished row keeps its row and a few small facts. The full analysis is held
 // only for the last LIVE_RESULTS rows and for rows the user opens, and is rebuilt
-// on demand otherwise: replayed from the folder cache when that holds this file's
-// fit, re-fitted in a one-off worker when it does not.
+// on demand otherwise: from the folder's stored units when it holds this file's
+// fits, re-fitted in a one-off worker where it does not.
 
-/**
- * Whether a cache index entry may stand in for a fresh fit of this file under
- * these options: the file's bytes, the build and the analysis options all match,
- * and a fit is actually stored.
- *
- * THE ONE PLACE THIS RULE LIVES. The run and the on-demand rebuild both ask it.
- * They once held separate copies, and the rebuild's copy checked only the bytes,
- * so a read-only folder's stale entry, left on disk after the run had correctly
- * re-fitted the file, could be replayed into an older row's Gallery or Report.
- *
- * This is necessary, not sufficient: a caller replaying the fit must still check
- * that the replay reproduces the row it is standing in for.
- *
- * @param allowOtherVersion accept a fit written by another build: true when the
- *        user adopted the cache, or when this very row was already built from it
- */
-function cacheHitUsable(hit, {hashes, options, allowOtherVersion = false}) {
-    return !!hit && !!hit.battery && !!hashes
-        && hit.hash === combinedHash(hashes)
-        && ((hit.appVersion ?? null) === APP_VERSION || allowOtherVersion)
-        && JSON.stringify(hit.options ?? null) === JSON.stringify(options ?? null);
-}
-
-// THE CHART FACTS, CACHED BESIDE THE ROW. The charts need three things from a file
+// THE CHART FACTS, STORED BESIDE THE ROW. The charts need three things from a file
 // that its row does not hold: the parallax aperture, every candidate's error against
 // truth, and how far the sensor turned. All come from the full analysis, which a long
-// run releases once a row is done and a cached run no longer rebuilds, so they are
-// taken while the analysis exists and stored with the cache entry. Bump the version
-// whenever what is taken changes: an entry with another version is replayed once and
-// stored again.
+// run releases once a row is done and a remembered row never rebuilds, so they are
+// taken while the analysis exists and stored with the row. Bump the version whenever
+// what is taken changes: a row stored with another version is rebuilt once.
 const CHART_DATA_VERSION = 1;
 
 /** Take the chart facts from an entry's analysis, while it still has one. */
@@ -1125,11 +1127,6 @@ function captureChartData(entry) {
 function chartDataFrom(entry) {
     return {version: CHART_DATA_VERSION, apertureDeg: entry.apertureDeg ?? null,
         candidateErrors: entry.candidateErrors ?? null, sensorTurnDeg: entry.sensorTurnDeg ?? null};
-}
-
-/** Whether a usable hit's row can be shown as it is: it carries the chart facts this build takes. */
-function storedRowUsable(hit) {
-    return !!hit?.row && hit.chartData?.version === CHART_DATA_VERSION;
 }
 
 /** Finished rows that keep their full analysis: enough that the ones just
@@ -1151,14 +1148,241 @@ function holdResults(state, entry) {
         sum + (e.results?.dataset?.n ?? 0) * (e.results?.hypotheses?.length ?? 0), 0);
 }
 
+// The build that produced a cache record. Rows are rebuilt under a new build and
+// units are re-checked under it — see the section note above.
+const APP_VERSION = process.env.BUILD_VERSION_STRING ?? "dev";
+
+/**
+ * The stored units a file's run can start from, as blob text for the fitter, and
+ * the index records they came from. A unit is taken only when BotBenchCacheIndex
+ * says it may be; a blob whose index line was lost is found by its name and its
+ * own meta is put back in the index. A schema-2 entry lends its old blob for the
+ * units it holds, which the fitter splits.
+ *
+ * @param adoptUnits  the units another build's fits may be used for, after the
+ *                    run's sample check; the legacy blob's units count individually
+ */
+async function gatherCachedUnits(dirCache, hit, {hash, plan, options, adoptUnits = new Set()}) {
+    const texts = {plan: plan.slice(), cached: {}, legacy: null, legacyUnits: [], legacyElapsedMs: null};
+    const records = {};
+    if (!dirCache || !hit || hit.hash !== hash) return {texts, records};
+    const usable = (record, unitId) => unitRecordUsable(record,
+        {unitId, options, appVersion: APP_VERSION, adoptable: adoptUnits.has(unitId)});
+    for (const unitId of plan) {
+        let record = hit.units?.[unitId] ?? null;
+        if (!record) {
+            try {
+                const text = await readBlobText(dirCache, unitBlobName(hash, unitId));
+                const recovered = unitRecordFromMeta(unitMetaFromBlob(text));
+                if (recovered && usable(recovered, unitId)) {
+                    hit.units ??= {};
+                    hit.units[unitId] = recovered;
+                    texts.cached[unitId] = {text};
+                    records[unitId] = recovered;
+                }
+            } catch (e) { /* no such blob: the unit is fitted */ }
+            continue;
+        }
+        if (!usable(record, unitId)) continue;
+        try {
+            texts.cached[unitId] = {text: await readBlobText(dirCache, record.blob)};
+            records[unitId] = record;
+        } catch (e) {
+            console.warn("BotBench: a stored fit could not be read; fitting it again", unitId, e);
+        }
+    }
+    if (isLegacyEntry(hit) && (hit.options?.anchorM ?? null) === (options.anchorM ?? null)) {
+        const sameBuild = (hit.appVersion ?? null) === APP_VERSION;
+        const allowed = LEGACY_UNITS.filter((unitId) => plan.includes(unitId) && !texts.cached[unitId]
+            && (sameBuild || adoptUnits.has(unitId)));
+        if (allowed.length) {
+            try {
+                texts.legacy = await readBlobText(dirCache, hit.battery);
+                texts.legacyUnits = allowed;
+                texts.legacyElapsedMs = hit.elapsedMs ?? null;
+            } catch (e) {
+                console.warn("BotBench: the old battery blob could not be read; fitting", e);
+            }
+        }
+    }
+    return {texts, records};
+}
+
+/**
+ * Write what a run fitted, and what it split out of a schema-2 blob, as unit blobs,
+ * and put their records in the index. A schema-2 entry whose old blob has been
+ * split completely is turned into a schema-3 entry and its old blob removed.
+ *
+ * @returns the records written, by unit id
+ */
+async function storeUnits(dirCache, entry, {hash, hashes, options, out, legacyHit = null, adoptUnits = new Set()}) {
+    const results = dirCache.data.results;
+    const written = {};
+    for (const [unitId, rec] of Object.entries(out.units ?? {})) {
+        // A fit made from a seed a full battery would not have used is this run's
+        // result, not the unit (TraverseBattery `seedComplete`).
+        if (!rec || rec.cacheable === false) continue;
+        const blob = unitBlobName(hash, unitId);
+        const record = unitRecord({unitId, blob, options, appVersion: APP_VERSION,
+            elapsedMs: rec.elapsedMs, failures: rec.failures});
+        try {
+            await writeBlobText(dirCache, blob, packUnitBlob({unitId, hash, ...record}, rec.result));
+            recordUnit(results, entry.name, {hash, hashes}, unitId, record);
+            written[unitId] = record;
+        } catch (e) {
+            // The codec refuses anything it cannot represent exactly. Skipping the
+            // cache costs a re-run next time; writing a lossy blob would cost a
+            // wrong answer.
+            console.warn("BotBench: not caching the fit for", entry.relativePath, unitId, e);
+        }
+    }
+    const migrated = Object.entries(out.migrated ?? {});
+    for (const [unitId, rec] of migrated) {
+        // A unit this run fitted afresh is this build's own; the copy split from
+        // the old blob is the one the run's check declined, and is not stored.
+        if (written[unitId]) continue;
+        const blob = unitBlobName(hash, unitId);
+        const legacyVersion = legacyHit?.appVersion ?? APP_VERSION;
+        const record = unitRecord({unitId, blob, options, appVersion: legacyVersion,
+            elapsedMs: null, failures: rec.failures, legacyBatteryMs: rec.legacyBatteryMs,
+            adopted: legacyHit?.adopted === true, adoptedFrom: legacyHit?.adoptedFrom ?? null,
+            adoptedAt: legacyHit?.adoptedAt ?? null});
+        // Stamped with this build only where the run's check allowed the unit to
+        // be used; a unit the check never saw keeps the build that fitted it.
+        if (legacyVersion !== APP_VERSION && adoptUnits.has(unitId)) adoptRecord(record, APP_VERSION);
+        try {
+            await writeBlobText(dirCache, blob, packUnitBlob({unitId, hash, ...record}, rec.result));
+            recordUnit(results, entry.name, {hash, hashes}, unitId, record);
+            written[unitId] = record;
+        } catch (e) {
+            console.warn("BotBench: could not store a unit split from the old cache", entry.relativePath, unitId, e);
+        }
+    }
+    // The old blob held these units together; once every one it held is a unit of
+    // its own (split out, or fitted afresh under this build), it has nothing left to
+    // give. The blob's name is taken before the entry's schema-2 fields go: the
+    // index entry and `legacyHit` are one object.
+    const held = out.legacyHeld ?? [];
+    if (legacyHit && held.length && held.every((unitId) => results[entry.name]?.units?.[unitId])) {
+        const legacyBlob = legacyHit.battery;
+        const hit = results[entry.name];
+        if (hit) {
+            for (const key of ["battery", "row", "options", "chartData", "elapsedMs", "appVersion",
+                "adopted", "adoptedFrom", "adoptedAt"]) delete hit[key];
+        }
+        await removeBlob(dirCache, legacyBlob);
+    }
+    return written;
+}
+
+/**
+ * The fit time a row reports: the time of every unit it was built from, from
+ * whichever run fitted it, plus this run's own assembly.
+ */
+function rowElapsedMs(records, out) {
+    const fitted = Object.values(out.units ?? {}).reduce((sum, r) => sum + (r?.elapsedMs ?? 0), 0);
+    const assembly = Math.max(0, (out.elapsedMs ?? 0) - fitted);
+    return Math.round(elapsedFromUnits({...records, ...(out.units ?? {})}) + assembly);
+}
+
+/**
+ * Analyse one entry through the cache: show its remembered row when there is
+ * one for this selection, otherwise fit what is missing, rebuild the row and
+ * store both. The one road for the run and for a row opened later.
+ *
+ * @param ctx {options, plan, key, pool, adoptUnits, adoptRows, forceRows, hashes,
+ *             dirCache, onProgress, isCancelled, yieldToDOM, needResults}
+ * @returns {Promise<{row, results, rowReused, hit}>}
+ */
+async function analyseEntryWithCache(entry, ctx) {
+    const {options, plan, key, pool, dirCache, hashes} = ctx;
+    const adoptUnits = ctx.adoptUnits ?? new Set();
+    const hash = combinedHash(hashes);
+    const hit = dirCache?.data.results[entry.name] ?? null;
+    const entryMatches = !!hit && hit.hash === hash;
+
+    // 1. The remembered row, when this selection has one under this build (or an
+    //    adopted one), unless the caller needs the full analysis or a rebuild.
+    if (entryMatches && !ctx.forceRows && !ctx.needResults) {
+        const memo = hit.rows?.[key];
+        if (rowMemoUsable(memo, {appVersion: APP_VERSION, unitVersions: unitVersionsFor(plan),
+            adoptable: ctx.adoptRows === true}) && memo.chartData?.version === CHART_DATA_VERSION) {
+            if ((memo.appVersion ?? null) !== APP_VERSION && dirCache.writable) {
+                // The row, and the units it was built from that the sample check
+                // cleared, are this build's from now on; otherwise the next run
+                // would check them all over again.
+                adoptRecord(memo, APP_VERSION);
+                for (const unitId of plan) {
+                    const record = hit.units?.[unitId];
+                    if (record && adoptUnits.has(unitId)) adoptRecord(record, APP_VERSION);
+                }
+                try { await writeDirCache(dirCache); }
+                catch (e) { console.warn("BotBench: could not re-stamp the adopted row", e); }
+            }
+            return {row: unpackFromCache(memo.row), results: null, rowReused: true, hit, memo,
+                chartData: memo.chartData, unitsUsed: Object.keys(hit.units ?? {}).length,
+                adopted: memo.adopted === true, adoptedFrom: memo.adoptedFrom ?? null};
+        }
+    }
+
+    // 2. The stored units this selection can start from.
+    const {texts, records} = entryMatches
+        ? await gatherCachedUnits(dirCache, hit, {hash, plan, options, adoptUnits})
+        : {texts: {plan: plan.slice(), cached: {}, legacy: null, legacyUnits: [], legacyElapsedMs: null}, records: {}};
+    const fromStore = Object.keys(texts.cached).length + texts.legacyUnits.length;
+    if (fromStore) ctx.onStatus?.(fromStore === plan.length ? "cached" : "partly cached",
+        `${fromStore} of ${plan.length} fit units read from ${CACHE_FILENAME}; ${plan.length - fromStore} to fit.`);
+    // A stored unit used under another build's stamp was allowed by the sample
+    // check; it is this build's from now on, so the next run does not check it again.
+    let restamped = false;
+    for (const [unitId, record] of Object.entries(records)) {
+        if ((record.appVersion ?? null) !== APP_VERSION && adoptUnits.has(unitId)) {
+            adoptRecord(record, APP_VERSION);
+            restamped = true;
+        }
+    }
+
+    // 3. Fit the rest and build the row, in the worker.
+    const record = await ingestBotBenchEntry(entry);
+    const out = await pool.run(record, {
+        ...options, units: texts,
+        onProgress: ctx.onProgress, isCancelled: ctx.isCancelled, yieldToDOM: ctx.yieldToDOM,
+    });
+    if (ctx.isCancelled?.()) throw new Error("cancelled");
+    const {results, row} = out;
+    row.fileSha256 = hashes;
+    row.elapsedMs = rowElapsedMs(records, out);
+    entry.results = results;
+    entry.apertureDeg = null; entry.candidateErrors = null; entry.sensorTurnDeg = null;
+    captureChartData(entry);
+
+    // 4. Store the fits and the row.
+    if (dirCache?.writable) {
+        try {
+            if (restamped) await writeDirCache(dirCache);
+            await storeUnits(dirCache, entry, {hash, hashes, options, out,
+                legacyHit: entryMatches && isLegacyEntry(hit) ? hit : null, adoptUnits});
+            recordRowMemo(dirCache.data.results, entry.name, {hash, hashes}, key, {
+                row: packForCache(row), chartData: chartDataFrom(entry), elapsedMs: row.elapsedMs,
+                appVersion: APP_VERSION, solvers: options.solvers ?? null, unitVersions: unitVersionsFor(plan),
+            });
+            await writeDirCache(dirCache);
+        } catch (e) {
+            console.warn("BotBench cache write failed for", entry.relativePath, e);
+        }
+    }
+    return {row, results, rowReused: false, hit, chartData: chartDataFrom(entry),
+        unitsUsed: fromStore, fitted: Object.keys(out.units ?? {}), adopted: false, adoptedFrom: null};
+}
+
 /**
  * The full analysis for a finished row, rebuilding it if it was released.
  *
  * The result must be the analysis that produced THE ROW IN THE TABLE, never merely
- * one for the same file. So a cached fit is replayed only when cacheHitUsable
- * accepts it, and then kept only if the replayed row equals the table's row;
- * anything else is discarded and the file is re-fitted in a one-off worker, which
- * keeps the page responsive. Concurrent requests share one rebuild.
+ * one for the same file. The row was built from the folder's stored units under this
+ * build, so rebuilding from them reproduces it; the rebuilt row is compared with the
+ * table's row all the same, and a mismatch is said out loud. Concurrent requests
+ * share one rebuild.
  */
 async function ensureResults(state, entry) {
     if (entry.results) {
@@ -1168,56 +1392,33 @@ async function ensureResults(state, entry) {
     if (entry.status !== "done") throw new Error("this row has no finished analysis");
     if (!entry.rebuilding) {
         entry.rebuilding = (async () => {
-            const record = await ingestBotBenchEntry(entry);
             const options = entry.options ?? runOptions(state);
-            let results = null;
-            const hashes = entry.row?.fileSha256;
+            const hashes = entry.row?.fileSha256 ?? await entryFileHashes(entry);
             // Compared through the codec, as the run's own self-check is, so NaN and
             // Infinity are seen as themselves rather than flattened to null.
             const tableRow = entry.row ? packForCache(entry.row) : null;
-            // elapsedMs is left out of the comparison: it is the wall-clock time the
-            // analysis took, so no fresh fit can ever match it. Measured on a 120 s
-            // scenario: the table row, a re-fit and a second re-fit agreed on every
-            // other field bit for bit, and differed only there (8099, 4979 and 4901 ms).
-            // sameFittedRow holds that rule for every comparison of this kind.
-            const matchesTable = (row) => {
-                if (!row || !tableRow) return false;
-                if (hashes) row.fileSha256 = hashes;
-                return sameFittedRow(row, tableRow);
-            };
-            const dirCache = entry.dirHandle && hashes ? await loadDirCache(state, entry) : null;
-            const hit = dirCache?.data?.results?.[entry.name];
-            // Another build's fit is acceptable only for a row that was itself built
-            // from this cache; the equality check below still has the last word.
-            if (cacheHitUsable(hit, {hashes, options, allowOtherVersion: entry.fromCache === true})) {
-                try {
-                    const battery = await readBatteryBlob(dirCache, hit.battery);
-                    const replay = await runBotBenchAnalysis(record,
-                        {...options, battery, elapsedMs: hit.elapsedMs ?? null});
-                    if (matchesTable(replay.row)) {
-                        results = replay.results;
-                    } else {
-                        console.warn("BotBench: the cached fit does not reproduce this row; re-fitting",
-                            entry.relativePath);
-                    }
-                } catch (e) {
-                    console.warn("BotBench: could not replay the cached fit, re-fitting", entry.relativePath, e);
-                }
-            }
-            if (!results) {
-                const pool = new BotBenchAnalysisPool(1);
-                let fitted;
-                try { fitted = await pool.run(record, options); }
-                finally { pool.dispose(); }
-                // A fresh fit of the same bytes under the same options should reproduce
-                // the row exactly. Say so loudly if it does not, rather than show a
-                // gallery that quietly disagrees with its own table row.
-                if (!matchesTable(fitted.row)) {
-                    console.warn("BotBench: re-fitting did not reproduce this row exactly; the gallery "
+            const dirCache = entry.dirHandle ? await loadDirCache(state, entry) : null;
+            const pool = new BotBenchAnalysisPool(1);
+            let results;
+            try {
+                const plan = planUnits(options.solvers, options);
+                // A row built from this cache may use any unit it holds, whatever
+                // build fitted it: that is the unit the row came from.
+                const adoptUnits = new Set(entry.fromCache ? plan : []);
+                const out = await analyseEntryWithCache(entry, {
+                    options, plan, key: selectionKey(options.solvers, options), pool, dirCache, hashes,
+                    adoptUnits, adoptRows: false, forceRows: true, needResults: true,
+                    isCancelled: () => false, yieldToDOM: async () => {},
+                });
+                results = out.results;
+                // elapsedMs is left out of the comparison: it is the wall-clock time the
+                // analysis took, so no fresh fit can ever match it. sameFittedRow holds
+                // that rule for every comparison of this kind.
+                if (tableRow && !sameFittedRow(out.row, tableRow)) {
+                    console.warn("BotBench: rebuilding this row did not reproduce it exactly; the gallery "
                         + "may differ from the table", entry.relativePath);
                 }
-                results = fitted.results;
-            }
+            } finally { pool.dispose(); }
             entry.results = results;
             holdResults(state, entry);
             return results;
@@ -1249,37 +1450,36 @@ function makeThrottle(fn, intervalMs) {
     return throttled;
 }
 
-// The build that produced a cache entry. A replay runs TODAY's ingest and
-// post-processing over a stored fit, so entries from another build are not
-// reusable — see the section note above.
-const APP_VERSION = process.env.BUILD_VERSION_STRING ?? "dev";
-
 // ---------------------------------------------------------------------------
 // adopting a cache written by an older build
 // ---------------------------------------------------------------------------
 //
-// Any new build changes APP_VERSION and so invalidates every cached fit, and a
-// large folder then re-runs every optimizer. Most builds do not touch the
-// fitting at all, so most of that work is wasted.
+// Any new build changes APP_VERSION. A stored unit fitted by another build is not
+// simply trusted: the code of one fitter may have changed without anyone bumping
+// that unit's version. Nor is it simply discarded, because most builds do not
+// touch the fitting at all, and a large folder would then re-run every optimizer
+// for nothing.
 //
-// So: before a big run whose cache is stale ONLY on the version, actually FIT a
-// random sample and check that today's code lands on the same row the stored fit
-// does. If every one matches, offer to adopt the rest.
+// So: before a big run whose stored units are stale ONLY on the build, actually FIT
+// a random sample of files and compare each unit with its stored copy. A unit that
+// reproduces on every sampled file is reused everywhere; one that differs anywhere
+// is fitted again for every file, and the others are still reused. The same sample
+// says whether the rebuilt rows equal the remembered ones, so those can be shown
+// as they are too.
 //
-// The sample has to be a real fit, not a replay. The replay's own self-check
-// (further down) asks "does the STORED fit still produce the STORED row under
-// today's post-processing" — which says nothing about whether today's FITTER
-// would find that fit. Only running the optimizers answers that, which is why
-// this is a sample and not a per-file check.
-//
-// Adopting is recorded: the entry keeps the version it was really fitted under
-// in `adoptedFrom`, and carries `adopted: true` forever after, so a cache that
-// has been carried across builds never passes itself off as a fresh one.
+// The sample has to be a real fit, not a replay: only running the optimizers says
+// whether today's fitter lands where the stored fit did. Adopting is recorded: a
+// record keeps the build that really fitted it in `adoptedFrom` and carries
+// `adopted: true` forever after, so a cache carried across builds never passes
+// itself off as a fresh one.
 const CACHE_ADOPT_MIN_FILES = 20;
 const CACHE_ADOPT_SAMPLE = 10;
 
-/** Every entry whose cache is good except that another build wrote it. */
-async function findVersionStaleEntries(state, found, options) {
+/**
+ * Every entry with a planned unit that is stored under another build (and is
+ * otherwise reusable), with the units concerned.
+ */
+async function findVersionStaleEntries(state, found, options, plan) {
     const stale = [];
     for (const source of found) {
         try {
@@ -1287,11 +1487,20 @@ async function findVersionStaleEntries(state, found, options) {
             const hashes = await entryFileHashes(probe);
             const dirCache = await loadDirCache(state, probe);
             const hit = dirCache?.data.results[probe.name];
-            if (!hit || !hit.battery) continue;
-            if (hit.hash !== combinedHash(hashes)) continue;
-            if (JSON.stringify(hit.options ?? null) !== JSON.stringify(options ?? null)) continue;
-            if ((hit.appVersion ?? null) === APP_VERSION) continue;
-            stale.push({source, hashes, dirCache, hit});
+            if (!hit || hit.hash !== combinedHash(hashes)) continue;
+            const units = [];
+            for (const unitId of plan) {
+                const record = hit.units?.[unitId];
+                if (record) {
+                    if ((record.appVersion ?? null) !== APP_VERSION && unitRecordUsable(record,
+                        {unitId, options, appVersion: APP_VERSION, adoptable: true})) units.push(unitId);
+                } else if (isLegacyEntry(hit) && LEGACY_UNITS.includes(unitId)
+                    && (hit.appVersion ?? null) !== APP_VERSION
+                    && (hit.options?.anchorM ?? null) === (options.anchorM ?? null)) {
+                    units.push(unitId);
+                }
+            }
+            if (units.length) stale.push({source, hashes, dirCache, hit, units});
         } catch (e) { /* unreadable cache: it will simply re-run */ }
     }
     return stale;
@@ -1308,24 +1517,91 @@ function sampleN(items, n) {
 }
 
 /**
- * Fit a sample for real and compare each result with its cached row.
- *
- * @returns {Promise<{checked: number, matched: number, mismatched: string[]}>}
+ * The stored copy of one unit, as blob text, for a comparison: the unit's own blob,
+ * or the same unit split out of a schema-2 blob and packed the same way. The
+ * comparison itself (unitResultAgrees) allows floating-point noise, so a fit made
+ * on another build of the JavaScript engine still counts as reproduced.
  */
-async function probeCacheAdoption(state, stale, options, pool, {onProgress = null} = {}) {
+async function storedUnitText(dirCache, hit, hash, unitId, legacySplit) {
+    const record = hit.units?.[unitId];
+    if (record?.blob) return readBlobText(dirCache, record.blob);
+    if (isLegacyEntry(hit) && LEGACY_UNITS.includes(unitId)) {
+        if (!legacySplit.units) {
+            const battery = unpackFromCache(JSON.parse(await readBlobText(dirCache, hit.battery)));
+            legacySplit.units = legacyUnitsFromBattery(battery, {elapsedMs: hit.elapsedMs ?? null});
+        }
+        const split = legacySplit.units[unitId];
+        return split ? packUnitBlob({unitId}, split.result) : null;
+    }
+    return null;
+}
+
+/**
+ * Fit a sample for real and compare each unit, and the row, with the stored copy.
+ * The fresh fits are stored: they are this build's own, and the sampled files then
+ * need no second fit in the run.
+ *
+ * @returns {Promise<{checked, units: {unitId: {checked, matched, mismatched}}, rows: {checked, matched}}>}
+ */
+async function probeCacheAdoption(state, stale, options, plan, key, pool, {onProgress = null} = {}) {
     const sample = sampleN(stale, Math.min(CACHE_ADOPT_SAMPLE, stale.length));
-    const result = {checked: 0, matched: 0, mismatched: []};
+    const result = {checked: 0, units: {}, rows: {checked: 0, matched: 0, mismatched: []}};
+    for (const unitId of plan) result.units[unitId] = {checked: 0, matched: 0, mismatched: []};
     for (const candidate of sample) {
         if (state.cancelled) break;
+        const {source, hashes, dirCache, hit} = candidate;
+        const hash = combinedHash(hashes);
         try {
-            const record = await ingestBotBenchEntry({...candidate.source});
-            const {row} = await pool.run(record, {...options, isCancelled: () => state.cancelled});
-            row.fileSha256 = candidate.hashes;
+            const entry = {...source};
+            const record = await ingestBotBenchEntry(entry);
+            // A fresh fit of every planned unit. A schema-2 blob still travels, with
+            // nothing allowed from it, so its units are split out and stored beside
+            // the fresh ones and the old blob can go.
+            let legacy = null;
+            if (isLegacyEntry(hit)) {
+                try { legacy = await readBlobText(dirCache, hit.battery); } catch (e) { legacy = null; }
+            }
+            const out = await pool.run(record, {...options,
+                units: {plan: plan.slice(), cached: {}, legacy, legacyUnits: [], legacyElapsedMs: hit.elapsedMs ?? null},
+                isCancelled: () => state.cancelled});
             result.checked++;
-            // Not a whole-row comparison: a fresh fit's elapsedMs never equals the
-            // cached one, and comparing it made this probe fail on every file.
-            if (sameFittedRow(row, candidate.hit.row)) result.matched++;
-            else result.mismatched.push(candidate.source.relativePath ?? candidate.source.name);
+            const legacySplit = {};
+            for (const unitId of plan) {
+                const fresh = out.units?.[unitId];
+                if (!fresh) continue;
+                let stored = null;
+                try { stored = await storedUnitText(dirCache, hit, hash, unitId, legacySplit); }
+                catch (e) { stored = null; }
+                if (stored === null) continue;
+                const tally = result.units[unitId];
+                tally.checked++;
+                if (unitResultAgrees(fresh.result, stored)) tally.matched++;
+                else tally.mismatched.push(source.relativePath ?? source.name);
+            }
+            // The remembered row for this selection, from whatever build made it.
+            const memo = hit.rows?.[key];
+            if (memo?.row) {
+                const row = {...out.row, fileSha256: hashes};
+                result.rows.checked++;
+                // To floating-point noise, and without the fit time, which no two
+                // runs share (see valuesAgree in BotBenchCacheIndex).
+                if (valuesAgree(row, unpackFromCache(memo.row))) result.rows.matched++;
+                else result.rows.mismatched.push(source.relativePath ?? source.name);
+            }
+            // Keep the work: this build fitted these for real.
+            if (dirCache.writable) {
+                out.row.fileSha256 = hashes;
+                out.row.elapsedMs = rowElapsedMs({}, out);
+                entry.results = out.results;
+                captureChartData(entry);
+                await storeUnits(dirCache, entry, {hash, hashes, options, out,
+                    legacyHit: isLegacyEntry(hit) ? hit : null});
+                recordRowMemo(dirCache.data.results, entry.name, {hash, hashes}, key, {
+                    row: packForCache(out.row), chartData: chartDataFrom(entry), elapsedMs: out.row.elapsedMs,
+                    appVersion: APP_VERSION, solvers: options.solvers ?? null, unitVersions: unitVersionsFor(plan),
+                });
+                await writeDirCache(dirCache);
+            }
         } catch (e) {
             // A file that will not fit today tells us nothing about the cache.
             console.warn("BotBench cache probe skipped", candidate.source.name, e);
@@ -1335,40 +1611,27 @@ async function probeCacheAdoption(state, stale, options, pool, {onProgress = nul
     return result;
 }
 
-
-// Content-addressed over ALL THREE input hashes, not just the first.
-//
-// combinedHash is "<csv>|<sidecar>|<truth>" and the csv part alone is 64 hex
-// characters, so a name taken from its first 40 fell entirely inside the csv
-// hash: two copies of one CSV with DIFFERENT sidecars — a different declared
-// MaxRange, say — produced the same blob name, and the second analysis
-// overwrote the first while both index entries still pointed at it. The index
-// keys on all three and so must the name.
-const blobName = (hash) => {
-    const [csv = "", sidecar = "-", truth = "-"] = hash.split("|");
-    return `${csv.slice(0, 32)}-${sidecar.slice(0, 12)}-${truth.slice(0, 12)}.json`;
-};
-
-async function readBatteryBlob(rec, name) {
-    const dir = await rec.handle.getDirectoryHandle(CACHE_BLOB_DIR);
-    const fh = await dir.getFileHandle(name);
-    return unpackFromCache(JSON.parse(await (await fh.getFile()).text()));
-}
-
-async function writeBatteryBlob(rec, name, battery) {
-    // Packed BEFORE the directory is touched: the codec throws on anything it
-    // cannot represent exactly, and that must abandon the write rather than
-    // leave a half-written blob the index would later point at.
-    const packed = JSON.stringify(packForCache(battery));
-    const dir = await rec.handle.getDirectoryHandle(CACHE_BLOB_DIR, {create: true});
-    const fh = await dir.getFileHandle(name, {create: true});
-    const writable = await fh.createWritable();
-    await writable.write(packed);
-    await writable.close();
+/** What the sample said, per unit, in a form a person can decide on. */
+function describeAdoptionProbe(probe, plan) {
+    const reuse = [], refit = [], unseen = [];
+    for (const unitId of plan) {
+        const t = probe.units[unitId];
+        if (!t || !t.checked) unseen.push(unitId);
+        else if (t.matched === t.checked) reuse.push(`${unitId} (${t.matched}/${t.checked})`);
+        else refit.push(`${unitId} (differs on ${t.checked - t.matched} of ${t.checked})`);
+    }
+    const rows = probe.rows.checked
+        ? (probe.rows.matched === probe.rows.checked
+            ? `Rows: all ${probe.rows.checked} remembered rows were reproduced exactly, so they are shown as they are.`
+            : `Rows: ${probe.rows.checked - probe.rows.matched} of ${probe.rows.checked} remembered rows differ, so every row is rebuilt from the fits.`)
+        : "Rows: none remembered for this selection; every row is built from the fits.";
+    return {reuse, refit, unseen, rows,
+        adoptUnits: new Set(plan.filter((u) => probe.units[u]?.checked && probe.units[u].matched === probe.units[u].checked)),
+        adoptRows: probe.rows.checked > 0 && probe.rows.matched === probe.rows.checked};
 }
 
 async function flushCaches(state) {
-    if (state.running) return;
+    if (state.running || state.flushing) return;
     // Every leaf folder this dialog has touched: entries from the current run
     // plus any cache records already loaded.
     const dirs = new Map();
@@ -1378,36 +1641,86 @@ async function flushCaches(state) {
         // one of them and silently leave the other's cache in place.
         if (e.dirHandle) dirs.set(e.dirHandle, e.dirHandle);
     }
-    for (const rec of state.dirCaches ?? []) {
-        dirs.set(rec.handle, rec.handle);
-        // Index writes are batched, so one may still be pending. Drop it: written
-        // after the delete below, it would put back the index this just removed.
-        if (rec.flushTimer) { clearTimeout(rec.flushTimer); rec.flushTimer = null; }
-        rec.pendingChanges = 0;
-    }
+    for (const rec of state.dirCaches ?? []) dirs.set(rec.handle, rec.handle);
     if (!dirs.size) {
         state.status.textContent = "No cacheable folders in this session — "
             + "caching needs Choose Folder (drag-and-drop folders are read-only).";
         return;
     }
-    let removed = 0, denied = 0;
-    for (const [, handle] of dirs) {
-        try { await handle.removeEntry(CACHE_FILENAME); removed++; }
-        catch (e) {
-            // NotFound = nothing to flush there; NotAllowed = read-only grant.
-            if (e?.name === "NotAllowedError" || e?.name === "SecurityError") denied++;
+    state.flushing = true;
+    setButtonDisabled(state.flushCacheButton, true);
+    try {
+        // COUNT IT FIRST. The question has to say what it is asking about: a cache
+        // is hours of fitting, and the button sits beside the harmless ones.
+        const totals = {indexFiles: 0, indexBytes: 0, blobs: 0, blobBytes: 0};
+        const progress = makeThrottle(() => {
+            state.status.textContent = `Measuring the cache… ${totals.blobs.toLocaleString()} fitted unit(s), `
+                + `${formatBytes(totals.blobBytes)} so far`;
+        }, 250);
+        progress();
+        for (const [, handle] of dirs) {
+            const found = await measureCacheOnDisk(handle, (bytes) => {
+                totals.blobs++;
+                totals.blobBytes += bytes;
+                progress();
+            });
+            totals.indexFiles += found.indexFiles;
+            totals.indexBytes += found.indexBytes;
         }
-        // The analyses the index pointed at. Removed even when the index was
-        // already gone, or a flushed folder would keep the bulk of its cache on
-        // disk with nothing left that could ever read it.
-        try { await handle.removeEntry(CACHE_BLOB_DIR, {recursive: true}); }
-        catch (e) { /* absent, or the same read-only grant counted above */ }
+        progress.cancel();
+        if (!totals.indexFiles && !totals.blobs) {
+            state.status.textContent = `No cache in the ${dirs.size} folder(s) of this session; nothing to flush.`;
+            return;
+        }
+        const readOnly = (state.dirCaches ?? []).filter((rec) => rec.writable === false).length;
+        const fitMs = (state.dirCaches ?? []).reduce((sum, rec) => sum + recordedFitMs(rec.data), 0);
+        const bytes = totals.blobBytes + totals.indexBytes;
+        state.status.textContent = `Cache measured: ${totals.blobs.toLocaleString()} fitted unit(s), ${formatBytes(bytes)}.`;
+        const message = `This deletes the cache from ${dirs.size} folder(s):\n\n`
+            + `    ${totals.blobs.toLocaleString()} fitted unit(s), ${formatBytes(totals.blobBytes)}\n`
+            + `    ${totals.indexFiles} index file(s) with the remembered rows, ${formatBytes(totals.indexBytes)}\n\n`
+            + (fitMs > 0 ? `The fits they hold took ${describeDuration(fitMs)} to compute. ` : "")
+            + `The next run over these folders fits every file from scratch. `
+            + `The scenario files and any screenshots are not touched.`
+            + (readOnly ? `\n\n${readOnly} folder(s) were opened read-only and will be skipped; `
+                + `reopen them with Folder (Caching) to flush them.` : "");
+        const ok = await showConfirm(message, {
+            title: "Flush the cache?", yesLabel: "Flush the cache", noLabel: "Keep the cache",
+            typeToConfirm: "Flush",
+        });
+        if (!ok) {
+            state.status.textContent = "The cache was kept.";
+            return;
+        }
+        for (const rec of state.dirCaches ?? []) {
+            // Index writes are batched, so one may still be pending. Drop it: written
+            // after the delete below, it would put back the index this just removed.
+            // Only now, once the answer is yes: a kept cache keeps its pending writes.
+            if (rec.flushTimer) { clearTimeout(rec.flushTimer); rec.flushTimer = null; }
+            rec.pendingChanges = 0;
+        }
+        let removed = 0, denied = 0;
+        for (const [, handle] of dirs) {
+            try { await handle.removeEntry(CACHE_FILENAME); removed++; }
+            catch (e) {
+                // NotFound = nothing to flush there; NotAllowed = read-only grant.
+                if (e?.name === "NotAllowedError" || e?.name === "SecurityError") denied++;
+            }
+            // The analyses the index pointed at. Removed even when the index was
+            // already gone, or a flushed folder would keep the bulk of its cache on
+            // disk with nothing left that could ever read it.
+            try { await handle.removeEntry(CACHE_BLOB_DIR, {recursive: true}); }
+            catch (e) { /* absent, or the same read-only grant counted above */ }
+        }
+        state.dirCaches = [];
+        state.status.textContent = `Flushed ${removed} cache file(s) and ${formatBytes(bytes)} from ${dirs.size} `
+            + `folder(s). The next run will analyse every file from scratch.`
+            + (denied ? ` ${denied} folder(s) were opened read-only — reopen with `
+                + `Folder (Caching) to delete their caches.` : "");
+    } finally {
+        state.flushing = false;
+        refreshControls(state);
     }
-    state.dirCaches = [];
-    state.status.textContent = `Flushed ${removed} cache file(s) from ${dirs.size} `
-        + `folder(s). The next run will analyse every file from scratch.`
-        + (denied ? ` ${denied} folder(s) were opened read-only — reopen with `
-            + `Folder (Caching) to delete their caches.` : "");
 }
 
 function fsEntryToFile(fsEntry) {
@@ -1760,6 +2073,11 @@ function createDialog() {
         + "Sitrec. An existing picture is kept unless it is older than its scenario file. Needs a "
         + "folder chosen with write access; about a second per file, on the main thread, so it "
         + "runs alongside the fits rather than instead of them.", false);
+    const rebuildRows = labelledCheckbox("Rebuild rows",
+        "Do not show a remembered row as it is: rebuild every row from the stored fits, which takes "
+        + "a fraction of a second a file. The fits themselves are still reused. Use it after a change "
+        + "to the candidates, the ranking or the verdict, which the cache cannot see.", false);
+    const solversButton = makeButton("Solvers…", "#5c6bc0");
 
     const anchorLabel = document.createElement("label");
     anchorLabel.title = "The start range the search bracket is centred on, in nautical miles — "
@@ -1792,7 +2110,8 @@ function createDialog() {
         + "pointing error, what the verdict concluded, and what ranking blind cost. Exports SVG "
         + "or a 300 dpi PNG for a paper.");
 
-    for (const el of [recursive.label, families.label, mcSweep.label, screenshots.label, anchorLabel,
+    for (const el of [recursive.label, families.label, mcSweep.label, screenshots.label, rebuildRows.label,
+        anchorLabel, solversButton,
         chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
         cancelButton, clearButton,
         flushCacheButton, exportJsonButton, exportCsvButton, summaryButton, chartsButton]) {
@@ -1932,7 +2251,11 @@ function createDialog() {
         familiesInput: families.input,
         mcSweepInput: mcSweep.input,
         screenshotsInput: screenshots.input,
+        rebuildRowsInput: rebuildRows.input,
         anchorInput,
+        // The solvers the next run uses: the last choice, remembered across sessions.
+        solvers: loadStoredSolvers(),
+        solversButton,
         chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
         cancelButton, clearButton,
         flushCacheButton,
@@ -2573,20 +2896,19 @@ function openInNewSitrec(state, entry) {
                 parse(entry.labelsText, "truth sidecar"),
                 entry.relativePath);
 
-            // botENUToLLA, the SCENARIO'S OWN conversion, and MSL rather than
-            // HAE — see the note on consistentTrackCSVs for why a general
-            // ENU->ECEF->LLA is wrong on a BOT file in two compounding ways.
             // The candidates need the full analysis. A released one is rebuilt;
             // a row that never finished opens without candidates, as before.
             let results = null;
             try { results = entry.status === "done" ? await ensureResults(state, entry) : null; }
             catch (e) { console.warn("BotBench: opening without candidates", entry.relativePath, e); }
-            const origin = results?.botOrigin;
-            const csvOpts = origin ? {
-                toLLA: (x, y, z) => botENUToLLA(x, y, z, origin),
-                altitudeIsHAE: false,
-                startMs: results.clipStartMs,
-            } : null;
+            // IN THE RECEIVER'S FRAME, NOT THE SIDECAR'S. The new window dates
+            // and places the scenario from the BOT defaults, because the sidecar
+            // does not travel as a file; the candidates must use the same clock
+            // and site or they land away from it — see botHandoffFrame, and the
+            // scenario's own MSL conversion (consistentTrackCSVs) for why a
+            // general ENU->ECEF->LLA is wrong on a BOT file.
+            const frame = botHandoffFrame(results);
+            const csvOpts = frame ? {toLLA: frame.toLLA, altitudeIsHAE: frame.altitudeIsHAE, startMs: frame.startMs} : null;
 
             // Consistent if there are any, weak in their place if there are
             // not — handoffCandidateCSVs owns that rule and the reasoning for
@@ -2634,7 +2956,7 @@ function openInNewSitrec(state, entry) {
                     // leaves each marker where the camera saw it. This is only
                     // a default — the Object menu's checkbox still decides.
                     forceAboveSurfaceAlongLOS: true,
-                    notes: `${notes}\n\n${candidateNotes(candidates)}`,
+                    notes: `${notes}\n\n${frame?.note ? `${frame.note}\n\n` : ""}${candidateNotes(candidates)}`,
                 },
             };
         },
@@ -2732,7 +3054,10 @@ function refreshControls(state) {
     state.familiesInput.disabled = running;
     state.mcSweepInput.disabled = running;
     state.screenshotsInput.disabled = running;
+    state.rebuildRowsInput.disabled = running;
     state.anchorInput.disabled = running;
+    setButtonDisabled(state.solversButton, running);
+    refreshSolversButton(state);
 }
 
 function clearResults(state) {
@@ -2773,7 +3098,130 @@ function runOptions(state) {
         anchorM: nm * METERS_PER_NM,
         solutionFamilies: state.familiesInput.checked,
         mcOrderSweep: state.mcSweepInput.checked,
+        // In candidate order, so two runs of one choice read as one option set.
+        solvers: normalizeSolvers(state.solvers),
     };
+}
+
+// ---------------------------------------------------------------------------
+// the solver choice
+// ---------------------------------------------------------------------------
+
+const SOLVERS_STORAGE_KEY = "botbench.solvers";
+
+function loadStoredSolvers() {
+    try {
+        const raw = localStorage.getItem(SOLVERS_STORAGE_KEY);
+        const ids = raw ? JSON.parse(raw) : null;
+        return Array.isArray(ids) && ids.length ? normalizeSolvers(ids) : allSolverIds();
+    } catch (e) {
+        return allSolverIds();
+    }
+}
+
+function storeSolvers(ids) {
+    try { localStorage.setItem(SOLVERS_STORAGE_KEY, JSON.stringify(ids)); } catch (e) { /* private mode */ }
+}
+
+function refreshSolversButton(state) {
+    state.solversButton.textContent = `Solvers: ${describeSolvers(state.solvers)}`;
+}
+
+/**
+ * The solver choice, as a dialog over the window: one checkbox per solver, grouped
+ * as the candidates are, with the last choice already ticked. Resolves to the
+ * chosen ids, or null when the user backs out. With `fileCount` the confirm button
+ * starts the run; without it the choice is kept for the next run.
+ */
+function chooseSolvers(state, {fileCount = 0} = {}) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement("div");
+        overlay.style.cssText = `
+            position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 10002;
+            display: flex; align-items: center; justify-content: center;
+        `;
+        const panel = document.createElement("div");
+        panel.style.cssText = `
+            background: #fff; color: #222; border-radius: 8px; padding: 16px 18px; width: min(680px, 94vw);
+            max-height: 92vh; overflow: auto; box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+            font-family: Arial, sans-serif; font-size: 13px;
+        `;
+        const title = document.createElement("h3");
+        title.textContent = fileCount ? `Solvers for this run of ${fileCount} file(s)` : "Solvers for the next run";
+        title.style.cssText = "margin: 0 0 6px; color: #1976d2; font-size: 16px;";
+        const note = document.createElement("p");
+        note.style.cssText = "margin: 0 0 10px; color: #52514e; line-height: 1.45;";
+        note.textContent = "Only the ticked solvers are fitted, and only their candidates are ranked, so the "
+            + "top candidate and the verdict are those of this selection. Fits are stored per solver in the "
+            + "folder: a later run with more solvers reuses these fits and fits only the missing ones, and a "
+            + "run with fewer reads what it needs.";
+        panel.append(title, note);
+
+        const boxes = new Map();
+        const chosen = new Set(normalizeSolvers(state.solvers));
+        const groups = [...new Set(SOLVERS.map((s) => s.group))];
+        const grid = document.createElement("div");
+        grid.style.cssText = "display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 18px;";
+        for (const group of groups) {
+            const head = document.createElement("div");
+            head.textContent = group;
+            head.style.cssText = "grid-column: 1 / -1; margin: 8px 0 2px; font-weight: 700; color: #4a5b6b; "
+                + "font-size: 11px; letter-spacing: .04em; text-transform: uppercase;";
+            grid.appendChild(head);
+            for (const solver of SOLVERS.filter((s) => s.group === group)) {
+                const label = document.createElement("label");
+                label.style.cssText = "display: flex; align-items: flex-start; gap: 6px; cursor: pointer; line-height: 1.35;";
+                if (solver.note) label.title = solver.note;
+                const box = document.createElement("input");
+                box.type = "checkbox";
+                box.checked = chosen.has(solver.id);
+                box.style.marginTop = "2px";
+                boxes.set(solver.id, box);
+                label.append(box, document.createTextNode(solver.name));
+                grid.appendChild(label);
+            }
+        }
+        panel.appendChild(grid);
+
+        const buttons = document.createElement("div");
+        buttons.style.cssText = "display: flex; gap: 8px; align-items: center; margin-top: 14px; flex-wrap: wrap;";
+        const allButton = makeButton("All", "#757575", "Tick every solver.");
+        const noneButton = makeButton("None", "#757575", "Untick every solver.");
+        const count = document.createElement("span");
+        count.style.cssText = "color: #52514e; margin-left: auto;";
+        const okButton = makeButton(fileCount ? "Run" : "Use these", "#1976d2");
+        const cancelButton = makeButton("Cancel", "#757575");
+        const refresh = () => {
+            const n = [...boxes.values()].filter((b) => b.checked).length;
+            count.textContent = `${n} of ${SOLVERS.length} selected`;
+            setButtonDisabled(okButton, n === 0);
+            okButton.textContent = fileCount ? `Run with ${n} solver(s)` : `Use ${n} solver(s)`;
+        };
+        for (const box of boxes.values()) box.addEventListener("change", refresh);
+        allButton.addEventListener("click", () => { for (const b of boxes.values()) b.checked = true; refresh(); });
+        noneButton.addEventListener("click", () => { for (const b of boxes.values()) b.checked = false; refresh(); });
+        refresh();
+        buttons.append(allButton, noneButton, count, okButton, cancelButton);
+        panel.appendChild(buttons);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+
+        const finish = (ids) => {
+            if (overlay.parentNode) document.body.removeChild(overlay);
+            if (ids) {
+                state.solvers = ids;
+                storeSolvers(ids);
+                refreshSolversButton(state);
+            }
+            resolve(ids);
+        };
+        okButton.addEventListener("click", () => {
+            const ids = normalizeSolvers([...boxes.entries()].filter(([, b]) => b.checked).map(([id]) => id));
+            finish(ids);
+        });
+        cancelButton.addEventListener("click", () => finish(null));
+        overlay.addEventListener("click", (event) => { if (event.target === overlay) finish(null); });
+    });
 }
 
 // A macrotask yield that background-tab throttling does not clamp (unlike
@@ -2791,17 +3239,32 @@ function makeYield() {
     return yieldTask;
 }
 
-async function analyzeEntries(state, found) {
+async function analyzeEntries(state, found, {askSolvers = false} = {}) {
     if (state.running) return;
     if (!found.length) {
         state.status.textContent = "No BOT interchange or FMV files found.";
         return;
+    }
+    // A run starts with the solver choice. The dialog remembers the last choice,
+    // so the usual answer is one click; a caller that already knows what it wants
+    // (the MCP API, a bulk script) skips it.
+    if (askSolvers) {
+        const chosen = await chooseSolvers(state, {fileCount: found.length});
+        if (!chosen) {
+            state.status.textContent = `Run not started. ${found.length} file(s) found.`;
+            return;
+        }
     }
     state.running = true;
     state.cancelled = false;
     refreshControls(state);
 
     const options = runOptions(state);
+    const plan = planUnits(options.solvers, options);
+    const key = selectionKey(options.solvers, options);
+    // A remembered row is shown as it is by default; this rebuilds every row from
+    // the stored fits instead, which is the cheap way to be sure of them.
+    const forceRows = state.rebuildRowsInput.checked;
     // Deliberately NOT part of runOptions: those options are hashed into the cache
     // key, and whether a picture was taken has no bearing on the numbers. A run
     // with screenshots on must still hit the cache written by a run with them off.
@@ -2852,62 +3315,73 @@ async function analyzeEntries(state, found) {
             ? `, screenshots ${shotQueue.done} of ${shotQueue.total}` : "";
         state.status.textContent = `Analysing ${completed} of ${found.length} complete`
             + (pool.workers && !pool.workers.closed ? ` (${concurrency} workers)` : "")
-            + shots + (state.memoryNote ?? "");
+            + `, ${describeSolvers(options.solvers)}` + shots + (state.memoryNote ?? "");
     }, 250);
     // The summary tiles take medians over EVERY finished row, so recomputing them
     // after each file made each file cost more than the last. Once a second is plenty,
     // and the run ends with a full recompute.
     const updateSummaryThrottled = makeThrottle(() => updateSummary(state), 1000);
-    const fitEntry = (record, onProgress) => pool.run(record, {
-        ...options, onProgress, isCancelled: () => state.cancelled, yieldToDOM,
-    });
 
-    // Before anything else: is this whole run about to re-fit a cache that is
-    // stale only because the build changed? Worth ten real fits to find out.
-    let adoptCache = false;
+    // Before anything else: is this whole run about to re-fit units that are stale
+    // only because the build changed? Worth ten real fits to find out — per unit.
+    let adoptUnits = new Set();
+    let adoptRows = false;
     let adoptNote = "";
     if (found.length > CACHE_ADOPT_MIN_FILES) {
         try {
             state.status.textContent = "Checking the cache…";
             await yieldToDOM();
-            const stale = await findVersionStaleEntries(state, found, options);
+            const stale = await findVersionStaleEntries(state, found, options, plan);
             if (stale.length >= CACHE_ADOPT_SAMPLE) {
-                const fitted = stale[0].hit.appVersion ?? "an earlier build";
-                state.status.textContent = `Cache written by ${fitted}: fitting `
-                    + `${CACHE_ADOPT_SAMPLE} of ${stale.length} files to see whether it still holds…`;
+                const first = stale[0];
+                const fitted = first.hit.units?.[first.units[0]]?.appVersion ?? first.hit.appVersion ?? "an earlier build";
+                state.status.textContent = `Fits stored by ${fitted}: fitting `
+                    + `${CACHE_ADOPT_SAMPLE} of ${stale.length} files to see which units still hold…`;
                 await yieldToDOM();
-                const probe = await probeCacheAdoption(state, stale, options, pool, {
+                const probe = await probeCacheAdoption(state, stale, options, plan, key, pool, {
                     onProgress: (r) => {
                         state.progress.value = r.checked / CACHE_ADOPT_SAMPLE;
+                        const held = plan.filter((u) => r.units[u].checked && r.units[u].matched === r.units[u].checked).length;
                         state.status.textContent = `Checking the cache: ${r.checked} of `
-                            + `${CACHE_ADOPT_SAMPLE} fitted, ${r.matched} identical…`;
+                            + `${CACHE_ADOPT_SAMPLE} fitted, ${held} of ${plan.length} units reproduced so far…`;
                     },
                 });
                 state.progress.value = 0;
-                if (!state.cancelled && probe.checked > 0 && probe.mismatched.length === 0) {
-                    adoptCache = await showConfirm(
-                        `${stale.length} of the ${found.length} files have a cached analysis that `
-                        + `this build would normally discard, because it was fitted by ${fitted} `
-                        + `and this is ${APP_VERSION}.\n\n`
-                        + `${probe.checked} of them were just re-fitted for real, and all `
-                        + `${probe.matched} produced exactly the row the cache holds. The fitting `
-                        + `has not changed.\n\n`
-                        + `Reuse those cached fits? Every statistic, verdict and display is still `
-                        + `recomputed by today's code — only the fitted solution tracks are reused. `
-                        + `The cache entries are stamped with this build and marked as adopted, so `
-                        + `they never read as a fresh run.`,
-                        {title: "Reuse the cache from an earlier build?",
-                            yesLabel: `Reuse ${stale.length} cached fits`, noLabel: "Re-fit everything"});
-                    adoptNote = adoptCache
-                        ? ` Adopted ${stale.length} cached fit(s) from ${fitted} after checking ${probe.checked}.`
-                        : "";
-                } else if (probe.mismatched.length) {
-                    console.log("BotBench: not offering cache adoption; these differ under this build:",
-                        probe.mismatched);
+                if (!state.cancelled && probe.checked > 0) {
+                    const verdict = describeAdoptionProbe(probe, plan);
+                    if (verdict.adoptUnits.size) {
+                        const ok = await showConfirm(
+                            `${stale.length} of the ${found.length} files have fits stored by ${fitted}, `
+                            + `which this build (${APP_VERSION}) would otherwise fit again.\n\n`
+                            + `${probe.checked} of them were just fitted for real and compared with the store, `
+                            + `one fit unit at a time.\n\n`
+                            + `Reproduced exactly, so reused as they are: ${verdict.reuse.join(", ")}.\n`
+                            + (verdict.refit.length
+                                ? `Differ under this build, so fitted again for every file: ${verdict.refit.join(", ")}.\n` : "")
+                            + (verdict.unseen.length
+                                ? `Not stored for the sampled files, so fitted where missing: ${verdict.unseen.join(", ")}.\n` : "")
+                            + `${verdict.rows}\n\n`
+                            + `Reuse the units that reproduced? Every candidate, verdict and row is still built `
+                            + `by today's code from them. The records are stamped with this build and marked as `
+                            + `adopted, so they never read as a fresh run.`,
+                            {title: "Reuse fits from an earlier build?",
+                                yesLabel: `Reuse ${verdict.reuse.length} unit(s)`, noLabel: "Fit everything again"});
+                        if (ok) {
+                            adoptUnits = verdict.adoptUnits;
+                            adoptRows = verdict.adoptRows;
+                            adoptNote = ` Reused ${verdict.reuse.length} of ${plan.length} fit unit(s) from ${fitted} `
+                                + `after checking ${probe.checked} file(s)`
+                                + (verdict.refit.length ? `; ${verdict.refit.length} unit(s) differed and were fitted again` : "")
+                                + ".";
+                        }
+                    } else {
+                        console.log("BotBench: not offering cache adoption; no unit reproduced on every sampled file:",
+                            probe.units);
+                    }
                 }
             }
         } catch (probeError) {
-            console.warn("BotBench cache probe failed; re-fitting normally.", probeError);
+            console.warn("BotBench cache probe failed; fitting normally.", probeError);
         }
     }
 
@@ -2919,177 +3393,61 @@ async function analyzeEntries(state, found) {
             // whatever the controls read at export time — making a deliberately
             // mixed comparison look uniform, which is the one thing it must not do.
             const entry = {...source, key: state.nextRowId++, status: "queued", row: null,
-                results: null, options: {...options}};
+                results: null, options: {...options, solvers: options.solvers.slice()}};
             addRow(state, entry);
             updateProgress();
             await yieldToDOM();
 
-            // Cache lookup, best-effort: any failure here (hashing, an unreadable
-            // cache file) falls through to a normal run rather than an error row.
-            let hashes = null, dirCache = null, cachedHit = false;
             try {
                 setRowStatus(state, entry, "hashing");
-                hashes = await entryFileHashes(entry);
-                dirCache = await loadDirCache(state, entry);
-                const hit = dirCache?.data.results[entry.name];
-                if (cacheHitUsable(hit, {hashes, options: entry.options, allowOtherVersion: adoptCache})) {
-                    let reused = false;
-                    if (storedRowUsable(hit)) {
-                        // THE STORED ROW, USED AS IT IS. A replay rebuilds the whole analysis
-                        // around the cached fit and then checks its row against this one,
-                        // and on a hit the two cannot differ. Under this build the stored
-                        // row IS what this code makes from these inputs, because the analysis
-                        // is deterministic apart from its timing. Under another build the
-                        // cache was adopted only after a random sample was re-fitted in full
-                        // and reproduced its stored rows exactly. So a replay here would only
-                        // rebuild the full analysis, and that is rebuilt on demand instead,
-                        // when Gallery, Report or Open in Sitrec needs it (ensureResults). The
-                        // chart facts the analysis would give are cached beside the row.
-                        entry.row = unpackFromCache(hit.row);
-                        entry.apertureDeg = hit.chartData.apertureDeg ?? null;
-                        entry.candidateErrors = hit.chartData.candidateErrors ?? null;
-                        entry.sensorTurnDeg = hit.chartData.sensorTurnDeg ?? null;
-                        entry.rowReused = true;
-                        reused = true;
-                    } else {
-                        setRowStatus(state, entry, "cached", "Replaying the cached analysis…");
-                        await yieldToDOM();
-                        const battery = await readBatteryBlob(dirCache, hit.battery);
-                        // The SAME ingest and the SAME runner a fresh analysis uses —
-                        // only the fit is handed in rather than computed. Nothing here
-                        // reconstructs a result; the result is built by the code that
-                        // builds every other result.
-                        const record = await ingestBotBenchEntry(entry);
-                        const {results, row} = await runBotBenchAnalysis(record, {
-                            ...options, battery, elapsedMs: hit.elapsedMs ?? null,
-                            isCancelled: () => state.cancelled,
-                        });
-                        // Before the comparison, not after: the stored row carries the
-                        // hashes too, and a row that is complete on one side of the
-                        // check and not the other fails it every single time.
-                        if (hashes) row.fileSha256 = hashes;
-                        // THE CACHE CHECKS ITSELF. The row was stored when the fit ran;
-                        // this one was just rebuilt from it. They can only differ if
-                        // something the three keys do not cover has moved underneath —
-                        // so a mismatch discards the entry and runs the file properly,
-                        // rather than showing a number no current code would produce.
-                        // Compared through the codec because a row can hold NaN and
-                        // Infinity, and plain stringify flattens both to null, which
-                        // would hide exactly the differences worth catching.
-                        if (!sameFittedRow(row, hit.row)) {
-                            console.warn("BotBench: cached analysis for", entry.relativePath,
-                                "no longer reproduces its stored row — re-analysing.");
-                            delete dirCache.data.results[entry.name];
-                        } else {
-                            entry.results = results;
-                            entry.row = row;
-                            // Stored beside the row, so the next run can use the row as it is.
-                            captureChartData(entry);
-                            if (dirCache.writable) {
-                                hit.chartData = chartDataFrom(entry);
-                                try { await writeDirCache(dirCache); }
-                                catch (e) { console.warn("BotBench: could not store the chart data", e); }
-                            }
-                            reused = true;
-                        }
-                    }
-                    if (reused) {
-                        entry.status = "done";
-                        entry.fromCache = true;
-                        cachedHit = true;
-                        // Carried across a build: keep the version that really fitted
-                        // it, stamp today's, and mark it adopted for good. An entry
-                        // adopted twice keeps the ORIGINAL adoptedFrom, because that
-                        // is the build whose optimizers produced the numbers.
-                        const wasAdopted = (hit.appVersion ?? null) !== APP_VERSION;
-                        if (wasAdopted && dirCache.writable) {
-                            hit.adoptedFrom = hit.adoptedFrom ?? hit.appVersion ?? "unknown";
-                            hit.adopted = true;
-                            hit.adoptedAt = new Date().toISOString();
-                            hit.appVersion = APP_VERSION;
-                            try { await writeDirCache(dirCache); }
-                            catch (e) { console.warn("BotBench: could not re-stamp the adopted cache", e); }
-                        }
-                        entry.cacheAdopted = hit.adopted === true;
-                        entry.cacheAdoptedFrom = hit.adoptedFrom ?? null;
-                        fillRow(state, entry);
-                        setRowStatus(state, entry, entry.cacheAdopted ? "adopted" : "cached",
-                            `Reused from ${CACHE_FILENAME} (saved ${hit.savedAt ?? "?"}).\n`
-                            + (entry.cacheAdopted
-                                ? `The FIT was made by ${hit.adoptedFrom}, not by this build. It was `
-                                  + `adopted after a random sample was re-fitted under this build and `
-                                  + `reproduced the cached rows exactly.\n`
-                                : `Input hashes, analysis options and app version all match this `
-                                  + `file's cached run.\n`)
-                            + (entry.rowReused
-                                ? `The stored row was used as it is. The full analysis is rebuilt when `
-                                  + `Gallery, Report or Open in Sitrec needs it.`
-                                : `The fit was reused and everything else recomputed, and the replayed `
-                                  + `row reproduces the stored one exactly.`));
-                    }
-                }
-            } catch (cacheError) {
-                console.warn("BotBench cache lookup failed for", entry.relativePath, cacheError);
-            }
-
-            if (!cachedHit) try {
+                const hashes = await entryFileHashes(entry);
+                // Cache lookup, best-effort: an unreadable cache file falls through to
+                // a normal run rather than an error row.
+                let dirCache = null;
+                try { dirCache = await loadDirCache(state, entry); }
+                catch (cacheError) { console.warn("BotBench cache lookup failed for", entry.relativePath, cacheError); }
                 setRowStatus(state, entry, "reading");
                 await yieldToDOM();
-                const record = await ingestBotBenchEntry(entry);
-
-                const {results, row, battery, elapsedMs} = await fitEntry(record, (frac, label) => {
-                    setRowStatus(state, entry, `${Math.round(frac * 100)}%`, label);
-                    setFraction(i, frac);
-                    updateProgress();
+                const out = await analyseEntryWithCache(entry, {
+                    options, plan, key, pool, dirCache, hashes, adoptUnits, adoptRows, forceRows,
+                    needResults: false,
+                    onStatus: (text, tooltip) => setRowStatus(state, entry, text, tooltip),
+                    onProgress: (frac, label) => {
+                        setRowStatus(state, entry, `${Math.round(frac * 100)}%`, label);
+                        setFraction(i, frac);
+                        updateProgress();
+                    },
+                    isCancelled: () => state.cancelled, yieldToDOM,
                 });
                 if (state.cancelled) throw new Error("cancelled");
-                entry.results = results;
-                entry.row = row;
-                // The hashes ride on the ROW, so Export JSON records exactly which
-                // bytes produced each result.
-                if (hashes) row.fileSha256 = hashes;
+                entry.row = out.row;
+                entry.apertureDeg = out.chartData?.apertureDeg ?? null;
+                entry.candidateErrors = out.chartData?.candidateErrors ?? null;
+                entry.sensorTurnDeg = out.chartData?.sensorTurnDeg ?? null;
+                entry.rowReused = out.rowReused;
+                entry.fromCache = out.rowReused || out.unitsUsed > 0;
+                entry.cacheAdopted = out.adopted;
+                entry.cacheAdoptedFrom = out.adoptedFrom;
                 entry.status = "done";
                 fillRow(state, entry);
-                if (dirCache?.writable && hashes) {
-                    const hash = combinedHash(hashes);
-                    const name = blobName(hash);
-                    // The fit first, the index second. A blob with no index entry is
-                    // dead weight a flush will collect; an index entry pointing at a
-                    // blob that was never written would be a hit that throws on every
-                    // future run. The row is stored EXACTLY AS BUILT, because the
-                    // replay's self-check compares against it — note that row.fileSha256
-                    // is already on it, and the replay re-applies the same hashes.
-                    let stored = false;
-                    try { await writeBatteryBlob(dirCache, name, battery); stored = true; }
-                    catch (writeError) {
-                        // The codec refuses anything it cannot represent exactly.
-                        // Skipping the cache costs a re-run next time; writing a
-                        // lossy blob would cost a wrong answer.
-                        console.warn("BotBench: not caching the analysis for",
-                            entry.relativePath, writeError);
-                    }
-                    if (stored) {
-                        // Taken now, while the analysis exists, so a later run can show
-                        // this row as it is (see CHART_DATA_VERSION).
-                        captureChartData(entry);
-                        dirCache.data.results[entry.name] = {
-                            hash, hashes,
-                            savedAt: new Date().toISOString(),
-                            appVersion: APP_VERSION,
-                            options: {...entry.options},
-                            // Stored in the codec's encoding, not raw: it exists to
-                            // be compared against a replayed row, and that
-                            // comparison has to see NaN and Infinity as themselves.
-                            row: packForCache(row),
-                            elapsedMs, battery: name,
-                            chartData: chartDataFrom(entry),
-                        };
-                        try { await writeDirCache(dirCache); }
-                        catch (writeError) {
-                            console.warn("BotBench cache write failed for",
-                                entry.relativePath, writeError);
-                        }
-                    }
+                const fittedCount = out.fitted?.length ?? 0;
+                if (out.rowReused) {
+                    setRowStatus(state, entry, out.adopted ? "adopted" : "cached",
+                        `Remembered row from ${CACHE_FILENAME} for this solver selection`
+                        + (out.adopted ? `, built by ${out.adoptedFrom} and adopted after a sample of `
+                            + `rebuilt rows reproduced it exactly.\n` : `, built by this build.\n`)
+                        + `Input hashes, analysis options and unit versions all match. The full analysis `
+                        + `is rebuilt from the stored fits when Gallery, Report or Open in Sitrec needs it.`);
+                } else if (fittedCount === 0) {
+                    setRowStatus(state, entry, "rebuilt",
+                        `Every fit unit this row needs was read from ${CACHE_FILENAME} (${out.unitsUsed} unit(s)); `
+                        + `the candidates, verdict and row were built from them by this build.`);
+                } else if (out.unitsUsed) {
+                    setRowStatus(state, entry, "partly cached",
+                        `${out.unitsUsed} fit unit(s) read from ${CACHE_FILENAME}; ${fittedCount} fitted now `
+                        + `(${out.fitted.join(", ")}). The row was built from all of them by this build.`);
+                } else {
+                    setRowStatus(state, entry, "done", `Every fit unit was fitted in this run (${out.fitted.join(", ")}).`);
                 }
             } catch (error) {
                 if (state.cancelled) {
@@ -3101,8 +3459,9 @@ async function analyzeEntries(state, found) {
                 entry.error = error?.message || String(error);
                 setRowError(state, entry, entry.error);
             }
-            // KEEP THE ROW, RELEASE THE ANALYSIS. The aperture is the one fact the charts
-            // need from the full analysis, so it is taken now, while the positions exist.
+            // KEEP THE ROW, RELEASE THE ANALYSIS. The chart facts are the only things
+            // the charts need from the full analysis, so they are taken now, while
+            // the positions exist.
             if (entry.status === "done") {
                 captureChartData(entry);
                 holdResults(state, entry);
@@ -3151,7 +3510,7 @@ async function analyzeEntries(state, found) {
         updateProgress.cancel();
         updateSummaryThrottled.cancel();
         // The cache indexes are written in batches during a run; write what is left,
-        // on a cancel too, since every file finished so far has its fit on disk.
+        // on a cancel too, since every file finished so far has its fits on disk.
         await flushAllDirCaches(state);
         pool?.dispose();
         state.workerPool = null;
@@ -3171,7 +3530,8 @@ async function analyzeEntries(state, found) {
     state.shotQueue = null;
     state.status.textContent = (state.cancelled
         ? `Cancelled. ${done} result(s) in the table.`
-        : `Done. ${done} result(s) in the table.`) + adoptNote + shotNote + (state.memoryNote ?? "");
+        : `Done. ${done} result(s) in the table, ${describeSolvers(options.solvers)}.`)
+        + adoptNote + shotNote + (state.memoryNote ?? "");
     state.running = false;
     refreshControls(state);
     updateSummary(state);
@@ -3232,7 +3592,7 @@ async function runFolderScan(state, mode) {
         state.status.textContent = error.message || String(error);
         return;
     }
-    await analyzeEntries(state, found);
+    await analyzeEntries(state, found, {askSolvers: true});
 }
 
 async function runChooseFiles(state) {
@@ -3264,7 +3624,7 @@ async function runChooseFiles(state) {
         return;
     }
     setDialogSource(state, await describeEntrySource(found));
-    await analyzeEntries(state, found);
+    await analyzeEntries(state, found, {askSolvers: true});
 }
 
 function wireDragAndDrop(state) {
@@ -3308,7 +3668,7 @@ function wireDragAndDrop(state) {
             state.status.textContent = "No BOT interchange or FMV files in the drop.";
             return;
         }
-        await analyzeEntries(state, found);
+        await analyzeEntries(state, found, {askSolvers: true});
     });
 }
 
@@ -3341,7 +3701,7 @@ export async function openBotBenchWithEntries(entries) {
             + "or a STANAG 4676 .xml).";
         return 0;
     }
-    await analyzeEntries(state, found);
+    await analyzeEntries(state, found, {askSolvers: true});
     return found.length;
 }
 
@@ -3368,6 +3728,7 @@ export function openBotBenchDialog() {
         setButtonDisabled(state.cancelButton, true);
     };
     state.clearButton.onclick = () => clearResults(state);
+    state.solversButton.onclick = () => { if (!state.running) chooseSolvers(state); };
     state.flushCacheButton.onclick = () => flushCaches(state).then(() => refreshControls(state));
     state.chooseFolderReadButton.onclick = () => runFolderScan(state, "read");
     state.chooseFolderCacheButton.onclick = () => runFolderScan(state, "readwrite");
@@ -3424,7 +3785,11 @@ export function addBotBenchMenu(fileAnalysisFolder) {
     if (isLocal && !window._botBench) {
         window._botBench = {
             open: openBotBenchDialog,
-            run: (state, entries) => analyzeEntries(state, entries),
+            run: (state, entries, opts) => analyzeEntries(state, entries, opts),
+            // The solver choice: every id, the current choice, and a setter that the
+            // next run reads (the interactive run starts with the dialog instead).
+            solverIds: allSolverIds, SOLVERS,
+            setSolvers: (state, ids) => { state.solvers = normalizeSolvers(ids); storeSolvers(state.solvers); refreshSolversButton(state); },
             pairSidecars, ingestBotBenchEntry, runBotBenchAnalysis,
             createAnalysisPool: (size) => new BotBenchAnalysisPool(size),
             // The two ingest internals worth exercising directly: a timebase

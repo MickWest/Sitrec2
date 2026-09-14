@@ -214,6 +214,15 @@ cannot determine:
   Camera Center), the gallery and verdict carry a prominent
   "Constructed LOS — validation only" banner. Fits recovering the target then
   confirm internal consistency, not an independent discovery.
+- **A ground answer must be visible**: the *Ground Object* is rejected, as the
+  *Ground Vehicle* is when its sightlines miss the ground, unless its fitted
+  surface point lies in front of the sensor and inside its horizon on at least
+  98% of frames. The fit treats each sightline as a whole line, so upward
+  sightlines can put the point behind the sensor. And when the sensor flies
+  nearly straight toward or away from the object with the sightlines within
+  about 2 degrees of horizontal, the curved-surface refinement pushes the point
+  out without limit, measured at 10^20 m and more. The horizon allows 10% for
+  atmospheric refraction.
 - **No global object winner**: every tile carries a colored **category label**
   — *Physically based* (balloon, drone, aircraft), *LOS Constrained* (constant
   air speed / altitude / minimum acceleration), *Geometric* (stationary, ground,

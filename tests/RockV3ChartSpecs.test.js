@@ -234,6 +234,32 @@ describe("whose error, and in what unit", () => {
             expect([key, plain[key] === chosen[key]]).toEqual([key, !errorKeys.includes(key)]);
         }
     });
+    test("the solver figure draws a runaway value at the ceiling, counts it, and keeps it in the label", () => {
+        // A client's Ground Object candidate reached 2.52e59 of the range, which stretched the axis to 1e59.
+        const ceiling = ERROR_METRICS.relSep.ceiling;
+        const wild = rows.map((r, i) => (i === 0 ? {...r, r_candidates: [...r.r_candidates,
+            {key: "ground", name: "Ground Object", relSep: 2.52e59, sepM: 1e63, angDeg: 1, losDeg: 0.5}]} : r));
+        const figure = figErrorBySolver(wild);
+        expect(figure.layout.yaxis.range[1]).toBeLessThanOrEqual(Math.log10(ceiling * 2.2) + 1e-9);
+        const dots = figure.data.filter((t) => t.type === "scattergl");
+        expect(Math.max(...dots.flatMap((t) => t.y))).toBe(ceiling);
+        expect(dots.flatMap((t) => t.text).some((label) => /2\.52e\+59, drawn at the ceiling/.test(label))).toBe(true);
+        const boxes = figure.data.filter((t) => t.type === "box");
+        expect(Math.max(...boxes.flatMap((t) => [...t.q3, ...t.upperfence]))).toBeLessThanOrEqual(ceiling);
+        expect(figure.layout.annotations.at(-1).text.replace(/<br>/g, " "))
+            .toContain("and 1 above a thousand times the mean true range at the ceiling");
+        // a figure with nothing past the ceiling says nothing about it
+        expect(figErrorBySolver(rows).layout.annotations.at(-1).text).not.toMatch(/ceiling/);
+    });
+    test("a dot's hover label names the file by its path under the scanned folder", () => {
+        const withPath = rows.map((r) => ({...r, path: `batch_${r.d_durationSeconds}sec/${r.d_errorDeg}deg/All/${r.base}.all.csv`}));
+        const lengthDots = figErrorByLength(withPath).data.filter((t) => t.type === "scattergl");
+        expect(lengthDots.flatMap((t) => t.text).every((label) => /^batch_\d+sec\/[\d.]+deg\/All\/.+\.all\.csv$/.test(label))).toBe(true);
+        const solverDots = figErrorBySolver(withPath).data.filter((t) => t.type === "scattergl");
+        expect(solverDots.flatMap((t) => t.text).every((label) => /\.all\.csv · /.test(label))).toBe(true);
+        // rows without a path, as from a JSONL file, keep the file name
+        expect(figErrorByLength(rows).data.find((t) => t.type === "scattergl").text[0]).toBe(rows[0].base);
+    });
 });
 
 describe("page furniture", () => {
@@ -293,5 +319,58 @@ describe("sensor-turn levels", () => {
         expect(turns.stats).toEqual(figErrorByTurn(rows).stats);
         expect(turns.title).not.toMatch(/sensor turn 20°$/);
         expect(buildAllFigures(rows).find((f) => f.key === "errorByLength").stats).toEqual(figErrorByLength(rows).stats);
+    });
+});
+
+describe("dot marks: area by clip length, straight tracks as squares", () => {
+    const {makeMarks, isStraightTrack, STRAIGHT_MARK_COLOR, figErrorByLength} = require("../src/analysis/charts/RockV3ChartSpecs");
+    const base = makeRows({rungs: [0, 0.2], durations: [20, 120, 300], perClass: 6, sidecar: true});
+    const rows = base.map((r, i) => ({...r, d_turnDeg: i % 2 === 0 ? 0 : 10}));
+    const dotsOf = (figure) => figure.data.filter((t) => t.type === "scattergl");
+
+    test("off by default: the dots are drawn exactly as before", () => {
+        expect(figErrorByLength(rows, {marks: makeMarks({}, rows)}).data).toEqual(figErrorByLength(rows).data);
+        const dot = dotsOf(figErrorByLength(rows))[0];
+        expect(dot.marker.symbol).toBeUndefined();
+        expect(typeof dot.marker.size).toBe("number");
+    });
+
+    test("straightness comes from the turn level, else from the measured sensor turn", () => {
+        expect(isStraightTrack({d_turnDeg: 0})).toBe(true);
+        expect(isStraightTrack({d_turnDeg: 5, in_sensorTurnDeg: 0})).toBe(false);
+        expect(isStraightTrack({in_sensorTurnDeg: 0.4})).toBe(true);
+        expect(isStraightTrack({in_sensorTurnDeg: 3})).toBe(false);
+        expect(isStraightTrack({})).toBeNull();
+    });
+
+    test("straight tracks are dark red squares with the area of the circle they replace", () => {
+        const marks = makeMarks({markStraight: true}, rows);
+        const straight = marks.style({d_turnDeg: 0}, 5, "#2a78d6");
+        const curved = marks.style({d_turnDeg: 10}, 5, "#2a78d6");
+        expect(straight).toMatchObject({symbol: "square", color: STRAIGHT_MARK_COLOR});
+        expect(curved).toEqual({size: 5, symbol: "circle", color: "#2a78d6"});
+        expect(straight.size ** 2).toBeCloseTo(Math.PI * (curved.size / 2) ** 2, 9);
+        const symbols = dotsOf(figErrorByLength(rows, {marks})).flatMap((t) => t.marker.symbol);
+        expect(symbols).toContain("square");
+        expect(symbols).toContain("circle");
+    });
+
+    test("area is in proportion to clip length, and the middle length keeps the figure size", () => {
+        const marks = makeMarks({sizeByLength: true}, rows);
+        const area = (seconds) => Math.PI * (marks.style({d_durationSeconds: seconds, d_turnDeg: 10}, 5, "#000").size / 2) ** 2;
+        expect(area(300) / area(20)).toBeCloseTo(15, 9);
+        expect(marks.style({d_durationSeconds: 120, d_turnDeg: 10}, 5, "#000").size).toBeCloseTo(5, 12);
+        // a straight track's square has the area of a curved track's circle at the same length
+        const both = makeMarks({sizeByLength: true, markStraight: true}, rows);
+        expect(both.style({d_durationSeconds: 300, d_turnDeg: 0}, 5, "#000").size ** 2).toBeCloseTo(area(300), 9);
+    });
+
+    test("buildAllFigures marks the dot figures on one scale and says so in their captions only", () => {
+        const figures = buildAllFigures(rows, {marks: {sizeByLength: true, markStraight: true}});
+        const byLength = figures.find((f) => f.key === "errorByLength");
+        expect(byLength.layout.annotations.at(-1).text.replace(/<br>/g, " "))
+            .toMatch(/Dark red squares .* area in proportion to its clip length, from 20 s to 300 s/);
+        const within = figures.find((f) => f.key === "withinByLength");
+        expect(within.layout.annotations.at(-1).text).not.toMatch(/Dark red squares/);
     });
 });

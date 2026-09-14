@@ -928,6 +928,10 @@ export function fitGroundVehicle(dataset, groundZ) {
  * flat pin, a systematic ~0.13 deg residual that used to demote the true
  * answer). Shared by the analysis gallery and the live "Global Fit: Ground
  * Object" method so applying the tile reproduces it exactly.
+ *
+ * Also returns visibleFraction (groundPointVisibleFraction): the share of
+ * frames from which the solved point could be seen at all. The gallery rejects
+ * the candidate when that is not essentially every frame.
  */
 export function fitGroundPoint(dataset, groundZ) {
     // fixed-point iteration: pin z to the surface height at the previous
@@ -941,7 +945,43 @@ export function fitGroundPoint(dataset, groundZ) {
         if (Math.abs(zCurved - fit.point[2]) < 0.005) break;
         fit = fitFixedPoint(dataset, {z: zCurved});
     }
-    return fit;
+    return {...fit, visibleFraction: groundPointVisibleFraction(dataset, fit.point, groundZ)};
+}
+
+// Standard atmospheric refraction carries the visible horizon about 8% further
+// than the geometric horizon, so a surface point this much past the geometric
+// horizon distance still counts as visible.
+const HORIZON_REFRACTION_ALLOWANCE = 1.1;
+
+/**
+ * The share of frames from which a point on the ground can be seen: it lies in
+ * front of the sensor along that frame's sightline, and no further away than the
+ * horizon at the sensor's height above the curved surface (groundZ is the
+ * surface's tangent-plane height, as in fitGroundPoint).
+ *
+ * fitFixedPoint fits whole sightlines, which run behind the sensor too, so it
+ * can return a point nobody could see. Upward sightlines put a pinned ground
+ * point behind the sensor. Sightlines that keep one bearing within about 2
+ * degrees of horizontal (a sensor flying straight at or away from the object)
+ * leave the point fixed only by where a near-flat line meets the ground, and the
+ * curved-surface passes then push it out without limit: 1e20 m and more,
+ * measured. A point like that scores 0 here.
+ */
+export function groundPointVisibleFraction(dataset, point, groundZ) {
+    const {n, S, D} = dataset;
+    const [px, py, pz] = point;
+    if (!n || !Number.isFinite(px) || !Number.isFinite(py) || !Number.isFinite(pz)) return 0;
+    let visible = 0;
+    for (let f = 0; f < n; f++) {
+        const sx = S[f * 3], sy = S[f * 3 + 1], sz = S[f * 3 + 2];
+        const rx = px - sx, ry = py - sy, rz = pz - sz;
+        if (!(rx * D[f * 3] + ry * D[f * 3 + 1] + rz * D[f * 3 + 2] > 0)) continue;   // behind the sensor
+        const height = sz - (groundZ - (sx * sx + sy * sy) / (2 * EARTH_RADIUS_M));
+        if (!(height > 0)) continue;
+        const horizonM = Math.sqrt(height * height + 2 * height * EARTH_RADIUS_M) * HORIZON_REFRACTION_ALLOWANCE;
+        if (Math.hypot(rx, ry, rz) <= horizonM) visible++;
+    }
+    return visible / n;
 }
 
 // 3x3 solve (row-major), returns null if singular

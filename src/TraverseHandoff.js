@@ -33,7 +33,7 @@ import {rankAllHypotheses} from "./TraverseRanking";
 import {SWEEP_VARIANTS} from "./TraverseBattery";
 import {clipFrameDate} from "./TraverseHypotheses";
 import {showError} from "./showError";
-import {botLOSToAzEl} from "./TrackFiles/CTrackFileBOT";
+import {BOT_DEFAULT_EPOCH_ISO, BOT_DEFAULT_ORIGIN, botENUToLLA, botLOSToAzEl} from "./TrackFiles/CTrackFileBOT";
 
 // The curve-fitting strategies swept over polynomial order. TraverseHypotheses
 // documents these as a METHOD DIAGNOSTIC and not a ranking — "a higher-order
@@ -257,6 +257,60 @@ export function consistentTrackCSVs(results, {
         out.push(entry);
     }
     return out;
+}
+
+/**
+ * The frame the receiving window gives a handed-off BOT scenario, for writing
+ * the candidates in.
+ *
+ * The scenario travels WITHOUT its sidecar (see openInNewSitrec in BotBenchUI:
+ * the sidecar goes as notes, because the importer would refuse it as a file),
+ * so the importer dates the scenario from BOT_DEFAULT_EPOCH_ISO and places it
+ * at BOT_DEFAULT_ORIGIN, whatever the sidecar declared. The candidates have to
+ * be written in THAT frame and not the sidecar's, or they do not land beside
+ * the scenario they explain. Measured on rock_v3, whose sidecars declare
+ * 2026-06-15 against a 2025-02-01 default: the candidates arrived 500 days
+ * after the truth, outside the sitch's time window, so every candidate marker
+ * sat at its first point while the truth moved. The interchange set declares
+ * the default epoch, which is why the same code was right there.
+ *
+ * `note` says what was ignored when the sidecar was not at the defaults, so a
+ * reader is told the scene's date and place are the importer's and not the
+ * file's. Null for a result with no BOT origin (an FMV clip carries its own
+ * absolute timestamps and gets no candidates here).
+ */
+export function botHandoffFrame(results, {defaultOrigin = BOT_DEFAULT_ORIGIN,
+    defaultEpochISO = BOT_DEFAULT_EPOCH_ISO} = {}) {
+    const declared = results?.botOrigin;
+    if (!declared) return null;
+    const origin = {
+        latDeg: defaultOrigin.latDeg, lonDeg: defaultOrigin.lonDeg,
+        groundElevationMSL: defaultOrigin.groundElevationMSL ?? 0,
+    };
+    const epochMs = Date.parse(defaultEpochISO);
+    const sameSite = Math.abs(declared.latDeg - origin.latDeg) < 1e-9
+        && Math.abs(declared.lonDeg - origin.lonDeg) < 1e-9
+        && Math.abs((declared.groundElevationMSL ?? 0) - origin.groundElevationMSL) < 1e-6;
+    const clipStartMs = results.clipStartMs;
+    const sameEpoch = !Number.isFinite(clipStartMs) || clipStartMs === epochMs;
+    const ignored = [];
+    if (!sameEpoch) {
+        ignored.push(`its epoch ${new Date(clipStartMs).toISOString()} (this scene is dated ${defaultEpochISO})`);
+    }
+    if (!sameSite) {
+        ignored.push(`its origin ${declared.latDeg}, ${declared.lonDeg}, ground ${declared.groundElevationMSL ?? 0} m `
+            + `(this scene is placed at ${origin.latDeg}, ${origin.lonDeg}, ground ${origin.groundElevationMSL} m)`);
+    }
+    return {
+        toLLA: (x, y, z) => botENUToLLA(x, y, z, origin),
+        altitudeIsHAE: false,
+        startMs: epochMs,
+        note: ignored.length
+            ? `The scenario file travels without its sidecar, so this window ignores ${ignored.join(" and ")}. `
+                + `The candidates are written on the same clock and at the same site as the scenario here, so `
+                + `they line up with it; the date and place the sidecar declares are in the notes above.`
+            : null,
+    };
 }
 
 /**

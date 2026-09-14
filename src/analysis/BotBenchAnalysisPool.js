@@ -1,6 +1,7 @@
 import {Globals} from "../Globals";
 import {runBotBenchAnalysis} from "./BotBenchRunner";
 import {BotBenchWorkerPool} from "./BotBenchWorkerPool";
+import {unitsFromTexts} from "./BotBenchUnitTexts";
 
 /** One analysis implementation, with worker fitting and main-thread reporting. */
 export class BotBenchAnalysisPool {
@@ -12,6 +13,11 @@ export class BotBenchAnalysisPool {
         this.cancelled = false;
     }
 
+    /**
+     * Fit and analyse one record. `options.units`, when given, is the stored-unit
+     * text bundle BotBenchUnitTexts describes; the result carries `units` (what was
+     * fitted) and `migrated` (what came out of a schema-2 blob) for the caller to store.
+     */
     async run(record, {onProgress, isCancelled = () => false, yieldToDOM = async () => {}, ...options} = {}) {
         const cancelled = () => this.cancelled || isCancelled();
         if (cancelled()) throw new Error("cancelled");
@@ -25,8 +31,15 @@ export class BotBenchAnalysisPool {
                     clipStartMs: record.clipStartMs, meta: {maxRangeM: record.meta?.maxRangeM}},
                 options, {equatorRadius: Globals.equatorRadius, polarRadius: Globals.polarRadius}, onProgress);
                 if (cancelled()) throw new Error("cancelled");
-                return runBotBenchAnalysis(record, {...options, battery: fitted.battery,
+                const {units: unitTexts, ...analysisOptions} = options;
+                const out = await runBotBenchAnalysis(record, {...analysisOptions, battery: fitted.battery,
                     fitElapsedMs: fitted.elapsedMs, isCancelled: cancelled});
+                if (out && typeof out === "object") {
+                    out.units = fitted.units ?? {};
+                    out.migrated = fitted.migrated ?? {};
+                    out.legacyHeld = fitted.legacyHeld ?? [];
+                }
+                return out;
             } catch (error) {
                 if (cancelled() || !this.workers.closed) throw error;
                 // A host may block workers. Recover through the same fit code,
@@ -34,13 +47,22 @@ export class BotBenchAnalysisPool {
                 console.warn("BotBench workers unavailable; continuing on the main thread", error);
             }
         }
-        const task = this.fallback.catch(() => {}).then(() => {
+        const task = this.fallback.catch(() => {}).then(async () => {
             if (cancelled()) throw new Error("cancelled");
-            return runBotBenchAnalysis(record, {...options, isCancelled: cancelled,
+            const {units: unitTexts, ...analysisOptions} = options;
+            const {cached, migrated, legacyHeld} = unitsFromTexts(unitTexts);
+            const out = await runBotBenchAnalysis(record, {...analysisOptions,
+                units: unitTexts ? {cached} : null,
+                isCancelled: cancelled,
                 onProgress: async (fraction, label) => {
                     onProgress?.(fraction, label);
                     await yieldToDOM();
                 }});
+            if (out && typeof out === "object") {
+                out.migrated = migrated;
+                out.legacyHeld = legacyHeld;
+            }
+            return out;
         });
         this.fallback = task;
         return task;

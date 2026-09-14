@@ -67,7 +67,9 @@ computed from the rows on screen rather than written in by hand.
 
 Every error/range axis is labelled in powers of ten, one label per decade.
 
-Hovering a dot that stands for one track names the track. When the run made a
+Hovering a dot that stands for one track names the track by its path under the
+folder that was scanned, so files with the same name in different folders can be
+told apart. Rows loaded from a JSONL file give the file name only. When the run made a
 scenario screenshot for it (**Scenario screenshots** in BOTBench), the screenshot
 shows beside the label. Rows loaded from a JSONL file have no screenshots.
 
@@ -94,6 +96,19 @@ sensor-turn figures always use every level, since comparing the levels is their
 purpose. A row's level comes from its answer key, so rows loaded from a JSONL file
 have none.
 
+Two check boxes mark the dots in every figure that draws one dot per track. Both
+start off, when every dot is a circle of one size in its target class color.
+
+- **Area by clip length** gives each dot an area in proportion to its clip length.
+  The scale is set once from all the rows, so a 300 s dot has 15 times the area of
+  a 20 s dot in every figure, and the middle clip length keeps the usual size.
+- **Straight as red squares** draws a track whose sensor flew straight as a dark
+  red square: its turn level is 0, or, without a level, its sensor turned less
+  than 1 degree. A square has the same area as the circle it replaces, so only
+  the shape and color change. Tracks that turned keep their circles.
+
+A caption says which marks are on.
+
 ## How to read a box
 
 The boxes are drawn from statistics computed before the chart is built, not by
@@ -117,6 +132,11 @@ hollow dot means the top candidate came from the range-blind polynomial family.
 drawn at it so the axis stays readable, and each caption says how many were
 moved. The statistics behind the box never see the floor.
 
+The solver figure also has a **drawing ceiling**: a thousand times the mean true
+range, 10,000 km in metres, or 180 degrees. A candidate past it is drawn at the
+ceiling, the caption counts it, and its hover label gives the value itself. So one
+runaway fit cannot stretch the axis to 10^59.
+
 ## Confidence intervals
 
 The within-tolerance figures use exact Clopper-Pearson intervals at 95%. They
@@ -125,6 +145,18 @@ and usually a little more. They are wider than the score intervals often used
 for the same job, which is the price of never overstating certainty on a small
 count. A track whose top candidate has no range at all counts as outside the
 tolerance rather than being dropped.
+
+## Full size
+
+**Full size** shows the figure on its own, drawn to fill the browser window.
+The panels grow with the window and the caption re-wraps to its width; the
+title, legend and caption keep their size. The toolbar keeps only the choices
+the figure reads: the candidate and the unit on the error figures, the
+candidate alone on the tolerance figures (which always use a share of range),
+the sensor-turn level on the figures that take one, and the dot marks on the
+figures whose points are tracks. The figure picker and the file loader are
+hidden until **Exit full size**. Resizing the window redraws the figure, and
+the exports are unchanged: they still render at the figure's own layout size.
 
 ## Exporting for a paper
 
@@ -153,6 +185,9 @@ npm run bot-charts -- --input <joined-results.jsonl> --out-dir <dir> --format bo
 | `--scale <n>` | PNG pixel multiplier, default 3. |
 | `--only <keys>` | Comma-separated figure keys. Defaults to all. |
 | `--index` | Also write an `index.html` showing every figure. |
+| `--turn <deg>` | Limit the figures to one sensor-turn level, as the window's Turn level does; the sensor-turn figures always use every level. |
+| `--marks area,straight` | The dot marks: area by clip length, straight tracks as red squares. |
+| `--suffix <text>` | Added to every file name, so variants of one figure can sit side by side. |
 | `--list` | Print the figure keys and exit. |
 
 This path drives a headless browser, because Plotly has no server-side

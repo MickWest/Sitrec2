@@ -41,6 +41,14 @@
  * The battery never touches Sit, NodeMan, the DOM or terrain directly. It is
  * async only so the progress hook can yield — every fit inside is a synchronous
  * number-crunch.
+ *
+ * FIT UNITS. Every expensive fit is one named UNIT (the list, in order, is
+ * BATTERY_UNITS in analysis/BotBenchSolvers.js). A caller may pass `units` to run
+ * only some of them and to hand in stored results for others — BOTBench's folder
+ * cache stores fits per unit, so a run that adds one solver fits one unit. Without
+ * `units` every unit runs, as the live analysis always has. Whatever the caller
+ * asks for, the fits themselves are the same code in the same order with the same
+ * inputs: a unit read from a store is used exactly where a fresh fit would be.
  */
 
 import {
@@ -68,6 +76,7 @@ import {QuadcopterModel} from "./QuadcopterModel";
 import {assessExecutiveVerdict, hypothesisFitKind} from "./TraverseRanking";
 import {gradeHypotheses} from "./TraversePlatformMirror";
 import {buildRangeLadder, rangeConditionedFamily} from "./TraverseFamily";
+import {UNIT_ORDER} from "./analysis/BotBenchSolvers";
 
 // Slow-object range-profile settings. Exported because the hypothesis builder
 // needs the SAME options the slow profile was computed with (it re-derives the
@@ -440,6 +449,16 @@ export async function runTraverseBattery({
     // progress-overlay helper. Null runs with no progress reporting at all.
     phase = null,
     isCancelled = () => false,
+
+    // Per-unit control, or null to run everything:
+    //   plan     the unit ids to have, in any order (default: every unit);
+    //   cached   {unitId: {result, failures}} stored results to use instead of
+    //            fitting — each is used exactly where the fresh fit would be;
+    //   onUnit   called with (unitId, record) as each unit is fitted.
+    // What was fitted comes back as `units` on the result: {unitId: {result,
+    // elapsedMs, failures, cacheable}}. A unit that is neither planned nor
+    // cached is null downstream, and the candidates that need it are absent.
+    units = null,
 }) {
     const failures = [];
     const noPhase = () => async () => {};
@@ -450,6 +469,33 @@ export async function runTraverseBattery({
     // observable event from here; re-raise the cancel so the caller unwinds.
     const rethrowIfCancelled = (e) => {
         if ((e && e.message === "cancelled") || cancelled()) throw new Error("cancelled");
+    };
+
+    // The unit plan. Without `units` every unit is wanted and none is stored, so
+    // runUnit always fits — the live analysis's path.
+    const plan = new Set(units?.plan ?? UNIT_ORDER);
+    const stored = units?.cached ?? {};
+    const fittedUnits = {};
+    const wanted = (id) => plan.has(id);
+    const clock = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+    // Run one unit: nothing when it is not planned, the stored result when there
+    // is one, a fresh fit otherwise. A fit reports its own failures on the array
+    // it is given, so they are kept with the unit and a stored unit brings them
+    // back. A cancel thrown inside a fit passes straight through.
+    const runUnit = async (id, fit) => {
+        if (!wanted(id)) return null;
+        if (Object.prototype.hasOwnProperty.call(stored, id) && stored[id]) {
+            for (const f of stored[id].failures ?? []) failures.push({...f});
+            return stored[id].result ?? null;
+        }
+        const unitFailures = [];
+        const t0 = clock();
+        const result = (await fit(unitFailures)) ?? null;
+        const record = {result, elapsedMs: clock() - t0, failures: unitFailures, cacheable: true};
+        fittedUnits[id] = record;
+        for (const f of unitFailures) failures.push(f);
+        if (units?.onUnit) units.onUnit(id, record);
+        return result;
     };
 
     // Sensor-baseline observability: with a (near-)static LOS origin no
@@ -469,17 +515,19 @@ export async function runTraverseBattery({
     // range.
     provenance.linearFitConditioning = assessLinearFitConditioning(dataset);
 
-    const sweep = await sweepConstAirSpeed(dataset, {
+    const sweep = await runUnit("constAir", () => sweepConstAirSpeed(dataset, {
         ranges,
         speedTarget,
         // Auto-expand the range bracket when the winner sits on a grid
         // edge (only when the user hasn't pinned an explicit band).
         expand: rangeIsDefault,
         progress: at(0.00, 0.18, "Sweeping constant-air-speed grid..."),
-    });
+    }));
     // Expansion is part of the search result, not a display-only detail.
     // Every downstream profile/model must inspect the same resolved bracket.
-    const resolvedRanges = sweep.ranges;
+    // Without the sweep (a plan that has no unit needing it) the bracket is the
+    // one that was asked for, and nothing below searches inside it.
+    const resolvedRanges = sweep ? sweep.ranges : ranges;
     fitRangeMin = Math.min(fitRangeMin, resolvedRanges[0]);
     fitRangeMax = Math.max(fitRangeMax, resolvedRanges[resolvedRanges.length - 1]);
     caRangeMin = Math.min(caRangeMin, resolvedRanges[0]);
@@ -487,44 +535,57 @@ export async function runTraverseBattery({
     plausRangeMin = Math.min(plausRangeMin, resolvedRanges[0]);
     plausRangeMax = Math.max(plausRangeMax, resolvedRanges[resolvedRanges.length - 1]);
 
-    const fastProfile = await rangeProfile(dataset, {
-        ranges: resolvedRanges,
-        vTarget: speedTarget,
-        vSigma: 60 * KNOTS_TO_MS,
-        progress: at(0.18, 0.12, "Range profile: fast object..."),
-    });
     const slowOpts = {...SLOW_OPTS};
-    const slowProfile = await rangeProfile(dataset, {
-        ...slowOpts,
-        ranges: resolvedRanges,
-        progress: at(0.30, 0.12, "Range profile: slow object..."),
-    });
-
-    let aircraft = null;
-    try {
-        aircraft = await fitAircraft(dataset, {
-            tasTarget: speedTarget,
-            rangeMin: fitRangeMin, rangeMax: fitRangeMax,
-            runs: 3,
-            groundPrior,
-            shouldCancel: cancelled,
-            progress: at(0.42, 0.34, "Fitting fixed-wing aircraft model..."),
+    // The two range profiles are one unit: both are cheap, both read the
+    // resolved bracket, and the report draws them together.
+    const profiles = await runUnit("profiles", async () => {
+        const fastProfile = await rangeProfile(dataset, {
+            ranges: resolvedRanges,
+            vTarget: speedTarget,
+            vSigma: 60 * KNOTS_TO_MS,
+            progress: at(0.18, 0.12, "Range profile: fast object..."),
         });
-    } catch (e) {
-        rethrowIfCancelled(e);
-        failures.push({method: "Fixed-Wing Aircraft", error: (e && e.message) || "fit failed"});
-    }
+        const slowProfile = await rangeProfile(dataset, {
+            ...slowOpts,
+            ranges: resolvedRanges,
+            progress: at(0.30, 0.12, "Range profile: slow object..."),
+        });
+        return {fastProfile, slowProfile};
+    });
+    const fastProfile = profiles?.fastProfile ?? null;
+    const slowProfile = profiles?.slowProfile ?? null;
+
+    const aircraft = await runUnit("aircraft", async (unitFailures) => {
+        try {
+            return await fitAircraft(dataset, {
+                tasTarget: speedTarget,
+                rangeMin: fitRangeMin, rangeMax: fitRangeMax,
+                runs: 3,
+                groundPrior,
+                shouldCancel: cancelled,
+                progress: at(0.42, 0.34, "Fitting fixed-wing aircraft model..."),
+            });
+        } catch (e) {
+            rethrowIfCancelled(e);
+            unitFailures.push({method: "Fixed-Wing Aircraft", error: (e && e.message) || "fit failed"});
+            return null;
+        }
+    });
 
     // --- Extra interpretation fits for the hypothesis gallery ---------
-    await at(0.76, 0.02, "Fitting constant-altitude path...")(0);
-    const ca = fitConstAltitude(dataset, {rangeMin: caRangeMin, rangeMax: caRangeMax});
+    const ca = await runUnit("constAlt", async () => {
+        await at(0.76, 0.02, "Fitting constant-altitude path...")(0);
+        return fitConstAltitude(dataset, {rangeMin: caRangeMin, rangeMax: caRangeMax});
+    });
 
-    await at(0.79, 0.02, "Fitting least-maneuvering path...")(0);
-    const plausible = fitPlausibleBestRange(dataset, {
-        vTarget: speedTarget,
-        vSigma: 60 * KNOTS_TO_MS,
-        rangeMin: plausRangeMin,
-        rangeMax: plausRangeMax,
+    const plausible = await runUnit("plausible", async () => {
+        await at(0.79, 0.02, "Fitting least-maneuvering path...")(0);
+        return fitPlausibleBestRange(dataset, {
+            vTarget: speedTarget,
+            vSigma: 60 * KNOTS_TO_MS,
+            rangeMin: plausRangeMin,
+            rangeMax: plausRangeMax,
+        });
     });
 
     // Wind input for the wind-tracer fits (Sky Lantern / Balloon and
@@ -584,32 +645,38 @@ export async function runTraverseBattery({
     // and NO object assumptions, but a local optimizer can still retain a
     // different basin from a different seed; the free quadcopter is deliberately
     // NOT seeded (the unconstrained, anomaly-reachable envelope fit).
+    // The smoother track is a unit of its own: cheap, but the seed of the
+    // balloon and drone fits below, and a candidate in its own right for a
+    // caller that asks for it (BOTBench's Kalman Smoother solver).
+    const kalman = await runUnit("kalman", () => {
+        try {
+            // The kalmanProcessNoise / kalmanMeasurementNoise GUI sliders hold
+            // log10 EXPONENTS, not variances — the live Kalman node converts them
+            // with Math.pow(10, v0) (see CNodeLOSFitKalman._doCompute), which is
+            // why the caller resolves them rather than this module reading nodes.
+            // Undefined leaves fitKalmanFilter on its own 1e-4 / 1.0 defaults.
+            return fitKalmanFilter({...physicsDS, minRange: KS_SEED_MIN_RANGE}, new Set(), {
+                processNoise: kalmanNoise ? kalmanNoise("kalmanProcessNoise") : undefined,
+                measurementNoise: kalmanNoise ? kalmanNoise("kalmanMeasurementNoise") : undefined,
+            });
+        } catch (e) {
+            // Non-fatal: a seeding failure must never abort the analysis.
+            console.warn("Kalman seed for the physics fits failed; "
+                + "falling back to the least-manoeuvring track:", e);
+            return null;
+        }
+    });
     let seedTrack = null;
     let seedSource = null;
-    try {
-        // The kalmanProcessNoise / kalmanMeasurementNoise GUI sliders hold
-        // log10 EXPONENTS, not variances — the live Kalman node converts them
-        // with Math.pow(10, v0) (see CNodeLOSFitKalman._doCompute), which is
-        // why the caller resolves them rather than this module reading nodes.
-        // Undefined leaves fitKalmanFilter on its own 1e-4 / 1.0 defaults.
-        const ks = fitKalmanFilter({...physicsDS, minRange: KS_SEED_MIN_RANGE}, new Set(), {
-            processNoise: kalmanNoise ? kalmanNoise("kalmanProcessNoise") : undefined,
-            measurementNoise: kalmanNoise ? kalmanNoise("kalmanMeasurementNoise") : undefined,
-        });
-        // Only seed from a finite smoother track. A non-finite result must
-        // fall through to the plausible track (or no seed), never poison the
-        // physical fits with NaN initial parameters.
-        if (ks && ks.positions && allFinite(ks.positions)) {
-            seedTrack = Float64Array.from(ks.positions);
-            seedSource = "kalman";
-        } else if (ks && ks.positions) {
-            console.warn("Kalman seed produced a non-finite track; "
-                + "falling back to the least-manoeuvring track.");
-        }
-    } catch (e) {
-        // Non-fatal: a seeding failure must never abort the analysis.
-        console.warn("Kalman seed for the physics fits failed; "
-            + "falling back to the least-manoeuvring track:", e);
+    // Only seed from a finite smoother track. A non-finite result must
+    // fall through to the plausible track (or no seed), never poison the
+    // physical fits with NaN initial parameters.
+    if (kalman && kalman.positions && allFinite(kalman.positions)) {
+        seedTrack = Float64Array.from(kalman.positions);
+        seedSource = "kalman";
+    } else if (kalman && kalman.positions) {
+        console.warn("Kalman seed produced a non-finite track; "
+            + "falling back to the least-manoeuvring track.");
     }
     // Fall back to the least-manoeuvring plausible track only if the smoother
     // is unavailable.
@@ -617,35 +684,45 @@ export async function runTraverseBattery({
         seedTrack = plausible.track;
         seedSource = "plausible";
     }
+    // Whether the seed is the one a full battery would use. With the smoother
+    // unusable and the least-manoeuvring fit not planned, a seeded fit made
+    // here starts from nothing, which a full run's would not — so such a fit
+    // is a result for this run and not one to store as the unit.
+    const seedComplete = seedSource === "kalman" || !!(plausible && plausible.track);
+    const seeded = (record) => { record.cacheable = seedComplete; return record; };
 
-    await at(0.82, 0.05, "Fitting balloon model (free wind)...")(0);
-    let lantern = null;
-    try {
-        // FREE reconstruction: fit wind + lift together with NO measured-wind
-        // input — "does a plausible balloon fit these sightlines?" — and yield
-        // the inferred wind + lift profile.
-        const freeModel = new SkyLanternModel();
-        // lets the model's wind vary across the clip in duration-invariant
-        // units (see SkyLanternModel._windAt)
-        freeModel.clipDuration = clipDurationSec;
-        // Seed the time-varying wind from the best geometric path so DE
-        // starts in the right basin instead of scattering in 12-D.
-        let freeOpts = physicsOpts;
-        if (seedTrack) {
-            freeModel.seedFromTrack(seedTrack, physicsDS);
-            const ov = seededOverrides(freeModel);
-            if (ov) freeOpts = {...physicsOpts, paramOverrides: ov};
+    const lantern = await runUnit("lantern", async (unitFailures) => {
+        await at(0.82, 0.05, "Fitting balloon model (free wind)...")(0);
+        let fit = null;
+        try {
+            // FREE reconstruction: fit wind + lift together with NO measured-wind
+            // input — "does a plausible balloon fit these sightlines?" — and yield
+            // the inferred wind + lift profile.
+            const freeModel = new SkyLanternModel();
+            // lets the model's wind vary across the clip in duration-invariant
+            // units (see SkyLanternModel._windAt)
+            freeModel.clipDuration = clipDurationSec;
+            // Seed the time-varying wind from the best geometric path so DE
+            // starts in the right basin instead of scattering in 12-D.
+            let freeOpts = physicsOpts;
+            if (seedTrack) {
+                freeModel.seedFromTrack(seedTrack, physicsDS);
+                const ov = seededOverrides(freeModel);
+                if (ov) freeOpts = {...physicsOpts, paramOverrides: ov};
+            }
+            fit = await fitPhysicsModel(physicsDS, new Set(), freeModel, freeOpts);
+        } catch (e) {
+            rethrowIfCancelled(e);
+            unitFailures.push({method: "Sky Lantern / Balloon (free wind)", error: (e && e.message) || "fit failed"});
+            fit = null;
         }
-        lantern = await fitPhysicsModel(physicsDS, new Set(), freeModel, freeOpts);
-    } catch (e) {
-        rethrowIfCancelled(e);
-        failures.push({method: "Sky Lantern / Balloon (free wind)", error: (e && e.message) || "fit failed"});
-        lantern = null;
-    }
-    throwIfCancelled();
-    if (!lantern && !failures.some((f) => f.method === "Sky Lantern / Balloon (free wind)")) {
-        failures.push({method: "Sky Lantern / Balloon (free wind)", error: "fit returned no solution"});
-    }
+        throwIfCancelled();
+        if (!fit && !unitFailures.some((f) => f.method === "Sky Lantern / Balloon (free wind)")) {
+            unitFailures.push({method: "Sky Lantern / Balloon (free wind)", error: "fit returned no solution"});
+        }
+        return fit;
+    });
+    if (fittedUnits.lantern) seeded(fittedUnits.lantern);
 
     // "USING EXISTING WIND" reconstruction: a second balloon fit whose drift
     // wind is softly pinned to the caller's wind (kept loose — even a real
@@ -653,8 +730,14 @@ export async function runTraverseBattery({
     // provenance so the hypothesis can say whether that wind was measured or
     // hand-set. Kept SEPARATE from the free fit so both modes coexist and the
     // inferred-vs-existing wind comparison is available.
+    //
+    // Not a unit: it exists only where a scene supplies a wind, and the note it
+    // leaves when none did belongs to the balloon interpretation, so it is made
+    // whenever that interpretation is wanted.
     let lanternMeasured = null;
-    if (windPrior) {
+    if (!wanted("lantern")) {
+        // no balloon interpretation asked for; nothing to pin and nothing to note
+    } else if (windPrior) {
         await at(0.87, 0.02,
             `Fitting balloon model (${windPrior.measured ? "measured" : "sitch"} wind)...`)(0);
         try {
@@ -702,27 +785,30 @@ export async function runTraverseBattery({
     // the generic multirotor envelope; the hypothesis classifies the solved
     // trajectory to the nearest common model. May fail / be implausible for
     // far-field scenes (its range is capped at 20 km) — degrade gracefully.
-    await at(0.89, 0.04, "Fitting quadcopter (drone) model...")(0);
-    let quad = null;
-    try {
-        // Coarsen the SEARCH integration (fitMaxDt): the quadcopter's dynamics
-        // (linearly-varying turn rate, along-track accel, constant climb, wind)
-        // are smooth, so a 0.5 s step is accurate for the plausible solutions
-        // the turning-effort prior admits, while the frame-rate 1/30 s step ran
-        // ~20k RK4 substeps per DE evaluation and made this the slowest phase of
-        // the whole analysis (TA-25). The final full-resolution trajectory still
-        // integrates at the model's own maxDt.
-        quad = await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(),
-            {...physicsOpts, fitMaxDt: 0.5});
-    } catch (e) {
-        rethrowIfCancelled(e);
-        failures.push({method: "Quadcopter", error: (e && e.message) || "fit failed"});
-        quad = null;
-    }
-    throwIfCancelled();
-    if (!quad && !failures.some((f) => f.method === "Quadcopter")) {
-        failures.push({method: "Quadcopter", error: "fit returned no solution"});
-    }
+    const quad = await runUnit("quadcopter", async (unitFailures) => {
+        await at(0.89, 0.04, "Fitting quadcopter (drone) model...")(0);
+        let fit = null;
+        try {
+            // Coarsen the SEARCH integration (fitMaxDt): the quadcopter's dynamics
+            // (linearly-varying turn rate, along-track accel, constant climb, wind)
+            // are smooth, so a 0.5 s step is accurate for the plausible solutions
+            // the turning-effort prior admits, while the frame-rate 1/30 s step ran
+            // ~20k RK4 substeps per DE evaluation and made this the slowest phase of
+            // the whole analysis (TA-25). The final full-resolution trajectory still
+            // integrates at the model's own maxDt.
+            fit = await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(),
+                {...physicsOpts, fitMaxDt: 0.5});
+        } catch (e) {
+            rethrowIfCancelled(e);
+            unitFailures.push({method: "Quadcopter", error: (e && e.message) || "fit failed"});
+            fit = null;
+        }
+        throwIfCancelled();
+        if (!fit && !unitFailures.some((f) => f.method === "Quadcopter")) {
+            unitFailures.push({method: "Quadcopter", error: "fit returned no solution"});
+        }
+        return fit;
+    });
 
     // Drone as CONTROL INPUTS — the plausible-flight counterpart to the
     // free quadcopter above. Seeded from the best geometric path (Kalman
@@ -741,16 +827,17 @@ export async function runTraverseBattery({
     // the two residuals is the informative quantity (an ordinary flight
     // explaining the rays as well as a contorted one, versus not), and
     // keeping the free fit means nothing is foreclosed.
-    let droneCtl = null;
-    if (seedTrack) {
+    const droneCtl = await runUnit("droneControl", async (unitFailures) => {
+        if (!seedTrack) return null;
         await at(0.93, 0.01, "Fitting drone control inputs...")(0);
+        let fit = null;
         try {
             const m = new DroneControlModel(knotsForDuration(clipDurationSec));
             m.seedFromTrack(seedTrack, physicsDS);
-            const seeded = m.seedParams();
+            const seedVector = m.seedParams();
             const defs = m.getParameterDefs();
             const paramOverrides = {};
-            defs.forEach((d, i) => { paramOverrides[d.name] = seeded[i]; });
+            defs.forEach((d, i) => { paramOverrides[d.name] = seedVector[i]; });
             // This is the highest-dimensional fit in the analysis (1 + 3K
             // params, K up to 12 => 37), and the seed already sits on the
             // smoother path — so it is a LOCAL-REFINEMENT problem, not a
@@ -771,60 +858,80 @@ export async function runTraverseBattery({
             // deciding factor anyway (see balloonConsistency ranking). Safe:
             // NM is monotonic from the seed, so it can never return worse than
             // the seed — a corkscrew (huge residual) can't appear.
-            droneCtl = await fitPhysicsModel(physicsDS, new Set(), m,
+            fit = await fitPhysicsModel(physicsDS, new Set(), m,
                 {...physicsOpts, paramOverrides, optimizer: "nm",
                     sampleStride: 20, fitMaxDt: 1.0, maxIter: 400});
-            if (droneCtl) {
-                droneCtl.model = m;
-                droneCtl.solvedVector = defs.map((d) => droneCtl.params.solved[d.name]);
+            if (fit) {
+                // What the hypothesis builder reads off the model, taken now:
+                // the model is a class instance, so a stored unit cannot carry
+                // it, and these four values are all the builder ever asked it.
+                const solvedVector = defs.map((d) => fit.params.solved[d.name]);
+                fit.solvedVector = solvedVector;
+                fit.knots = m.K;
+                fit.description = m.describe(solvedVector);
+                fit.headingTravelDeg = m.headingTravelDeg(solvedVector);
+                fit.seedClamping = m.seedClamping();
             }
         } catch (e) {
             rethrowIfCancelled(e);
-            failures.push({method: "Drone (control inputs)", error: (e && e.message) || "fit failed"});
-            droneCtl = null;
+            unitFailures.push({method: "Drone (control inputs)", error: (e && e.message) || "fit failed"});
+            fit = null;
         }
         throwIfCancelled();
         // A null return means the fit produced no finite solution (fail-closed
         // in fitPhysicsModel); record it as a typed failure rather than
         // silently omitting the candidate.
-        if (!droneCtl && !failures.some((f) => f.method === "Drone (control inputs)")) {
-            failures.push({method: "Drone (control inputs)", error: "fit returned no finite solution"});
+        if (!fit && !unitFailures.some((f) => f.method === "Drone (control inputs)")) {
+            unitFailures.push({method: "Drone (control inputs)", error: "fit returned no finite solution"});
         }
-    }
+        return fit;
+    });
+    if (fittedUnits.droneControl) seeded(fittedUnits.droneControl);
 
     // Range BANDS for the physically-based interpretations: refit each model
     // at a ladder of held ranges and keep the ranges it still admits. Gated
     // off by default — it is several extra fits per model — but when on it
     // is the difference between "the balloon is at 3.1 NM" and "any range
     // from 2.1 to 7.4 NM fits a balloon equally well".
-    let families = null;
-    if (solutionFamilies) {
+    const families = !solutionFamilies ? null : await runUnit("families", async (unitFailures) => {
+        let out = null;
         try {
-            families = await buildSolutionFamilies({
+            out = await buildSolutionFamilies({
                 dataset, physicsDS, physicsOpts, clipDurationSec, seedTrack,
                 lantern, quad, aircraft, resolvedRanges, speedTarget, groundPrior,
-                screen: familyScreen, failures,
+                screen: familyScreen, failures: unitFailures,
                 shouldCancel: cancelled,
                 progress: (frac, label) =>
                     at(0.92, 0.03, `Tracing range band: ${label}...`)(frac),
             });
         } catch (e) {
             rethrowIfCancelled(e);
-            failures.push({method: "Solution families", error: (e && e.message) || "failed"});
+            unitFailures.push({method: "Solution families", error: (e && e.message) || "failed"});
         }
         throwIfCancelled();
-    }
+        return out;
+    });
+    if (fittedUnits.families) seeded(fittedUnits.families);
 
     // Polynomial-order sweep across the three curve-fitting strategies. This
     // is the longest single block in the analysis (Monte Carlo 2 is ~5 s per
     // order on a 20,000-frame clip), so it gets a real slice of the progress
     // bar and reports which fit is running — the progress callback awaits a
     // DOM yield, which is what keeps the bar moving and Cancel responsive.
-    const mcSweep = await sweepPolynomialOrders(dataset, async (done, total, label) => {
-        await at(0.93, 0.05,
-            `Sweeping curve fits (${done + 1}/${total}): ${label}...`)(done / total);
-    }, {mcOrderSweep, sweepOverrides});
+    //
+    // Stored without its strategy objects, which carry the fit functions; the
+    // key is enough to find the strategy again.
+    const polySweep = await runUnit("polySweep", async () => {
+        const swept = await sweepPolynomialOrders(dataset, async (done, total, label) => {
+            await at(0.93, 0.05,
+                `Sweeping curve fits (${done + 1}/${total}): ${label}...`)(done / total);
+        }, {mcOrderSweep, sweepOverrides});
+        return {...swept, results: swept.results.map(({variant, order, result}) =>
+            ({variantKey: variant.key, order, result}))};
+    });
     throwIfCancelled();
+    const mcSweep = polySweep ? {...polySweep, results: polySweep.results.map(({variantKey, order, result}) =>
+        ({variant: SWEEP_VARIANTS.find((v) => v.key === variantKey), order, result}))} : null;
 
     // Satellite (LEO pass) — the caller owns it: it loads the historical
     // catalogue for the sitch's date through the server (network, slow first
@@ -847,7 +954,7 @@ export async function runTraverseBattery({
         dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
         slowProfile, slowOpts,
         originLat, originLon,
-        provenance, failures, windPrior, mcSweep, droneCtl,
+        provenance, failures, windPrior, mcSweep, droneCtl, kalman,
     });
 
     // Attach the range bands AFTER the hypothesis set is built, keyed by the
@@ -895,8 +1002,8 @@ export async function runTraverseBattery({
     return {
         sweep, resolvedRanges, fastProfile, slowProfile, slowOpts,
         aircraft, ca, plausible, seedTrack, seedSource,
-        lantern, lanternMeasured, quad, droneCtl,
-        families, mcSweep, satellite,
+        lantern, lanternMeasured, quad, droneCtl, kalman,
+        families, mcSweep, polySweep, satellite,
         hypotheses, executiveAssessment,
         failures, windPrior, groundPrior,
         physicsDS, clipDurationSec,
@@ -904,5 +1011,8 @@ export async function runTraverseBattery({
         // searchBounds must quote what was actually searched.
         fitRangeMin, fitRangeMax, caRangeMin, caRangeMax, plausRangeMin, plausRangeMax,
         provenance,
+        // What this call fitted, per unit, for a caller that stores fits.
+        units: fittedUnits,
+        seedComplete,
     };
 }

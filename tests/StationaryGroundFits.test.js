@@ -196,5 +196,42 @@ describe("fitGroundPoint (stationary light on the curved surface)", () => {
         // the flat z-pin would sit ~17.6 m off the surface and miss by far more
         const flat = fitFixedPoint(ds, {z: gz});
         expect(Math.abs(flat.point[2] - P[2])).toBeGreaterThan(10);
+        // and the solved point is in front of the sensor, inside its horizon, on every frame
+        expect(fit.visibleFraction).toBe(1);
+    });
+
+    // A level sensor 5 km up, flying straight on a compass heading, with exact
+    // sightlines to a point 30 km north at a chosen elevation angle.
+    function straightFlightRays({headingDeg, elevationDeg, seconds = 20}) {
+        const fps = 10, n = seconds * fps + 1, speed = 110, sensorZ = 5000;
+        const tz = sensorZ + 30000 * Math.tan(elevationDeg * Math.PI / 180);
+        const east = Math.sin(headingDeg * Math.PI / 180), north = Math.cos(headingDeg * Math.PI / 180);
+        const S = new Float64Array(n * 3), D = new Float64Array(n * 3);
+        for (let f = 0; f < n; f++) {
+            const sx = speed * (f / fps) * east, sy = speed * (f / fps) * north;
+            S[f * 3] = sx; S[f * 3 + 1] = sy; S[f * 3 + 2] = sensorZ;
+            const dx = -sx, dy = 30000 - sy, dz = tz - sensorZ;
+            const l = Math.hypot(dx, dy, dz);
+            D[f * 3] = dx / l; D[f * 3 + 1] = dy / l; D[f * 3 + 2] = dz / l;
+        }
+        return {n, fps, S, D, W: new Float64Array(n * 3)};
+    }
+
+    test("downward sightlines crossing the flight path give a point that can be seen", () => {
+        const fit = fitGroundPoint(straightFlightRays({headingDeg: 90, elevationDeg: -5}), 0);
+        expect(fit.visibleFraction).toBe(1);
+    });
+
+    test("near-horizontal sightlines that keep one bearing run the point past the horizon", () => {
+        // Flying straight at the object, 0.3 degrees below horizontal: the curved-surface
+        // passes carry the point from about 9e5 m to about 5e77 m. Nobody could see it.
+        const fit = fitGroundPoint(straightFlightRays({headingDeg: 0, elevationDeg: -0.3}), 0);
+        expect(Math.hypot(fit.point[0], fit.point[1])).toBeGreaterThan(1e12);
+        expect(fit.visibleFraction).toBe(0);
+    });
+
+    test("upward sightlines put the pinned point behind the sensor", () => {
+        const fit = fitGroundPoint(straightFlightRays({headingDeg: 90, elevationDeg: 10}), 0);
+        expect(fit.visibleFraction).toBe(0);
     });
 });

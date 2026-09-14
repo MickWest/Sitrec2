@@ -65,6 +65,7 @@ describe("where the length and rung come from when they are available", () => {
         expect(r.d_durationSeconds).toBe(120);
         expect(r.d_errorDeg).toBe(0.2);
         expect(r.set).toBe("batch_120sec");
+        expect(r.path).toBe("batch_120sec/0.2deg/All/drone_001.all.csv");
     });
     test("a declared sigma of exactly zero is the clean rung, not a missing one", () => {
         const [r] = rowsFromBotBenchEntries([entry({

@@ -21,6 +21,10 @@
 //   --format <fmt>     svg (default), png, or both
 //   --scale <n>        PNG pixel multiplier (default 3, so ~4500px wide)
 //   --only <keys>      comma-separated figure keys; default all
+//   --turn <deg>       limit the figures to one sensor-turn level (the sensor-turn
+//                      figures always use every level), as the window's Turn level does
+//   --marks <list>     dot marks, comma-separated: area (by clip length), straight (as red squares)
+//   --suffix <text>    added to every file name, so variants of one figure can sit side by side
 //   --index            also write an index.html that shows them all
 //   --list             print the figure keys and exit
 import fs from "fs";
@@ -63,7 +67,11 @@ if (!fs.existsSync(inputPath)) { console.error(`no such file: ${inputPath}`); pr
 
 const rows = fs.readFileSync(inputPath, "utf8").split("\n").filter(Boolean)
     .map((line) => JSON.parse(line)).filter((r) => !r.header);
-const figures = specs.buildAllFigures(rows, {only}).filter((f) => !f.error);
+const turnDeg = flag("turn") !== null ? Number(flag("turn")) : null;
+const markList = (flag("marks") ?? "").split(",").map((s) => s.trim());
+const marks = {sizeByLength: markList.includes("area"), markStraight: markList.includes("straight")};
+const suffix = flag("suffix", "");
+const figures = specs.buildAllFigures(rows, {only, turnDeg, marks}).filter((f) => !f.error);
 if (!figures.length) { console.error("no figure could be built from those rows"); process.exit(1); }
 console.log(`${rows.length} rows -> ${figures.length} figure(s): ${figures.map((f) => f.key).join(", ")}`);
 
@@ -94,7 +102,7 @@ for (const figure of figures) {
             return url;
         }, {data: figure.data, layout: figure.layout, config: figure.config, fmt, scale});
 
-        const file = path.join(outDir, `${figure.key}.${fmt}`);
+        const file = path.join(outDir, `${figure.key}${suffix}.${fmt}`);
         if (fmt === "svg") {
             // Plotly hands SVG back as a percent-encoded data URL, not base64.
             fs.writeFileSync(file, decodeURIComponent(dataUrl.replace(/^data:image\/svg\+xml,/, "")));
@@ -110,8 +118,8 @@ await browser.close();
 if (has("index")) {
     const ext = formats.includes("svg") ? "svg" : formats[0];
     const items = figures.map((f) =>
-        `<figure><figcaption><b>${f.key}</b> — ${f.title}</figcaption>`
-        + `<img src="${f.key}.${ext}" alt="${f.key}"></figure>`).join("\n");
+        `<figure><figcaption><b>${f.key}${suffix}</b> — ${f.title}</figcaption>`
+        + `<img src="${f.key}${suffix}.${ext}" alt="${f.key}${suffix}"></figure>`).join("\n");
     fs.writeFileSync(path.join(outDir, "index.html"),
         `<meta charset="utf-8"><title>BOT Bench result charts</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;margin:24px;max-width:1560px}

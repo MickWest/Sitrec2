@@ -247,9 +247,11 @@ function buildModalShell(title, message) {
  * @param {string} [opts.title="Choose"]
  * @param {Array<{label:string, value:*, description?:string, color?:string, primary?:boolean, cancel?:boolean}>} opts.options
  * @param {*} [opts.cancelValue=null] - Value resolved on dismissal when no option is flagged cancel
+ * @param {string|null} [opts.typeToConfirm=null] - A word the user must type, exactly, before any
+ *        option except the cancel one can be chosen (Enter included)
  * @returns {Promise<*>}
  */
-export function showChoice(message, {title = "Choose", options = [], cancelValue = null} = {}) {
+export function showChoice(message, {title = "Choose", options = [], cancelValue = null, typeToConfirm = null} = {}) {
     return new Promise((resolve) => {
         const cancelOption = options.find(o => o.cancel);
         const dismissValue = cancelOption ? cancelOption.value : cancelValue;
@@ -264,6 +266,36 @@ export function showChoice(message, {title = "Choose", options = [], cancelValue
 
         const {overlay, modal} = buildModalShell(title, message);
 
+        // A word the user has to type before anything but the cancel option can be
+        // chosen. For an action that cannot be undone and sits one click from the
+        // harmless buttons (Flush Cache deletes hours of fitting), a second button
+        // is not a check; typing the word is. Exact, including case.
+        const gated = [];
+        let armed = !typeToConfirm;
+        const setArmed = (on) => {
+            armed = on;
+            for (const b of gated) {
+                b.disabled = !on;
+                b.style.opacity = on ? '1' : '0.45';
+                b.style.cursor = on ? 'pointer' : 'not-allowed';
+            }
+        };
+        let input = null;
+        if (typeToConfirm) {
+            input = document.createElement('input');
+            input.type = 'text';
+            input.autocomplete = 'off';
+            input.spellcheck = false;
+            input.placeholder = `Type ${typeToConfirm} to continue`;
+            input.setAttribute('aria-label', input.placeholder);
+            input.style.cssText = `
+                width: 100%; box-sizing: border-box; padding: 8px 10px; margin: 4px 0 12px;
+                font-family: inherit; font-size: 14px; border: 1px solid #ccc; border-radius: 4px;
+            `;
+            input.addEventListener('input', () => setArmed(input.value.trim() === typeToConfirm));
+            modal.appendChild(input);
+        }
+
         const cleanup = (result) => {
             document.removeEventListener('keydown', onKey);
             if (overlay.parentNode) document.body.removeChild(overlay);
@@ -273,7 +305,10 @@ export function showChoice(message, {title = "Choose", options = [], cancelValue
         const primaryOption = options.find(o => o.primary) || options[0];
         const onKey = (e) => {
             if (e.key === 'Escape') { e.preventDefault(); cleanup(dismissValue); }
-            else if (e.key === 'Enter' && primaryOption) { e.preventDefault(); cleanup(primaryOption.value); }
+            else if (e.key === 'Enter' && primaryOption) {
+                e.preventDefault();
+                if (armed || primaryOption.cancel) cleanup(primaryOption.value);
+            }
         };
         // Backdrop (outside the modal) click dismisses.
         overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) cleanup(dismissValue); });
@@ -297,14 +332,17 @@ export function showChoice(message, {title = "Choose", options = [], cancelValue
                 desc.style.cssText = `font-size: 12px; opacity: 0.85; margin-top: 3px; font-weight: normal;`;
                 btn.appendChild(desc);
             }
-            btn.onclick = () => cleanup(opt.value);
+            btn.onclick = () => { if (armed || opt.cancel) cleanup(opt.value); };
+            if (typeToConfirm && !opt.cancel) gated.push(btn);
             modal.appendChild(btn);
             if (!firstButton) firstButton = btn;
         }
+        if (typeToConfirm) setArmed(false);
 
         document.addEventListener('keydown', onKey);
         document.body.appendChild(overlay);
-        if (firstButton) firstButton.focus();
+        if (input) input.focus();
+        else if (firstButton) firstButton.focus();
     });
 }
 
@@ -317,12 +355,14 @@ export function showChoice(message, {title = "Choose", options = [], cancelValue
  * @param {string} [opts.title="Confirm"]
  * @param {string} [opts.yesLabel="Yes"]
  * @param {string} [opts.noLabel="No"]
+ * @param {string|null} [opts.typeToConfirm=null] - A word to type before Yes can be chosen (see showChoice)
  * @returns {Promise<boolean>}
  */
-export function showConfirm(message, {title = "Confirm", yesLabel = "Yes", noLabel = "No"} = {}) {
+export function showConfirm(message, {title = "Confirm", yesLabel = "Yes", noLabel = "No", typeToConfirm = null} = {}) {
     return showChoice(message, {
         title,
         cancelValue: false,
+        typeToConfirm,
         options: [
             {label: yesLabel, value: true, primary: true, color: "#1976d2"},
             {label: noLabel, value: false, cancel: true, color: "#757575"},

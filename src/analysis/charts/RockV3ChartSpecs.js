@@ -50,6 +50,81 @@ const HALO = "rgba(255,255,255,0.82)";
 const fin = (v) => typeof v === "number" && Number.isFinite(v);
 const same = (a, b) => fin(a) && fin(b) && Math.abs(a - b) < 1e-9;
 const atLeast = (v, floor) => Math.max(v, floor);
+// A track in a hover label: its path under the scanned folder when the row came from a
+// BOTBench run, so files of the same name in different folders can be told apart.
+const trackLabel = (r) => r.path ?? r.base ?? "";
+
+// ---------------------------------------------------------------------------
+// how the dots are marked
+// ---------------------------------------------------------------------------
+
+export const STRAIGHT_MARK_COLOR = "#8b1a1a";
+// Without a turn level, a track counts as straight when its sensor turned less than this, degrees.
+export const STRAIGHT_TURN_DEG = 1;
+// A square of side d * sqrt(pi) / 2 has the area of a circle of diameter d.
+const SQUARE_SIDE_PER_DIAMETER = Math.sqrt(Math.PI) / 2;
+
+/**
+ * Whether the sensor flew straight for a track: its turn level is 0, or, where the answer
+ * key gives no level, it turned less than STRAIGHT_TURN_DEG. Null when neither is known.
+ */
+export function isStraightTrack(r) {
+    if (fin(r?.d_turnDeg)) return r.d_turnDeg === 0;
+    if (fin(r?.in_sensorTurnDeg)) return r.in_sensorTurnDeg < STRAIGHT_TURN_DEG;
+    return null;
+}
+
+/**
+ * HOW THE DOTS ARE MARKED, the same in every figure that draws one dot per track.
+ *
+ * Off by default: every dot is a circle of the figure size, in its class color.
+ * sizeByLength gives each dot an area in proportion to its clip length, on one scale for
+ * all the rows, with the middle clip length at the figure size. markStraight draws a track
+ * whose sensor flew straight as a dark red square with the area a circle would have, so
+ * the shape and color change and the area does not.
+ */
+export function makeMarks({sizeByLength = false, markStraight = false} = {}, rows = []) {
+    const lengths = durationsOf(rows);
+    const reference = sizeByLength && lengths.length ? lengths[Math.floor((lengths.length - 1) / 2)] : null;
+    const byLength = reference !== null;
+    const active = byLength || markStraight;
+    const notes = [];
+    if (markStraight) {
+        notes.push(`Dark red squares are tracks whose sensor flew straight (turn level 0, or a turn under `
+            + `${STRAIGHT_TURN_DEG}°); circles turned.`);
+    }
+    if (byLength) {
+        notes.push(`Each dot has an area in proportion to its clip length, from ${lengths[0]} s to `
+            + `${lengths[lengths.length - 1]} s.`);
+    }
+    return {
+        sizeByLength: byLength, markStraight, active, note: notes.join(" "),
+        /** The marker fields for one track: none when no marks are on. */
+        style(r, size, color) {
+            if (!active) return {};
+            const diameter = byLength && fin(r.d_durationSeconds) && r.d_durationSeconds > 0
+                ? size * Math.sqrt(r.d_durationSeconds / reference) : size;
+            return markStraight && isStraightTrack(r) === true
+                ? {size: diameter * SQUARE_SIDE_PER_DIAMETER, symbol: "square", color: STRAIGHT_MARK_COLOR}
+                : {size: diameter, symbol: "circle", color};
+        },
+    };
+}
+
+/** A trace marker size, color and symbol for its tracks: arrays when marks are on, one value each when not. */
+function markerFor(tracks, size, color, marks) {
+    if (!marks?.active) return {size, color};
+    const styles = tracks.map((r) => marks.style(r, size, color));
+    return {size: styles.map((m) => m.size), color: styles.map((m) => m.color), symbol: styles.map((m) => m.symbol)};
+}
+
+/** Add a sentence to the end of a figure caption, wrapped again as a whole. */
+function appendCaption(figure, sentence) {
+    const annotations = figure.layout?.annotations;
+    const caption = annotations?.[annotations.length - 1];
+    if (!caption || !sentence) return;
+    caption.text = wrapText(`${String(caption.text).replace(/<br>/g, " ")} ${sentence}`);
+}
 
 export function formatPercent(v) {
     if (!fin(v)) return "-";
@@ -116,22 +191,24 @@ export function formatDegrees(v) {
  * The units an error can be plotted in. Each names the row fields holding it for the
  * blind top candidate and for the best candidate, and the field holding it in a row's
  * candidate list. A null row field means the value is found in the candidate list, by
- * the name of the top or best candidate.
+ * the name of the top or best candidate. The floor and the ceiling are drawing limits:
+ * a value outside them is drawn at the limit, and every statistic uses the value itself.
  */
 export const ERROR_METRICS = {
     relSep: {
         label: "Error / range", noun: "mean 3D error / mean true range", unit: "",
-        floor: FLOOR, tolerance: {value: TOL5, label: "5% of range"}, format: formatPercent,
+        floor: FLOOR, ceiling: 1e3, ceilingLabel: "a thousand times the mean true range",
+        tolerance: {value: TOL5, label: "5% of range"}, format: formatPercent,
         topField: "r_topRelSep", bestField: "r_bestRelSep", candidateField: "relSep",
     },
     sepM: {
         label: "Mean absolute error (m)", noun: "mean 3D error (m)", unit: "m",
-        floor: 0.01, tolerance: null, format: formatMetres,
+        floor: 0.01, ceiling: 1e7, ceilingLabel: "10,000 km", tolerance: null, format: formatMetres,
         topField: "r_topSepM", bestField: "r_bestSepM", candidateField: "sepM",
     },
     angDeg: {
         label: "Angular error (deg)", noun: "mean angular error seen from the sensor (deg)", unit: "deg",
-        floor: 1e-5, tolerance: null, format: formatDegrees,
+        floor: 1e-5, ceiling: 180, ceilingLabel: "180°", tolerance: null, format: formatDegrees,
         topField: null, bestField: null, candidateField: "angDeg",
     },
 };
@@ -166,7 +243,7 @@ export function makeMeasure({metric = "relSep", subject = SUBJECT_TOP} = {}) {
     return {
         metric: key, subject, who,
         label: m.label, noun: m.noun, unit: m.unit,
-        floor: m.floor, tolerance: m.tolerance, format: m.format,
+        floor: m.floor, ceiling: m.ceiling, ceilingLabel: m.ceilingLabel, tolerance: m.tolerance, format: m.format,
         isDefault: key === "relSep" && subject === SUBJECT_TOP,
         axisTitle: `${capitalize(who)} ${m.noun}`,
         // Only the top candidate's row says whether it came from the range-blind family.
@@ -226,13 +303,18 @@ export function durationGroups(rows, wanted) {
  * lowerfence and upperfence are taken literally rather than derived — which is
  * what keeps the log-space Tukey rule intact.
  */
-export function boxTrace(positions, stats, color, {axis = "", width = 0.62, floor = null} = {}) {
+export function boxTrace(positions, stats, color, {axis = "", width = 0.62, floor = null, ceiling = null} = {}) {
     const keep = positions.map((x, i) => [x, stats[i]]).filter(([, s]) => s);
     // The floor is a DRAWING device, exactly as in the matplotlib reference: the
     // statistics are computed on the raw values and only the drawn geometry is
     // clipped. Without this a cell whose whole distribution sits at 1e-7 drags
-    // the shared log axis down three decades and squashes every other panel.
-    const clip = (v) => (floor === null ? v : Math.max(v, floor));
+    // the shared log axis down three decades and squashes every other panel. The
+    // ceiling does the same at the top, where one runaway fit would otherwise
+    // stretch the axis to 1e59.
+    const clip = (v) => {
+        const raised = floor === null ? v : Math.max(v, floor);
+        return ceiling === null ? raised : Math.min(raised, ceiling);
+    };
     return {
         type: "box",
         x: keep.map(([x]) => x),
@@ -266,6 +348,11 @@ export function stripTrace(positions, color, {axis = "", hollow = false, name = 
     text = null, seed = 805, amount = 0.26, opacity = 1} = {}) {
     const offsets = jitterOffsets(positions.length, amount, seed);
     const labels = text ?? (positions.some((p) => p.label) ? positions.map((p) => p.label ?? "") : null);
+    // Per-dot size, color and symbol when any dot carries them (makeMarks); one of each otherwise.
+    const each = (field, fallback) => (positions.some((p) => p[field] !== undefined)
+        ? positions.map((p) => p[field] ?? fallback) : fallback);
+    const sizes = each("size", size), colors = each("color", color), symbols = each("symbol", undefined);
+    const shape = symbols === undefined ? {} : {symbol: symbols};
     return {
         type: "scattergl",
         mode: "markers",
@@ -276,8 +363,9 @@ export function stripTrace(positions, color, {axis = "", hollow = false, name = 
         hovertemplate: labels ? "%{text}<br>%{y:.3g}<extra></extra>" : "%{y}<extra></extra>",
         opacity,
         marker: hollow
-            ? {size: size + 2, color: "rgba(0,0,0,0)", line: {color, width: 1}}
-            : {size, color, line: {color: "#ffffff", width: 0.4}},
+            ? {size: Array.isArray(sizes) ? sizes.map((v) => v + 2) : sizes + 2, color: "rgba(0,0,0,0)",
+                line: {color: colors, width: 1}, ...shape}
+            : {size: sizes, color: colors, line: {color: "#ffffff", width: 0.4}, ...shape},
         name,
         showlegend: false,
         xaxis: `x${axis}`, yaxis: `y${axis}`,
@@ -476,7 +564,7 @@ const hollowNote = (measure) => (measure.marksBlind
     : "Dots: every track. ");
 
 /** Error against clip length, one panel per class and rung. */
-export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMeasure()} = {}) {
+export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks()} = {}) {
     const durations = durationsOf(rows);
     const rungs = rungGroups(rows, rungsWanted);
     // One clip length is one box per panel, which compares nothing. The
@@ -505,7 +593,7 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
                     if (!fin(v)) continue;
                     peak = Math.max(peak, v);
                     (measure.marksBlind && r.r_topBlind ? hollow : points)
-                        .push({x: d, y: atLeast(v, floor), id: r.rowIndex ?? null, label: r.base ?? ""});
+                        .push({x: d, y: atLeast(v, floor), id: r.rowIndex ?? null, label: trackLabel(r), ...marks.style(r, 5, CLASS_HUE[cls])});
                 }
                 const box = stats[stats.length - 1];
                 if (box) medians[`${rung}deg/${cls}/${durations[d]}`] = box.median;
@@ -557,7 +645,7 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
 }
 
 /** Error against the pointing-error ladder, one panel per class and clip length. */
-export function figErrorByRung(rows, {durationsWanted = [20, 120], measure = makeMeasure()} = {}) {
+export function figErrorByRung(rows, {durationsWanted = [20, 120], measure = makeMeasure(), marks = makeMarks()} = {}) {
     const rungs = rungsOf(rows);
     const durations = durationGroups(rows, durationsWanted);
     if (rungs.length < 2 || !durations.length) return null;
@@ -585,7 +673,7 @@ export function figErrorByRung(rows, {durationsWanted = [20, 120], measure = mak
                     if (!fin(v)) continue;
                     peak = Math.max(peak, v);
                     (measure.marksBlind && r.r_topBlind ? hollow : points)
-                        .push({x: e, y: atLeast(v, floor), id: r.rowIndex ?? null, label: r.base ?? ""});
+                        .push({x: e, y: atLeast(v, floor), id: r.rowIndex ?? null, label: trackLabel(r), ...marks.style(r, 5, CLASS_HUE[cls])});
                 }
             }
             data.push(boxTrace(rungs.map((unused, e) => e), stats, CLASS_HUE[cls], {axis: suffix, floor}));
@@ -769,7 +857,8 @@ export function figErrorByTurn(rows, {across = "length", rungsWanted = [0, 0.2],
                     : `A line that stays flat says turning does not help at that clip length. Lines for ${series.join(", ")} s clips. `)
                 + `${cells} cells. `
                 + (flooredMedians ? `${flooredMedians} medians below ${measure.format(floor)} are drawn at the floor. ` : "")
-                + `At ${rungLabel(rung0)} pointing error: ${parts.join(". ")}.`,
+                // Nothing to compare when the rows lack the first or last length.
+                + (parts.length ? `At ${rungLabel(rung0)} pointing error: ${parts.join(". ")}.` : ""),
         }),
         config: BASE_CONFIG,
         stats: medians,
@@ -931,7 +1020,7 @@ export function figClassOutcome(rows, {durationsWanted = [20, 120]} = {}) {
 }
 
 /** What the blind ranking cost, against the best candidate that was on offer. */
-export function figRankingCost(rows, {rungsWanted = [0, 0.2], measure = makeMeasure()} = {}) {
+export function figRankingCost(rows, {rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks()} = {}) {
     // The best candidate set against itself is a diagonal line and nothing else.
     if (measure.subject === SUBJECT_BEST) return null;
     const rungs = rungGroups(rows, rungsWanted);
@@ -956,9 +1045,9 @@ export function figRankingCost(rows, {rungsWanted = [0, 0.2], measure = makeMeas
             summary[`${rung}deg/${cls}`] = {n: here.length, topIsBest: chose, medianRatio: ratio};
             data.push({
                 type: "scattergl", mode: "markers", x: xs, y: ys,
-                marker: {size: 4.5, color: CLASS_HUE[cls], opacity: 0.75,
+                marker: {...markerFor(here, 4.5, CLASS_HUE[cls], marks), opacity: 0.75,
                     line: {color: "#ffffff", width: 0.3}},
-                text: here.map((r) => r.base ?? ""),
+                text: here.map((r) => trackLabel(r)),
                 customdata: here.map((r) => r.rowIndex ?? null),
                 hovertemplate: "%{text}<br>best %{x:.3g}, chosen %{y:.3g}<extra></extra>",
                 showlegend: false, xaxis: `x${suffix}`, yaxis: `y${suffix}`,
@@ -1013,7 +1102,7 @@ export function figRankingCost(rows, {rungsWanted = [0, 0.2], measure = makeMeas
 }
 
 /** Error against the two geometry axes, with a median trend over equal-count bins. */
-export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2], measure = makeMeasure()} = {}) {
+export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks()} = {}) {
     const rungs = rungGroups(rows, rungsWanted);
     if (!rungs.length) return null;
     const floor = measure.floor;
@@ -1037,9 +1126,9 @@ export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2], measure = make
                 for (const y of ys) peak = Math.max(peak, y);
                 data.push({
                     type: "scattergl", mode: "markers", x: xs, y: ys,
-                    marker: {size: 3.5, color: CLASS_HUE[cls], opacity: 0.35},
+                    marker: {...markerFor(here, 3.5, CLASS_HUE[cls], marks), opacity: 0.35},
                     // Hoverable, so a dot can name its track and show its screenshot.
-                    text: here.map((r) => r.base ?? ""),
+                    text: here.map((r) => trackLabel(r)),
                     customdata: here.map((r) => r.rowIndex ?? null),
                     hovertemplate: "%{text}<br>%{y:.3g}<extra></extra>",
                     showlegend: false,
@@ -1228,7 +1317,7 @@ const classAxis = (classes) => ({
 const PERCENT_TICKS = {tickvals: [0, 0.25, 0.5, 0.75, 1], ticktext: ["0%", "25%", "50%", "75%", "100%"]};
 
 /** The chosen candidate's error, one box per target class. */
-export function figErrorByClass(rows, {measure = makeMeasure()} = {}) {
+export function figErrorByClass(rows, {measure = makeMeasure(), marks = makeMarks()} = {}) {
     if (!isSingleCell(rows)) return null;
     const classes = classesOf(rows);
     if (!classes.length) return null;
@@ -1251,7 +1340,7 @@ export function figErrorByClass(rows, {measure = makeMeasure()} = {}) {
             if (!fin(v)) continue;
             peak = Math.max(peak, v);
             (measure.marksBlind && r.r_topBlind ? hollow : points)
-                .push({x: i, y: atLeast(v, floor), id: r.rowIndex ?? null, label: r.base ?? ""});
+                .push({x: i, y: atLeast(v, floor), id: r.rowIndex ?? null, label: trackLabel(r), ...marks.style(r, 5, CLASS_HUE[cls])});
         }
         data.push(boxTrace([i], [box], CLASS_HUE[cls], {floor}));
         data.push(stripTrace(points, CLASS_HUE[cls], {seed: 805 + i}));
@@ -1451,12 +1540,14 @@ export function shortSolverName(name) {
  * builds only from rows carrying every candidate's error (r_candidates), which a
  * BOTBench run keeps; a joined JSONL without them gets no figure.
  */
-export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMeasure()} = {}) {
+export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks()} = {}) {
     const scored = rows.filter((r) => Array.isArray(r.r_candidates) && r.r_candidates.length);
     if (!scored.length) return null;
     const rungs = rungGroups(scored, rungsWanted);
     if (!rungs.length) return null;
-    const floor = measure.floor;
+    const floor = measure.floor, ceiling = measure.ceiling;
+    // Dots of 3 px would shrink to 1 px at the shortest length, so area by length starts from 4.
+    const dotSize = marks.sizeByLength ? 4 : 3;
     const nameOf = (c) => c.name ?? c.key ?? "?";
 
     // One order for every panel: by median error over all the rows, best first.
@@ -1479,7 +1570,7 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
     const data = [], titles = [];
     const medians = {};
     const lowest = [];
-    let drawn = 0, floored = 0, peak = floor;
+    let drawn = 0, floored = 0, capped = 0, peak = floor;
     for (const cls of CLASSES) {
         for (const rung of rungs) {
             const i = titles.length;
@@ -1492,9 +1583,14 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
                     const v = measure.candidate(c);
                     if (s === undefined || !fin(v)) continue;
                     values[s].push(v);
-                    points.push({x: s, y: atLeast(v, floor), id: r.rowIndex ?? null,
-                        label: `${r.base ?? ""} · ${shortSolverName(nameOf(c))}`});
-                    peak = Math.max(peak, v);
+                    points.push({x: s, y: Math.min(atLeast(v, floor), ceiling), id: r.rowIndex ?? null, ...marks.style(r, dotSize, CLASS_HUE[cls]),
+                        label: `${trackLabel(r)} · ${shortSolverName(nameOf(c))}`});
+                    // A value past the ceiling is drawn at it; its label keeps the value itself.
+                    if (v > ceiling) {
+                        points[points.length - 1].label += ` (${v.toPrecision(3)}, drawn at the ceiling)`;
+                        capped++;
+                    }
+                    peak = Math.max(peak, Math.min(v, ceiling));
                     if (v < floor) floored++;
                     drawn++;
                 }
@@ -1504,8 +1600,8 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
                 if (box) medians[`${rung}deg/${cls}/${name}`] = box.median;
                 return box;
             });
-            data.push(boxTrace(solvers.map((unused, s) => s), stats, CLASS_HUE[cls], {axis: suffix, floor}));
-            if (points.length) data.push(stripTrace(points, CLASS_HUE[cls], {axis: suffix, size: 3, opacity: 0.35}));
+            data.push(boxTrace(solvers.map((unused, s) => s), stats, CLASS_HUE[cls], {axis: suffix, floor, ceiling}));
+            if (points.length) data.push(stripTrace(points, CLASS_HUE[cls], {axis: suffix, size: dotSize, opacity: 0.35}));
             const best = solvers.map((name) => [name, medians[`${rung}deg/${cls}/${name}`]])
                 .filter(([, m]) => fin(m)).sort((a, b) => a[1] - b[1])[0];
             if (best) {
@@ -1537,7 +1633,10 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
                 + `first. A solver with a low box can find the answer; set it beside the blind top candidate's error in `
                 + `the clip-length figure to see what the ranking passed over. Solvers are ordered by their median error `
                 + `over every panel, best first. Box, whiskers and dots as in the clip-length figure; ${floored} values `
-                + `below ${measure.format(floor)} are drawn at the floor. Lowest median per panel: ${lowest.join("; ")}.`
+                + `below ${measure.format(floor)} are drawn at the floor`
+                + (capped ? `, and ${capped} above ${measure.ceilingLabel} at the ceiling, where the hover label gives `
+                    + "the value itself" : "")
+                + `. Lowest median per panel: ${lowest.join("; ")}.`
                 + (measure.subject === SUBJECT_TOP ? "" : " The candidate choice does not apply here: every candidate is shown."),
         }),
         config: BASE_CONFIG,
@@ -1549,11 +1648,17 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
 // the registry both front ends walk
 // ---------------------------------------------------------------------------
 
+// Each entry says what the figure reads beyond the rows: `dots` marks a figure whose
+// points are tracks (the dot marks apply), `measure` which error choices it honours
+// ("full": the candidate and the unit; "subject": the candidate only, since the
+// tolerance figures always use a share of range), and `allTurnLevels` that it takes
+// every sensor-turn level whatever the turn choice. The window's full-size view
+// shows only the choices a figure reads.
 export const FIGURES = [
     {key: "errorByClass", name: "Error by target class", group: "This run",
-        build: (rows, {measure} = {}) => figErrorByClass(rows, {measure})},
+        dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorByClass(rows, {measure, marks})},
     {key: "withinByClass", name: "Within tolerance, by target class", group: "This run",
-        build: (rows, {measure} = {}) => figWithinByClass(rows, {measure})},
+        measure: "subject", build: (rows, {measure} = {}) => figWithinByClass(rows, {measure})},
     {key: "outcomeByClass", name: "What the verdict says, by target class", group: "This run",
         build: (rows) => figOutcomeByClass(rows)},
     {key: "verdictByClass", name: "Verdict code, by target class", group: "This run",
@@ -1572,21 +1677,21 @@ export const FIGURES = [
                 + "Polynomial LSQ, Constant Altitude and Saddle are curve fits that carry no object claim.",
         })},
     {key: "errorByLength", name: "Error by clip length", group: "Accuracy",
-        build: (rows, {measure} = {}) => figErrorByLength(rows, {measure})},
+        dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorByLength(rows, {measure, marks})},
     {key: "errorByRung", name: "Error by pointing error", group: "Accuracy",
-        build: (rows, {measure} = {}) => figErrorByRung(rows, {measure})},
+        dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorByRung(rows, {measure, marks})},
     {key: "withinByLength", name: "Within tolerance, by length", group: "Accuracy",
-        build: (rows, {measure} = {}) => figWithinTolerance(rows, {axis: "length", fixed: [0, 0.2], measure})},
+        measure: "subject", build: (rows, {measure} = {}) => figWithinTolerance(rows, {axis: "length", fixed: [0, 0.2], measure})},
     {key: "withinByRung", name: "Within tolerance, by pointing error", group: "Accuracy",
-        build: (rows, {measure} = {}) => figWithinTolerance(rows, {axis: "rung", fixed: [20, 120], measure})},
+        measure: "subject", build: (rows, {measure} = {}) => figWithinTolerance(rows, {axis: "rung", fixed: [20, 120], measure})},
     {key: "errorByLengthAndTurn", name: "Error by clip length, per sensor turn", group: "Sensor turn", allTurnLevels: true,
-        build: (rows, {measure} = {}) => figErrorByTurn(rows, {across: "length", measure})},
+        measure: "full", build: (rows, {measure} = {}) => figErrorByTurn(rows, {across: "length", measure})},
     {key: "errorByTurn", name: "Error by sensor turn, per clip length", group: "Sensor turn", allTurnLevels: true,
-        build: (rows, {measure} = {}) => figErrorByTurn(rows, {across: "turn", measure})},
+        measure: "full", build: (rows, {measure} = {}) => figErrorByTurn(rows, {across: "turn", measure})},
     {key: "errorBySolver", name: "Error by solver", group: "Accuracy",
-        build: (rows, {measure} = {}) => figErrorBySolver(rows, {measure})},
+        dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorBySolver(rows, {measure, marks})},
     {key: "errorVsGeometry", name: "Error against geometry", group: "Geometry",
-        build: (rows, {measure} = {}) => figErrorVsGeometry(rows, {measure})},
+        dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorVsGeometry(rows, {measure, marks})},
     {key: "classOutcome", name: "What the verdict says about the class", group: "Interpretation",
         build: (rows) => figClassOutcome(rows)},
     {key: "verdictMix", name: "Verdict code", group: "Interpretation",
@@ -1608,7 +1713,7 @@ export const FIGURES = [
                 + "Altitude and Saddle are curve fits that carry no object claim.",
         })},
     {key: "rankingCost", name: "Cost of blind ranking", group: "Ranking",
-        build: (rows, {measure} = {}) => figRankingCost(rows, {measure})},
+        dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figRankingCost(rows, {measure, marks})},
 ];
 
 /**
@@ -1620,15 +1725,20 @@ export const FIGURES = [
  *
  * turnDeg limits the rows to one sensor-turn level, and each figure's title says so.
  * The figures that compare turn levels (allTurnLevels) always take every row.
+ *
+ * marks says how the dots are marked (makeMarks). The area scale is set once from every
+ * row, so a dot of one clip length has one area in every figure.
  */
-export function buildAllFigures(rows, {only = null, measure = makeMeasure(), turnDeg = null} = {}) {
+export function buildAllFigures(rows, {only = null, measure = makeMeasure(), turnDeg = null, marks = null} = {}) {
     const oneLevel = fin(turnDeg) ? rows.filter((r) => same(r.d_turnDeg, turnDeg)) : rows;
+    const dotMarks = makeMarks(marks ?? {}, rows);
     return FIGURES
         .filter((f) => !only || only.includes(f.key))
         .map((f) => {
             try {
-                const figure = f.build(f.allTurnLevels ? rows : oneLevel, {measure});
+                const figure = f.build(f.allTurnLevels ? rows : oneLevel, {measure, marks: dotMarks});
                 if (figure && !f.allTurnLevels && fin(turnDeg)) markTurnLevel(figure, turnDeg);
+                if (figure && f.dots && dotMarks.active) appendCaption(figure, dotMarks.note);
                 return figure;
             } catch (e) { return {key: f.key, error: String(e?.message ?? e)}; }
         })

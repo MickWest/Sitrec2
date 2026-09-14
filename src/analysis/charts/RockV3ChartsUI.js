@@ -20,9 +20,13 @@
 //
 // Hovering a track's dot shows its scenario screenshot beside Plotly's label, when
 // the run made one (see wireHoverImages).
+//
+// Full size shows one figure on the whole browser window, drawn to fit it, with
+// only the choices that figure reads. The export is unchanged: it still renders the
+// figure at its own layout size.
 
 import {
-    buildAllFigures, FIGURES, CLASSES, ERROR_METRICS, SUBJECT_BEST, SUBJECT_TOP, makeMeasure,
+    buildAllFigures, FIGURES, CLASSES, ERROR_METRICS, SUBJECT_BEST, SUBJECT_TOP, makeMeasure, wrapText,
 } from "./RockV3ChartSpecs";
 import {drawFigure, purgeFigure, figureToImage, loadPlotly} from "./PlotlyLoader";
 import {showError} from "../../showError";
@@ -86,6 +90,29 @@ function describeGap(rows) {
             + "so a figure should have been drawn. That is a fault in the charts, not in the data.");
     }
     return parts.join("");
+}
+
+// The width the figures are laid out for, and the caption wrap that goes with it
+// (pageLayout in RockV3ChartSpecs). A figure drawn wider or narrower re-wraps its
+// caption in proportion, so the text still fills the width without running off it.
+const LAYOUT_WIDTH = 1500;
+const CAPTION_COLS = 165;
+
+/**
+ * A copy of a figure laid out for a given size. The panels scale with the plot
+ * area; the margins stay in pixels, so the title, legend and caption keep their
+ * size. The caption is the last paper annotation and is re-wrapped for the width.
+ */
+export function fitFigureTo(figure, width, height) {
+    const layout = {...figure.layout, width, height};
+    const annotations = (layout.annotations ?? []).slice();
+    const caption = annotations[annotations.length - 1];
+    if (caption && caption.xref === "paper" && caption.yanchor === "top" && typeof caption.text === "string") {
+        const cols = Math.max(40, Math.round(CAPTION_COLS * width / LAYOUT_WIDTH));
+        annotations[annotations.length - 1] = {...caption, text: wrapText(caption.text.replace(/<br>/g, " "), cols)};
+    }
+    layout.annotations = annotations;
+    return {...figure, layout};
 }
 
 /** The solver names the rows' candidate lists hold, in order of first appearance. */
@@ -219,6 +246,10 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         position: "fixed", inset: "0", background: "rgba(0,0,0,0.5)", zIndex: "10000",
         display: "flex", alignItems: "center", justifyContent: "center",
     });
+    // The InteractionRouter owns document wheel events and hands each one to the view under
+    // the pointer, which zooms and cancels the scroll, so the wheel did nothing here. Declared
+    // native, as the traverse gallery is, the wheel scrolls the figure.
+    overlay.dataset.interactionNative = "true";
     const modal = document.createElement("div");
     css(modal, {
         background: "#fff", borderRadius: "8px", width: "94vw", height: "92vh",
@@ -252,7 +283,27 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     const closeButton = makeButton("Close", "#757575");
     const turnPicker = makeSelect("Which sensor-turn level the figures use: every level pooled, or one level. "
         + "The figures that compare turn levels always use every level.", "150px");
-    bar.append(picker, subjectPicker, metricPicker, turnPicker, loadButton, svgButton, pngButton, closeButton, status);
+    // Two ways to mark the dots, both off to begin with (makeMarks in RockV3ChartSpecs.js).
+    const makeToggle = (text, title) => {
+        const label = document.createElement("label");
+        css(label, {display: "flex", alignItems: "center", gap: "4px", fontSize: "12px", color: "#333",
+            cursor: "pointer", whiteSpace: "nowrap"});
+        label.title = title;
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        label.append(box, text);
+        return {label, box};
+    };
+    const lengthToggle = makeToggle("Area by clip length",
+        "Give each track dot an area in proportion to its clip length, on one scale for every figure.");
+    const straightToggle = makeToggle("Straight as red squares",
+        "Draw a track whose sensor flew straight (turn level 0, or a turn under 1 degree) as a dark red square "
+        + "with the same area as a circle.");
+    const fullButton = makeButton("Full size", "#455a64");
+    fullButton.title = "Show this figure alone, drawn to fill the browser window, with only the choices it reads. "
+        + "Exports are unchanged.";
+    bar.append(picker, subjectPicker, metricPicker, turnPicker, lengthToggle.label, straightToggle.label,
+        fullButton, loadButton, svgButton, pngButton, closeButton, status);
     modal.appendChild(bar);
 
     // plot area
@@ -265,7 +316,45 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     const state = {
         overlay, rows: rows ?? [], figures: [], current: null, sourceLabel,
         imageUrls: new Map(), measure: makeMeasure(), turnDeg: null, turnLevels: [],
+        marks: {sizeByLength: false, markStraight: false},
+        fullSize: false,
     };
+
+    // The window's chrome in the two modes. Full size fills the browser window and
+    // shows, of the choices, only those the current figure reads; the figure picker
+    // and the file loader are hidden, since the view is of one figure.
+    const applyChrome = () => {
+        const full = state.fullSize;
+        const meta = state.current ? FIGURES.find((f) => f.key === state.current.key) : null;
+        css(modal, full
+            ? {width: "100vw", height: "100vh", borderRadius: "0"}
+            : {width: "94vw", height: "92vh", borderRadius: "8px"});
+        const hide = (el, hidden) => { el.style.display = hidden ? "none" : ""; };
+        hide(picker, full);
+        hide(loadButton, full);
+        const usesMeasure = !full || !!meta?.measure;
+        hide(subjectPicker, !state.rows.length || !usesMeasure);
+        hide(metricPicker, !state.rows.length || !usesMeasure || (full && meta?.measure !== "full"));
+        hide(turnPicker, state.turnLevels.length < 2 || (full && !!meta?.allTurnLevels));
+        hide(lengthToggle.label, full && !meta?.dots);
+        hide(straightToggle.label, full && !meta?.dots);
+        fullButton.textContent = full ? "Exit full size" : "Full size";
+        fullButton.style.display = state.current ? "" : "none";
+    };
+    // Drawn to the plot area in full size, at the figure's own size otherwise.
+    const figureToDraw = (figure) => {
+        if (!state.fullSize) return figure;
+        const width = Math.max(320, plot.clientWidth - 2);
+        const height = Math.max(240, plot.clientHeight - 2);
+        return fitFigureTo(figure, width, height);
+    };
+    let resizeTimer = null;
+    const onResize = () => {
+        if (!state.fullSize || !state.current) return;
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => { show(state.current); }, 120);
+    };
+    window.addEventListener("resize", onResize);
 
     const setStatus = (text) => { status.textContent = text; };
     const sourceText = () => `${state.rows.length} rows${state.sourceLabel ? ` from ${state.sourceLabel}` : ""}`
@@ -324,6 +413,7 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         turnPicker.value = keepTurn === null ? "all" : String(keepTurn);
         turnPicker.style.display = state.turnLevels.length > 1 ? "" : "none";
         state.turnDeg = state.turnLevels.length > 1 ? keepTurn : null;
+        applyChrome();
     };
 
     const rebuild = async () => {
@@ -333,7 +423,7 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         // the row again (see wireHoverImages).
         state.rows.forEach((row, i) => { row.rowIndex = i; });
         fillChoices();
-        state.figures = buildAllFigures(state.rows, {measure: state.measure, turnDeg: state.turnDeg});
+        state.figures = buildAllFigures(state.rows, {measure: state.measure, turnDeg: state.turnDeg, marks: state.marks});
         const rungKnown = state.rows.some((r) => Number.isFinite(r.d_errorDeg));
         const unpaired = state.rows.some((r) => r.in_sidecarPaired === false);
         state.note = state.rows.length && !rungKnown
@@ -360,20 +450,26 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
 
     const show = async (figure) => {
         state.current = figure;
+        applyChrome();
         if (figure.error) {
             chart.innerHTML = `<div style='padding:40px;color:#b00'>${figure.key}: ${figure.error}</div>`;
             return;
         }
         setStatus(`${sourceText()} — drawing…`);
         try {
-            await drawFigure(chart, figure);
+            await drawFigure(chart, figureToDraw(figure));
             wireHoverImages(state, chart);
-            setStatus(sourceText() + (state.note ?? ""));
+            setStatus(sourceText() + (state.note ?? "") + (state.fullSize ? " — full size" : ""));
         } catch (error) {
             setStatus("");
             showError(`Could not draw the chart: ${error?.message ?? error}`);
         }
     };
+    fullButton.addEventListener("click", () => {
+        state.fullSize = !state.fullSize;
+        applyChrome();
+        if (state.current) show(state.current);
+    });
 
     picker.addEventListener("change", () => {
         const figure = state.figures.find((f) => f.key === picker.value);
@@ -382,11 +478,14 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     const onChoice = () => {
         state.measure = makeMeasure({metric: metricPicker.value, subject: subjectPicker.value});
         state.turnDeg = turnPicker.value === "all" ? null : Number(turnPicker.value);
+        state.marks = {sizeByLength: lengthToggle.box.checked, markStraight: straightToggle.box.checked};
         rebuild();
     };
     subjectPicker.addEventListener("change", onChoice);
     metricPicker.addEventListener("change", onChoice);
     turnPicker.addEventListener("change", onChoice);
+    lengthToggle.box.addEventListener("change", onChoice);
+    straightToggle.box.addEventListener("change", onChoice);
 
     const exportAs = async (format) => {
         if (!state.current) return;
@@ -400,7 +499,8 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
             const choice = (state.measure.isDefault ? ""
                 : `-${state.measure.metric}-${String(state.measure.subject).replace(/[^A-Za-z0-9]+/g, "_")}`)
                 + (Number.isFinite(state.turnDeg) && !FIGURES.find((f) => f.key === state.current.key)?.allTurnLevels
-                    ? `-turn${state.turnDeg}` : "");
+                    ? `-turn${state.turnDeg}` : "")
+                + (state.marks.sizeByLength ? "-area" : "") + (state.marks.markStraight ? "-straight" : "");
             link.download = `${state.current.key}${choice}.${format}`;
             document.body.appendChild(link);
             link.click();
@@ -443,6 +543,8 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     });
 
     const close = () => {
+        window.removeEventListener("resize", onResize);
+        clearTimeout(resizeTimer);
         purgeFigure(chart);
         for (const url of state.imageUrls.values()) if (url) URL.revokeObjectURL(url);
         state.imageUrls.clear();
@@ -474,7 +576,7 @@ export function addResultChartsMenu(fileAnalysisFolder) {
     if (isLocal && !window._botCharts) {
         window._botCharts = {
             open: openResultCharts, openForEntries: openResultChartsForEntries,
-            rowsFromJsonl, rowsFromBotBenchEntries, buildAllFigures, makeMeasure,
+            rowsFromJsonl, rowsFromBotBenchEntries, buildAllFigures, makeMeasure, fitFigureTo,
             get active() { return activeWindow; },
         };
     }

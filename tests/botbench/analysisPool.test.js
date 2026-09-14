@@ -25,11 +25,36 @@ test("worker receives only fitting inputs and the current Earth model, then uses
     expect(sent.record.meta.maxRangeM).toBe(10000);
     expect(sent.earthRadii).toEqual({equatorRadius: Globals.equatorRadius, polarRadius: Globals.polarRadius});
     expect(sent.options).toEqual({anchorM: 9000, solutionFamilies: true});
-    workers[0].onmessage({data: {id: sent.id, battery: {fitted: true}, elapsedMs: 1234}});
-    expect(await result).toEqual({row: 'built'});
+    workers[0].onmessage({data: {id: sent.id, battery: {fitted: true}, elapsedMs: 1234,
+        units: {kalman: {result: 1}}, migrated: {}}});
+    // The fitted units ride back on the result for the caller to store.
+    expect(await result).toEqual({row: 'built', units: {kalman: {result: 1}}, migrated: {}, legacyHeld: []});
     expect(runBotBenchAnalysis).toHaveBeenCalledWith(record, expect.objectContaining({
         battery: {fitted: true}, fitElapsedMs: 1234, anchorM: 9000, solutionFamilies: true,
     }));
+    pool.dispose();
+});
+
+test("stored unit text goes to the worker untouched, and never into the result builder's options", async () => {
+    const workers = [];
+    global.Worker = jest.fn(() => {
+        const worker = {postMessage: jest.fn(), terminate: jest.fn()};
+        workers.push(worker); return worker;
+    });
+    runBotBenchAnalysis.mockResolvedValue({row: 'built'});
+    const pool = new BotBenchAnalysisPool(1);
+    const units = {plan: ['kalman'], cached: {kalman: {text: '{"meta":{},"result":{}}'}}, legacy: null,
+        legacyUnits: [], legacyElapsedMs: null};
+    const result = pool.run({dataset: {n: 10}}, {anchorM: 9000, solvers: ['gfKalman'], units});
+    workers[0].onmessage({data: {ready: true}});
+    const sent = workers[0].postMessage.mock.calls[0][0];
+    expect(sent.options.units).toEqual(units);
+    expect(sent.options.solvers).toEqual(['gfKalman']);
+    workers[0].onmessage({data: {id: sent.id, battery: {}, elapsedMs: 5, units: {}, migrated: {}}});
+    await result;
+    const passed = runBotBenchAnalysis.mock.calls[0][1];
+    expect(passed.units).toBeUndefined();
+    expect(passed.solvers).toEqual(['gfKalman']);
     pool.dispose();
 });
 

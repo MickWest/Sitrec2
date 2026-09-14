@@ -63,7 +63,8 @@ export class BotBenchWorkerPool {
                         }
                         current.job = null;
                         if (data.error) job.reject(new Error(data.error));
-                        else job.resolve({battery: data.battery, elapsedMs: data.elapsedMs});
+                        else job.resolve({battery: data.battery, elapsedMs: data.elapsedMs,
+                            units: data.units ?? {}, migrated: data.migrated ?? {}, legacyHeld: data.legacyHeld ?? []});
                         this.dispatch();
                     };
                     worker.onerror = (event) => this.fail(new Error(event.message || "BOTBench worker failed"));

@@ -231,6 +231,8 @@ export function rowsFromBotBenchEntries(entries) {
 
         out.push({
             base,
+            // The file's path under the folder that was scanned, for the charts' hover labels.
+            path: path || null,
             set: path.includes("/") ? path.split("/")[0] : null,
             d_class: cls,
             d_durationSeconds: duration,
