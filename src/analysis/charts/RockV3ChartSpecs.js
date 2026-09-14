@@ -771,44 +771,61 @@ export function figErrorByTrueDistance(rows, {measure = makeMeasure(), marks = m
     };
 }
 
-/** Mean absolute position error against mean true range, with a logarithmic range axis. */
+/**
+ * Mean absolute position error against mean true range: the range on a linear axis
+ * from zero, the error on a logarithmic axis clamped at ABSOLUTE_ERROR_FLOOR_M. A value
+ * below the floor, an exact zero included, is drawn at the floor with its hover label
+ * keeping the value itself, and the axis never goes below the floor. Unchecking
+ * "log Error" gives a linear error axis from zero with no floor.
+ */
+export const ABSOLUTE_ERROR_FLOOR_M = 1e-3;
+
 export function figAbsoluteErrorVsTrueRange(rows, {measure = makeMeasure(), marks = makeMarks()} = {}) {
     // This figure always compares distances in metres, whatever unit another figure uses.
     const absolute = makeMeasure({metric: "sepM", subject: measure.subject, logError: measure.logError});
+    const floor = absolute.logError ? ABSOLUTE_ERROR_FLOOR_M : 0;
     const groups = new Map();
-    let count = 0, minRange = Infinity, maxRange = 0, minError = Infinity, maxError = 0;
+    let count = 0, floored = 0, minRange = Infinity, maxRange = 0, minError = Infinity, maxError = 0;
     for (const r of rows) {
         const range = r.in_trueRangeMeanM, error = absolute.value(r);
-        // Preserve the actual error without a drawing floor. Zero is valid on a linear
-        // error axis; the range axis always requires positive distances.
-        if (!fin(range) || range <= 0 || !fin(error) || error < 0 || (absolute.logError && error === 0)) continue;
+        // A distance must be positive; an error must be finite and not negative. Zero is
+        // valid on both error scales: at zero on the linear axis, at the floor on the log one.
+        if (!fin(range) || range <= 0 || !fin(error) || error < 0) continue;
         const cls = r.d_class ?? "unknown";
         if (!groups.has(cls)) groups.set(cls, []);
         groups.get(cls).push(r);
         count++;
+        if (error < floor) floored++;
         minRange = Math.min(minRange, range); maxRange = Math.max(maxRange, range);
         minError = Math.min(minError, error); maxError = Math.max(maxError, error);
     }
     if (!count) return null;
+    const drawnError = (r) => Math.max(absolute.value(r), floor);
+    const dotLabel = (r) => {
+        const v = absolute.value(r);
+        return errorDotLabel(r, absolute) + (v < floor ? ` (${v.toPrecision(3)} m, drawn at the floor)` : "");
+    };
     const data = [...groups].map(([cls, here]) => ({
         type: "scattergl", mode: "markers",
-        x: here.map((r) => r.in_trueRangeMeanM), y: here.map(absolute.value),
+        x: here.map((r) => r.in_trueRangeMeanM), y: here.map(drawnError),
         marker: {...markerFor(here, 5, CLASS_HUE[cls] ?? MUTED, marks), opacity: 0.55},
-        text: here.map((r) => errorDotLabel(r, absolute)), customdata: here.map((r) => r.rowIndex ?? null),
+        text: here.map(dotLabel), customdata: here.map((r) => r.rowIndex ?? null),
         hovertemplate: "%{text}<br>Mean true range: %{x:.6g} m<br>Mean absolute error: %{y:.6g} m<extra></extra>",
         name: CLASS_LABEL[cls] ?? (cls === "unknown" ? "Unknown class" : cls),
         showlegend: true,
     }));
-    const logRange = (min, max) => [Math.log10(min) - 0.15, Math.log10(max) + 0.15];
+    // The log axis runs from 0.15 decades below the smallest drawn error, never below the
+    // floor, to 0.15 decades above the largest.
+    const logRange = [Math.log10(Math.max(minError, floor)) - 0.15, Math.log10(Math.max(maxError, floor)) + 0.15];
     const layout = gridLayout({
         rows: 1, cols: 1,
         xTitle: "Mean true range (m)", yTitle: "Mean absolute error (m)",
-        yRange: absolute.logError ? logRange(minError, maxError) : absolute.yRange(maxError),
+        yRange: absolute.logError ? logRange : absolute.yRange(maxError),
         logY: absolute.logError,
     });
     Object.assign(layout.xaxis, {
-        type: "log", gridcolor: GRID, exponentformat: "power", dtick: 1,
-        range: logRange(minRange, maxRange),
+        type: "linear", gridcolor: GRID, exponentformat: "none", separatethousands: true,
+        range: [0, maxRange * 1.05],
     });
     const title = `This run: ${absolute.who} mean absolute error vs. mean true range`;
     return {
@@ -817,19 +834,19 @@ export function figAbsoluteErrorVsTrueRange(rows, {measure = makeMeasure(), mark
             title, height: 750, legendEntries: groups.size,
             caption: `${count} track evaluations drawn, with target classes, clip lengths and pointing-error levels `
                 + "pooled within the current selection. Each dot is one track evaluation. "
-                + "Horizontal: mean 3D platform-to-true-target distance over the clip. "
-                + `Vertical: mean 3D distance between the ${absolute.who} and the true target at matching times. `
+                + "Horizontal: mean 3D platform-to-true-target distance over the clip, on a linear scale from zero. "
+                + `Vertical: mean 3D distance between the ${absolute.who} and the true target at matching times, `
                 + (absolute.logError
-                    ? "Both axes use metres and logarithmic scales; each decade is a factor of ten. "
-                        + "Positive values are plotted without a drawing floor or ceiling. "
-                        + `${rows.length - count} evaluations with missing, invalid or zero range or error are omitted; `
-                        + "logarithmic scales require positive values."
-                    : "Both axes use metres. Range uses a logarithmic scale; error uses a linear scale starting at zero. "
-                        + "Errors are plotted without a drawing floor or ceiling, including zero errors. "
-                        + `${rows.length - count} evaluations with missing or invalid values or nonpositive range are omitted.`),
+                    ? "on a logarithmic scale, each decade a factor of ten, clamped at 1 mm: "
+                        + `${floored} values below 1 mm (exact zeros included) are drawn at the floor, where the hover `
+                        + "label gives the value itself. No ceiling is applied. "
+                    : "on a linear scale starting at zero, without a drawing floor or ceiling, zero errors included. ")
+                + "Both axes use metres. "
+                + `${rows.length - count} evaluations with missing or invalid values or nonpositive range are omitted.`,
         }),
         config: BASE_CONFIG,
-        stats: {count, omitted: rows.length - count, byClass: Object.fromEntries([...groups].map(([cls, here]) => [cls, here.length])),
+        stats: {count, floored, omitted: rows.length - count,
+            byClass: Object.fromEntries([...groups].map(([cls, here]) => [cls, here.length])),
             rangeM: [minRange, maxRange], errorM: [minError, maxError]},
     };
 }

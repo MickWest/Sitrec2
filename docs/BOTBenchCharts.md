@@ -51,6 +51,7 @@ rung figures. The figures that compare clip lengths need at least two.
 | First-ranked hypothesis, by target class | One cell: which hypothesis family the ranking placed first |
 | Error by clip length | The blind top candidate's error against clip length, one panel per target class and pointing-error rung |
 | Error by pointing error | The same error against the pointing-error ladder, one panel per class and clip length |
+| Mean absolute error vs. mean true range | One dot per evaluation: its mean absolute error in metres against its mean true range, on a linear range axis from zero. With **log Error** on, the error axis is logarithmic and clamped at 1 mm: a smaller error, an exact zero included, is drawn at the floor and its hover label keeps the value. With it off, the error axis is linear from zero with no floor |
 | Error by clip length, per sensor turn | Median error against clip length, one line per sensor-turn level, with quartile bars. A flat line means a longer clip does not help at that amount of turn |
 | Error by sensor turn, per clip length | The same medians against the turn level, one line per clip length |
 | Within tolerance, by length | Share of tracks inside 5% and 1% of true range, against clip length, with exact 95% intervals |

@@ -15,7 +15,7 @@ lockstep with docs/WhatsNew-Details.md.
 
 - **Choose BOTBench solvers** (File → File Analysis → **BOTBench...**): select from 16 candidates, including **Global Fit: Kalman Smoother**, and rank only the selected candidates.
 - **Heading and velocity errors** (File → File Analysis → **Result Charts...**): compare candidates using **Mean 2D heading error (deg)** or **Mean 3D velocity error (m/s)**.
-- **True-distance charts** (Result Charts → **Accuracy**): **Error by true distance** groups errors into six equal-width distance bands, and **Mean absolute error vs. mean true range** plots each track's position error against its actual mean range in metres.
+- **True-distance charts** (Result Charts → **Accuracy**): **Error by true distance** groups errors into six equal-width distance bands, and **Mean absolute error vs. mean true range** plots each track's position error against its actual mean range in metres, with errors below 1 mm drawn at a 1 mm floor when **log Error** is on.
 - **Export to KMZ with Track** (Objects → the object's folder): export the model together with its timestamped path, sampled once per second, for Google Earth playback or import back into Sitrec.
 
 ### Improvements
@@ -33,6 +33,10 @@ lockstep with docs/WhatsNew-Details.md.
 - Fixed exported objects with spaces or parentheses in their names disappearing in Google Earth Pro, and cancelled object saves being reported as errors.
 - Fixed unnecessary reruns of stored **Drone (flown inputs)** fits after a browser-engine change.
 - Fixed mouse-wheel scrolling in Result Charts and misplaced **5% of range** reference labels.
+
+### Security
+
+- **Charts stay on your computer** (Result Charts): the chart toolbar no longer offers Plotly's **Share chart...** button, which uploads the chart to Plotly's cloud service; **Export SVG** and **Export PNG** still save the file locally.
 
 ## Version 2.158.0 (2026-09-13)
 

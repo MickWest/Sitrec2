@@ -7,7 +7,7 @@
 
 import {
     buildAllFigures, rungGroups, durationGroups, isSingleCell, cellDescription, rungLabel, CLASSES,
-    figErrorByClass, figOutcomeByClass, figErrorByTrueDistance, figAbsoluteErrorVsTrueRange, makeMeasure,
+    figErrorByClass, figOutcomeByClass, figErrorByTrueDistance, figAbsoluteErrorVsTrueRange, ABSOLUTE_ERROR_FLOOR_M, makeMeasure,
 } from "../src/analysis/charts/RockV3ChartSpecs";
 import {median} from "../src/analysis/charts/ChartStats";
 
@@ -133,54 +133,68 @@ describe("mean absolute error vs. mean true range", () => {
     ].map((r) => ({...r, r_topRelSep: r.r_topSepM / r.in_trueRangeMeanM,
         r_candidates: [{name: "Quadcopter", sepM: 12, headingDeg: 90}]}));
 
-    test("plots exact range and absolute error on two log axes, without clipping or jitter", () => {
+    test("plots exact range on a linear axis and error on a log axis floored at 1 mm", () => {
         const figure = figAbsoluteErrorVsTrueRange(rows);
         expect(figure.data.map((t) => t.x)).toEqual([[1000], [100000]]);
-        expect(figure.data.map((t) => t.y)).toEqual([[1e-8], [1e9]]);
+        // 1e-8 is below the floor: drawn at the floor, the label keeps the value.
+        expect(figure.data.map((t) => t.y)).toEqual([[ABSOLUTE_ERROR_FLOOR_M], [1e9]]);
+        expect(figure.data[0].text[0]).toContain("1.00e-8 m, drawn at the floor");
+        expect(figure.data[1].text[0]).not.toContain("drawn at the floor");
         expect(figure.data.map((t) => t.customdata)).toEqual([[0], [1]]);
-        expect(figure.layout.xaxis.type).toBe("log");
+        expect(figure.layout.xaxis.type).toBe("linear");
+        expect(figure.layout.xaxis.range).toEqual([0, 105000]);
         expect(figure.layout.yaxis.type).toBe("log");
         expect(figure.layout.xaxis.title.text).toBe("Mean true range (m)");
         expect(figure.layout.yaxis.title.text).toBe("Mean absolute error (m)");
-        expect(figure.layout.yaxis.range[0]).toBeLessThan(-8);
+        expect(figure.layout.yaxis.range[0]).toBeCloseTo(Math.log10(ABSOLUTE_ERROR_FLOOR_M) - 0.15, 6);
         expect(figure.layout.yaxis.range[1]).toBeGreaterThan(9);
-        expect(figure.stats).toMatchObject({count: 2, omitted: 0, byClass: {balloon: 1, drone: 1}});
+        expect(figure.stats).toMatchObject({count: 2, floored: 1, omitted: 0, byClass: {balloon: 1, drone: 1},
+            errorM: [1e-8, 1e9]});
+        const caption = figure.layout.annotations.at(-1).text.replace(/<br>/g, " ");
+        expect(caption).toContain("linear scale from zero");
+        expect(caption).toContain("1 values below 1 mm (exact zeros included) are drawn at the floor");
     });
 
     test("always uses metres while allowing a different candidate", () => {
         const best = figAbsoluteErrorVsTrueRange(rows, {measure: makeMeasure({subject: "best", metric: "headingDeg"})});
-        expect(best.data.map((t) => t.y)).toEqual([[1e-9], [200]]);
+        expect(best.data.map((t) => t.y)).toEqual([[ABSOLUTE_ERROR_FLOOR_M], [200]]);
         const solver = figAbsoluteErrorVsTrueRange(rows, {measure: makeMeasure({subject: "Quadcopter", metric: "angDeg"})});
         expect(solver.data.map((t) => t.y)).toEqual([[12], [12]]);
         expect(solver.title).toContain("Quadcopter");
         expect(solver.layout.yaxis.type).toBe("log");
+        // Nothing below the floor: the axis starts just under the smallest error, as before.
+        expect(solver.layout.yaxis.range[0]).toBeCloseTo(Math.log10(12) - 0.15, 6);
     });
 
-    test("omits and counts values that cannot be plotted on logarithmic axes", () => {
+    test("omits and counts values that cannot be plotted, and floors an exact zero error", () => {
         const invalid = [
             {in_trueRangeMeanM: 0}, {in_trueRangeMeanM: -10}, {in_trueRangeMeanM: Infinity},
-            {r_topSepM: 0}, {r_topSepM: -1}, {r_topSepM: null}, {r_topSepM: NaN},
+            {r_topSepM: -1}, {r_topSepM: null}, {r_topSepM: NaN},
         ].map((change) => ({...rows[0], ...change}));
-        const figure = figAbsoluteErrorVsTrueRange([...rows, ...invalid]);
-        expect(figure.stats).toMatchObject({count: 2, omitted: 7});
-        expect(figure.layout.annotations.at(-1).text.replace(/<br>/g, " ")).toContain("7 evaluations with missing, invalid or zero");
+        const zero = {...rows[0], r_topSepM: 0};
+        const figure = figAbsoluteErrorVsTrueRange([...rows, zero, ...invalid]);
+        expect(figure.stats).toMatchObject({count: 3, floored: 2, omitted: 6});
+        expect(figure.data[0].y).toEqual([ABSOLUTE_ERROR_FLOOR_M, ABSOLUTE_ERROR_FLOOR_M]);
+        expect(figure.data[0].text[1]).toContain("0.00 m, drawn at the floor");
+        expect(figure.layout.annotations.at(-1).text.replace(/<br>/g, " "))
+            .toContain("6 evaluations with missing or invalid values or nonpositive range are omitted");
         expect(figAbsoluteErrorVsTrueRange(invalid)).toBeNull();
         expect(figAbsoluteErrorVsTrueRange([])).toBeNull();
     });
 
-    test("linear error keeps the range logarithmic and includes exact zero errors", () => {
+    test("linear error keeps the range linear and includes exact zero errors without a floor", () => {
         const zero = {...rows[0], r_topSepM: 0};
         const figure = figAbsoluteErrorVsTrueRange([...rows, zero, {...zero, in_trueRangeMeanM: 0}],
             {measure: makeMeasure({metric: "headingDeg", logError: false})});
         expect(figure.data.flatMap((t) => t.y)).toEqual([1e-8, 0, 1e9]);
-        expect(figure.layout.xaxis.type).toBe("log");
+        expect(figure.layout.xaxis.type).toBe("linear");
         expect(figure.layout.yaxis).toMatchObject({type: "linear"});
         expect(figure.layout.yaxis.range[0]).toBe(0);
         expect(figure.layout.yaxis.range[1]).toBeGreaterThan(1e9);
-        expect(figure.stats).toMatchObject({count: 3, omitted: 1});
+        expect(figure.stats).toMatchObject({count: 3, floored: 0, omitted: 1});
         const caption = figure.layout.annotations.at(-1).text.replace(/<br>/g, " ");
-        expect(caption).toContain("error uses a linear scale starting at zero");
-        expect(caption).not.toContain("zero range or error are omitted");
+        expect(caption).toContain("on a linear scale starting at zero, without a drawing floor or ceiling");
+        expect(caption).not.toContain("drawn at the floor");
         const onlyZero = figAbsoluteErrorVsTrueRange([zero], {measure: makeMeasure({logError: false})});
         expect(onlyZero.layout.yaxis.range.every(Number.isFinite)).toBe(true);
         expect(onlyZero.layout.yaxis.range[1]).toBeGreaterThan(0);
@@ -192,7 +206,7 @@ describe("mean absolute error vs. mean true range", () => {
         expect(figure.stats.count).toBe(1);
         expect(figure.data[0].marker.symbol).toEqual(["square"]);
         expect(figure.data[0].x).toEqual([1000]);
-        expect(figure.data[0].y).toEqual([1e-8]);
+        expect(figure.data[0].y).toEqual([ABSOLUTE_ERROR_FLOOR_M]);   // 1e-8, drawn at the floor
         expect(figure.title).toContain("sensor turn 0°");
     });
 });
