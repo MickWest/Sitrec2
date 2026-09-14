@@ -10,6 +10,7 @@
 
 import fs from "fs";
 import path from "path";
+import {BASE_CONFIG} from "../src/analysis/charts/RockV3ChartSpecs";
 
 const ROOT = path.resolve(__dirname, "..");
 const PLOTLY_MAIN = require.resolve("plotly.js-cartesian-dist-min");
@@ -101,5 +102,70 @@ describe("loadPlotly", () => {
         const attempt = loader.loadPlotly();
         document.head.querySelector("script").dispatchEvent(new Event("load"));
         await expect(attempt).rejects.toThrow(/did not define Plotly/);
+    });
+});
+
+describe("chart sharing is disabled", () => {
+    const figure = () => ({
+        data: [{x: [1, 2], y: [3, 4], type: "scatter"}],
+        layout: {width: 600, height: 400},
+        config: {
+            showSendToCloud: true,
+            plotlyServerURL: "/chart-sharing",
+            modeBarButtons: [["sendChartToCloud", "zoom2d"], ["toImage"]],
+            modeBarButtonsToAdd: [{name: "sendChartToCloud", click: jest.fn()}, "toggleSpikelines"],
+            modeBarButtonsToRemove: ["lasso2d"],
+        },
+    });
+
+    beforeEach(() => {
+        window.Plotly = {
+            react: jest.fn().mockResolvedValue(undefined),
+            newPlot: jest.fn().mockResolvedValue(undefined),
+            toImage: jest.fn().mockResolvedValue("data:image/svg+xml,local-chart"),
+            purge: jest.fn(),
+        };
+    });
+    afterEach(() => { delete window.Plotly; });
+
+    test("figure specs disable the default cloud button for every renderer", () => {
+        expect(BASE_CONFIG.showSendToCloud).toBe(false);
+        expect(BASE_CONFIG.plotlyServerURL).toBe("");
+        expect(BASE_CONFIG.modeBarButtonsToRemove).toContain("sendChartToCloud");
+    });
+
+    test("drawing overrides sharing options and removes custom cloud buttons without changing the figure", async () => {
+        const spec = figure();
+        const element = document.createElement("div");
+        await freshLoader().drawFigure(element, spec);
+        const config = window.Plotly.react.mock.calls[0][3];
+        expect(config).toMatchObject({
+            showSendToCloud: false,
+            plotlyServerURL: "",
+            modeBarButtons: [["zoom2d"], ["toImage"]],
+            modeBarButtonsToAdd: ["toggleSpikelines"],
+        });
+        expect(config.modeBarButtonsToRemove).toEqual(expect.arrayContaining(["lasso2d", "sendChartToCloud"]));
+        expect(spec.config.showSendToCloud).toBe(true);
+        expect(spec.config.modeBarButtons[0]).toContain("sendChartToCloud");
+    });
+
+    test("a chart without custom controls retains valid Plotly modebar defaults", async () => {
+        const spec = figure();
+        delete spec.config;
+        await freshLoader().drawFigure(document.createElement("div"), spec);
+        expect(window.Plotly.react.mock.calls[0][3]).toMatchObject({
+            showSendToCloud: false, plotlyServerURL: "", modeBarButtons: false, modeBarButtonsToAdd: [],
+        });
+    });
+
+    test.each(["svg", "png"])("%s export disables sharing and keeps local image generation", async format => {
+        await expect(freshLoader().figureToImage(figure(), {format})).resolves.toBe("data:image/svg+xml,local-chart");
+        const [holder, , , config] = window.Plotly.newPlot.mock.calls[0];
+        expect(config).toMatchObject({showSendToCloud: false, plotlyServerURL: "", staticPlot: true});
+        expect(window.Plotly.toImage).toHaveBeenCalledWith(holder,
+            {format, width: 600, height: 400, scale: format === "svg" ? 1 : 3});
+        expect(window.Plotly.purge).toHaveBeenCalledWith(holder);
+        expect(holder.isConnected).toBe(false);
     });
 });

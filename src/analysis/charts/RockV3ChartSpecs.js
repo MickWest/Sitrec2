@@ -23,6 +23,7 @@
 import {
     boxStatsLinear, boxStatsLog, clopperPearson, equalCountMedians, jitterOffsets, median, tally, finiteSorted,
 } from "./ChartStats";
+import {localPlotlyConfig} from "./PlotlyConfig";
 
 // ---------------------------------------------------------------------------
 // theme, shared with the matplotlib reference so the two look related
@@ -576,7 +577,7 @@ export function toleranceShapes(panelCount, value, label, {logY = true} = {}) {
     return {shapes, annotations};
 }
 
-export const BASE_CONFIG = {
+export const BASE_CONFIG = localPlotlyConfig({
     displaylogo: false,
     responsive: true,
     // The publication export. SVG keeps the text as text, which is what a journal
@@ -585,7 +586,7 @@ export const BASE_CONFIG = {
     toImageButtonOptions: {format: "svg", scale: 1},
     modeBarButtonsToAdd: ["toggleSpikelines"],
     modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d"],
-};
+});
 
 // ---------------------------------------------------------------------------
 // figures

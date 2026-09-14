@@ -20,6 +20,7 @@
 
 import {buildAssetURL} from "../../release/assetURL";
 import plotlyPackage from "plotly.js-cartesian-dist-min/package.json";
+import {localPlotlyConfig} from "./PlotlyConfig";
 
 /**
  * Where the build puts Plotly, relative to the app. webpackCopyPatterns.js writes
@@ -76,7 +77,7 @@ export const plotlyReady = () => plotly !== null;
  */
 export async function drawFigure(element, figure) {
     const Plotly = await loadPlotly();
-    await Plotly.react(element, figure.data, figure.layout, figure.config);
+    await Plotly.react(element, figure.data, figure.layout, localPlotlyConfig(figure.config));
     return element;
 }
 
@@ -103,7 +104,7 @@ export async function figureToImage(figure, {format = "svg", scale = 3} = {}) {
     holder.style.cssText = "position:absolute; left:-10000px; top:0;";
     document.body.appendChild(holder);
     try {
-        await Plotly.newPlot(holder, figure.data, figure.layout, {...figure.config, staticPlot: true});
+        await Plotly.newPlot(holder, figure.data, figure.layout, localPlotlyConfig({...figure.config, staticPlot: true}));
         return await Plotly.toImage(holder, {
             format,
             width: figure.layout.width ?? 1500,
