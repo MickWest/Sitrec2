@@ -605,6 +605,15 @@ Sitrec can export tracks in several formats via the export buttons in the **Expo
 Exported files are downloaded directly to your browser's download folder, named after
 the track (e.g. `MISB-Aguadilla Ground Spline.csv`).
 
+An object in the **Objects** menu has its own **Export to KMZ with Track** button. It
+writes a KMZ holding the object as a 3D model at its current position and, when the
+object rides a track (a track's object, or the traverse object), that track as a
+time-stamped `<gx:Track>` sampled once per second of sitch time, drawn in the
+object's color. Google Earth plays the path on its time slider, and Sitrec reads the
+file back as a track. Seconds at which the track has no position (a constant-altitude
+traverse where the line of sight never reaches that altitude) break the line rather
+than being joined across.
+
 A spline track — one made with **Add Track**, dropped in as a `.spline.json`, or built
 into a sitch — gets all four: its control points *and* the per-frame track it generates,
 in CSV, MISB CSV and KML. The per-frame formats export the **smoothed** track, so they

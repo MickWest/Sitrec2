@@ -54,7 +54,7 @@ import {
     WebGLCubeRenderTarget,
     WireframeGeometry
 } from "three";
-import {FileManager, Globals, guiMenus, markShadowCastersDirty, NodeMan, setRenderOne, Sit} from "../Globals";
+import {FileManager, GlobalDateTimeNode, Globals, guiMenus, markShadowCastersDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {assert} from "../assert";
 import {
     DebugArrowAB,
@@ -70,6 +70,9 @@ import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js'
 import {CNodeLabel3D, CNodeMeasureAB} from "./CNodeLabels3D";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {getLocalUpVector} from "../SphericalMath";
+import {escapeXML} from "../utils";
+import {showError} from "../showError";
+import {colladaSafeId, describeTrackSamples, kmlColorFromHex, sampleTrackAtOneHertz, trackPlacemarkXML} from "../ExportObjectKMZ";
 
 import {findRootTrack} from "../FindRootTrack";
 import {GlobalScene} from "../LocalFrame";
@@ -422,12 +425,22 @@ export class CNode3DObject extends CNode3DGroup {
 
     }
 
-    // Export the 3D object as a KML file for Google Earth
+    // The track this object rides, for the export: the position controller's source
+    // track, so a traverse object exports its traverse and a track object its track.
+    // An object at a fixed point has none — objectFocusTrack then returns the object
+    // itself, whose "track" would be that one point repeated.
+    exportTrackNode() {
+        const track = objectFocusTrack(this);
+        return track && track !== this ? track : null;
+    }
+
+    // "Export to KMZ with Track": the object as a COLLADA model at its current position,
+    // plus the track it rides sampled once per second as a time-stamped gx:Track.
     async exportToKML() {
         try {
             // Get the current position of the object in ECEF coordinates
             const ecefPosition = this.group.position.clone();
-            
+
             // Convert ECEF position to LLA (Latitude, Longitude, Altitude)
             const lla = ECEFToLLAVD_radii(ecefPosition);
             const latitude = lla.x;   // degrees
@@ -435,39 +448,59 @@ export class CNode3DObject extends CNode3DGroup {
             // lla.z is HAE (height above the WGS84 ellipsoid). KML "absolute" altitude
             // is MSL (EGM96 geoid), so convert (H = h - N) before writing the KML.
             const altitude = lla.z - meanSeaLevelOffset(latitude, longitude);
-            
+
             // Get object properties
             const objectName = this.props.name || this.id;
             const geometryType = this.common.geometry || 'sphere';
-            
+
             // Get sitch name for filename prefix
             const sitchName = Sit.sitchName || Sit.name;
             // Generate COLLADA file content
             const colladaResult = this.generateColladaContent(objectName, geometryType);
             const colladaContent = colladaResult.content;
             const colladaFilename = `${objectName}_${geometryType}.dae`;
-            
+
+            // The track, one point per second of sitch time, drawn in the object's color.
+            const track = this.exportTrackNode();
+            const samples = track ? sampleTrackAtOneHertz(track, {
+                frames: Sit.frames,
+                fps: Sit.fps,
+                frameToMS: (frame) => GlobalDateTimeNode.frameToMS(frame),
+            }) : [];
+            const trackPlacemark = trackPlacemarkXML(samples, {
+                name: `${objectName} track`,
+                color: kmlColorFromHex(this.getMaterialInfo().color),
+            });
+            const trackNote = track
+                ? describeTrackSamples(samples)
+                : "none (this object is not on a track)";
+
             // Create KML content that references the COLLADA model in files/ directory
-            const kmlContent = this.generateKMLContent(objectName, latitude, longitude, altitude, geometryType, `files/${colladaFilename}`);
-            
+            const kmlContent = this.generateKMLContent(objectName, latitude, longitude, altitude,
+                geometryType, `files/${colladaFilename}`, {trackPlacemark, trackNote});
+
             // Create a KMZ file containing doc.kml and files/model.dae with sitch name prefix
             const kmzFilename = `${sitchName}_${objectName}_${geometryType}.kmz`;
-            
+
             await this.saveAsKMZ(kmlContent, colladaContent, objectName, geometryType, kmzFilename);
             console.log(`KMZ file exported successfully as: ${kmzFilename}`);
             console.log(`COLLADA contains ${colladaResult.vertexCount} vertices, ${colladaResult.triangleCount} triangles`);
             console.log(`Material: ${colladaResult.materialInfo.color}, opacity: ${colladaResult.materialInfo.opacity}`);
-            
-            alert(`3D object exported successfully!\n\nFile saved:\n- ${kmzFilename} (KMZ archive with embedded 3D model)\n\nIMPORTANT:\n1. Open the KMZ file directly in Google Earth\n2. The 3D object will appear at the specified location\n3. No extraction needed - everything is packaged together!\n\nNote: KMZ is the standard format for 3D models in Google Earth.`);
-            
+            console.log(`Track: ${trackNote}`);
         } catch (error) {
-            console.error('Error exporting to KML:', error);
-            alert('Error exporting to KML: ' + error.message);
+            // Cancelling the save dialog arrives here as an error; it is not one.
+            if (/cancelled/i.test(error?.message ?? "")) {
+                console.log("KMZ export cancelled");
+                return;
+            }
+            console.error('Error exporting to KMZ:', error);
+            showError('Error exporting to KMZ: ' + error.message);
         }
     }
 
     // Generate KML content for the 3D object
-    generateKMLContent(name, latitude, longitude, altitude, geometryType, colladaFilename) {
+    generateKMLContent(name, latitude, longitude, altitude, geometryType, colladaFilename,
+                       {trackPlacemark = "", trackNote = ""} = {}) {
         // Get object dimensions based on geometry type
         const dimensions = this.getObjectDimensions(geometryType);
         
@@ -496,6 +529,7 @@ export class CNode3DObject extends CNode3DGroup {
                 <li>Opacity: ${materialInfo.opacity.toFixed(2)}</li>
                 ${materialInfo.transparent ? '<li>Transparent: Yes</li>' : ''}
             </ul>
+            ${trackNote ? `<p><strong>Track:</strong> ${trackNote}</p>` : ''}
             <p><em>Exported from Sitrec</em></p>
             ]]>
         `;
@@ -505,13 +539,13 @@ export class CNode3DObject extends CNode3DGroup {
 
         // Generate KML with 3D model reference
         const kml = `<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
     <Document>
-        <name>${name} - ${geometryType}</name>
+        <name>${escapeXML(name)} - ${geometryType}</name>
         <description>3D Object exported from Sitrec</description>
         
         <Placemark>
-            <name>${name}</name>
+            <name>${escapeXML(name)}</name>
             <description>${description}</description>
             <Model>
                 <altitudeMode>absolute</altitudeMode>
@@ -531,11 +565,11 @@ export class CNode3DObject extends CNode3DGroup {
                     <z>${scale.z}</z>
                 </Scale>
                 <Link>
-                    <href>${colladaFilename}</href>
+                    <href>${escapeXML(colladaFilename)}</href>
                 </Link>
             </Model>
         </Placemark>
-    </Document>
+${trackPlacemark}    </Document>
 </kml>`;
 
         return kml;
@@ -736,10 +770,15 @@ export class CNode3DObject extends CNode3DGroup {
         // Get material properties
         const materialInfo = this.getMaterialInfo();
         
-        // Generate unique IDs
-        const geometryId = `${name}-geometry`;
-        const materialId = `${name}-material`;
-        const effectId = `${name}-effect`;
+        // COLLADA ids are XML NCNames and every url="#..." is a URI fragment, so the
+        // object's name cannot go in as it is: "balloon_001 (Truth)_ob" has spaces and
+        // parentheses, and a loader that resolves "#balloon_001 (Truth)_ob-geometry"
+        // strictly finds no geometry and draws nothing. The visible name stays on the
+        // KML side; inside the model only a safe id is needed.
+        const safeName = colladaSafeId(name);
+        const geometryId = `${safeName}-geometry`;
+        const materialId = `${safeName}-material`;
+        const effectId = `${safeName}-effect`;
         
         // Create COLLADA XML content
         const collada = `<?xml version="1.0" encoding="utf-8"?>
@@ -788,13 +827,13 @@ export class CNode3DObject extends CNode3DGroup {
     </library_effects>
     
     <library_materials>
-        <material id="${materialId}" name="${name}-material">
+        <material id="${materialId}" name="${materialId}">
             <instance_effect url="#${effectId}"/>
         </material>
     </library_materials>
     
     <library_geometries>
-        <geometry id="${geometryId}" name="${name}-geometry">
+        <geometry id="${geometryId}" name="${geometryId}">
             <mesh>
                 <source id="${geometryId}-positions">
                     <float_array id="${geometryId}-positions-array" count="${vertices.length}">
@@ -837,7 +876,7 @@ export class CNode3DObject extends CNode3DGroup {
     
     <library_visual_scenes>
         <visual_scene id="Scene" name="Scene">
-            <node id="${name}" name="${name}" type="NODE">
+            <node id="${safeName}" name="${safeName}" type="NODE">
                 <instance_geometry url="#${geometryId}">
                     <bind_material>
                         <technique_common>

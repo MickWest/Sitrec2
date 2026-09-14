@@ -1941,8 +1941,9 @@ const en = {
                 + "Falls back to lifting straight up when the sightline is too flat to help.",
         },
         exportToKML: {
-            label: "Export to KML",
-            tooltip: "Export this 3D object as a KML file for Google Earth",
+            label: "Export to KMZ with Track",
+            tooltip: "Export this object as a KMZ file for Google Earth: the object as a 3D model at its "
+                + "current position, plus the track it is on, sampled once per second",
         },
         startAnalysis: {
             label: "Start Analysis",

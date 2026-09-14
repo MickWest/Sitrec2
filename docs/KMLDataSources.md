@@ -318,7 +318,7 @@ Sitrec doesn't only *read* KML — it also **writes** it, and those exports re-i
 |---|---|---|
 | `CNodeTrack.exportTrackKML` (`CNodeTrack.js:158`) | `<Folder><Placemark><gx:Track>` — single folder, single placemark, `altitudeMode=absolute`, `extrude=1` | imports as a 1-track group |
 | `CNodeMISBData` track export (`CNodeMISBData.js:1810`) | Same `<Folder>…<gx:Track>` shape | imports as a 1-track group |
-| `CNode3DObject` (`CNode3DObject.js:443`) | `<Document><Placemark><Model><Link href=…dae>` | No time+geometry → a scene object, not a track |
+| `CNode3DObject.exportToKML` — the Objects menu's **Export to KMZ with Track** | `<Document>` holding a `<Placemark><Model><Link href=…dae>` for the object and, when it rides a track, a `<Placemark><gx:Track>` sampled once per second (`<gx:MultiTrack>` with `<gx:interpolate>0` where the track has gaps); the track half is written by `ExportObjectKMZ.js` | The `<gx:Track>` imports as a 1-track group at 1 Hz; the model Placemark has no time+geometry → a scene object, not a track |
 | `CustomManagerMenus` "Sitrec Pin" (`CustomManagerMenus.js:538`) | `<Document><Placemark><Point>` (no time) | A point landmark feature, not a track |
 
 The track exporters emit **MSL** altitude (KML `absolute` is the EGM96 geoid datum) and
