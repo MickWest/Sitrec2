@@ -65,7 +65,7 @@ rung figures. The figures that compare clip lengths need at least two.
 Every figure carries its own caption, and every number in that caption is
 computed from the rows on screen rather than written in by hand.
 
-Every error/range axis is labelled in powers of ten, one label per decade.
+Logarithmic error axes are labelled in powers of ten, one label per decade.
 
 Hovering a dot that stands for one track names the track by its path under the
 folder that was scanned, so files with the same name in different folders can be
@@ -73,7 +73,12 @@ told apart. Rows loaded from a JSONL file give the file name only. When the run 
 scenario screenshot for it (**Scenario screenshots** in BOTBench), the screenshot
 shows beside the label. Rows loaded from a JSONL file have no screenshots.
 
-Two choices above the figure apply to every error figure at once:
+Each track dot's tooltip also names the solver that produced its error. For the
+top or best candidate, this can differ from track to track; when a solver is
+selected, the tooltip names that solver. The ranking-cost chart also names the
+best solver used for comparison.
+
+The error controls above the figure apply to every error figure at once:
 
 - **Candidate** picks whose error is plotted: the candidate the blind ranking put
   first (the default), the candidate closest to truth, which is an oracle pick, or
@@ -91,8 +96,13 @@ Two choices above the figure apply to every error figure at once:
   velocity error carries the range error; the heading error does not, which makes it
   a comparison of shape alone. The heading error is bounded, so its figures use a
   fixed linear axis from 0 to 180 degrees in steps of 25, with the box whiskers
-  computed on the values themselves; the other units use a log axis that the data
-  sets, with a drawing floor.
+  computed on the values themselves; the other units default to a log axis that
+  the data sets, with a drawing floor.
+- **log Error** starts checked. Uncheck it to use linear error axes starting at
+  zero, with zero errors shown at zero. Box whiskers then use the raw values.
+  Heading error keeps its fixed 0–180 degree scale. The cost-of-ranking chart
+  switches both error axes; the absolute-error-versus-range chart keeps its
+  range axis logarithmic. Exports retain the selected scale.
 
 The tolerance figures always use a share of range, for the chosen candidate. The
 solver figure already shows every candidate, so only the unit applies to it. The
@@ -131,18 +141,17 @@ the charting library, because two conventions here are deliberate.
 **Quartiles and the median come from the raw values.** The median of an even
 count is the mean of the two middle values.
 
-**The whiskers use Tukey's rule applied in log space.** The fence is 1.5 box
+**The whiskers use Tukey's rule in the selected axis scale.** On a log axis, the fence is 1.5 box
 heights beyond the quartiles, but measured on the base-10 logarithm rather than
 on the raw values, so that it is symmetric on the log axis it is drawn on. A
 whisker reaches the last observation still inside that fence, never the fence
-itself. Computing the fence on raw values instead would put the lower whisker
-almost on the box and the upper one far away, which tells the reader nothing.
+itself. On a linear axis, the fence is computed on the raw values instead.
 
 **Every observation is drawn as a dot**, jittered sideways so they do not stack.
 Because every point is already there, no separate outlier marks are drawn. A
 hollow dot means the top candidate came from the range-blind polynomial family.
 
-**A drawing floor is applied only when drawing.** Values below the floor are
+**A drawing floor is applied only when drawing a log error axis.** Values below the floor are
 drawn at it so the axis stays readable, and each caption says how many were
 moved. The statistics behind the box never see the floor.
 

@@ -7,7 +7,7 @@
 
 import {
     buildAllFigures, rungGroups, durationGroups, isSingleCell, cellDescription, rungLabel, CLASSES,
-    figErrorByClass, figOutcomeByClass,
+    figErrorByClass, figOutcomeByClass, figErrorByTrueDistance, figAbsoluteErrorVsTrueRange, makeMeasure,
 } from "../src/analysis/charts/RockV3ChartSpecs";
 import {median} from "../src/analysis/charts/ChartStats";
 
@@ -45,6 +45,227 @@ const keysOf = (rows) => buildAllFigures(rows).filter((f) => !f.error).map((f) =
 const BY_CLASS = ["errorByClass", "withinByClass", "outcomeByClass", "verdictByClass", "topCandidateByClass"];
 const SWEEP_ONLY = ["errorByLength", "errorByRung", "withinByRung", "withinByLength", "classOutcome",
     "verdictMix", "topCandidateMix"];
+
+describe("error by true distance", () => {
+    const distances = [1000, 1000, 1000, 2000, 3000, 4000, 5000, 6000, 7000];
+    const rows = distances.map((distance, i) => ({
+        base: `track_${i}`, rowIndex: i, in_trueRangeMeanM: distance,
+        r_topRelSep: (i + 1) / 100, r_bestRelSep: (i + 1) / 200,
+        d_turnDeg: 0, d_durationSeconds: 20,
+        r_candidates: [{name: "Quadcopter", sepM: (i + 1) * 10, headingDeg: i * 10}],
+    }));
+
+    test("six equal distance widths, with each boundary and the maximum counted once", () => {
+        const figure = figErrorByTrueDistance(rows);
+        expect(figure.stats.map((s) => [s.minM, s.maxM])).toEqual([
+            [1000, 2000], [2000, 3000], [3000, 4000], [4000, 5000], [5000, 6000], [6000, 7000],
+        ]);
+        // Uneven populations prove that these are distance bands, not quantiles.
+        expect(figure.stats.map((s) => s.count)).toEqual([3, 1, 1, 1, 1, 2]);
+        expect(figure.stats[0].median).toBeCloseTo(0.02, 12);
+        expect(figure.stats[5].median).toBeCloseTo(0.085, 12);
+        expect(figure.data.find((t) => t.type === "box").median).toHaveLength(6);
+        expect(figure.data.filter((t) => t.type === "scattergl").flatMap((t) => t.customdata).sort())
+            .toEqual(rows.map((r) => r.rowIndex));
+    });
+
+    test("missing errors do not shrink the distance coverage, and empty bands stay visible", () => {
+        const figure = figErrorByTrueDistance([
+            {...rows[0], in_trueRangeMeanM: 0},
+            {...rows[1], in_trueRangeMeanM: 6000, r_topRelSep: null},
+            {...rows[2], in_trueRangeMeanM: null},
+            {...rows[3], in_trueRangeMeanM: -1},
+            {...rows[4], in_trueRangeMeanM: Infinity},
+        ]);
+        expect(figure.stats.map((s) => s.count)).toEqual([1, 0, 0, 0, 0, 0]);
+        expect(figure.stats[5]).toMatchObject({minM: 5000, maxM: 6000, total: 1, median: null});
+        expect(figure.layout.xaxis.ticktext).toHaveLength(6);
+        expect(figure.layout.xaxis.range).toEqual([-0.5, 5.5]);
+        expect(figure.data.find((t) => t.type === "box").x).toEqual([0]);
+        const caption = figure.layout.annotations.at(-1).text.replace(/<br>/g, " ");
+        expect(caption).toContain("3 with no valid true distance and 1 with no value");
+        expect(figErrorByTrueDistance([])).toBeNull();
+        expect(figErrorByTrueDistance([{in_trueRangeMeanM: null}])).toBeNull();
+        expect(figErrorByTrueDistance(rows.slice(0, 3))).toBeNull();
+    });
+
+    test("candidate and unit choices change the errors but keep the same distance bands", () => {
+        const best = figErrorByTrueDistance(rows, {measure: makeMeasure({subject: "best"})});
+        const metres = figErrorByTrueDistance(rows, {measure: makeMeasure({subject: "Quadcopter", metric: "sepM"})});
+        expect(best.stats[0].median).toBeCloseTo(0.01, 12);
+        expect(metres.stats[0].median).toBe(20);
+        expect(metres.stats.map((s) => s.minM)).toEqual(best.stats.map((s) => s.minM));
+        expect(metres.layout.yaxis.title.text).toContain("(m)");
+        expect(metres.layout.shapes ?? []).toHaveLength(0);
+        const heading = figErrorByTrueDistance(rows, {measure: makeMeasure({subject: "Quadcopter", metric: "headingDeg"})});
+        expect(heading.layout.yaxis).toMatchObject({type: "linear", range: [0, 180]});
+        expect(heading.stats[0].median).toBe(10);
+    });
+
+    test("display limits do not change the box statistics", () => {
+        const figure = figErrorByTrueDistance(rows.map((r, i) => ({...r, r_topRelSep: i < 3 ? 0 : 1e6})));
+        expect(figure.stats[0].median).toBe(0);
+        expect(figure.stats[5].median).toBe(1e6);
+        const box = figure.data.find((t) => t.type === "box");
+        expect(box.median[0]).toBe(1e-4);
+        expect(box.median[5]).toBe(1e3);
+        expect(figure.layout.yaxis.range[1]).toBeLessThan(4);
+    });
+
+    test("the registered chart uses the turn selection and straight markers", () => {
+        const selected = buildAllFigures([
+            ...rows, {...rows[0], d_turnDeg: 20, in_trueRangeMeanM: 1e6},
+        ], {only: ["errorByTrueDistance"], turnDeg: 0, marks: {markStraight: true}});
+        expect(selected).toHaveLength(1);
+        expect(selected[0].stats.at(-1).maxM).toBe(7000);
+        expect(selected[0].title).toContain("sensor turn 0°");
+        expect(selected[0].data.find((t) => t.type === "scattergl").marker.symbol)
+            .toEqual(rows.map(() => "square"));
+    });
+});
+
+describe("mean absolute error vs. mean true range", () => {
+    const rows = [
+        {rowIndex: 0, base: "near", d_class: "balloon", in_trueRangeMeanM: 1000,
+            r_topSepM: 1e-8, r_bestSepM: 1e-9, d_turnDeg: 0, d_durationSeconds: 20},
+        {rowIndex: 1, base: "far", d_class: "drone", in_trueRangeMeanM: 100000,
+            r_topSepM: 1e9, r_bestSepM: 200, d_turnDeg: 20, d_durationSeconds: 300},
+    ].map((r) => ({...r, r_topRelSep: r.r_topSepM / r.in_trueRangeMeanM,
+        r_candidates: [{name: "Quadcopter", sepM: 12, headingDeg: 90}]}));
+
+    test("plots exact range and absolute error on two log axes, without clipping or jitter", () => {
+        const figure = figAbsoluteErrorVsTrueRange(rows);
+        expect(figure.data.map((t) => t.x)).toEqual([[1000], [100000]]);
+        expect(figure.data.map((t) => t.y)).toEqual([[1e-8], [1e9]]);
+        expect(figure.data.map((t) => t.customdata)).toEqual([[0], [1]]);
+        expect(figure.layout.xaxis.type).toBe("log");
+        expect(figure.layout.yaxis.type).toBe("log");
+        expect(figure.layout.xaxis.title.text).toBe("Mean true range (m)");
+        expect(figure.layout.yaxis.title.text).toBe("Mean absolute error (m)");
+        expect(figure.layout.yaxis.range[0]).toBeLessThan(-8);
+        expect(figure.layout.yaxis.range[1]).toBeGreaterThan(9);
+        expect(figure.stats).toMatchObject({count: 2, omitted: 0, byClass: {balloon: 1, drone: 1}});
+    });
+
+    test("always uses metres while allowing a different candidate", () => {
+        const best = figAbsoluteErrorVsTrueRange(rows, {measure: makeMeasure({subject: "best", metric: "headingDeg"})});
+        expect(best.data.map((t) => t.y)).toEqual([[1e-9], [200]]);
+        const solver = figAbsoluteErrorVsTrueRange(rows, {measure: makeMeasure({subject: "Quadcopter", metric: "angDeg"})});
+        expect(solver.data.map((t) => t.y)).toEqual([[12], [12]]);
+        expect(solver.title).toContain("Quadcopter");
+        expect(solver.layout.yaxis.type).toBe("log");
+    });
+
+    test("omits and counts values that cannot be plotted on logarithmic axes", () => {
+        const invalid = [
+            {in_trueRangeMeanM: 0}, {in_trueRangeMeanM: -10}, {in_trueRangeMeanM: Infinity},
+            {r_topSepM: 0}, {r_topSepM: -1}, {r_topSepM: null}, {r_topSepM: NaN},
+        ].map((change) => ({...rows[0], ...change}));
+        const figure = figAbsoluteErrorVsTrueRange([...rows, ...invalid]);
+        expect(figure.stats).toMatchObject({count: 2, omitted: 7});
+        expect(figure.layout.annotations.at(-1).text.replace(/<br>/g, " ")).toContain("7 evaluations with missing, invalid or zero");
+        expect(figAbsoluteErrorVsTrueRange(invalid)).toBeNull();
+        expect(figAbsoluteErrorVsTrueRange([])).toBeNull();
+    });
+
+    test("linear error keeps the range logarithmic and includes exact zero errors", () => {
+        const zero = {...rows[0], r_topSepM: 0};
+        const figure = figAbsoluteErrorVsTrueRange([...rows, zero, {...zero, in_trueRangeMeanM: 0}],
+            {measure: makeMeasure({metric: "headingDeg", logError: false})});
+        expect(figure.data.flatMap((t) => t.y)).toEqual([1e-8, 0, 1e9]);
+        expect(figure.layout.xaxis.type).toBe("log");
+        expect(figure.layout.yaxis).toMatchObject({type: "linear"});
+        expect(figure.layout.yaxis.range[0]).toBe(0);
+        expect(figure.layout.yaxis.range[1]).toBeGreaterThan(1e9);
+        expect(figure.stats).toMatchObject({count: 3, omitted: 1});
+        const caption = figure.layout.annotations.at(-1).text.replace(/<br>/g, " ");
+        expect(caption).toContain("error uses a linear scale starting at zero");
+        expect(caption).not.toContain("zero range or error are omitted");
+        const onlyZero = figAbsoluteErrorVsTrueRange([zero], {measure: makeMeasure({logError: false})});
+        expect(onlyZero.layout.yaxis.range.every(Number.isFinite)).toBe(true);
+        expect(onlyZero.layout.yaxis.range[1]).toBeGreaterThan(0);
+    });
+
+    test("the registered scatter supports turn selection and straight markers", () => {
+        const [figure] = buildAllFigures(rows, {only: ["absoluteErrorVsTrueRange"], turnDeg: 0,
+            measure: makeMeasure({metric: "headingDeg"}), marks: {markStraight: true}});
+        expect(figure.stats.count).toBe(1);
+        expect(figure.data[0].marker.symbol).toEqual(["square"]);
+        expect(figure.data[0].x).toEqual([1000]);
+        expect(figure.data[0].y).toEqual([1e-8]);
+        expect(figure.title).toContain("sensor turn 0°");
+    });
+});
+
+describe("log Error choice", () => {
+    const errorKeys = ["errorByClass", "errorByLength", "errorByTrueDistance", "absoluteErrorVsTrueRange",
+        "errorByRung", "errorByLengthAndTurn", "errorByTurn", "errorBySolver", "errorVsGeometry", "rankingCost"];
+    const rows = [0, 20].flatMap((turn) => makeRows({rungs: [0, 0.2], durations: [20, 120], perClass: 6})
+        .map((r) => ({...r, d_turnDeg: turn, r_topSepM: r.r_topRelSep * 1000, r_bestSepM: r.r_bestRelSep * 1000,
+            r_bestName: r.r_topName,
+            r_candidates: [{name: r.r_topName, relSep: r.r_topRelSep, sepM: r.r_topRelSep * 1000,
+                angDeg: r.r_topRelSep, velocityMS: r.r_topRelSep * 10}]})));
+
+    test.each(["relSep", "sepM", "angDeg", "velocityMS"])("%s switches every error plot and preserves other plots", (metric) => {
+        const seen = new Set();
+        for (const selection of [rows, rows.filter((r) => r.d_durationSeconds === 20 && r.d_errorDeg === 0)]) {
+            const logarithmic = buildAllFigures(selection, {measure: makeMeasure({metric})});
+            const linear = buildAllFigures(selection, {measure: makeMeasure({metric, logError: false})});
+            expect(linear.map((f) => f.key)).toEqual(logarithmic.map((f) => f.key));
+            for (const [i, figure] of linear.entries()) {
+                expect(figure.error).toBeUndefined();
+                if (!errorKeys.includes(figure.key)) {
+                    expect(figure).toEqual(logarithmic[i]);
+                    continue;
+                }
+                seen.add(figure.key);
+                for (const [name, axis] of Object.entries(figure.layout)) {
+                    if (!/^yaxis\d*$/.test(name)) continue;
+                    expect(logarithmic[i].layout[name].type).toBe("log");
+                    expect(axis.type).toBe("linear");
+                    expect(axis.range[0]).toBe(0);
+                    expect(axis.range[1]).toBeGreaterThan(0);
+                    expect(axis.range.every(Number.isFinite)).toBe(true);
+                    expect(axis.dtick).toBeUndefined();
+                }
+                // Shapes always use data coordinates; annotation coordinates follow the axis scale.
+                const labels = figure.layout.annotations.filter((a) => a.text === "5% of range");
+                for (const label of labels) {
+                    expect(label.y).toBe(0.05);
+                    const logLabel = logarithmic[i].layout.annotations.find((a) => a.text === label.text && a.yref === label.yref);
+                    expect(logLabel.y).toBeCloseTo(Math.log10(0.05), 12);
+                    expect(figure.layout.shapes.find((s) => s.yref === label.yref)).toMatchObject({y0: 0.05, y1: 0.05});
+                }
+                if (figure.key === "rankingCost") {
+                    expect(figure.layout.xaxis.type).toBe("linear");
+                    expect(figure.layout.xaxis.range).toEqual(figure.layout.yaxis.range);
+                    expect(figure.layout.shapes[0]).toMatchObject({x0: 0, y0: 0,
+                        x1: figure.layout.xaxis.range[1], y1: figure.layout.yaxis.range[1]});
+                }
+            }
+        }
+        expect([...seen].sort()).toEqual([...errorKeys].sort());
+    });
+
+    test("linear boxes preserve zeros and quartiles, and compute whiskers in the displayed scale", () => {
+        const errors = [0, 1, 2, 3, 10];
+        const selection = errors.map((error, i) => ({...rows[i], d_class: "balloon",
+            d_durationSeconds: 20, d_errorDeg: 0, r_topRelSep: error}));
+        const log = figErrorByClass(selection);
+        const linear = figErrorByClass(selection, {measure: makeMeasure({logError: false})});
+        const logBox = log.data.find((t) => t.type === "box");
+        const linearBox = linear.data.find((t) => t.type === "box");
+        expect(linearBox.median).toEqual(logBox.median);
+        expect(linearBox.q1).toEqual(logBox.q1);
+        expect(linearBox.q3).toEqual(logBox.q3);
+        expect(linearBox.upperfence).toEqual([3]);
+        expect(logBox.upperfence).toEqual([10]);
+        expect(linear.data.filter((t) => t.type === "scattergl").flatMap((t) => t.y)).toContain(0);
+        expect(log.data.filter((t) => t.type === "scattergl").flatMap((t) => t.y)).not.toContain(0);
+        expect(linear.layout.annotations.at(-1).text).not.toMatch(/log10|drawn at the floor/);
+        expect(makeMeasure({metric: "headingDeg", logError: false}).yRange(50)).toEqual([0, 180]);
+    });
+});
 
 describe("one cell with the pointing error unknown: the All-folder run", () => {
     const rows = makeRows();
@@ -257,8 +478,8 @@ describe("whose error, and in what unit", () => {
             .map((f) => [f.key, JSON.stringify(f.stats)]));
         const plain = statsOf(buildAllFigures(rows));
         const chosen = statsOf(buildAllFigures(rows, {measure}));
-        const errorKeys = ["errorByLength", "errorByRung", "withinByLength", "withinByRung", "errorBySolver",
-            "errorVsGeometry", "rankingCost"];
+        const errorKeys = ["errorByLength", "errorByTrueDistance", "errorByRung", "withinByLength", "withinByRung", "errorBySolver",
+            "absoluteErrorVsTrueRange", "errorVsGeometry", "rankingCost"];
         expect(Object.keys(plain)).toEqual(expect.arrayContaining(["errorByLength", "withinByRung", "verdictMix"]));
         for (const key of Object.keys(plain)) {
             expect([key, plain[key] === chosen[key]]).toEqual([key, !errorKeys.includes(key)]);
@@ -284,11 +505,38 @@ describe("whose error, and in what unit", () => {
     test("a dot's hover label names the file by its path under the scanned folder", () => {
         const withPath = rows.map((r) => ({...r, path: `batch_${r.d_durationSeconds}sec/${r.d_errorDeg}deg/All/${r.base}.all.csv`}));
         const lengthDots = figErrorByLength(withPath).data.filter((t) => t.type === "scattergl");
-        expect(lengthDots.flatMap((t) => t.text).every((label) => /^batch_\d+sec\/[\d.]+deg\/All\/.+\.all\.csv$/.test(label))).toBe(true);
+        expect(lengthDots.flatMap((t) => t.text).every((label) => /^batch_\d+sec\/[\d.]+deg\/All\/.+\.all\.csv<br>Solver: /.test(label))).toBe(true);
         const solverDots = figErrorBySolver(withPath).data.filter((t) => t.type === "scattergl");
-        expect(solverDots.flatMap((t) => t.text).every((label) => /\.all\.csv · /.test(label))).toBe(true);
+        expect(solverDots.flatMap((t) => t.text).every((label) => /\.all\.csv<br>Solver: /.test(label))).toBe(true);
         // rows without a path, as from a JSONL file, keep the file name
-        expect(figErrorByLength(rows).data.find((t) => t.type === "scattergl").text[0]).toBe(rows[0].base);
+        expect(figErrorByLength(rows).data.find((t) => t.type === "scattergl").text[0])
+            .toBe(`${rows[0].base}<br>Solver: ${rows[0].r_topName}`);
+    });
+    test.each(["top", "best", "Quadcopter"])("track tooltips name the solver for the %s selection", (subject) => {
+        const varied = rows.map((r, i) => ({...r,
+            r_topName: i % 2 ? "Global Fit: Kalman Smoother" : r.r_topName}));
+        const seen = new Set();
+        for (const selection of [varied, varied.filter((r) => r.d_durationSeconds === 20 && r.d_errorDeg === 0)]) {
+            const figures = buildAllFigures(selection, {measure: makeMeasure({subject})});
+            for (const figure of figures) {
+                expect(figure.error).toBeUndefined();
+                for (const trace of figure.data.filter((t) => t.type === "scattergl")) {
+                    seen.add(figure.key);
+                    trace.customdata.forEach((id, i) => {
+                        const row = varied[id];
+                        const name = subject === "top" ? row.r_topName : subject === "best" ? row.r_bestName : subject;
+                        if (figure.key === "errorBySolver") {
+                            expect(row.r_candidates.some((c) => trace.text[i] === `${row.base}<br>Solver: ${c.name}`)).toBe(true);
+                        } else {
+                            expect(trace.text[i]).toContain(`${row.base}<br>Solver: ${name}`);
+                            if (figure.key === "rankingCost") expect(trace.text[i]).toContain(`Best solver: ${row.r_bestName}`);
+                        }
+                    });
+                }
+            }
+        }
+        expect([...seen]).toEqual(expect.arrayContaining(["errorByClass", "errorByLength", "errorByTrueDistance",
+            "absoluteErrorVsTrueRange", "errorByRung", "errorVsGeometry", "errorBySolver"]));
     });
 });
 

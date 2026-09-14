@@ -394,7 +394,7 @@ function getHelpDocContent($docName, $availableDocs) {
     // Cut on a character boundary where mbstring is available: a naive byte-wise substr
     // can split a multibyte UTF-8 sequence, and the resulting invalid string makes the
     // json_encode of this response fail outright rather than merely truncating oddly.
-    $limit = 60000;
+    $limit = 80000;
     if (strlen($content) > $limit) {
         $content = function_exists('mb_substr')
             ? mb_substr($content, 0, $limit, 'UTF-8')

@@ -14,9 +14,8 @@
  *              when the file carries truth, how far that interpretation
  *              actually was from it.
  *
- * Every row keeps its full results object, so "Gallery" opens the same
- * full-screen candidate gallery the Analyze button produces, with no
- * re-computation, and "Report" builds the same HTML report on demand.
+ * Rows keep their summary and chart facts. A small recent set keeps its full
+ * analysis; older rows rebuild it from stored fits when Gallery or Report opens.
  *
  * Structure and idiom follow VideoFolderAnalysisUI.js deliberately — this is
  * the second tool in the File Analysis folder and they should feel like one
@@ -44,8 +43,9 @@ import {
 import {longestUniformRun, measureAnchorRate} from "./BotBenchClock";
 import {putFileHandoff} from "../FileHandoff";
 import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBenchRunner";
-import {botBenchConcurrency, runBotBenchQueue} from "./BotBenchWorkerPool";
+import {botBenchConcurrency, createBotBenchYield, runBotBenchQueue} from "./BotBenchWorkerPool";
 import {BotBenchAnalysisPool} from "./BotBenchAnalysisPool";
+import {entryFileHashes, readEntrySidecars} from "./BotBenchEntryFiles";
 import {packForCache, unpackFromCache, sameFittedRow} from "./BotBenchCacheCodec";
 import {
     SOLVERS, allSolverIds, describeSolvers, isEverySolver, normalizeSolvers, planUnits, selectionKey,
@@ -856,7 +856,8 @@ function buildSummaryReport(entries, options) {
  * `bot-0001.scenario.json`, sometimes `bot-0001.truth.json`), and only the
  * directory walk can see them together — by the time a file reaches the
  * ingest it is a lone Blob. So the walk collects every candidate, then this
- * attaches the sidecar TEXT to the row that needs it.
+ * attaches a file reference to the row that needs it. Text is read only while
+ * hashing, ingesting or opening that row, not retained for the whole folder.
  *
  * TWO LAYOUTS, ONE LOOKUP. The pairing key is DIRECTORY + scenario base, not
  * the base alone: a recursive walk over a swept tree sees the same basename in
@@ -869,7 +870,7 @@ function buildSummaryReport(entries, options) {
  * sibling layout) and falls back to its parent (the meta layout). Both keys
  * still carry the batch path, so the cross-batch collision stays impossible.
  */
-async function pairSidecars(found, {explicit = false} = {}) {
+export async function pairSidecars(found, {explicit = false} = {}) {
     const sidecars = new Map();
     const labels = new Map();
     const rows = [];
@@ -885,15 +886,9 @@ async function pairSidecars(found, {explicit = false} = {}) {
     const queued = explicit ? rows : await keepOnlyPointingSRT(rows);
     for (const r of queued) {
         const s = sidecars.get(r.key) ?? sidecars.get(r.altKey);
-        if (s) {
-            try { r.sidecarText = await (await s.getFile()).text(); }
-            catch (e) { /* ingest warns about the missing sidecar */ }
-        }
+        if (s) r.sidecarFile = s;
         const l = labels.get(r.key) ?? labels.get(r.altKey);
-        if (l) {
-            try { r.labelsText = await (await l.getFile()).text(); }
-            catch (e) { /* labels are optional */ }
-        }
+        if (l) r.labelsFile = l;
     }
     queued.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
     return queued;
@@ -976,24 +971,8 @@ function isExplicitlyCollectable(name) {
 // whose FileSystemEntry API is read-only.
 // ---------------------------------------------------------------------------
 
-async function sha256Hex(data) {
-    const buf = typeof data === "string" ? new TextEncoder().encode(data) : data;
-    const digest = await crypto.subtle.digest("SHA-256", buf);
-    return Array.from(new Uint8Array(digest))
-        .map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-// Hash EVERY input that shapes the row. The sidecar and answer key travel as
-// text on the entry (pairSidecars), so a changed sidecar with an unchanged CSV
-// correctly misses the cache.
-async function entryFileHashes(entry) {
-    const hashes = {csv: await sha256Hex(await (await entry.getFile()).arrayBuffer())};
-    if (entry.sidecarText != null) hashes.sidecar = await sha256Hex(entry.sidecarText);
-    if (entry.labelsText != null) hashes.truth = await sha256Hex(entry.labelsText);
-    return hashes;
-}
-
-// One memoized cache record per leaf folder for the life of the dialog.
+// One handle record per leaf folder for the life of the dialog. Its index is
+// loaded while needed and released when the run finishes that folder.
 //
 // KEYED BY THE HANDLE ITSELF, not by dirPath. A walk numbers its paths relative
 // to the folder that was chosen, so the chosen root is always "" — and picking
@@ -1006,10 +985,10 @@ async function loadDirCache(state, entry) {
     if (!entry.dirHandle) return null;   // drag-and-drop: no writable folder
     if (!state.dirCaches) state.dirCaches = [];
     const already = state.dirCaches.find((r) => r.handle === entry.dirHandle);
-    if (already) return already.loading;
-    const rec = {handle: entry.dirHandle, data: null,
+    if (already?.loading) return already.loading;
+    const rec = already ?? {handle: entry.dirHandle, data: null,
         writable: entry.cacheWritable !== false};
-    state.dirCaches.push(rec);
+    if (!already) state.dirCaches.push(rec);
     rec.loading = (async () => {
         let data = emptyIndex();
         try {
@@ -1022,20 +1001,35 @@ async function loadDirCache(state, entry) {
     return rec.loading;
 }
 
+async function releaseDirCache(rec) {
+    if (!rec?.data || rec.resultReaders > 0) return;
+    // A writer reads rec.data when its turn comes, so finish it before releasing.
+    try { await flushDirCache(rec); }
+    catch (e) { console.warn("BotBench cache write failed", e); return; }
+    if (rec.resultReaders > 0) return;
+    rec.recordedFitMs = recordedFitMs(rec.data);
+    rec.data = null;
+    rec.loading = null;
+    rec.writing = null;
+}
+
 // THE CACHE INDEX IS WRITTEN IN BATCHES. It is one JSON file per folder holding a
 // row for every file in that folder, so rewriting it after each file made every
 // completion cost as much as all the earlier ones in that folder put together. A
-// folder's index is now written after CACHE_WRITE_BATCH changes or
+// folder's index is now written after CACHE_WRITE_BATCH result changes or
 // CACHE_WRITE_DELAY_MS, whichever comes first, and every folder is written when the
 // run ends, cancelled or not. The unit blobs are still written per file and first, so
 // a tab lost mid-run costs at most one batch of index entries — and those are
 // recovered from the blobs' own meta on the next run.
+// Adopting an unchanged row only changes its build stamp. Those updates use the
+// timer or folder-completion flush, not the row-count trigger: repeatedly writing
+// the full index to acknowledge a cache hit can cost more than loading the row.
 const CACHE_WRITE_BATCH = 25;
 const CACHE_WRITE_DELAY_MS = 3000;
 
-function writeDirCache(rec) {
+function writeDirCache(rec, {metadataOnly = false} = {}) {
     rec.pendingChanges = (rec.pendingChanges ?? 0) + 1;
-    if (rec.pendingChanges >= CACHE_WRITE_BATCH) return flushDirCache(rec);
+    if (!metadataOnly && rec.pendingChanges >= CACHE_WRITE_BATCH) return flushDirCache(rec);
     if (!rec.flushTimer) {
         rec.flushTimer = setTimeout(() => {
             flushDirCache(rec).catch((e) => console.warn("BotBench cache write failed", e));
@@ -1294,7 +1288,7 @@ function rowElapsedMs(records, out) {
  *             dirCache, onProgress, isCancelled, yieldToDOM, needResults}
  * @returns {Promise<{row, results, rowReused, hit}>}
  */
-async function analyseEntryWithCache(entry, ctx) {
+export async function analyseEntryWithCache(entry, ctx) {
     const {options, plan, key, pool, dirCache, hashes} = ctx;
     const adoptUnits = ctx.adoptUnits ?? new Set();
     const hash = combinedHash(hashes);
@@ -1316,7 +1310,7 @@ async function analyseEntryWithCache(entry, ctx) {
                     const record = hit.units?.[unitId];
                     if (record && adoptUnits.has(unitId)) adoptRecord(record, APP_VERSION);
                 }
-                try { await writeDirCache(dirCache); }
+                try { await writeDirCache(dirCache, {metadataOnly: true}); }
                 catch (e) { console.warn("BotBench: could not re-stamp the adopted row", e); }
             }
             return {row: unpackFromCache(memo.row), results: null, rowReused: true, hit, memo,
@@ -1359,7 +1353,7 @@ async function analyseEntryWithCache(entry, ctx) {
     // 4. Store the fits and the row.
     if (dirCache?.writable) {
         try {
-            if (restamped) await writeDirCache(dirCache);
+            if (restamped) await writeDirCache(dirCache, {metadataOnly: true});
             await storeUnits(dirCache, entry, {hash, hashes, options, out,
                 legacyHit: entryMatches && isLegacyEntry(hit) ? hit : null, adoptUnits});
             recordRowMemo(dirCache.data.results, entry.name, {hash, hashes}, key, {
@@ -1398,6 +1392,7 @@ async function ensureResults(state, entry) {
             // Infinity are seen as themselves rather than flattened to null.
             const tableRow = entry.row ? packForCache(entry.row) : null;
             const dirCache = entry.dirHandle ? await loadDirCache(state, entry) : null;
+            if (dirCache) dirCache.resultReaders = (dirCache.resultReaders ?? 0) + 1;
             const pool = new BotBenchAnalysisPool(1);
             let results;
             try {
@@ -1418,7 +1413,11 @@ async function ensureResults(state, entry) {
                     console.warn("BotBench: rebuilding this row did not reproduce it exactly; the gallery "
                         + "may differ from the table", entry.relativePath);
                 }
-            } finally { pool.dispose(); }
+            } finally {
+                pool.dispose();
+                if (dirCache) dirCache.resultReaders--;
+                if (!state.running) await releaseDirCache(dirCache);
+            }
             entry.results = results;
             holdResults(state, entry);
             return results;
@@ -1476,18 +1475,24 @@ const CACHE_ADOPT_MIN_FILES = 20;
 const CACHE_ADOPT_SAMPLE = 10;
 
 /**
- * Every entry with a planned unit that is stored under another build (and is
- * otherwise reusable), with the units concerned.
+ * Candidates for the compatibility sample, selected from index metadata only.
+ * The sample and the run each verify input hashes before using stored results;
+ * a current-build run must not read every source file twice just to find none.
  */
-async function findVersionStaleEntries(state, found, options, plan) {
+export async function findVersionStaleEntries(state, found, options, plan) {
     const stale = [];
+    let previous = null;
     for (const source of found) {
+        if (state.cancelled) break;
         try {
-            const probe = {...source};
-            const hashes = await entryFileHashes(probe);
-            const dirCache = await loadDirCache(state, probe);
-            const hit = dirCache?.data.results[probe.name];
-            if (!hit || hit.hash !== combinedHash(hashes)) continue;
+            if (previous?.handle !== source.dirHandle) {
+                await releaseDirCache(previous);
+                previous = null;
+            }
+            const dirCache = await loadDirCache(state, source);
+            previous = dirCache;
+            const hit = dirCache?.data.results[source.name];
+            if (!hit) continue;
             const units = [];
             for (const unitId of plan) {
                 const record = hit.units?.[unitId];
@@ -1500,9 +1505,13 @@ async function findVersionStaleEntries(state, found, options, plan) {
                     units.push(unitId);
                 }
             }
-            if (units.length) stale.push({source, hashes, dirCache, hit, units});
+            // Do not retain hit or dirCache.data here: only ten candidates will
+            // be sampled, and keeping all their indexes can cost hundreds of MB.
+            if (units.length) stale.push({source, units,
+                appVersion: hit.units?.[units[0]]?.appVersion ?? hit.appVersion});
         } catch (e) { /* unreadable cache: it will simply re-run */ }
     }
+    await releaseDirCache(previous);
     return stale;
 }
 
@@ -1549,9 +1558,15 @@ async function probeCacheAdoption(state, stale, options, plan, key, pool, {onPro
     for (const unitId of plan) result.units[unitId] = {checked: 0, matched: 0, mismatched: []};
     for (const candidate of sample) {
         if (state.cancelled) break;
-        const {source, hashes, dirCache, hit} = candidate;
-        const hash = combinedHash(hashes);
+        const {source} = candidate;
+        let dirCache;
         try {
+            dirCache = await loadDirCache(state, source);
+            const hit = dirCache?.data.results[source.name];
+            if (!hit) continue;
+            const hashes = await entryFileHashes(source);
+            const hash = combinedHash(hashes);
+            if (hit.hash !== hash) continue;
             const entry = {...source};
             const record = await ingestBotBenchEntry(entry);
             // A fresh fit of every planned unit. A schema-2 blob still travels, with
@@ -1605,6 +1620,8 @@ async function probeCacheAdoption(state, stale, options, plan, key, pool, {onPro
         } catch (e) {
             // A file that will not fit today tells us nothing about the cache.
             console.warn("BotBench cache probe skipped", candidate.source.name, e);
+        } finally {
+            await releaseDirCache(dirCache);
         }
         onProgress?.(result);
     }
@@ -1673,7 +1690,8 @@ async function flushCaches(state) {
             return;
         }
         const readOnly = (state.dirCaches ?? []).filter((rec) => rec.writable === false).length;
-        const fitMs = (state.dirCaches ?? []).reduce((sum, rec) => sum + recordedFitMs(rec.data), 0);
+        const fitMs = (state.dirCaches ?? []).reduce((sum, rec) => sum
+            + (rec.data ? recordedFitMs(rec.data) : rec.recordedFitMs ?? 0), 0);
         const bytes = totals.blobBytes + totals.indexBytes;
         state.status.textContent = `Cache measured: ${totals.blobs.toLocaleString()} fitted unit(s), ${formatBytes(bytes)}.`;
         const message = `This deletes the cache from ${dirs.size} folder(s):\n\n`
@@ -1736,7 +1754,7 @@ function fsEntryToFile(fsEntry) {
  * read is not a setting, it is a dead end with no way to reach the files short
  * of guessing that the checkbox is at fault.
  */
-function collectFsEntry(fsEntry, basePath, out, recursive, depth = 0, onSkip = null) {
+export function collectFsEntry(fsEntry, basePath, out, recursive, depth = 0, onSkip = null) {
     return new Promise((resolve) => {
         const rel = basePath ? `${basePath}/${fsEntry.name}` : fsEntry.name;
         if (fsEntry.isFile) {
@@ -1745,6 +1763,7 @@ function collectFsEntry(fsEntry, basePath, out, recursive, depth = 0, onSkip = n
             }
             resolve();
         } else if (fsEntry.isDirectory && (recursive || depth === 0)) {
+            if (fsEntry.name === CACHE_BLOB_DIR) { resolve(); return; }
             // Every child is read before any is followed, because whether a subfolder
             // is walked depends on which folders sit beside it (see
             // interchangeFoldersToSkip). A read error ends the listing; what was read
@@ -1891,9 +1910,10 @@ async function entriesFromDataTransfer(dataTransfer, recursive, {onSkip = null} 
 // the same rule as the drop path above. Where a folder holds All, Input and Truth
 // side by side, Input and Truth are left out (see interchangeFoldersToSkip) and
 // `onSkip` is told the path of each one.
-async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", onFound = null, parentHandle = null,
+export async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", onFound = null, parentHandle = null,
     onSkip = null} = {}) {
     const files = [];
+    if (directoryHandle.name === CACHE_BLOB_DIR) return files;
     // Every child is listed before any is followed, because whether a subfolder is
     // walked depends on which folders sit beside it.
     const children = [];
@@ -1916,6 +1936,9 @@ async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", o
                 onFound?.(entry);
             }
         } else if (recursive && handle.kind === "directory") {
+            // Fit blobs are generated output, never scenario inputs. A processed
+            // folder can have hundreds of thousands of these file handles.
+            if (name === CACHE_BLOB_DIR) continue;
             if (skip.has(name)) {
                 onSkip?.(relativePath);
                 continue;
@@ -2882,18 +2905,17 @@ function openInNewSitrec(state, entry) {
     openHandoffWindow({
         buildFiles: async () => {
             const file = await entry.getFile();
-            // The sidecar TEXT is already on the entry — pairSidecars attached
-            // it during the folder walk, which is the only moment the siblings
-            // were visible together. Parsed leniently: a malformed sidecar
-            // must cost the notes, never the file open.
+            const sidecars = await readEntrySidecars(entry);
+            // Parsed leniently: a malformed sidecar must cost the notes,
+            // never the file open.
             const parse = (text, what) => {
                 if (!text) return null;
                 try { return JSON.parse(text); }
                 catch (e) { console.warn(`BotBench: could not parse the ${what}:`, e); return null; }
             };
             const notes = buildScenarioNotes(
-                parse(entry.sidecarText, "scenario sidecar"),
-                parse(entry.labelsText, "truth sidecar"),
+                parse(sidecars.sidecarText, "scenario sidecar"),
+                parse(sidecars.labelsText, "truth sidecar"),
                 entry.relativePath);
 
             // The candidates need the full analysis. A released one is rebuilt;
@@ -3229,17 +3251,19 @@ function chooseSolvers(state, {fileCount = 0} = {}) {
 // a 30-file run out to hours). Same reasoning as AnalyzeTraverse's makeYield.
 function makeYield() {
     if (typeof MessageChannel === "undefined") {
-        return () => new Promise((resolve) => setTimeout(resolve, 0));
+        return createBotBenchYield(() => new Promise((resolve) => setTimeout(resolve, 0)));
     }
     const channel = new MessageChannel();
     const pending = [];
     channel.port1.onmessage = () => pending.shift()?.();
-    const yieldTask = () => new Promise((resolve) => { pending.push(resolve); channel.port2.postMessage(0); });
+    const yieldTask = createBotBenchYield(() => new Promise((resolve) => {
+        pending.push(resolve); channel.port2.postMessage(0);
+    }));
     yieldTask.dispose = () => { channel.port1.close(); channel.port2.close(); };
     return yieldTask;
 }
 
-async function analyzeEntries(state, found, {askSolvers = false} = {}) {
+export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
     if (state.running) return;
     if (!found.length) {
         state.status.textContent = "No BOT interchange or FMV files found.";
@@ -3295,6 +3319,11 @@ async function analyzeEntries(state, found, {askSolvers = false} = {}) {
     const concurrency = typeof Worker === "undefined" ? 1 : botBenchConcurrency(found.length);
     const pool = new BotBenchAnalysisPool(concurrency);
     state.workerPool = pool;
+    const remainingByDirectory = new Map();
+    for (const source of found) {
+        if (source.dirHandle) remainingByDirectory.set(source.dirHandle,
+            (remainingByDirectory.get(source.dirHandle) ?? 0) + 1);
+    }
     let completed = 0;
     const fractions = new Float64Array(found.length);
     // A running sum, not a reduce over every file: the progress callback fires many
@@ -3314,7 +3343,7 @@ async function analyzeEntries(state, found, {askSolvers = false} = {}) {
         const shots = wantShots && shotQueue.total
             ? `, screenshots ${shotQueue.done} of ${shotQueue.total}` : "";
         state.status.textContent = `Analysing ${completed} of ${found.length} complete`
-            + (pool.workers && !pool.workers.closed ? ` (${concurrency} workers)` : "")
+            + (pool.workers?.slots.length && !pool.workers.closed ? ` (${pool.workers.slots.length} workers)` : "")
             + `, ${describeSolvers(options.solvers)}` + shots + (state.memoryNote ?? "");
     }, 250);
     // The summary tiles take medians over EVERY finished row, so recomputing them
@@ -3334,7 +3363,7 @@ async function analyzeEntries(state, found, {askSolvers = false} = {}) {
             const stale = await findVersionStaleEntries(state, found, options, plan);
             if (stale.length >= CACHE_ADOPT_SAMPLE) {
                 const first = stale[0];
-                const fitted = first.hit.units?.[first.units[0]]?.appVersion ?? first.hit.appVersion ?? "an earlier build";
+                const fitted = first.appVersion ?? "an earlier build";
                 state.status.textContent = `Fits stored by ${fitted}: fitting `
                     + `${CACHE_ADOPT_SAMPLE} of ${stale.length} files to see which units still hold…`;
                 await yieldToDOM();
@@ -3398,12 +3427,12 @@ async function analyzeEntries(state, found, {askSolvers = false} = {}) {
             updateProgress();
             await yieldToDOM();
 
+            let dirCache = null;
             try {
                 setRowStatus(state, entry, "hashing");
                 const hashes = await entryFileHashes(entry);
                 // Cache lookup, best-effort: an unreadable cache file falls through to
                 // a normal run rather than an error row.
-                let dirCache = null;
                 try { dirCache = await loadDirCache(state, entry); }
                 catch (cacheError) { console.warn("BotBench cache lookup failed for", entry.relativePath, cacheError); }
                 setRowStatus(state, entry, "reading");
@@ -3458,6 +3487,12 @@ async function analyzeEntries(state, found, {askSolvers = false} = {}) {
                 entry.status = "error";
                 entry.error = error?.message || String(error);
                 setRowError(state, entry, entry.error);
+            } finally {
+                if (source.dirHandle) {
+                    const remaining = remainingByDirectory.get(source.dirHandle) - 1;
+                    remainingByDirectory.set(source.dirHandle, remaining);
+                    if (remaining === 0) await releaseDirCache(dirCache);
+                }
             }
             // KEEP THE ROW, RELEASE THE ANALYSIS. The chart facts are the only things
             // the charts need from the full analysis, so they are taken now, while
@@ -3512,6 +3547,7 @@ async function analyzeEntries(state, found, {askSolvers = false} = {}) {
         // The cache indexes are written in batches during a run; write what is left,
         // on a cancel too, since every file finished so far has its fits on disk.
         await flushAllDirCaches(state);
+        for (const rec of state.dirCaches ?? []) await releaseDirCache(rec);
         pool?.dispose();
         state.workerPool = null;
         yieldToDOM.dispose?.();

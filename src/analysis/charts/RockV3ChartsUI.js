@@ -14,9 +14,8 @@
 // full-page figure. Neither needs a browser to be automated, because the reader
 // is already in one.
 //
-// Two choices apply to every error figure at once: whose error (the blind top
-// candidate, the best candidate, or one solver) and in what unit (a share of range,
-// metres, or degrees). See makeMeasure in RockV3ChartSpecs.
+// Error controls select whose error (the blind top candidate, the best candidate,
+// or one solver), its unit and a log or linear scale. See makeMeasure in RockV3ChartSpecs.
 //
 // Hovering a track's dot shows its scenario screenshot beside Plotly's label, when
 // the run made one (see wireHoverImages).
@@ -283,7 +282,6 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     const closeButton = makeButton("Close", "#757575");
     const turnPicker = makeSelect("Which sensor-turn level the figures use: every level pooled, or one level. "
         + "The figures that compare turn levels always use every level.", "150px");
-    // Two ways to mark the dots, both off to begin with (makeMarks in RockV3ChartSpecs.js).
     const makeToggle = (text, title) => {
         const label = document.createElement("label");
         css(label, {display: "flex", alignItems: "center", gap: "4px", fontSize: "12px", color: "#333",
@@ -294,6 +292,11 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         label.append(box, text);
         return {label, box};
     };
+    const logToggle = makeToggle("log Error",
+        "Use logarithmic error axes. Uncheck for linear error axes starting at zero. "
+        + "Heading error always uses its fixed 0–180 degree scale.");
+    logToggle.box.checked = true;
+    // Two ways to mark the dots, both off to begin with (makeMarks in RockV3ChartSpecs.js).
     const lengthToggle = makeToggle("Area by clip length",
         "Give each track dot an area in proportion to its clip length, on one scale for every figure.");
     const straightToggle = makeToggle("Straight as black squares",
@@ -302,7 +305,7 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     const fullButton = makeButton("Full size", "#455a64");
     fullButton.title = "Show this figure alone, drawn to fill the browser window, with only the choices it reads. "
         + "Exports are unchanged.";
-    bar.append(picker, subjectPicker, metricPicker, turnPicker, lengthToggle.label, straightToggle.label,
+    bar.append(picker, subjectPicker, metricPicker, logToggle.label, turnPicker, lengthToggle.label, straightToggle.label,
         fullButton, loadButton, svgButton, pngButton, closeButton, status);
     modal.appendChild(bar);
 
@@ -319,6 +322,15 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         marks: {sizeByLength: false, markStraight: false},
         fullSize: false,
     };
+    const currentMeasure = () => {
+        const fixedMetric = FIGURES.find((f) => f.key === state.current?.key)?.fixedMetric;
+        return fixedMetric ? makeMeasure({metric: fixedMetric, subject: state.measure.subject,
+            logError: state.measure.logError}) : state.measure;
+    };
+    const canChooseErrorScale = () => {
+        const meta = FIGURES.find((f) => f.key === state.current?.key);
+        return (meta?.measure === "full" || !!meta?.fixedMetric) && !ERROR_METRICS[currentMeasure().metric].axis;
+    };
 
     // The window's chrome in the two modes. Full size fills the browser window and
     // shows, of the choices, only those the current figure reads; the figure picker
@@ -334,7 +346,9 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         hide(loadButton, full);
         const usesMeasure = !full || !!meta?.measure;
         hide(subjectPicker, !state.rows.length || !usesMeasure);
-        hide(metricPicker, !state.rows.length || !usesMeasure || (full && meta?.measure !== "full"));
+        hide(metricPicker, !state.rows.length || !usesMeasure || !!meta?.fixedMetric || (full && meta?.measure !== "full"));
+        hide(logToggle.label, !state.rows.length || (full && !canChooseErrorScale()));
+        logToggle.box.disabled = !canChooseErrorScale();
         hide(turnPicker, state.turnLevels.length < 2 || (full && !!meta?.allTurnLevels));
         hide(lengthToggle.label, full && !meta?.dots);
         hide(straightToggle.label, full && !meta?.dots);
@@ -357,11 +371,14 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     window.addEventListener("resize", onResize);
 
     const setStatus = (text) => { status.textContent = text; };
-    const sourceText = () => `${state.rows.length} rows${state.sourceLabel ? ` from ${state.sourceLabel}` : ""}`
-        + (state.measure.isDefault ? "" : ` — ${state.measure.who}, ${state.measure.label.toLowerCase()}`)
-        + (state.turnLevels.length < 2 ? ""
-            : Number.isFinite(state.turnDeg) ? ` — sensor turn ${state.turnDeg}°`
-            : ` — ${state.turnLevels.length} sensor-turn levels pooled`);
+    const sourceText = () => {
+        const measure = currentMeasure();
+        return `${state.rows.length} rows${state.sourceLabel ? ` from ${state.sourceLabel}` : ""}`
+            + (measure.isDefault ? "" : ` — ${measure.who}, ${measure.label.toLowerCase()}`)
+            + (state.turnLevels.length < 2 ? ""
+                : Number.isFinite(state.turnDeg) ? ` — sensor turn ${state.turnDeg}°`
+                : ` — ${state.turnLevels.length} sensor-turn levels pooled`);
+    };
 
     // The choices, filled from what the rows can support. A choice that is no
     // longer offered falls back to the default rather than drawing empty figures.
@@ -397,7 +414,7 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         metricPicker.value = keepMetric;
         subjectPicker.style.display = state.rows.length ? "" : "none";
         metricPicker.style.display = state.rows.length ? "" : "none";
-        state.measure = makeMeasure({metric: keepMetric, subject: keepSubject});
+        state.measure = makeMeasure({metric: keepMetric, subject: keepSubject, logError: logToggle.box.checked});
         // A sensor-turn level, offered only when the rows hold more than one.
         state.turnLevels = [...new Set(state.rows.map((r) => r.d_turnDeg).filter(Number.isFinite))]
             .sort((a, b) => a - b);
@@ -476,13 +493,15 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         if (figure) show(figure);
     });
     const onChoice = () => {
-        state.measure = makeMeasure({metric: metricPicker.value, subject: subjectPicker.value});
+        state.measure = makeMeasure({metric: metricPicker.value, subject: subjectPicker.value,
+            logError: logToggle.box.checked});
         state.turnDeg = turnPicker.value === "all" ? null : Number(turnPicker.value);
         state.marks = {sizeByLength: lengthToggle.box.checked, markStraight: straightToggle.box.checked};
         rebuild();
     };
     subjectPicker.addEventListener("change", onChoice);
     metricPicker.addEventListener("change", onChoice);
+    logToggle.box.addEventListener("change", onChoice);
     turnPicker.addEventListener("change", onChoice);
     lengthToggle.box.addEventListener("change", onChoice);
     straightToggle.box.addEventListener("change", onChoice);
@@ -496,8 +515,10 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
             link.href = url;
             // The choice goes in the name, so two exports of one figure do not collide.
             // A turn level too, except on the figures that always use every level.
-            const choice = (state.measure.isDefault ? ""
-                : `-${state.measure.metric}-${String(state.measure.subject).replace(/[^A-Za-z0-9]+/g, "_")}`)
+            const measure = currentMeasure();
+            const choice = (measure.isDefault ? ""
+                : `-${measure.metric}-${String(measure.subject).replace(/[^A-Za-z0-9]+/g, "_")}`)
+                + (canChooseErrorScale() && !measure.logError ? "-linear" : "")
                 + (Number.isFinite(state.turnDeg) && !FIGURES.find((f) => f.key === state.current.key)?.allTurnLevels
                     ? `-turn${state.turnDeg}` : "")
                 + (state.marks.sizeByLength ? "-area" : "") + (state.marks.markStraight ? "-straight" : "");

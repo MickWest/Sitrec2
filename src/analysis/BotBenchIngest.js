@@ -55,6 +55,7 @@ import {
 import {
     longestUniformRun, maxOf, measureAnchorRate, median, timingStats, trimmedMean,
 } from "./BotBenchClock";
+import {readEntrySidecars} from "./BotBenchEntryFiles";
 
 const DEG = Math.PI / 180;
 
@@ -2209,11 +2210,12 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
 /**
  * Ingest one queued entry.
  *
- * `entry` is {name, relativePath, getFile(), sidecarText?, labelsText?}. The
- * dialog pairs a BOT CSV with its sidecar during the folder walk, because the
- * sidecar is a sibling file and only the walk can see it.
+ * `entry` has name, relativePath, getFile(), and optional paired sidecarFile /
+ * labelsFile references or inline sidecarText / labelsText. Paired files are
+ * read locally so the folder's queued and finished rows never hold their texts.
  */
 export async function ingestBotBenchEntry(entry) {
+    entry = await readEntrySidecars(entry);
     const role = botBenchExplicitFileRole(entry.name);
     if (role === "track-file") {
         const text = await (await entry.getFile()).text();

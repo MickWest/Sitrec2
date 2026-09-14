@@ -336,12 +336,45 @@ export function unitResultAgrees(freshResult, storedText) {
     let stored;
     try { stored = readUnitBlob(storedText); } catch (e) { return false; }
     let fresh = freshResult;
-    if (stored.meta?.unitId === "constAir" && fresh && Array.isArray(fresh.sorted)) {
+    const unitId = stored.meta?.unitId;
+    if (unitId === "constAir" && fresh && Array.isArray(fresh.sorted)) {
         // Both sides carry the rebuilt copy; compare the stored form of each.
         fresh = {...fresh, sorted: null};
         stored.result = {...stored.result, sorted: null};
     }
+    if (unitId === "droneControl") return droneControlAgrees(fresh, stored.result);
     return valuesAgree(fresh, stored.result);
+}
+
+/**
+ * The drone-control fit is the one unit whose optimizer stops at an iteration
+ * budget (400 Nelder-Mead steps) rather than at convergence. A last-bit
+ * difference between two engines — Node against Chrome, or Chrome after an
+ * update — moves where the descent stands after 400 steps, so the same code
+ * lands centimetres apart: measured, up to 0.3 m on a 5 km track with the same
+ * residual to five decimals, on about 1.5% of the rock_v3 files. Nothing
+ * downstream can tell those two fits apart, but the floating-point tolerance
+ * above can, and one such file in a ten-file sample had every file's drone
+ * control fitted again. So this unit is reproduced when its positions agree
+ * within DRONE_CONTROL_POSITION_TOLERANCE_M and its residual within
+ * DRONE_CONTROL_RESIDUAL_TOLERANCE_DEG; the solved vector, iteration counts and
+ * description follow the positions and are not compared.
+ */
+export const DRONE_CONTROL_POSITION_TOLERANCE_M = 1;
+export const DRONE_CONTROL_RESIDUAL_TOLERANCE_DEG = 1e-3;
+
+function droneControlAgrees(fresh, stored) {
+    if (fresh === null || stored === null) return fresh === stored;
+    if (!fresh || !stored) return false;
+    const a = fresh.positions, b = stored.positions;
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 3) {
+        const d = Math.hypot(a[i] - b[i], a[i + 1] - b[i + 1], a[i + 2] - b[i + 2]);
+        if (!(d <= DRONE_CONTROL_POSITION_TOLERANCE_M)) return false;
+    }
+    const ea = fresh.params?.errDeg, eb = stored.params?.errDeg;
+    if (Number.isFinite(ea) !== Number.isFinite(eb)) return false;
+    return !Number.isFinite(ea) || Math.abs(ea - eb) <= DRONE_CONTROL_RESIDUAL_TOLERANCE_DEG;
 }
 
 // ---------------------------------------------------------------------------

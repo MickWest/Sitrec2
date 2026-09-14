@@ -9,6 +9,31 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.159.0 (2026-09-14)
+
+### New Features
+
+- **Choose BOTBench solvers** (File → File Analysis → **BOTBench...**): select from 16 candidates, including **Global Fit: Kalman Smoother**, and rank only the selected candidates.
+- **Heading and velocity errors** (File → File Analysis → **Result Charts...**): compare candidates using **Mean 2D heading error (deg)** or **Mean 3D velocity error (m/s)**.
+- **True-distance charts** (Result Charts → **Accuracy**): **Error by true distance** groups errors into six equal-width distance bands, and **Mean absolute error vs. mean true range** plots each track's position error against its actual mean range in metres.
+- **Export to KMZ with Track** (Objects → the object's folder): export the model together with its timestamped path, sampled once per second, for Google Earth playback or import back into Sitrec.
+
+### Improvements
+
+- BOTBench reuses stored fits when you add solvers, remembers result rows for different selections, and reduces memory use and loading overhead when reopening large processed folders.
+- **Chart display controls** (Result Charts): use **Full size**, **Area by clip length**, **Straight as black squares** and **log Error** to change the display, with each track's tooltip identifying its file and solver.
+- **Camera exports** (Camera → **Export Camera as KML (Photo)**): include the full traverse path and preserve the calculated photo-camera values at full precision.
+- **Flush Cache** (BOTBench): shows the size and recorded fitting time of the cache and requires typing **Flush** before deleting it.
+
+### Bug Fixes
+
+- Fixed impossible Ground Object candidates being ranked and extreme errors making the solver chart unreadable.
+- Fixed BOTBench candidates appearing stationary or displaced when opening a scenario in another Sitrec window.
+- Fixed rolled video photos being oriented incorrectly in Google Earth Pro.
+- Fixed exported objects with spaces or parentheses in their names disappearing in Google Earth Pro, and cancelled object saves being reported as errors.
+- Fixed unnecessary reruns of stored **Drone (flown inputs)** fits after a browser-engine change.
+- Fixed mouse-wheel scrolling in Result Charts and misplaced **5% of range** reference labels.
+
 ## Version 2.158.0 (2026-09-13)
 
 ### New Features

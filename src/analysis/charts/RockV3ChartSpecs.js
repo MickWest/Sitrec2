@@ -53,6 +53,8 @@ const atLeast = (v, floor) => Math.max(v, floor);
 // A track in a hover label: its path under the scanned folder when the row came from a
 // BOTBench run, so files of the same name in different folders can be told apart.
 const trackLabel = (r) => r.path ?? r.base ?? "";
+const solverLabel = (r, name) => `${trackLabel(r)}<br>Solver: ${name || "Unknown"}`;
+const errorDotLabel = (r, measure) => solverLabel(r, measure.solverName(r));
 
 // ---------------------------------------------------------------------------
 // how the dots are marked
@@ -244,12 +246,13 @@ const capitalize = (text) => String(text).charAt(0).toUpperCase() + String(text)
  * `subject` is the blind top candidate (the default), the best candidate (an oracle
  * pick, knowable only with truth in hand), or one solver by name. `metric` is a key of
  * ERROR_METRICS. Every error figure reads its values, floor, tolerance line and labels
- * through one of these, so the chart window's two choices change all the figures
- * together. The default draws every figure exactly as before.
+ * through one of these. `logError` selects the error scale; heading error keeps
+ * its fixed linear scale. The defaults preserve the original figures.
  */
-export function makeMeasure({metric = "relSep", subject = SUBJECT_TOP} = {}) {
+export function makeMeasure({metric = "relSep", subject = SUBJECT_TOP, logError = true} = {}) {
     const key = ERROR_METRICS[metric] ? metric : "relSep";
     const m = ERROR_METRICS[key];
+    const axis = m.axis ?? (logError ? null : {type: "linear"});
     const fromList = (row, name, field) => (row.r_candidates ?? []).find((c) => c.name === name)?.[field];
     const read = (row, who, spec) => {
         let v;
@@ -261,26 +264,30 @@ export function makeMeasure({metric = "relSep", subject = SUBJECT_TOP} = {}) {
     const who = subject === SUBJECT_TOP ? "blind top candidate"
         : subject === SUBJECT_BEST ? "best candidate (oracle)" : shortSolverName(subject);
     return {
-        metric: key, subject, who,
+        metric: key, subject, who, logError,
         label: m.label, noun: m.noun, unit: m.unit, needsLists: !!m.needsLists,
-        /** A fixed linear y axis (type, range, dtick), or null for the shared log axis. */
-        axis: m.axis ?? null,
-        /** The y range for a figure whose data peaks at `peak`: the fixed axis, or the log range above the floor. */
-        yRange: (peak) => (m.axis ? m.axis.range : [Math.log10(m.floor * 0.55), Math.log10(peak * 2.2)]),
+        /** Linear axis settings, or null for the shared log axis. */
+        axis,
+        /** The y range for a figure whose data peaks at `peak`. Linear errors start at zero. */
+        yRange: (peak) => axis ? (axis.range ?? [0, (peak || m.floor || 1) * 1.1])
+            : [Math.log10(m.floor * 0.55), Math.log10(peak * 2.2)],
         /** Box statistics in the space the axis is drawn in, so the whiskers are Tukey's on that axis. */
-        boxStats: (values) => (m.axis ? boxStatsLinear(values) : boxStatsLog(values)),
+        boxStats: (values) => (axis ? boxStatsLinear(values) : boxStatsLog(values)),
         /** The caption's sentence on the whiskers, matching boxStats. */
-        fenceNote: m.axis ? "Whiskers: Tukey's 1.5 box-heights on the values themselves."
+        fenceNote: axis ? "Whiskers: Tukey's 1.5 box-heights on the values themselves."
             : "Whiskers: Tukey's 1.5 box-heights, computed on log10 so the fence is symmetric on this axis.",
-        /** The caption's sentence on the floor, given a count or the word "Values"; nothing on a fixed axis. */
-        floorNote: (floored) => (m.axis ? "" : (typeof floored === "number"
+        /** The caption's sentence on the floor, given a count or the word "Values"; nothing on a linear axis. */
+        floorNote: (floored) => (axis ? "" : (typeof floored === "number"
             ? `${floored} values below ${m.format(m.floor)} are drawn at the floor. `
             : `Values below ${m.format(m.floor)} are drawn at the floor. `)),
-        floor: m.floor, ceiling: m.ceiling, ceilingLabel: m.ceilingLabel, tolerance: m.tolerance, format: m.format,
+        floor: axis ? 0 : m.floor, ceiling: m.ceiling, ceilingLabel: m.ceilingLabel, tolerance: m.tolerance, format: m.format,
         isDefault: key === "relSep" && subject === SUBJECT_TOP,
         axisTitle: `${capitalize(who)} ${m.noun}`,
         // Only the top candidate's row says whether it came from the range-blind family.
         marksBlind: subject === SUBJECT_TOP,
+        /** The solver that produced the displayed error, including the per-track top or oracle pick. */
+        solverName: (row) => subject === SUBJECT_TOP ? (row.r_topName || row.r_topKey || "Unknown")
+            : subject === SUBJECT_BEST ? (row.r_bestName || "Unknown") : subject,
         /** The subject's error on a row, or null. */
         value: (row) => read(row, subject, m),
         /** The best candidate's error on a row, in the same unit. */
@@ -549,8 +556,8 @@ export function pageLayout(layout, {title, caption, height = 900, width = 1500, 
     };
 }
 
-/** A dashed reference line across one panel, with a haloed label. */
-export function toleranceShapes(panelCount, value, label) {
+/** A dashed reference line on an error axis, with a haloed label. */
+export function toleranceShapes(panelCount, value, label, {logY = true} = {}) {
     const shapes = [], annotations = [];
     for (let i = 0; i < panelCount; i++) {
         const suffix = i === 0 ? "" : String(i + 1);
@@ -560,7 +567,8 @@ export function toleranceShapes(panelCount, value, label) {
             line: {color: MUTED, width: 1, dash: "dot"}, layer: "below",
         });
         annotations.push({
-            xref: `x${suffix} domain`, yref: `y${suffix}`, x: 1, y: value,
+            // On log axes, annotations use log10 coordinates; shapes use data values.
+            xref: `x${suffix} domain`, yref: `y${suffix}`, x: 1, y: logY ? Math.log10(value) : value,
             text: label, showarrow: false, xanchor: "right", yanchor: "bottom",
             font: {size: 10, color: MUTED}, bgcolor: HALO, borderpad: 1,
         });
@@ -586,7 +594,7 @@ export const BASE_CONFIG = {
 /** The tolerance line, when the measure has one: 5% of range for error/range, none in metres or degrees. */
 function addTolerance(layout, panelCount, measure) {
     if (!measure.tolerance) return;
-    const tol = toleranceShapes(panelCount, measure.tolerance.value, measure.tolerance.label);
+    const tol = toleranceShapes(panelCount, measure.tolerance.value, measure.tolerance.label, {logY: !measure.axis});
     layout.shapes = [...(layout.shapes ?? []), ...tol.shapes];
     layout.annotations = [...(layout.annotations ?? []), ...tol.annotations];
 }
@@ -630,7 +638,7 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
                     if (!fin(v)) continue;
                     peak = Math.max(peak, v);
                     (measure.marksBlind && r.r_topBlind ? hollow : points)
-                        .push({x: d, y: atLeast(v, floor), id: r.rowIndex ?? null, label: trackLabel(r), ...marks.style(r, 5, CLASS_HUE[cls])});
+                        .push({x: d, y: atLeast(v, floor), id: r.rowIndex ?? null, label: errorDotLabel(r, measure), ...marks.style(r, 5, CLASS_HUE[cls])});
                 }
                 const box = stats[stats.length - 1];
                 if (box) medians[`${rung}deg/${cls}/${durations[d]}`] = box.median;
@@ -680,6 +688,151 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
     };
 }
 
+/** Error in six equal-width bands over the full mean true distance of the selected rows. */
+export function figErrorByTrueDistance(rows, {measure = makeMeasure(), marks = makeMarks()} = {}) {
+    const ranged = rows.filter((r) => fin(r.in_trueRangeMeanM) && r.in_trueRangeMeanM >= 0);
+    if (!ranged.length) return null;
+    const minM = ranged.reduce((v, r) => Math.min(v, r.in_trueRangeMeanM), Infinity);
+    const maxM = ranged.reduce((v, r) => Math.max(v, r.in_trueRangeMeanM), -Infinity);
+    if (maxM === minM) return null; // There is no distance comparison to draw.
+
+    const bandCount = 6;
+    const edges = Array.from({length: bandCount + 1}, (_, i) =>
+        i === bandCount ? maxM : minM + (maxM - minM) * i / bandCount);
+    const bands = Array.from({length: bandCount}, () => []);
+    // Set the bounds before excluding missing candidate errors. Changing the selected
+    // solver must not change which distance band a track belongs to.
+    for (const r of ranged) {
+        let band = 0;
+        while (band < bandCount - 1 && r.in_trueRangeMeanM >= edges[band + 1]) band++;
+        bands[band].push(r);
+    }
+
+    const color = CLASS_HUE.balloon;
+    const points = [], hollow = [], boxes = [], stats = [];
+    let drawn = 0, missing = 0, floored = 0, capped = 0, peak = measure.floor;
+    bands.forEach((here, band) => {
+        const values = here.map(measure.value).filter(fin);
+        const box = measure.boxStats(values);
+        boxes.push(box);
+        stats.push({minM: edges[band], maxM: edges[band + 1], total: here.length,
+            count: values.length, median: box?.median ?? null});
+        drawn += values.length;
+        missing += here.length - values.length;
+        floored += values.filter((v) => v < measure.floor).length;
+        capped += values.filter((v) => v > measure.ceiling).length;
+        for (const r of here) {
+            const value = measure.value(r);
+            if (!fin(value)) continue;
+            const y = Math.min(measure.ceiling, atLeast(value, measure.floor));
+            peak = Math.max(peak, y);
+            (measure.marksBlind && r.r_topBlind ? hollow : points).push({
+                x: band, y, id: r.rowIndex ?? null,
+                label: `${errorDotLabel(r, measure)}<br>Mean true distance: ${formatMetres(r.in_trueRangeMeanM)}`,
+                ...marks.style(r, 5, color),
+            });
+        }
+    });
+    const positions = bands.map((unused, i) => i);
+    const data = [
+        boxTrace(positions, boxes, color, {floor: measure.floor, ceiling: measure.ceiling}),
+        stripTrace(points, color),
+    ];
+    if (hollow.length) data.push(stripTrace(hollow, color, {hollow: true, seed: 806}));
+    const layout = gridLayout({
+        rows: 1, cols: 1,
+        xTitle: "Mean platform-to-true-target distance (six equal-width bands)",
+        yTitle: measure.axisTitle,
+        tickvals: positions,
+        ticktext: stats.map((s) => `${formatMetres(s.minM)}–${formatMetres(s.maxM)}<br>n=${s.count}`),
+        yRange: measure.yRange(peak), logY: !measure.axis, yAxis: measure.axis,
+    });
+    // Keep empty bands visible, including those at either end of the distance range.
+    layout.xaxis.range = [-0.5, bandCount - 0.5];
+    addTolerance(layout, 1, measure);
+    const title = `This run: ${measure.who} error by true distance${unitSuffix(measure)}`;
+    return {
+        key: "errorByTrueDistance", title, data,
+        layout: pageLayout(layout, {
+            title, height: 750,
+            caption: `Six equal-width distance bands from ${formatMetres(minM)} to ${formatMetres(maxM)}. `
+                + "Distance is the mean 3D platform-to-true-target distance over each clip. "
+                + "Each band includes its lower bound; only the final band includes its upper bound. "
+                + "Target classes, clip lengths and pointing-error levels are pooled within the current selection. "
+                + `${drawn} track evaluations drawn; n is the number drawn in each band. `
+                + `${rows.length - ranged.length} with no valid true distance and ${missing} with no value for the `
+                + `${measure.who} are not drawn. Empty bands have no box. `
+                + `Box: quartiles and median on the raw values. ${measure.fenceNote} ${hollowNote(measure)}`
+                + measure.floorNote(floored)
+                + (capped ? `${capped} values above ${measure.ceilingLabel} are drawn at the ceiling. ` : ""),
+        }),
+        config: BASE_CONFIG, stats,
+    };
+}
+
+/** Mean absolute position error against mean true range, with a logarithmic range axis. */
+export function figAbsoluteErrorVsTrueRange(rows, {measure = makeMeasure(), marks = makeMarks()} = {}) {
+    // This figure always compares distances in metres, whatever unit another figure uses.
+    const absolute = makeMeasure({metric: "sepM", subject: measure.subject, logError: measure.logError});
+    const groups = new Map();
+    let count = 0, minRange = Infinity, maxRange = 0, minError = Infinity, maxError = 0;
+    for (const r of rows) {
+        const range = r.in_trueRangeMeanM, error = absolute.value(r);
+        // Preserve the actual error without a drawing floor. Zero is valid on a linear
+        // error axis; the range axis always requires positive distances.
+        if (!fin(range) || range <= 0 || !fin(error) || error < 0 || (absolute.logError && error === 0)) continue;
+        const cls = r.d_class ?? "unknown";
+        if (!groups.has(cls)) groups.set(cls, []);
+        groups.get(cls).push(r);
+        count++;
+        minRange = Math.min(minRange, range); maxRange = Math.max(maxRange, range);
+        minError = Math.min(minError, error); maxError = Math.max(maxError, error);
+    }
+    if (!count) return null;
+    const data = [...groups].map(([cls, here]) => ({
+        type: "scattergl", mode: "markers",
+        x: here.map((r) => r.in_trueRangeMeanM), y: here.map(absolute.value),
+        marker: {...markerFor(here, 5, CLASS_HUE[cls] ?? MUTED, marks), opacity: 0.55},
+        text: here.map((r) => errorDotLabel(r, absolute)), customdata: here.map((r) => r.rowIndex ?? null),
+        hovertemplate: "%{text}<br>Mean true range: %{x:.6g} m<br>Mean absolute error: %{y:.6g} m<extra></extra>",
+        name: CLASS_LABEL[cls] ?? (cls === "unknown" ? "Unknown class" : cls),
+        showlegend: true,
+    }));
+    const logRange = (min, max) => [Math.log10(min) - 0.15, Math.log10(max) + 0.15];
+    const layout = gridLayout({
+        rows: 1, cols: 1,
+        xTitle: "Mean true range (m)", yTitle: "Mean absolute error (m)",
+        yRange: absolute.logError ? logRange(minError, maxError) : absolute.yRange(maxError),
+        logY: absolute.logError,
+    });
+    Object.assign(layout.xaxis, {
+        type: "log", gridcolor: GRID, exponentformat: "power", dtick: 1,
+        range: logRange(minRange, maxRange),
+    });
+    const title = `This run: ${absolute.who} mean absolute error vs. mean true range`;
+    return {
+        key: "absoluteErrorVsTrueRange", title, data,
+        layout: pageLayout(layout, {
+            title, height: 750, legendEntries: groups.size,
+            caption: `${count} track evaluations drawn, with target classes, clip lengths and pointing-error levels `
+                + "pooled within the current selection. Each dot is one track evaluation. "
+                + "Horizontal: mean 3D platform-to-true-target distance over the clip. "
+                + `Vertical: mean 3D distance between the ${absolute.who} and the true target at matching times. `
+                + (absolute.logError
+                    ? "Both axes use metres and logarithmic scales; each decade is a factor of ten. "
+                        + "Positive values are plotted without a drawing floor or ceiling. "
+                        + `${rows.length - count} evaluations with missing, invalid or zero range or error are omitted; `
+                        + "logarithmic scales require positive values."
+                    : "Both axes use metres. Range uses a logarithmic scale; error uses a linear scale starting at zero. "
+                        + "Errors are plotted without a drawing floor or ceiling, including zero errors. "
+                        + `${rows.length - count} evaluations with missing or invalid values or nonpositive range are omitted.`),
+        }),
+        config: BASE_CONFIG,
+        stats: {count, omitted: rows.length - count, byClass: Object.fromEntries([...groups].map(([cls, here]) => [cls, here.length])),
+            rangeM: [minRange, maxRange], errorM: [minError, maxError]},
+    };
+}
+
 /** Error against the pointing-error ladder, one panel per class and clip length. */
 export function figErrorByRung(rows, {durationsWanted = [20, 120], measure = makeMeasure(), marks = makeMarks()} = {}) {
     const rungs = rungsOf(rows);
@@ -709,7 +862,7 @@ export function figErrorByRung(rows, {durationsWanted = [20, 120], measure = mak
                     if (!fin(v)) continue;
                     peak = Math.max(peak, v);
                     (measure.marksBlind && r.r_topBlind ? hollow : points)
-                        .push({x: e, y: atLeast(v, floor), id: r.rowIndex ?? null, label: trackLabel(r), ...marks.style(r, 5, CLASS_HUE[cls])});
+                        .push({x: e, y: atLeast(v, floor), id: r.rowIndex ?? null, label: errorDotLabel(r, measure), ...marks.style(r, 5, CLASS_HUE[cls])});
                 }
             }
             data.push(boxTrace(rungs.map((unused, e) => e), stats, CLASS_HUE[cls], {axis: suffix, floor}));
@@ -1084,7 +1237,7 @@ export function figRankingCost(rows, {rungsWanted = [0, 0.2], measure = makeMeas
                 type: "scattergl", mode: "markers", x: xs, y: ys,
                 marker: {...markerFor(here, 4.5, CLASS_HUE[cls], marks), opacity: 0.75,
                     line: {color: "#ffffff", width: 0.3}},
-                text: here.map((r) => trackLabel(r)),
+                text: here.map((r) => `${errorDotLabel(r, measure)}<br>Best solver: ${r.r_bestName || "Unknown"}`),
                 customdata: here.map((r) => r.rowIndex ?? null),
                 hovertemplate: "%{text}<br>best %{x:.3g}, chosen %{y:.3g}<extra></extra>",
                 showlegend: false, xaxis: `x${suffix}`, yaxis: `y${suffix}`,
@@ -1099,6 +1252,7 @@ export function figRankingCost(rows, {rungsWanted = [0, 0.2], measure = makeMeas
         xTitle: `Best candidate ${measure.noun} (an oracle pick)`,
         yTitle: measure.axisTitle,
         tickvals: undefined, ticktext: undefined,
+        logY: !measure.axis,
     });
     layout.shapes = [];
     for (let i = 0; i < titles.length; i++) {
@@ -1106,10 +1260,10 @@ export function figRankingCost(rows, {rungsWanted = [0, 0.2], measure = makeMeas
         // The same number format as the error/range y axes: powers of ten, one label
         // per decade. Left to Plotly's default, this axis read "100µ, 0.001, 0.01"
         // beside a y axis reading "10^-4, 10^-3", two notations for one quantity.
-        // Both axes carry the same unit, so a fixed axis applies to both.
-        const [from, to] = measure.axis ? measure.axis.range : [lo * 0.7, hi * 1.4];
+        // Both axes carry error, so apply the same scale and range to both.
+        const [from, to] = measure.axis ? measure.yRange(hi) : [lo * 0.7, hi * 1.4];
         const shared = measure.axis
-            ? {...measure.axis, gridcolor: GRID}
+            ? {...measure.axis, range: [from, to], gridcolor: GRID}
             : {type: "log", gridcolor: GRID, exponentformat: "power", dtick: 1, range: [Math.log10(from), Math.log10(to)]};
         Object.assign(layout[`xaxis${suffix}`], shared);
         Object.assign(layout[`yaxis${suffix}`], {...shared, matches: undefined});
@@ -1167,7 +1321,7 @@ export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2], measure = make
                     type: "scattergl", mode: "markers", x: xs, y: ys,
                     marker: {...markerFor(here, 3.5, CLASS_HUE[cls], marks), opacity: 0.35},
                     // Hoverable, so a dot can name its track and show its screenshot.
-                    text: here.map((r) => trackLabel(r)),
+                    text: here.map((r) => errorDotLabel(r, measure)),
                     customdata: here.map((r) => r.rowIndex ?? null),
                     hovertemplate: "%{text}<br>%{y:.3g}<extra></extra>",
                     showlegend: false,
@@ -1192,9 +1346,10 @@ export function figErrorVsGeometry(rows, {rungsWanted = [0, 0.2], measure = make
     const layout = gridLayout({
         rows: rungs.length, cols: 2, titles,
         xTitle: "", yTitle: measure.axisTitle,
-        // Error/range keeps its fixed top at 300% of range, as before; the other units
-        // have no natural top, so the data sets it.
-        yRange: measure.yRange(measure.metric === "relSep" ? 3 / 2.2 : peak), logY: !measure.axis, yAxis: measure.axis,
+        // Log error/range keeps its fixed top at 300% of range; other units and
+        // linear axes use the data to set the top.
+        yRange: measure.yRange(measure.metric === "relSep" && !measure.axis ? 3 / 2.2 : peak),
+        logY: !measure.axis, yAxis: measure.axis,
     });
     for (let i = 0; i < titles.length; i++) {
         const suffix = i === 0 ? "" : String(i + 1);
@@ -1378,7 +1533,7 @@ export function figErrorByClass(rows, {measure = makeMeasure(), marks = makeMark
             if (!fin(v)) continue;
             peak = Math.max(peak, v);
             (measure.marksBlind && r.r_topBlind ? hollow : points)
-                .push({x: i, y: atLeast(v, floor), id: r.rowIndex ?? null, label: trackLabel(r), ...marks.style(r, 5, CLASS_HUE[cls])});
+                .push({x: i, y: atLeast(v, floor), id: r.rowIndex ?? null, label: errorDotLabel(r, measure), ...marks.style(r, 5, CLASS_HUE[cls])});
         }
         data.push(boxTrace([i], [box], CLASS_HUE[cls], {floor}));
         data.push(stripTrace(points, CLASS_HUE[cls], {seed: 805 + i}));
@@ -1621,7 +1776,7 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
                     if (s === undefined || !fin(v)) continue;
                     values[s].push(v);
                     points.push({x: s, y: Math.min(atLeast(v, floor), ceiling), id: r.rowIndex ?? null, ...marks.style(r, dotSize, CLASS_HUE[cls]),
-                        label: `${trackLabel(r)} · ${shortSolverName(nameOf(c))}`});
+                        label: solverLabel(r, nameOf(c))});
                     // A value past the ceiling is drawn at it; its label keeps the value itself.
                     if (v > ceiling) {
                         points[points.length - 1].label += ` (${v.toPrecision(3)}, drawn at the ceiling)`;
@@ -1715,6 +1870,11 @@ export const FIGURES = [
         })},
     {key: "errorByLength", name: "Error by clip length", group: "Accuracy",
         dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorByLength(rows, {measure, marks})},
+    {key: "errorByTrueDistance", name: "Error by true distance", group: "Accuracy",
+        dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorByTrueDistance(rows, {measure, marks})},
+    {key: "absoluteErrorVsTrueRange", name: "Mean absolute error vs. mean true range", group: "Accuracy",
+        dots: true, measure: "subject", fixedMetric: "sepM",
+        build: (rows, {measure, marks} = {}) => figAbsoluteErrorVsTrueRange(rows, {measure, marks})},
     {key: "errorByRung", name: "Error by pointing error", group: "Accuracy",
         dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorByRung(rows, {measure, marks})},
     {key: "withinByLength", name: "Within tolerance, by length", group: "Accuracy",

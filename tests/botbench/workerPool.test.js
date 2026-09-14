@@ -1,4 +1,4 @@
-import {BotBenchWorkerPool, botBenchConcurrency, runBotBenchQueue,
+import {BotBenchWorkerPool, botBenchConcurrency, createBotBenchYield, runBotBenchQueue,
     transferableBuffers} from "../../src/analysis/BotBenchWorkerPool";
 
 function fakeWorkers() {
@@ -32,6 +32,27 @@ test("bounds active work and returns out-of-order results to the right caller", 
     expect((await a).battery).toBe('a-result');
     expect((await c).battery).toBe('c-result');
     pool.dispose();
+});
+
+test("cached-row UI yields share a frame budget across concurrent lanes", async () => {
+    let now = 0, resume;
+    const schedule = jest.fn(() => new Promise(resolve => { resume = resolve; }));
+    const yieldToDOM = createBotBenchYield(schedule, () => now);
+    for (let i = 0; i < 1000; i++) await yieldToDOM();
+    expect(schedule).not.toHaveBeenCalled();
+    now = 16;
+    const pending = Array.from({length: 16}, () => yieldToDOM());
+    expect(schedule).toHaveBeenCalledTimes(1);
+    resume();
+    await Promise.all(pending);
+    now = 31;
+    await yieldToDOM();
+    expect(schedule).toHaveBeenCalledTimes(1);
+    now = 32;
+    const next = yieldToDOM();
+    expect(schedule).toHaveBeenCalledTimes(2);
+    resume();
+    await next;
 });
 
 test("cancellation terminates active workers and rejects queued work", async () => {

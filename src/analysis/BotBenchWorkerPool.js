@@ -3,6 +3,21 @@ export function botBenchConcurrency(count, cores = globalThis.navigator?.hardwar
     return Math.max(1, Math.min(count, 16, Number.isFinite(cores) ? Math.max(1, Math.floor(cores) - 1) : 1));
 }
 
+/** Share one UI yield across queue lanes, and only after a frame's work. */
+export function createBotBenchYield(yieldTask, now = () => performance.now(), budgetMs = 16) {
+    let lastYield = now();
+    let pending = null;
+    return () => {
+        if (pending) return pending;
+        if (now() - lastYield < budgetMs) return Promise.resolve();
+        pending = yieldTask().then(() => {
+            lastYield = now();
+            pending = null;
+        });
+        return pending;
+    };
+}
+
 /** Each buffer appears once, even when hypotheses share tracks/metrics. */
 export function transferableBuffers(value) {
     const buffers = new Set(), seen = new Set();

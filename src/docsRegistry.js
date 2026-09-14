@@ -83,7 +83,7 @@ export function docUrl(file, {anchor = null, absolute = false} = {}) {
 // with the constant in sitrecServer/chatbot.php. Front-load AI-facing docs regardless.
 
 // Must match the truncation limit in sitrecServer/chatbot.php (getHelpDocContent).
-export const AI_DOC_CHAR_LIMIT = 60000;
+export const AI_DOC_CHAR_LIMIT = 80000;
 
 // Help-menu grouping. Order here is the order the sub-folders appear in.
 // `labelKey` resolves under menus.help.documentation.sections.* in src/i18n/en.js.

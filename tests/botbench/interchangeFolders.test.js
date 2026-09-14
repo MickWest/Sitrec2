@@ -15,7 +15,7 @@ describe("interchangeFoldersToSkip", () => {
         expect(interchangeFoldersToSkip(["All", "Input", "Truth", "meta"])).toEqual(new Set(["Input", "Truth"]));
     });
 
-    test("meta, the cache and any other folder are still walked", () => {
+    test("copy exclusion applies only to Input and Truth", () => {
         const skip = interchangeFoldersToSkip(["All", "Input", "Truth", "meta", "SitrecImage", ".botbench-cache"]);
         expect(skip).toEqual(new Set(["Input", "Truth"]));
     });

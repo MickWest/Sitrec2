@@ -6,6 +6,7 @@
  */
 import {
     CACHE_BLOB_DIR, CACHE_FILENAME, describeDuration, formatBytes, measureCacheOnDisk, recordedFitMs,
+    DRONE_CONTROL_POSITION_TOLERANCE_M,
     CACHE_SCHEMA, LEGACY_UNITS, adoptRecord, combinedHash, elapsedFromUnits, emptyIndex,
     isLegacyEntry, legacyBlobName, legacyUnitsFromBattery, normalizeIndex, packUnitBlob, readUnitBlob,
     recordRowMemo, recordUnit, rowMemoUsable, sameUnitResult, unitBlobName, unitMetaFromBlob,
@@ -214,5 +215,28 @@ describe("what Flush Cache measures", () => {
         }};
         expect(recordedFitMs(data)).toBe(5000 + 30 + 4000 + 20 + 7000);
         expect(recordedFitMs(null)).toBe(0);
+    });
+});
+
+describe("the drone-control unit is compared within a metre", () => {
+    const blob = (unitId, result) => packUnitBlob({unitId, hash, version: 1}, result);
+    const positions = Float64Array.from([100, 200, 300, 110, 210, 310, 120, 220, 320]);
+    const shifted = (metres) => Float64Array.from(positions, (v, i) => (i % 3 === 0 ? v + metres : v));
+    const fit = (pos, errDeg = 0.1234) => ({positions: pos, residuals: new Float32Array(3), activeCount: 3,
+        params: {errDeg, optimizer: {iterations: 400}, solved: {speed: 12.3}}, solvedVector: [12.3], description: "one held input"});
+
+    test("a stopped optimizer's centimetres do not count as a different fit", () => {
+        const stored = blob("droneControl", fit(positions));
+        expect(unitResultAgrees(fit(shifted(0.3), 0.12341), stored)).toBe(true);
+        expect(unitResultAgrees(fit(shifted(DRONE_CONTROL_POSITION_TOLERANCE_M * 1.5)), stored)).toBe(false);
+        expect(unitResultAgrees(fit(shifted(0.3), 0.2), stored)).toBe(false);
+        expect(unitResultAgrees(null, blob("droneControl", null))).toBe(true);
+        expect(unitResultAgrees(fit(positions), blob("droneControl", null))).toBe(false);
+    });
+
+    test("every other unit is still held to floating-point noise", () => {
+        const stored = blob("kalman", {positions, residuals: new Float32Array(3), params: {}, activeCount: 3});
+        expect(unitResultAgrees({positions: shifted(0.3), residuals: new Float32Array(3), params: {}, activeCount: 3}, stored)).toBe(false);
+        expect(unitResultAgrees({positions: shifted(1e-9), residuals: new Float32Array(3), params: {}, activeCount: 3}, stored)).toBe(true);
     });
 });

@@ -535,11 +535,15 @@ than 20 files whose stored units come from another build, BOTBench first
 fits 10 of those files for real and compares each unit with its stored copy.
 A unit that reproduces on every sampled file is reused everywhere; one that
 differs is fitted again for every file, and the others are still reused. The
-comparison allows floating-point noise and nothing else: a fit is
-deterministic, but the same code on another build of the JavaScript engine
-lands a few units in the last place apart, and a fit stopped at an iteration
-cap can turn that into centimetres, which no reader could see. The wall time
-is kept beside the unit rather than inside it. The dialog names the units it
+comparison allows floating-point noise: a fit is deterministic, but the same
+code on another build of the JavaScript engine lands a few units in the last
+place apart. The drone-control fit is the one unit whose optimizer stops at an
+iteration budget rather than at convergence, so that last-place difference
+moves where it stands when it stops — up to a few tenths of a metre on a
+5 km track, on about one file in seventy; it counts as reproduced when its
+positions agree within a metre and its residual within a thousandth of a
+degree, since no reader could tell those fits apart. The wall time is kept
+beside the unit rather than inside it. The dialog names the units it
 will reuse and the ones it will refit. Reused records are stamped with the current build and
 marked as adopted, with the build that made the fit kept beside them.
 
@@ -553,6 +557,13 @@ are kept with the row, so the charts open on a remembered run without opening
 a blob. A change to the candidates, the ranking or the verdict cannot be seen
 by the cache; the **Rebuild rows** option rebuilds every row from the stored
 fits when such a change is known.
+
+Remembered rows load without starting analysis workers or reading fit blobs.
+Input hashes are still checked. The folder scan skips the generated fit
+directory, sidecar text is read only while needed, and each leaf folder's
+cache index is released from memory when its rows finish loading. The table
+and charts retain the row summaries; Gallery and Report load the full analysis
+on demand.
 
 A cache written before fits were stored per unit (one blob per file holding
 the whole battery) is still read. The first run over such a folder splits each
