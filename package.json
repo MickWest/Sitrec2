@@ -208,7 +208,7 @@
     "jest": "^30.5.1",
     "jest-environment-jsdom": "^30.5.1",
     "jsdom": "^30.0.1",
-    "markdown-it": "^14.1.0",
+    "markdown-it": "^15.0.2",
     "mini-css-extract-plugin": "^2.10.2",
     "pixelmatch": "^7.2.0",
     "playwright": "^1.57.0",
