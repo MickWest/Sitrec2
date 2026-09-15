@@ -434,6 +434,10 @@ export async function runTraverseBattery({
 
     // Toggles (the analyzeTweaks subset the battery reads).
     solutionFamilies = false, mcOrderSweep = false,
+    // Search the fixed-wing and balloon fits on the GPU (WebGPU) when available.
+    // Opt-in: a GPU search finds different basins, so it changes results. The
+    // quadcopter, drone-control and range-band fits stay on the CPU.
+    gpu = false,
 
     // Injected environment — see the module header. All optional but buildHypotheses.
     buildHypotheses,
@@ -561,6 +565,7 @@ export async function runTraverseBattery({
                 tasTarget: speedTarget,
                 rangeMin: fitRangeMin, rangeMax: fitRangeMax,
                 runs: 3,
+                ...(gpu ? {gpu} : {}),
                 groundPrior,
                 shouldCancel: cancelled,
                 progress: at(0.42, 0.34, "Fitting fixed-wing aircraft model..."),
@@ -710,7 +715,7 @@ export async function runTraverseBattery({
                 const ov = seededOverrides(freeModel);
                 if (ov) freeOpts = {...physicsOpts, paramOverrides: ov};
             }
-            fit = await fitPhysicsModel(physicsDS, new Set(), freeModel, freeOpts);
+            fit = await fitPhysicsModel(physicsDS, new Set(), freeModel, gpu ? {...freeOpts, gpu} : freeOpts);
         } catch (e) {
             rethrowIfCancelled(e);
             unitFailures.push({method: "Sky Lantern / Balloon (free wind)", error: (e && e.message) || "fit failed"});
@@ -750,7 +755,8 @@ export async function runTraverseBattery({
                 const ov = seededOverrides(m);
                 if (ov) measuredOpts = {...physicsOpts, paramOverrides: ov};
             }
-            lanternMeasured = await fitPhysicsModel(physicsDS, new Set(), m, measuredOpts);
+            lanternMeasured = await fitPhysicsModel(physicsDS, new Set(), m,
+                gpu ? {...measuredOpts, gpu} : measuredOpts);
         } catch (e) {
             rethrowIfCancelled(e);
             lanternMeasured = null;  // non-fatal — the free fit is the primary

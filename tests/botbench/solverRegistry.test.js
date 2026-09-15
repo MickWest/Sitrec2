@@ -4,7 +4,7 @@
  */
 import {
     BATTERY_UNITS, SOLVERS, UNIT_ORDER, UNIT_VERSIONS, allSolverIds, describeSolvers, includeSetFor,
-    isEverySolver, normalizeSolvers, planUnits, sameOptions, selectionKey, solverById, unitOptions,
+    isEverySolver, normalizeSolvers, planUnits, rowMemoStorable, sameOptions, selectionKey, solverById, unitOptions,
     unitVersionsFor,
 } from "../../src/analysis/BotBenchSolvers";
 
@@ -83,6 +83,33 @@ describe("options and keys", () => {
         expect(key).toBe("aircraft,gfKalman|a=37040|f=0|m=0");
         expect(selectionKey(["aircraft", "gfKalman"], {anchorM: 37040})).toBe(key);
         expect(selectionKey(null, {anchorM: 37040, mcOrderSweep: true})).toMatch(/\|m=1$/);
+    });
+
+    test("the GPU search option separates only the units it changes, and only when on", () => {
+        const cpu = {anchorM: 37040, solutionFamilies: true};
+        const gpu = {...cpu, gpuSearch: true};
+        // CPU runs keep exactly the records and keys stored before the option existed.
+        expect(unitOptions("aircraft", cpu)).toEqual({anchorM: 37040});
+        expect(selectionKey(null, cpu)).not.toMatch(/g=/);
+        for (const unit of ["aircraft", "lantern", "families"]) {
+            expect(unitOptions(unit, gpu).gpuSearch).toBe(true);
+            expect(sameOptions(unitOptions(unit, gpu), unitOptions(unit, cpu))).toBe(false);
+        }
+        for (const unit of ["constAir", "profiles", "kalman", "quadcopter", "droneControl", "polySweep"]) {
+            expect(sameOptions(unitOptions(unit, gpu), unitOptions(unit, cpu))).toBe(true);
+        }
+        expect(selectionKey(null, gpu)).toMatch(/\|g=1$/);
+    });
+
+    test("a GPU-option row is remembered only when its searches ran on the GPU", () => {
+        const gpu = {gpuSearch: true};
+        expect(rowMemoStorable(gpu, {searchBackend: "webgpu"})).toBe(true);
+        expect(rowMemoStorable(gpu, {searchBackend: "cpu"})).toBe(false);
+        expect(rowMemoStorable(gpu, {searchBackend: "mixed"})).toBe(false);
+        // Neither search in the selection: nothing could have fallen back.
+        expect(rowMemoStorable(gpu, {searchBackend: null})).toBe(true);
+        // CPU runs are unaffected.
+        expect(rowMemoStorable({}, {searchBackend: "cpu"})).toBe(true);
     });
 
     test("the include set adds the Monte Carlo tiles only under their option", () => {

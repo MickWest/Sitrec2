@@ -196,6 +196,19 @@ cannot determine:
   input/run into its stochastic searches and records optimizer metadata. This
   makes supported runs repeatable for the same code and inputs; it does not
   prove that a retained basin is the global optimum.
+- **GPU search (optional)**: *Traverse Analysis Tweaks → GPU search (WebGPU)*,
+  off by default. When the browser supports WebGPU, the fixed-wing and balloon
+  fits search on the graphics card. Many independent searches with large
+  populations run at once, and they test hundreds of times more candidate
+  solutions than the normal search, in less time. The graphics card scores
+  candidates in single precision. The best candidates are then refined on the
+  CPU, and every reported number (parameters, residual, track, bound checks)
+  is computed there in double precision, as it is without this option. A larger
+  search can find a better-fitting basin than the normal search, so results can
+  differ from a CPU run, and they can differ slightly between graphics cards. The
+  quadcopter, drone-control and range-band fits still use the CPU. Without
+  WebGPU, or if the graphics card reports an error, the analysis uses the normal
+  search. The report's run audit records which search each fixed-wing run used.
 - **Physical fits are seeded from the smoother**: the balloon (with its wind free
   to vary over the clip) and the drone control-input candidate start from the
   best geometric approximation — the Kalman-smoother path — and refine from

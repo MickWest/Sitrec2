@@ -205,6 +205,10 @@ export const analyzeTweaks = {
     // range ladder — the honest cost of asking "which ranges does this model
     // admit?" rather than only "where is its best answer?".
     solutionFamilies: false,
+    // Off by default: searching the fixed-wing and balloon fits on the GPU finds
+    // different (usually better) basins, so it changes results. Falls back to the
+    // CPU where WebGPU is unavailable.
+    gpuSearch: false,
 };
 
 // "no truth track selected" sentinel for the Truth Track dropdown
@@ -1688,6 +1692,14 @@ export function addAnalyzeTweaks(traverseMenu) {
             "band of distances that model admits, drawn as faint tracks around the headline one. Costs " +
             "several extra fits per model.");
     }
+    const cbGpu = folder.add(analyzeTweaks, "gpuSearch").name("GPU search (WebGPU)");
+    if (cbGpu.tooltip) {
+        cbGpu.tooltip("Off by default. Search the fixed-wing and balloon fits on the graphics card: " +
+            "hundreds of times more candidate solutions in less time, which can find better fits than the " +
+            "normal search. The final parameters, residuals and tracks are still computed on the CPU at " +
+            "full precision. Results can differ from a CPU run and between graphics cards. Uses the CPU " +
+            "search when this browser has no WebGPU.");
+    }
     const windMode = folder.add(analyzeTweaks, "windMode", ["Sitch wind", "Zero wind"]).name("Wind for analysis");
     if (windMode.tooltip) {
         windMode.tooltip("Choose the shared wind used by ray-following metrics and the fixed-wing gallery fit, " +
@@ -1876,6 +1888,8 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
         // Families are attached to the hypotheses and drawn in every graph, so
         // toggling them must not serve the other setting's cached results.
         analyzeTweaks.solutionFamilies ? 1 : 0,
+        // A GPU search finds different basins from the CPU search.
+        analyzeTweaks.gpuSearch ? 1 : 0,
         ...terrainState,
         analyzeTweaks.aoFixedPoint, analyzeTweaks.aoKnownNow, analyzeTweaks.aoKnownOther,
         Sit.name || "", Sit.frames || 0, Sit.fps || 0,
@@ -2383,6 +2397,7 @@ export async function runTraverseAnalysis() {
             fitRangeMin, fitRangeMax, caRangeMin, caRangeMax, plausRangeMin, plausRangeMax,
             solutionFamilies: analyzeTweaks.solutionFamilies,
             mcOrderSweep: analyzeTweaks.mcOrderSweep,
+            gpu: analyzeTweaks.gpuSearch,
             sweepOverrides: sweepOverridesFromGUI(),
             groundPrior,
             // The GUI/scene-aware hypothesis builder (terrain probes, clip start,
@@ -2651,11 +2666,13 @@ export async function runTraverseAnalysis() {
                     deGenerations: r.de?.generations,
                     deEvaluations: r.de?.evaluations,
                     deStopReason: r.de?.stopReason,
+                    backend: r.de?.backend ?? "cpu",
                     polishIterations: r.polishIterations,
                     polishStopReason: r.polishStopReason,
                 })),
                 lantern: lantern?.params?.optimizer ?? null,
                 quadcopter: quad?.params?.optimizer ?? null,
+                gpuSearchRequested: !!analyzeTweaks.gpuSearch,
             },
             checks: {
                 stationary: analyzeTweaks.aoFixedPoint,

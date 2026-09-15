@@ -48,6 +48,7 @@ import {BotBenchAnalysisPool} from "./BotBenchAnalysisPool";
 import {entryFileHashes, readEntrySidecars} from "./BotBenchEntryFiles";
 import {packForCache, unpackFromCache, sameFittedRow} from "./BotBenchCacheCodec";
 import {
+    rowMemoStorable,
     SOLVERS, allSolverIds, describeSolvers, isEverySolver, normalizeSolvers, planUnits, selectionKey,
     unitVersionsFor,
 } from "./BotBenchSolvers";
@@ -387,7 +388,7 @@ export const CSV_COLUMNS = [
     "ordTopSizeOneSided",
     "ordMin", "ordMinClass", "ordMinName", "ordMinErrDeg",
     "declaredMaxRangeM", "maxRangeViolationCount", "topViolatesMaxRange",
-    "optAnchorNM", "optRangeBands", "optMcSweep", "optSolvers",
+    "optAnchorNM", "optRangeBands", "optMcSweep", "optGpuSearch", "optSolvers", "searchBackend",
     "probeGeometryPinned", "probeSpeedOverride", "probeRangeM",
     "probeDecisiveness", "probeValleyWidthLog",
     "topKey", "topName", "topTier", "topErrDeg", "topRangeM", "topSpeedKt",
@@ -448,6 +449,9 @@ export function rowToCsvRecord(entry) {
         optAnchorNM: entry.options ? (entry.options.anchorM / METERS_PER_NM).toFixed(2) : "",
         optRangeBands: entry.options ? entry.options.solutionFamilies : "",
         optMcSweep: entry.options ? entry.options.mcOrderSweep : "",
+        optGpuSearch: entry.options ? !!entry.options.gpuSearch : "",
+        // Where the searches ran, which the option alone does not say.
+        searchBackend: r?.searchBackend ?? "",
         // The solvers the row was built from: "all", or the ids joined with +.
         optSolvers: entry.options ? (isEverySolver(entry.options.solvers) ? "all"
             : normalizeSolvers(entry.options.solvers).join("+")) : "",
@@ -520,6 +524,17 @@ function padCell(value, width, right = false) {
     return right ? s.padStart(width) : s.padEnd(width);
 }
 
+// When the GPU search was asked for, say where it actually ran: without WebGPU the
+// same fits run on the CPU, and a reader must not assume otherwise.
+function gpuSearchNote(rows, options) {
+    if (!options.gpuSearch) return "";
+    const count = (backend) => rows.filter((r) => r.searchBackend === backend).length;
+    const onCpu = count("cpu"), mixed = count("mixed");
+    return ` — ran on the GPU for ${count("webgpu")} file(s)`
+        + (mixed ? `, partly on the GPU for ${mixed}` : "")
+        + (onCpu ? `, on the CPU for ${onCpu} (no WebGPU, or a GPU error)` : "");
+}
+
 function buildSummaryReport(entries, options) {
     // Which option sets are actually represented among these rows. If a run
     // spans more than one, the header says so instead of quoting the controls'
@@ -548,6 +563,7 @@ function buildSummaryReport(entries, options) {
             L.push(`    anchor ${(o.anchorM / METERS_PER_NM).toFixed(1)} NM, `
                 + `bands ${o.solutionFamilies ? "on" : "off"}, `
                 + `MC sweep ${o.mcOrderSweep ? "on" : "off"}, `
+                + `GPU search ${o.gpuSearch ? "on" : "off"}, `
                 + describeSolvers(o.solvers));
         }
     } else {
@@ -556,6 +572,7 @@ function buildSummaryReport(entries, options) {
             + `(the same for every file — see the note below)`);
         L.push(`  Range bands:             ${o.solutionFamilies ? "on" : "off"}`);
         L.push(`  Monte Carlo order sweep: ${o.mcOrderSweep ? "on" : "off"}`);
+        L.push(`  GPU search:              ${o.gpuSearch ? "on" : "off"}${gpuSearchNote(rows, o)}`);
         L.push(`  Solvers:                 ${describeSolvers(o.solvers)}`
             + (isEverySolver(o.solvers) ? "" : ` — ${normalizeSolvers(o.solvers).join(", ")}`));
     }
@@ -1356,10 +1373,12 @@ export async function analyseEntryWithCache(entry, ctx) {
             if (restamped) await writeDirCache(dirCache, {metadataOnly: true});
             await storeUnits(dirCache, entry, {hash, hashes, options, out,
                 legacyHit: entryMatches && isLegacyEntry(hit) ? hit : null, adoptUnits});
-            recordRowMemo(dirCache.data.results, entry.name, {hash, hashes}, key, {
-                row: packForCache(row), chartData: chartDataFrom(entry), elapsedMs: row.elapsedMs,
-                appVersion: APP_VERSION, solvers: options.solvers ?? null, unitVersions: unitVersionsFor(plan),
-            });
+            if (rowMemoStorable(options, row)) {
+                recordRowMemo(dirCache.data.results, entry.name, {hash, hashes}, key, {
+                    row: packForCache(row), chartData: chartDataFrom(entry), elapsedMs: row.elapsedMs,
+                    appVersion: APP_VERSION, solvers: options.solvers ?? null, unitVersions: unitVersionsFor(plan),
+                });
+            }
             await writeDirCache(dirCache);
         } catch (e) {
             console.warn("BotBench cache write failed for", entry.relativePath, e);
@@ -1611,10 +1630,12 @@ async function probeCacheAdoption(state, stale, options, plan, key, pool, {onPro
                 captureChartData(entry);
                 await storeUnits(dirCache, entry, {hash, hashes, options, out,
                     legacyHit: isLegacyEntry(hit) ? hit : null});
-                recordRowMemo(dirCache.data.results, entry.name, {hash, hashes}, key, {
-                    row: packForCache(out.row), chartData: chartDataFrom(entry), elapsedMs: out.row.elapsedMs,
-                    appVersion: APP_VERSION, solvers: options.solvers ?? null, unitVersions: unitVersionsFor(plan),
-                });
+                if (rowMemoStorable(options, out.row)) {
+                    recordRowMemo(dirCache.data.results, entry.name, {hash, hashes}, key, {
+                        row: packForCache(out.row), chartData: chartDataFrom(entry), elapsedMs: out.row.elapsedMs,
+                        appVersion: APP_VERSION, solvers: options.solvers ?? null, unitVersions: unitVersionsFor(plan),
+                    });
+                }
                 await writeDirCache(dirCache);
             }
         } catch (e) {
@@ -2089,6 +2110,12 @@ function createDialog() {
     const mcSweep = labelledCheckbox("Monte Carlo sweep",
         "Add the two Monte Carlo curve-fit strategies across polynomial orders. A method "
         + "diagnostic; adds 10 candidates per file and is the bulk of the sweep's cost.", false);
+    const gpuSearch = labelledCheckbox("GPU search",
+        "Search the fixed-wing and balloon fits on the graphics card (WebGPU): far more candidate "
+        + "solutions in less time, which can find better fits than the normal search. The final "
+        + "numbers are still computed on the CPU at full precision. Results can differ from a CPU "
+        + "run, so these fits are cached separately. Where WebGPU is unavailable the fits run on the "
+        + "CPU; the searchBackend column and the summary say where each file's searches ran.", false);
     const screenshots = labelledCheckbox("Scenario screenshots",
         "Also save a picture of each scenario into a SitrecImage folder beside it, so the Track "
         + "Browser can show the real scene instead of a plotted plan view. Each file is imported "
@@ -2133,7 +2160,8 @@ function createDialog() {
         + "pointing error, what the verdict concluded, and what ranking blind cost. Exports SVG "
         + "or a 300 dpi PNG for a paper.");
 
-    for (const el of [recursive.label, families.label, mcSweep.label, screenshots.label, rebuildRows.label,
+    for (const el of [recursive.label, families.label, mcSweep.label, gpuSearch.label, screenshots.label,
+        rebuildRows.label,
         anchorLabel, solversButton,
         chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
         cancelButton, clearButton,
@@ -2273,6 +2301,7 @@ function createDialog() {
         recursiveInput: recursive.input,
         familiesInput: families.input,
         mcSweepInput: mcSweep.input,
+        gpuSearchInput: gpuSearch.input,
         screenshotsInput: screenshots.input,
         rebuildRowsInput: rebuildRows.input,
         anchorInput,
@@ -3075,6 +3104,7 @@ function refreshControls(state) {
     state.recursiveInput.disabled = running;
     state.familiesInput.disabled = running;
     state.mcSweepInput.disabled = running;
+    state.gpuSearchInput.disabled = running;
     state.screenshotsInput.disabled = running;
     state.rebuildRowsInput.disabled = running;
     state.anchorInput.disabled = running;
@@ -3120,6 +3150,8 @@ function runOptions(state) {
         anchorM: nm * METERS_PER_NM,
         solutionFamilies: state.familiesInput.checked,
         mcOrderSweep: state.mcSweepInput.checked,
+        // Present only when on, so a CPU run's option set reads exactly as before.
+        ...(state.gpuSearchInput.checked ? {gpuSearch: true} : {}),
         // In candidate order, so two runs of one choice read as one option set.
         solvers: normalizeSolvers(state.solvers),
     };

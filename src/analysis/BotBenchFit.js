@@ -58,6 +58,42 @@ export function botBenchRangeLimits(record) {
     return {declaredMaxM, gridMaxM};
 }
 
+/**
+ * Where a battery's GPU-capable searches ran: "webgpu" when the fixed-wing and
+ * balloon fits it holds both used the GPU, "cpu" when neither did, "mixed" when one
+ * did, and null when it holds neither fit.
+ */
+export function searchBackendOf(battery) {
+    const used = [];
+    if (battery?.aircraft) used.push(battery.aircraft.runs?.[0]?.de?.backend === "webgpu");
+    if (battery?.lantern) used.push(battery.lantern.params?.optimizer?.de?.backend === "webgpu");
+    if (!used.length) return null;
+    if (used.every(Boolean)) return "webgpu";
+    return used.some(Boolean) ? "mixed" : "cpu";
+}
+
+/**
+ * A run that asked for the GPU search but whose fit used the CPU (no WebGPU in this
+ * worker, or a GPU error) made a CPU result. Stored under the GPU options it would
+ * be served to later GPU runs as though it were one, so it is kept for this run only.
+ * The range bands start from those fits, so they follow them.
+ */
+function markGpuFallbacksUncacheable(units) {
+    if (!units) return;
+    let fellBack = false;
+    const check = (unitId, usedGpu) => {
+        const record = units[unitId];
+        if (!record) return;
+        if (!record.result || !usedGpu(record.result)) {
+            record.cacheable = false;
+            fellBack = true;
+        }
+    };
+    check("aircraft", (fit) => fit.runs?.[0]?.de?.backend === "webgpu");
+    check("lantern", (fit) => fit.params?.optimizer?.de?.backend === "webgpu");
+    if (fellBack && units.families) units.families.cacheable = false;
+}
+
 export function validateBotBenchRecord({dataset}) {
     // A LAST-LINE GUARD, not a redundant one. The ingest already refuses a file
     // with too few rows, but a bug BETWEEN that check and here (an aliasing
@@ -76,6 +112,9 @@ export function validateBotBenchRecord({dataset}) {
 
 export async function fitBotBenchRecord(record, {
     anchorM = DEFAULT_ANCHOR_M, solutionFamilies = false, mcOrderSweep = false,
+    // Search the fixed-wing and balloon fits on the GPU where WebGPU exists
+    // (TraverseBattery `gpu`). Changes those fits, so their units are stored apart.
+    gpuSearch = false,
     // The solvers wanted (BotBenchSolvers ids; null for all) and, optionally,
     // stored fit units to use in place of fitting: {cached: {unitId: {result,
     // failures}}, onUnit}. The plan of units is derived from the solvers here,
@@ -157,7 +196,7 @@ export async function fitBotBenchRecord(record, {
         cameraHeading: null,
     };
 
-    return runTraverseBattery({
+    const battery = await runTraverseBattery({
         dataset, originLat, originLon, provenance,
         anchorDist: anchorM,
         speedTarget: SPEED_TARGET_MS,
@@ -182,6 +221,7 @@ export async function fitBotBenchRecord(record, {
         plausRangeMax: capM(55 * METERS_PER_NM),
         solutionFamilies,
         mcOrderSweep,
+        gpu: gpuSearch,
         familyScreen: makeFlatFamilyScreen(dataset, originLat, originLon, groundZ),
         buildHypotheses: (args) => buildCoreHypotheses({
             ...args,
@@ -204,7 +244,8 @@ export async function fitBotBenchRecord(record, {
         isCancelled,
         units: {plan, cached: units?.cached ?? {}, onUnit: units?.onUnit ?? null},
     });
-
+    if (gpuSearch) markGpuFallbacksUncacheable(battery.units);
+    return battery;
 }
 
 export function cacheableBotBenchBattery(battery) {

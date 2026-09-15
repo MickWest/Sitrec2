@@ -39,6 +39,8 @@
 import {differentialEvolution, mulberry32, patternSearchPolish} from "./DifferentialEvolution";
 import {assessBoundPins} from "./BoundedFit";
 import {metricSmoothingWindow, trajectorySmoothingSettings} from "./SmoothingPolicy";
+import {gpuDifferentialEvolution, resolveGpuBudget} from "./gpu/GpuDifferentialEvolution";
+import {buildAircraftKernel, GPU_AIRCRAFT_BUDGET} from "./gpu/AircraftCostKernel";
 
 export const KNOTS_TO_MS = 0.514444;
 export const METERS_PER_NM = 1852;
@@ -2409,7 +2411,7 @@ function aircraftAngErrDeg(dataset, params, stride) {
 
 // Cumulative per-frame wind displacement: cumW[f*3+c] = sum of W[0..f-1].
 // Lets the strided cost advance the wind term over a whole block in O(1).
-function cumulativeWind(dataset) {
+export function cumulativeWind(dataset) {
     const {n, W} = dataset;
     const cumW = new Float64Array(n * 3);
     for (let f = 1; f < n; f++) {
@@ -2423,7 +2425,7 @@ function cumulativeWind(dataset) {
 // Fast optimizer cost: integrate the model block-by-block over `costFrames`
 // (midpoint heading per block — 2nd order, more accurate than the full-res
 // forward Euler, and O(costFrames) instead of O(n)). cumW is cumulativeWind().
-function aircraftCostErrDeg(dataset, params, costFrames, cumW, incumbent, errSigma, scoreError) {
+export function aircraftCostErrDeg(dataset, params, costFrames, cumW, incumbent, errSigma, scoreError) {
     const {S, D, fps} = dataset;
     const [R0, h0, V, w0, wd, climb] = params;
     let px = S[0] + D[0] * R0, py = S[1] + D[1] * R0, pz = S[2] + D[2] * R0;
@@ -2484,6 +2486,11 @@ function aircraftCostErrDeg(dataset, params, costFrames, cumW, incumbent, errSig
  *   shouldCancel()       checked between optimizer evaluations
  *   boundedCost          skip provably losing evaluations (default true);
  *                        false runs the full objective for comparison
+ *   gpu                  true or {instances, pop, gens}: search on the GPU
+ *                        (WebGPU) instead of the CPU DE runs, then polish the
+ *                        best `runs` instance results on the CPU. Falls back
+ *                        to the CPU search when WebGPU is unavailable. Finds
+ *                        different (usually better) basins, so results differ.
  *
  * Returns {params: {startDist, heading, tas, turnRate, turnAccel, climb},
  *          cost, errDeg, track, metrics, runs: [per-run summaries]}
@@ -2619,10 +2626,86 @@ export async function fitAircraft(dataset, options = {}) {
         };
         return pol;
     };
+    // GPU SEARCH (opt-in, options.gpu). Many independent DE instances with large
+    // populations run on the GPU at once, in f32 (see AircraftCostKernel.js for
+    // why f32 is accurate enough here). The best `nRuns` instance results are then
+    // polished on the CPU with the same f64 objective and pattern search as doRun,
+    // so every cost and parameter reported below is f64. The search budget is far
+    // above the escalation run's, so escalation does not follow a GPU search.
+    // Returns null — use the CPU runs — when WebGPU is unavailable or fails.
+    const gpuRuns = async () => {
+        if (!(errSigma > 1e-4) || !Number.isFinite(errSigma)) return null;
+        const budget = resolveGpuBudget(options.gpu, GPU_AIRCRAFT_BUDGET);
+        const seed = 0x51F17A;
+        const GPU_SHARE = 0.6;
+        let search;
+        try {
+            search = await gpuDifferentialEvolution({
+                kernel: buildAircraftKernel({dataset, costFrames, cumW, T, errSigma, turnSigma, climbSigma,
+                    tasTarget, tasSigma, groundPrior, earthRadius: EARTH_RADIUS_M}),
+                instances: Array.from({length: budget.instances}, () => ({lo, hi})),
+                pop: budget.pop, gens: budget.gens, seed,
+                shouldCancel: options.shouldCancel,
+                onProgress: options.progress ? (frac) => options.progress(GPU_SHARE * frac) : null,
+            });
+        } catch (e) {
+            if (e && e.message === "cancelled") throw e;
+            console.warn("GPU fixed-wing search failed; using the CPU search:", e);
+            return null;
+        }
+        if (!search) return null;
+        const ranked = search.instances.map((inst, instance) => ({...inst, instance}))
+            .sort((a, b) => a.cost - b.cost);
+        const polishCount = Math.min(nRuns, ranked.length);
+        const out = [];
+        for (let r = 0; r < polishCount; r++) {
+            const p0 = GPU_SHARE + (1 - GPU_SHARE) * r / polishCount;
+            const p1 = GPU_SHARE + (1 - GPU_SHARE) * (r + 1) / polishCount;
+            const clock = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+            let lastYield = clock();
+            let evaluations = 0;
+            const expected = 1 + 300 * lo.length * 2;
+            const pulse = () => {
+                evaluations++;
+                if (options.shouldCancel && options.shouldCancel()) return false;
+                if (!options.progress || clock() - lastYield <= 60) return true;
+                return Promise.resolve(options.progress(p0 + Math.min(1, evaluations / expected) * (p1 - p0)))
+                    .then(() => {
+                        lastYield = clock();
+                        return !(options.shouldCancel && options.shouldCancel());
+                    });
+            };
+            const pol = await patternSearchPolish(
+                cost, ranked[r].params, [200, 0.5, 2, 0.02, 0.002, 0.5],
+                {lo, hi, onEvaluation: pulse, boundedCost});
+            if (pol.cancelled || (options.shouldCancel && options.shouldCancel())) {
+                throw new Error("cancelled");
+            }
+            pol.de = {
+                backend: "webgpu",
+                seed,
+                instance: ranked[r].instance,
+                instances: budget.instances,
+                pop: budget.pop,
+                gens: budget.gens,
+                generations: search.generations,
+                evaluations: search.evaluations,
+                stopReason: "generation_limit",
+            };
+            out.push(pol);
+        }
+        return out;
+    };
+
     const ESC_RESERVE = 0.15;
-    for (let r = 0; r < nRuns; r++) {
-        runs.push(await doRun(pop, gens, 0x51F17A + r * 0x9E3779,
-            (1 - ESC_RESERVE) * r / nRuns, (1 - ESC_RESERVE) * (r + 1) / nRuns));
+    const fromGpu = options.gpu ? await gpuRuns() : null;
+    if (fromGpu) {
+        runs.push(...fromGpu);
+    } else {
+        for (let r = 0; r < nRuns; r++) {
+            runs.push(await doRun(pop, gens, 0x51F17A + r * 0x9E3779,
+                (1 - ESC_RESERVE) * r / nRuns, (1 - ESC_RESERVE) * (r + 1) / nRuns));
+        }
     }
     runs.sort((a, b) => a.cost - b.cost);
 
@@ -2643,7 +2726,7 @@ export async function fitAircraft(dataset, options = {}) {
         ? (runs[runs.length - 1].cost - runs[0].cost) / runs[0].cost
         : 0;
     let escalated = false;
-    if (options.escalate !== false
+    if (options.escalate !== false && !fromGpu
         && (runSpread > 0.10 || (runs[0].cost > 6 && runs[0].cost < 300))) {
         escalated = true;
         // A latency-bounded RECOVERY pass, not full basin verification: on

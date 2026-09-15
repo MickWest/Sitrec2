@@ -128,6 +128,8 @@
 
 import {integrateRK4} from "./PhysicsModel";
 import {assessBoundPins} from "./BoundedFit";
+import {gpuDifferentialEvolution, resolveGpuBudget} from "./gpu/GpuDifferentialEvolution";
+import {buildLanternKernel, GPU_PHYSICS_BUDGET} from "./gpu/LanternCostKernel";
 
 // ---------------------------------------------------------------------------
 // Linear algebra helpers
@@ -1667,21 +1669,73 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     const searchHi = hasLocks ? subset(hi) : hi;
     const searchScales = hasLocks ? subset(scales) : scales;
 
+    // GPU SEARCH (opt-in, options.gpu = true or {instances, pop, gens}): replaces
+    // the CPU differential evolution for models that have a WGSL cost kernel
+    // (currently SkyLanternModel without a ground prior). Independent instances,
+    // each seeded with x0, run on the GPU in f32; every instance's best is then
+    // re-scored here in f64 and the lowest f64 cost goes to the same Nelder-Mead
+    // polish as the CPU path. dePop/deGens do not apply to it. Returns null — use
+    // the CPU search — when no kernel covers the model or WebGPU is unavailable.
+    const gpuPhysicsSearch = async () => {
+        const kernel = buildLanternKernel({
+            model, dataset, costFrames, costTimes, T, errSigma, groundPrior,
+            maxDt: fitMaxDt ?? model.maxDt ?? 0.02,
+        });
+        if (!kernel) return null;
+        const budget = resolveGpuBudget(options.gpu, GPU_PHYSICS_BUDGET);
+        const instLo = lo.slice(), instHi = hi.slice();
+        for (const i of lockedIdx) { instLo[i] = x0[i]; instHi[i] = x0[i]; }
+        let search;
+        try {
+            search = await gpuDifferentialEvolution({
+                kernel,
+                instances: Array.from({length: budget.instances}, () => ({lo: instLo, hi: instHi, seedVector: x0})),
+                pop: budget.pop, gens: budget.gens, seed: options.seed ?? 0xF17DE5,
+                shouldCancel: options.shouldCancel,
+            });
+        } catch (e) {
+            if (e && e.message === "cancelled") throw e;
+            console.warn(`GPU search for ${model.getName()} failed; using the CPU search:`, e);
+            return null;
+        }
+        if (!search) return null;
+        let best = null;
+        for (const inst of search.instances) {
+            const full = inst.params.map((v, i) => Math.min(hi[i], Math.max(lo[i], v)));
+            for (const i of lockedIdx) full[i] = x0[i];
+            const candidate = hasLocks ? subset(full) : full;
+            const c = searchCost(candidate);
+            if (!best || c < best.cost) best = {params: candidate, cost: c};
+        }
+        return {
+            ...best,
+            generations: search.generations,
+            evaluations: search.evaluations,
+            stopReason: "generation_limit",
+            backend: "webgpu",
+            instances: budget.instances,
+            pop: budget.pop,
+        };
+    };
+
     let result;
     if (options.optimizer === "de") {
-        const {differentialEvolution, mulberry32} = require("./DifferentialEvolution");
-        const de = await differentialEvolution(searchCost, searchLo, searchHi, {
-            pop: options.dePop ?? 48,
-            gens: options.deGens ?? 120,
-            seeds: [searchX0],
-            // Deterministic by default: identical dataset + options => identical
-            // fit (was unseeded Math.random — user-visible parameters flipped
-            // between runs on near-degenerate scenes). options.seed overrides.
-            rng: mulberry32(options.seed ?? 0xF17DE5),
-            // Candidate-level cooperation covers the initial population and the
-            // inside of every generation, not just generation boundaries.
-            onEvaluation: optimizerPulse,
-        });
+        let de = options.gpu ? await gpuPhysicsSearch() : null;
+        if (!de) {
+            const {differentialEvolution, mulberry32} = require("./DifferentialEvolution");
+            de = await differentialEvolution(searchCost, searchLo, searchHi, {
+                pop: options.dePop ?? 48,
+                gens: options.deGens ?? 120,
+                seeds: [searchX0],
+                // Deterministic by default: identical dataset + options => identical
+                // fit (was unseeded Math.random — user-visible parameters flipped
+                // between runs on near-degenerate scenes). options.seed overrides.
+                rng: mulberry32(options.seed ?? 0xF17DE5),
+                // Candidate-level cooperation covers the initial population and the
+                // inside of every generation, not just generation boundaries.
+                onEvaluation: optimizerPulse,
+            });
+        }
         if (de.cancelled || (options.shouldCancel && options.shouldCancel())) {
             throw new Error("cancelled");
         }
@@ -1697,6 +1751,7 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
             generations: de.generations,
             evaluations: de.evaluations,
             stopReason: de.stopReason,
+            ...(de.backend ? {backend: de.backend, instances: de.instances, pop: de.pop} : {}),
         };
     } else {
         result = await nelderMead(searchCost, searchX0, {

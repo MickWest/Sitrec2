@@ -165,15 +165,25 @@ export function planUnits(ids, {solutionFamilies = false} = {}) {
 }
 
 /**
+ * The units whose fit changes under the GPU search option: the fixed-wing and
+ * balloon searches run on the GPU, and the range bands start from those two fits.
+ */
+export const GPU_SEARCH_UNITS = Object.freeze(["aircraft", "lantern", "families"]);
+
+/**
  * The run options one unit's fit depends on. Every unit searches inside the bracket
  * the range anchor sets; the range-band unit exists only under its option, and the
  * polynomial sweep adds the Monte Carlo strategies under its option. A stored unit
  * is reused only when these match.
+ *
+ * The GPU search flag is added ONLY when it is on, so every unit stored by a CPU
+ * run keeps the options record it always had and stays reusable.
  */
 export function unitOptions(unit, options = {}) {
     const out = {anchorM: options.anchorM ?? null};
     if (unit === "families") out.solutionFamilies = !!options.solutionFamilies;
     if (unit === "polySweep") out.mcOrderSweep = !!options.mcOrderSweep;
+    if (options.gpuSearch && GPU_SEARCH_UNITS.includes(unit)) out.gpuSearch = true;
     return out;
 }
 
@@ -189,8 +199,23 @@ export function sameOptions(a, b) {
  * build is reused only after the run has checked a sample of them.
  */
 export function selectionKey(ids, options = {}) {
-    const flags = `a=${options.anchorM ?? "-"}|f=${options.solutionFamilies ? 1 : 0}|m=${options.mcOrderSweep ? 1 : 0}`;
+    // The GPU flag is appended only when on, so rows remembered by CPU runs keep their keys.
+    const flags = `a=${options.anchorM ?? "-"}|f=${options.solutionFamilies ? 1 : 0}|m=${options.mcOrderSweep ? 1 : 0}`
+        + (options.gpuSearch ? "|g=1" : "");
     return `${normalizeSolvers(ids).join(",")}|${flags}`;
+}
+
+/**
+ * Whether a finished row may be remembered under its selection key. A row made under
+ * the GPU search option whose fixed-wing or balloon search ran on the CPU instead (no
+ * WebGPU, or a GPU error) is a CPU row: remembered under the GPU key, it would be shown
+ * to later GPU runs, which would then never fit. Its fits are not stored either
+ * (BotBenchFit `markGpuFallbacksUncacheable`). A row with neither search is unaffected.
+ */
+export function rowMemoStorable(options, row) {
+    if (!options?.gpuSearch) return true;
+    const backend = row?.searchBackend ?? null;
+    return backend === null || backend === "webgpu";
 }
 
 /** The unit versions a plan was made under, for the row memo to record and check. */

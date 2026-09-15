@@ -129,6 +129,15 @@ group.
   polynomial fits are to their order), adds ten candidates per file, and is the
   bulk of the sweep's cost. Leave it off unless you are studying the methods
   themselves.
+- **GPU search** — search the fixed-wing and balloon fits on the graphics card
+  (WebGPU), as the live analysis's *GPU search (WebGPU)* option does: many
+  independent searches with large populations, testing hundreds of times more
+  candidate solutions, with the final numbers still computed on the CPU at full
+  precision. It can find better fits than the normal search, so results can
+  differ from a CPU run, and those fits are cached separately from CPU fits.
+  Where WebGPU is unavailable the same fits run on the CPU; the `searchBackend`
+  column (`webgpu`, `cpu` or `mixed`) and the summary report say where each
+  file's searches ran, and `optGpuSearch` records the option.
 - **Rebuild rows** — do not show a remembered row as it is; rebuild every row
   from the stored fits, which takes a fraction of a second a file. The fits
   themselves are still reused. Use it after a change to the candidates, the
@@ -529,7 +538,11 @@ on the next run.
 
 A stored unit is used only when the input hashes, the unit's version and the
 options that shape it (the range anchor, and its own option where it has
-one) all match. Every new build of Sitrec has a new app version, and fitting
+one) all match. The fixed-wing, balloon and range-band units also carry the
+**GPU search** option when it is on, so GPU and CPU fits of the same file are
+stored side by side and never stand in for each other. A GPU run whose fit ran on
+the CPU instead (no WebGPU, or a GPU error) is not stored, and neither is its
+row, so a later run with WebGPU fits it again. Every new build of Sitrec has a new app version, and fitting
 code can change without its unit version being bumped, so on a run of more
 than 20 files whose stored units come from another build, BOTBench first
 fits 10 of those files for real and compares each unit with its stored copy.

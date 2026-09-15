@@ -42,16 +42,16 @@
 
 import {PhysicsModel} from "./PhysicsModel";
 
-const MULT_MIN = 0.25;  // wind shear multiplier floor (never reverses)
-const MULT_MAX = 3.0;   // ...and ceiling (never a hurricane aloft)
-const EARTH_R = 6371000;
+export const MULT_MIN = 0.25;  // wind shear multiplier floor (never reverses)
+export const MULT_MAX = 3.0;   // ...and ceiling (never a hurricane aloft)
+export const EARTH_R = 6371000;
 
 // Reference RMS wind variation for the variability prior (m/s): roughly the
 // amount a real wind wanders over a few minutes without anything remarkable
 // happening. 1 cost unit = 0.02 deg of fit, so at this level the variation must
 // buy 0.02 deg to be worth having; 3x this costs 9 units and needs real support.
 // See SkyLanternModel._windVariationCost.
-const WIND_VARIATION_REF = 2.0;
+export const WIND_VARIATION_REF = 2.0;
 
 // Solve a 3x3 linear system M x = b (M row-major) by Gaussian elimination with
 // partial pivoting. Returns null if singular (the caller falls back to a

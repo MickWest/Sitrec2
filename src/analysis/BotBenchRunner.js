@@ -33,6 +33,7 @@ import {SWEEP_VARIANTS} from "../TraverseBattery";
 import {botBenchRangeLimits, cacheableBotBenchBattery, DEFAULT_ANCHOR_M,
     fitBotBenchRecord, SPEED_TARGET_MS, validateBotBenchRecord} from "./BotBenchFit";
 export {DEFAULT_ANCHOR_M} from "./BotBenchFit";
+import {searchBackendOf} from "./BotBenchFit";
 import {
     buildTraverseReportHTML, traverseReportSeries,
 } from "../AnalyzeTraverse";
@@ -82,7 +83,7 @@ export const ABSENT_HYPOTHESES = [
  * Run the analysis on one ingested record.
  *
  * @param record  from BotBenchIngest.ingestBotBenchEntry
- * @param options {anchorM, solutionFamilies, mcOrderSweep, onProgress, isCancelled}
+ * @param options {anchorM, solutionFamilies, mcOrderSweep, gpuSearch, onProgress, isCancelled}
  * @returns a results object of the same shape runTraverseAnalysis returns, so
  *          showTraverseGallery(results) opens it with no re-computation.
  */
@@ -90,6 +91,8 @@ export async function runBotBenchAnalysis(record, {
     anchorM = DEFAULT_ANCHOR_M,
     solutionFamilies = false,
     mcOrderSweep = false,
+    // Search the fixed-wing and balloon fits on the GPU where WebGPU exists.
+    gpuSearch = false,
     // The solvers to run, as BotBenchSolvers names them; null for every one.
     solvers = null,
     // Per-unit fitting for the battery (TraverseBattery `units`): which fit
@@ -122,7 +125,7 @@ export async function runBotBenchAnalysis(record, {
             + `is reported against the declared limit — expect them all to violate it.`);
     }
     const battery = cachedBattery ?? await fitBotBenchRecord(record, {
-        anchorM, solutionFamilies, mcOrderSweep, solvers, units, onProgress, isCancelled,
+        anchorM, solutionFamilies, mcOrderSweep, gpuSearch, solvers, units, onProgress, isCancelled,
     });
     const provenance = battery.provenance;
 
@@ -702,6 +705,9 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
         separability,
         candidates: results.hypotheses.length,
         rangeUnobservable: !!results.provenance.rangeUnobservable,
+        // Where the fixed-wing and balloon searches actually ran. Asking for the GPU
+        // search does not guarantee it: without WebGPU the same fits run on the CPU.
+        searchBackend: searchBackendOf(battery),
         failures: results.failures.map((f) => f.method),
         truthScore,
         // Scored in DEGREES of bearing error, and kept in its own field so no
