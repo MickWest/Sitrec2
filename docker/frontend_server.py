@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Read-only frontend artifact server. Backend routes are never served here."""
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from urllib.parse import unquote, urlsplit
 import os
 import re
 
-ROOT = Path(os.environ.get('SITREC_FRONTEND_ROOT', '/srv/frontend')).resolve()
+ROOT = os.path.realpath(os.environ.get('SITREC_FRONTEND_ROOT', '/srv/frontend'))
+ROOT_PREFIX = os.path.join(ROOT, '')
 
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(ROOT), **kwargs)
+        super().__init__(*args, directory=ROOT, **kwargs)
 
     def allowed(self):
         path = unquote(urlsplit(self.path).path)
@@ -22,10 +22,12 @@ class Handler(SimpleHTTPRequestHandler):
             return False
         if any(p.startswith('.') or p in ('sitrecServer', 'config', 'private', 'node_modules') for p in parts if p):
             return False
-        candidate = ROOT / path.lstrip('/')
-        if candidate.suffix.lower() in ('.php', '.py', '.sh', '.env', '.map'):
+        if os.path.splitext(path)[1].lower() in ('.php', '.py', '.sh', '.env', '.map'):
             return False
-        return candidate.resolve().is_relative_to(ROOT) and candidate.is_file()
+        # Normalize first, then check containment on the string, and only then touch
+        # the file system. realpath follows symlinks, so a link out of ROOT is refused.
+        candidate = os.path.realpath(os.path.join(ROOT, path.lstrip('/')))
+        return candidate.startswith(ROOT_PREFIX) and os.path.isfile(candidate)
 
     def do_GET(self):
         if self.path == '/healthz':
