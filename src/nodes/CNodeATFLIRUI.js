@@ -1,15 +1,29 @@
-// The Atflir UI has some of the screen symbology, plus the rendering of the artifial horizon
+// ATFLIR symbology, shared by the legacy jet sitches and the optional custom HUD.
 import {NodeMan, Sit} from "../Globals";
 import {par} from "../par";
-import {abs, floor, m2f, pad, radians} from "../utils";
+import {abs, degrees, floor, m2f, pad, radians} from "../utils";
 import {CNodeViewUI} from "./CNodeViewUI";
+import {Vector3} from "three";
+import {getAzElFromPositionAndForward, getCompassHeading} from "../SphericalMath";
+import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
+import {MISB} from "../MISBUtils";
+import {airframeHeadingFromVelocity} from "../AirframeHeading";
+import {closingSpeedKnots, getTrackMISBRow, telemetryNumber, trackFrameSpan} from "../SensorTrackTelemetry";
+import {getHUDImageRect} from "../HUDImageRect";
+import {getHUDColor} from "../HUDColor";
 
 export class   CNodeATFLIRUI extends CNodeViewUI {
 
     constructor(v) {
         super(v);
 
-        this.input("jetAltitude")
+        this.optionalInputs(["camera", "cameraTrack", "target", "jetAltitude"]);
+        this.trackDriven = !!this.in.camera;
+        // Keep custom readouts local: creating a hidden HUD must not overwrite
+        // the legacy jet's par.az/el/rng/Vc or its video clock offset.
+        this.readouts = this.trackDriven ? {az: null, el: null, rng: null, Vc: null, time: 0} : par;
+        const readouts = this.readouts;
 
         this.timeStart = v.timeStart;
         this.timeStartMin = v.timeStartMin;
@@ -26,45 +40,39 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
         this.addText("reticle", "RTCL", 61.9, 3.1)
         this.addText("diamond", "V", 93.9, 4.5, 4)
         this.addText("operational", "OPR", 3.5, 7)
-        this.addText("zoom", Sit.lookFOV === 0.35 ? "Z 2.0" : "Z 1.0", 14.8, 7)
+        this.addText("zoom", this.trackDriven ? "" : (Sit.lookFOV === 0.35 ? "Z 2.0" : "Z 1.0"), 14.8, 7)
 
-        /////////////////////////////////////////////////////////////////////
-        // these are all rather specific, and should be passed in as hooks
-        // but par.az and par el work. par.time needs a base value
-
-        this.addText("az", "35° L", 47, 7).listen(par, "az", function (value) {
-            this.text = (floor(0.499999+abs(value))) + "° " + (value > 0 ? "R" : "L");
+        this.addText("az", "", 47, 7).listen(readouts, "az", function (value) {
+            this.text = Number.isFinite(value) ? (floor(0.499999+abs(value))) + "° " + (value > 0 ? "R" : "L") : "";
         })
 
-        this.addText("el", "- 2°", 8.2, 48.5).listen(par, "el", function (value) {
-            this.text = (value < 0 ? "- " : "  ") + (floor(0.49999+abs(value))) + "°";
+        this.addText("el", "", 8.2, 48.5).listen(readouts, "el", function (value) {
+            this.text = Number.isFinite(value) ? (value < 0 ? "- " : "  ") + (floor(0.49999+abs(value))) + "°" : "";
         })
 
 
-        if (par.rng === undefined)
-            par.rng = 0;
-        this.addText("rng", "", 85, 30).listen(par, "rng", function (value) {
-            if (par.rng > 0)
+        this.addText("rng", "", 85, 30).listen(readouts, "rng", function (value) {
+            if (Number.isFinite(value) && value > 0)
                 this.text = value.toFixed(1) + " RNG";
             else
                 this.text = ""
         })
 
-        if (par.Vc === undefined)
-            par.Vc = 0;
-        this.addText("Vc", "", 90, 40).listen(par, "Vc", function (value) {
-            if (par.Vc !== 0)
+        const trackDriven = this.trackDriven;
+        this.addText("Vc", "", 90, 40).listen(readouts, "Vc", function (value) {
+            if (Number.isFinite(value) && (trackDriven || value !== 0))
                 this.text = value.toFixed() + " Vc";
             else
                 this.text = ""
         })
 
 
-        const timeStartMin = v.timeStartMin ?? 52;
-        const timeStartSec = v.timeStartSec ?? 45;
-        par.startTimeSeconds = 60*timeStartMin + timeStartSec
-        this.addText("time", "....", 45.9, 99.8).listen(par, "time", function (value) {
-            var sec = par.startTimeSeconds + floor(value)
+        const timeStartMin = v.timeStartMin ?? (this.trackDriven ? 0 : 52);
+        const timeStartSec = v.timeStartSec ?? (this.trackDriven ? 0 : 45);
+        const startTimeSeconds = 60*timeStartMin + timeStartSec;
+        if (!this.trackDriven) par.startTimeSeconds = startTimeSeconds;
+        this.addText("time", "....", 45.9, 99.8).listen(readouts, "time", function (value) {
+            const sec = (trackDriven ? startTimeSeconds : par.startTimeSeconds) + floor(value ?? 0);
             this.text = pad(floor(sec/60),2)+pad(sec%60,2);
         })
 
@@ -74,25 +82,92 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
     }
 
 
-    update() {
-        const altitude = Math.round(m2f(this.in.jetAltitude.v0));
+    setAltitude(meters) {
+        if (!Number.isFinite(meters)) {
+            this.textAlt1000s.text = this.textAlt000.text = "";
+            return;
+        }
+        const altitude = Math.round(m2f(meters));
         this.textAlt1000s.text = ""+pad(Math.floor(altitude/1000),2)
         this.textAlt000.text = ""+pad(altitude%1000,3);
     }
 
+    update() {
+        if (!this.trackDriven) this.setAltitude(this.in.jetAltitude?.v0);
+    }
+
+    updateTrackReadouts(frame) {
+        // Custom setup precedes legacy Sit.setup(), so resolve tracks lazily.
+        if (!this.in.cameraTrack) {
+            const id = ["cameraTrackSwitchSmooth", "cameraTrackSwitch", "jetTrack", "cameraTrack"]
+                .find(id => NodeMan.exists(id));
+            if (id) this.addInput("cameraTrack", id);
+        }
+        if (!this.in.target) {
+            const id = ["targetTrackSwitchSmooth", "targetTrackSwitch", "targetTrack"]
+                .find(id => NodeMan.exists(id));
+            if (id) this.addInput("target", id);
+        }
+        const camera = this.in.camera.camera;
+        camera.updateMatrixWorld();
+        const forward = new Vector3().setFromMatrixColumn(camera.matrixWorld, 2).negate();
+        const track = this.in.cameraTrack;
+        const row = track ? getTrackMISBRow(track, frame) : null;
+        let heading = telemetryNumber(row?.[MISB.PlatformHeadingAngle]);
+        if (heading === null && track) {
+            const [a, b] = trackFrameSpan(frame, Sit.frames);
+            if (b > a) {
+                const position = track.p(frame);
+                const velocity = track.p(b).clone().sub(track.p(a)).divideScalar(b - a);
+                const wind = NodeMan.get("localWind", false)?.getValueFrame(frame, position);
+                heading = airframeHeadingFromVelocity(position, velocity, wind);
+            }
+        }
+        const bearing = degrees(getCompassHeading(camera.position, forward, camera));
+        this.readouts.az = heading === null ? null : ((bearing - heading + 540) % 360) - 180;
+        this.readouts.el = getAzElFromPositionAndForward(camera.position, forward)[1];
+        const target = this.in.target;
+        this.readouts.rng = target ? camera.position.distanceTo(target.p(frame)) / 1852 : null;
+        this.readouts.Vc = closingSpeedKnots(track, target, frame, Sit.frames, Sit.fps, Sit.simSpeed ?? 1);
+        this.readouts.time = frame * (Sit.simSpeed ?? 1) / Sit.fps;
+        // The aircraft bank indicator is independent of the camera image roll.
+        // Without recorded platform roll, leave the moving horizon arms absent.
+        this.bank = telemetryNumber(row?.[MISB.PlatformRollAngle]);
+        const lla = ECEFToLLAVD_radii(camera.position);
+        this.setAltitude(lla.z - meanSeaLevelOffset(lla.x, lla.y));
+        // FOV alone cannot identify a sensor's optical/digital zoom mode.
+        this.textElements.fov.text = "FOV";
+        this.textElements.zoom.text = `${camera.fov.toFixed(3)}°`;
+    }
+
+    px(x) {
+        return this.hudRect ? this.hudRect.x + this.hudRect.width * x / 100 : super.px(x);
+    }
+
+    py(y) {
+        return this.hudRect ? this.hudRect.y + this.hudRect.height * y / 100 : super.py(y);
+    }
+
+    sx(x) {
+        return this.hudRect ? this.hudRect.width * x / 100 : super.sx(x);
+    }
+
     // Render for CNodeATFLIRUI
     renderCanvas(frame) {
+        if (!this.visible) return;
         if (this.overlayView && !this.overlayView.visible) return;
+        if (this.trackDriven) {
+            this.updateTrackReadouts(frame);
+            this.hudRect = getHUDImageRect(this.widthPx, this.heightPx,
+                NodeMan.get("mirrorVideo", false) ?? NodeMan.get("video", false), 1);
+        }
         super.renderCanvas(frame)
 
-        // bank node is created by the Gimbal core step; skip overlay until then.
-        if (!NodeMan.exists("bank")) return;
-
-        // const a = -radians(this.horizonAngle)
-        const a = radians(NodeMan.get("bank").v(par.frame))
+        const bank = this.trackDriven ? this.bank : NodeMan.get("bank", false)?.v(frame);
+        const a = radians(bank ?? 0);
         const c = this.ctx
 
-        c.strokeStyle = '#FFFFFF';
+        c.strokeStyle = this.trackDriven ? getHUDColor() : '#FFFFFF';
         c.lineWidth = 1.5
 
 
@@ -116,6 +191,8 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
 
         c.stroke();
 
+        if (!Number.isFinite(bank)) return;
+
         var o = 6.7 // offset of start of line from middle
         var l = 13 // length of line
         var d = 3 // lenght of small line at the end
@@ -131,4 +208,3 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
 
 
 }
-

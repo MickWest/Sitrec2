@@ -137,8 +137,9 @@ function releaseLayer() {
     // getter backed by the GL context that dispose() tears down. Reading it afterwards
     // used to throw, which left the dead canvas on screen and `layer` still pointing at
     // a disposed filter that every later frame then tried to draw with.
-    const {filter, canvas} = layer;
+    const {filter, canvas, unregisterHUDLayer} = layer;
     layer = null;
+    unregisterHUDLayer();
     try {
         if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas);
         if (filter) filter.dispose();
@@ -147,7 +148,7 @@ function releaseLayer() {
     }
 }
 
-function buildLayer(width, height) {
+function buildLayer(host, width, height) {
     releaseLayer();
     if (!filterModule) return;
 
@@ -166,7 +167,8 @@ function buildLayer(width, height) {
     composite.height = height;
     // The canvas is held here rather than fetched from the filter later, so releasing
     // never depends on the filter still being alive.
-    layer = {filter, canvas, composite, compositeCtx: composite.getContext("2d"), width, height, osdViews: []};
+    layer = {host, filter, canvas, composite, compositeCtx: composite.getContext("2d"), width, height, osdViews: [],
+        unregisterHUDLayer: host.registerHUDLayer(canvas)};
 }
 
 // Draw the host view and its OSD into one canvas, laid out exactly as they sit on screen.
@@ -227,8 +229,8 @@ export function updateVideoFormatLayer() {
     const ratio = window.devicePixelRatio || 1;
     const width = Math.max(2, Math.ceil(host.widthPx * ratio / 2) * 2);
     const height = Math.max(2, Math.ceil(host.heightPx * ratio / 2) * 2);
-    if (!layer || layer.width !== width || layer.height !== height) {
-        buildLayer(width, height);
+    if (!layer || layer.host !== host || layer.width !== width || layer.height !== height) {
+        buildLayer(host, width, height);
         if (!layer) return;
     }
 
@@ -253,6 +255,9 @@ export function updateVideoFormatLayer() {
     style.width = `${box.width}px`;
     style.height = `${box.height}px`;
     style.zIndex = `${layerZIndex(host, layer.osdViews)}`;
+    // Keep the header and its dropdown above the filtered image without changing
+    // the pixels fed to the filter or the size/position of the rendered picture.
+    host._clipHUDsBelowHeader();
 }
 
 async function loadFilterModule() {

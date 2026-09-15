@@ -576,6 +576,19 @@ class CNodeView extends CNode {
         this._clipHUDsBelowHeader();
     }
 
+    // Register a presentation canvas that sits above the view but is not itself a view
+    // (for example, the filtered composite). Header changes must clip it immediately,
+    // including while paused, when no new video frame is rendered.
+    registerHUDLayer(element) {
+        this._hudLayers ??= new Set();
+        this._hudLayers.add(element);
+        this._clipHUDsBelowHeader();
+        return () => {
+            this._hudLayers.delete(element);
+            element.style.clipPath = "";
+        };
+    }
+
     // A view's HUD companions — the compass, the MQ-9 / Wescam OSD frames, the video-info
     // panel — are separate views positioned `relativeTo` this one: SIBLING divs with a higher
     // z-index (updateZOrder stacks by area, and they are the same size). The header lives
@@ -589,10 +602,14 @@ class CNodeView extends CNode {
     // compass well below the bar is left untouched rather than beheaded.
     _clipHUDsBelowHeader() {
         const chrome = this.uiBar?.shown ? this.uiBar.chromeRect() : null;
+        const clip = element => {
+            element.style.clipPath = chrome ? hudClipPath(chrome, element.getBoundingClientRect()) : "";
+        };
         ViewMan.iterate((id, view) => {
             if (view.in?.relativeTo !== this || !view.div) return;
-            view.div.style.clipPath = chrome ? hudClipPath(chrome, view.div.getBoundingClientRect()) : "";
+            clip(view.div);
         });
+        this._hudLayers?.forEach(clip);
     }
 
     // A header drag must keep the bar visible for the whole gesture, even if the pointer
