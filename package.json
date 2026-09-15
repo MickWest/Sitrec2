@@ -147,7 +147,7 @@
       "\\.txt$": "<rootDir>/tests/rawTextTransform.js"
     },
     "transformIgnorePatterns": [
-      "node_modules/(?!(3d-tiles-renderer|three/examples)/)"
+      "node_modules/(?!(3d-tiles-renderer|three/examples|three/build)/)"
     ],
     "moduleNameMapper": {
       ".+\\.mjs$": "<rootDir>/tests/__mocks__/three-addons-stub.js",
