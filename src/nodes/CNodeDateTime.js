@@ -8,7 +8,7 @@ import {assert} from "../assert";
 import {calculateGST} from "../CelestialMath";
 import {updateGUIFrames} from "../JetGUI";
 import {updateFrameSlider} from "./CNodeFrameSlider";
-import {getOffsetFromDateTimeString} from "../DateTimeUtils";
+import {frameTimeOffsetMS, getOffsetFromDateTimeString} from "../DateTimeUtils";
 import {EventManager} from "../CEventManager";
 import {t} from "../i18n";
 import {showTimingAnalysis} from "../showTimingAnalysis";
@@ -97,13 +97,13 @@ for (const key in timeZoneOffsets) {
 
 // given a start time in ms, calculate the current "now" time based on the frame and the simSpeed and fps
 function startToNowMS(startMS) {
-    const nowMS = (Math.round(startMS + par.frame * 1000 * (Sit.simSpeed??1)/ Sit.fps))
+    const nowMS = Math.round(startMS) + frameTimeOffsetMS(par.frame, Sit.fps, Sit.simSpeed ?? 1);
     return nowMS;
 }
 
 // reverse of the above, given a "now" time, calculate the start time
 function nowToStartMS(nowMS) {
-    const startMS = (Math.round(nowMS - par.frame * 1000 * (Sit.simSpeed??1)/ Sit.fps))
+    const startMS = Math.round(nowMS) - frameTimeOffsetMS(par.frame, Sit.fps, Sit.simSpeed ?? 1);
     return startMS;
 }
 
@@ -1122,7 +1122,7 @@ export class CNodeDateTime extends CNode {
 // given a frame number then return the time in ms since the start of the epoch
     frameToMS(frame) {
         const startMS = this.dateStart.valueOf();
-        const MS = (Math.round(startMS + frame * 1000 * (Sit.simSpeed??1)/ Sit.fps))
+        const MS = startMS + frameTimeOffsetMS(frame, Sit.fps, Sit.simSpeed ?? 1);
         return MS;
     }
 

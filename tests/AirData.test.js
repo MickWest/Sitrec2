@@ -1,4 +1,13 @@
-import {airDataFromTAS, KNOT_MPS, pitotImpactPressureRatio, standardAtmosphere} from "../src/AirData";
+import {airDataFromTAS, KNOT_MPS, pitotImpactPressureRatio, pressureAltitudeFromPressure, standardAtmosphere} from "../src/AirData";
+
+test('pressure altitude inverts both standard layers without converting to geometric height', () => {
+    for (const h of [-500, 0, 7620, 11000, 15000, 19999]) {
+        const geometric = 6356766 * h / (6356766 - h);
+        expect(pressureAltitudeFromPressure(standardAtmosphere(geometric).pressurePa)).toBeCloseTo(h, 7);
+    }
+    expect(pressureAltitudeFromPressure(37592.6868624202) / .3048).toBeCloseTo(25004.99999, 5);
+    for (const bad of [null, undefined, NaN, 0, -1, 1]) expect(pressureAltitudeFromPressure(bad)).toBeNull();
+});
 
 test('standard atmosphere uses geometric height and the isothermal layer', () => {
     expect(standardAtmosphere(0)).toEqual({pressurePa: 101325, temperatureK: 288.15});

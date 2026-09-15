@@ -58,3 +58,9 @@ export function timeStrToEpoch(str) {
     const ms = Date.parse(str);
     return ms
 }
+// Quantize a frame offset once, before combining it with an epoch timestamp.
+// Rounding epoch + offset and epoch - offset separately is not invertible at
+// half milliseconds (a regular occurrence with 30000/1001 video).
+export function frameTimeOffsetMS(frame, fps, simSpeed = 1) {
+    return Math.round(frame * 1000 * simSpeed / fps);
+}

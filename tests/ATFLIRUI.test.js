@@ -101,3 +101,16 @@ test('legacy configured TAS is not wind-corrected a second time', () => {
     expect(ui.airData.casKnots).toBeCloseTo(254, 0);
     expect(ui.airData.mach).toBeCloseTo(.61, 2);
 });
+
+test('recorded pressure drives barometric altitude independently of geometric camera height', () => {
+    const {ui, row} = hud();
+    row[MISB.StaticPressure] = 375.926868624202;
+    ui.updateTrackReadouts(30);
+    expect(ui.readouts.altitudeSource).toBe('pressure altitude');
+    expect(ui.readouts.altitudeMeters / .3048).toBeCloseTo(25004.99999, 5);
+    expect(ui.textAlt1000s.text + ui.textAlt000.text).toBe('25000');
+    delete row[MISB.StaticPressure];
+    ui.updateTrackReadouts(30);
+    expect(ui.readouts.altitudeSource).toBe('MSL height');
+    expect(ui.textAlt1000s.text + ui.textAlt000.text).toBe(String(Math.round(7600 / .3048)));
+});

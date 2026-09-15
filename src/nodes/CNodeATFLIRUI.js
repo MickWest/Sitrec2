@@ -13,7 +13,7 @@ import {closingSpeedKnots, getTrackMISBRow, telemetryNumber, trackAirVelocity, t
 import {getHUDImageRect} from "../HUDImageRect";
 import {getHUDColor} from "../HUDColor";
 import {drawHUDText, ensureMQ9FontLoaded, MQ9_FONT} from "../HUDFonts";
-import {airDataFromTAS, KNOT_MPS, standardAtmosphere} from "../AirData";
+import {airDataFromTAS, KNOT_MPS, pressureAltitudeFromPressure, standardAtmosphere} from "../AirData";
 
 const TEXT_SCALE = 0.9;
 const TEXT_BRIGHTNESS = 0.85;
@@ -24,7 +24,7 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
     constructor(v) {
         super({...v, defaultFont: MQ9_FONT, defaultAlign: "left", defaultFontSize: v.defaultFontSize ?? 3.5});
         this.fontReady = ensureMQ9FontLoaded();
-        this.showHideController?.tooltip("ATFLIR display. CAS (knots) and Mach use the camera track minus Local Wind. Static pressure and temperature use recorded data when present, otherwise a standard atmosphere at the camera's MSL height. BLK is a placeholder.");
+        this.showHideController?.tooltip("ATFLIR display. CAS (knots) and Mach use the camera track minus Local Wind. Static pressure and temperature use metadata when present, otherwise a standard atmosphere at the camera's MSL height. Altitude uses pressure altitude from metadata/profile pressure in 10-foot steps, otherwise MSL height. BLK is a placeholder.");
 
         this.optionalInputs(["camera", "cameraTrack", "target", "jetAltitude", "jetTAS", "atmosphere"]);
         this.trackDriven = !!this.in.camera;
@@ -37,6 +37,14 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
         this.timeStart = v.timeStart;
         this.timeStartMin = v.timeStartMin;
         this.timeStartSec = v.timeStartSec;
+        // Optional reconstruction display timing. Keep the geometric readouts
+        // available even before a source instrument first displays them.
+        this.timeOffsetSeconds = v.timeOffsetSeconds ?? (60*(v.timeStartMin ?? 0)+(v.timeStartSec ?? 0));
+        this.timeFormat = v.timeFormat ?? "mmss";
+        this.rangeStartFrame = v.rangeStartFrame ?? 0;
+        this.targetMarkerStartFrame = v.targetMarkerStartFrame ?? 0;
+        this.simpleSerials.push("timeOffsetSeconds", "timeFormat", "rangeStartFrame", "targetMarkerStartFrame");
+        const display = this;
 
         this.cx = 50
         this.cy = 36.4
@@ -60,7 +68,7 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
 
 
         this.addText("rng", "", 72, 31.4).listen(readouts, "rng", function (value) {
-            if (Number.isFinite(value) && value > 0)
+            if (Number.isFinite(value) && value > 0 && (!display.trackDriven || readouts.frame >= display.rangeStartFrame))
                 this.text = value.toFixed(1) + " RNG";
             else
                 this.text = ""
@@ -68,8 +76,10 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
 
         const trackDriven = this.trackDriven;
         this.addText("Vc", "", 79.5, 41.5).listen(readouts, "Vc", function (value) {
-            if (Number.isFinite(value) && (trackDriven || value !== 0))
-                this.text = value.toFixed() + " Vc";
+            // Display model: round upward to 10-knot steps. Keep readouts.Vc
+            // unquantized for the physical calculation and analysis.
+            if (Number.isFinite(value) && (trackDriven || value !== 0) && (!trackDriven || readouts.frame >= display.rangeStartFrame))
+                this.text = (Math.ceil(value / 10) * 10).toFixed() + " Vc";
             else
                 this.text = ""
         })
@@ -80,8 +90,8 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
         const startTimeSeconds = 60*timeStartMin + timeStartSec;
         if (!this.trackDriven) par.startTimeSeconds = startTimeSeconds;
         this.addText("time", "....", 45.9, 99.8).listen(readouts, "time", function (value) {
-            const sec = (trackDriven ? startTimeSeconds : par.startTimeSeconds) + floor(value ?? 0);
-            this.text = pad(floor(sec/60),2)+pad(sec%60,2);
+            const sec = floor((trackDriven ? display.timeOffsetSeconds : par.startTimeSeconds) + (value ?? 0));
+            this.text = trackDriven && display.timeFormat === "seconds" ? String(sec) : pad(floor(sec/60),2)+pad(sec%60,2);
         })
 
 
@@ -98,12 +108,12 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
     }
 
 
-    setAltitude(meters) {
+    setAltitude(meters, incrementFeet = 1) {
         if (!Number.isFinite(meters)) {
             this.textAlt1000s.text = this.textAlt000.text = "";
             return;
         }
-        const altitude = Math.round(m2f(meters));
+        const altitude = Math.round(m2f(meters) / incrementFeet) * incrementFeet;
         this.textAlt1000s.text = ""+pad(Math.floor(altitude/1000),2)
         this.textAlt000.text = ""+pad(altitude%1000,3);
     }
@@ -148,6 +158,7 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
     }
 
     updateTrackReadouts(frame) {
+        this.readouts.frame = frame;
         // Custom setup precedes legacy Sit.setup(), so resolve tracks lazily.
         if (!this.in.cameraTrack) {
             const id = ["cameraTrackSwitchSmooth", "cameraTrackSwitch", "jetTrack", "cameraTrack"]
@@ -181,7 +192,7 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
         this.readouts.rng = target ? camera.position.distanceTo(target.p(frame)) / 1852 : null;
         // The target marker follows the projected track. A centered marker is a
         // consequence of the camera pointing at it, not a claim of tracker lock.
-        this.targetMarker = target ? target.p(frame).clone().project(camera) : null;
+        this.targetMarker = target && frame >= (this.targetMarkerStartFrame ?? 0) ? target.p(frame).clone().project(camera) : null;
         this.readouts.Vc = closingSpeedKnots(track, target, frame, Sit.frames, Sit.fps, Sit.simSpeed ?? 1);
         this.readouts.time = frame * (Sit.simSpeed ?? 1) / Sit.fps;
         // The aircraft bank indicator is independent of the camera image roll.
@@ -189,8 +200,12 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
         this.bank = telemetryNumber(row?.[MISB.PlatformRollAngle]);
         const lla = ECEFToLLAVD_radii(camera.position);
         const altitudeMSL = lla.z - meanSeaLevelOffset(lla.x, lla.y);
-        this.setAltitude(altitudeMSL);
         this.updateAirData(frame, track, row, altitudeMSL);
+        const pressureAltitude = this.airData.pressureSource === "metadata/profile"
+            ? pressureAltitudeFromPressure(this.airData.pressurePa) : null;
+        this.readouts.altitudeSource = pressureAltitude === null ? "MSL height" : "pressure altitude";
+        this.readouts.altitudeMeters = pressureAltitude ?? altitudeMSL;
+        this.setAltitude(this.readouts.altitudeMeters, pressureAltitude === null ? 1 : 10);
         // FOV alone cannot identify a sensor's optical/digital zoom mode.
         this.textElements.fov.text = "FOV";
         this.textElements.zoom.text = `${camera.fov.toFixed(3)}°`;

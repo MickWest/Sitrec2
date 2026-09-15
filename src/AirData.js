@@ -24,6 +24,19 @@ export function standardAtmosphere(altitudeMSL) {
     return {pressurePa, temperatureK};
 }
 
+// Pressure altitude is the standard-atmosphere geopotential height associated
+// with static pressure. It is independent of actual temperature and MSL height.
+// Return metres, using the same supported layers as standardAtmosphere().
+export function pressureAltitudeFromPressure(pressurePa) {
+    if (!Number.isFinite(pressurePa) || pressurePa <= 0) return null;
+    const t11 = T0 - LAPSE * 11000;
+    const p11 = P0 * (t11 / T0) ** (G0 / (R * LAPSE));
+    const height = pressurePa >= p11
+        ? -T0 / LAPSE * Math.expm1(R * LAPSE / G0 * Math.log(pressurePa / P0))
+        : 11000 - R * t11 / G0 * Math.log(pressurePa / p11);
+    return height >= -1000 && height <= 20000 ? height : null;
+}
+
 // Pitot impact pressure divided by ambient static pressure. At supersonic speed
 // the flow first crosses a normal shock, then decelerates isentropically to rest.
 export function pitotImpactPressureRatio(mach) {

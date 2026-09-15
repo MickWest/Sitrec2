@@ -1,4 +1,16 @@
-import {getOffsetFromDateTimeString, timeStrToEpoch} from "../src/DateTimeUtils";
+import {frameTimeOffsetMS, getOffsetFromDateTimeString, timeStrToEpoch} from "../src/DateTimeUtils";
+
+test('fractional video time uses one reversible millisecond offset at half-millisecond boundaries', () => {
+    const fps = 30000/1001;
+    const start = Date.parse('2000-01-01T00:00:00Z');
+    expect(frameTimeOffsetMS(645, fps)).toBe(21522);
+    for (const frame of [0, 1, 15, 368, 370, 645, 1032]) {
+        const offset = frameTimeOffsetMS(frame, fps);
+        expect(Math.abs(offset-frame*1001/30)).toBeLessThanOrEqual(.50000001);
+        expect((start+offset)-frameTimeOffsetMS(frame, fps)).toBe(start);
+    }
+    expect(frameTimeOffsetMS(30, 30, 2)).toBe(2000);
+});
 
 describe('getOffsetFromDateTimeString', () => {
     test('returns 0 for UTC datetime (Z)', () => {
