@@ -69,3 +69,35 @@ test('legacy altitude update still uses the supplied jet altitude', () => {
     expect(ui.textAlt1000s.text).toBe("25");
     expect(ui.textAlt000.text).toBe("000");
 });
+
+test('HUD air data responds to wind and uses recorded static pressure and temperature', () => {
+    const {ui, row, track, camera} = hud();
+    row[MISB.StaticPressure] = 376.0089; // hPa
+    row[MISB.OutsideAirTemperature] = -34.53; // static degrees Celsius
+    track.p = f => camera.position.clone().add(new Vector3(f * 200 / 30, 0, 0));
+    const wind = {getValueFrame: () => new Vector3(20 / 30, 0, 0)};
+    setNodeMan({exists: () => false, get: id => id === 'localWind' ? wind : undefined});
+    ui.updateTrackReadouts(30);
+    expect(ui.airData.tasMPS).toBeCloseTo(180, 6);
+    expect(ui.airData.pressurePa).toBeCloseTo(37600.89);
+    expect(ui.airData.temperatureK).toBeCloseTo(238.62);
+    const withWind = ui.airData.casKnots;
+    wind.getValueFrame = () => new Vector3();
+    ui.updateTrackReadouts(30);
+    expect(ui.airData.casKnots).toBeGreaterThan(withWind);
+    delete row[MISB.StaticPressure];
+    delete row[MISB.OutsideAirTemperature];
+    ui.updateTrackReadouts(30);
+    expect(ui.airData.pressureSource).toBe('standard atmosphere');
+    expect(ui.airData.temperatureSource).toBe('standard atmosphere');
+});
+
+test('legacy configured TAS is not wind-corrected a second time', () => {
+    const {ui} = hud();
+    ui.trackDriven = false;
+    ui.in.jetTAS = {v: () => 369};
+    ui.updateAirData(30, null, null, 25000 * .3048);
+    expect(ui.airData.tasMPS).toBeCloseTo(369 * 1852 / 3600);
+    expect(ui.airData.casKnots).toBeCloseTo(254, 0);
+    expect(ui.airData.mach).toBeCloseTo(.61, 2);
+});

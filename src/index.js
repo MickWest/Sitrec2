@@ -8,7 +8,7 @@
  * - Coordinate startup lifecycle, GUI initialization, and main loop wiring.
  */
 import {ColorManagement, Group, REVISION, Scene, WebGLRenderer,} from "three";
-import {setupVideoFormatEffectsMenu} from "./videoFilters/VideoFormatLayer";
+import {disposeVideoFormatLayer, setupVideoFormatEffectsMenu} from "./videoFilters/VideoFormatLayer";
 import {disposeRefractionTool, setupRefractionToolMenu} from "./refraction/RefractionLoader";
 import "./js/uPlot/uPlot.css"
 import {makeDraggable} from "./DragResizeUtils";
@@ -3342,6 +3342,7 @@ function disposeEverything() {
     console.log("");
 
     Globals.disposing = true;
+    disposeVideoFormatLayer();
     disposeRefractionTool();
 
     // cancel any requested animation frames

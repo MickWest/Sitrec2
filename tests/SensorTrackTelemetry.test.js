@@ -1,5 +1,5 @@
 import {Vector3} from "three";
-import {closingSpeedKnots, getTrackMISBRow, telemetryNumber} from "../src/SensorTrackTelemetry";
+import {closingSpeedKnots, getTrackMISBRow, telemetryNumber, trackAirVelocity} from "../src/SensorTrackTelemetry";
 
 test('reads frame-aligned metadata through a smoother and the selected switch', () => {
     const rows = [[10], [20]];
@@ -39,4 +39,17 @@ test('receding is negative, stationary is zero, missing derivative is unknown', 
     expect(closingSpeedKnots(fixed, fixed, 5, 11, 30)).toBe(0);
     expect(closingSpeedKnots(fixed, fixed, 0, 1, 30)).toBeNull();
     expect(closingSpeedKnots(fixed, null, 0, 11, 30)).toBeNull();
+});
+
+test('air velocity subtracts crosswind and vertical wind with the same simulation clock', () => {
+    for (const [fps, simSpeed] of [[30, 1], [15, 1], [30, 2]]) {
+        const dt = simSpeed / fps;
+        const track = {p: f => new Vector3(180, 0, 10).multiplyScalar(f * dt)};
+        const wind = {getValueFrame: () => new Vector3(20, 30, 4).multiplyScalar(dt)};
+        for (const frame of [0, 5, 10]) {
+            expect(trackAirVelocity(track, wind, frame, 11, fps, simSpeed).distanceTo(new Vector3(160, -30, 6)))
+                .toBeLessThan(1e-10);
+        }
+        expect(trackAirVelocity(track, wind, 0, 1, fps, simSpeed)).toBeNull();
+    }
 });

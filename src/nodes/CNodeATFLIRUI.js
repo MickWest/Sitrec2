@@ -3,27 +3,36 @@ import {NodeMan, Sit} from "../Globals";
 import {par} from "../par";
 import {abs, degrees, floor, m2f, pad, radians} from "../utils";
 import {CNodeViewUI} from "./CNodeViewUI";
-import {Vector3} from "three";
+import {Color, LinearSRGBColorSpace, Vector3} from "three";
 import {getAzElFromPositionAndForward, getCompassHeading} from "../SphericalMath";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {MISB} from "../MISBUtils";
 import {airframeHeadingFromVelocity} from "../AirframeHeading";
-import {closingSpeedKnots, getTrackMISBRow, telemetryNumber, trackFrameSpan} from "../SensorTrackTelemetry";
+import {closingSpeedKnots, getTrackMISBRow, telemetryNumber, trackAirVelocity, trackFrameSpan} from "../SensorTrackTelemetry";
 import {getHUDImageRect} from "../HUDImageRect";
 import {getHUDColor} from "../HUDColor";
+import {drawHUDText, ensureMQ9FontLoaded, MQ9_FONT} from "../HUDFonts";
+import {airDataFromTAS, KNOT_MPS, standardAtmosphere} from "../AirData";
+
+const TEXT_SCALE = 0.9;
+const TEXT_BRIGHTNESS = 0.85;
+const textColor = new Color();
 
 export class   CNodeATFLIRUI extends CNodeViewUI {
 
     constructor(v) {
-        super(v);
+        super({...v, defaultFont: MQ9_FONT, defaultAlign: "left", defaultFontSize: v.defaultFontSize ?? 3.5});
+        this.fontReady = ensureMQ9FontLoaded();
+        this.showHideController?.tooltip("ATFLIR display. CAS (knots) and Mach use the camera track minus Local Wind. Static pressure and temperature use recorded data when present, otherwise a standard atmosphere at the camera's MSL height. BLK is a placeholder.");
 
-        this.optionalInputs(["camera", "cameraTrack", "target", "jetAltitude"]);
+        this.optionalInputs(["camera", "cameraTrack", "target", "jetAltitude", "jetTAS", "atmosphere"]);
         this.trackDriven = !!this.in.camera;
         // Keep custom readouts local: creating a hidden HUD must not overwrite
         // the legacy jet's par.az/el/rng/Vc or its video clock offset.
         this.readouts = this.trackDriven ? {az: null, el: null, rng: null, Vc: null, time: 0} : par;
         const readouts = this.readouts;
+        this.airData = {casKnots: null, mach: null};
 
         this.timeStart = v.timeStart;
         this.timeStartMin = v.timeStartMin;
@@ -38,7 +47,6 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
         this.addText("fov", "NAR", 14.8, 3.1)
         this.addText("mode", "IR", 48.4, 3.1)
         this.addText("reticle", "RTCL", 61.9, 3.1)
-        this.addText("diamond", "V", 93.9, 4.5, 4)
         this.addText("operational", "OPR", 3.5, 7)
         this.addText("zoom", this.trackDriven ? "" : (Sit.lookFOV === 0.35 ? "Z 2.0" : "Z 1.0"), 14.8, 7)
 
@@ -47,11 +55,11 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
         })
 
         this.addText("el", "", 8.2, 48.5).listen(readouts, "el", function (value) {
-            this.text = Number.isFinite(value) ? (value < 0 ? "- " : "  ") + (floor(0.49999+abs(value))) + "°" : "";
+            this.text = Number.isFinite(value) ? (value < 0 ? "-" : " ") + (floor(0.49999+abs(value))) + "°" : "";
         })
 
 
-        this.addText("rng", "", 85, 30).listen(readouts, "rng", function (value) {
+        this.addText("rng", "", 72, 31.4).listen(readouts, "rng", function (value) {
             if (Number.isFinite(value) && value > 0)
                 this.text = value.toFixed(1) + " RNG";
             else
@@ -59,7 +67,7 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
         })
 
         const trackDriven = this.trackDriven;
-        this.addText("Vc", "", 90, 40).listen(readouts, "Vc", function (value) {
+        this.addText("Vc", "", 79.5, 41.5).listen(readouts, "Vc", function (value) {
             if (Number.isFinite(value) && (trackDriven || value !== 0))
                 this.text = value.toFixed() + " Vc";
             else
@@ -79,6 +87,14 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
 
         this.textAlt1000s = this.addText("alt-1000s", "", 74.7, 96, 4.2)
         this.textAlt000 = this.addText("alt-000", "", 79.3, 95.805, 3.7)
+
+        this.addText("cas", "", 15.5, 93.4).listen(this.airData, "casKnots", function (value) {
+            this.text = Number.isFinite(value) ? value.toFixed(0) : "";
+        });
+        this.addText("mach", "", 13.3, 96.7).listen(this.airData, "mach", function (value) {
+            this.text = Number.isFinite(value) ? `M ${value.toFixed(2)}` : "";
+        });
+        this.addText("blk", "BLK", 14.3, 99.8);
     }
 
 
@@ -94,6 +110,41 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
 
     update() {
         if (!this.trackDriven) this.setAltitude(this.in.jetAltitude?.v0);
+    }
+
+    updateAirData(frame, track, row, altitudeMSL) {
+        const wind = NodeMan.get("localWind", false);
+        const velocity = trackAirVelocity(track, wind, frame, Sit.frames, Sit.fps, Sit.simSpeed ?? 1);
+        // A legacy jet's configured TAS is already air-relative. For a custom
+        // reconstruction, derive TAS from the actual selected track minus wind.
+        const jetTAS = !this.trackDriven ? (this.in.jetTAS ?? NodeMan.get("jetTAS", false))?.v(frame) : null;
+        const tasMPS = Number.isFinite(jetTAS) ? jetTAS * KNOT_MPS : velocity?.length() ?? null;
+        const profile = this.in.atmosphere?.getAtAltitude(altitudeMSL);
+        const isa = standardAtmosphere(altitudeMSL);
+        const pressureHpa = telemetryNumber(row?.[MISB.StaticPressure]) ?? telemetryNumber(profile?.pressure);
+        const temperatureC = telemetryNumber(row?.[MISB.OutsideAirTemperature]) ?? telemetryNumber(profile?.temp);
+        const pressurePa = pressureHpa > 0 ? pressureHpa * 100 : isa?.pressurePa;
+        const temperatureK = temperatureC !== null && temperatureC > -273.15 ? temperatureC + 273.15 : isa?.temperatureK;
+        this.airData ??= {};
+        Object.assign(this.airData, airDataFromTAS(tasMPS, pressurePa, temperatureK), {
+            tasMPS, pressurePa, temperatureK,
+            speedSource: Number.isFinite(jetTAS) ? "configured TAS" : wind ? "track minus local wind" : "track, zero wind assumed",
+            pressureSource: pressureHpa > 0 ? "metadata/profile" : "standard atmosphere",
+            temperatureSource: temperatureC !== null && temperatureC > -273.15 ? "metadata/profile" : "standard atmosphere",
+        });
+    }
+
+    addText(key, text, x, y, size, color, align, font) {
+        return super.addText(key, text, x, y, (size ?? this.defaultFontSize) * TEXT_SCALE, color, align, font);
+    }
+
+    drawText(text, x, y) {
+        this.ctx.save();
+        // Scale the displayed RGB values, keeping glyphs opaque over the image.
+        this.ctx.fillStyle = "#" + textColor.setStyle(this.ctx.fillStyle, LinearSRGBColorSpace)
+            .multiplyScalar(TEXT_BRIGHTNESS).getHexString(LinearSRGBColorSpace);
+        drawHUDText(this.ctx, text, x, y, parseFloat(this.ctx.font));
+        this.ctx.restore();
     }
 
     updateTrackReadouts(frame) {
@@ -128,13 +179,18 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
         this.readouts.el = getAzElFromPositionAndForward(camera.position, forward)[1];
         const target = this.in.target;
         this.readouts.rng = target ? camera.position.distanceTo(target.p(frame)) / 1852 : null;
+        // The target marker follows the projected track. A centered marker is a
+        // consequence of the camera pointing at it, not a claim of tracker lock.
+        this.targetMarker = target ? target.p(frame).clone().project(camera) : null;
         this.readouts.Vc = closingSpeedKnots(track, target, frame, Sit.frames, Sit.fps, Sit.simSpeed ?? 1);
         this.readouts.time = frame * (Sit.simSpeed ?? 1) / Sit.fps;
         // The aircraft bank indicator is independent of the camera image roll.
         // Without recorded platform roll, leave the moving horizon arms absent.
         this.bank = telemetryNumber(row?.[MISB.PlatformRollAngle]);
         const lla = ECEFToLLAVD_radii(camera.position);
-        this.setAltitude(lla.z - meanSeaLevelOffset(lla.x, lla.y));
+        const altitudeMSL = lla.z - meanSeaLevelOffset(lla.x, lla.y);
+        this.setAltitude(altitudeMSL);
+        this.updateAirData(frame, track, row, altitudeMSL);
         // FOV alone cannot identify a sensor's optical/digital zoom mode.
         this.textElements.fov.text = "FOV";
         this.textElements.zoom.text = `${camera.fov.toFixed(3)}°`;
@@ -160,7 +216,14 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
             this.updateTrackReadouts(frame);
             this.hudRect = getHUDImageRect(this.widthPx, this.heightPx,
                 NodeMan.get("mirrorVideo", false) ?? NodeMan.get("video", false), 1);
+        } else {
+            const track = this.in.cameraTrack ?? NodeMan.get("jetTrack", false);
+            this.updateAirData(frame, track, track ? getTrackMISBRow(track, frame) : null, this.in.jetAltitude?.v0);
         }
+        // The bundled font has different advances from sans-serif. Place the
+        // smaller altitude digits after the actual prefix, without overlap.
+        this.ctx.font = `${Math.floor(this.sx(this.textAlt1000s.size * 100))}px ${MQ9_FONT}`;
+        this.textAlt000.x = this.textAlt1000s.x + this.ctx.measureText(this.textAlt1000s.text).width / this.sx(100);
         super.renderCanvas(frame)
 
         const bank = this.trackDriven ? this.bank : NodeMan.get("bank", false)?.v(frame);
@@ -168,12 +231,28 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
         const c = this.ctx
 
         c.strokeStyle = this.trackDriven ? getHUDColor() : '#FFFFFF';
-        c.lineWidth = 1.5
+        // Scale the vector strokes with the source image, so RS-170 filtering
+        // receives the same symbology proportions at any viewport/export size.
+        c.lineWidth = this.sx(0.25);
+        c.strokeRect(this.px(58.6), this.py(0.25), this.sx(15.4), this.py(3.6) - this.py(0.25));
+        c.beginPath();
+        this.moveTo(93.9, 1.8);
+        this.lineTo(95.6, 4.0);
+        this.lineTo(97.3, 1.8);
+        c.stroke();
 
-
-
-
-
+        const marker = this.targetMarker;
+        if (marker && Math.abs(marker.x) < 1 && Math.abs(marker.y) < 1 && marker.z >= -1 && marker.z <= 1) {
+            const x = (marker.x + 1) * 50, y = (1 - marker.y) * 50;
+            c.beginPath();
+            for (const sign of [-1, 1]) {
+                this.moveTo(x + sign * 1.5, y - 1.2);
+                this.lineTo(x + sign * 1.5, y + 1.2);
+                this.moveTo(x + sign * 1.5, y);
+                this.lineTo(x + sign * .6, y);
+            }
+            c.stroke();
+        }
         const r = 1.6 // radius of small circle
         const k = 4 // length of spike
         const k_top = 3 // length of spike

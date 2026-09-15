@@ -69,6 +69,7 @@ import {deserializeScriptedVideo, serializeScriptedVideo} from "./CScriptedVideo
 import {sitrecAPI} from "./CSitrecAPI";
 import {ScenarioManager} from "./CScenarioManager";
 import {deserializeLongExposure, serializeLongExposure} from "./LongExposure";
+import {deserializeVideoFormatEffects, serializeVideoFormatEffects} from "./videoFilters/VideoFormatLayer";
 import {getCursorPositionFromTopView} from "./mouseMoveView";
 import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightSidebar} from "./PageStructure";
 import {CNodeControllerCelestial} from "./nodes/CNodeControllerVarious";
@@ -681,6 +682,7 @@ export const serializeMethods = {
 
         // Long Exposure / Camera Nudge parameters (null when all defaults)
         out.longExposure = serializeLongExposure() ?? Sit.longExposure ?? null
+        out.videoFormatEffects = serializeVideoFormatEffects();
 
         // Split-tree tiling layout (UI redesign Phase 2): the optional view-tiling tree (view
         // ids + seam sizes). null when not tiled ⇒ legacy free-floating behaviour on reload.
@@ -1852,6 +1854,7 @@ export const serializeMethods = {
         if (sitchData.longExposure) {
             deserializeLongExposure(sitchData.longExposure);
         }
+        deserializeVideoFormatEffects(sitchData.videoFormatEffects);
 
         if (sitchData.subSitchesData) {
             this.deserializeSubSitches(sitchData.subSitchesData);
