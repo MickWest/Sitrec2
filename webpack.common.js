@@ -205,9 +205,6 @@ module.exports = (env = {}) => ({
         bootstrap: './src/release/bootstrap.js',
     },
     target: 'web',
-    externals: {
-        'node:fs': 'commonjs2 fs',
-    },
     cache: {
         type: 'filesystem', // Enable persistent caching for faster rebuilds
         buildDependencies: {
