@@ -19,7 +19,7 @@ export async function convertTiffBufferToBlobURL(buffer) {
     const imageData = ctx.createImageData(width, height);
 
     const numBands = rasters.length;
-    const extraSamples = image.fileDirectory.ExtraSamples;
+    const extraSamples = await image.fileDirectory.loadValue('ExtraSamples');
     const hasAlpha = extraSamples && (extraSamples[0] === 1 || extraSamples[0] === 2);
 
     for (let i = 0; i < width * height; i++) {
@@ -52,19 +52,19 @@ export async function convertTiffBufferToPngImage(buffer) {
     });
 }
 
-export function convertTIFFToElevationArray(image) {
+export async function convertTIFFToElevationArray(image) {
 
     if (!image.isTiled) {
         throw new Error("TIFF image is not tiled");
     }
 
-    const width = image.fileDirectory.ImageWidth;
-    const height = image.fileDirectory.ImageLength;
-    const tileWidth = image.fileDirectory.TileWidth;
-    const tileHeight = image.fileDirectory.TileLength;
-    const tileCount = image.fileDirectory.TileOffsets.length;
-    const tileOffsets = image.fileDirectory.TileOffsets;
-    const tileByteCounts = image.fileDirectory.TileByteCounts;
+    // geotiff 3 reads large tags lazily, so tag values come from loadValue(), not properties
+    const width = image.getWidth();
+    const height = image.getHeight();
+    const tileWidth = image.getTileWidth();
+    const tileHeight = image.getTileHeight();
+    const tileOffsets = await image.fileDirectory.loadValue('TileOffsets');
+    const tileByteCounts = await image.fileDirectory.loadValue('TileByteCounts');
 
     const buffer = image.source.arrayBuffer;
 

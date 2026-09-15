@@ -2231,7 +2231,7 @@ export class QuadTreeTile {
         const height = image.getHeight();
         console.log(`GeoTIFF x = ${this.x} y = ${this.y}, z = ${this.z}, width=${width}, height=${height}`);
 
-        const processedElevation = convertTIFFToElevationArray(image);
+        const processedElevation = await convertTIFFToElevationArray(image);
         this.computeElevationFromGeoTIFF(processedElevation, width, height);
 
 
