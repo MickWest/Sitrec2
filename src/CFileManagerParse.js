@@ -979,7 +979,7 @@ export const parseMethods = {
         const imageData = ctx.createImageData(width, height);
 
         const numBands = rasters.length;
-        const extraSamples = image.fileDirectory.ExtraSamples;
+        const extraSamples = await image.fileDirectory.loadValue('ExtraSamples');
         const hasAlpha = extraSamples && (extraSamples[0] === 1 || extraSamples[0] === 2);
 
         for (let i = 0; i < width * height; i++) {
