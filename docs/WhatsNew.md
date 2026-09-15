@@ -9,6 +9,26 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.160.0 (2026-09-15)
+
+### New Features
+
+- **GPU search** (Traverse → Traverse Analysis Tweaks → *GPU search (WebGPU)*, and the *GPU search* option in File → File Analysis → **BOTBench...**): optionally search the fixed-wing and balloon fits on the graphics card, testing far more candidate solutions in less time. The final numbers are still computed at full precision, results can differ from a normal run, and the normal search is used where WebGPU is not available.
+- **ATFLIR display** (Show → Views → *ATFLIRUI*): an optional ATFLIR-style overlay on the look view. It reads the camera and target tracks and shows azimuth, elevation, range, closing speed, altitude, calibrated airspeed, Mach and a target marker, plus a bank indicator when the track records platform roll.
+
+### Improvements
+
+- **Video Format Effects** (Effects → Video Format Effects): whether the effect is on, and all its settings, are saved with the sitch and restored when it loads. A sitch saved without them opens with the effect off.
+- The ATFLIR overlays in the Gimbal, GoFast and FLIR1 sitches use the updated lettering and symbols, add calibrated airspeed and Mach readouts, and round closing speed up to the next 10 knots.
+- BOTBench writes a large folder's cache index less often and in smaller pieces, and its status line shows the page's memory use where the browser reports it.
+
+### Bug Fixes
+
+- Fixed terrain staying flat with the *National Map 3DEP GeoTIFF* elevation source, which failed to load every tile. Importing TIFF files uses the same loader and is fixed too.
+- Fixed MP4 videos getting a slightly wrong frame rate, which could put imported tracks out of step with the video.
+- Fixed BOTBench replacing a folder's cache index that it could not read, and fitting files again when their cache entries were lost because the tab closed or crashed during a run.
+- Fixed the look view's header bar and menus being hidden while **Video Format Effects** is on.
+
 ## Version 2.159.0 (2026-09-14)
 
 ### New Features

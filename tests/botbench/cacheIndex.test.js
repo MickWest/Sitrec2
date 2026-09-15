@@ -8,6 +8,7 @@ import {
     CACHE_BLOB_DIR, CACHE_FILENAME, describeDuration, formatBytes, measureCacheOnDisk, recordedFitMs,
     DRONE_CONTROL_POSITION_TOLERANCE_M,
     CACHE_SCHEMA, LEGACY_UNITS, adoptRecord, combinedHash, elapsedFromUnits, emptyIndex,
+    indexTextChunks, indexWritePolicy, isReadableIndex,
     isLegacyEntry, legacyBlobName, legacyUnitsFromBattery, normalizeIndex, packUnitBlob, readUnitBlob,
     recordRowMemo, recordUnit, rowMemoUsable, sameUnitResult, unitBlobName, unitMetaFromBlob,
     unitRecord, unitRecordFromMeta, unitRecordUsable, unitResultAgrees, valuesAgree,
@@ -238,5 +239,34 @@ describe("the drone-control unit is compared within a metre", () => {
         const stored = blob("kalman", {positions, residuals: new Float32Array(3), params: {}, activeCount: 3});
         expect(unitResultAgrees({positions: shifted(0.3), residuals: new Float32Array(3), params: {}, activeCount: 3}, stored)).toBe(false);
         expect(unitResultAgrees({positions: shifted(1e-9), residuals: new Float32Array(3), params: {}, activeCount: 3}, stored)).toBe(true);
+    });
+});
+
+describe("writing the index", () => {
+    test("only a schema 2 or 3 index with results is readable, so nothing else is overwritten as empty", () => {
+        expect(isReadableIndex({schema: 3, results: {}})).toBe(true);
+        expect(isReadableIndex({schema: 2, results: {}})).toBe(true);
+        expect(isReadableIndex({schema: 4, results: {}})).toBe(false);
+        expect(isReadableIndex({schema: 3})).toBe(false);
+        expect(isReadableIndex(null)).toBe(false);
+    });
+
+    test("the pieces join to the same index, and a large index comes in several pieces", () => {
+        const data = {schema: CACHE_SCHEMA, results: {}, savedAt: "t", appVersion: "v"};
+        for (let i = 0; i < 50; i++) {
+            data.results[`f "${i}".csv`] = {hash, hashes, units: {kalman: {blob: "b", n: i}}, rows: {}};
+        }
+        const pieces = [...indexTextChunks(data, 200)];
+        expect(pieces.length).toBeGreaterThan(1);
+        expect(JSON.parse(pieces.join(""))).toEqual(JSON.parse(JSON.stringify(data)));
+        expect(JSON.parse([...indexTextChunks(emptyIndex())].join(""))).toEqual(emptyIndex());
+        expect(JSON.parse([...indexTextChunks({results: {}})].join(""))).toEqual({results: {}});
+    });
+
+    test("an index is written less often as it grows", () => {
+        expect(indexWritePolicy(0)).toEqual({batch: 25, delayMs: 3000});
+        expect(indexWritePolicy(100)).toEqual({batch: 25, delayMs: 3000});
+        expect(indexWritePolicy(3000)).toEqual({batch: 300, delayMs: 36000});
+        expect(indexWritePolicy(100000).delayMs).toBe(60000);
     });
 });

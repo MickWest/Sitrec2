@@ -9,6 +9,75 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.160.0 (2026-09-15)
+
+### New Features
+
+- **Optional GPU search for the fixed-wing and balloon fits** (Traverse → Traverse Analysis Tweaks → *GPU search (WebGPU)*, and the *GPU search* checkbox in File → File Analysis → **BOTBench...**; `5e0fd874`, `src/gpu/GpuDifferentialEvolution.js`, `AircraftCostKernel.js`, `LanternCostKernel.js`, `WebGPUCompute.js`, `src/TraverseAnalysis.js`, `src/LOSFitting.js`, `src/TraverseBattery.js`, `src/AnalyzeTraverse.js`, `src/analysis/BotBenchFit.js`, `BotBenchSolvers.js`, `BotBenchRunner.js`, `BotBenchUI.js`). Both switches are off by default.
+  - **What it does.** `analyzeTweaks.gpuSearch` (and `gpuSearch` in BOTBench) passes `gpu` through `runTraverseBattery`. `fitAircraft` then runs `gpuDifferentialEvolution` with `buildAircraftKernel` (`GPU_AIRCRAFT_BUDGET`: 8 independent instances, population 1024, 300 generations; the CPU search is 3 runs × 60 × 150). The best 3 instances are refined by `patternSearchPolish` with the double-precision cost, and no CPU escalation run follows a GPU search. `fitPhysicsModel` runs the free-wind and measured-wind Sky Lantern / Balloon fits with `buildLanternKernel` (`GPU_PHYSICS_BUDGET`: 4 × 1024 × 200, each instance seeded with the start vector; the CPU search is 48 × 120). Each instance's best is scored again in double precision, and the lowest goes to the usual Nelder-Mead polish. The kernel covers only `SkyLanternModel` without a ground prior.
+  - **Precision.** WGSL has only 32-bit floats. The kernels never subtract two absolute positions: each sightline is built from the sensor offset S(0) − S(f), formed in 64-bit floats on the CPU, plus the displacement flown since frame 0. Angles use atan2(|r × d|, r · d). The commit reports the 32-bit cost within 2e-6 (fixed-wing) and 1e-6 (balloon) of the 64-bit cost near an optimum. Every reported parameter, residual and track is still computed on the CPU in 64-bit floats. A larger search can land in a different, usually better, basin, so results can differ from a CPU run and between graphics cards.
+  - **Fallback.** `getComputeDevice` returns null without WebGPU or an adapter. A compile error, validation error or device loss logs a console warning, and the fit uses the CPU search. The quadcopter, drone-control and range-band fits and the constant-air-speed grid stay on the CPU.
+  - **Traverse Analysis.** The option is part of `computeAnalysisFingerprint`, and the report's run audit records `backend` for each fixed-wing run plus `gpuSearchRequested`.
+  - **BOTBench.** `unitOptions` adds `gpuSearch: true` to the `aircraft`, `lantern` and `families` units (`GPU_SEARCH_UNITS`), and `selectionKey` appends `|g=1`, both only when the option is on. GPU and CPU fits of one file are stored side by side, and CPU-run cache keys are unchanged. When a GPU run falls back to the CPU, `markGpuFallbacksUncacheable` and `rowMemoStorable` refuse to store its fits and row, so a later run with WebGPU fits them again. New CSV columns are `optGpuSearch` and `searchBackend` (`webgpu`, `cpu` or `mixed`, from `searchBackendOf`). The summary report's *GPU search* line counts the files that ran on the GPU, partly on the GPU, or on the CPU.
+  - **Speed.** Measured by the author in Chrome on an Apple M4 Pro: a 900-frame balloon fit went from 283–306 ms to 104–119 ms, the whole analysis from 1.98 s to 1.47 s, and a 12-clip BOTBench batch from 4.39 s to 3.75 s.
+- **ATFLIR display** (Show → Views → *ATFLIRUI*; `f5349f69`, `c4afe178`, `0aa7e8a9`, `src/nodes/CNodeATFLIRUI.js`, `src/CustomSupport.js`, `src/SensorTrackTelemetry.js`, `src/AirData.js`, `src/HUDImageRect.js`). This is an optional ATFLIR-style overlay on the look view, hidden by default.
+  - **Setup.** `CCustomManager.setupATFLIRUI` creates it during custom-manager setup, beside `setupWescamMXUI`, so older saved sitches get it too. It is created for any sitch with a `lookView` and `lookCamera`.
+  - **Separate readouts.** With a `camera` input, `CNodeATFLIRUI` runs track-driven and keeps its own `readouts` object, so the hidden display never overwrites the old jet sitches' `par.az/el/rng/Vc`.
+  - **Track sources.** Tracks are found on first render: the camera track from `cameraTrackSwitchSmooth` / `cameraTrackSwitch` / `jetTrack` / `cameraTrack`, the target from `targetTrackSwitchSmooth` / `targetTrackSwitch` / `targetTrack`.
+  - **Pointing and range readouts:**
+    - **Azimuth:** camera compass bearing minus platform heading. Heading comes from MISB *Platform Heading Angle* via `getTrackMISBRow`, otherwise `airframeHeadingFromVelocity` with Local Wind.
+    - **Elevation:** from the camera's forward vector.
+    - **RNG:** camera-to-target distance in NM.
+    - **Vc:** `closingSpeedKnots`, which is minus the rate of change of slant range. It is shown rounded up to 10-kt steps; the stored value is not rounded.
+    - **FOV:** the camera FOV in degrees.
+    - **Bank indicator:** from MISB *Platform Roll Angle*, and left off when roll is not recorded.
+    - **Target marker:** brackets at the target track's projected position. A centred marker does not mean a tracker lock.
+  - **Air data** (`updateAirData`, `AirData.js`). TAS is the camera track's velocity minus `localWind` (`trackAirVelocity`). Static pressure and temperature come from MISB *Static Pressure* / *Outside Air Temperature* or a connected `atmosphere` input profile, otherwise a standard atmosphere at the camera's MSL height. `airDataFromTAS` gives Mach and compressible CAS, with a normal shock above Mach 1. BLK is a placeholder.
+  - **Altitude.** Shown as pressure altitude (`pressureAltitudeFromPressure`, in 10-ft steps) when pressure comes from metadata or a profile, otherwise as MSL height.
+  - **Placement.** The symbols follow video zoom and pan through `getHUDImageRect`, now shared with `CNodeMQ9UI.getHUDRect`.
+  - **Saved fields.** Four node fields are saved and have no menu controls: `timeOffsetSeconds` (counter start), `timeFormat` (`"mmss"` or `"seconds"`), `rangeStartFrame` (RNG and Vc hidden before it) and `targetMarkerStartFrame`.
+
+### Improvements
+
+- **Video Format Effects are saved with the sitch** (Effects → Video Format Effects; `c4afe178`, `serializeVideoFormatEffects` / `deserializeVideoFormatEffects` in `src/videoFilters/VideoFormatLayer.js`, `src/CustomManagerSerialize.js`, `src/index.js`).
+  - **Saving.** A saved sitch now stores `videoFormatEffects`, a copy of the on/off state and every signal, screen and encoding setting.
+  - **Loading.** Settings are restored in place, because the permanent menu controls and the filter hold these objects by reference. The effect is switched on only when the sitch saved it on.
+  - **Older sitches.** A sitch without the key uses the tuning remembered by the browser (`loadSettings`), with the effect off.
+  - **Session behaviour.** `disposeEverything` now calls `disposeVideoFormatLayer`, which turns the effect off when a sitch is torn down, and a settings change marks the sitch as modified (`markSitchDirty`). Before this, the effect's state was not saved with a sitch, and it always started off when the page loaded.
+- **The old jet sitches' ATFLIR overlays use the updated drawing** (`c4afe178`, `0aa7e8a9`, `src/nodes/CNodeATFLIRUI.js`, `src/nodes/CNodeViewUI.js`). The same class draws the Gimbal `ATFLIRUIOverlay` and `dero` overlays (`initJetStuffOverlays`), and the GoFast and FLIR1 overlays.
+  - **Lettering.** All ATFLIR text now uses the shared HUD font (`MQ9_FONT` via `drawHUDText`) at 90% size (`TEXT_SCALE`) and 85% brightness (`TEXT_BRIGHTNESS`), left-aligned, through the new `CNodeViewUI.drawText` hook.
+  - **Symbols.** The reticle box and the diamond (previously a "V" glyph) are drawn as lines whose width scales with the image. RNG and Vc have moved, and the elevation text is written "-2°" instead of "- 2°".
+  - **Readouts.** The CAS, Mach and BLK texts are added; in these sitches TAS is the configured `jetTAS` where one exists, with no second wind correction. Vc is shown rounded up to 10-kt steps.
+- **BOTBench writes large folders' cache index less often and in smaller pieces** (working-tree change, `indexTextChunks` and `indexWritePolicy` in `src/analysis/BotBenchCacheIndex.js`, `saveDirCache` and `pageMemoryNote` in `src/analysis/BotBenchUI.js`, `docs/BOTBench.md`).
+  - **Why.** Each write is the whole folder's index, about 12 KB per file per the code comment, so fixed thresholds made writing grow with the square of the folder size.
+  - **Chunked writes.** `saveDirCache` now streams compact JSON in pieces of about 1 MiB through the writable, instead of one `JSON.stringify(data, null, 1)` string; the indentation had added about a third to the size. A failed write aborts the writable, leaving the previous file whole, and records `rec.writeError`.
+  - **Write thresholds.** `indexWritePolicy` sets the write batch to max(25, ceil(entries / 10)) results and the delay to entries × 12 ms, kept between 3 s and 60 s. `entries` is the count at the last successful write in the session, so the first write still uses 25 results / 3 s.
+  - **Memory on the status line.** The running and final status lines add "page memory X of Y GB" where Chromium's `performance.memory` exists. This is the page heap only, not the analysis workers.
+
+### Bug Fixes
+
+- **Fixed the *National Map 3DEP GeoTIFF* elevation source failing every tile, which left the terrain flat, and TIFF / GeoTIFF file imports that use the same loader** (`65a4081d`, `79ff1864`, `855ee6e6`, `webpack.common.js`, `src/CFileManager.js`, `src/TIFFUtils.js`, `src/QuadTreeTile.js`, `src/CFileManagerParse.js`).
+  - **Cause.** `webpack.common.js` declared `externals: {'node:fs': 'commonjs2 fs'}`. geotiff's own `fs` import resolved to that external, so the lazily loaded geotiff chunk evaluated `require("fs")` as it loaded and threw "require is not defined" in the browser. This hit every caller of `loadGeoTIFF`: elevation tiles, `tif`/`tiff` file import and GeoTIFF ground overlays. The same binding is present in local 2.158.0 dev and serverless builds.
+  - **Fix.** The external is removed, so geotiff gets its empty browser stub. `CFileManager`'s console-mode file read now uses `import(/* webpackIgnore: true */ "node:fs")`, so console mode still reads local files. The commit reports 3DEP tiles in headless Chrome at 0/33 before and 93/93 after.
+  - **geotiff 3 migration.** The same release moves to geotiff 3.0.5, which reads large TIFF tags only on request. `convertTIFFToElevationArray` is now async; it uses `getWidth` / `getHeight` / `getTileWidth` / `getTileHeight` and `await fileDirectory.loadValue('TileOffsets' | 'TileByteCounts')`, and `ExtraSamples` is read the same way. The commit reports an exact match against `readRasters()` on two real 3DEP tiles.
+- **Fixed MP4 videos getting a slightly wrong frame rate, which could put imported tracks out of step with the video** (`0aa7e8a9`, `MP4Source.updateTiming` in `src/js/mp4-decode/mp4_demuxer.js`, `frameTimeOffsetMS` in `src/DateTimeUtils.js`, `src/nodes/CNodeDateTime.js`).
+  - **Cause.** For non-fragmented files the frame rate was sample count ÷ movie duration, rounded to 0.01 fps. Movie duration can include edit lists or audio padding. In the new test, a 1033-frame 30000/1001 clip with a 34.5 s movie duration came out as 29.94 fps, about one frame off by its last frame.
+  - **Fix.** The rate now uses the video track's sample duration and keeps its fractional value.
+  - **Time conversion.** `startToNowMS`, `nowToStartMS` and `frameToMS` now round the frame offset once, through `frameTimeOffsetMS`, before adding it to the epoch time. Frame ↔ time conversion is therefore exactly reversible at half-millisecond boundaries, which occur regularly with 30000/1001 video.
+- **Fixed BOTBench replacing a folder's cache index that exists but cannot be read, and refitting files whose index entries were lost** (working-tree change, `loadDirCache`, `saveDirCache`, `gatherCachedUnits` and `cacheIndexNote` in `src/analysis/BotBenchUI.js`, `isReadableIndex` in `BotBenchCacheIndex.js`).
+  - **Unreadable index, before.** Any read or parse failure of `.botbench-cache` started from `emptyIndex()`, and the next batched write replaced the file with an index holding only that run.
+  - **Unreadable index, now.** Only a missing file (`NotFoundError`) starts fresh. The file is read twice, and must parse to schema 2 or 3 with `results`. Otherwise `rec.indexUnreadable` is set, a console warning is logged, and `saveDirCache` does not write that index for the rest of the session. Fits are still written as their own blobs.
+  - **Lost entries.** `gatherCachedUnits` used to run only for a file whose index entry matched its hash. A file whose entry was lost when the tab closed or crashed between batched index writes, or whose entry was for other bytes, was fitted again. It now runs for every file: when no index record exists, it opens `unitBlobName(hash, unitId)` in the blob folder, accepts a blob whose meta hash matches, and records it with `recordUnit`.
+  - **Status line.** Both the running and final lines append "Cache index: N could not be read and was left as is, M could not be written (see the console); the fits are stored and are found again by name." when either applies.
+- **Fixed the look view's header bar and its menus being hidden while Video Format Effects is on** (Effects → Video Format Effects; `f5349f69`, `CNodeView.registerHUDLayer` / `_clipHUDsBelowHeader`, `buildLayer` and `updateVideoFormatLayer` in `src/videoFilters/VideoFormatLayer.js`).
+  - **Cause.** The filtered composite canvas sits above the host view but is not a view, so the existing clipping below the header did not apply to it.
+  - **Fix.** The canvas is now registered as a HUD layer and clipped below the header, including while playback is paused. It is unregistered when released and rebuilt when the host view changes.
+
+### Security
+
+- **The BotBench cache decoder accepts only the array types it writes** (`bb9bb59f`, `TYPED_ARRAYS` in `src/analysis/BotBenchCacheCodec.js`; CodeQL `js/unvalidated-dynamic-method-call`). The stored array-type name was looked up in a plain object, so an inherited name such as `"constructor"` matched a built-in and produced the wrong kind of value or an unclear error. `TYPED_ARRAYS` is now a `Map` (`has` / `get`), and an unknown name fails with "unknown array type". Valid caches are unaffected.
+- **The Docker frontend server checks a path before reading the file system** (`97f06256`, `Handler.allowed` in `docker/frontend_server.py`; CodeQL `py/path-injection`). The path is now resolved with `os.path.realpath`, which follows symlinks, then checked with a string prefix test against the root folder, and only then passed to `os.path.isfile`. The extension deny-list is checked on the URL path. The commit reports that the old and new checks agree on 29 test paths, including symlink escapes and encoded "..", so the allow and deny results do not change.
+
 ## Version 2.159.0 (2026-09-14)
 
 ### New Features

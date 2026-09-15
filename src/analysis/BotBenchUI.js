@@ -54,7 +54,8 @@ import {
 } from "./BotBenchSolvers";
 import {
     CACHE_BLOB_DIR, CACHE_FILENAME, CACHE_SCHEMA, LEGACY_UNITS, adoptRecord, combinedHash, emptyIndex,
-    isLegacyEntry, legacyUnitsFromBattery, normalizeIndex, packUnitBlob, recordRowMemo, recordUnit,
+    indexTextChunks, indexWritePolicy, isLegacyEntry, isReadableIndex, legacyUnitsFromBattery, normalizeIndex,
+    packUnitBlob, recordRowMemo, recordUnit,
     rowMemoUsable, unitBlobName, unitMetaFromBlob, unitRecord, unitRecordFromMeta,
     unitRecordUsable, unitResultAgrees, valuesAgree, elapsedFromUnits, describeDuration, formatBytes, measureCacheOnDisk, recordedFitMs,
 } from "./BotBenchCacheIndex";
@@ -998,7 +999,7 @@ function isExplicitlyCollectable(name) {
 // written into the first folder's cache, in the first folder's directory. A
 // list keyed by handle identity is exact, and stays iterable — which a
 // WeakMap is not, and flushCaches has to walk every folder it has touched.
-async function loadDirCache(state, entry) {
+export async function loadDirCache(state, entry) {
     if (!entry.dirHandle) return null;   // drag-and-drop: no writable folder
     if (!state.dirCaches) state.dirCaches = [];
     const already = state.dirCaches.find((r) => r.handle === entry.dirHandle);
@@ -1008,10 +1009,38 @@ async function loadDirCache(state, entry) {
     if (!already) state.dirCaches.push(rec);
     rec.loading = (async () => {
         let data = emptyIndex();
-        try {
-            const fh = await entry.dirHandle.getFileHandle(CACHE_FILENAME);
-            data = normalizeIndex(JSON.parse(await (await fh.getFile()).text()));
-        } catch (e) { /* absent or unreadable — start fresh */ }
+        rec.indexUnreadable = null;
+        let fh = null;
+        try { fh = await entry.dirHandle.getFileHandle(CACHE_FILENAME); }
+        catch (e) {
+            // Absent is the one reason to start fresh.
+            if (e?.name !== "NotFoundError") rec.indexUnreadable = String(e?.message ?? e);
+        }
+        if (fh) {
+            // Read twice before giving up: a file replaced while it is being read
+            // fails the read once and is whole the next time.
+            for (let attempt = 0; attempt < 2; attempt++) {
+                try {
+                    const parsed = JSON.parse(await (await fh.getFile()).text());
+                    if (!isReadableIndex(parsed)) throw new Error("not an index this build can read");
+                    data = normalizeIndex(parsed);
+                    rec.indexUnreadable = null;
+                    break;
+                } catch (e) {
+                    // Gone between finding it and reading it is still absent.
+                    if (e?.name === "NotFoundError") { rec.indexUnreadable = null; break; }
+                    rec.indexUnreadable = String(e?.message ?? e);
+                }
+            }
+        }
+        // PRESENT BUT UNREADABLE IS NOT ABSENT. Starting fresh and then writing would
+        // replace the index of every earlier run with one that holds only this run. So
+        // the file is left as it is: this session does not write it, each fit still goes
+        // to its own blob, and a run finds those blobs by name (gatherCachedUnits).
+        if (rec.indexUnreadable) {
+            console.warn(`BotBench: ${CACHE_FILENAME} could not be read (${rec.indexUnreadable}). `
+                + `It is kept as it is and not written this session; fits are still stored.`);
+        }
         rec.data = data;
         return rec;
     })();
@@ -1031,31 +1060,28 @@ async function releaseDirCache(rec) {
 }
 
 // THE CACHE INDEX IS WRITTEN IN BATCHES. It is one JSON file per folder holding a
-// row for every file in that folder, so rewriting it after each file made every
-// completion cost as much as all the earlier ones in that folder put together. A
-// folder's index is now written after CACHE_WRITE_BATCH result changes or
-// CACHE_WRITE_DELAY_MS, whichever comes first, and every folder is written when the
-// run ends, cancelled or not. The unit blobs are still written per file and first, so
-// a tab lost mid-run costs at most one batch of index entries — and those are
-// recovered from the blobs' own meta on the next run.
+// row for every file in that folder, so each write costs as much as the folder's
+// whole history. A folder's index is written after enough result changes or enough
+// time, both growing with the size of the index (indexWritePolicy), and every folder
+// is written when the run ends, cancelled or not. The unit blobs are still written
+// per file and first, so a tab lost mid-run costs only the index entries since the
+// last write — and gatherCachedUnits finds those fits again by blob name.
 // Adopting an unchanged row only changes its build stamp. Those updates use the
 // timer or folder-completion flush, not the row-count trigger: repeatedly writing
 // the full index to acknowledge a cache hit can cost more than loading the row.
-const CACHE_WRITE_BATCH = 25;
-const CACHE_WRITE_DELAY_MS = 3000;
-
-function writeDirCache(rec, {metadataOnly = false} = {}) {
+export function writeDirCache(rec, {metadataOnly = false} = {}) {
     rec.pendingChanges = (rec.pendingChanges ?? 0) + 1;
-    if (!metadataOnly && rec.pendingChanges >= CACHE_WRITE_BATCH) return flushDirCache(rec);
+    const policy = indexWritePolicy(rec.indexEntries ?? 0);
+    if (!metadataOnly && rec.pendingChanges >= policy.batch) return flushDirCache(rec);
     if (!rec.flushTimer) {
         rec.flushTimer = setTimeout(() => {
             flushDirCache(rec).catch((e) => console.warn("BotBench cache write failed", e));
-        }, CACHE_WRITE_DELAY_MS);
+        }, policy.delayMs);
     }
     return Promise.resolve();
 }
 
-function flushDirCache(rec) {
+export function flushDirCache(rec) {
     if (rec.flushTimer) { clearTimeout(rec.flushTimer); rec.flushTimer = null; }
     if (!rec.pendingChanges) return rec.writing ?? Promise.resolve();
     rec.pendingChanges = 0;
@@ -1069,13 +1095,46 @@ async function flushAllDirCaches(state) {
 }
 
 async function saveDirCache(rec) {
-    rec.data.schema = CACHE_SCHEMA;
-    rec.data.savedAt = new Date().toISOString();
-    rec.data.appVersion = APP_VERSION;
-    const fh = await rec.handle.getFileHandle(CACHE_FILENAME, {create: true});
-    const writable = await fh.createWritable();
-    await writable.write(JSON.stringify(rec.data, null, 1));
-    await writable.close();
+    // An index that is on disk but could not be read is never replaced (loadDirCache).
+    if (rec.indexUnreadable) return;
+    const data = rec.data;
+    data.schema = CACHE_SCHEMA;
+    data.savedAt = new Date().toISOString();
+    data.appVersion = APP_VERSION;
+    try {
+        const fh = await rec.handle.getFileHandle(CACHE_FILENAME, {create: true});
+        const writable = await fh.createWritable();
+        try {
+            for (const chunk of indexTextChunks(data)) await writable.write(chunk);
+            await writable.close();
+        } catch (e) {
+            // Until close() the browser writes to a temporary copy, so a failed write
+            // leaves the previous index whole. Abort discards the copy.
+            try { await writable.abort?.(); } catch (abortError) { /* already closed */ }
+            throw e;
+        }
+    } catch (e) {
+        rec.writeError = String(e?.message ?? e);
+        throw e;
+    }
+    rec.writeError = null;
+    rec.indexEntries = Object.keys(data.results).length;
+}
+
+/**
+ * A status-line note for folders whose index this run is not keeping up to date.
+ * Their fits are still stored as blobs and found again by name, so nothing is lost,
+ * but a reader has to know why those rows will be rebuilt next time.
+ */
+function cacheIndexNote(state) {
+    const recs = state.dirCaches ?? [];
+    const unreadable = recs.filter((rec) => rec.indexUnreadable).length;
+    const failed = recs.filter((rec) => !rec.indexUnreadable && rec.writeError).length;
+    if (!unreadable && !failed) return "";
+    const parts = [];
+    if (unreadable) parts.push(`${unreadable} could not be read and ${unreadable === 1 ? "was" : "were"} left as is`);
+    if (failed) parts.push(`${failed} could not be written`);
+    return ` Cache index: ${parts.join(", ")} (see the console); the fits are stored and are found again by name.`;
 }
 
 async function readBlobText(rec, name) {
@@ -1173,21 +1232,35 @@ const APP_VERSION = process.env.BUILD_VERSION_STRING ?? "dev";
  * @param adoptUnits  the units another build's fits may be used for, after the
  *                    run's sample check; the legacy blob's units count individually
  */
-async function gatherCachedUnits(dirCache, hit, {hash, plan, options, adoptUnits = new Set()}) {
+export async function gatherCachedUnits(dirCache, hit, {hash, hashes, name, plan, options, adoptUnits = new Set()}) {
     const texts = {plan: plan.slice(), cached: {}, legacy: null, legacyUnits: [], legacyElapsedMs: null};
     const records = {};
-    if (!dirCache || !hit || hit.hash !== hash) return {texts, records};
+    if (!dirCache) return {texts, records};
+    // The index entry for these bytes, when the index has one. A file with NO entry,
+    // or with an entry for other bytes, is looked for as well: a tab that crashes
+    // between batched index writes loses the entries of the files it finished last,
+    // but not their blobs, which are written first. Blob names are content-addressed
+    // over every input hash and each blob's meta repeats the full hash, so a blob
+    // found this way was made from these very bytes.
+    const entry = hit && hit.hash === hash ? hit : null;
     const usable = (record, unitId) => unitRecordUsable(record,
         {unitId, options, appVersion: APP_VERSION, adoptable: adoptUnits.has(unitId)});
+    let blobDir;
     for (const unitId of plan) {
-        let record = hit.units?.[unitId] ?? null;
+        const record = entry?.units?.[unitId] ?? null;
         if (!record) {
+            // Looked up once per file, so a folder with no fits yet costs one lookup.
+            if (blobDir === undefined) {
+                try { blobDir = await dirCache.handle.getDirectoryHandle(CACHE_BLOB_DIR); }
+                catch (e) { blobDir = null; }
+            }
+            if (!blobDir) continue;
             try {
-                const text = await readBlobText(dirCache, unitBlobName(hash, unitId));
-                const recovered = unitRecordFromMeta(unitMetaFromBlob(text));
+                const text = await (await (await blobDir.getFileHandle(unitBlobName(hash, unitId))).getFile()).text();
+                const meta = unitMetaFromBlob(text);
+                const recovered = meta && (meta.hash ?? hash) === hash ? unitRecordFromMeta(meta) : null;
                 if (recovered && usable(recovered, unitId)) {
-                    hit.units ??= {};
-                    hit.units[unitId] = recovered;
+                    recordUnit(dirCache.data.results, name, {hash, hashes}, unitId, recovered);
                     texts.cached[unitId] = {text};
                     records[unitId] = recovered;
                 }
@@ -1202,15 +1275,15 @@ async function gatherCachedUnits(dirCache, hit, {hash, plan, options, adoptUnits
             console.warn("BotBench: a stored fit could not be read; fitting it again", unitId, e);
         }
     }
-    if (isLegacyEntry(hit) && (hit.options?.anchorM ?? null) === (options.anchorM ?? null)) {
-        const sameBuild = (hit.appVersion ?? null) === APP_VERSION;
+    if (isLegacyEntry(entry) && (entry.options?.anchorM ?? null) === (options.anchorM ?? null)) {
+        const sameBuild = (entry.appVersion ?? null) === APP_VERSION;
         const allowed = LEGACY_UNITS.filter((unitId) => plan.includes(unitId) && !texts.cached[unitId]
             && (sameBuild || adoptUnits.has(unitId)));
         if (allowed.length) {
             try {
-                texts.legacy = await readBlobText(dirCache, hit.battery);
+                texts.legacy = await readBlobText(dirCache, entry.battery);
                 texts.legacyUnits = allowed;
-                texts.legacyElapsedMs = hit.elapsedMs ?? null;
+                texts.legacyElapsedMs = entry.elapsedMs ?? null;
             } catch (e) {
                 console.warn("BotBench: the old battery blob could not be read; fitting", e);
             }
@@ -1337,9 +1410,8 @@ export async function analyseEntryWithCache(entry, ctx) {
     }
 
     // 2. The stored units this selection can start from.
-    const {texts, records} = entryMatches
-        ? await gatherCachedUnits(dirCache, hit, {hash, plan, options, adoptUnits})
-        : {texts: {plan: plan.slice(), cached: {}, legacy: null, legacyUnits: [], legacyElapsedMs: null}, records: {}};
+    const {texts, records} = await gatherCachedUnits(dirCache, hit,
+        {hash, hashes, name: entry.name, plan, options, adoptUnits});
     const fromStore = Object.keys(texts.cached).length + texts.legacyUnits.length;
     if (fromStore) ctx.onStatus?.(fromStore === plan.length ? "cached" : "partly cached",
         `${fromStore} of ${plan.length} fit units read from ${CACHE_FILENAME}; ${plan.length - fromStore} to fit.`);
@@ -3281,6 +3353,20 @@ function chooseSolvers(state, {fileCount = 0} = {}) {
 // A macrotask yield that background-tab throttling does not clamp (unlike
 // setTimeout, which Chrome drops to ~1/minute in a hidden tab — that would drag
 // a 30-file run out to hours). Same reasoning as AnalyzeTraverse's makeYield.
+/**
+ * The page's JavaScript heap against its limit, where the browser reports it
+ * (Chromium's performance.memory). The analysis workers' heaps are not included.
+ * Shown on the status line so a long run on a machine short of memory can be
+ * watched: a run that crashed out of memory after 1,000-2,000 files could not be
+ * reproduced outside the browser, where the analysis measured flat.
+ */
+function pageMemoryNote() {
+    const m = globalThis.performance?.memory;
+    if (!m || !(m.jsHeapSizeLimit > 0)) return "";
+    const gb = (bytes) => (bytes / 1073741824).toFixed(1);
+    return `, page memory ${gb(m.usedJSHeapSize)} of ${gb(m.jsHeapSizeLimit)} GB`;
+}
+
 function makeYield() {
     if (typeof MessageChannel === "undefined") {
         return createBotBenchYield(() => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -3369,6 +3455,7 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
         // A trailing throttled call can land after the run has ended, and would
         // overwrite the final "Done" or "Cancelled" line with a stale count.
         if (!state.running) return;
+        state.memoryNote = pageMemoryNote();
         state.progress.value = fractionSum / found.length;
         // The captures run one at a time beside the fits and are much slower, so
         // their backlog is worth showing rather than appearing as a wait at the end.
@@ -3376,7 +3463,7 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
             ? `, screenshots ${shotQueue.done} of ${shotQueue.total}` : "";
         state.status.textContent = `Analysing ${completed} of ${found.length} complete`
             + (pool.workers?.slots.length && !pool.workers.closed ? ` (${pool.workers.slots.length} workers)` : "")
-            + `, ${describeSolvers(options.solvers)}` + shots + (state.memoryNote ?? "");
+            + `, ${describeSolvers(options.solvers)}` + shots + (state.memoryNote ?? "") + cacheIndexNote(state);
     }, 250);
     // The summary tiles take medians over EVERY finished row, so recomputing them
     // after each file made each file cost more than the last. Once a second is plenty,
@@ -3599,7 +3686,7 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
     state.status.textContent = (state.cancelled
         ? `Cancelled. ${done} result(s) in the table.`
         : `Done. ${done} result(s) in the table, ${describeSolvers(options.solvers)}.`)
-        + adoptNote + shotNote + (state.memoryNote ?? "");
+        + adoptNote + shotNote + (state.memoryNote ?? "") + cacheIndexNote(state);
     state.running = false;
     refreshControls(state);
     updateSummary(state);

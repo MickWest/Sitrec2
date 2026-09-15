@@ -72,13 +72,76 @@ export function emptyIndex() {
 }
 
 /**
+ * Whether parsed index text is an index this build reads: schema 2 or 3, with
+ * results. Anything else — a damaged file, another program's JSON, an index that a
+ * newer build wrote under a schema this one does not know — is not an empty index,
+ * and must never be overwritten as though it were one.
+ */
+export function isReadableIndex(parsed) {
+    return !!parsed && typeof parsed === "object" && !!parsed.results
+        && (parsed.schema === 2 || parsed.schema === CACHE_SCHEMA);
+}
+
+/**
  * An index as read from disk, in schema-3 shape. Schema 2 is accepted as it is:
  * its entries are recognised by isLegacyEntry. Anything else starts fresh.
  */
 export function normalizeIndex(parsed) {
-    if (!parsed || typeof parsed !== "object" || !parsed.results) return emptyIndex();
-    if (parsed.schema !== 2 && parsed.schema !== CACHE_SCHEMA) return emptyIndex();
+    if (!isReadableIndex(parsed)) return emptyIndex();
     return {...parsed, schema: CACHE_SCHEMA, results: parsed.results};
+}
+
+/**
+ * The index as compact JSON text, in pieces of about `chunkChars` characters, for a
+ * writable stream. Joined, the pieces parse to what JSON.stringify(data) parses to;
+ * only the place of `results` among the top-level keys differs.
+ *
+ * WHY PIECES. An index holds about 12 KB for every file in its folder (measured on
+ * rock_v3: 3.5 MB for 300 files), so a folder of a few thousand files is tens of
+ * megabytes of text. One JSON.stringify makes that as a single string, and the
+ * browser copies it again to send it to the file. Built one file's record at a time,
+ * the largest string is one piece. Compact rather than indented: the one-space
+ * indent added a third to the size (4.7 MB for the same 300 files).
+ */
+export function* indexTextChunks(data, chunkChars = 1 << 20) {
+    const {results = {}, ...head} = data ?? {};
+    const headText = JSON.stringify(head);
+    let text = (headText === "{}" ? "{" : headText.slice(0, -1) + ",") + "\"results\":{";
+    let first = true;
+    for (const name of Object.keys(results)) {
+        const value = JSON.stringify(results[name]);
+        if (value === undefined) continue;
+        text += (first ? "" : ",") + JSON.stringify(name) + ":" + value;
+        first = false;
+        if (text.length >= chunkChars) {
+            yield text;
+            text = "";
+        }
+    }
+    yield text + "}}";
+}
+
+export const INDEX_WRITE_BATCH = 25;
+export const INDEX_WRITE_DELAY_MS = 3000;
+export const INDEX_WRITE_MAX_DELAY_MS = 60000;
+
+/**
+ * When a run writes a folder's index, for an index holding `entries` files: after
+ * `batch` changed results, or `delayMs` after the first unwritten change.
+ *
+ * Every write is the WHOLE index, so fixed thresholds make the writing grow with the
+ * square of the folder. At 25 results or 3 seconds, a folder of 3,000 files wrote an
+ * index of about 47 MB as often as every 3 seconds for the rest of the run. Both
+ * thresholds therefore grow with the index, which holds the timer's writing to about
+ * a megabyte a second up to 5,000 files. What a later write can lose is cheap: the
+ * unit records are found again from their blobs, and a row is rebuilt from its units.
+ */
+export function indexWritePolicy(entries) {
+    const n = Number.isFinite(entries) && entries > 0 ? entries : 0;
+    return {
+        batch: Math.max(INDEX_WRITE_BATCH, Math.ceil(n / 10)),
+        delayMs: Math.min(INDEX_WRITE_MAX_DELAY_MS, Math.max(INDEX_WRITE_DELAY_MS, n * 12)),
+    };
 }
 
 /** A schema-2 entry: one blob for the whole battery, and no units yet. */

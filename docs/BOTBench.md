@@ -532,9 +532,14 @@ the fixed-wing, constant-altitude and minimum-acceleration fits, the Kalman
 smoother, the balloon, quadcopter and drone-control fits, the polynomial
 sweep, and the range bands when that option is on. The Ground Object and the
 stationary point are closed-form fits made while the candidates are built and
-need nothing stored. Each unit is a blob of its own, self-describing, so an
-index line lost between the batched index writes is recovered from the blob
-on the next run.
+need nothing stored. Each unit is a blob of its own, self-describing, and
+written before the index. So a fit whose index line was lost, because the tab
+closed or crashed between two index writes, is found again by its blob name on
+the next run and is not fitted twice. Each index write is the whole folder's
+index, so a large folder's index is written less often. An index file that is
+on the disk but cannot be read is left as it is and is not written for the
+rest of the session. The status line says so, and the fits still go to their
+blobs.
 
 A stored unit is used only when the input hashes, the unit's version and the
 options that shape it (the range anchor, and its own option where it has

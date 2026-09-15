@@ -1,10 +1,12 @@
 /** @jest-environment jsdom */
 import {webcrypto, createHash} from "node:crypto";
 import {TextEncoder} from "node:util";
-import {analyseEntryWithCache, analyzeEntries, collectFsEntry, findVersionStaleEntries, openBotBenchDialog,
-    pairSidecars, walkDirectoryHandle} from "../../src/analysis/BotBenchUI";
+import {analyseEntryWithCache, analyzeEntries, collectFsEntry, findVersionStaleEntries, flushDirCache,
+    gatherCachedUnits, loadDirCache, openBotBenchDialog, pairSidecars, walkDirectoryHandle,
+    writeDirCache} from "../../src/analysis/BotBenchUI";
 import {entryFileHashes, readEntrySidecars} from "../../src/analysis/BotBenchEntryFiles";
-import {CACHE_BLOB_DIR, CACHE_FILENAME, combinedHash, unitRecord} from "../../src/analysis/BotBenchCacheIndex";
+import {CACHE_BLOB_DIR, CACHE_FILENAME, combinedHash, packUnitBlob, recordUnit, unitBlobName,
+    unitRecord} from "../../src/analysis/BotBenchCacheIndex";
 import {selectionKey, UNIT_VERSIONS} from "../../src/analysis/BotBenchSolvers";
 import {BotBenchAnalysisPool} from "../../src/analysis/BotBenchAnalysisPool";
 
@@ -86,10 +88,14 @@ function cachedFolder(name, count, version = appVersion) {
     const writes = [];
     const handle = {name, getFileHandle: jest.fn(async requested => {
         expect(requested).toBe(CACHE_FILENAME);
-        return {getFile: async () => ({text: async () => text}), createWritable: async () => ({
-            write: async value => { text = value; writes.push("write"); },
-            close: async () => { writes.push("close"); },
-        })};
+        // A writable stream appends its writes and replaces the file on close.
+        return {getFile: async () => ({text: async () => text}), createWritable: async () => {
+            let pending = "";
+            return {
+                write: async value => { pending += value; writes.push("write"); },
+                close: async () => { text = pending; writes.push("close"); },
+            };
+        }};
     }), getDirectoryHandle: jest.fn()};
     sources.forEach(source => { source.dirHandle = handle; source.cacheWritable = false; });
     return {sources, handle, writes, readIndex: () => JSON.parse(text)};
@@ -207,6 +213,86 @@ test("cached rows need one content read, no analysis, and retain no indexes afte
         globalThis.Worker = previousWorker;
         state.closeButton.onclick();
     }
+});
+
+const notFound = () => Object.assign(new Error("missing"), {name: "NotFoundError"});
+
+test("a file whose index entry was lost is found again by its blob names", async () => {
+    const hashes = {csv: digest("csv")};
+    const hash = combinedHash(hashes);
+    const name = "x.all.csv";
+    const plan = ["kalman", "polySweep"];
+    const blobs = new Map();
+    const store = (unitId, meta = {}) => {
+        const record = unitRecord({unitId, blob: unitBlobName(hash, unitId), options, appVersion, elapsedMs: 100});
+        blobs.set(unitBlobName(hash, unitId),
+            packUnitBlob({unitId, hash, ...record, ...meta}, {positions: new Float64Array([1, 2, 3])}));
+        return record;
+    };
+    const kalman = store("kalman");
+    const blobDir = {getFileHandle: jest.fn(async blobName => {
+        if (!blobs.has(blobName)) throw notFound();
+        return {getFile: async () => ({text: async () => blobs.get(blobName)})};
+    })};
+    const dirCache = {handle: {getDirectoryHandle: jest.fn(async () => blobDir)},
+        data: {schema: 3, results: {}}, writable: true};
+
+    // No entry at all, as after a tab lost between index writes.
+    const found = await gatherCachedUnits(dirCache, null, {hash, hashes, name, plan, options});
+    expect(Object.keys(found.texts.cached)).toEqual(["kalman"]);
+    expect(found.records.kalman).toEqual(kalman);
+    expect(dirCache.data.results[name]).toMatchObject({hash, units: {kalman}});
+    expect(dirCache.handle.getDirectoryHandle).toHaveBeenCalledTimes(1);
+
+    // An entry for other bytes does not hide the fits of these bytes.
+    dirCache.data.results[name] = {hash: "other", hashes: {csv: "other"}, units: {}, rows: {}};
+    const again = await gatherCachedUnits(dirCache, dirCache.data.results[name], {hash, hashes, name, plan, options});
+    expect(Object.keys(again.texts.cached)).toEqual(["kalman"]);
+    expect(dirCache.data.results[name].hash).toBe(hash);
+
+    // A blob under this name whose meta says other bytes made it is not used.
+    store("kalman", {hash: "other"});
+    const wrong = {...dirCache, data: {schema: 3, results: {}}};
+    expect((await gatherCachedUnits(wrong, null, {hash, hashes, name, plan, options})).texts.cached).toEqual({});
+
+    // A folder with no fits yet costs one lookup per file.
+    const empty = {handle: {getDirectoryHandle: jest.fn(async () => { throw notFound(); })},
+        data: {schema: 3, results: {}}};
+    expect((await gatherCachedUnits(empty, null, {hash, hashes, name, plan, options})).texts.cached).toEqual({});
+    expect(empty.handle.getDirectoryHandle).toHaveBeenCalledTimes(1);
+});
+
+test("an index that is on disk but unreadable is kept, and a missing one is made", async () => {
+    const damaged = "{\"schema\":3,\"results\":{\"a.all.csv\":";
+    const disk = {text: damaged};
+    const handle = {getFileHandle: jest.fn(async (requested, {create = false} = {}) => {
+        expect(requested).toBe(CACHE_FILENAME);
+        if (disk.text === null && !create) throw notFound();
+        return {getFile: async () => ({text: async () => disk.text}), createWritable: async () => {
+            let pending = "";
+            return {write: async value => { pending += value; }, close: async () => { disk.text = pending; }};
+        }};
+    })};
+    const hashes = {csv: digest("csv")};
+    const record = unitRecord({unitId: "kalman", blob: "b.json", options, appVersion});
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+        const rec = await loadDirCache({}, {name: "a.all.csv", dirHandle: handle});
+        expect(rec.indexUnreadable).toBeTruthy();
+        recordUnit(rec.data.results, "a.all.csv", {hash: combinedHash(hashes), hashes}, "kalman", record);
+        await writeDirCache(rec);
+        await flushDirCache(rec);
+        expect(disk.text).toBe(damaged);
+        expect(warn).toHaveBeenCalled();
+
+        disk.text = null;
+        const fresh = await loadDirCache({}, {name: "a.all.csv", dirHandle: handle});
+        expect(fresh.indexUnreadable).toBeNull();
+        recordUnit(fresh.data.results, "a.all.csv", {hash: combinedHash(hashes), hashes}, "kalman", record);
+        await writeDirCache(fresh);
+        await flushDirCache(fresh);
+        expect(JSON.parse(disk.text).results["a.all.csv"].units.kalman).toEqual(record);
+    } finally { warn.mockRestore(); }
 });
 
 test("cancelling row loading releases indexes and stops claiming new files", async () => {
