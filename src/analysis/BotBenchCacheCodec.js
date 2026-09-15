@@ -24,11 +24,13 @@
  * every platform Sitrec runs on is little-endian in any case.
  */
 
-const TYPED_ARRAYS = {
+// A Map, not a plain object: the type name comes from the cache file, and a plain
+// object would also answer for inherited names such as "constructor".
+const TYPED_ARRAYS = new Map(Object.entries({
     Float64Array, Float32Array,
     Int32Array, Int16Array, Int8Array,
     Uint32Array, Uint16Array, Uint8Array, Uint8ClampedArray,
-};
+}));
 
 function toBase64(u8) {
     let s = "";
@@ -65,7 +67,7 @@ export function packForCache(value, path = "$") {
 
     if (ArrayBuffer.isView(value)) {
         const name = value.constructor?.name;
-        if (!TYPED_ARRAYS[name]) {
+        if (!TYPED_ARRAYS.has(name)) {
             throw new Error(`BotBench cache: unsupported view ${name} at ${path}`);
         }
         return {__ta: name, d: toBase64(new Uint8Array(value.buffer,
@@ -163,7 +165,7 @@ export function unpackFromCache(value) {
             : value.__num === "Infinity" ? Infinity : -Infinity;
     }
     if (typeof value.__ta === "string") {
-        const Ctor = TYPED_ARRAYS[value.__ta];
+        const Ctor = TYPED_ARRAYS.get(value.__ta);
         if (!Ctor) throw new Error(`BotBench cache: unknown array type ${value.__ta}`);
         const bytes = fromBase64(value.d);
         // Copy into a fresh buffer rather than viewing the decode buffer: a
