@@ -2142,8 +2142,10 @@ export class CFileManager extends CManager {
             var bufferPromise = null;
             let fetchOperationId = null; // Track for cleanup
             if (!isUrl && !isResolvableRef && isConsole) {
-                // read the asset from the local filesystem if this is not running inside a browser
-                bufferPromise = import("node:fs")
+                // read the asset from the local filesystem if this is not running inside a browser.
+                // webpackIgnore keeps this a native import, so the browser bundle has no fs module
+                // (a bundled fs stub broke geotiff, whose own fs import must resolve to its empty browser stub)
+                bufferPromise = import(/* webpackIgnore: true */ "node:fs")
                     .then(fs => {
                         return fs.promises.readFile(resolvedFilename);
                     });
