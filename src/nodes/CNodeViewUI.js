@@ -260,7 +260,7 @@ export class CNodeViewUI extends CNodeViewCanvas2D {
             this.ctx.fillStyle = resolveHUDColor(t.color);
             this.ctx.strokeStyle = "black"; // t.color;
             this.ctx.textAlign = t.align;
-            this.ctx.fillText(t.text, x, y)
+            this.drawText(t.text, x, y);
             // this.ctx.lineWidth = Math.floor(this.sx(0.2));                 // Set the width of the outline
             // this.ctx.strokeText(t.text, x, y);
             t.bbox = getTextBBox(this.ctx, t.text)
@@ -271,6 +271,10 @@ export class CNodeViewUI extends CNodeViewCanvas2D {
             }
         })
 
+    }
+
+    drawText(text, x, y) {
+        this.ctx.fillText(text, x, y);
     }
 
     // recalculate() will be called if an input node to this CNodeViewUI is changed

@@ -19,6 +19,7 @@ import {MQ9TrackingSimulation} from "../MQ9TrackingSimulation";
 import {MQ9_TRACKING_DEFAULTS} from "../MQ9TrackingModel";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getHUDColor} from "../HUDColor";
+import {getHUDImageRect} from "../HUDImageRect";
 import {formatDM, formatDMS} from "../CoordinateFormat";
 import {drawHUDText, ensureMQ9FontLoaded, MQ9_FONT} from "../HUDFonts";
 
@@ -451,21 +452,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
 
     getHUDRect(videoView = NodeMan.get("mirrorVideo", false) ?? NodeMan.get("video", false)) {
-        if (videoView?.videoWidth > 0 && videoView.videoHeight > 0 && videoView.videoToCanvasCoords) {
-            // Map the WHOLE source image, including the part outside the pane
-            // after zoom/pan. dx/dy/dWidth/dHeight describe only the clipped
-            // visible part and therefore cannot locate the sensor boresight.
-            const [x0, y0] = videoView.videoToCanvasCoords(0, 0);
-            const [x1, y1] = videoView.videoToCanvasCoords(videoView.videoWidth, videoView.videoHeight);
-            const scaleX = this.widthPx / videoView.widthPx;
-            const scaleY = this.heightPx / videoView.heightPx;
-            if ([x0, y0, x1, y1, scaleX, scaleY].every(Number.isFinite) && x1 > x0 && y1 > y0) {
-                return {x: x0 * scaleX, y: y0 * scaleY, width: (x1 - x0) * scaleX, height: (y1 - y0) * scaleY};
-            }
-        }
-        // No loaded video: retain the standalone HUD layout used by recording.
-        const width = Math.min(this.widthPx, this.heightPx * 16 / 9);
-        return {x: (this.widthPx - width) / 2, y: 0, width, height: this.heightPx};
+        return getHUDImageRect(this.widthPx, this.heightPx, videoView);
     }
 
     px(x) {

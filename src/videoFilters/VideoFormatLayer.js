@@ -13,13 +13,14 @@
 // own GL context) that the ShaderPass route would not pay. Measure before assuming it is
 // affordable at a given resolution; see the notes in private/notes.
 
-import {guiMenus, NodeMan, Sit, setRenderOne} from "../Globals";
+import {guiMenus, markSitchDirty, NodeMan, Sit, setRenderOne} from "../Globals";
 import {getCanvasDisplayRect} from "../VideoExporter";
 import {
     applyScreenPreset,
     applySignalPreset,
     defaultVideoFilterSettings,
     isVideoFilterActive,
+    resolveVideoFilterSettings,
     SCREEN_PRESETS,
     SIGNAL_FORMATS,
 } from "./VideoFilterSettings";
@@ -67,10 +68,8 @@ function loadSettings() {
             for (const section of ["signal", "screen"]) {
                 if (saved[section]) Object.assign(loaded[section], saved[section]);
             }
-            // Deliberately NOT restored: the effect always starts off. It covers the look
-            // view with a degraded picture, and coming back to a session already filtered
-            // reads as the renderer being broken rather than as an effect being on. The
-            // format and its tuning are kept, so ticking it back on resumes where it was.
+            // Browser preferences supply tuning for new/older sitches. Only an explicit
+            // per-sitch save enables the effect automatically.
         }
     } catch (e) {
         // Unreadable storage is not worth failing the menu over.
@@ -92,6 +91,25 @@ function saveSettings() {
 export function getVideoFormatLayerSettings() {
     if (!settings) settings = loadSettings();
     return settings;
+}
+
+export function serializeVideoFormatEffects() {
+    // A detached snapshot: subsequent menu changes must not alter an in-flight save.
+    return JSON.parse(JSON.stringify(getVideoFormatLayerSettings()));
+}
+
+export function deserializeVideoFormatEffects(saved) {
+    const restored = saved ? resolveVideoFilterSettings(saved) : loadSettings();
+    const current = getVideoFormatLayerSettings();
+    // Permanent GUI controllers and the filter hold these objects by reference.
+    for (const section of ["signal", "screen", "encoding"]) {
+        for (const key of Object.keys(current[section])) delete current[section][key];
+        Object.assign(current[section], restored[section]);
+    }
+    current.enabled = saved?.enabled === true;
+    releaseLayer();
+    refreshControllers();
+    setRenderOne();
 }
 
 // ─── The layer itself ────────────────────────────────────────────────────────
@@ -137,8 +155,9 @@ function releaseLayer() {
     // getter backed by the GL context that dispose() tears down. Reading it afterwards
     // used to throw, which left the dead canvas on screen and `layer` still pointing at
     // a disposed filter that every later frame then tried to draw with.
-    const {filter, canvas} = layer;
+    const {filter, canvas, unregisterHUDLayer} = layer;
     layer = null;
+    unregisterHUDLayer();
     try {
         if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas);
         if (filter) filter.dispose();
@@ -147,7 +166,7 @@ function releaseLayer() {
     }
 }
 
-function buildLayer(width, height) {
+function buildLayer(host, width, height) {
     releaseLayer();
     if (!filterModule) return;
 
@@ -166,7 +185,8 @@ function buildLayer(width, height) {
     composite.height = height;
     // The canvas is held here rather than fetched from the filter later, so releasing
     // never depends on the filter still being alive.
-    layer = {filter, canvas, composite, compositeCtx: composite.getContext("2d"), width, height, osdViews: []};
+    layer = {host, filter, canvas, composite, compositeCtx: composite.getContext("2d"), width, height, osdViews: [],
+        unregisterHUDLayer: host.registerHUDLayer(canvas)};
 }
 
 // Draw the host view and its OSD into one canvas, laid out exactly as they sit on screen.
@@ -227,8 +247,8 @@ export function updateVideoFormatLayer() {
     const ratio = window.devicePixelRatio || 1;
     const width = Math.max(2, Math.ceil(host.widthPx * ratio / 2) * 2);
     const height = Math.max(2, Math.ceil(host.heightPx * ratio / 2) * 2);
-    if (!layer || layer.width !== width || layer.height !== height) {
-        buildLayer(width, height);
+    if (!layer || layer.host !== host || layer.width !== width || layer.height !== height) {
+        buildLayer(host, width, height);
         if (!layer) return;
     }
 
@@ -253,6 +273,9 @@ export function updateVideoFormatLayer() {
     style.width = `${box.width}px`;
     style.height = `${box.height}px`;
     style.zIndex = `${layerZIndex(host, layer.osdViews)}`;
+    // Keep the header and its dropdown above the filtered image without changing
+    // the pixels fed to the filter or the size/position of the rendered picture.
+    host._clipHUDsBelowHeader();
 }
 
 async function loadFilterModule() {
@@ -273,6 +296,7 @@ async function loadFilterModule() {
 
 function changed({rebuild = false} = {}) {
     saveSettings();
+    markSitchDirty();
     // The settings object is read fresh each frame, but the filter caches nothing that
     // changes here except its own size - so only a format or camera change needs the
     // GPU resources rebuilding. A paused sitch renders nothing on its own, so ask for a
@@ -299,7 +323,11 @@ export function setupVideoFormatEffectsMenu() {
     // Every controller here is PERMANENT. addGUIFolder makes the folder permanent, but
     // menuBar.destroy(false) still destroys its non-permanent children on a sitch change -
     // which left the folder present but empty for every sitch loaded after the first.
-    const add = (...args) => folder.add(...args).perm();
+    const register = controller => {
+        controllers.push(controller);
+        return controller;
+    };
+    const add = (...args) => register(folder.add(...args).perm());
 
     add(settings, "enabled")
         .name("Video Format Effects")
@@ -318,26 +346,26 @@ export function setupVideoFormatEffectsMenu() {
         });
 
     const sig = settings.signal;
-    controllers.push(add(sig, "noiseLevel", 0, 1, 0.01).name("Tape noise")
+    add(sig, "noiseLevel", 0, 1, 0.01).name("Tape noise")
         .tooltip("Tape grain and colour noise. The character comes from the format's own channel bandwidths; this is how much of it.")
-        .onChange(() => changed()));
-    controllers.push(add(sig, "jitter", 0, 1.5, 0.01).name("Time-base error")
+        .onChange(() => changed());
+    add(sig, "jitter", 0, 1.5, 0.01).name("Time-base error")
         .tooltip("Line-to-line horizontal instability, worst just below the top of the frame.")
-        .onChange(() => changed()));
-    controllers.push(add(sig, "headSwitch", 0, 1.5, 0.01).name("Head switching")
+        .onChange(() => changed());
+    add(sig, "headSwitch", 0, 1.5, 0.01).name("Head switching")
         .tooltip("The torn band across the bottom of the frame where the tape heads swap over.")
-        .onChange(() => changed()));
-    controllers.push(add(sig, "dropouts", 0, 1, 0.01).name("Dropouts")
+        .onChange(() => changed());
+    add(sig, "dropouts", 0, 1, 0.01).name("Dropouts")
         .tooltip("Patches where the head loses contact with the tape. Most are hidden by the dropout compensator, which repeats the line above; the rest are the classic bright dash.")
-        .onChange(() => changed()));
-    controllers.push(add(sig, "interlace", 0, 1, 0.01).name("Interlace combing")
+        .onChange(() => changed());
+    add(sig, "interlace", 0, 1, 0.01).name("Interlace combing")
         .tooltip("Comb-toothed edges on anything moving, from alternate lines being a field older.")
-        .onChange(() => changed()));
-    controllers.push(add(sig, "scanlines", 0, 1, 0.01).name("Scan lines")
-        .onChange(() => changed()));
-    controllers.push(add(sig, "chromaVBlur", 0, 1, 0.01).name("Colour smear")
+        .onChange(() => changed());
+    add(sig, "scanlines", 0, 1, 0.01).name("Scan lines")
+        .onChange(() => changed());
+    add(sig, "chromaVBlur", 0, 1, 0.01).name("Colour smear")
         .tooltip("Vertical colour softness, from the delay line on PAL and from colour-under on tape.")
-        .onChange(() => changed()));
+        .onChange(() => changed());
 
     add(settings.screen, "enabled")
         .name("Recorded off a screen")
@@ -359,96 +387,98 @@ export function setupVideoFormatEffectsMenu() {
     // Everything about the camera and the screen it is pointed at, in one place.
     const scr = settings.screen;
     const tweaks = folder.addFolder("Camera Tweaks").close().perm();
-    const tweak = (...args) => tweaks.add(...args).perm();
+    const tweak = (...args) => register(tweaks.add(...args).perm());
 
     // The physical setup. These four decide how much of the frame the screen fills -
     // stand further back and the dark room comes into view around it.
-    controllers.push(tweak(scr, "hfov", 10, 140, 1).name("Camera HFOV (deg)")
+    tweak(scr, "hfov", 10, 140, 1).name("Camera HFOV (deg)")
         .tooltip("Horizontal field of view of the lens filming the screen. A phone's main camera is around 65 degrees.")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "cameraAspect", 0.5, 3, 0.01).name("Aspect ratio")
+        .onChange(() => changed());
+    tweak(scr, "cameraAspect", 0.5, 3, 0.01).name("Aspect ratio")
         .tooltip("Shape of the camera's own frame, width over height. 1.78 is 16:9. Letterboxed into the view when it differs.")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "screenWidthM", 0.1, 5, 0.01).name("Screen width (m)")
+        .onChange(() => changed());
+    tweak(scr, "screenWidthM", 0.1, 5, 0.01).name("Screen width (m)")
         .tooltip("Physical width of the screen being filmed.")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "screenDistanceM", 0.1, 10, 0.01).name("Distance (m)")
+        .onChange(() => changed());
+    tweak(scr, "screenDistanceM", 0.1, 10, 0.01).name("Distance (m)")
         .tooltip("How far the camera is from the screen. Together with the width and the field of view this sets how much of the frame the screen fills.")
-        .onChange(() => changed()));
+        .onChange(() => changed());
 
-    controllers.push(tweak(scr, "zoom", 0.5, 2, 0.01).name("Extra crop")
+    tweak(scr, "zoom", 0.5, 2, 0.01).name("Extra crop")
         .tooltip("A manual crop on top of the framing the physical setup gives. 1 leaves it alone.")
-        .onChange(() => changed()));
+        .onChange(() => changed());
 
-    controllers.push(tweak(scr, "handheld", 0, 2, 0.01).name("Wobble")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "handheldSpeed", 0.1, 3, 0.05).name("Wobble speed")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "handheldVariation", 0, 1, 0.01).name("Wobble variation")
+    tweak(scr, "handheld", 0, 2, 0.01).name("Wobble")
+        .onChange(() => changed());
+    tweak(scr, "handheldSpeed", 0.1, 3, 0.05).name("Wobble speed")
+        .onChange(() => changed());
+    tweak(scr, "handheldVariation", 0, 1, 0.01).name("Wobble variation")
         .tooltip("How much the wobble amount itself drifts, so the shot has steady stretches and unsteady ones.")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "handheldDrift", 0, 2, 0.01).name("Slow drift")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "handheldRotation", 0, 2, 0.01).name("Rotation")
-        .onChange(() => changed()));
+        .onChange(() => changed());
+    tweak(scr, "handheldDrift", 0, 2, 0.01).name("Slow drift")
+        .onChange(() => changed());
+    tweak(scr, "handheldRotation", 0, 2, 0.01).name("Rotation")
+        .onChange(() => changed());
 
-    controllers.push(tweak(scr, "autoExposure").name("Auto exposure")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "exposureBias", -0.5, 1.5, 0.01).name("Exposure bias")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "exposureSpeed", 0, 1, 0.01).name("Adaptation speed")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "knee", 0.1, 1, 0.01).name("Highlight knee")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "clip", 0, 1, 0.01).name("Highlight clipping")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "blackCrush", 0, 0.4, 0.005).name("Black crush")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "blackLift", 0, 0.15, 0.002).name("Black lift")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "bloom", 0, 2, 0.01).name("Bloom")
-        .onChange(() => changed()));
+    tweak(scr, "autoExposure").name("Auto exposure")
+        .onChange(() => changed());
+    tweak(scr, "exposureBias", -0.5, 1.5, 0.01).name("Exposure bias")
+        .onChange(() => changed());
+    tweak(scr, "exposureSpeed", 0, 1, 0.01).name("Adaptation speed")
+        .onChange(() => changed());
+    tweak(scr, "knee", 0.1, 1, 0.01).name("Highlight knee")
+        .onChange(() => changed());
+    tweak(scr, "clip", 0, 1, 0.01).name("Highlight clipping")
+        .onChange(() => changed());
+    tweak(scr, "blackCrush", 0, 0.4, 0.005).name("Black crush")
+        .onChange(() => changed());
+    tweak(scr, "blackLift", 0, 0.15, 0.002).name("Black lift")
+        .onChange(() => changed());
+    tweak(scr, "bloom", 0, 2, 0.01).name("Bloom")
+        .onChange(() => changed());
 
-    controllers.push(tweak(scr, "keystone", -0.4, 0.4, 0.005).name("Keystone")
+    tweak(scr, "keystone", -0.4, 0.4, 0.005).name("Keystone")
         .tooltip("The camera is never quite square-on to the screen.")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "barrel", 0, 0.3, 0.005).name("Barrel distortion")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "aberration", 0, 0.01, 0.0002).name("Chromatic aberration")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "edgeSoftness", 0, 4, 0.05).name("Edge softness")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "gridDepth", 0, 0.6, 0.005).name("Screen grid / moire")
+        .onChange(() => changed());
+    tweak(scr, "barrel", 0, 0.3, 0.005).name("Barrel distortion")
+        .onChange(() => changed());
+    tweak(scr, "aberration", 0, 0.01, 0.0002).name("Chromatic aberration")
+        .onChange(() => changed());
+    tweak(scr, "edgeSoftness", 0, 4, 0.05).name("Edge softness")
+        .onChange(() => changed());
+    tweak(scr, "gridDepth", 0, 0.6, 0.005).name("Screen grid / moire")
         .tooltip("The screen's own pixel structure. The moire is the real beat between that and the output raster.")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "gridPitch", 0.15, 0.7, 0.005).name("Grid pitch")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "beat", 0, 0.4, 0.005).name("Refresh beat")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "beatBars", 0.5, 5, 0.1).name("Beat bars")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "beatSpeed", 0, 0.5, 0.005).name("Beat speed")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "glare", 0, 0.5, 0.005).name("Glass reflection")
+        .onChange(() => changed());
+    tweak(scr, "gridPitch", 0.15, 0.7, 0.005).name("Grid pitch")
+        .onChange(() => changed());
+    tweak(scr, "beat", 0, 0.4, 0.005).name("Refresh beat")
+        .onChange(() => changed());
+    tweak(scr, "beatBars", 0.5, 5, 0.1).name("Beat bars")
+        .onChange(() => changed());
+    tweak(scr, "beatSpeed", 0, 0.5, 0.005).name("Beat speed")
+        .onChange(() => changed());
+    tweak(scr, "glare", 0, 0.5, 0.005).name("Glass reflection")
         .tooltip("A reflection on the screen's glass. Confined to the screen, as a reflection in it would be.")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "bezelWidth", 0, 0.15, 0.002).name("Bezel width")
+        .onChange(() => changed());
+    tweak(scr, "bezelWidth", 0, 0.15, 0.002).name("Bezel width")
         .tooltip("The monitor's frame around the screen, as a fraction of the screen's width.")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "bezelLevel", 0, 0.5, 0.005).name("Bezel brightness")
+        .onChange(() => changed());
+    tweak(scr, "bezelLevel", 0, 0.5, 0.005).name("Bezel brightness")
         .tooltip("How light the bezel is. 0.1 is a 90% black grey; 0 is a bezel that vanishes into the dark room.")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "vignette", 0, 1, 0.01).name("Vignette")
-        .onChange(() => changed()));
-    controllers.push(tweak(scr, "noise", 0, 0.15, 0.002).name("Sensor noise")
-        .onChange(() => changed()));
+        .onChange(() => changed());
+    tweak(scr, "vignette", 0, 1, 0.01).name("Vignette")
+        .onChange(() => changed());
+    tweak(scr, "noise", 0, 0.15, 0.002).name("Sensor noise")
+        .onChange(() => changed());
 
     // Enabled from a previous session: pull the chunk in now rather than on the first
     // frame, so the effect appears with the scene instead of a moment after it.
     if (settings.enabled) loadFilterModule();
 }
 
-// Drop the GPU resources when a sitch is torn down; the settings survive.
+// Drop GPU resources and the enabled flag when a sitch is torn down.
 export function disposeVideoFormatLayer() {
     releaseLayer();
+    if (settings) settings.enabled = false;
+    refreshControllers();
 }

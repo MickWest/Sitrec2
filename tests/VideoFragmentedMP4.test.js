@@ -138,3 +138,13 @@ test('ordinary MP4 timing retains the declared movie duration', () => {
     expect(source.durationInSeconds).toBe(2);
     expect(source.fps).toBe(30);
 });
+
+test('video frame rate retains the fractional sample clock despite movie padding', () => {
+    const source = new MP4Source();
+    source.updateTiming({isFragmented: false, tracks: [{type: 'video', nb_samples: 1033,
+        movie_duration: 34500, movie_timescale: 1000, samples_duration: 1033*1001, timescale: 30000}]});
+    expect(source.durationInSeconds).toBe(34.5);
+    expect(source.totalFrames).toBe(1033);
+    expect(source.fps).toBeCloseTo(30000/1001, 12);
+    expect(1032/source.fps).toBeCloseTo(1032*1001/30000, 12);
+});

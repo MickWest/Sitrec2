@@ -93,6 +93,7 @@ import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
 import {CNodeSimInfoUI} from "./nodes/CNodeSimInfoUI";
 import {CNodeWescamMXUI} from "./nodes/CNodeWescamMXUI";
+import {CNodeATFLIRUI} from "./nodes/CNodeATFLIRUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
 import {CNodeGUIFlag, CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {CNodeControllerCameraBankRoll} from "./nodes/CNodeControllerCameraBankRoll";
@@ -1166,6 +1167,22 @@ export class CCustomManager {
             relativeTo: "lookView",
             visible: false,
             passThrough: true,
+        });
+    }
+
+    // Register here so older saved custom sitches also get the optional view.
+    setupATFLIRUI() {
+        if (NodeMan.exists("ATFLIRUI")) return;
+        if (!NodeMan.exists("lookView") || !NodeMan.exists("lookCamera")) return;
+
+        new CNodeATFLIRUI({
+            id: "ATFLIRUI",
+            camera: "lookCamera",
+            relativeTo: "lookView",
+            visible: false,
+            passThrough: true,
+            defaultFontSize: 3.5,
+            defaultFontColor: "hud",
         });
     }
 

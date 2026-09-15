@@ -31,7 +31,7 @@ function save({local = false, custom = false} = {}) {
         GlobalScene: {children: []}, par: {}, Units: {modSerialize: empty},
         FeatureManager: manager, CustomGraphManager: manager, Synth3DManager: manager, LayoutMan: manager,
         serializeMotionAnalysis: empty, serializeAutoTracking: empty, serializeHorizonExtractor: empty,
-        serializeScriptedVideo: empty, serializeLongExposure: empty,
+        serializeScriptedVideo: empty, serializeLongExposure: empty, serializeVideoFormatEffects: empty,
         process: {env: {BUILD_VERSION_NUMBER: '2.156.2', BUILD_VERSION_STRING: 'test', VERSION: 'test'}},
         currentBuild: null, collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry,
         assert: (condition, message) => { if (!condition) throw new Error(message); },

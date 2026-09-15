@@ -172,10 +172,11 @@ export class MP4Source {
       if (videoTrack) {
         this.totalFrames = videoTrack.nb_samples;
         this._expectedVideoSamples = this.totalFrames;
-        // A fragment's sample count must be paired with its own duration,
-        // even when the header declares the duration of the entire movie.
-        const fpsDuration = info.isFragmented ? sampleDuration : this.durationInSeconds;
-        const fps = Math.round(this.totalFrames / fpsDuration * 100) / 100;
+        // Pair the sample count with the video sample duration. Movie duration
+        // can include edits or audio padding. Keep fractional rates intact:
+        // rounding 30000/1001 to two decimals changes frame/track alignment.
+        const fpsDuration = sampleDuration > 0 ? sampleDuration : this.durationInSeconds;
+        const fps = this.totalFrames / fpsDuration;
         this.fps = fps > 0 && fps <= 240 ? fps : 30;
       }
     }

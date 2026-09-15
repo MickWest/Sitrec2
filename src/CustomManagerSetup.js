@@ -2283,6 +2283,8 @@ export const setupMethods = {
 
         this.setupWescamMXUI();
 
+        this.setupATFLIRUI();
+
         this.setupOSDDataSeriesController();
 
         setupHorizonExtractorMenu();
