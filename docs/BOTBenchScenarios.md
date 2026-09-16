@@ -477,10 +477,11 @@ the normal file picker in a fresh sitch and verifies frame counts, timestamps,
 camera position, sightline, FOV, and rendered projection against the recording.
 The check also compares the MQ9UI crosshair with the recorded image coordinates,
 both in the default layout and with zoom/pan in stacked video and look panes.
-TS metadata with transport timestamps imports with **Angle Smooth Window
-(frames)** set to **0**, preserving the recorded wobble. The check verifies
-that default without changing it. For a previously saved sitch, set the window
-to 0 manually. Standalone MISB retains its 120-frame default. KLV field
+Ordinary TS metadata imports with **Angle Smooth Window (frames)** set to **120**
+for smooth playback. The check verifies that default, then explicitly selects **0**
+for analysis so the recorded wobble matches the target pixels. Reports record both
+the import default and the analysis setting. For a previously saved sitch, set the
+window to 0 when comparing the rendered camera against the source video. KLV field
 quantization is included in the comparison tolerances. Optical zoom magnifies
 its pixel error, so the projection tolerance scales with magnification. Reports
 retain the actual video-pixel error and separately check viewport mapping using

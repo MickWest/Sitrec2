@@ -19,6 +19,7 @@ import {misbSightlineHeading} from "../MISBSightline";
 import {LLAToECEF} from "../LLA-ECEF-ENU";
 import {raycastGroundElevationFast} from "../raycastGround";
 import {GlobalScene} from "../LocalFrame";
+import {withUnfilteredAnalysisAngles} from "../AnalysisAngleSmoothing";
 
 const DEG = 180 / Math.PI;
 let active;
@@ -228,6 +229,15 @@ export function preview() { return active.canvas.toDataURL("image/jpeg", 0.9); }
 // This runs in a fresh page after File > Import, so `active` is gone and the filter has
 // to be handed back in - see the grayscale check below for why it needs to know.
 export async function verifyImported(expected, videoFilter = null) {
+    const los = Object.values(NodeMan.list).map(e => e.data)
+        .find(n => n.constructor.name === "CNodeLOSTrackMISB");
+    const defaultAngleSmoothingFrames = los?.in.sensorAz.in.smooth?.v0;
+    if (defaultAngleSmoothingFrames !== 120) throw new Error(`Unexpected TS import angle window: ${defaultAngleSmoothingFrames}`);
+    return withUnfilteredAnalysisAngles(los,
+        () => verifyUnfilteredImport(expected, videoFilter, defaultAngleSmoothingFrames));
+}
+
+async function verifyUnfilteredImport(expected, videoFilter, defaultAngleSmoothingFrames) {
     await ensureGeoidLoaded();
     const nodes = Object.values(NodeMan.list).map(e => e.data);
     // Match on a sensor-only field as well as length and start time: the derived
@@ -267,11 +277,11 @@ export async function verifyImported(expected, videoFilter = null) {
     }
     const los = nodes.find(n => n.constructor.name === "CNodeLOSTrackMISB");
     if (!data || !video || !los) throw new Error("Imported video, MISB track or camera sightline is missing");
-    // Verify the ordinary import settings, without repairing them for the test.
+    // Ordinary imports use smoothing for playback. This analysis explicitly
+    // uses unfiltered attitude so recorded wobble matches the target pixels.
     const smoothing = los.in.sensorAz.in.smooth;
     if (!smoothing) throw new Error("Imported camera angle smoothing control is missing");
-    const defaultAngleSmoothingFrames = smoothing.v0;
-    if (defaultAngleSmoothingFrames !== 0) throw new Error(`TS import filtered camera angles over ${defaultAngleSmoothingFrames} frames`);
+    if (smoothing.v0 !== 0) throw new Error("Analysis camera angle smoothing must be zero");
     const result = {frames: video.frames, records: data.misb.length, width: video.videoWidth, height: video.videoHeight,
         defaultAngleSmoothingFrames, angleSmoothingFrames: smoothing.v0,
         fps: Sit.fps, maxPositionErrorM: 0, maxDirectionErrorDeg: 0, maxFovErrorDeg: 0, maxTimestampErrorUs: 0, maxPtsErrorUs: 0,

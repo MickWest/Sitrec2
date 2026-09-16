@@ -30,6 +30,7 @@ import {t} from "./i18n";
 import {abFrameRange, buildAnalysisDataset, trimHeldFrames, unpackTrackToECEF} from "./TraverseAnalysisData";
 import {captureInputFiltering, captureAnalysisFiltering, filteringSummaryHTML} from "./AnalysisFiltering";
 import {metricSmoothingWindow} from "./SmoothingPolicy";
+import {withUnfilteredAnalysisAngles} from "./AnalysisAngleSmoothing";
 import {getPointBelow, calculateAltitude} from "./threeExt";
 // The fit battery moved to TraverseBattery.js, and with it every solver this
 // file used to call directly. What remains here are the ones the REPORT and the
@@ -2113,6 +2114,10 @@ export async function runTraverseAnalysis() {
         showError("Traverse analysis is already running. Wait for it to finish, or Cancel it, before starting another.");
         return null;
     }
+    return withUnfilteredAnalysisAngles(resolveLOSNode(), runTraverseAnalysisWithCurrentAngles);
+}
+
+async function runTraverseAnalysisWithCurrentAngles() {
     let losNode = resolveLOSNode();
     if (!losNode) {
         showError("Traverse analysis: no LOS node found.\n" +

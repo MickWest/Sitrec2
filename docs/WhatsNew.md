@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.161.0 (2026-09-15)
+
+### New Features
+
+- **Monte Carlo (GPU)** (Traverse → *LOS Traverse Method*, Traverse → Traverse Analysis Tweaks → *Monte Carlo GPU*, and the **Solvers…** list in File → File Analysis → **BOTBench...**): six new fits that try between 50,000 and 1,000,000 random paths through the sightlines and keep the one that matches them best, as a way of comparing fitting methods. They need a browser with WebGPU, report a clear failure without it, and are off until you tick them.
+- **Max workers** (File → File Analysis → **BOTBench...**): choose how many files are analysed at once — 1, 2, 4, 8 or 16, starting at 4 — so a long run is less likely to exhaust memory. The choice is remembered, and changing it does not affect anything already stored in a folder's cache.
+
+### Improvements
+
+- **GPU search** (Traverse → Traverse Analysis Tweaks, and the same option in BOTBench) is now on by default, so the fixed-wing and balloon fits search on the graphics card wherever the browser supports it. A BOTBench folder analysed before this fits those candidates again on its next run.
+- **Analyze Traverse Methods** (Traverse) now reads the recorded camera and platform angles unfiltered whatever the **Angle Smooth Window (frames)** control says, and puts your setting back when the run finishes, fails or is cancelled. Because of that, imported video metadata keeps the four-second angle smoothing default again and plays back smoothly; position and tracked-pixel smoothing are unchanged, and bearings-only files still import unfiltered.
+- A Sitrec server run from the supplied container now tells browsers how long to keep each file: for a year for the files whose names change with every build, and only until checked for the small startup files whose names never change. Without that a browser could reuse the previous release's start page and fail to load the new one.
+
 ## Version 2.160.0 (2026-09-15)
 
 ### New Features
