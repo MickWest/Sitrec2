@@ -10,6 +10,7 @@ import {
     fromUVToDirKnots,
     greatCircleDistanceDeg,
     compassFromDeg,
+    knotsFromMISBWindSpeed,
     windDirFromBearing,
     normalizeWindTimestampMs,
 } from '../src/nodes/WindHelpers';
@@ -235,5 +236,26 @@ describe('sampleJSONGrid', () => {
         // Clamped lat=90. fj = (90-1)/(-1) = -89. j0 = floor = -89, sj = 0.
         // j0 is clamped to min(max(-89, 0), ny-2) = 0. j1=1. sj=0 so north row.
         expect(r.u).toBeCloseTo(10, 6);
+    });
+});
+
+describe('knotsFromMISBWindSpeed', () => {
+    test('MISB tag 36 is metres per second', () => {
+        expect(knotsFromMISBWindSpeed(0)).toBe(0);
+        // Sitrec's knot is 0.514444 m/s, a rounded 1852/3600.
+        expect(knotsFromMISBWindSpeed(1)).toBeCloseTo(1.9438462, 6);
+        // A 108.8 kt wind at 25,000 ft, as an ST 0601 file stores it.
+        expect(knotsFromMISBWindSpeed(55.9536)).toBeCloseTo(108.765191, 5);
+    });
+
+    test('a track-source wind builds the same (u,v) as the metres-per-second path', () => {
+        // Reading the tag as knots, which the wind sources used to do, left the
+        // grid 1.94 times too slow. Both paths must now agree exactly.
+        const fromDeg = 270.347;
+        const speedMS = 55.9536;
+        const direct = fromDirSpeedToUV(fromDeg, speedMS);
+        const viaKnots = fromDirSpeedKnotsToUV(fromDeg, knotsFromMISBWindSpeed(speedMS));
+        expect(viaKnots.u).toBeCloseTo(direct.u, 9);
+        expect(viaKnots.v).toBeCloseTo(direct.v, 9);
     });
 });

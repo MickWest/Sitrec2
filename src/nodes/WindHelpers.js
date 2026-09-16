@@ -129,6 +129,16 @@ export function fromDirSpeedKnotsToUV(fromDeg, knots) {
     return fromDirSpeedToUV(fromDeg, metersPerSecondFromKnots(knots));
 }
 
+// MISB ST 0601 tag 36 (WindSpeed) is METRES PER SECOND. Sitrec's wind nodes and
+// GUI work in knots, so every read of that tag converts through here, in one
+// place. Sonde-derived profiles do NOT come through here: CTrackFileSonde
+// stores m/s in the tag and CNodeAtmosphericProfile keeps m/s all the way to
+// fromDirSpeedToUV, which takes m/s. Only the track-as-wind-source path needs
+// this conversion.
+export function knotsFromMISBWindSpeed(metersPerSecond) {
+    return knotsFromMetersPerSecond(metersPerSecond);
+}
+
 // (u,v) in m/s → {from in deg, knots}.
 export function fromUVToDirKnots(u, v) {
     const speedMS = Math.sqrt(u * u + v * v);

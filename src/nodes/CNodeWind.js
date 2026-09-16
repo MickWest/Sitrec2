@@ -8,7 +8,7 @@ import {assert} from "../assert";
 import {V3} from "../threeUtils";
 import {t} from "../i18n";
 import {MISB} from "../MISBUtils";
-import {normalizeWindTimestampMs} from "./WindHelpers";
+import {knotsFromMISBWindSpeed, normalizeWindTimestampMs} from "./WindHelpers";
 
 export class CNodeWind extends CNode {
     constructor(v, _guiMenu) {
@@ -284,8 +284,10 @@ export class CNodeWind extends CNode {
                 }
                 const sample = (row) => {
                     const from = row && row[MISB.WindDirection];
-                    const knots = row && row[MISB.WindSpeed];
-                    return Number.isFinite(from) && Number.isFinite(knots) ? {from, knots} : null;
+                    // Tag 36 is metres per second (ST 0601); this node is knots.
+                    const speedMS = row && row[MISB.WindSpeed];
+                    return Number.isFinite(from) && Number.isFinite(speedMS)
+                        ? {from, knots: knotsFromMISBWindSpeed(speedMS)} : null;
                 };
                 // Tracks with no wind columns at all: bail out once (cached)
                 // instead of scanning for a nearest valid row on every frame.

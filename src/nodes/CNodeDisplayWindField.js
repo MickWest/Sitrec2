@@ -26,6 +26,7 @@ import {
     fromDirSpeedToUV,
     fromUVToDirKnots,
     greatCircleDistanceDeg,
+    knotsFromMISBWindSpeed,
     levelToAltFeet,
     sampleJSONGrid,
     WIND_LEVEL_TABLE,
@@ -1664,12 +1665,16 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         const slot = Math.max(0, Math.min(misb.length - 1, Math.round(slotF)));
         const row = misb[slot];
         const dir = row?.[MISB.WindDirection];
-        const spd = row?.[MISB.WindSpeed];
+        const spdMS = row?.[MISB.WindSpeed];
         if (typeof dir !== "number" || !Number.isFinite(dir)
-            || typeof spd !== "number" || !Number.isFinite(spd)) {
+            || typeof spdMS !== "number" || !Number.isFinite(spdMS)) {
             throw new Error(`Track ${trackId} missing wind data at frame ${f}`);
         }
 
+        // Tag 36 is metres per second (ST 0601). Convert once, here, so the
+        // grid, the status text and the change detector in update() all agree
+        // on knots.
+        const spd = knotsFromMISBWindSpeed(spdMS);
         const {u, v} = fromDirSpeedKnotsToUV(dir, spd);
         const points = this._windNodePositions();
         if (points.length === 0) {
@@ -2423,9 +2428,11 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                     const slot = Math.max(0, Math.min(misb.length - 1, Math.round(slotF)));
                     const row = misb[slot];
                     const dir = row?.[MISB.WindDirection];
-                    const spd = row?.[MISB.WindSpeed];
+                    const spdMS = row?.[MISB.WindSpeed];
                     if (typeof dir === "number" && Number.isFinite(dir)
-                        && typeof spd === "number" && Number.isFinite(spd)) {
+                        && typeof spdMS === "number" && Number.isFinite(spdMS)) {
+                        // Knots, matching what _fillFromTrackSource stored.
+                        const spd = knotsFromMISBWindSpeed(spdMS);
                         const dDir = Math.abs((dir - (this._trackLastDir ?? dir) + 540) % 360 - 180);
                         const dSpd = Math.abs(spd - (this._trackLastSpd ?? spd));
                         if (dDir > 2 || dSpd > 1) {

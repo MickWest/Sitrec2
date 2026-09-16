@@ -9,7 +9,7 @@ A few short names recur:
 - **`wn`** — shorthand for "the wind node", `NodeMan.get("windField")` (an instance of `CNodeDisplayWindField` defined in `src/nodes/CNodeDisplayWindField.js`). The Wind GUI binds directly to its fields.
 - **`par`** — Sitrec's global runtime-parameter object (`import {par} from "../par"`). The Wind GUI mirrors `wn.statusText` into `par.windStatus`; `par.balloonCount` controls how many nearby sounding profiles are requested.
 - **GFS** — the NOAA Global Forecast System. Numerical weather prediction model run four times daily.
-- **MISB** — Motion Imagery Standards Board. Standard 0903 defines a tag set used by aircraft pod metadata, including columns for wind direction (35) and speed (36).
+- **MISB** — Motion Imagery Standards Board. Standard 0601 defines the tag set used by aircraft pod metadata, including wind direction (tag 35, degrees the wind blows **from**) and wind speed (tag 36, **metres per second**).
 - **eccodes** — ECMWF's GRIB decoding library (`pip install eccodes` + a system shared lib). `tools/fetch_wind.py` imports it.
 
 ## End-to-end flow
@@ -183,7 +183,7 @@ This is a *per-point* request — Open-Meteo doesn't supply gridded fields the w
 
 ### Track-derived winds
 
-If a sitch has a track file with MISB columns **35 (WindDirection)** and **36 (WindSpeed)**, the dropdown automatically gets a **Track: \<shortName\>** entry. Picking it sets `this.source` to the `track:TrackData_<shortName>` key. `_fillFromTrackSource(altFt)` reads the row at the timeline's corresponding track slot, interprets WindSpeed as knots, converts the direction and speed to `(u, v)` in m/s, and builds the wind grid — uniform if there are no wind-node positions, otherwise IDW over the wind-relevant track points. During playback the field is rebuilt when direction changes by more than 2° or speed changes by more than 1 knot.
+If a sitch has a track file with MISB columns **35 (WindDirection)** and **36 (WindSpeed)**, the dropdown automatically gets a **Track: \<shortName\>** entry. Picking it sets `this.source` to the `track:TrackData_<shortName>` key. `_fillFromTrackSource(altFt)` reads the row at the timeline's corresponding track slot, converts WindSpeed from metres per second (the ST 0601 unit) to knots through `knotsFromMISBWindSpeed`, converts the direction and speed to `(u, v)` in m/s, and builds the wind grid — uniform if there are no wind-node positions, otherwise IDW over the wind-relevant track points. During playback the field is rebuilt when direction changes by more than 2° or speed changes by more than 1 knot.
 
 ## Debugging wind end-to-end
 
@@ -260,7 +260,7 @@ The implementation choices in `_buildGridFromSamples` (`src/nodes/CNodeDisplayWi
 
 - All timestamps round-trip as ISO 8601 UTC.
 - GFS uses **m/s** internally (eccodes returns SI). Sounding parsers normalize whatever the source format provides into m/s before building (u, v).
-- Track-derived rows are interpreted as direction in degrees and speed in knots by `_fillFromTrackSource`; the conversion to m/s happens before grid construction.
+- Track-derived rows carry direction in degrees and speed in **metres per second**, the MISB ST 0601 units. `_fillFromTrackSource` converts the speed to knots with `knotsFromMISBWindSpeed` for the status text and the change detector, then to `(u, v)` in m/s before grid construction. Sounding profiles keep metres per second throughout and never use that conversion, because `CNodeAtmosphericProfile` feeds `fromDirSpeedToUV` directly.
 - The GUI displays speeds in knots, but every internal value (windU, windV, sampleWind) is m/s. The conversion is at the GUI boundary only.
 
 ### Coordinate systems
