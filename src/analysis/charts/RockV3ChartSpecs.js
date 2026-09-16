@@ -40,6 +40,7 @@ export const INK = "#0b0b0b", INK2 = "#52514e", MUTED = "#898781";
 export const GRID = "#e1e0d9", AXIS = "#c3c2b7", SURFACE = "#fcfcfb";
 
 export const RUNGS = [0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0];
+export const BATCH_DURATIONS = [20, 40, 60, 120, 180, 240, 300];
 export const FLOOR = 1e-4;          // drawing floor for a fraction-of-range axis
 export const TOL5 = 0.05, TOL1 = 0.01;
 
@@ -167,6 +168,11 @@ export function cell(rows, cls = null, duration = null, rung = null) {
 
 export const durationsOf = (rows) =>
     [...new Set(rows.map((r) => r.d_durationSeconds).filter(fin))].sort((a, b) => a - b);
+export const batchDurationsOf = (rows) => {
+    const present = [...new Set(rows.map((r) => r.d_batchDurationSeconds).filter(fin))].sort((a, b) => a - b);
+    return [...BATCH_DURATIONS.filter((duration) => present.includes(duration)),
+        ...present.filter((duration) => !BATCH_DURATIONS.includes(duration))];
+};
 export const rungsOf = (rows) =>
     RUNGS.filter((e) => rows.some((r) => same(r.d_errorDeg, e)));
 
@@ -628,9 +634,11 @@ const hollowNote = (measure) => (measure.marksBlind
     ? "Dots: every track; hollow means the top candidate came from the range-blind polynomial family. "
     : "Dots: every track. ");
 
-/** Error against clip length, one panel per class and rung. */
-export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks()} = {}) {
-    const durations = durationsOf(rows);
+/** Error against one duration dimension, one panel per class and rung. */
+function figErrorByDurationDimension(rows, {
+    values, readValue, key, dimensionName, xTitle, comparisonNote,
+    rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks(),
+}) {
     const rungs = rungGroups(rows, rungsWanted);
     const presentRungs = [...new Set(rows.map((r) => r.d_errorDeg).filter(fin))].sort((a, b) => a - b);
     const groups = rungs.map((rung) => ({rung, key: `${rung}deg`, label: `${rungLabel(rung)} pointing error`, pooled: false}));
@@ -640,9 +648,9 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
     if (presentRungs.length > 1) {
         groups.push({rung: null, key: "all", label: "All Pointing Errors", pooled: true});
     }
-    // One clip length is one box per panel, which compares nothing. The
+    // One duration is one box per panel, which compares nothing. The
     // by-class figures below cover that case.
-    if (durations.length < 2 || !groups.length) return null;
+    if (values.length < 2 || !groups.length) return null;
     const floor = measure.floor;
 
     const data = [];
@@ -654,16 +662,14 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
             const i = titles.length;
             const suffix = i === 0 ? "" : String(i + 1);
             const stats = [], points = [], hollow = [];
-            for (let d = 0; d < durations.length; d++) {
-                const here = group.pooled
-                    ? rows.filter((r) => r.d_class === cls
-                        && same(r.d_durationSeconds, durations[d]) && fin(r.d_errorDeg))
-                    : cell(rows, cls, durations[d], group.rung);
-                const values = here.map(measure.value).filter(fin);
-                missing += here.length - values.length;
-                drawn += values.length;
-                floored += values.filter((v) => v < floor).length;
-                stats.push(measure.boxStats(values));
+            for (let d = 0; d < values.length; d++) {
+                const here = rows.filter((r) => r.d_class === cls && same(readValue(r), values[d])
+                    && (group.pooled ? fin(r.d_errorDeg) : group.rung === null || same(r.d_errorDeg, group.rung)));
+                const errors = here.map(measure.value).filter(fin);
+                missing += here.length - errors.length;
+                drawn += errors.length;
+                floored += errors.filter((v) => v < floor).length;
+                stats.push(measure.boxStats(errors));
                 for (const r of here) {
                     const v = measure.value(r);
                     if (!fin(v)) continue;
@@ -672,9 +678,9 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
                         .push({x: d, y: atLeast(v, floor), id: r.rowIndex ?? null, label: errorDotLabel(r, measure), ...marks.style(r, 5, CLASS_HUE[cls])});
                 }
                 const box = stats[stats.length - 1];
-                if (box) medians[`${group.key}/${cls}/${durations[d]}`] = box.median;
+                if (box) medians[`${group.key}/${cls}/${values[d]}`] = box.median;
             }
-            data.push(boxTrace(durations.map((unused, d) => d), stats, CLASS_HUE[cls], {axis: suffix, floor}));
+            data.push(boxTrace(values.map((unused, d) => d), stats, CLASS_HUE[cls], {axis: suffix, floor}));
             data.push(stripTrace(points, CLASS_HUE[cls], {axis: suffix}));
             if (hollow.length) data.push(stripTrace(hollow, CLASS_HUE[cls], {axis: suffix, hollow: true, seed: 806}));
             titles.push(`${CLASS_LABEL[cls]}, ${group.label}`);
@@ -682,15 +688,15 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
     }
     const layout = gridLayout({
         rows: groups.length, cols: 3, titles,
-        xTitle: "Clip length (s)",
+        xTitle,
         yTitle: measure.axisTitle,
-        tickvals: durations.map((unused, d) => d),
-        ticktext: durations.map(String),
+        tickvals: values.map((unused, d) => d),
+        ticktext: values.map(String),
         yRange: measure.yRange(peak), logY: !measure.axis, yAxis: measure.axis,
     });
     addTolerance(layout, titles.length, measure);
 
-    const first = durations[0], last = durations[durations.length - 1];
+    const first = values[0], last = values[values.length - 1];
     const parts = [];
     for (const group of groups) {
         for (const cls of CLASSES) {
@@ -701,9 +707,9 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
             }
         }
     }
-    const title = `rock_v3: ${measure.who} error by clip length, three target classes${unitSuffix(measure)}`;
+    const title = `rock_v3: ${measure.who} error by ${dimensionName}, three target classes${unitSuffix(measure)}`;
     return {
-        key: "errorByLength",
+        key,
         title,
         data,
         layout: pageLayout(layout, {
@@ -712,14 +718,34 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
             caption: `${drawn} track values drawn across the panels (${missing} with no value for the ${measure.who} are not drawn). `
                 + `Each individual-error row uses one pointing-error level. `
                 + (presentRungs.length > 1
-                    ? `All Pointing Errors pools all ${presentRungs.length} available levels at each clip length. ` : "")
-                + `Within one level, the same tracks recur at every length, so a longer clip extends the same track. `
+                    ? `All Pointing Errors pools all ${presentRungs.length} available levels at each ${dimensionName}. ` : "")
+                + comparisonNote
                 + `${measure.boxNote} ${measure.fenceNote} ${hollowNote(measure)}`
                 + `${measure.floorNote(floored)}${parts.join("; ")}.`,
         }),
         config: BASE_CONFIG,
         stats: medians,
     };
+}
+
+/** Error against measured clip length, one panel per class and rung. */
+export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks()} = {}) {
+    return figErrorByDurationDimension(rows, {
+        values: durationsOf(rows), readValue: (row) => row.d_durationSeconds,
+        key: "errorByLength", dimensionName: "clip length", xTitle: "Clip length (s)",
+        comparisonNote: "Within one level, the same tracks recur at every length, so a longer clip extends the same track. ",
+        rungsWanted, measure, marks,
+    });
+}
+
+/** Error against the requested batch duration, one panel per class and rung. */
+export function figErrorByDuration(rows, {rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks()} = {}) {
+    return figErrorByDurationDimension(rows, {
+        values: batchDurationsOf(rows), readValue: (row) => row.d_batchDurationSeconds,
+        key: "errorByDuration", dimensionName: "batch duration", xTitle: "Batch duration (s)",
+        comparisonNote: "The duration is read from each batch_Nsec folder and kept separate from the measured clip length. ",
+        rungsWanted, measure, marks,
+    });
 }
 
 /** Error in six equal-width bands over the full mean true distance of the selected rows. */
@@ -1524,11 +1550,12 @@ export function labelMapFrom(rows, keyField, nameField) {
 
 const distinctFinite = (values) => [...new Set(values.filter(fin))].sort((a, b) => a - b);
 
-/** At most one pointing-error rung and at most one clip length. */
+/** At most one pointing-error rung, clip length and requested batch duration. */
 export function isSingleCell(rows) {
     return rows.length > 0
         && distinctFinite(rows.map((r) => r.d_errorDeg)).length <= 1
-        && durationsOf(rows).length <= 1;
+        && durationsOf(rows).length <= 1
+        && batchDurationsOf(rows).length <= 1;
 }
 
 export const classesOf = (rows) => CLASSES.filter((cls) => rows.some((r) => r.d_class === cls));
@@ -2026,6 +2053,8 @@ export const FIGURES = [
         })},
     {key: "errorByLength", name: "Error by clip length", group: "Accuracy",
         dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorByLength(rows, {measure, marks})},
+    {key: "errorByDuration", name: "Error by Duration", group: "Accuracy",
+        dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorByDuration(rows, {measure, marks})},
     {key: "errorByTrueDistance", name: "Error by true distance", group: "Accuracy",
         dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorByTrueDistance(rows, {measure, marks})},
     {key: "absoluteErrorVsTrueRange", name: "Mean absolute error vs. mean true range", group: "Accuracy",

@@ -20,6 +20,16 @@ import {rankAllHypotheses} from "../../TraverseRanking";
 const DEG = 180 / Math.PI;
 const fin = (v) => typeof v === "number" && Number.isFinite(v);
 
+/** The requested duration encoded by a batch_<N>sec (or older batch_<N>s) folder. */
+export function batchDurationSeconds(row) {
+    if (fin(row?.d_batchDurationSeconds)) return row.d_batchDurationSeconds;
+    for (const value of [row?.path, row?.batch, row?.set]) {
+        const match = String(value ?? "").match(/(?:^|\/)batch_(\d+)(?:sec|s)(?:\/|$)/i);
+        if (match) return Number(match[1]);
+    }
+    return null;
+}
+
 // The verdict's interpretation class each true class is judged against. Party and
 // weather balloons are both the balloon class; a fixed-wing drone is fixed-wing.
 const CLASS_KEY_BY_OBJECT = {balloon: "balloon", aircraft: "fixedWing", drone: "fixedWing"};
@@ -310,7 +320,7 @@ export function rowsFromBotBenchEntries(entries) {
         // Clip length: the folder name when it carries one, the answer key next,
         // and the run's own measurement last. Rounded to 0.1 s, so floating-point
         // noise in frames/rate does not split one clip length into several.
-        const lengthFromPath = Number(path.match(/batch_(\d+)sec/)?.[1]);
+        const lengthFromPath = batchDurationSeconds({path});
         const lengthFromKey = truth?.provenance?.spec?.durationSeconds;
         const measured = fin(quality.durationS) ? Math.round(quality.durationS * 10) / 10 : null;
         const duration = fin(lengthFromPath) ? lengthFromPath : (fin(lengthFromKey) ? lengthFromKey : measured);
@@ -338,6 +348,9 @@ export function rowsFromBotBenchEntries(entries) {
             set: path.includes("/") ? path.split("/")[0] : null,
             d_class: cls,
             d_durationSeconds: duration,
+            // Keep the requested batch duration distinct from the measured clip
+            // length. It is known only when the scanned path names a batch folder.
+            d_batchDurationSeconds: lengthFromPath,
             d_errorDeg: rung,
             d_turnDeg: turn,
             d_classCorrect: classCorrectFor(cls, truth, row.viableClasses),
@@ -388,7 +401,7 @@ export function rowsFromJsonl(text) {
         if (!trimmed) continue;
         try {
             const row = JSON.parse(trimmed);
-            if (!row.header) rows.push(row);
+            if (!row.header) rows.push({...row, d_batchDurationSeconds: batchDurationSeconds(row)});
         } catch (e) { /* one bad line must not lose the file */ }
     }
     return rows;

@@ -8,6 +8,7 @@
 
 import {
     rowsFromBotBenchEntries, rowsFromJsonl, apertureFromPositions, classOf, classCorrectFor, filterRowsToSolvers,
+    batchDurationSeconds,
 } from "../src/analysis/charts/BotBenchChartRows";
 
 function entry({name, relativePath = name, sidecar = null, labels = null, quality = {}, row = {}, results = null}) {
@@ -37,6 +38,9 @@ describe("a run over an All folder chosen on its own, with no sidecars", () => {
     test("the clip length comes from the run itself", () => {
         for (const r of rows) expect(r.d_durationSeconds).toBe(20);
     });
+    test("the batch duration stays unknown when no batch folder was scanned", () => {
+        for (const r of rows) expect(r.d_batchDurationSeconds).toBeNull();
+    });
     test("the pointing-error rung is honestly unknown, not guessed", () => {
         for (const r of rows) expect(r.d_errorDeg).toBeNull();
     });
@@ -63,6 +67,7 @@ describe("where the length and rung come from when they are available", () => {
             quality: {durationS: 120},
         })]);
         expect(r.d_durationSeconds).toBe(120);
+        expect(r.d_batchDurationSeconds).toBe(120);
         expect(r.d_errorDeg).toBe(0.2);
         expect(r.set).toBe("batch_120sec");
         expect(r.path).toBe("batch_120sec/0.2deg/All/drone_001.all.csv");
@@ -125,6 +130,16 @@ describe("rowsFromJsonl", () => {
         const text = [JSON.stringify({header: true}), JSON.stringify({base: "a"}), "{not json", "",
             JSON.stringify({base: "b"})].join("\n");
         expect(rowsFromJsonl(text).map((r) => r.base)).toEqual(["a", "b"]);
+    });
+    test("derives the batch duration from current and older folder names", () => {
+        const rows = rowsFromJsonl([
+            JSON.stringify({base: "a", path: "rock_v3/batch_240sec/0.2deg/All/a.all.csv"}),
+            JSON.stringify({base: "b", batch: "batch_60s"}),
+            JSON.stringify({base: "c", set: "batch_40sec"}),
+        ].join("\n"));
+        expect(rows.map((r) => r.d_batchDurationSeconds)).toEqual([240, 60, 40]);
+        expect(batchDurationSeconds({path: "batch_120sec/All/a.csv"})).toBe(120);
+        expect(batchDurationSeconds({path: "All/a.csv"})).toBeNull();
     });
 });
 

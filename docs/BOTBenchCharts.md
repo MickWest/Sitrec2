@@ -4,7 +4,7 @@ Interactive charts of a BOTBench result set, and the same figures exported for a
 paper. Open them from **File → File Analysis → Result Charts...**.
 
 The charts answer questions a table of numbers cannot: how accuracy changes with
-clip length, how it decays along the pointing-error ladder, what the executive
+clip length and requested batch duration, how it decays along the pointing-error ladder, what the executive
 verdict actually concluded, and how much the blind ranking cost against the best
 candidate it had on offer.
 
@@ -17,7 +17,7 @@ some.
 JSON Lines file with one flattened result per line, the format the offline
 pipeline writes. Each line carries the analysis result together with the
 generation-side inputs it is being judged against, so the charts can group by
-target class, clip length and pointing-error rung.
+target class, clip length, batch duration and pointing-error rung.
 
 **Open it from a finished BOTBench run** with the **Charts** button. The rows are
 built from the run itself: the clip length, the target class, the class outcome
@@ -50,6 +50,7 @@ rung figures. The figures that compare clip lengths need at least two.
 | Verdict code, by target class | One cell: the executive verdict mix per class |
 | First-ranked hypothesis, by target class | One cell: which hypothesis family the ranking placed first |
 | Error by clip length | The blind top candidate's error against clip length, one panel per target class and selected pointing-error rung, followed by an **All Pointing Errors** row that pools every available error level |
+| Error by Duration | The same error against the requested `batch_20sec`, `batch_40sec`, `batch_60sec`, `batch_120sec`, `batch_180sec`, `batch_240sec` and `batch_300sec` duration, kept separate from the measured clip length |
 | Error by pointing error | The same error against the pointing-error ladder, one panel per class and clip length |
 | Mean absolute error vs. mean true range | One dot per evaluation: its mean absolute error in metres against its mean true range, on a linear range axis from zero. With **log Error** on, the error axis is logarithmic and clamped at 1 mm: a smaller error, an exact zero included, is drawn at the floor and its hover label keeps the value. With it off, the error axis is linear from zero with no floor |
 | Error by clip length, per sensor turn | Median error against clip length, one line per sensor-turn level, with quartile bars. A flat line means a longer clip does not help at that amount of turn |

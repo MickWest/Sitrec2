@@ -7,8 +7,8 @@
 
 import {
     buildAllFigures, rungGroups, durationGroups, isSingleCell, cellDescription, rungLabel, CLASSES, CLASS_LABEL,
-    figErrorByClass, figErrorByLength, figOutcomeByClass, figErrorByTrueDistance, figAbsoluteErrorVsTrueRange,
-    ABSOLUTE_ERROR_FLOOR_M, makeMeasure,
+    figErrorByClass, figErrorByLength, figErrorByDuration, figOutcomeByClass, figErrorByTrueDistance,
+    figAbsoluteErrorVsTrueRange, ABSOLUTE_ERROR_FLOOR_M, makeMeasure, BATCH_DURATIONS,
 } from "../src/analysis/charts/RockV3ChartSpecs";
 import {median} from "../src/analysis/charts/ChartStats";
 
@@ -24,7 +24,7 @@ function makeRows({perClass = 20, durations = [20], rungs = [null], sidecar = fa
                     const rel = Math.pow(10, -3 + 2.5 * rand());
                     rows.push({
                         base: `${cls}_${String(i + 1).padStart(3, "0")}`,
-                        d_class: cls, d_durationSeconds: d, d_errorDeg: e,
+                        d_class: cls, d_durationSeconds: d, d_batchDurationSeconds: d, d_errorDeg: e,
                         d_classCorrect: rand() > 0.3,
                         r_viable: rand() > 0.2 ? "balloon+multirotor" : "",
                         r_topRelSep: rel, r_bestRelSep: rel / (1 + rand()),
@@ -44,7 +44,7 @@ function makeRows({perClass = 20, durations = [20], rungs = [null], sidecar = fa
 
 const keysOf = (rows) => buildAllFigures(rows).filter((f) => !f.error).map((f) => f.key);
 const BY_CLASS = ["errorByClass", "withinByClass", "outcomeByClass", "verdictByClass", "topCandidateByClass"];
-const SWEEP_ONLY = ["errorByLength", "errorByRung", "withinByRung", "withinByLength", "classOutcome",
+const SWEEP_ONLY = ["errorByLength", "errorByDuration", "errorByRung", "withinByRung", "withinByLength", "classOutcome",
     "verdictMix", "topCandidateMix"];
 
 describe("error by true distance", () => {
@@ -213,7 +213,7 @@ describe("mean absolute error vs. mean true range", () => {
 });
 
 describe("log Error choice", () => {
-    const errorKeys = ["errorByClass", "errorByLength", "errorByTrueDistance", "absoluteErrorVsTrueRange",
+    const errorKeys = ["errorByClass", "errorByLength", "errorByDuration", "errorByTrueDistance", "absoluteErrorVsTrueRange",
         "errorByRung", "errorByLengthAndTurn", "errorByTurn", "errorBySolver", "errorBySolverSorted", "errorBySolverCustom",
         "errorVsGeometry", "rankingCost"];
     const rows = [0, 20].flatMap((turn) => makeRows({rungs: [0, 0.2], durations: [20, 120], perClass: 6})
@@ -352,7 +352,7 @@ describe("a sweep", () => {
         const keys = keysOf(rows);
         expect(isSingleCell(rows)).toBe(false);
         for (const key of BY_CLASS) expect(keys).not.toContain(key);
-        for (const key of ["errorByLength", "errorByRung", "withinByRung", "withinByLength", "classOutcome"]) {
+        for (const key of ["errorByLength", "errorByDuration", "errorByRung", "withinByRung", "withinByLength", "classOutcome"]) {
             expect(keys).toContain(key);
         }
     });
@@ -381,6 +381,36 @@ describe("error by clip length across all pointing errors", () => {
     });
 });
 
+describe("error by requested batch duration", () => {
+    const rows = BATCH_DURATIONS.flatMap((batch, batchIndex) => CLASSES.map((cls, classIndex) => ({
+        base: `${cls}_${batch}`,
+        d_class: cls,
+        // Keep the measured length fixed to prove that this figure reads the
+        // batch folder dimension, rather than reusing the clip-length field.
+        d_durationSeconds: 120,
+        d_batchDurationSeconds: batch,
+        d_errorDeg: 0.2,
+        r_topRelSep: (batchIndex + 1) / 100 + classIndex / 1000,
+        r_topName: "Constant Velocity",
+    })));
+    const figure = figErrorByDuration(rows);
+
+    test("uses the seven rock_v3 batch durations in their fixed order", () => {
+        expect(figure.key).toBe("errorByDuration");
+        expect(figure.layout.xaxis.ticktext).toEqual(BATCH_DURATIONS.map(String));
+        expect(figure.layout.xaxis.title.text).toBe("Batch duration (s)");
+        expect(figure.stats["0.2deg/balloon/20"]).toBeCloseTo(0.01, 12);
+        expect(figure.stats["0.2deg/balloon/300"]).toBeCloseTo(0.07, 12);
+        expect(figure.title).toContain("error by batch duration");
+    });
+
+    test("is available through the Accuracy figure registry", () => {
+        const figureFromRegistry = buildAllFigures(rows).find((item) => item.key === "errorByDuration");
+        expect(figureFromRegistry).toBeDefined();
+        expect(figureFromRegistry.error).toBeUndefined();
+    });
+});
+
 describe("a sweep of the pointing-error ladder at one clip length", () => {
     // The run that prompted durationGroups: 40 s clips at nine rungs drew two
     // figures, because every rung figure asked only for 20 s and 120 s clips.
@@ -397,6 +427,7 @@ describe("a sweep of the pointing-error ladder at one clip length", () => {
     test("and no figure that compares clip lengths, which needs two", () => {
         const keys = keysOf(rows);
         expect(keys).not.toContain("errorByLength");
+        expect(keys).not.toContain("errorByDuration");
         expect(keys).not.toContain("withinByLength");
     });
 });
@@ -651,7 +682,7 @@ describe("whose error, and in what unit", () => {
             .map((f) => [f.key, JSON.stringify(f.stats)]));
         const plain = statsOf(buildAllFigures(rows));
         const chosen = statsOf(buildAllFigures(rows, {measure}));
-        const errorKeys = ["errorByLength", "errorByTrueDistance", "errorByRung", "withinByLength", "withinByRung", "errorBySolver",
+        const errorKeys = ["errorByLength", "errorByDuration", "errorByTrueDistance", "errorByRung", "withinByLength", "withinByRung", "errorBySolver",
             "errorBySolverSorted", "errorBySolverCustom", "absoluteErrorVsTrueRange", "errorVsGeometry", "rankingCost"];
         expect(Object.keys(plain)).toEqual(expect.arrayContaining(["errorByLength", "withinByRung", "verdictMix"]));
         for (const key of Object.keys(plain)) {
@@ -710,7 +741,7 @@ describe("whose error, and in what unit", () => {
                 }
             }
         }
-        expect([...seen]).toEqual(expect.arrayContaining(["errorByClass", "errorByLength", "errorByTrueDistance",
+        expect([...seen]).toEqual(expect.arrayContaining(["errorByClass", "errorByLength", "errorByDuration", "errorByTrueDistance",
             "absoluteErrorVsTrueRange", "errorByRung", "errorVsGeometry", "errorBySolver", "errorBySolverSorted",
             "errorBySolverCustom"]));
     });
