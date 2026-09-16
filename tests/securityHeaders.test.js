@@ -46,6 +46,65 @@ describe("the container sets the baseline headers", () => {
     });
 });
 
+describe("the container sets cache headers by file name", () => {
+    const conf = read("docker", "cache-headers.conf");
+    const dockerfile = read("Dockerfile.release");
+
+    // The two Apache expressions, in order: the immutable branch, then no-cache.
+    const [immutable, noCache] = [...conf.matchAll(/<(?:Else)?If "%\{REQUEST_FILENAME\} =~ m#(.+)#">/g)]
+        .map(m => new RegExp(m[1]));
+    const root = name => "/var/www/html/" + name;
+
+    test("the conf is installed AND enabled", () => {
+        expect(dockerfile).toMatch(/COPY\s+docker\/cache-headers\.conf\s+\/etc\/apache2\/conf-available\//);
+        expect(dockerfile).toMatch(/a2enconf\s+sitrec-cache-headers/);
+    });
+
+    test("each branch sets the intended header", () => {
+        expect(conf).toMatch(/<If [^>]+>\s*Header set Cache-Control "public, max-age=31536000, immutable"\s*<\/If>/);
+        expect(conf).toMatch(/<ElseIf [^>]+>\s*Header set Cache-Control "no-cache"\s*<\/ElseIf>/);
+    });
+
+    // Names taken from a production build.
+    test.each([
+        "bootstrap.beacfc8a97c4825cb3dd.bundle.js",
+        "index.07cadf6ad9834d5efa9c.bundle.js",
+        "vendors-node_modules_astronomy-engine_esm_astronomy_js-node_modules_satellite_js_dist_satelli-384e5e.68da8f033277b10ceae0.bundle.js",
+        "8a5d575186451cae1e2a.js",
+        "8e17072deeb50510e590.wasm",
+        "refraction-tool.d392446e.css",
+    ])("hashed %s is cached for a year", name => {
+        expect(immutable.test(root(name))).toBe(true);
+    });
+
+    // A fixed name changes under the same URL, so a year-long cache would serve a
+    // stale copy. Uploads are below the web root and are never matched.
+    test.each([
+        "index.html",
+        "index.css",
+        "app-entry.json",
+        "bootstrap.bundle.js",
+        "index.07cadf6ad9834d5efa9c.bundle.js.LICENSE.txt",
+        "sitrec-upload/abcdefabcdefabcdefab.js",
+        "sitrec-upload/foo.abcdefabcdefabcdefab.bundle.js",
+    ])("%s is not cached for a year", name => {
+        expect(immutable.test(root(name))).toBe(false);
+    });
+
+    // Every fixed-name file on the startup path. "" is the directory request.
+    test.each([
+        "",
+        "index.html",
+        "index.css",
+        "app-entry.json",
+        "build-info.json",
+        "sitrec-runtime-env.js",
+        "sitrec-channel-config.js",
+    ])("startup file '%s' is checked on every load", name => {
+        expect(noCache.test(root(name))).toBe(true);
+    });
+});
+
 describe("the shipped Node servers set the same baseline", () => {
     const servers = ["standalone-server.js", "standalone-serverless.js"];
 

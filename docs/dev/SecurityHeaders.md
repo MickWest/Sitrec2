@@ -44,6 +44,33 @@ in its existing CSP meta tag. Sitrec uses document-relative URLs and does not ne
 a base element. The supplied restricted AWS CSP response-header default uses the
 same directive. This small meta policy does not replace a complete deployment CSP.
 
+## Cache headers
+
+The container also sets `Cache-Control` on the application files at the web root, by
+file name (`docker/cache-headers.conf`):
+
+| Files | Value | Why |
+|---|---|---|
+| Hashed names: `name.<hash>.bundle.js`, `<hash>.js`, `<hash>.wasm`, `name.<hash>.css` | `public, max-age=31536000, immutable` | A new build gets a new name, so the content never changes under the URL |
+| `index.html` (and the directory request), `index.css`, `app-entry.json`, `build-info.json`, `sitrec-runtime-env.js`, `sitrec-channel-config.js` | `no-cache` | The name stays the same at each release, so the browser must check before use |
+
+`no-cache` does not stop caching. The browser keeps its copy and checks it; an unchanged
+file costs one `304 Not Modified`.
+
+**Without a header on `index.html`, a release can stop Sitrec starting.** The browser
+guesses how long the page stays fresh from its `Last-Modified` date, and can reuse the
+previous release's page for hours. That page names the previous bootstrap bundle, which
+the new release no longer has. The `<meta http-equiv="Cache-Control">` tag in the page
+does not prevent this: browsers ignore it for HTTP caching.
+
+Only files directly in the web root match, so a hash-like name uploaded to
+`sitrec-upload/` is not cached for a year. A 404 gets no cache header.
+
+If you serve a production build from your own web server, set the same two rules for the
+application's own directory only, not for uploads or server endpoints below it. A CDN in
+front can also add or override browser cache times, so check the response it sends, not
+only the origin's.
+
 ## What Sitrec deliberately does not set
 
 Each of these needs a decision about *your* deployment. Two of them break features outright
