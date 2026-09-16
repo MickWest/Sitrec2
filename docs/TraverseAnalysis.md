@@ -196,8 +196,8 @@ cannot determine:
   input/run into its stochastic searches and records optimizer metadata. This
   makes supported runs repeatable for the same code and inputs; it does not
   prove that a retained basin is the global optimum.
-- **GPU search (optional)**: *Traverse Analysis Tweaks → GPU search (WebGPU)*,
-  off by default. When the browser supports WebGPU, the fixed-wing and balloon
+- **GPU search**: *Traverse Analysis Tweaks → GPU search (WebGPU)* is enabled
+  by default. When the browser supports WebGPU, the fixed-wing and balloon
   fits search on the graphics card. Many independent searches with large
   populations run at once, and they test hundreds of times more candidate
   solutions than the normal search, in less time. The graphics card scores
@@ -209,6 +209,13 @@ cannot determine:
   quadcopter, drone-control and range-band fits still use the CPU. Without
   WebGPU, or if the graphics card reports an error, the analysis uses the normal
   search. The report's run audit records which search each fixed-wing run used.
+- **GPU Monte Carlo presets**: *Traverse Analysis Tweaks → Monte Carlo GPU*
+  adds a selected trial budget, or all six budgets, to the gallery. The presets
+  `mc_50k` through `mc_1M` use order 1 and 0.1° LOS uncertainty, sampling blind
+  ranges independently of the range anchor. They require WebGPU and report
+  failures explicitly. The same presets are selectable in the traverse menu
+  and [BOTBench](BOTBench.md#choosing-the-solvers). They compare fitting methods;
+  the trial count is a search budget, not a confidence level.
 - **Physical fits are seeded from the smoother**: the balloon (with its wind free
   to vary over the clip) and the drone control-input candidate start from the
   best geometric approximation — the Kalman-smoother path — and refine from

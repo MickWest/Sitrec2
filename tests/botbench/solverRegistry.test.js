@@ -3,14 +3,17 @@
  * units behind them (src/analysis/BotBenchSolvers.js).
  */
 import {
-    BATTERY_UNITS, SOLVERS, UNIT_ORDER, UNIT_VERSIONS, allSolverIds, describeSolvers, includeSetFor,
+    BATTERY_UNITS, SOLVERS, UNIT_ORDER, UNIT_VERSIONS, allSolverIds, defaultSolverIds, describeSolvers, includeSetFor,
     isEverySolver, normalizeSolvers, planUnits, rowMemoStorable, sameOptions, selectionKey, solverById, unitOptions,
     unitVersionsFor,
 } from "../../src/analysis/BotBenchSolvers";
+import {MONTE_CARLO_IDS, MONTE_CARLO_PRESETS, MONTE_CARLO_SEED} from "../../src/MonteCarloLOS";
 
 describe("the solver list", () => {
-    test("names the sixteen candidates the charts show, with the Kalman smoother among them", () => {
-        expect(SOLVERS).toHaveLength(16);
+    test("names the original candidates and six independent GPU Monte Carlo presets", () => {
+        expect(SOLVERS).toHaveLength(22);
+        expect(defaultSolverIds()).toHaveLength(16);
+        expect(allSolverIds().filter(id => id.startsWith("mc_"))).toEqual(MONTE_CARLO_IDS);
         expect(allSolverIds()).toContain("gfKalman");
         expect(solverById("gfKalman").name).toBe("Global Fit: Kalman Smoother");
         expect(allSolverIds().filter((id) => id.startsWith("gfPolyALS:"))).toEqual(
@@ -29,14 +32,15 @@ describe("the solver list", () => {
         }
     });
 
-    test("a selection is normalized to known ids in candidate order; nothing means everything", () => {
+    test("a selection is normalized; absent selections retain the original default battery", () => {
         expect(normalizeSolvers(["gfKalman", "constAir", "bogus"])).toEqual(["constAir", "gfKalman"]);
-        expect(normalizeSolvers(null)).toEqual(allSolverIds());
-        expect(normalizeSolvers([])).toEqual(allSolverIds());
-        expect(isEverySolver(null)).toBe(true);
+        expect(normalizeSolvers(null)).toEqual(defaultSolverIds());
+        expect(normalizeSolvers([])).toEqual(defaultSolverIds());
+        expect(isEverySolver(null)).toBe(false);
+        expect(isEverySolver(allSolverIds())).toBe(true);
         expect(isEverySolver(["gfKalman"])).toBe(false);
-        expect(describeSolvers(["gfKalman"])).toBe("1 of 16 solvers");
-        expect(describeSolvers(null)).toBe("all 16 solvers");
+        expect(describeSolvers(["gfKalman"])).toBe("1 of 22 solvers");
+        expect(describeSolvers(null)).toBe("16 of 22 solvers");
     });
 });
 
@@ -58,9 +62,14 @@ describe("the unit plan", () => {
     });
 
     test("every solver plans every unit but the range bands, which need their option and an object model", () => {
-        expect(planUnits(null)).toEqual(UNIT_ORDER.filter((u) => u !== "families"));
-        expect(planUnits(null, {solutionFamilies: true})).toEqual(UNIT_ORDER);
+        expect(planUnits(allSolverIds())).toEqual(UNIT_ORDER.filter((u) => u !== "families"));
+        expect(planUnits(allSolverIds(), {solutionFamilies: true})).toEqual(UNIT_ORDER);
+        expect(planUnits(null)).not.toEqual(expect.arrayContaining(MONTE_CARLO_IDS));
         expect(planUnits(["gfKalman"], {solutionFamilies: true})).toEqual(["kalman"]);
+    });
+
+    test("each GPU Monte Carlo preset runs without a constant-velocity or range-sweep seed", () => {
+        for (const id of MONTE_CARLO_IDS) expect(planUnits([id])).toEqual([id]);
     });
 
     test("the plan is in battery order whatever the selection order", () => {
@@ -69,6 +78,15 @@ describe("the unit plan", () => {
 });
 
 describe("options and keys", () => {
+    test("GPU Monte Carlo cache options fix the preset and seed, independent of physics options", () => {
+        for (const id of MONTE_CARLO_IDS) {
+            const expected = {...MONTE_CARLO_PRESETS[id], seed: MONTE_CARLO_SEED, backend: "webgpu"};
+            expect(unitOptions(id, {})).toEqual(expected);
+            expect(unitOptions(id, {anchorM: 1, gpuSearch: true, mcOrderSweep: true})).toEqual(expected);
+        }
+        expect(rowMemoStorable({}, {missingGpuSolvers: ["mc_50k"]})).toBe(false);
+        expect(rowMemoStorable({gpuSearch: true}, {searchBackend: "webgpu", missingGpuSolvers: ["mc_1M"]})).toBe(false);
+    });
     test("a unit's options are the anchor, plus its own flag where it has one", () => {
         const options = {anchorM: 37040, solutionFamilies: true, mcOrderSweep: true, solvers: ["x"]};
         expect(unitOptions("aircraft", options)).toEqual({anchorM: 37040});

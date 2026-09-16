@@ -490,6 +490,11 @@ function mulberry32(seed) {
 }
 const MC_DEFAULT_SEED = 0x5eed1234;
 
+// Separate async blind-range fitter for large trial budgets. Existing synchronous
+// MC nodes retain their seeded sampling and serialized behavior.
+export {fitMonteCarloGPU} from "./gpu/MonteCarloLOS";
+export {MONTE_CARLO_PRESETS} from "./MonteCarloLOS";
+
 export function fitMonteCarlo(dataset, excluded, options = {}) {
     const {sensorPos, losDir, times, count} = dataset;
 

@@ -26,6 +26,7 @@ export class BotBenchAnalysisPool {
                 // Only observations and declared constraints enter the worker.
                 // Truth, labels, file handles and UI state stay with the caller.
                 const fitted = await this.workers.run({dataset: record.dataset,
+                    losSamples: record.losSamples,
                     originLat: record.originLat, originLon: record.originLon,
                     groundZ: record.groundZ, kind: record.kind,
                     clipStartMs: record.clipStartMs, meta: {maxRangeM: record.meta?.maxRangeM}},

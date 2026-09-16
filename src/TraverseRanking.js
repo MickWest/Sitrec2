@@ -319,7 +319,7 @@ export function hypothesisCategory(h) {
         return CATEGORY_BY_KEY.catalogue;
     }
     if (FORWARD_KEYS.has(h?.key)) return CATEGORY_BY_KEY.forward;
-    if (h?.key === "straightLine" || String(h?.key || "").startsWith("gf")) {
+    if (h?.key === "straightLine" || String(h?.key || "").startsWith("gf") || p.mcPreset) {
         return CATEGORY_BY_KEY.approximation;
     }
     if (GEOMETRIC_KEYS.has(h?.key) || h?.atInfinity) return CATEGORY_BY_KEY.geometric;

@@ -29,6 +29,7 @@ import {classifyFixedWing, classifyQuadcopter} from "./VehicleModels";
 import {satelliteECEF, satelliteTrackENU, satelliteSunlit} from "./SatelliteSearch";
 import {localFitCompletionWarnings, settledButUnidentifiable} from "./TraverseRanking";
 import {solvedHorizontalWindAt} from "./TraverseWind";
+import {monteCarloName} from "./MonteCarloLOS";
 
 export const UNDERGROUND_TOL = 40;
 export const GROUND_CONTACT_TOL = 150;
@@ -469,7 +470,7 @@ export function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, win
 
 export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured,
     quad, satellite, slowProfile, slowOpts, originLat, originLon, provenance = null,
-    failures = null, windPrior = null, mcSweep = null, droneCtl = null,
+    failures = null, windPrior = null, mcSweep = null, monteCarlo = null, droneCtl = null,
     // The Kalman smoother fit the battery seeds the physics models from. It
     // becomes a candidate of its own only when `kalmanCandidate` is set: the live
     // analysis already reads that candidate off its Kalman method node, and a
@@ -1289,6 +1290,32 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
                 });
             }
         }
+    }
+
+    for (const [id, result] of Object.entries(monteCarlo ?? {})) {
+        if (!has(id) || !result?.positions) continue;
+        const track = Float64Array.from(result.positions);
+        const metricsFull = trackMetrics(dataset, track);
+        const p = result.params;
+        const range = Math.hypot(track[0] - S[0], track[1] - S[1], track[2] - S[2]);
+        list.push({
+            key: id, name: monteCarloName(id), color: "#b79be0",
+            subtitle: `${p.numTrials.toLocaleString("en-US")} blind-range trials · order ${p.order} · ${p.losUncertaintyDeg}°`,
+            track, metricsFull, errDeg: meanAngularError(dataset, track) * 180 / Math.PI,
+            nonPhysical: !Number.isFinite(metricsFull.airSpeed.mean)
+                || metricsFull.airSpeed.mean / KNOTS_TO_MS > 20000 || !(metricsFull.gLoad.max < 2000),
+            linearConditioning: assessLinearFitConditioning(dataset, {positions: track}),
+            params: {range, mcPreset: id, polynomialOrder: p.order, mcTrials: p.numTrials,
+                mcLOSUncertaintyDeg: p.losUncertaintyDeg, seed: p.seed,
+                maxDistance: p.maxDistance, backend: p.backend},
+            notes: `Samples ${p.numTrials.toLocaleString("en-US")} polynomial paths using random points along the sightlines, `
+                + `with ${p.losUncertaintyDeg}° angular perturbations. Ranges are sampled from zero to `
+                + `${(p.maxDistance / METERS_PER_NM).toFixed(2)} NM, limited further by each observation's MaxRange when supplied. `
+                + "The path with the smallest mean angular error is retained. The GPU searches the trials and the best candidates "
+                + "are checked in double precision. Sampling is independent of the range anchor and the constant-velocity fit. "
+                + "This is a fitting-method comparison, not an object identification or a confidence interval. "
+                + "The range limits constrain sampled points; the fitted path can extend beyond them.",
+        });
     }
 
     // Ground Vehicle — where the sightlines meet a curved constant-elevation shell at the

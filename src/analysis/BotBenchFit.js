@@ -59,14 +59,16 @@ export function botBenchRangeLimits(record) {
 }
 
 /**
- * Where a battery's GPU-capable searches ran: "webgpu" when the fixed-wing and
- * balloon fits it holds both used the GPU, "cpu" when neither did, "mixed" when one
- * did, and null when it holds neither fit.
+ * Where the battery's GPU-capable searches ran (physics and Monte Carlo):
+ * "webgpu", "cpu", "mixed", or null when none was run successfully.
  */
 export function searchBackendOf(battery) {
     const used = [];
     if (battery?.aircraft) used.push(battery.aircraft.runs?.[0]?.de?.backend === "webgpu");
     if (battery?.lantern) used.push(battery.lantern.params?.optimizer?.de?.backend === "webgpu");
+    for (const fit of Object.values(battery?.monteCarlo ?? {})) {
+        if (fit) used.push(fit.params?.backend === "webgpu");
+    }
     if (!used.length) return null;
     if (used.every(Boolean)) return "webgpu";
     return used.some(Boolean) ? "mixed" : "cpu";
@@ -115,7 +117,7 @@ export async function fitBotBenchRecord(record, {
     // Search the fixed-wing and balloon fits on the GPU where WebGPU exists
     // (TraverseBattery `gpu`). Changes those fits, so their units are stored apart.
     gpuSearch = false,
-    // The solvers wanted (BotBenchSolvers ids; null for all) and, optionally,
+    // The solvers wanted (BotBenchSolvers ids; null for the default set) and, optionally,
     // stored fit units to use in place of fitting: {cached: {unitId: {result,
     // failures}}, onUnit}. The plan of units is derived from the solvers here,
     // so a caller never has to know which unit serves which candidate.
@@ -221,6 +223,8 @@ export async function fitBotBenchRecord(record, {
         plausRangeMax: capM(55 * METERS_PER_NM),
         solutionFamilies,
         mcOrderSweep,
+        monteCarloData: record.losSamples ?? (record.meta?.maxRangeM > 0
+            ? {maxRange: new Float64Array(dataset.n).fill(record.meta.maxRangeM)} : null),
         gpu: gpuSearch,
         familyScreen: makeFlatFamilyScreen(dataset, originLat, originLon, groundZ),
         buildHypotheses: (args) => buildCoreHypotheses({
@@ -255,6 +259,8 @@ export function cacheableBotBenchBattery(battery) {
         hypotheses, sweep, resolvedRanges, fastProfile, slowProfile,
         slowOpts, aircraft, families, executiveAssessment, failures,
         provenance: battery.provenance,
+        monteCarlo: battery.monteCarlo,
+        missingGpuSolvers: battery.missingGpuSolvers,
         // Which seed the physics fits started from, and whether that is the
         // seed a full battery would have used (see TraverseBattery).
         seedSource: battery.seedSource ?? null, seedComplete: battery.seedComplete ?? true,

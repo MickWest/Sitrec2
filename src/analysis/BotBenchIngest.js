@@ -1032,6 +1032,10 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
         kind: "bot",
         label: label || sidecar?.label || sidecar?.trackId || "BOT scenario",
         dataset,
+        // Preserve observation-level timing/range limits for the CLI-style
+        // Monte Carlo search; other fits keep their existing uniform clock.
+        losSamples: {times, maxRange: Float64Array.from(kept, p =>
+            Number.isFinite(p.maxRange) && p.maxRange > 0 ? p.maxRange : -1)},
         originLat: oLat * DEG,
         originLon: oLon * DEG,
         // Ground is the Z = 0 plane — see the note where groundZ is set.

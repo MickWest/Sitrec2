@@ -17,6 +17,8 @@
  * tests all read this file.
  */
 
+import {MONTE_CARLO_IDS, MONTE_CARLO_PRESETS, MONTE_CARLO_SEED, monteCarloName} from "../MonteCarloLOS";
+
 /**
  * The units of the battery, in the order the battery runs them, each with the units
  * it needs finished first. A caller planning a subset closes over `needs`, so the
@@ -39,6 +41,7 @@ export const BATTERY_UNITS = Object.freeze({
     droneControl: {needs: ["kalman"]},
     families: {needs: ["constAir", "aircraft", "lantern", "quadcopter", "kalman"]},
     polySweep: {needs: []},
+    ...Object.fromEntries(MONTE_CARLO_IDS.map(id => [id, {needs: []}])),
 });
 
 /** The units in battery order. */
@@ -62,6 +65,7 @@ export const UNIT_VERSIONS = Object.freeze({
     droneControl: 1,
     families: 1,
     polySweep: 1,
+    ...Object.fromEntries(MONTE_CARLO_IDS.map(id => [id, 1])),
 });
 
 /** The polynomial orders the curve-fit sweep produces (TraverseBattery.MC_SWEEP_MAX_ORDER). */
@@ -99,6 +103,10 @@ export const SOLVERS = Object.freeze([
         id: `gfPolyALS:${order}`, name: `Global Fit: Polynomial LSQ (order ${order})`, group: "Curve fits",
         units: ["polySweep"], note: order === 1 ? "The deterministic alternating least-squares curve fits, one sweep for all five orders." : null,
     })),
+    ...MONTE_CARLO_IDS.map(id => ({id, name: monteCarloName(id), group: "Monte Carlo (GPU)",
+        units: [id], default: false,
+        note: `${MONTE_CARLO_PRESETS[id].numTrials.toLocaleString("en-US")} blind-range trials, order 1, 0.1° LOS uncertainty. Requires WebGPU.`,
+    })),
 ]);
 
 /** The Monte Carlo sweep's candidates, present only when that option is on. */
@@ -111,6 +119,11 @@ export function allSolverIds() {
     return SOLVERS.map((s) => s.id);
 }
 
+/** Keep GPU-only additions opt-in for existing/default CPU runs. */
+export function defaultSolverIds() {
+    return SOLVERS.filter(s => s.default !== false).map(s => s.id);
+}
+
 /** The solver for an id, or null. */
 export function solverById(id) {
     return SOLVER_BY_ID.get(id) ?? null;
@@ -118,15 +131,14 @@ export function solverById(id) {
 
 /**
  * A selection as the run carries it: the known ids, deduplicated, in candidate
- * order. Null, undefined or an empty list means every solver, so an option that was
- * never set reads as the whole battery, which is what every run before the choice
- * existed used.
+ * order. An absent or empty selection retains the original default battery.
+ * GPU-only Monte Carlo presets must be selected explicitly (or with All).
  */
 export function normalizeSolvers(ids) {
-    if (!ids) return allSolverIds();
+    if (!ids) return defaultSolverIds();
     const wanted = new Set(Array.isArray(ids) ? ids : [ids]);
     const kept = SOLVERS.filter((s) => wanted.has(s.id)).map((s) => s.id);
-    return kept.length ? kept : allSolverIds();
+    return kept.length ? kept : defaultSolverIds();
 }
 
 /** Whether a selection is the whole battery. */
@@ -180,6 +192,9 @@ export const GPU_SEARCH_UNITS = Object.freeze(["aircraft", "lantern", "families"
  * run keeps the options record it always had and stays reusable.
  */
 export function unitOptions(unit, options = {}) {
+    if (MONTE_CARLO_IDS.includes(unit)) {
+        return {...MONTE_CARLO_PRESETS[unit], seed: MONTE_CARLO_SEED, backend: "webgpu"};
+    }
     const out = {anchorM: options.anchorM ?? null};
     if (unit === "families") out.solutionFamilies = !!options.solutionFamilies;
     if (unit === "polySweep") out.mcOrderSweep = !!options.mcOrderSweep;
@@ -213,6 +228,9 @@ export function selectionKey(ids, options = {}) {
  * (BotBenchFit `markGpuFallbacksUncacheable`). A row with neither search is unaffected.
  */
 export function rowMemoStorable(options, row) {
+    // A failed GPU-only fit must be retried, even when GPU search for the
+    // independent physics models was not selected.
+    if (row?.missingGpuSolvers?.length) return false;
     if (!options?.gpuSearch) return true;
     const backend = row?.searchBackend ?? null;
     return backend === null || backend === "webgpu";
@@ -225,7 +243,7 @@ export function unitVersionsFor(units) {
     return out;
 }
 
-/** A short description of a selection for the status line: "all 16 solvers", "3 of 16 solvers". */
+/** A short description of a selection for the status line. */
 export function describeSolvers(ids) {
     const n = normalizeSolvers(ids).length;
     return n === SOLVERS.length ? `all ${n} solvers` : `${n} of ${SOLVERS.length} solvers`;

@@ -6,6 +6,7 @@ import {CNodeSwitch} from "./nodes/CNodeSwitch";
 import {guiMenus, NodeMan, Sit} from "./Globals";
 import {addAnalyzeButton, addAnalyzeTweaks} from "./AnalyzeTraverse";
 import {EventManager} from "./CEventManager";
+import {MONTE_CARLO_IDS, monteCarloName} from "./MonteCarloLOS";
 
 export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExtra = "", exportable = true) {
 
@@ -21,6 +22,9 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
     traverseInputs2["Global Fit: Kalman Smoother"] = "LOSFitKalman" + idExtra;
     traverseInputs2["Global Fit: Monte Carlo 1"] = "LOSFitMonteCarlo" + idExtra;
     traverseInputs2["Global Fit: Monte Carlo 2"] = "LOSFitMonteCarlo2" + idExtra;
+    for (const preset of MONTE_CARLO_IDS) {
+        traverseInputs2[monteCarloName(preset)] = `LOSFitGPU_${preset}${idExtra}`;
+    }
     traverseInputs2["Global Fit: Physics"] = "LOSFitPhysics" + idExtra;
     traverseInputs2["Global Fit: Plausible"] = "LOSFitPlausible" + idExtra;
     traverseInputs2["Global Fit: Minimum Speed"] = "LOSFitMinSpeed" + idExtra;

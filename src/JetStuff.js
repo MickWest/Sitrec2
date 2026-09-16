@@ -50,6 +50,8 @@ import {CNodeLOSFitCA} from "./nodes/CNodeLOSFitCA";
 import {CNodeLOSFitKalman} from "./nodes/CNodeLOSFitKalman";
 import {CNodeLOSFitMonteCarlo} from "./nodes/CNodeLOSFitMonteCarlo";
 import {CNodeLOSFitMonteCarlo2} from "./nodes/CNodeLOSFitMonteCarlo2";
+import {CNodeLOSFitMonteCarloGPU} from "./nodes/CNodeLOSFitMonteCarloGPU";
+import {MONTE_CARLO_IDS} from "./MonteCarloLOS";
 import {CNodeLOSFitPhysics} from "./nodes/CNodeLOSFitPhysics";
 import {CNodeLOSFitPlausible} from "./nodes/CNodeLOSFitPlausible";
 import {CNodeLOSFitMinSpeed} from "./nodes/CNodeLOSFitMinSpeed";
@@ -893,6 +895,10 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
         losUncertaintyDeg: "mcLOSUncertainty",
         order: "mcOrder",
     })
+
+    for (const preset of MONTE_CARLO_IDS) {
+        new CNodeLOSFitMonteCarloGPU({id: `LOSFitGPU_${preset}${idExtra}`, LOS: los, preset});
+    }
 
     // Physics model parameters
     if (!NodeMan.exists("physicsMaxIter")) {

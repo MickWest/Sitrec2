@@ -49,6 +49,7 @@ import {
     traversePlausible,
 } from "./TraverseAnalysis";
 import {fitKalmanFilter, fitPhysicsModel, assessLinearFitConditioning} from "./LOSFitting";
+import {MONTE_CARLO_IDS} from "./MonteCarloLOS";
 import {DroneControlModel, knotsForDuration} from "./DroneControlFit";
 import {SkyLanternModel} from "./SkyLanternModel";
 import {QuadcopterModel} from "./QuadcopterModel";
@@ -201,14 +202,13 @@ export const analyzeTweaks = {
     // the gallery is not dominated by 10 extra Monte Carlo diagnostic tiles.
     // Enabling it adds the two Monte Carlo strategies across orders (TA-27).
     mcOrderSweep: false,
+    mcGpuPreset: "Off",
     // Off by default because it re-fits each physics model at every rung of a
     // range ladder — the honest cost of asking "which ranges does this model
     // admit?" rather than only "where is its best answer?".
     solutionFamilies: false,
-    // Off by default: searching the fixed-wing and balloon fits on the GPU finds
-    // different (usually better) basins, so it changes results. Falls back to the
-    // CPU where WebGPU is unavailable.
-    gpuSearch: false,
+    // GPU search defaults on; the physics models fall back to CPU where needed.
+    gpuSearch: true,
 };
 
 // "no truth track selected" sentinel for the Truth Track dropdown
@@ -1684,6 +1684,9 @@ export function addAnalyzeTweaks(traverseMenu) {
             "polynomial order. Enable to also run the two Monte Carlo strategies across orders — 10 extra " +
             "diagnostic tiles that show method/order sensitivity, at a noticeable cost on long clips.");
     }
+    folder.add(analyzeTweaks, "mcGpuPreset", ["Off", ...MONTE_CARLO_IDS, "All"])
+        .name("Monte Carlo GPU")
+        .tooltip("Add the selected blind-range Monte Carlo trial budget to the analysis. Order 1, 0.1° uncertainty; requires WebGPU. All compares every budget.");
     const cbFamilies = folder.add(analyzeTweaks, "solutionFamilies").name("Solution families (range bands)");
     if (cbFamilies.tooltip) {
         cbFamilies.tooltip("Off by default. Sightlines alone rarely pin a range: for any distance profile " +
@@ -1694,7 +1697,7 @@ export function addAnalyzeTweaks(traverseMenu) {
     }
     const cbGpu = folder.add(analyzeTweaks, "gpuSearch").name("GPU search (WebGPU)");
     if (cbGpu.tooltip) {
-        cbGpu.tooltip("Off by default. Search the fixed-wing and balloon fits on the graphics card: " +
+        cbGpu.tooltip("Search the fixed-wing and balloon fits on the graphics card: " +
             "hundreds of times more candidate solutions in less time, which can find better fits than the " +
             "normal search. The final parameters, residuals and tracks are still computed on the CPU at " +
             "full precision. Results can differ from a CPU run and between graphics cards. Uses the CPU " +
@@ -1885,6 +1888,7 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
         // Ground Vehicle, changes underground/mode flags and the ground priors).
         analyzeTweaks.groundMode,
         analyzeTweaks.mcOrderSweep,   // toggling the Monte Carlo sweep changes the tile set
+        analyzeTweaks.mcGpuPreset,
         // Families are attached to the hypotheses and drawn in every graph, so
         // toggling them must not serve the other setting's cached results.
         analyzeTweaks.solutionFamilies ? 1 : 0,
@@ -2397,6 +2401,8 @@ export async function runTraverseAnalysis() {
             fitRangeMin, fitRangeMax, caRangeMin, caRangeMax, plausRangeMin, plausRangeMax,
             solutionFamilies: analyzeTweaks.solutionFamilies,
             mcOrderSweep: analyzeTweaks.mcOrderSweep,
+            mcGpuPresets: analyzeTweaks.mcGpuPreset === "All" ? MONTE_CARLO_IDS
+                : MONTE_CARLO_IDS.filter(id => id === analyzeTweaks.mcGpuPreset),
             gpu: analyzeTweaks.gpuSearch,
             sweepOverrides: sweepOverridesFromGUI(),
             groundPrior,
@@ -2733,7 +2739,8 @@ export async function runTraverseAnalysis() {
         window.lastTraverseAnalysis = results;
         // View-dependent global tile LOD is not an analysis input. Preserve the
         // precise ground samples that did affect candidate grading instead.
-        _analysisCache = {fp, terrainDependencies, results};
+        // A temporarily unavailable GPU-only solver must be retried next time.
+        _analysisCache = battery.missingGpuSolvers?.length ? null : {fp, terrainDependencies, results};
     } catch (error) {
         if (error && error.message === "cancelled") return null;
         // Elevation changing mid-run no longer aborts — it is noted and the run
@@ -3870,6 +3877,10 @@ function solutionSpaceHTML(h, ss) {
             `LEO satellites propagated for the date. There isn't a continuous trajectory family here, only the best ` +
             `catalogue match and how far off it is (${(h.errDeg || 0).toFixed(2)}°). A clean, ` +
             `sunlit sub-degree match merits follow-up against timing/catalogue uncertainty; a large residual means no known satellite fits.`;
+    } else if (h.params?.mcPreset) {
+        return `This is a <b>blind-range Monte Carlo fit</b>: a degree-${h.params.polynomialOrder} curve chosen from `
+            + `${h.params.mcTrials.toLocaleString("en-US")} random trials by mean angular error. Increasing the budget searches `
+            + "more paths of the same degree. A smaller residual measures agreement with the sightlines, not confidence in the recovered range or object type.";
     } else if (h.key === "straightLine" || String(h.key || "").startsWith("gf")) {
         // The Global Fit family (constant velocity/acceleration, Kalman smoother,
         // Monte Carlo, Polynomial LSQ) and the straight line are curve fits to the

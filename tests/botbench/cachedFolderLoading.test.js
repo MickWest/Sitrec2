@@ -16,7 +16,8 @@ beforeAll(() => {
 });
 
 const appVersion = process.env.BUILD_VERSION_STRING ?? "dev";
-const options = {anchorM: 37040, solutionFamilies: false, mcOrderSweep: false, solvers: ["gfKalman"]};
+const options = {anchorM: 37040, solutionFamilies: false, mcOrderSweep: false,
+    gpuSearch: true, solvers: ["gfKalman"]};
 const digest = text => createHash("sha256").update(text).digest("hex");
 function file(name, text, relativePath = name) {
     return {name, relativePath, kind: "file", getFile: jest.fn(async () => ({

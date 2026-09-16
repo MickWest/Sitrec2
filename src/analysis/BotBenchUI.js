@@ -2187,7 +2187,7 @@ function createDialog() {
         + "solutions in less time, which can find better fits than the normal search. The final "
         + "numbers are still computed on the CPU at full precision. Results can differ from a CPU "
         + "run, so these fits are cached separately. Where WebGPU is unavailable the fits run on the "
-        + "CPU; the searchBackend column and the summary say where each file's searches ran.", false);
+        + "CPU; the searchBackend column and the summary say where each file's searches ran.", true);
     const screenshots = labelledCheckbox("Scenario screenshots",
         "Also save a picture of each scenario into a SitrecImage folder beside it, so the Track "
         + "Browser can show the real scene instead of a plotted plan view. Each file is imported "
@@ -3239,9 +3239,9 @@ function loadStoredSolvers() {
     try {
         const raw = localStorage.getItem(SOLVERS_STORAGE_KEY);
         const ids = raw ? JSON.parse(raw) : null;
-        return Array.isArray(ids) && ids.length ? normalizeSolvers(ids) : allSolverIds();
+        return normalizeSolvers(ids);
     } catch (e) {
-        return allSolverIds();
+        return normalizeSolvers(null);
     }
 }
 
@@ -3280,7 +3280,8 @@ function chooseSolvers(state, {fileCount = 0} = {}) {
         note.textContent = "Only the ticked solvers are fitted, and only their candidates are ranked, so the "
             + "top candidate and the verdict are those of this selection. Fits are stored per solver in the "
             + "folder: a later run with more solvers reuses these fits and fits only the missing ones, and a "
-            + "run with fewer reads what it needs.";
+            + "run with fewer reads what it needs. Monte Carlo GPU presets require WebGPU and use order 1 with 0.1° uncertainty; "
+            + "the separate GPU search checkbox controls the aircraft and balloon models.";
         panel.append(title, note);
 
         const boxes = new Map();

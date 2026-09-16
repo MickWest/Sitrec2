@@ -129,7 +129,7 @@ group.
   polynomial fits are to their order), adds ten candidates per file, and is the
   bulk of the sweep's cost. Leave it off unless you are studying the methods
   themselves.
-- **GPU search** — search the fixed-wing and balloon fits on the graphics card
+- **GPU search** — enabled by default. Search the fixed-wing and balloon fits on the graphics card
   (WebGPU), as the live analysis's *GPU search (WebGPU)* option does: many
   independent searches with large populations, testing hundreds of times more
   candidate solutions, with the final numbers still computed on the CPU at full
@@ -193,13 +193,39 @@ responsive as a short one. Exports, the summary and the charts still read every 
 
 ### Choosing the solvers
 
-A run starts with a dialog listing the sixteen solvers, one checkbox each,
+A run starts with a dialog listing the twenty-two solvers, one checkbox each,
 grouped as the candidates are: the sightline fits (Constant Air Speed,
 Constant Altitude, Minimum Acceleration, Minimum Speed), the object models
 (Fixed-Wing Aircraft, Sky Lantern / Balloon, Quadcopter, Drone with flown
 inputs), the geometry checks (Ground Object, the stationary point), and the
-curve fits (the Kalman smoother and the five polynomial orders). The last
-choice is remembered, so the usual answer is one click.
+curve fits (the Kalman smoother and the five polynomial orders), plus six
+GPU Monte Carlo presets. The original sixteen solvers are selected initially;
+the GPU Monte Carlo presets can be selected individually or with **All**.
+The last choice is remembered, so the usual answer is one click.
+
+**Monte Carlo (GPU)** offers `mc_50k`, `mc_100k`, `mc_150k`, `mc_200k`,
+`mc_250k`, and `mc_1M`: 50,000 through 1,000,000 trials. Each uses polynomial
+order **1** and LOS uncertainty **0.1°**. These sample blind ranges along
+randomly perturbed sightlines and retain the path with the lowest mean angular
+error. They need no constant-velocity seed or range-anchor sweep. The search
+range is ten times the largest sensor-axis span (with a one-metre span floor),
+capped by each sampled observation's positive `MaxRange`. Those caps constrain
+the sampled points; they do not guarantee that the whole fitted path stays
+inside the limits. BOTBench keeps the original observation times and caps.
+
+Each preset runs and caches separately, using a fixed random seed. WebGPU is
+required for these solvers, independently of the **GPU search** checkbox for
+the physics models. An unavailable GPU is reported as a failed fit and retried
+on a later run. The GPU scores trials in single precision; the best candidates
+are checked in double precision. These are curve-fit diagnostics, without the
+CLI's confidence-summary calculation.
+
+The same presets appear in Sitrec's **Traverse** selector as **Monte Carlo
+50k (GPU)** through **Monte Carlo 1M (GPU)**. They fit the A–B window and show
+status, angular error, and fit time in the traverse menu. **Traverse Analysis
+Tweaks → Monte Carlo GPU** adds one preset or all six to the analysis gallery,
+where **Use exact result** applies the fitted track. The existing **Monte Carlo
+sweep** remains the separate comparison across polynomial orders.
 
 Only the ticked solvers are fitted, and only their candidates are ranked, so
 the top candidate, the verdict and every truth score are those of the

@@ -30,6 +30,7 @@
  */
 
 import {SWEEP_VARIANTS} from "../TraverseBattery";
+import {MONTE_CARLO_IDS} from "../MonteCarloLOS";
 import {botBenchRangeLimits, cacheableBotBenchBattery, DEFAULT_ANCHOR_M,
     fitBotBenchRecord, SPEED_TARGET_MS, validateBotBenchRecord} from "./BotBenchFit";
 export {DEFAULT_ANCHOR_M} from "./BotBenchFit";
@@ -60,7 +61,7 @@ import {describeMeasuredPlatform, RAYLEIGH_MEAN, RAYLEIGH_SD} from "./BotBenchIn
 // than from the data.
 // The Kalman smoother candidate is the same kind of thing: a curve fit through
 // the sightlines, seeded from the constant-velocity fit, with no range of its own.
-const DIAGNOSTIC_FAMILY_KEYS = new Set([...SWEEP_VARIANTS.map((v) => v.key), "gfKalman"]);
+const DIAGNOSTIC_FAMILY_KEYS = new Set([...SWEEP_VARIANTS.map((v) => v.key), "gfKalman", ...MONTE_CARLO_IDS]);
 
 /**
  * What a bulk run cannot produce, named as data so the report and the table can
@@ -93,7 +94,7 @@ export async function runBotBenchAnalysis(record, {
     mcOrderSweep = false,
     // Search the fixed-wing and balloon fits on the GPU where WebGPU exists.
     gpuSearch = false,
-    // The solvers to run, as BotBenchSolvers names them; null for every one.
+    // The solvers to run, as BotBenchSolvers names them; null for the default set.
     solvers = null,
     // Per-unit fitting for the battery (TraverseBattery `units`): which fit
     // units to have and which stored results to use. Passed through untouched.
@@ -708,6 +709,7 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
         // Where the fixed-wing and balloon searches actually ran. Asking for the GPU
         // search does not guarantee it: without WebGPU the same fits run on the CPU.
         searchBackend: searchBackendOf(battery),
+        missingGpuSolvers: battery.missingGpuSolvers ?? [],
         failures: results.failures.map((f) => f.method),
         truthScore,
         // Scored in DEGREES of bearing error, and kept in its own field so no

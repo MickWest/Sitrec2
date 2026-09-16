@@ -77,6 +77,8 @@ import {assessExecutiveVerdict, hypothesisFitKind} from "./TraverseRanking";
 import {gradeHypotheses} from "./TraversePlatformMirror";
 import {buildRangeLadder, rangeConditionedFamily} from "./TraverseFamily";
 import {UNIT_ORDER} from "./analysis/BotBenchSolvers";
+import {MONTE_CARLO_IDS, monteCarloName} from "./MonteCarloLOS";
+import {fitMonteCarloGPU} from "./gpu/MonteCarloLOS";
 
 // Slow-object range-profile settings. Exported because the hypothesis builder
 // needs the SAME options the slow profile was computed with (it re-derives the
@@ -434,6 +436,9 @@ export async function runTraverseBattery({
 
     // Toggles (the analyzeTweaks subset the battery reads).
     solutionFamilies = false, mcOrderSweep = false,
+    // Independent blind-range GPU solvers, selected explicitly by the live UI.
+    // BOTBench instead selects their individual units in its plan.
+    mcGpuPresets = [], monteCarloData = null,
     // Search the fixed-wing and balloon fits on the GPU (WebGPU) when available.
     // Opt-in: a GPU search finds different basins, so it changes results. The
     // quadcopter, drone-control and range-band fits stay on the CPU.
@@ -475,9 +480,10 @@ export async function runTraverseBattery({
         if ((e && e.message === "cancelled") || cancelled()) throw new Error("cancelled");
     };
 
-    // The unit plan. Without `units` every unit is wanted and none is stored, so
-    // runUnit always fits — the live analysis's path.
-    const plan = new Set(units?.plan ?? UNIT_ORDER);
+    // The live path fits the standard battery plus its selected GPU presets.
+    // BOTBench supplies an explicit plan and can reuse stored units.
+    const plan = new Set(units?.plan ?? UNIT_ORDER.filter(id =>
+        !MONTE_CARLO_IDS.includes(id) || mcGpuPresets.includes(id)));
     const stored = units?.cached ?? {};
     const fittedUnits = {};
     const wanted = (id) => plan.has(id);
@@ -486,7 +492,7 @@ export async function runTraverseBattery({
     // is one, a fresh fit otherwise. A fit reports its own failures on the array
     // it is given, so they are kept with the unit and a stored unit brings them
     // back. A cancel thrown inside a fit passes straight through.
-    const runUnit = async (id, fit) => {
+    const runUnit = async (id, fit, cacheable = () => true) => {
         if (!wanted(id)) return null;
         if (Object.prototype.hasOwnProperty.call(stored, id) && stored[id]) {
             for (const f of stored[id].failures ?? []) failures.push({...f});
@@ -495,7 +501,7 @@ export async function runTraverseBattery({
         const unitFailures = [];
         const t0 = clock();
         const result = (await fit(unitFailures)) ?? null;
-        const record = {result, elapsedMs: clock() - t0, failures: unitFailures, cacheable: true};
+        const record = {result, elapsedMs: clock() - t0, failures: unitFailures, cacheable: cacheable(result)};
         fittedUnits[id] = record;
         for (const f of unitFailures) failures.push(f);
         if (units?.onUnit) units.onUnit(id, record);
@@ -939,6 +945,33 @@ export async function runTraverseBattery({
     const mcSweep = polySweep ? {...polySweep, results: polySweep.results.map(({variantKey, order, result}) =>
         ({variant: SWEEP_VARIANTS.find((v) => v.key === variantKey), order, result}))} : null;
 
+    const monteCarlo = {};
+    const missingGpuSolvers = [];
+    const mcPlan = MONTE_CARLO_IDS.filter(wanted);
+    for (const [i, id] of mcPlan.entries()) {
+        const progress = at(0.98, 0.005, `Fitting ${monteCarloName(id)}...`);
+        monteCarlo[id] = await runUnit(id, async unitFailures => {
+            try {
+                await progress(i / mcPlan.length);
+                const result = await fitMonteCarloGPU({...dataset, ...monteCarloData}, new Set(), {
+                    preset: id, shouldCancel: cancelled,
+                    onProgress: fraction => progress((i + fraction) / mcPlan.length),
+                });
+                if (!result) throw new Error("Too few observations for this fit");
+                // Timing lives in the unit record. Keeping volatile durations
+                // in the fit would fail exact cache validation on every run.
+                const {timing, ...params} = result.params;
+                return {...result, params};
+            } catch (e) {
+                rethrowIfCancelled(e);
+                unitFailures.push({method: monteCarloName(id), error: e.message || "fit failed"});
+                return null;
+            }
+        }, result => result?.params?.backend === "webgpu");
+        if (!monteCarlo[id]) missingGpuSolvers.push(id);
+    }
+    throwIfCancelled();
+
     // Satellite (LEO pass) — the caller owns it: it loads the historical
     // catalogue for the sitch's date through the server (network, slow first
     // time) and finds the pass best matching the sightlines. Null hook means
@@ -946,7 +979,7 @@ export async function runTraverseBattery({
     // nothing.
     let satellite = null;
     if (searchSatellites) {
-        await at(0.98, 0.01, "Loading LEO satellites for the date...")(0);
+        await at(0.985, 0.005, "Loading LEO satellites for the date...")(0);
         try {
             satellite = await searchSatellites({dataset});
         } catch (e) {
@@ -960,7 +993,7 @@ export async function runTraverseBattery({
         dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
         slowProfile, slowOpts,
         originLat, originLon,
-        provenance, failures, windPrior, mcSweep, droneCtl, kalman,
+        provenance, failures, windPrior, mcSweep, monteCarlo, droneCtl, kalman,
     });
 
     // Attach the range bands AFTER the hypothesis set is built, keyed by the
@@ -1009,7 +1042,7 @@ export async function runTraverseBattery({
         sweep, resolvedRanges, fastProfile, slowProfile, slowOpts,
         aircraft, ca, plausible, seedTrack, seedSource,
         lantern, lanternMeasured, quad, droneCtl, kalman,
-        families, mcSweep, polySweep, satellite,
+        families, mcSweep, polySweep, monteCarlo, missingGpuSolvers, satellite,
         hypotheses, executiveAssessment,
         failures, windPrior, groundPrior,
         physicsDS, clipDurationSec,

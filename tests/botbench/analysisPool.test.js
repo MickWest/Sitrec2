@@ -14,7 +14,8 @@ test("worker receives only fitting inputs and the current Earth model, then uses
         workers.push(worker); return worker;
     });
     const record = {dataset: {n: 10}, originLat: 40, originLon: -105, groundZ: 0,
-        kind: 'bot', clipStartMs: 123, meta: {maxRangeM: 10000}, truth: {answer: 1}, labels: {answer: 2}};
+        kind: 'bot', clipStartMs: 123, meta: {maxRangeM: 10000},
+        losSamples: {times: [0, 1], maxRange: [10000, 9000]}, truth: {answer: 1}, labels: {answer: 2}};
     runBotBenchAnalysis.mockResolvedValue({row: 'built'});
     const pool = new BotBenchAnalysisPool(1);
     const result = pool.run(record, {anchorM: 9000, solutionFamilies: true});
@@ -23,6 +24,7 @@ test("worker receives only fitting inputs and the current Earth model, then uses
     expect(sent.record.truth).toBeUndefined();
     expect(sent.record.labels).toBeUndefined();
     expect(sent.record.meta.maxRangeM).toBe(10000);
+    expect(sent.record.losSamples).toEqual(record.losSamples);
     expect(sent.earthRadii).toEqual({equatorRadius: Globals.equatorRadius, polarRadius: Globals.polarRadius});
     expect(sent.options).toEqual({anchorM: 9000, solutionFamilies: true});
     workers[0].onmessage({data: {id: sent.id, battery: {fitted: true}, elapsedMs: 1234,
