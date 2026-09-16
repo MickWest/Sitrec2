@@ -2271,6 +2271,20 @@ function createDialog() {
     };
     workerLabel.append(document.createTextNode("Max workers"), workerLimitInput);
 
+    const fractionLabel = document.createElement("label");
+    fractionLabel.style.cssText = "display: inline-flex; align-items: center; gap: 6px; font-size: 13px;";
+    fractionLabel.title = "Analyse every nth case in file order. 1 uses all cases; 3 selects cases 3, 6, 9, and so on. "
+        + "Only the selected cases are analysed or included in Charts.";
+    const fractionInput = document.createElement("input");
+    fractionInput.type = "number";
+    fractionInput.min = "1";
+    fractionInput.step = "1";
+    fractionInput.value = "1";
+    fractionInput.setAttribute("aria-label", "Fraction");
+    fractionInput.style.cssText = "width: 64px; font-size: 13px; padding: 3px;";
+    fractionInput.onchange = () => readCaseFraction(fractionInput);
+    fractionLabel.append(document.createTextNode("Fraction"), fractionInput);
+
     const anchorLabel = document.createElement("label");
     anchorLabel.title = "The start range the search bracket is centred on, in nautical miles — "
         + "the SAME for every file in the run. The interactive analysis uses the Tgt Start Dist "
@@ -2298,13 +2312,13 @@ function createDialog() {
     const exportCsvButton = makeButton("Export CSV", "#455a64");
     const summaryButton = makeButton("Summary", "#00695c");
     const chartsButton = makeButton("Charts", "#5c6bc0",
-        "Open the result charts for the rows in this table: accuracy against clip length and "
+        "Use the analysed cases selected by Fraction. Show accuracy against clip length and "
         + "pointing error, what the verdict concluded, and what ranking blind cost. Exports SVG "
         + "or a 300 dpi PNG for a paper.");
 
     for (const el of [recursive.label, families.label, mcSweep.label, gpuSearch.label, screenshots.label,
         rebuildRows.label,
-        anchorLabel, workerLabel, solversButton,
+        anchorLabel, workerLabel, fractionLabel, solversButton,
         chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
         cancelButton, clearButton,
         flushCacheButton, exportJsonButton, exportCsvButton, summaryButton, chartsButton]) {
@@ -2446,7 +2460,7 @@ function createDialog() {
         gpuSearchInput: gpuSearch.input,
         screenshotsInput: screenshots.input,
         rebuildRowsInput: rebuildRows.input,
-        anchorInput, workerLimitInput,
+        anchorInput, workerLimitInput, fractionInput,
         // The solvers the next run uses: the last choice, remembered across sessions.
         solvers: loadStoredSolvers(),
         solversButton,
@@ -3251,6 +3265,7 @@ function refreshControls(state) {
     state.rebuildRowsInput.disabled = running;
     state.anchorInput.disabled = running;
     state.workerLimitInput.disabled = running;
+    state.fractionInput.disabled = running;
     setButtonDisabled(state.solversButton, running);
     refreshSolversButton(state);
 }
@@ -3280,6 +3295,14 @@ function clearResults(state) {
 // text, so the clamp has to happen here.
 const ANCHOR_MIN_NM = 0.3;
 const ANCHOR_MAX_NM = 90;
+
+// Sampling changes which cases may be fitted, not the fit or its cache identity.
+function readCaseFraction(input) {
+    const value = Number(input.value);
+    const fraction = Number.isSafeInteger(value) && value >= 1 ? value : 1;
+    input.value = String(fraction);
+    return fraction;
+}
 
 function runOptions(state) {
     const raw = Number(state.anchorInput.value);
@@ -3472,6 +3495,10 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
         state.status.textContent = "No BOT interchange or FMV files found.";
         return;
     }
+    const fraction = readCaseFraction(state.fractionInput);
+    const fitSources = found.filter((_, i) => (i + 1) % fraction === 0);
+    const fractionNote = fraction === 1 ? "" : ` Fraction ${fraction}: ${fitSources.length} of ${found.length} `
+        + "cases selected for analysis and Charts.";
     // A run starts with the solver choice. The dialog remembers the last choice,
     // so the usual answer is one click; a caller that already knows what it wants
     // (the MCP API, a bulk script) skips it.
@@ -3551,7 +3578,7 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
             ? `, screenshots ${shotQueue.done} of ${shotQueue.total}` : "";
         state.status.textContent = `Analysing ${completed} of ${found.length} complete`
             + (pool.workers?.slots.length && !pool.workers.closed ? ` (${pool.workers.slots.length} workers)` : "")
-            + `, ${describeSolvers(options.solvers)}` + shots + (state.memoryNote ?? "") + cacheIndexNote(state);
+            + `, ${describeSolvers(options.solvers)}` + fractionNote + shots + (state.memoryNote ?? "") + cacheIndexNote(state);
     }, 250);
     // The summary tiles take medians over EVERY finished row, so recomputing them
     // after each file made each file cost more than the last. Once a second is plenty,
@@ -3563,11 +3590,11 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
     let adoptUnits = new Set();
     let adoptRows = false;
     let adoptNote = "";
-    if (found.length > CACHE_ADOPT_MIN_FILES) {
+    if (fitSources.length > CACHE_ADOPT_MIN_FILES) {
         try {
             state.status.textContent = "Checking the cache…";
             await yieldToDOM();
-            const stale = await findVersionStaleEntries(state, found, options, plan);
+            const stale = await findVersionStaleEntries(state, fitSources, options, plan);
             if (stale.length >= CACHE_ADOPT_SAMPLE) {
                 const first = stale[0];
                 const fitted = first.appVersion ?? "an earlier build";
@@ -3587,7 +3614,7 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
                     const verdict = describeAdoptionProbe(probe, plan);
                     if (verdict.adoptUnits.size) {
                         const ok = await showConfirm(
-                            `${stale.length} of the ${found.length} files have fits stored by ${fitted}, `
+                            `${stale.length} of the ${fitSources.length} selected files have fits stored by ${fitted}, `
                             + `which this build (${APP_VERSION}) would otherwise fit again.\n\n`
                             + `${probe.checked} of them were just fitted for real and compared with the store, `
                             + `one fit unit at a time.\n\n`
@@ -3623,6 +3650,7 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
 
     try {
         await runBotBenchQueue(found, concurrency, async (source, i) => {
+            const selectedForFit = (i + 1) % fraction === 0;
             // The options this file was actually run under, frozen per entry. The
             // dialog's controls stay live between batches, so a run at one anchor
             // followed by a run at another used to have BOTH batches labelled with
@@ -3636,54 +3664,61 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
 
             let dirCache = null;
             try {
-                setRowStatus(state, entry, "hashing");
-                const hashes = await entryFileHashes(entry);
-                // Cache lookup, best-effort: an unreadable cache file falls through to
-                // a normal run rather than an error row.
-                try { dirCache = await loadDirCache(state, entry); }
-                catch (cacheError) { console.warn("BotBench cache lookup failed for", entry.relativePath, cacheError); }
-                setRowStatus(state, entry, "reading");
-                await yieldToDOM();
-                const out = await analyseEntryWithCache(entry, {
-                    options, plan, key, pool, dirCache, hashes, adoptUnits, adoptRows, forceRows,
-                    needResults: false,
-                    onStatus: (text, tooltip) => setRowStatus(state, entry, text, tooltip),
-                    onProgress: (frac, label) => {
-                        setRowStatus(state, entry, `${Math.round(frac * 100)}%`, label);
-                        setFraction(i, frac);
-                        updateProgress();
-                    },
-                    isCancelled: () => state.cancelled, yieldToDOM,
-                });
-                if (state.cancelled) throw new Error("cancelled");
-                entry.row = out.row;
-                entry.apertureDeg = out.chartData?.apertureDeg ?? null;
-                entry.candidateErrors = out.chartData?.candidateErrors ?? null;
-                entry.sensorTurnDeg = out.chartData?.sensorTurnDeg ?? null;
-                entry.rowReused = out.rowReused;
-                entry.fromCache = out.rowReused || out.unitsUsed > 0;
-                entry.cacheAdopted = out.adopted;
-                entry.cacheAdoptedFrom = out.adoptedFrom;
-                entry.status = "done";
-                fillRow(state, entry);
-                const fittedCount = out.fitted?.length ?? 0;
-                if (out.rowReused) {
-                    setRowStatus(state, entry, out.adopted ? "adopted" : "cached",
-                        `Remembered row from ${CACHE_FILENAME} for this solver selection`
-                        + (out.adopted ? `, built by ${out.adoptedFrom} and adopted after a sample of `
-                            + `rebuilt rows reproduced it exactly.\n` : `, built by this build.\n`)
-                        + `Input hashes, analysis options and unit versions all match. The full analysis `
-                        + `is rebuilt from the stored fits when Gallery, Report or Open in Sitrec needs it.`);
-                } else if (fittedCount === 0) {
-                    setRowStatus(state, entry, "rebuilt",
-                        `Every fit unit this row needs was read from ${CACHE_FILENAME} (${out.unitsUsed} unit(s)); `
-                        + `the candidates, verdict and row were built from them by this build.`);
-                } else if (out.unitsUsed) {
-                    setRowStatus(state, entry, "partly cached",
-                        `${out.unitsUsed} fit unit(s) read from ${CACHE_FILENAME}; ${fittedCount} fitted now `
-                        + `(${out.fitted.join(", ")}). The row was built from all of them by this build.`);
+                if (!selectedForFit) {
+                    entry.status = "skipped";
+                    setRowStatus(state, entry, "skipped",
+                        `Excluded by Fraction ${fraction}; this case is not analysed or included in Charts.`);
                 } else {
-                    setRowStatus(state, entry, "done", `Every fit unit was fitted in this run (${out.fitted.join(", ")}).`);
+                    setRowStatus(state, entry, "hashing");
+                    const hashes = await entryFileHashes(entry);
+                    // Cache lookup, best-effort: an unreadable cache file falls through to
+                    // a normal run rather than an error row.
+                    try { dirCache = await loadDirCache(state, entry); }
+                    catch (cacheError) { console.warn("BotBench cache lookup failed for", entry.relativePath, cacheError); }
+                    setRowStatus(state, entry, "reading");
+                    await yieldToDOM();
+                    const out = await analyseEntryWithCache(entry, {
+                        options, plan, key, pool, dirCache, hashes, adoptUnits, adoptRows,
+                        forceRows,
+                        needResults: false,
+                        onStatus: (text, tooltip) => setRowStatus(state, entry, text, tooltip),
+                        onProgress: (frac, label) => {
+                            setRowStatus(state, entry, `${Math.round(frac * 100)}%`, label);
+                            setFraction(i, frac);
+                            updateProgress();
+                        },
+                        isCancelled: () => state.cancelled, yieldToDOM,
+                    });
+                    if (state.cancelled) throw new Error("cancelled");
+                    entry.row = out.row;
+                    entry.apertureDeg = out.chartData?.apertureDeg ?? null;
+                    entry.candidateErrors = out.chartData?.candidateErrors ?? null;
+                    entry.sensorTurnDeg = out.chartData?.sensorTurnDeg ?? null;
+                    entry.rowReused = out.rowReused;
+                    entry.fromCache = out.rowReused || out.unitsUsed > 0;
+                    entry.cacheAdopted = out.adopted;
+                    entry.cacheAdoptedFrom = out.adoptedFrom;
+                    entry.status = "done";
+                    fillRow(state, entry);
+                    const fittedCount = out.fitted?.length ?? 0;
+                    if (out.rowReused) {
+                        setRowStatus(state, entry, out.adopted ? "adopted" : "cached",
+                            `Remembered row from ${CACHE_FILENAME} for this solver selection`
+                            + (out.adopted ? `, built by ${out.adoptedFrom} and adopted after a sample of `
+                                + `rebuilt rows reproduced it exactly.\n` : `, built by this build.\n`)
+                            + `Input hashes, analysis options and unit versions all match. The full analysis `
+                            + `is rebuilt from the stored fits when Gallery, Report or Open in Sitrec needs it.`);
+                    } else if (fittedCount === 0) {
+                        setRowStatus(state, entry, "rebuilt",
+                            `Every fit unit this row needs was read from ${CACHE_FILENAME} (${out.unitsUsed} unit(s)); `
+                            + `the candidates, verdict and row were built from them by this build.`);
+                    } else if (out.unitsUsed) {
+                        setRowStatus(state, entry, "partly cached",
+                            `${out.unitsUsed} fit unit(s) read from ${CACHE_FILENAME}; ${fittedCount} fitted now `
+                            + `(${out.fitted.join(", ")}). The row was built from all of them by this build.`);
+                    } else {
+                        setRowStatus(state, entry, "done", `Every fit unit was fitted in this run (${out.fitted.join(", ")}).`);
+                    }
                 }
             } catch (error) {
                 if (state.cancelled) {
@@ -3713,7 +3748,7 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
             // cache or from a fresh fit. Queued rather than awaited: captures run
             // one at a time because they drive the single live 3D view, while the
             // fits carry on in their workers.
-            if (wantShots && entry.status === "done" && entry.dirHandle) {
+            if (wantShots && selectedForFit && entry.status === "done" && entry.dirHandle) {
                 shotQueue.add(entry.name, async () => {
                     try {
                         const shot = await captureEntryImage(entry);
@@ -3774,7 +3809,7 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
     state.status.textContent = (state.cancelled
         ? `Cancelled. ${done} result(s) in the table.`
         : `Done. ${done} result(s) in the table, ${describeSolvers(options.solvers)}.`)
-        + adoptNote + shotNote + (state.memoryNote ?? "") + cacheIndexNote(state);
+        + fractionNote + adoptNote + shotNote + (state.memoryNote ?? "") + cacheIndexNote(state);
     state.running = false;
     refreshControls(state);
     updateSummary(state);

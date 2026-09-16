@@ -26,6 +26,7 @@ import {
 } from "../../src/analysis/BotBenchCacheIndex";
 import {selectionKey, UNIT_VERSIONS} from "../../src/analysis/BotBenchSolvers";
 import {BotBenchAnalysisPool} from "../../src/analysis/BotBenchAnalysisPool";
+import {rowsFromBotBenchEntries} from "../../src/analysis/charts/BotBenchChartRows";
 
 beforeAll(() => {
     globalThis.TextEncoder = TextEncoder;
@@ -118,6 +119,82 @@ function cachedFolder(name, count, version = appVersion) {
     sources.forEach(source => { source.dirHandle = handle; source.cacheWritable = false; });
     return {sources, handle, writes, readIndex: () => JSON.parse(text)};
 }
+
+function scenarioCSV() {
+    const rows = ["TrackID,Time,SensorPositionX,SensorPositionY,SensorPositionZ,LOSUnitVectorX,LOSUnitVectorY,LOSUnitVectorZ"];
+    for (let i = 0; i < 12; i++) {
+        const sensor = [i * 10, i * i, 1000], delta = [3000 - sensor[0], 2000 - sensor[1], -500];
+        const length = Math.hypot(...delta);
+        rows.push(["fraction-test", i, ...sensor, ...delta.map(v => v / length)].join(","));
+    }
+    return rows.join("\n");
+}
+
+test("Fraction fits and charts every third case while ignoring other cached results", async () => {
+    const folder = cachedFolder("fraction", 9);
+    const state = openBotBenchDialog();
+    const analysis = jest.spyOn(BotBenchAnalysisPool.prototype, "run");
+    const originalWorker = globalThis.Worker;
+    globalThis.Worker = undefined;
+    // Selected cases 3, 6 and 9 need new fits. Case 1 has changed too, while the
+    // other cases have valid cached rows; all six unselected cases must be ignored.
+    for (const i of [0, 2, 5, 8]) folder.sources[i].getFile = file(folder.sources[i].name, scenarioCSV()).getFile;
+    folder.handle.getDirectoryHandle.mockRejectedValue(Object.assign(new Error("missing"), {name: "NotFoundError"}));
+    try {
+        expect(state.fractionInput.value).toBe("1");
+        state.fractionInput.value = "3";
+        state.solvers = options.solvers;
+        const running = analyzeEntries(state, folder.sources);
+        expect(state.fractionInput.disabled).toBe(true);
+        await running;
+        expect(analysis.mock.calls.map(([record]) => record.label)).toEqual(
+            [2, 5, 8].map(i => folder.sources[i].relativePath));
+        expect(state.entries[0].status).toBe("skipped");
+        expect(state.entries.filter(e => e.status === "done")).toHaveLength(3);
+        expect(state.entries.filter(e => e.rowReused)).toHaveLength(0);
+        expect(rowsFromBotBenchEntries(state.entries.filter(e => e.status === "done"))).toHaveLength(3);
+        for (const i of [0, 1, 3, 4, 6, 7]) expect(folder.sources[i].getFile).not.toHaveBeenCalled();
+        expect(state.status.textContent).toContain("Fraction 3: 3 of 9 cases selected");
+        expect(state.progress.value).toBe(1);
+        expect(state.fractionInput.disabled).toBe(false);
+        expect(state.entries.every(e => !Object.hasOwn(e.options, "fraction"))).toBe(true);
+        expect(state.dirCaches.every(rec => rec.data === null)).toBe(true);
+    } finally {
+        state.closeButton.onclick();
+        analysis.mockRestore();
+        globalThis.Worker = originalWorker;
+    }
+});
+
+test("a fraction larger than the folder ignores all cached results", async () => {
+    const folder = cachedFolder("cached-fraction", 4);
+    const state = openBotBenchDialog();
+    const analysis = jest.spyOn(BotBenchAnalysisPool.prototype, "run");
+    try {
+        state.solvers = options.solvers;
+        state.fractionInput.value = "10";
+        state.rebuildRowsInput.checked = true;
+        await analyzeEntries(state, folder.sources);
+        expect(analysis).not.toHaveBeenCalled();
+        expect(state.entries.every(e => e.status === "skipped")).toBe(true);
+        expect(rowsFromBotBenchEntries(state.entries)).toHaveLength(0);
+        expect(folder.handle.getFileHandle).not.toHaveBeenCalled();
+    } finally {
+        state.closeButton.onclick();
+        analysis.mockRestore();
+    }
+});
+
+test("invalid Fraction values normalize to 1", () => {
+    const state = openBotBenchDialog();
+    try {
+        for (const value of ["", "0", "-3", "2.5", "NaN"]) {
+            state.fractionInput.value = value;
+            state.fractionInput.dispatchEvent(new Event("change"));
+            expect(state.fractionInput.value).toBe("1");
+        }
+    } finally { state.closeButton.onclick(); }
+});
 
 test("the compatibility scan reads only indexes and releases them between folders", async () => {
     const a = cachedFolder("a", 20), b = cachedFolder("b", 20, "old");

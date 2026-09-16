@@ -111,6 +111,11 @@ group.
 
 ### The controls row
 
+- **Fraction** — analyse every nth case in file order. The default, **1**, uses
+  all cases; **3** selects cases 3, 6, 9, and so on. Only selected cases can start
+  fits, appear in **Charts**, or produce scenario screenshots. Other cases are
+  marked **skipped**, even when they have valid cached results. Fraction does not
+  change solver settings or invalidate cached results.
 - **Max workers** — limit how many files are processed at once: 1, 2, 4, 8 or
   16, with a default of 4. The choice is remembered in this browser. Fewer
   workers reduce memory pressure but may take longer; try 2 if a long run has
