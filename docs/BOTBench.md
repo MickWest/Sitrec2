@@ -5,6 +5,10 @@ Sitrec's traverse analysis over a whole folder of files at once and tables the
 results side by side. It sits next to **Analyze Video FMV Data…** in the same
 submenu, and the two are deliberately similar.
 
+Open BOTBench directly with `?action=botbench`, for example
+`https://local.metabunk.org/sitrec/?action=botbench`. The route starts Sitrec on
+its neutral custom situation and opens the BOTBench window as soon as setup finishes.
+
 **BOT** stands for **Bearings-Only Traversal**: reconstructing where something
 was, and how it moved, from pointing directions alone — a camera tells you
 which way it was looking, never how far away the object was. The
@@ -205,20 +209,20 @@ responsive as a short one. Exports, the summary and the charts still read every 
 
 ### Choosing the solvers
 
-A run starts with a dialog listing the twenty-five solvers, one checkbox each,
+A run starts with a dialog listing the twenty-four solvers, one checkbox each,
 grouped as the candidates are: the sightline fits (Constant Air Speed,
 Constant Altitude, Horizontal Speed Valley, Minimum Acceleration,
 Minimum Speed), the object models
 (Fixed-Wing Aircraft, Sky Lantern / Balloon, Quadcopter, Drone with flown
 inputs), the geometry checks (Ground Object, the stationary point), and the
 curve fits (direct Constant Velocity and Constant Acceleration, the Kalman
-smoother, and the five polynomial orders), plus six GPU Monte Carlo presets.
+smoother, and the five polynomial orders), plus five GPU Monte Carlo presets.
 The nineteen solvers outside that GPU group are
 selected initially; the GPU Monte Carlo presets can be selected individually or with **All**.
 The last choice is remembered, so the usual answer is one click.
 
-**Monte Carlo (GPU)** offers `mc_50k`, `mc_100k`, `mc_150k`, `mc_200k`,
-`mc_250k`, and `mc_1M`: 50,000 through 1,000,000 trials. Each uses polynomial
+**Monte Carlo (GPU)** offers `mc_50k`, `mc_100k`, `mc_250k`, `mc_500k`, and
+`mc_1M`: five budgets from 50,000 through 1,000,000 trials. Each uses polynomial
 order **1** and LOS uncertainty **0.1°**. These sample blind ranges along
 randomly perturbed sightlines and retain the path with the lowest mean angular
 error. They need no constant-velocity seed or range-anchor sweep. The search
@@ -608,13 +612,15 @@ moves where it stands when it stops — up to a few tenths of a metre on a
 5 km track, on about one file in seventy; it counts as reproduced when its
 positions agree within a metre and its residual within a thousandth of a
 degree, since no reader could tell those fits apart. The wall time is kept
-beside the unit rather than inside it. The dialog names the units it
-will reuse and the ones it will refit. Reused records are stamped with the current build and
-marked as adopted, with the build that made the fit kept beside them.
+beside the unit rather than inside it. Compatible fits are reused automatically;
+the final status names how many units were reused and how many were fitted again.
+Use **Flush Cache** before the run when every fit must be recomputed. Reused
+records are stamped with the current build and marked as adopted, with the build
+that made the fit kept beside them.
 
 The finished row is remembered too, under the solver selection and options
 that produced it, for the last few selections of each file. A remembered row
-is shown as it is when this build made it, or when the same sample of ten
+is shown as it is when this build made it, or when the same sample of five
 files showed the rebuilt rows identical; otherwise the row is rebuilt from
 the fits, which takes a fraction of a second a file. The chart facts (the
 parallax aperture, every candidate's error against truth, the sensor turn)

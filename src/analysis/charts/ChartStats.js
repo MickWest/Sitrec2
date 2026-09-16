@@ -14,11 +14,11 @@
 //     use and none of them agrees with numpy on small samples, so a chart drawn
 //     with the wrong one silently disagrees with the Python figures.
 //
-//   * BOX STATISTICS ARE TAKEN ON RAW VALUES, THE FENCE IN LOG SPACE. Quartiles
-//     are invariant under a monotone transform so they can be read straight off
-//     the raw numbers, but Tukey's 1.5*IQR fence is not: computed on raw values
-//     it is wildly asymmetric on a log axis. Computing the fence on log10 makes
-//     it symmetric where it is drawn, which is the whole point of the whiskers.
+//   * BOX STATISTICS DEFAULT TO RAW-VALUE QUARTILES AND A RAW-VALUE FENCE.
+//     The chart UI can vary the central interval and fence multiplier, and can
+//     switch a logarithmic chart to a log-space fence for a visually symmetric
+//     comparison. Raw-value fences match Matplotlib, Plotly and base R when a
+//     logarithmic axis is used only as the drawing transform.
 
 // ---------------------------------------------------------------------------
 // order statistics
@@ -63,23 +63,55 @@ export function median(values) {
 // ---------------------------------------------------------------------------
 
 /**
- * Quartiles and median on the raw values; whiskers at the last value inside
- * Tukey's 1.5*IQR fence computed on log10.
+ * The whisker on each side ends at the most extreme observation between that
+ * box edge and its mathematical fence. If interpolation leaves no observation
+ * in that interval, the whisker stays at the box edge, as Matplotlib does. This
+ * also guarantees the precomputed values satisfy Plotly's lower <= Q1 and
+ * upper >= Q3 requirements.
+ */
+function whiskersInside(sorted, q1, q3, lowerLimit, upperLimit) {
+    const lower = sorted.filter((v) => v >= lowerLimit && v <= q1);
+    const upper = sorted.filter((v) => v >= q3 && v <= upperLimit);
+    const lowerFence = lower.length ? lower[0] : q1;
+    const upperFence = upper.length ? upper[upper.length - 1] : q3;
+    return {
+        lowerFence,
+        upperFence,
+        nOutside: sorted.filter((v) => v < lowerFence || v > upperFence).length,
+    };
+}
+
+/**
+ * A centered raw-value percentile box and median; whiskers at the last value
+ * inside a configurable fence. Defaults to quartiles and Tukey's 1.5*IQR fence
+ * computed on the raw values. `whiskerSpace: "axis"` instead computes the fence
+ * on log10 for a visually symmetric comparison on a logarithmic axis.
  *
- * Values at or below zero cannot be placed on a log axis, so they are held back
- * from the FENCE calculation only, and reported in `nonPositive`. The quartiles
- * still see every value.
+ * With the optional axis-space fence, values at or below zero cannot be logged,
+ * so they are held back from that fence calculation and reported in
+ * `nonPositive`. The raw-value default and the quartiles see every value.
  *
  * @returns {null | {q1, median, q3, lowerFence, upperFence, n, nOutside, nonPositive, min, max}}
  *          lowerFence/upperFence are the extreme values still INSIDE the fence,
  *          which is what a whisker is drawn to (never the fence line itself).
  */
-export function boxStatsLog(values) {
+export function boxStatsLog(values, {boxPercent = 50, whiskerK = 1.5, whiskerSpace = "raw"} = {}) {
     const sorted = finiteSorted(values);
     if (sorted.length === 0) return null;
-    const q1 = quantileSorted(sorted, 0.25);
+    const central = Number.isFinite(boxPercent) ? Math.min(99, Math.max(1, boxPercent)) / 100 : 0.5;
+    const k = Number.isFinite(whiskerK) ? Math.max(0, whiskerK) : 1.5;
+    const tail = (1 - central) / 2;
+    const q1 = quantileSorted(sorted, tail);
     const med = quantileSorted(sorted, 0.5);
-    const q3 = quantileSorted(sorted, 0.75);
+    const q3 = quantileSorted(sorted, 1 - tail);
+
+    if (whiskerSpace === "raw") {
+        const span = q3 - q1;
+        const whiskers = whiskersInside(sorted, q1, q3, q1 - k * span, q3 + k * span);
+        return {q1, median: med, q3, ...whiskers,
+            n: sorted.length,
+            nonPositive: sorted.filter((v) => v <= 0).length, min: sorted[0], max: sorted[sorted.length - 1]};
+    }
 
     const positive = sorted.filter((v) => v > 0);
     const nonPositive = sorted.length - positive.length;
@@ -88,40 +120,38 @@ export function boxStatsLog(values) {
             n: sorted.length, nOutside: 0, nonPositive, min: sorted[0], max: sorted[sorted.length - 1]};
     }
     const logs = positive.map(Math.log10);
-    const lq1 = quantileSorted(logs, 0.25);
-    const lq3 = quantileSorted(logs, 0.75);
+    const lq1 = quantileSorted(logs, tail);
+    const lq3 = quantileSorted(logs, 1 - tail);
     const iqr = lq3 - lq1;
-    const loFence = lq1 - 1.5 * iqr;
-    const hiFence = lq3 + 1.5 * iqr;
-    const inside = positive.filter((v) => {
-        const l = Math.log10(v);
-        return l >= loFence && l <= hiFence;
-    });
-    const kept = inside.length ? inside : positive;
+    const loFence = lq1 - k * iqr;
+    const hiFence = lq3 + k * iqr;
+    const whiskers = whiskersInside(positive, q1, q3, 10 ** loFence, 10 ** hiFence);
     return {
         q1, median: med, q3,
-        lowerFence: kept[0],
-        upperFence: kept[kept.length - 1],
+        lowerFence: whiskers.lowerFence,
+        upperFence: whiskers.upperFence,
         n: sorted.length,
-        nOutside: positive.length - inside.length,
+        nOutside: whiskers.nOutside,
         nonPositive,
         min: sorted[0],
         max: sorted[sorted.length - 1],
     };
 }
 
-/** The same on a linear axis, for a panel that is not log-scaled. */
-export function boxStatsLinear(values) {
+/** The same on raw values, used by a linear axis and optional on a log axis. */
+export function boxStatsLinear(values, {boxPercent = 50, whiskerK = 1.5} = {}) {
     const sorted = finiteSorted(values);
     if (sorted.length === 0) return null;
-    const q1 = quantileSorted(sorted, 0.25);
+    const central = Number.isFinite(boxPercent) ? Math.min(99, Math.max(1, boxPercent)) / 100 : 0.5;
+    const k = Number.isFinite(whiskerK) ? Math.max(0, whiskerK) : 1.5;
+    const tail = (1 - central) / 2;
+    const q1 = quantileSorted(sorted, tail);
     const med = quantileSorted(sorted, 0.5);
-    const q3 = quantileSorted(sorted, 0.75);
+    const q3 = quantileSorted(sorted, 1 - tail);
     const iqr = q3 - q1;
-    const inside = sorted.filter((v) => v >= q1 - 1.5 * iqr && v <= q3 + 1.5 * iqr);
-    const kept = inside.length ? inside : sorted;
-    return {q1, median: med, q3, lowerFence: kept[0], upperFence: kept[kept.length - 1],
-        n: sorted.length, nOutside: sorted.length - inside.length, nonPositive: 0,
+    const whiskers = whiskersInside(sorted, q1, q3, q1 - k * iqr, q3 + k * iqr);
+    return {q1, median: med, q3, ...whiskers,
+        n: sorted.length, nonPositive: 0,
         min: sorted[0], max: sorted[sorted.length - 1]};
 }
 

@@ -1773,7 +1773,7 @@ async function probeCacheAdoption(state, stale, options, plan, key, pool, {onPro
     return result;
 }
 
-/** What the sample said, per unit, in a form a person can decide on. */
+/** What the sample said, per unit, in a form the run can apply and report. */
 function describeAdoptionProbe(probe, plan) {
     const reuse = [], refit = [], unseen = [];
     for (const unitId of plan) {
@@ -3521,32 +3521,17 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
                 if (!state.cancelled && probe.checked > 0) {
                     const verdict = describeAdoptionProbe(probe, plan);
                     if (verdict.adoptUnits.size) {
-                        const ok = await showConfirm(
-                            `${stale.length} of the ${fitSources.length} selected files have fits stored by ${fitted}, `
-                            + `which this build (${APP_VERSION}) would otherwise fit again.\n\n`
-                            + `${probe.checked} of them were just fitted for real and compared with the store, `
-                            + `one fit unit at a time.\n\n`
-                            + `Reproduced exactly, so reused as they are: ${verdict.reuse.join(", ")}.\n`
-                            + (verdict.refit.length
-                                ? `Differ under this build, so fitted again for every file: ${verdict.refit.join(", ")}.\n` : "")
-                            + (verdict.unseen.length
-                                ? `Not stored for the sampled files, so fitted where missing: ${verdict.unseen.join(", ")}.\n` : "")
-                            + `${verdict.rows}\n\n`
-                            + `Reuse the units that reproduced? Every candidate, verdict and row is still built `
-                            + `by today's code from them. The records are stamped with this build and marked as `
-                            + `adopted, so they never read as a fresh run.`,
-                            {title: "Reuse fits from an earlier build?",
-                                yesLabel: `Reuse ${verdict.reuse.length} unit(s)`, noLabel: "Fit everything again"});
-                        if (ok) {
-                            adoptUnits = verdict.adoptUnits;
-                            adoptRows = verdict.adoptRows;
-                            adoptNote = ` Reused ${verdict.reuse.length} of ${plan.length} fit unit(s) from ${fitted} `
-                                + `after checking ${probe.checked} file(s)`
-                                + (verdict.refit.length ? `; ${verdict.refit.length} unit(s) differed and were fitted again` : "")
-                                + ".";
-                        }
+                        adoptUnits = verdict.adoptUnits;
+                        adoptRows = verdict.adoptRows;
+                        adoptNote = ` Reused ${verdict.reuse.length} of ${plan.length} fit unit(s) from ${fitted} `
+                            + `after checking ${probe.checked} file(s)`
+                            + (verdict.refit.length ? `; ${verdict.refit.length} unit(s) differed and were fitted again` : "")
+                            + ".";
+                        console.log("BotBench: automatically adopting compatible fits from an earlier build.", {
+                            reuse: verdict.reuse, refit: verdict.refit, unseen: verdict.unseen, rows: verdict.rows,
+                        });
                     } else {
-                        console.log("BotBench: not offering cache adoption; no unit reproduced on every sampled file:",
+                        console.log("BotBench: not adopting cached fits; no unit reproduced on every sampled file:",
                             probe.units);
                     }
                 }

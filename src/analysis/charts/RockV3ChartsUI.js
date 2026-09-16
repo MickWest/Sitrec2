@@ -116,6 +116,19 @@ export function fitFigureTo(figure, width, height) {
     return {...figure, layout};
 }
 
+/**
+ * Return a copy whose layout height is a percentage of the figure's authored
+ * height. Always start from the authored figure so dragging the control back
+ * and forth cannot compound previous scaling.
+ */
+export function scaleFigureHeight(figure, percent = 100) {
+    const baseHeight = Number(figure?.layout?.height);
+    if (!Number.isFinite(baseHeight) || baseHeight <= 0) return figure;
+    const requested = Number(percent);
+    const scale = Math.min(2, Math.max(0.5, Number.isFinite(requested) ? requested / 100 : 1));
+    return fitFigureTo(figure, Number(figure.layout.width) || LAYOUT_WIDTH, Math.round(baseHeight * scale));
+}
+
 /** The solver names the rows' candidate lists hold, in order of first appearance. */
 function candidateNames(rows) {
     const names = [];
@@ -294,10 +307,46 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
         label.append(box, text);
         return {label, box};
     };
+    const makeRangeControl = (text, title, {min, max, step, value, width = "76px", format}) => {
+        const label = document.createElement("label");
+        label.title = title;
+        css(label, {display: "flex", alignItems: "center", gap: "4px", fontSize: "12px", color: "#333",
+            whiteSpace: "nowrap"});
+        const input = document.createElement("input");
+        input.type = "range";
+        Object.assign(input, {min: String(min), max: String(max), step: String(step), value: String(value)});
+        input.setAttribute("aria-label", text);
+        css(input, {width, margin: "0"});
+        const output = document.createElement("span");
+        css(output, {display: "inline-block", minWidth: "34px", textAlign: "right"});
+        const update = () => { output.textContent = format(Number(input.value)); };
+        update();
+        label.append(text, input, output);
+        return {label, input, output, update};
+    };
     const logToggle = makeToggle("log Error",
         "Use logarithmic error axes. Uncheck for linear error axes starting at zero. "
         + "Heading error always uses its fixed 0–180 degree scale.");
     logToggle.box.checked = true;
+    const boxControl = makeRangeControl("Box", "The central percentage enclosed by each box. "
+        + "50% is the conventional first-to-third-quartile box.",
+    {min: 20, max: 90, step: 5, value: 50, format: (value) => `${value}%`});
+    const whiskerControl = makeRangeControl("Whisker", "How far each whisker fence extends beyond the box, "
+        + "as a multiple of the box span. 1.5× with a 50% box is Tukey's standard 1.5×IQR rule.",
+    {min: 0, max: 3, step: 0.1, value: 1.5, format: (value) => `${value.toFixed(1)}×`});
+    const whiskerSpaceControl = document.createElement("label");
+    whiskerSpaceControl.title = "On a logarithmic error axis, compute the whisker fence on the raw values, "
+        + "as standard plotting packages do, or in log10 space for visual symmetry.";
+    css(whiskerSpaceControl, {display: "flex", alignItems: "center", gap: "4px", fontSize: "12px", color: "#333",
+        whiteSpace: "nowrap"});
+    const whiskerSpacePicker = makeSelect(whiskerSpaceControl.title, "105px");
+    for (const [value, text] of [["raw", "Raw values"], ["axis", "Axis space"]]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = text;
+        whiskerSpacePicker.appendChild(option);
+    }
+    whiskerSpaceControl.append("Fence", whiskerSpacePicker);
     // Two ways to mark the dots, both off to begin with (makeMarks in RockV3ChartSpecs.js).
     const lengthToggle = makeToggle("Area by clip length",
         "Give each track dot an area in proportion to its clip length, on one scale for every figure.");
@@ -313,8 +362,25 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
     const fullButton = makeButton("Full size", "#455a64");
     fullButton.title = "Show this figure alone, drawn to fill the browser window, with only the choices it reads. "
         + "Exports are unchanged.";
-    bar.append(picker, subjectPicker, metricPicker, logToggle.label, turnPicker, lengthToggle.label, straightToggle.label,
-        selectedToggle.label, solversButton, fullButton, loadButton, svgButton, pngButton, closeButton, status);
+    const heightControl = document.createElement("label");
+    heightControl.title = "Scale the chart height from 50% to 200%. This also changes exported chart height.";
+    css(heightControl, {display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", color: "#333",
+        whiteSpace: "nowrap"});
+    const heightInput = document.createElement("input");
+    heightInput.type = "range";
+    heightInput.min = "50";
+    heightInput.max = "200";
+    heightInput.step = "10";
+    heightInput.value = "100";
+    heightInput.setAttribute("aria-label", "Chart height percentage");
+    css(heightInput, {width: "90px", margin: "0"});
+    const heightValue = document.createElement("span");
+    heightValue.textContent = "100%";
+    css(heightValue, {display: "inline-block", width: "34px", textAlign: "right"});
+    heightControl.append("Height", heightInput, heightValue);
+    bar.append(picker, subjectPicker, metricPicker, logToggle.label, boxControl.label, whiskerControl.label,
+        whiskerSpaceControl, turnPicker, lengthToggle.label, straightToggle.label,
+        selectedToggle.label, solversButton, heightControl, fullButton, loadButton, svgButton, pngButton, closeButton, status);
     modal.appendChild(bar);
 
     // plot area
@@ -329,12 +395,13 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
         imageUrls: new Map(), measure: makeMeasure(), turnDeg: null, turnLevels: [],
         marks: {sizeByLength: false, markStraight: false},
         selectedSolvers: initialSolvers, selectedOnly: false, onSolversChanged,
-        fullSize: false,
+        heightPercent: 100, heightInput, heightValue, boxControl, whiskerControl, whiskerSpacePicker, fullSize: false,
     };
     const currentMeasure = () => {
         const fixedMetric = FIGURES.find((f) => f.key === state.current?.key)?.fixedMetric;
         return fixedMetric ? makeMeasure({metric: fixedMetric, subject: state.measure.subject,
-            logError: state.measure.logError}) : state.measure;
+            logError: state.measure.logError, boxPercent: state.measure.boxPercent,
+            whiskerK: state.measure.whiskerK, whiskerSpace: state.measure.whiskerSpace}) : state.measure;
     };
     const canChooseErrorScale = () => {
         const meta = FIGURES.find((f) => f.key === state.current?.key);
@@ -358,28 +425,44 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
         hide(metricPicker, !state.chartRows.length || !usesMeasure || !!meta?.fixedMetric || (full && meta?.measure !== "full"));
         hide(logToggle.label, !state.chartRows.length || (full && !canChooseErrorScale()));
         logToggle.box.disabled = !canChooseErrorScale();
+        const usesBoxes = !!state.current?.data?.some((trace) => trace.type === "box");
+        hide(boxControl.label, !usesBoxes);
+        hide(whiskerControl.label, !usesBoxes);
+        hide(whiskerSpaceControl, !usesBoxes || !!currentMeasure().axis);
         hide(turnPicker, state.turnLevels.length < 2 || (full && !!meta?.allTurnLevels));
         hide(lengthToggle.label, full && !meta?.dots);
         hide(straightToggle.label, full && !meta?.dots);
+        hide(heightControl, full);
         fullButton.textContent = full ? "Exit full size" : "Full size";
         fullButton.style.display = state.current ? "" : "none";
     };
-    // Drawn to the plot area in full size, at the figure's own size otherwise.
+    // Always use the available width, so a three-panel figure reaches the right
+    // edge of the results window instead of retaining its 1500 px export width.
+    // Normal mode keeps the authored/slider height; full size also fills height.
     const figureToDraw = (figure) => {
-        if (!state.fullSize) return figure;
         const width = Math.max(320, plot.clientWidth - 2);
+        if (!state.fullSize) {
+            const scaled = scaleFigureHeight(figure, state.heightPercent);
+            return fitFigureTo(scaled, width, scaled.layout.height);
+        }
         const height = Math.max(240, plot.clientHeight - 2);
         return fitFigureTo(figure, width, height);
     };
     let resizeTimer = null;
     const onResize = () => {
-        if (!state.fullSize || !state.current) return;
+        if (!state.current) return;
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => { show(state.current); }, 120);
     };
     window.addEventListener("resize", onResize);
 
     const setStatus = (text) => { status.textContent = text; };
+    const boxSettingsSuffix = (separator = " — ") => {
+        if (!state.current?.data?.some((trace) => trace.type === "box")) return "";
+        const measure = currentMeasure();
+        if (measure.boxPercent === 50 && measure.whiskerK === 1.5 && measure.whiskerSpace === "raw") return "";
+        return `${separator}box ${measure.boxPercent}%, whiskers ${measure.whiskerK}× ${measure.axis ? "raw" : measure.whiskerSpace}`;
+    };
     const sourceText = () => {
         const measure = currentMeasure();
         return `${state.chartRows.length} rows${state.sourceLabel ? ` from ${state.sourceLabel}` : ""}`
@@ -387,7 +470,8 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
             + (measure.isDefault ? "" : ` — ${measure.who}, ${measure.label.toLowerCase()}`)
             + (state.turnLevels.length < 2 ? ""
                 : Number.isFinite(state.turnDeg) ? ` — sensor turn ${state.turnDeg}°`
-                : ` — ${state.turnLevels.length} sensor-turn levels pooled`);
+                : ` — ${state.turnLevels.length} sensor-turn levels pooled`)
+            + boxSettingsSuffix();
     };
 
     // The choices, filled from what the rows can support. A choice that is no
@@ -424,7 +508,9 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
         metricPicker.value = keepMetric;
         subjectPicker.style.display = state.chartRows.length ? "" : "none";
         metricPicker.style.display = state.chartRows.length ? "" : "none";
-        state.measure = makeMeasure({metric: keepMetric, subject: keepSubject, logError: logToggle.box.checked});
+        state.measure = makeMeasure({metric: keepMetric, subject: keepSubject, logError: logToggle.box.checked,
+            boxPercent: Number(boxControl.input.value), whiskerK: Number(whiskerControl.input.value),
+            whiskerSpace: whiskerSpacePicker.value});
         // A sensor-turn level, offered only when the rows hold more than one.
         state.turnLevels = [...new Set(state.chartRows.map((r) => r.d_turnDeg).filter(Number.isFinite))]
             .sort((a, b) => a - b);
@@ -499,6 +585,13 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
         applyChrome();
         if (state.current) show(state.current);
     });
+    let heightTimer = null;
+    heightInput.addEventListener("input", () => {
+        state.heightPercent = Number(heightInput.value);
+        heightValue.textContent = `${state.heightPercent}%`;
+        clearTimeout(heightTimer);
+        heightTimer = setTimeout(() => { if (state.current) show(state.current); }, 50);
+    });
 
     picker.addEventListener("change", () => {
         const figure = state.figures.find((f) => f.key === picker.value);
@@ -506,7 +599,8 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
     });
     const onChoice = () => {
         state.measure = makeMeasure({metric: metricPicker.value, subject: subjectPicker.value,
-            logError: logToggle.box.checked});
+            logError: logToggle.box.checked, boxPercent: Number(boxControl.input.value),
+            whiskerK: Number(whiskerControl.input.value), whiskerSpace: whiskerSpacePicker.value});
         state.turnDeg = turnPicker.value === "all" ? null : Number(turnPicker.value);
         state.marks = {sizeByLength: lengthToggle.box.checked, markStraight: straightToggle.box.checked};
         rebuild();
@@ -517,6 +611,16 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
     turnPicker.addEventListener("change", onChoice);
     lengthToggle.box.addEventListener("change", onChoice);
     straightToggle.box.addEventListener("change", onChoice);
+    let boxTimer = null;
+    const onBoxInput = () => {
+        boxControl.update();
+        whiskerControl.update();
+        clearTimeout(boxTimer);
+        boxTimer = setTimeout(onChoice, 50);
+    };
+    boxControl.input.addEventListener("input", onBoxInput);
+    whiskerControl.input.addEventListener("input", onBoxInput);
+    whiskerSpacePicker.addEventListener("change", onChoice);
     selectedToggle.box.addEventListener("change", () => {
         state.selectedOnly = selectedToggle.box.checked;
         rebuild();
@@ -534,7 +638,7 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
         if (!state.current) return;
         setStatus(`Rendering ${format.toUpperCase()}…`);
         try {
-            const url = await figureToImage(state.current, {format});
+            const url = await figureToImage(scaleFigureHeight(state.current, state.heightPercent), {format});
             const link = document.createElement("a");
             link.href = url;
             // The choice goes in the name, so two exports of one figure do not collide.
@@ -545,7 +649,8 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
                 + (canChooseErrorScale() && !measure.logError ? "-linear" : "")
                 + (Number.isFinite(state.turnDeg) && !FIGURES.find((f) => f.key === state.current.key)?.allTurnLevels
                     ? `-turn${state.turnDeg}` : "")
-                + (state.marks.sizeByLength ? "-area" : "") + (state.marks.markStraight ? "-straight" : "");
+                + (state.marks.sizeByLength ? "-area" : "") + (state.marks.markStraight ? "-straight" : "")
+                + boxSettingsSuffix("-").replace(/[ .×%]+/g, "_");
             link.download = `${state.current.key}${choice}.${format}`;
             document.body.appendChild(link);
             link.click();
@@ -590,6 +695,8 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
     const close = () => {
         window.removeEventListener("resize", onResize);
         clearTimeout(resizeTimer);
+        clearTimeout(heightTimer);
+        clearTimeout(boxTimer);
         purgeFigure(chart);
         for (const url of state.imageUrls.values()) if (url) URL.revokeObjectURL(url);
         state.imageUrls.clear();
@@ -621,7 +728,7 @@ export function addResultChartsMenu(fileAnalysisFolder) {
     if (isLocal && !window._botCharts) {
         window._botCharts = {
             open: openResultCharts, openForEntries: openResultChartsForEntries,
-            rowsFromJsonl, rowsFromBotBenchEntries, buildAllFigures, makeMeasure, fitFigureTo,
+            rowsFromJsonl, rowsFromBotBenchEntries, buildAllFigures, makeMeasure, fitFigureTo, scaleFigureHeight,
             get active() { return activeWindow; },
         };
     }

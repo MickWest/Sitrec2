@@ -24,6 +24,7 @@ import {
     boxStatsLinear, boxStatsLog, clopperPearson, equalCountMedians, jitterOffsets, median, tally, finiteSorted,
 } from "./ChartStats";
 import {localPlotlyConfig} from "./PlotlyConfig";
+import {solverById} from "../BotBenchSolvers";
 
 // ---------------------------------------------------------------------------
 // theme, shared with the matplotlib reference so the two look related
@@ -137,7 +138,11 @@ export function formatPercent(v) {
     return `${(v * 100).toPrecision(2)}%`;
 }
 
-export const rungLabel = (e) => (e === null || e === undefined ? "unstated" : `${e}°`);
+export const rungLabel = (e) => {
+    if (e === null || e === undefined) return "unstated";
+    const rounded = Math.round(e * 1e7) / 1e7;
+    return `${Object.is(rounded, -0) ? 0 : rounded}°`;
+};
 
 /** Wrap text at roughly `cols` characters, for a caption annotation. */
 export function wrapText(text, cols = 165) {
@@ -208,7 +213,7 @@ export const ERROR_METRICS = {
     relSep: {
         label: "Error / range", noun: "mean 3D error / mean true range", unit: "",
         floor: FLOOR, ceiling: 1e3, ceilingLabel: "a thousand times the mean true range",
-        tolerance: {value: TOL5, label: "5% of range"}, format: formatPercent,
+        tolerance: {value: TOL5, label: "5%"}, format: formatPercent,
         topField: "r_topRelSep", bestField: "r_bestRelSep", candidateField: "relSep",
     },
     sepM: {
@@ -250,10 +255,17 @@ const capitalize = (text) => String(text).charAt(0).toUpperCase() + String(text)
  * through one of these. `logError` selects the error scale; heading error keeps
  * its fixed linear scale. The defaults preserve the original figures.
  */
-export function makeMeasure({metric = "relSep", subject = SUBJECT_TOP, logError = true} = {}) {
+export function makeMeasure({metric = "relSep", subject = SUBJECT_TOP, logError = true,
+    boxPercent = 50, whiskerK = 1.5, whiskerSpace = "raw"} = {}) {
     const key = ERROR_METRICS[metric] ? metric : "relSep";
     const m = ERROR_METRICS[key];
     const axis = m.axis ?? (logError ? null : {type: "linear"});
+    const central = Number.isFinite(boxPercent) ? Math.min(90, Math.max(20, boxPercent)) : 50;
+    const whisker = Number.isFinite(whiskerK) ? Math.min(3, Math.max(0, whiskerK)) : 1.5;
+    const space = whiskerSpace === "axis" ? "axis" : "raw";
+    const tail = (100 - central) / 2;
+    const compact = (value) => String(Number(value.toFixed(2)));
+    const spanName = central === 50 ? "IQR" : "the box span";
     const fromList = (row, name, field) => (row.r_candidates ?? []).find((c) => c.name === name)?.[field];
     const read = (row, who, spec) => {
         let v;
@@ -265,18 +277,25 @@ export function makeMeasure({metric = "relSep", subject = SUBJECT_TOP, logError 
     const who = subject === SUBJECT_TOP ? "blind top candidate"
         : subject === SUBJECT_BEST ? "best candidate (oracle)" : shortSolverName(subject);
     return {
-        metric: key, subject, who, logError,
+        metric: key, subject, who, logError, boxPercent: central, whiskerK: whisker, whiskerSpace: space,
         label: m.label, noun: m.noun, unit: m.unit, needsLists: !!m.needsLists,
         /** Linear axis settings, or null for the shared log axis. */
         axis,
         /** The y range for a figure whose data peaks at `peak`. Linear errors start at zero. */
         yRange: (peak) => axis ? (axis.range ?? [0, (peak || m.floor || 1) * 1.1])
             : [Math.log10(m.floor * 0.55), Math.log10(peak * 2.2)],
-        /** Box statistics in the space the axis is drawn in, so the whiskers are Tukey's on that axis. */
-        boxStats: (values) => (axis ? boxStatsLinear(values) : boxStatsLog(values)),
+        /** Box statistics in raw values by default, with an optional log-space fence. */
+        boxStats: (values) => (axis
+            ? boxStatsLinear(values, {boxPercent: central, whiskerK: whisker})
+            : boxStatsLog(values, {boxPercent: central, whiskerK: whisker, whiskerSpace: space})),
+        /** The caption's sentence on the central interval. */
+        boxNote: central === 50
+            ? "Box: quartiles (middle 50%) and median on the raw values."
+            : `Box: middle ${compact(central)}% (${compact(tail)}-${compact(100 - tail)} percentiles) and median on the raw values.`,
         /** The caption's sentence on the whiskers, matching boxStats. */
-        fenceNote: axis ? "Whiskers: Tukey's 1.5 box-heights on the values themselves."
-            : "Whiskers: Tukey's 1.5 box-heights, computed on log10 so the fence is symmetric on this axis.",
+        fenceNote: axis || space === "raw"
+            ? `Whiskers: extreme values inside fences ${compact(whisker)}×${spanName} beyond the box, computed on the raw values.`
+            : `Whiskers: extreme values inside fences ${compact(whisker)}×${spanName} beyond the box, computed on log10 so the fence is symmetric on this axis.`,
         /** The caption's sentence on the floor, given a count or the word "Values"; nothing on a linear axis. */
         floorNote: (floored) => (axis ? "" : (typeof floored === "number"
             ? `${floored} values below ${m.format(m.floor)} are drawn at the floor. `
@@ -344,7 +363,8 @@ export function durationGroups(rows, wanted) {
  * lowerfence and upperfence are taken literally rather than derived — which is
  * what keeps the log-space Tukey rule intact.
  */
-export function boxTrace(positions, stats, color, {axis = "", width = 0.62, floor = null, ceiling = null} = {}) {
+export function boxTrace(positions, stats, color, {axis = "", width = 0.62, floor = null, ceiling = null,
+    fillAlpha = 0.125, lineColor = color, lineWidth = 1.1} = {}) {
     const keep = positions.map((x, i) => [x, stats[i]]).filter(([, s]) => s);
     // The floor is a DRAWING device, exactly as in the matplotlib reference: the
     // statistics are computed on the raw values and only the drawn geometry is
@@ -364,11 +384,10 @@ export function boxTrace(positions, stats, color, {axis = "", width = 0.62, floo
         q3: keep.map(([, s]) => clip(s.q3)),
         lowerfence: keep.map(([, s]) => clip(s.lowerFence)),
         upperfence: keep.map(([, s]) => clip(s.upperFence)),
-        // A light tint, so the dots, and where they cluster, read through the box. At
-        // 0.25 the fill competed with its own dots; 0.125 sits half as far from the
-        // plot background.
-        fillcolor: hexToRgba(color, 0.125),
-        line: {color, width: 1.1},
+        // A light default tint lets the dots read through the box. Individual
+        // figures can strengthen it when they also draw darker points.
+        fillcolor: hexToRgba(color, fillAlpha),
+        line: {color: lineColor, width: lineWidth},
         marker: {color},
         median_color: INK,
         width,
@@ -695,7 +714,7 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
                 + (presentRungs.length > 1
                     ? `All Pointing Errors pools all ${presentRungs.length} available levels at each clip length. ` : "")
                 + `Within one level, the same tracks recur at every length, so a longer clip extends the same track. `
-                + `Box: quartiles and median on the raw values. ${measure.fenceNote} ${hollowNote(measure)}`
+                + `${measure.boxNote} ${measure.fenceNote} ${hollowNote(measure)}`
                 + `${measure.floorNote(floored)}${parts.join("; ")}.`,
         }),
         config: BASE_CONFIG,
@@ -777,7 +796,7 @@ export function figErrorByTrueDistance(rows, {measure = makeMeasure(), marks = m
                 + `${drawn} track evaluations drawn; n is the number drawn in each band. `
                 + `${rows.length - ranged.length} with no valid true distance and ${missing} with no value for the `
                 + `${measure.who} are not drawn. Empty bands have no box. `
-                + `Box: quartiles and median on the raw values. ${measure.fenceNote} ${hollowNote(measure)}`
+                + `${measure.boxNote} ${measure.fenceNote} ${hollowNote(measure)}`
                 + measure.floorNote(floored)
                 + (capped ? `${capped} values above ${measure.ceilingLabel} are drawn at the ceiling. ` : ""),
         }),
@@ -1586,8 +1605,8 @@ export function figErrorByClass(rows, {measure = makeMeasure(), marks = makeMark
         key: "errorByClass", title, data,
         layout: pageLayout(layout, {
             title, width: 1050, height: 660,
-            caption: `${drawn} tracks drawn (${missing} with no value for the ${measure.who} are not drawn). Box: `
-                + `quartiles and median on the raw values. ${measure.fenceNote} ${hollowNote(measure)}`
+            caption: `${drawn} tracks drawn (${missing} with no value for the ${measure.who} are not drawn). `
+                + `${measure.boxNote} ${measure.fenceNote} ${hollowNote(measure)}`
                 + `${measure.floorNote(floored)}${parts.join("; ")}.${unstatedNote(rows)}`,
         }),
         config: BASE_CONFIG,
@@ -1755,6 +1774,37 @@ export function shortSolverName(name) {
         .replace(/Polynomial LSQ \(order (\d+)\)/i, "Polynomial LSQ $1");
 }
 
+/** The axis label supplied by a registered solver, with legacy sweep fallbacks. */
+export function solverAxisName(candidate) {
+    const supplied = solverById(candidate?.key)?.shortName;
+    if (supplied) return supplied;
+    const name = String(candidate?.name ?? candidate?.key ?? "?");
+    const order = name.match(/\(order\s+(\d+)\)/i)?.[1];
+    if (order && candidate?.key === "gfPolyALS") return `poly_${order}`;
+    if (order && candidate?.key === "gfMC1") return `mc1_${order}`;
+    if (order && candidate?.key === "gfMC2") return `mc2_${order}`;
+    return shortSolverName(name);
+}
+
+// The comparison chart used for the compact solver review. Match both stable
+// solver IDs and names because imported result files can carry either one.
+const CUSTOM_SOLVER_KEYS = new Map([
+    ["gfca", 0], ["gfcv", 1], ["gfkalman", 2],
+    ["mc_100k", 3], ["mc_1m", 4], ["mc_250k", 5], ["mc_500k", 6], ["mc_50k", 7],
+]);
+
+function customSolverRank(candidate) {
+    const byKey = CUSTOM_SOLVER_KEYS.get(String(candidate?.key ?? "").toLowerCase());
+    if (byKey !== undefined) return byKey;
+    const name = shortSolverName(candidate?.name ?? candidate?.key).trim();
+    if (/^(?:constant acceleration|ca)$/i.test(name)) return 0;
+    if (/^(?:constant velocity|cv)$/i.test(name)) return 1;
+    if (/^kalman(?: smoother)?$/i.test(name)) return 2;
+    const mc = name.match(/^(?:monte carlo|mc)\s*(100k|1m|250k|500k|50k)(?:\s*\(gpu\))?$/i);
+    if (!mc) return null;
+    return {"100k": 3, "1m": 4, "250k": 5, "500k": 6, "50k": 7}[mc[1].toLowerCase()];
+}
+
 /**
  * Every candidate's error against truth, one box per solver.
  *
@@ -1765,11 +1815,16 @@ export function shortSolverName(name) {
  * BOTBench run keeps; a joined JSONL without them gets no figure.
  */
 export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks(),
-    sortByMedian = false} = {}) {
+    sortByMedian = false, customOrder = false} = {}) {
     const scored = rows.filter((r) => Array.isArray(r.r_candidates) && r.r_candidates.length);
     if (!scored.length) return null;
     const rungs = rungGroups(scored, rungsWanted);
-    if (!rungs.length) return null;
+    const presentRungs = [...new Set(scored.map((r) => r.d_errorDeg).filter(fin))].sort((a, b) => a - b);
+    const groups = rungs.map((rung) => ({rung, key: `${rung}deg`, label: `${rungLabel(rung)} pointing error`, pooled: false}));
+    if (presentRungs.length > 1) {
+        groups.push({rung: null, key: "all", label: "All Pointing Errors", pooled: true});
+    }
+    if (!groups.length) return null;
     const floor = measure.floor, ceiling = measure.ceiling;
     // Dots of 3 px would shrink to 1 px at the shortest length, so area by length starts from 4.
     const dotSize = marks.sizeByLength ? 4 : 3;
@@ -1781,27 +1836,51 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
     // can put a solver with a visibly lower box to the right in a particular
     // panel, which defeats the purpose of the sorted view.
     const pooled = new Map();
+    const customRanks = new Map();
+    const axisNames = new Map();
     for (const r of scored) {
         for (const c of r.r_candidates) {
             const v = measure.candidate(c);
             if (!fin(v)) continue;
-            if (!pooled.has(nameOf(c))) pooled.set(nameOf(c), []);
-            pooled.get(nameOf(c)).push(v);
+            const name = nameOf(c);
+            if (!pooled.has(name)) pooled.set(name, []);
+            pooled.get(name).push(v);
+            if (!axisNames.has(name)) axisNames.set(name, solverAxisName(c));
+            const rank = customSolverRank(c);
+            if (rank !== null && (!customRanks.has(name) || rank < customRanks.get(name))) customRanks.set(name, rank);
         }
     }
     const solvers = [...pooled.keys()];
     if (!solvers.length) return null;
+    const analysisOrder = new Map(solvers.map((name, i) => [name, i]));
+    const customSolvers = solvers.slice().sort((a, b) => {
+        const ar = customRanks.get(a), br = customRanks.get(b);
+        if (ar !== undefined && br !== undefined) return ar - br;
+        if (ar !== undefined) return -1;
+        if (br !== undefined) return 1;
+        return analysisOrder.get(a) - analysisOrder.get(b);
+    });
 
     const data = [], titles = [];
     const medians = {};
     const solverOrders = [];
     const lowest = [];
+    // Twenty percent taller than the compact solver layout, with a stable
+    // pixel band for the long rotated solver labels above the caption.
+    const chartHeight = 336 * groups.length + 120;
+    const plotHeight = chartHeight - 52 - 130; // pageLayout's top and bottom margins
+    const bottomPad = Math.min(0.36, 92 / plotHeight);
     let drawn = 0, floored = 0, capped = 0, peak = floor;
-    for (const cls of CLASSES) {
-        for (const rung of rungs) {
+    // Keep the three target classes across the page. Pointing-error groups run
+    // downward, so a one-level result still uses the same three-column panel
+    // geometry as a full comparison instead of stretching each class full width.
+    for (const group of groups) {
+        for (const cls of CLASSES) {
             const i = titles.length;
             const suffix = i === 0 ? "" : String(i + 1);
-            const here = cell(scored, cls, null, rung);
+            const here = group.pooled
+                ? scored.filter((r) => r.d_class === cls && fin(r.d_errorDeg))
+                : cell(scored, cls, null, group.rung);
             const valuesBySolver = new Map(solvers.map((name) => [name, []]));
             for (const r of here) {
                 for (const c of r.r_candidates) {
@@ -1809,7 +1888,7 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
                     if (fin(v) && valuesBySolver.has(nameOf(c))) valuesBySolver.get(nameOf(c)).push(v);
                 }
             }
-            const panelSolvers = solvers.slice();
+            const panelSolvers = (customOrder ? customSolvers : solvers).slice();
             if (sortByMedian) {
                 panelSolvers.sort((a, b) => {
                     const ma = median(valuesBySolver.get(a));
@@ -1843,57 +1922,73 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
             }
             const stats = panelSolvers.map((name, s) => {
                 const box = measure.boxStats(values[s]);
-                if (box) medians[`${rung}deg/${cls}/${name}`] = box.median;
+                if (box) medians[`${group.key}/${cls}/${name}`] = box.median;
                 return box;
             });
-            data.push(boxTrace(panelSolvers.map((unused, s) => s), stats, CLASS_HUE[cls], {axis: suffix, floor, ceiling}));
-            if (points.length) data.push(stripTrace(points, CLASS_HUE[cls], {axis: suffix, size: dotSize, opacity: 0.35}));
-            const best = panelSolvers.map((name) => [name, medians[`${rung}deg/${cls}/${name}`]])
+            data.push(boxTrace(panelSolvers.map((unused, s) => s), stats, CLASS_HUE[cls], {
+                axis: suffix, floor, ceiling, width: 0.82, fillAlpha: 0.24, lineColor: INK, lineWidth: 0.8,
+            }));
+            if (points.length) data.push(stripTrace(points, CLASS_HUE[cls], {axis: suffix, size: dotSize, opacity: 0.65}));
+            const best = panelSolvers.map((name) => [name, medians[`${group.key}/${cls}/${name}`]])
                 .filter(([, m]) => fin(m)).sort((a, b) => a[1] - b[1])[0];
             if (best) {
-                lowest.push(`${CLASS_LABEL[cls]} ${rungLabel(rung)}: ${shortSolverName(best[0])} ${measure.format(best[1])}`);
+                lowest.push(`${CLASS_LABEL[cls]} ${group.label}: ${axisNames.get(best[0]) ?? shortSolverName(best[0])} ${measure.format(best[1])}`);
             }
-            titles.push(`${CLASS_LABEL[cls]}, ${rungLabel(rung)} pointing error`);
+            titles.push(`${CLASS_LABEL[cls]}, ${group.label}`);
         }
     }
     const layout = gridLayout({
-        rows: CLASSES.length, cols: rungs.length, titles,
+        rows: groups.length, cols: CLASSES.length, titles,
         xTitle: "", yTitle: `Candidate ${measure.noun}`,
-        vGap: 0.14, bottomPad: 0.1,
-        yRange: measure.yRange(peak), logY: !measure.axis, yAxis: measure.axis,
+        vGap: 0.14, bottomPad,
+        // The custom metre view uses a stable comparison range. Plotly log ranges
+        // are exponents; a linear view uses the equivalent values in metres.
+        yRange: customOrder && measure.metric === "sepM"
+            ? (measure.axis ? [10 ** 0.5, 10 ** 6.2] : [0.5, 6.2])
+            : measure.yRange(peak),
+        logY: !measure.axis, yAxis: measure.axis,
     });
     for (let i = 0; i < titles.length; i++) {
         const suffix = i === 0 ? "" : String(i + 1);
         const panelSolvers = solverOrders[i];
         Object.assign(layout[`xaxis${suffix}`], {
             tickvals: panelSolvers.map((unused, s) => s),
-            ticktext: panelSolvers.map(shortSolverName),
-            tickangle: -35, tickfont: {size: 10, color: INK2},
+            ticktext: panelSolvers.map((name) => axisNames.get(name) ?? shortSolverName(name)),
+            tickangle: -45, tickfont: {size: 10, color: INK2},
         });
     }
     addTolerance(layout, titles.length, measure);
-    const title = `rock_v3: every candidate's error, by solver${sortByMedian ? ", sorted by median" : ""}`
+    const modeSuffix = customOrder ? ", custom solver order" : sortByMedian ? ", sorted by median" : "";
+    const key = customOrder ? "errorBySolverCustom" : sortByMedian ? "errorBySolverSorted" : "errorBySolver";
+    const title = `rock_v3: every candidate's error, by solver${modeSuffix}`
         + unitSuffix(measure);
     return {
-        key: sortByMedian ? "errorBySolverSorted" : "errorBySolver", title, data,
-        layout: pageLayout(layout, {
-            title, height: 560 * CLASSES.length + 200,
-            caption: `${drawn} candidate errors from ${scored.length} tracks, all clip lengths pooled. One box per solver: `
+        key, title, data,
+        layout: {...pageLayout(layout, {
+            title, height: chartHeight,
+            caption: `${drawn} candidate errors drawn across the panels from ${scored.length} tracks, all clip lengths pooled. `
+                + (presentRungs.length > 1
+                    ? `All Pointing Errors pools all ${presentRungs.length} available levels for each target class. ` : "")
+                + `One box per solver: `
                 + `every candidate that solver produced, scored against truth whether or not the blind ranking put it `
                 + `first. A solver with a low box can find the answer; set it beside the blind top candidate's error in `
                 + `the clip-length figure to see what the ranking passed over. `
-                + (sortByMedian
+                + (customOrder
+                    ? `CA, CV, Kalman, MC 100k, MC 1M, MC 250K, MC 500K and MC 50K appear first in that order when present; remaining solvers keep the order supplied by the analysis. `
+                    : sortByMedian
                     ? `Each panel's solvers are ordered by that panel's median error, best first. `
                     : `Solvers keep the order supplied by the analysis. `)
-                + `Box, whiskers and dots as in the clip-length figure`
+                + (customOrder && measure.metric === "sepM"
+                    ? `The metre-error Y axis is fixed from 10^0.5 m to 10^6.2 m. ` : "")
+                + `${measure.boxNote} ${measure.fenceNote} Dots show every candidate value`
                 + (measure.axis ? "" : `; ${floored} values below ${measure.format(floor)} are drawn at the floor`)
                 + (capped ? `${measure.axis ? ";" : ", and"} ${capped} above ${measure.ceilingLabel} at the ceiling, where the `
                     + "hover label gives the value itself" : "")
                 + `. Lowest median per panel: ${lowest.join("; ")}.`
                 + (measure.subject === SUBJECT_TOP ? "" : " The candidate choice does not apply here: every candidate is shown."),
-        }),
+        }), boxgap: 0.12},
         config: BASE_CONFIG,
-        stats: {solvers: sortByMedian ? solverOrders[0] : solvers, solverOrders, medians},
+        stats: {solvers: (sortByMedian || customOrder) ? solverOrders[0] : solvers, solverOrders, medians},
     };
 }
 
@@ -1951,6 +2046,9 @@ export const FIGURES = [
     {key: "errorBySolverSorted", name: "Error by solver (Sorted)", group: "Accuracy",
         dots: true, measure: "full",
         build: (rows, {measure, marks} = {}) => figErrorBySolver(rows, {measure, marks, sortByMedian: true})},
+    {key: "errorBySolverCustom", name: "Error by solver (Custom)", group: "Accuracy",
+        dots: true, measure: "full",
+        build: (rows, {measure, marks} = {}) => figErrorBySolver(rows, {measure, marks, customOrder: true})},
     {key: "errorVsGeometry", name: "Error against geometry", group: "Geometry",
         dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorVsGeometry(rows, {measure, marks})},
     {key: "classOutcome", name: "What the verdict says about the class", group: "Interpretation",

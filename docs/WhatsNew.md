@@ -16,6 +16,21 @@ lockstep with docs/WhatsNew-Details.md.
 - **Direct Constant Velocity and Constant Acceleration fits in BOTBench** (File → File Analysis → **BOTBench...** → **Solvers…**): run the same all-sightline least-squares CV and CA algorithms offered by the live Traverse menu. Both are selected by default and use each BOT observation's original time and maximum-range value.
 - **Horizontal Speed Valley** (Traverse → *LOS Traverse Method*, Traverse → **Analyze Traverse Methods...**, and the **Solvers…** list in File → File Analysis → **BOTBench...**): a speculative new fit for a level object that may turn but keeps about the same ground speed. It finds the altitude where that speed stays most steady, shows in the analysis how stable that answer is, and reports a failure instead of guessing when there is no clear answer. BOTBench ticks it by default unless you have already saved a solver choice.
 - **Fraction** (File → File Analysis → **BOTBench...**): analyze only every nth file (3 analyzes files 3, 6, 9 and so on), while the rest are marked skipped and left out of Charts and screenshots. It does not change or invalidate anything already stored in a folder's cache.
+- **Direct BOTBench startup** (`?action=botbench`): start with the neutral custom sitch and open BOTBench as soon as setup finishes, without opening the sitch browser first.
+- **Solver comparison charts** (File → File Analysis → **Result Charts...** → *Accuracy: Error by solver*): compare the three target classes across columns and pointing-error groups down rows, including a pooled **All Pointing Errors** row; the **Sorted** version orders every panel by its own median, while the new **Custom** version puts CA, CV, Kalman, MC 100k, MC 1M, MC 250k, MC 500k and MC 50k before the other selected solvers, fixes the metre-error scale from 10^0.5 m to 10^6.2 m, and leaves more room for its rotated solver labels.
+- **Height** (File → File Analysis → **Result Charts...**): scale every chart from 50% to 200% of its designed height, starting at 100%; the choice remains as you switch figures while the window is open and applies to SVG and PNG exports, while **Full size** continues to fit the chart to the browser window.
+- **Box, Whisker and Fence** (File → File Analysis → **Result Charts...**): choose a centered 20%–90% interval and a whisker fence from 0–3 times its span for every box chart, starting with the conventional middle-50% box and 1.5×IQR whiskers; logarithmic charts default to the ordinary Matplotlib, Plotly and base-R **Raw values** rule, with the visually symmetric **Axis space** rule available as an option, and nondefault choices appear in captions, status and export filenames.
+
+### Improvements
+
+- **Monte Carlo (GPU)** (Traverse → *LOS Traverse Method* and File → File Analysis → **BOTBench...** → **Solvers…**) now offers five trial budgets: 50k, 100k, 250k, 500k and 1M. The 150k and 200k choices are removed, the 500k choice is added, and BOTBench now has 24 solvers in total with 19 selected by default.
+- **BOTBench cache reuse** (File → File Analysis → **BOTBench...**): after the five-file compatibility check, automatically reuse each earlier-build fit unit that reproduces and fit again every unit that differs, without asking for confirmation; use **Flush Cache** before a run to force every fit to be recomputed.
+- **Error by solver chart labels** (File → File Analysis → **Result Charts...**): all three solver comparisons use compact names such as *ca*, *cv*, *kf*, *mc_100k*, *fixed_wing* and *flown_drone*, with wider, darker boxes and dots, thin black outlines and 45° labels; hover a dot to see the full solver name.
+- **Result Charts presentation** (File → File Analysis → **Result Charts...**): charts in the regular window fill its available width and redraw when the window is resized, while SVG and PNG exports keep their designed width; the tolerance-line label at the right edge is shortened from **5% of range** to **5%**.
+
+### Bug Fixes
+
+- Fixed pointing-error values such as 0.020000000000000004° appearing in Result Charts titles; labels now show 0.02°, and a tiny negative value that rounds to zero displays as 0°.
 
 ## Version 2.161.0 (2026-09-15)
 

@@ -115,8 +115,8 @@ describe("the incomplete beta function", () => {
 describe("box statistics", () => {
     // Same input and same rule as the matplotlib reference.
     const INPUT = [0.001, 0.002, 0.004, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 40.0];
-    test("quartiles on raw values, fence in log space", () => {
-        const box = boxStatsLog(INPUT);
+    test("quartiles on raw values, fence in log space when requested", () => {
+        const box = boxStatsLog(INPUT, {whiskerSpace: "axis"});
         expect(box.q1).toBeCloseTo(0.007, 12);
         expect(box.median).toBeCloseTo(0.05, 12);
         expect(box.q3).toBeCloseTo(0.35, 12);
@@ -128,11 +128,30 @@ describe("box statistics", () => {
     test("the log fence keeps a value a linear fence would throw out", () => {
         // 40 is 40x the upper quartile: on a raw 1.5*IQR fence it is an outlier,
         // on a log fence it is not. That difference is the reason for the rule.
-        expect(boxStatsLog(INPUT).nOutside).toBe(0);
+        expect(boxStatsLog(INPUT, {whiskerSpace: "axis"}).nOutside).toBe(0);
         expect(boxStatsLinear(INPUT).nOutside).toBeGreaterThan(0);
     });
+    test("a log chart defaults to the raw-value fence used by standard plotting packages", () => {
+        const raw = boxStatsLog(INPUT);
+        const linear = boxStatsLinear(INPUT);
+        expect(raw).toMatchObject({q1: linear.q1, median: linear.median, q3: linear.q3,
+            lowerFence: linear.lowerFence, upperFence: linear.upperFence, nOutside: linear.nOutside});
+        expect(raw.upperFence).toBeLessThan(40);
+    });
+    test("the central percentage and whisker multiplier are configurable", () => {
+        const wide = boxStatsLinear(INPUT, {boxPercent: 80, whiskerK: 0});
+        expect(wide.q1).toBeCloseTo(0.002, 12);
+        expect(wide.q3).toBeCloseTo(1, 12);
+        expect(wide.lowerFence).toBeGreaterThanOrEqual(wide.q1);
+        expect(wide.upperFence).toBeLessThanOrEqual(wide.q3);
+        expect(boxStatsLinear(INPUT, {boxPercent: 80, whiskerK: 3}).lowerFence).toBeLessThan(wide.lowerFence);
+    });
+    test("an empty side of a narrow fence ends at the interpolated box edge", () => {
+        const box = boxStatsLinear([1, 2, 3, 4], {whiskerK: 0});
+        expect(box).toMatchObject({q1: 1.75, lowerFence: 1.75, q3: 3.25, upperFence: 3.25});
+    });
     test("zero and negative values are kept out of the fence but counted", () => {
-        const box = boxStatsLog([0, -1, 0.01, 0.02, 0.03, 0.04]);
+        const box = boxStatsLog([0, -1, 0.01, 0.02, 0.03, 0.04], {whiskerSpace: "axis"});
         expect(box.nonPositive).toBe(2);
         expect(box.n).toBe(6);
         expect(box.lowerFence).toBeGreaterThan(0);

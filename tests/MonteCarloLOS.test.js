@@ -26,6 +26,8 @@ describe("blind Monte Carlo matches the supplied CLI's controlled random trials"
         const small = prepareMonteCarloLOS(dataset, new Set(), {numTrials: 50});
         const large = prepareMonteCarloLOS(dataset, new Set(), {preset: "mc_1M"});
         expect(monteCarloTrial(small, 23)).toEqual(monteCarloTrial(large, 23));
+        expect(Object.keys(MONTE_CARLO_PRESETS)).toEqual(["mc_50k", "mc_100k", "mc_250k", "mc_500k", "mc_1M"]);
+        expect(MONTE_CARLO_PRESETS.mc_500k).toEqual({order: 1, numTrials: 500000, losUncertaintyDeg: 0.1});
         expect(MONTE_CARLO_PRESETS.mc_1M).toEqual({order: 1, numTrials: 1000000, losUncertaintyDeg: 0.1});
     });
 

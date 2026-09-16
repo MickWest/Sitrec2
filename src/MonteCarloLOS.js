@@ -12,8 +12,8 @@
  */
 
 export const MONTE_CARLO_PRESETS = Object.freeze(Object.fromEntries([
-    ["mc_50k", 50000], ["mc_100k", 100000], ["mc_150k", 150000],
-    ["mc_200k", 200000], ["mc_250k", 250000], ["mc_1M", 1000000],
+    ["mc_50k", 50000], ["mc_100k", 100000], ["mc_250k", 250000],
+    ["mc_500k", 500000], ["mc_1M", 1000000],
 ].map(([id, numTrials]) => [id, Object.freeze({order: 1, losUncertaintyDeg: 0.1, numTrials})])));
 
 export const MONTE_CARLO_IDS = Object.freeze(Object.keys(MONTE_CARLO_PRESETS));

@@ -186,6 +186,12 @@ import {
 import {setupHUDColor} from "./HUDColor";
 import {applyStartupDefaults, setSitchStartLocation} from "./StartupDefaults";
 import {parseLatLonAlt} from "./CoordinateParser";
+import {
+    isExplicitStartupAction,
+    runStartupToolAction,
+    startupActionFromSearch,
+} from "./StartupActions";
+import {openBotBenchDialog} from "./analysis/BotBenchUI";
 
 // Initialize debug log capture BEFORE any console output
 debugLog.init();
@@ -294,8 +300,8 @@ if (typeof window !== 'undefined') {
 // However note that the imports above might have code that is executed
 // before this code is executed.
 
-// Detect if this is an explicit new sitch creation via ?action=new
-const isNewSitchAction = !isConsole && new URLSearchParams(window.location.search).get("action") === "new";
+// Startup actions select a neutral sitch and can open a tool after setup.
+const startupAction = !isConsole ? startupActionFromSearch(window.location.search) : null;
 
 // Start from the normal custom sitch, and switch to "empty" later only if the
 // browser can actually auto-open for this request.
@@ -670,7 +676,7 @@ Globals.regression = urlParams.get("regression") === "1";
 // any sitch loads so the first subdivide pass sees the requested mode.
 applyTileBoundsModeFromUrl();
 
-const hasExplicitStartupRequest = isNewSitchAction
+const hasExplicitStartupRequest = isExplicitStartupAction(startupAction)
     || !!urlParams.get("sitch")
     || !!urlParams.get("sit")
     || !!urlParams.get("custom")
@@ -922,6 +928,7 @@ legacySetup();
 await setupFunctions();
 loadStartupDropURLAfterSitchSetup();
 loadStartupHandoffAfterSitchSetup();
+runStartupToolAction(startupAction, {openBotBenchDialog});
 
 const dateTime = urlParams.get("datetime");
 if (dateTime) {

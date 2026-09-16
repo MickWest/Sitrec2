@@ -56,8 +56,9 @@ rung figures. The figures that compare clip lengths need at least two.
 | Error by sensor turn, per clip length | The same medians against the turn level, one line per clip length |
 | Within tolerance, by length | Share of tracks inside 5% and 1% of true range, against clip length, with exact 95% intervals |
 | Within tolerance, by pointing error | The same shares against the pointing-error rung |
-| Error by solver | Every candidate's error against truth, one box per solver, for each class and pointing-error rung, whether or not the ranking chose it |
-| Error by solver (Sorted) | The same solver comparison, with each panel's X axis ordered from lowest to highest median error in that panel |
+| Error by solver | Every candidate's error against truth, one box per solver, with the three target classes across columns and pointing-error groups down rows, plus an **All Pointing Errors** row that pools every available error level, whether or not the ranking chose it |
+| Error by solver (Sorted) | The same solver comparison and pooled panels, with each panel's X axis ordered from lowest to highest median error in that panel |
+| Error by solver (Custom) | The same solver comparison and pooled panels, with CA, CV, Kalman, MC 100k, MC 1M, MC 250K, MC 500K and MC 50K first in that fixed order when present, followed by the remaining selected solvers in analysis order. The **Mean absolute error (m)** Y axis has fixed bounds of 10^0.5 m through 10^6.2 m |
 | Error against geometry | Error against parallax aperture and against true range, with a median trend line over equal-count bins |
 | What the verdict says about the class | True class viable, only other classes viable, or nothing viable |
 | Verdict code | The executive verdict by rung, ordered by how far it narrows the answer |
@@ -66,6 +67,12 @@ rung figures. The figures that compare clip lengths need at least two.
 
 Every figure carries its own caption, and every number in that caption is
 computed from the rows on screen rather than written in by hand.
+
+The three **Error by solver** figures use the compact name registered with each
+solver: for example `ca`, `cv`, `kf`, `mc_100k`, `fixed_wing`, and `flown_drone`.
+The full solver name remains in each point's hover label. Their boxes use a
+tighter category gap, a darker class-color fill and dark class-color points,
+with thin black outlines and whiskers for contrast.
 
 Logarithmic error axes are labelled in powers of ten, one label per decade.
 
@@ -105,6 +112,18 @@ The error controls above the figure apply to every error figure at once:
   Heading error keeps its fixed 0–180 degree scale. The cost-of-ranking chart
   switches both error axes; the absolute-error-versus-range chart keeps its
   range axis logarithmic. Exports retain the selected scale.
+- **Box** controls the central percentage enclosed by each box, from 20% to
+  90%. The default 50% is the conventional first-to-third-quartile box.
+- **Whisker** controls the fence distance from 0 to 3 times the box span. With
+  a 50% box, the default 1.5× is Tukey's familiar 1.5×IQR rule. A whisker ends
+  at the most extreme observed value between the box and fence, or at the box
+  edge when that interval contains no observation.
+- **Fence** appears for logarithmic error axes. **Raw values**, the default,
+  applies the rule before the logarithmic drawing transform. This matches the
+  ordinary Matplotlib, Plotly and base-R behavior. **Axis space** applies the
+  fence after taking `log10`, making it visually symmetric on the chart. These
+  controls rebuild every box chart and are recorded in its caption, status line
+  and exported file name.
 
 The tolerance figures always use a share of range, for the chosen candidate. The
 solver figure already shows every candidate, so only the unit applies to it. The
@@ -116,7 +135,7 @@ metres. A run cached before these units existed rebuilds its rows once, from the
 stored fits, to add them.
 
 **Selected Solvers** limits candidate-backed charts to the solvers ticked in the
-adjacent **Solvers: N of 25 solvers** button. The selector is the same one used by
+adjacent **Solvers: N of 24 solvers** button. The selector is the same one used by
 BOTBench and remembers the same choice. Within the selected subset, the charts
 recalculate the truth-free top candidate and the closest-to-truth best candidate;
 the two solver comparison figures omit every unticked solver. Uncheck it to show
@@ -144,19 +163,46 @@ start off, when every dot is a circle of one size in its target class color.
 
 A caption says which marks are on.
 
+**Height** scales the current chart from 50% to 200% of its designed height.
+It starts at 100%, remains set while the charts window is open, and applies when
+you switch figures. SVG and PNG exports use the selected height. **Full size**
+continues to fit the figure to the browser window.
+
 ## How to read a box
 
 The boxes are drawn from statistics computed before the chart is built, not by
 the charting library, because two conventions here are deliberate.
 
-**Quartiles and the median come from the raw values.** The median of an even
-count is the mean of the two middle values.
+**By default, the box runs from the first to the third quartile.** This is the
+middle 50% of the raw values, with the median inside it. Sitrec uses NumPy's
+default linear percentile interpolation: percentile `p` lies at `(n-1)p`
+between the neighboring ordered observations. The **Box** control replaces the
+25th and 75th percentiles with an equally centered interval; for example, 80%
+uses the 10th and 90th percentiles. The median does not move.
 
-**The whiskers use Tukey's rule in the selected axis scale.** On a log axis, the fence is 1.5 box
-heights beyond the quartiles, but measured on the base-10 logarithm rather than
-on the raw values, so that it is symmetric on the log axis it is drawn on. A
-whisker reaches the last observation still inside that fence, never the fence
-itself. On a linear axis, the fence is computed on the raw values instead.
+**Sitrec's default whiskers use Tukey's 1.5× rule on the raw values.** The
+quartiles and 1.5×IQR fence are calculated in the original unit, then the
+completed box plot is transformed onto a logarithmic axis for drawing. This is
+how ordinary Matplotlib, Plotly and base-R box plots behave when their axis is
+made logarithmic, although it can look strongly asymmetric over several orders
+of magnitude. **Fence: Axis space** instead calculates the fence after taking
+`log10`, making its distance visually symmetric. A whisker reaches the most
+extreme observation between its box edge and fence. If there is no observation
+there, it stays at the box edge; it is not drawn to an unobserved mathematical
+fence value.
+
+Some higher-level plotting APIs deliberately transform the values before their
+statistical calculation. Seaborn's `log_scale` option and ggplot2's logarithmic
+*scale* behave this way, while applying a logarithmic coordinate transform after
+the statistic preserves the raw-value rule. The **Fence** selector makes that
+choice explicit rather than deriving it silently from the axis type.
+
+Other common conventions can produce different extents even from identical
+data. R uses its own sample hinges for some small sample sizes. Plotly can use
+linear, inclusive or exclusive quartiles when it calculates boxes itself. Some
+publications draw whiskers to the minimum and maximum, fixed percentiles such as
+5–95%, or one standard deviation. Sitrec supplies precomputed statistics to
+Plotly, so the chart library does not silently choose among these definitions.
 
 **Every observation is drawn as a dot**, jittered sideways so they do not stack.
 Because every point is already there, no separate outlier marks are drawn. A

@@ -49,11 +49,11 @@ test("BOT ingestion keeps each retained observation's time and range cap", () =>
 });
 
 test("selected presets alone produce separate curve-fit candidates and replay exactly from cache", async () => {
-    const solvers = ["mc_50k", "mc_250k", "mc_1M"];
+    const solvers = ["mc_50k", "mc_100k", "mc_250k", "mc_500k", "mc_1M"];
     const fresh = await fitBotBenchRecord(record, {solvers});
     expect(Object.keys(fresh.units)).toEqual(solvers);
     expect(fresh.hypotheses.map(h => h.key)).toEqual(solvers);
-    expect(fitMonteCarloGPU).toHaveBeenCalledTimes(3);
+    expect(fitMonteCarloGPU).toHaveBeenCalledTimes(5);
     expect(fitMonteCarloGPU.mock.calls[0][0]).toMatchObject(record.losSamples);
     expect(searchBackendOf(fresh)).toBe("webgpu");
     for (const h of fresh.hypotheses) {

@@ -10,8 +10,8 @@ import {
 import {MONTE_CARLO_IDS, MONTE_CARLO_PRESETS, MONTE_CARLO_SEED} from "../../src/MonteCarloLOS";
 
 describe("the solver list", () => {
-    test("names the default candidates and six independent GPU Monte Carlo presets", () => {
-        expect(SOLVERS).toHaveLength(25);
+    test("names the default candidates and five independent GPU Monte Carlo presets", () => {
+        expect(SOLVERS).toHaveLength(24);
         expect(defaultSolverIds()).toHaveLength(19);
         expect(allSolverIds().filter(id => id.startsWith("mc_"))).toEqual(MONTE_CARLO_IDS);
         expect(solverById("gfCV").name).toBe("Global Fit: Constant Velocity");
@@ -23,7 +23,9 @@ describe("the solver list", () => {
     });
 
     test("every solver's units exist, and every unit has a version and known needs", () => {
+        expect(new Set(SOLVERS.map((solver) => solver.shortName)).size).toBe(SOLVERS.length);
         for (const solver of SOLVERS) {
+            expect(solver.shortName).toMatch(/^[a-z0-9_]+$/i);
             for (const unit of solver.units) expect(BATTERY_UNITS[unit]).toBeDefined();
         }
         for (const unit of UNIT_ORDER) {
@@ -36,13 +38,14 @@ describe("the solver list", () => {
 
     test("a selection is normalized; absent selections retain the original default battery", () => {
         expect(normalizeSolvers(["gfKalman", "constAir", "bogus"])).toEqual(["constAir", "gfKalman"]);
+        expect(normalizeSolvers(["mc_150k", "mc_200k", "mc_500k"])).toEqual(["mc_500k"]);
         expect(normalizeSolvers(null)).toEqual(defaultSolverIds());
         expect(normalizeSolvers([])).toEqual(defaultSolverIds());
         expect(isEverySolver(null)).toBe(false);
         expect(isEverySolver(allSolverIds())).toBe(true);
         expect(isEverySolver(["gfKalman"])).toBe(false);
-        expect(describeSolvers(["gfKalman"])).toBe("1 of 25 solvers");
-        expect(describeSolvers(null)).toBe("19 of 25 solvers");
+        expect(describeSolvers(["gfKalman"])).toBe("1 of 24 solvers");
+        expect(describeSolvers(null)).toBe("19 of 24 solvers");
     });
 });
 

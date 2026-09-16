@@ -214,7 +214,7 @@ describe("mean absolute error vs. mean true range", () => {
 
 describe("log Error choice", () => {
     const errorKeys = ["errorByClass", "errorByLength", "errorByTrueDistance", "absoluteErrorVsTrueRange",
-        "errorByRung", "errorByLengthAndTurn", "errorByTurn", "errorBySolver", "errorBySolverSorted",
+        "errorByRung", "errorByLengthAndTurn", "errorByTurn", "errorBySolver", "errorBySolverSorted", "errorBySolverCustom",
         "errorVsGeometry", "rankingCost"];
     const rows = [0, 20].flatMap((turn) => makeRows({rungs: [0, 0.2], durations: [20, 120], perClass: 6})
         .map((r) => ({...r, d_turnDeg: turn, r_topSepM: r.r_topRelSep * 1000, r_bestSepM: r.r_bestRelSep * 1000,
@@ -239,13 +239,18 @@ describe("log Error choice", () => {
                     if (!/^yaxis\d*$/.test(name)) continue;
                     expect(logarithmic[i].layout[name].type).toBe("log");
                     expect(axis.type).toBe("linear");
-                    expect(axis.range[0]).toBe(0);
+                    if (figure.key === "errorBySolverCustom" && metric === "sepM") {
+                        expect(axis.range).toEqual([10 ** 0.5, 10 ** 6.2]);
+                        expect(logarithmic[i].layout[name].range).toEqual([0.5, 6.2]);
+                    } else {
+                        expect(axis.range[0]).toBe(0);
+                    }
                     expect(axis.range[1]).toBeGreaterThan(0);
                     expect(axis.range.every(Number.isFinite)).toBe(true);
                     expect(axis.dtick).toBeUndefined();
                 }
                 // Shapes always use data coordinates; annotation coordinates follow the axis scale.
-                const labels = figure.layout.annotations.filter((a) => a.text === "5% of range");
+                const labels = figure.layout.annotations.filter((a) => a.text === "5%");
                 for (const label of labels) {
                     expect(label.y).toBe(0.05);
                     const logLabel = logarithmic[i].layout.annotations.find((a) => a.text === label.text && a.yref === label.yref);
@@ -263,19 +268,22 @@ describe("log Error choice", () => {
         expect([...seen].sort()).toEqual([...errorKeys].sort());
     });
 
-    test("linear boxes preserve zeros and quartiles, and compute whiskers in the displayed scale", () => {
+    test("log axes default to raw-value whiskers and retain the optional axis-space rule", () => {
         const errors = [0, 1, 2, 3, 10];
         const selection = errors.map((error, i) => ({...rows[i], d_class: "balloon",
             d_durationSeconds: 20, d_errorDeg: 0, r_topRelSep: error}));
         const log = figErrorByClass(selection);
+        const logAxisFence = figErrorByClass(selection, {measure: makeMeasure({whiskerSpace: "axis"})});
         const linear = figErrorByClass(selection, {measure: makeMeasure({logError: false})});
         const logBox = log.data.find((t) => t.type === "box");
+        const logAxisBox = logAxisFence.data.find((t) => t.type === "box");
         const linearBox = linear.data.find((t) => t.type === "box");
         expect(linearBox.median).toEqual(logBox.median);
         expect(linearBox.q1).toEqual(logBox.q1);
         expect(linearBox.q3).toEqual(logBox.q3);
         expect(linearBox.upperfence).toEqual([3]);
-        expect(logBox.upperfence).toEqual([10]);
+        expect(logBox.upperfence).toEqual([3]);
+        expect(logAxisBox.upperfence).toEqual([10]);
         expect(linear.data.filter((t) => t.type === "scattergl").flatMap((t) => t.y)).toContain(0);
         expect(log.data.filter((t) => t.type === "scattergl").flatMap((t) => t.y)).not.toContain(0);
         expect(linear.layout.annotations.at(-1).text).not.toMatch(/log10|drawn at the floor/);
@@ -319,6 +327,12 @@ describe("one cell with the pointing error unknown: the All-folder run", () => {
         const ranking = buildAllFigures(rows).find((f) => f.key === "rankingCost");
         expect(ranking.layout.annotations.some((a) => String(a.text).includes("unstated"))).toBe(true);
         expect(rungLabel(null)).toBe("unstated");
+    });
+    test("pointing-error labels round away floating-point noise at seven decimal places", () => {
+        expect(rungLabel(0.020000000000000004)).toBe("0.02°");
+        expect(rungLabel(0.123456749)).toBe("0.1234567°");
+        expect(rungLabel(0.123456751)).toBe("0.1234568°");
+        expect(rungLabel(-Number.EPSILON)).toBe("0°");
     });
 });
 
@@ -490,7 +504,7 @@ describe("whose error, and in what unit", () => {
         const byLength = figErrorByLength(headingRows, {measure: heading});
         expect(byLength.layout.yaxis).toMatchObject({type: "linear", range: [0, 180], dtick: 25});
         expect(byLength.layout.yaxis2).toMatchObject({type: "linear", range: [0, 180], dtick: 25});
-        expect(byLength.layout.annotations.at(-1).text).toMatch(/on the values themselves/);
+        expect(byLength.layout.annotations.at(-1).text).toMatch(/computed on the raw values/);
         expect(byLength.layout.annotations.at(-1).text).not.toMatch(/log10|drawn at the floor/);
         const box = byLength.data.find((tr) => tr.type === "box");
         expect(box.median.every((v) => v >= 0 && v <= 180)).toBe(true);
@@ -499,6 +513,18 @@ describe("whose error, and in what unit", () => {
         expect(ERROR_METRICS.velocityMS.format(250)).toBe("250 m/s");
         expect(makeMeasure({metric: "relSep"}).needsLists).toBe(false);
         expect(measure.best(rows[3])).toBe(0.005);
+    });
+    test("box interval, whisker multiplier and whisker space flow into every box figure", () => {
+        const measure = makeMeasure({boxPercent: 80, whiskerK: 0.5, whiskerSpace: "raw"});
+        const figure = figErrorBySolver(rows, {measure});
+        const caption = figure.layout.annotations.at(-1).text.replace(/<br>/g, " ");
+        expect(measure).toMatchObject({boxPercent: 80, whiskerK: 0.5, whiskerSpace: "raw"});
+        expect(caption).toContain("middle 80% (10-90 percentiles)");
+        expect(caption).toContain("fences 0.5×the box span beyond the box, computed on the raw values");
+        const standard = figErrorBySolver(rows).data.find((trace) => trace.type === "box");
+        const changed = figure.data.find((trace) => trace.type === "box");
+        expect(changed.q1).not.toEqual(standard.q1);
+        expect(changed.q3).not.toEqual(standard.q3);
     });
     test("the tolerance figures keep a share of range, for whichever candidate is chosen", () => {
         const figure = figWithinTolerance(rows, {axis: "rung", measure: makeMeasure({metric: "sepM", subject: "Quadcopter"})});
@@ -510,6 +536,38 @@ describe("whose error, and in what unit", () => {
         expect([...figure.stats.solvers].sort()).toEqual(["Quadcopter", "Sky Lantern / Balloon"]);
         const dots = figure.data.find((t) => t.type === "scattergl");
         expect(dots.customdata.every((id) => Number.isInteger(id))).toBe(true);
+    });
+    test.each([false, true])("the solver figure adds an All Pointing Errors panel for sorted=%s", (sortByMedian) => {
+        const figure = figErrorBySolver(rows, {sortByMedian});
+        for (const cls of CLASSES) {
+            expect(figure.layout.annotations.some((a) =>
+                a.text === `${CLASS_LABEL[cls]}, All Pointing Errors`)).toBe(true);
+            const values = rows.filter((r) => r.d_class === cls)
+                .flatMap((r) => r.r_candidates.filter((c) => c.name === "Quadcopter").map((c) => c.relSep));
+            expect(figure.stats.medians[`all/${cls}/Quadcopter`]).toBeCloseTo(median(values), 12);
+        }
+        expect(figure.layout.annotations.at(-1).text.replace(/<br>/g, " "))
+            .toContain("All Pointing Errors pools all 2 available levels");
+    });
+    test.each([
+        ["ordinary", {}], ["sorted", {sortByMedian: true}], ["custom", {customOrder: true}],
+    ])("the %s solver figure keeps three class columns when there is one pointing-error level", (unused, options) => {
+        const single = figErrorBySolver(rows.filter((r) => r.d_errorDeg === 0), options);
+        const full = figErrorBySolver(rows, options);
+        expect(single.layout.annotations.slice(0, 3).map((a) => a.text)).toEqual(CLASSES.map((cls) =>
+            `${CLASS_LABEL[cls]}, 0° pointing error`));
+        expect(single.layout.xaxis.domain).toEqual(full.layout.xaxis.domain);
+        expect(single.layout.xaxis2.domain).toEqual(full.layout.xaxis2.domain);
+        expect(single.layout.xaxis3.domain).toEqual(full.layout.xaxis3.domain);
+        expect(single.layout.yaxis.domain).toEqual(single.layout.yaxis2.domain);
+        expect(single.layout.yaxis.domain).toEqual(single.layout.yaxis3.domain);
+        expect(single.layout.xaxis4).toBeUndefined();
+        expect(single.layout.height).toBe(456);
+        expect(full.layout.height).toBe(1128);
+        const singlePlotHeight = single.layout.height - single.layout.margin.t - single.layout.margin.b;
+        const fullPlotHeight = full.layout.height - full.layout.margin.t - full.layout.margin.b;
+        expect(single.layout.yaxis.domain[0] * singlePlotHeight).toBeCloseTo(92, 8);
+        expect(full.layout.yaxis7.domain[0] * fullPlotHeight).toBeCloseTo(92, 8);
     });
     test("the sorted solver figure follows each panel's median error and leaves the ordinary order unchanged", () => {
         const ordered = rows.map((r, i) => ({...r, r_candidates: [
@@ -523,6 +581,51 @@ describe("whose error, and in what unit", () => {
         expect(sorted.stats.solvers).toEqual(["Best median", "Middle", "First"]);
         expect(sorted.key).toBe("errorBySolverSorted");
         expect(sorted.layout.xaxis.ticktext).toEqual(["Best median", "Middle", "First"]);
+    });
+    test("the custom solver figure uses its fixed leading order and keeps other selected solvers in analysis order", () => {
+        const candidates = [
+            {key: "extraA", name: "Extra A"},
+            {key: "mc_250k", name: "Monte Carlo 250k (GPU)"},
+            {key: "mc_50k", name: "Monte Carlo 50k (GPU)"},
+            {key: "gfKalman", name: "Global Fit: Kalman Smoother"},
+            {key: "mc_500k", name: "Monte Carlo 500K (GPU)"},
+            {key: "gfCV", name: "Global Fit: Constant Velocity"},
+            {key: "mc_1M", name: "Monte Carlo 1M (GPU)"},
+            {key: "gfCA", name: "Global Fit: Constant Acceleration"},
+            {key: "mc_100k", name: "Monte Carlo 100k (GPU)"},
+            {key: "extraB", name: "Extra B"},
+        ];
+        const ordered = rows.map((r, i) => ({...r, r_candidates: candidates.map((c, j) => ({
+            ...c, relSep: 0.01 + i / 100000 + j / 10000, sepM: 10 + i + j,
+        }))}));
+        const custom = figErrorBySolver(ordered, {customOrder: true});
+        expect(custom.key).toBe("errorBySolverCustom");
+        expect(custom.layout.xaxis.ticktext).toEqual([
+            "ca", "cv", "kf", "mc_100k", "mc_1M", "mc_250k", "mc_500k", "mc_50k", "Extra A", "Extra B",
+        ]);
+        expect(custom.stats.solverOrders.every((order) => order.join("|") === custom.stats.solvers.join("|"))).toBe(true);
+
+        const withoutCA = ordered.map((r) => ({...r, r_candidates: r.r_candidates.filter((c) => c.key !== "gfCA")}));
+        expect(figErrorBySolver(withoutCA, {customOrder: true}).layout.xaxis.ticktext[0]).toBe("cv");
+    });
+    test("the solver boxes use compact publication styling", () => {
+        const figure = figErrorBySolver(rows, {customOrder: true});
+        const boxes = figure.data.filter((trace) => trace.type === "box");
+        const dots = figure.data.filter((trace) => trace.type === "scattergl");
+        expect(boxes.every((trace) => trace.width === 0.82)).toBe(true);
+        expect(boxes.every((trace) => trace.line.color === "#0b0b0b" && trace.line.width === 0.8)).toBe(true);
+        expect(boxes.every((trace) => trace.fillcolor.endsWith(",0.24)"))).toBe(true);
+        expect(dots.every((trace) => trace.opacity === 0.65)).toBe(true);
+        expect(figure.layout.boxgap).toBe(0.12);
+    });
+    test("the custom solver metre chart has fixed logarithmic and linear bounds", () => {
+        const logarithmic = figErrorBySolver(rows, {customOrder: true, measure: makeMeasure({metric: "sepM"})});
+        const linear = figErrorBySolver(rows, {customOrder: true,
+            measure: makeMeasure({metric: "sepM", logError: false})});
+        expect(logarithmic.layout.yaxis).toMatchObject({type: "log", range: [0.5, 6.2]});
+        expect(linear.layout.yaxis).toMatchObject({type: "linear", range: [10 ** 0.5, 10 ** 6.2]});
+        expect(logarithmic.layout.annotations.at(-1).text.replace(/<br>/g, " "))
+            .toContain("fixed from 10^0.5 m to 10^6.2 m");
     });
     test("the sorted solver figure orders each panel from the medians drawn in that panel", () => {
         const panelRows = [
@@ -540,6 +643,7 @@ describe("whose error, and in what unit", () => {
         expect(sorted.layout.xaxis2.ticktext).toEqual(["B", "A"]);
         expect(sorted.stats.solverOrders[0]).toEqual(["A", "B"]);
         expect(sorted.stats.solverOrders[1]).toEqual(["B", "A"]);
+        expect(sorted.layout.annotations.some((a) => String(a.text).includes("All Pointing Errors"))).toBe(false);
     });
     test("the registry hands the choice to every error figure, and to no other", () => {
         const measure = makeMeasure({metric: "sepM", subject: "Quadcopter"});
@@ -548,7 +652,7 @@ describe("whose error, and in what unit", () => {
         const plain = statsOf(buildAllFigures(rows));
         const chosen = statsOf(buildAllFigures(rows, {measure}));
         const errorKeys = ["errorByLength", "errorByTrueDistance", "errorByRung", "withinByLength", "withinByRung", "errorBySolver",
-            "errorBySolverSorted", "absoluteErrorVsTrueRange", "errorVsGeometry", "rankingCost"];
+            "errorBySolverSorted", "errorBySolverCustom", "absoluteErrorVsTrueRange", "errorVsGeometry", "rankingCost"];
         expect(Object.keys(plain)).toEqual(expect.arrayContaining(["errorByLength", "withinByRung", "verdictMix"]));
         for (const key of Object.keys(plain)) {
             expect([key, plain[key] === chosen[key]]).toEqual([key, !errorKeys.includes(key)]);
@@ -567,7 +671,9 @@ describe("whose error, and in what unit", () => {
         const boxes = figure.data.filter((t) => t.type === "box");
         expect(Math.max(...boxes.flatMap((t) => [...t.q3, ...t.upperfence]))).toBeLessThanOrEqual(ceiling);
         expect(figure.layout.annotations.at(-1).text.replace(/<br>/g, " "))
-            .toContain("and 1 above a thousand times the mean true range at the ceiling");
+            // The value appears once in its individual-error panel and once in
+            // the pooled All Pointing Errors panel.
+            .toContain("and 2 above a thousand times the mean true range at the ceiling");
         // a figure with nothing past the ceiling says nothing about it
         expect(figErrorBySolver(rows).layout.annotations.at(-1).text).not.toMatch(/ceiling/);
     });
@@ -594,7 +700,7 @@ describe("whose error, and in what unit", () => {
                     trace.customdata.forEach((id, i) => {
                         const row = varied[id];
                         const name = subject === "top" ? row.r_topName : subject === "best" ? row.r_bestName : subject;
-                        if (figure.key === "errorBySolver" || figure.key === "errorBySolverSorted") {
+                        if (["errorBySolver", "errorBySolverSorted", "errorBySolverCustom"].includes(figure.key)) {
                             expect(row.r_candidates.some((c) => trace.text[i] === `${row.base}<br>Solver: ${c.name}`)).toBe(true);
                         } else {
                             expect(trace.text[i]).toContain(`${row.base}<br>Solver: ${name}`);
@@ -605,7 +711,8 @@ describe("whose error, and in what unit", () => {
             }
         }
         expect([...seen]).toEqual(expect.arrayContaining(["errorByClass", "errorByLength", "errorByTrueDistance",
-            "absoluteErrorVsTrueRange", "errorByRung", "errorVsGeometry", "errorBySolver", "errorBySolverSorted"]));
+            "absoluteErrorVsTrueRange", "errorByRung", "errorVsGeometry", "errorBySolver", "errorBySolverSorted",
+            "errorBySolverCustom"]));
     });
 });
 
