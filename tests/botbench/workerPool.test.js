@@ -1,5 +1,10 @@
-import {BotBenchWorkerPool, botBenchConcurrency, createBotBenchYield, runBotBenchQueue,
-    transferableBuffers} from "../../src/analysis/BotBenchWorkerPool";
+import {
+    botBenchConcurrency,
+    BotBenchWorkerPool,
+    createBotBenchYield,
+    runBotBenchQueue,
+    transferableBuffers
+} from "../../src/analysis/BotBenchWorkerPool";
 
 function fakeWorkers() {
     const workers = [];
@@ -118,6 +123,17 @@ test("concurrency leaves a logical core for the UI and caps large machines", () 
     expect(botBenchConcurrency(2, 14)).toBe(2);
     expect(botBenchConcurrency(128, 128)).toBe(16);
     expect(botBenchConcurrency(128, 1)).toBe(1);
+});
+
+test("a worker limit reduces parallel work while respecting the file and CPU limits", () => {
+    expect(botBenchConcurrency(128, 24, 2)).toBe(2);
+    expect(botBenchConcurrency(128, 24, 4)).toBe(4);
+    expect(botBenchConcurrency(1, 24, 4)).toBe(1);
+    expect(botBenchConcurrency(128, 2, 4)).toBe(1);
+    expect(botBenchConcurrency(128, 128, 64)).toBe(16);
+    for (const invalid of [0, -1, NaN, Infinity]) {
+        expect(botBenchConcurrency(128, 24, invalid)).toBe(1);
+    }
 });
 
 test("an unexpected queue error waits for active jobs before rejecting", async () => {
