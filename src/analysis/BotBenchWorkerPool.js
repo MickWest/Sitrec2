@@ -1,6 +1,8 @@
 /** Bounded worker scheduling. No scene or UI imports; also usable by benchmarks. */
-export function botBenchConcurrency(count, cores = globalThis.navigator?.hardwareConcurrency ?? 2) {
-    return Math.max(1, Math.min(count, 16, Number.isFinite(cores) ? Math.max(1, Math.floor(cores) - 1) : 1));
+export function botBenchConcurrency(count, cores = globalThis.navigator?.hardwareConcurrency ?? 2, maxWorkers = 16) {
+    const limit = Number.isFinite(maxWorkers) ? Math.max(1, Math.floor(maxWorkers)) : 1;
+    return Math.max(1, Math.min(count, 16, limit,
+        Number.isFinite(cores) ? Math.max(1, Math.floor(cores) - 1) : 1));
 }
 
 /** Share one UI yield across queue lanes, and only after a frame's work. */

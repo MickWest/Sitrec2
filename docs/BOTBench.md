@@ -111,6 +111,12 @@ group.
 
 ### The controls row
 
+- **Max workers** — limit how many files are processed at once: 1, 2, 4, 8 or
+  16, with a default of 4. The choice is remembered in this browser. Fewer
+  workers reduce memory pressure but may take longer; try 2 if a long run has
+  exhausted memory. The actual count also depends on available CPU cores and
+  whether fits are already cached. The limit applies to simultaneous file reads
+  too. Changing it preserves cache reuse and does not change analysis options.
 - **Recursive** — descend into subfolders of a chosen or dropped folder (on by
   default). The folder you explicitly hand over is always scanned; the checkbox
   only controls whether folders *inside* it are. Where a folder holds `All/`,
@@ -273,6 +279,13 @@ settings.
 The status line narrates the run — which file is being analysed, and, when
 done, how many results are in the table. The progress bar spans the queued
 files.
+
+Where the browser exposes it, **page JS heap** reports the page's JavaScript
+memory against its heap limit. It excludes analysis workers and other browser
+memory, so a low value does not rule out a memory-related browser crash. On
+Windows, check Task Manager's **Performance → Memory → Committed** used/limit
+figures to see system-wide memory commitments; see
+[Microsoft's page-file explanation](https://learn.microsoft.com/en-us/troubleshoot/windows-client/performance/introduction-to-the-page-file).
 
 ### The summary tiles
 

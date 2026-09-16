@@ -109,6 +109,11 @@ RUN sed -i 's/^Listen 80$/Listen ${SITREC_LISTEN_PORT}/' /etc/apache2/ports.conf
 COPY docker/security-headers.conf /etc/apache2/conf-available/sitrec-security-headers.conf
 RUN a2enmod headers && a2enconf sitrec-security-headers
 
+# Browser caching by file name: hashed bundles for a year, the fixed-name startup
+# files checked on every load. Also needs mod_headers, enabled above.
+COPY docker/cache-headers.conf /etc/apache2/conf-available/sitrec-cache-headers.conf
+RUN a2enconf sitrec-cache-headers
+
 COPY docker/entrypoint.sh /usr/local/bin/sitrec-entrypoint.sh
 RUN chmod +x /usr/local/bin/sitrec-entrypoint.sh
 

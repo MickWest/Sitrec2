@@ -1,12 +1,29 @@
 /** @jest-environment jsdom */
-import {webcrypto, createHash} from "node:crypto";
+import {createHash, webcrypto} from "node:crypto";
 import {TextEncoder} from "node:util";
-import {analyseEntryWithCache, analyzeEntries, collectFsEntry, findVersionStaleEntries, flushDirCache,
-    gatherCachedUnits, loadDirCache, openBotBenchDialog, pairSidecars, walkDirectoryHandle,
-    writeDirCache} from "../../src/analysis/BotBenchUI";
+import {
+    analyseEntryWithCache,
+    analyzeEntries,
+    collectFsEntry,
+    findVersionStaleEntries,
+    flushDirCache,
+    gatherCachedUnits,
+    loadDirCache,
+    openBotBenchDialog,
+    pairSidecars,
+    walkDirectoryHandle,
+    writeDirCache
+} from "../../src/analysis/BotBenchUI";
 import {entryFileHashes, readEntrySidecars} from "../../src/analysis/BotBenchEntryFiles";
-import {CACHE_BLOB_DIR, CACHE_FILENAME, combinedHash, packUnitBlob, recordUnit, unitBlobName,
-    unitRecord} from "../../src/analysis/BotBenchCacheIndex";
+import {
+    CACHE_BLOB_DIR,
+    CACHE_FILENAME,
+    combinedHash,
+    packUnitBlob,
+    recordUnit,
+    unitBlobName,
+    unitRecord
+} from "../../src/analysis/BotBenchCacheIndex";
 import {selectionKey, UNIT_VERSIONS} from "../../src/analysis/BotBenchSolvers";
 import {BotBenchAnalysisPool} from "../../src/analysis/BotBenchAnalysisPool";
 
@@ -217,6 +234,59 @@ test("cached rows need one content read, no analysis, and retain no indexes afte
 });
 
 const notFound = () => Object.assign(new Error("missing"), {name: "NotFoundError"});
+
+test("the saved worker limit bounds file reads and leaves cached rows reusable", async () => {
+    const storageKey = "botbench.maxWorkers";
+    const previousLimit = localStorage.getItem(storageKey);
+    const cores = jest.spyOn(navigator, "hardwareConcurrency", "get").mockReturnValue(24);
+    const previousWorker = globalThis.Worker;
+    globalThis.Worker = jest.fn(() => { throw new Error("Cached rows must not start workers"); });
+    localStorage.removeItem(storageKey);
+    let state = openBotBenchDialog();
+    let running;
+    try {
+        expect(state.workerLimitInput.value).toBe("4");
+        state.workerLimitInput.value = "2";
+        state.workerLimitInput.dispatchEvent(new Event("change"));
+        state.closeButton.onclick();
+        state = openBotBenchDialog();
+        expect(state.workerLimitInput.value).toBe("2");
+        state.solvers = options.solvers;
+        let previousOptions;
+        for (const limit of [2, 1]) {
+            state.workerLimitInput.value = String(limit);
+            const folder = cachedFolder(`limit-${limit}`, 6);
+            let active = 0, peak = 0;
+            for (const source of folder.sources) {
+                const getFile = source.getFile;
+                source.getFile = async () => {
+                    peak = Math.max(peak, ++active);
+                    await new Promise(resolve => setTimeout(resolve, 5));
+                    active--;
+                    return getFile();
+                };
+            }
+            running = analyzeEntries(state, folder.sources);
+            expect(state.workerLimitInput.disabled).toBe(true);
+            expect(state.workerPool.workers.size).toBe(limit);
+            await running;
+            expect(peak).toBe(limit);
+            expect(state.workerLimitInput.disabled).toBe(false);
+            expect(state.entries.every(entry => entry.status === "done" && entry.rowReused)).toBe(true);
+            const rowOptions = state.entries.at(-1).options;
+            if (previousOptions) expect(rowOptions).toEqual(previousOptions);
+            previousOptions = rowOptions;
+        }
+        expect(globalThis.Worker).not.toHaveBeenCalled();
+    } finally {
+        await running;
+        state.closeButton.onclick();
+        cores.mockRestore();
+        globalThis.Worker = previousWorker;
+        if (previousLimit === null) localStorage.removeItem(storageKey);
+        else localStorage.setItem(storageKey, previousLimit);
+    }
+});
 
 test("a file whose index entry was lost is found again by its blob names", async () => {
     const hashes = {csv: digest("csv")};

@@ -23,11 +23,13 @@
  */
 
 import {saveAs} from "file-saver";
-import {setRenderOne} from "../Globals";
+import {NodeMan, setRenderOne} from "../Globals";
 import {
-    isAbortLikeError, showLocalFolderAccessUnsupportedMessage, supportsDirectoryPicker,
+    isAbortLikeError,
+    showLocalFolderAccessUnsupportedMessage,
+    supportsDirectoryPicker,
 } from "../CFileManagerUtils";
-import {showError, showConfirm} from "../showError";
+import {showConfirm, showError} from "../showError";
 import {openResultChartsForEntries} from "./charts/RockV3ChartsUI";
 import {apertureFromPositions, candidateErrorsFrom, sensorTurnFromPositions} from "./charts/BotBenchChartRows";
 import {showTimingAnalysis} from "../showTimingAnalysis";
@@ -36,38 +38,85 @@ import {par} from "../par";
 import {showTraverseGallery} from "../AnalyzeTraverse";
 import {METERS_PER_NM} from "../TraverseAnalysis";
 import {
-    botBenchExplicitFileRole, botBenchFileRole, botBenchPairingKeys, interchangeFoldersToSkip,
-    buildScenarioNotes, ingestBotBenchEntry, srtHasPointing,
-    ingestMISBRecords, sourceQualityGrade,
+    botBenchExplicitFileRole,
+    botBenchFileRole,
+    botBenchPairingKeys,
+    buildScenarioNotes,
+    ingestBotBenchEntry,
+    ingestMISBRecords,
+    interchangeFoldersToSkip,
+    sourceQualityGrade,
+    srtHasPointing,
 } from "./BotBenchIngest";
 import {longestUniformRun, measureAnchorRate} from "./BotBenchClock";
-import {putFileHandoff} from "../FileHandoff";
 import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBenchRunner";
 import {botBenchConcurrency, createBotBenchYield, runBotBenchQueue} from "./BotBenchWorkerPool";
 import {BotBenchAnalysisPool} from "./BotBenchAnalysisPool";
 import {entryFileHashes, readEntrySidecars} from "./BotBenchEntryFiles";
-import {packForCache, unpackFromCache, sameFittedRow} from "./BotBenchCacheCodec";
+import {packForCache, sameFittedRow, unpackFromCache} from "./BotBenchCacheCodec";
 import {
+    allSolverIds,
+    describeSolvers,
+    isEverySolver,
+    normalizeSolvers,
+    planUnits,
     rowMemoStorable,
-    SOLVERS, allSolverIds, describeSolvers, isEverySolver, normalizeSolvers, planUnits, selectionKey,
+    selectionKey,
+    SOLVERS,
     unitVersionsFor,
 } from "./BotBenchSolvers";
 import {
-    CACHE_BLOB_DIR, CACHE_FILENAME, CACHE_SCHEMA, LEGACY_UNITS, adoptRecord, combinedHash, emptyIndex,
-    indexTextChunks, indexWritePolicy, isLegacyEntry, isReadableIndex, legacyUnitsFromBattery, normalizeIndex,
-    packUnitBlob, recordRowMemo, recordUnit,
-    rowMemoUsable, unitBlobName, unitMetaFromBlob, unitRecord, unitRecordFromMeta,
-    unitRecordUsable, unitResultAgrees, valuesAgree, elapsedFromUnits, describeDuration, formatBytes, measureCacheOnDisk, recordedFitMs,
+    adoptRecord,
+    CACHE_BLOB_DIR,
+    CACHE_FILENAME,
+    CACHE_SCHEMA,
+    combinedHash,
+    describeDuration,
+    elapsedFromUnits,
+    emptyIndex,
+    formatBytes,
+    indexTextChunks,
+    indexWritePolicy,
+    isLegacyEntry,
+    isReadableIndex,
+    LEGACY_UNITS,
+    legacyUnitsFromBattery,
+    measureCacheOnDisk,
+    normalizeIndex,
+    packUnitBlob,
+    recordedFitMs,
+    recordRowMemo,
+    recordUnit,
+    rowMemoUsable,
+    unitBlobName,
+    unitMetaFromBlob,
+    unitRecord,
+    unitRecordFromMeta,
+    unitRecordUsable,
+    unitResultAgrees,
+    valuesAgree,
 } from "./BotBenchCacheIndex";
 import {
-    runImageCapture, captureScenarioImage, captureViewBlob, waitForSettle, clearImportedTracks,
-    captureEntryImage, createCaptureQueue, captureQueueIdle, imageDirFor, imageNameFor, imageStaleness,
+    captureEntryImage,
+    captureQueueIdle,
+    captureScenarioImage,
+    captureViewBlob,
+    clearImportedTracks,
+    createCaptureQueue,
+    imageDirFor,
+    imageNameFor,
+    imageStaleness,
+    runImageCapture,
+    waitForSettle,
 } from "./BotBenchImageCapture";
 import {
-    botHandoffFrame, candidateNotes, handoffCandidateCSVs, lookCameraFraming, openHandoffWindow,
+    botHandoffFrame,
+    candidateNotes,
+    handoffCandidateCSVs,
+    lookCameraFraming,
+    openHandoffWindow,
 } from "../TraverseHandoff";
 import {CNodeCustomGraphView} from "../nodes/CNodeCustomGraphView";
-import {NodeMan} from "../Globals";
 import {WindowedTableBody} from "./WindowedTableBody";
 
 let activeDialog = null;
@@ -2201,6 +2250,27 @@ function createDialog() {
         + "to the candidates, the ranking or the verdict, which the cache cannot see.", false);
     const solversButton = makeButton("Solvers…", "#5c6bc0");
 
+    const workerLabel = document.createElement("label");
+    workerLabel.style.cssText = "display: inline-flex; align-items: center; gap: 6px; font-size: 13px;";
+    workerLabel.title = "Maximum files processed at once. Fewer workers use less memory but may take longer. "
+        + "Start with 2 on a machine that has run out of memory. The limit also applies to file reads; "
+        + "the actual worker count depends on available CPU cores and whether fits are cached. "
+        + "Changing this limit keeps existing cached results usable.";
+    const workerLimitInput = document.createElement("select");
+    workerLimitInput.setAttribute("aria-label", "Max workers");
+    workerLimitInput.style.cssText = "font-size: 13px; padding: 3px;";
+    for (const count of WORKER_LIMITS) {
+        const option = document.createElement("option");
+        option.value = String(count);
+        option.textContent = String(count);
+        workerLimitInput.appendChild(option);
+    }
+    workerLimitInput.value = String(loadStoredWorkerLimit());
+    workerLimitInput.onchange = () => {
+        try { localStorage.setItem(WORKER_LIMIT_STORAGE_KEY, workerLimitInput.value); } catch (e) { /* private mode */ }
+    };
+    workerLabel.append(document.createTextNode("Max workers"), workerLimitInput);
+
     const anchorLabel = document.createElement("label");
     anchorLabel.title = "The start range the search bracket is centred on, in nautical miles — "
         + "the SAME for every file in the run. The interactive analysis uses the Tgt Start Dist "
@@ -2234,7 +2304,7 @@ function createDialog() {
 
     for (const el of [recursive.label, families.label, mcSweep.label, gpuSearch.label, screenshots.label,
         rebuildRows.label,
-        anchorLabel, solversButton,
+        anchorLabel, workerLabel, solversButton,
         chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
         cancelButton, clearButton,
         flushCacheButton, exportJsonButton, exportCsvButton, summaryButton, chartsButton]) {
@@ -2376,7 +2446,7 @@ function createDialog() {
         gpuSearchInput: gpuSearch.input,
         screenshotsInput: screenshots.input,
         rebuildRowsInput: rebuildRows.input,
-        anchorInput,
+        anchorInput, workerLimitInput,
         // The solvers the next run uses: the last choice, remembered across sessions.
         solvers: loadStoredSolvers(),
         solversButton,
@@ -3180,6 +3250,7 @@ function refreshControls(state) {
     state.screenshotsInput.disabled = running;
     state.rebuildRowsInput.disabled = running;
     state.anchorInput.disabled = running;
+    state.workerLimitInput.disabled = running;
     setButtonDisabled(state.solversButton, running);
     refreshSolversButton(state);
 }
@@ -3230,8 +3301,21 @@ function runOptions(state) {
 }
 
 // ---------------------------------------------------------------------------
-// the solver choice
+// execution limit and solver choice
 // ---------------------------------------------------------------------------
+
+const WORKER_LIMIT_STORAGE_KEY = "botbench.maxWorkers";
+const WORKER_LIMITS = [1, 2, 4, 8, 16];
+// A conservative starting point, not a measurement of available system memory.
+const DEFAULT_WORKER_LIMIT = 4;
+
+function loadStoredWorkerLimit() {
+    try {
+        const value = Number(localStorage.getItem(WORKER_LIMIT_STORAGE_KEY));
+        if (WORKER_LIMITS.includes(value)) return value;
+    } catch (e) { /* private mode */ }
+    return DEFAULT_WORKER_LIMIT;
+}
 
 const SOLVERS_STORAGE_KEY = "botbench.solvers";
 
@@ -3365,7 +3449,7 @@ function pageMemoryNote() {
     const m = globalThis.performance?.memory;
     if (!m || !(m.jsHeapSizeLimit > 0)) return "";
     const gb = (bytes) => (bytes / 1073741824).toFixed(1);
-    return `, page memory ${gb(m.usedJSHeapSize)} of ${gb(m.jsHeapSizeLimit)} GB`;
+    return `, page JS heap ${gb(m.usedJSHeapSize)} of ${gb(m.jsHeapSizeLimit)} GB (excludes workers and browser memory)`;
 }
 
 function makeYield() {
@@ -3435,7 +3519,10 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
     state.shotQueue = shotQueue;
     const yieldToDOM = makeYield();
 
-    const concurrency = typeof Worker === "undefined" ? 1 : botBenchConcurrency(found.length);
+    // Scheduling is separate from analysis options: lowering the memory pressure
+    // must not invalidate any fit or remembered row in the cache.
+    const workerLimit = Number(state.workerLimitInput.value) || DEFAULT_WORKER_LIMIT;
+    const concurrency = typeof Worker === "undefined" ? 1 : botBenchConcurrency(found.length, undefined, workerLimit);
     const pool = new BotBenchAnalysisPool(concurrency);
     state.workerPool = pool;
     const remainingByDirectory = new Map();
