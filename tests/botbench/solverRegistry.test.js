@@ -10,9 +10,9 @@ import {
 import {MONTE_CARLO_IDS, MONTE_CARLO_PRESETS, MONTE_CARLO_SEED} from "../../src/MonteCarloLOS";
 
 describe("the solver list", () => {
-    test("names the original candidates and six independent GPU Monte Carlo presets", () => {
-        expect(SOLVERS).toHaveLength(22);
-        expect(defaultSolverIds()).toHaveLength(16);
+    test("names the default candidates and six independent GPU Monte Carlo presets", () => {
+        expect(SOLVERS).toHaveLength(23);
+        expect(defaultSolverIds()).toHaveLength(17);
         expect(allSolverIds().filter(id => id.startsWith("mc_"))).toEqual(MONTE_CARLO_IDS);
         expect(allSolverIds()).toContain("gfKalman");
         expect(solverById("gfKalman").name).toBe("Global Fit: Kalman Smoother");
@@ -39,8 +39,8 @@ describe("the solver list", () => {
         expect(isEverySolver(null)).toBe(false);
         expect(isEverySolver(allSolverIds())).toBe(true);
         expect(isEverySolver(["gfKalman"])).toBe(false);
-        expect(describeSolvers(["gfKalman"])).toBe("1 of 22 solvers");
-        expect(describeSolvers(null)).toBe("16 of 22 solvers");
+        expect(describeSolvers(["gfKalman"])).toBe("1 of 23 solvers");
+        expect(describeSolvers(null)).toBe("17 of 23 solvers");
     });
 });
 

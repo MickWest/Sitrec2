@@ -117,6 +117,11 @@ export async function runBotBenchAnalysis(record, {
     const t0 = Date.now();
     const {dataset, originLat, originLon, groundZ} = record;
 
+    // Flat-plane benchmark records know their ground exactly. Fits that use
+    // an altitude band need it before the battery runs; the gallery also reads
+    // the same frozen value later when it draws its ground plane.
+    dataset.groundLevelM = groundZ;
+
     validateBotBenchRecord(record);
     if (isCancelled()) throw new Error("cancelled");
     const {declaredMaxM, gridMaxM} = botBenchRangeLimits(record);
@@ -153,10 +158,6 @@ export async function runBotBenchAnalysis(record, {
     // the input hashes, the analysis options AND the app version all match — so
     // the replay recomputes the identical values over the top of them.
     const cacheableBattery = cacheableBotBenchBattery(battery);
-
-    // The green ground plane in the 3D graphs. Flat plane, so this is exact
-    // rather than sampled — no terrain can arrive later and move it.
-    dataset.groundLevelM = groundZ;
 
     // --- Truth scoring, strictly after the fact -----------------------------
     const truth = record.truth && record.truth.usable ? record.truth : null;

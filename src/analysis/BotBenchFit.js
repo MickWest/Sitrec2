@@ -125,6 +125,7 @@ export async function fitBotBenchRecord(record, {
     onProgress = null, isCancelled = () => false,
 } = {}) {
     const {dataset, originLat, originLon, groundZ} = record;
+    dataset.groundLevelM = groundZ;
     validateBotBenchRecord(record);
     const include = includeSetFor(solvers, {mcOrderSweep});
     const plan = planUnits(solvers, {solutionFamilies});

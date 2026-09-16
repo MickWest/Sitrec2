@@ -468,7 +468,7 @@ export function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, win
     };
 }
 
-export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured,
+export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible, aircraft, lantern, lanternMeasured,
     quad, satellite, slowProfile, slowOpts, originLat, originLon, provenance = null,
     failures = null, windPrior = null, mcSweep = null, monteCarlo = null, droneCtl = null,
     // The Kalman smoother fit the battery seeds the physics models from. It
@@ -676,7 +676,59 @@ export function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lanter
         });
     }
 
-    // 3. Least-maneuvering plausible path — smoothest ray-riding trajectory.
+    // 3. Horizontal constant-speed manoeuvres — find the interior altitude
+    //    valley where a broadly smoothed level track changes horizontal speed
+    //    least. Turns are allowed; the invariant is speed magnitude.
+    if (!has("horizontalSpeed")) {
+        // not asked for
+    } else if (horizontalSpeed && !horizontalSpeed.failed) {
+        const track = horizontalSpeed.track;
+        list.push({
+            key: "horizontalSpeed",
+            name: "Horizontal Constant Speed Maneuvers",
+            subtitle: "Level flight; turns allowed, horizontal speed held",
+            color: "#ef9b45",
+            track,
+            metricsFull: trackMetrics(dataset, track),
+            errDeg: horizontalSpeed.errDeg,
+            params: {
+                range: horizontalSpeed.startDist,
+                altZ: horizontalSpeed.altZ,
+                score: horizontalSpeed.score,
+                meanSpeed: horizontalSpeed.meanSpeed,
+                medianSpeed: horizontalSpeed.medianSpeed,
+                smoothSeconds: horizontalSpeed.smoothSeconds,
+                velocitySeconds: horizontalSpeed.velocitySeconds,
+                altitudeMin: horizontalSpeed.altitudeMin,
+                altitudeMax: horizontalSpeed.altitudeMax,
+                platformAltitude: horizontalSpeed.platformAltitude,
+                platformGuard: horizontalSpeed.platformGuard,
+                alternativeScore: horizontalSpeed.alternativeScore,
+                localMinima: horizontalSpeed.localMinima,
+                errFloor,
+                motionFrame: "ground",
+            },
+            notes: `Speculative altitude inference for a level target whose horizontal speed stays constant `
+                + `while it turns. It selects an interior minimum of broadly smoothed speed variation at `
+                + `${horizontalSpeed.altZ.toFixed(0)} m; the upper ${(100 * horizontalSpeed.platformGuard).toFixed(0)}% `
+                + `of the ground-to-platform altitude band is excluded to reject the mathematical collapse `
+                + `onto the platform track.`,
+        });
+    } else {
+        list.push({
+            key: "horizontalSpeed",
+            name: "Horizontal Constant Speed Maneuvers",
+            subtitle: "Level flight; turns allowed, horizontal speed held",
+            color: "#ef9b45",
+            track: null,
+            metricsFull: null,
+            errDeg: NaN,
+            params: {},
+            notes: `Fit failed — ${horizontalSpeed?.failureReason ?? "no distinct interior altitude valley was found"}.`,
+        });
+    }
+
+    // 4. Least-maneuvering plausible path — smoothest ray-riding trajectory.
     //    Two-stage: geometry-decisive scenes pick the range purely by
     //    smoothness; narrow-baseline scenes fall back to the soft speed target.
     if (has("plausible") && plausible && plausible.track) {

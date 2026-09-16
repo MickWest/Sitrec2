@@ -73,11 +73,17 @@ test("reports interpolation and reference metrics even without a reference smoot
 test("summary reports actual finite-difference and spline spans and escapes source text", () => {
     const ds = {n: 301, fps: 30};
     const inputs = [{source: '<img src=x onerror="bad()">', roles: ["Reference"], method: "None", status: "off", duration: "0 s", detail: ""}];
-    const result = captureAnalysisFiltering(ds, [{key: "constAlt", track: []}, {key: "gfKalman", track: []}], inputs, [], {processNoise: 0.0001, measurementNoise: 1});
+    const result = captureAnalysisFiltering(ds, [
+        {key: "constAlt", track: []},
+        {key: "horizontalSpeed", track: [], params: {smoothSeconds: 12, velocitySeconds: 5}},
+        {key: "gfKalman", track: []},
+    ], inputs, [], {processNoise: 0.0001, measurementNoise: 1});
     const metrics = result.rows.find(x => x.source === "Analysis metrics");
     expect(metrics.accelerationDurationSeconds).toBe(4 * metricSmoothingWindow(301, 30) / 30);
     const K = trajectorySmoothingSettings(301, 30).K;
     expect(result.rows.find(x => x.source === "Constant altitude").detail).toContain(`${K} control points`);
+    expect(result.rows.find(x => x.source === "Horizontal constant speed maneuvers").duration)
+        .toContain("12 s position average");
     expect(result.rows.find(x => x.source === "Kalman smoother").durationSeconds).toBe(10);
     const html = filteringSummaryHTML(result);
     expect(html).toContain("&lt;img");

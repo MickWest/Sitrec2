@@ -269,7 +269,7 @@ describe("a row built from stored units equals a fresh one", () => {
     });
 
     test("a schema-2 blob split into units gives the same row, with the cheap units refitted", () => {
-        expect(Object.keys(fromLegacy.units).sort()).toEqual(["constAlt", "droneControl", "kalman", "polySweep"]);
+        expect(Object.keys(fromLegacy.units).sort()).toEqual(["constAlt", "droneControl", "horizontalSpeed", "kalman", "polySweep"]);
         expect(diff(fresh.row, fromLegacy.row, "row")).toBeNull();
         for (let i = 0; i < fresh.results.hypotheses.length; i++) {
             expect(diff(fresh.results.hypotheses[i], fromLegacy.results.hypotheses[i],

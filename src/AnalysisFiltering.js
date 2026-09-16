@@ -200,6 +200,16 @@ export function captureAnalysisFiltering(dataset, hypotheses = [], inputFilters 
             duration: `Knot spacing ${seconds(spacing)}; fit uses the full ${seconds((n - 1) / fps)} window`,
             durationSeconds: (n - 1) / fps, detail: `${K} control points; curvature penalty ${Number(curvature.toPrecision(4))}. This is a global fit, not a moving average; the final path can miss the sightlines.`});
     }
+    if (keys.has("horizontalSpeed")) {
+        const h = hypotheses.find(x => x.key === "horizontalSpeed");
+        const duration = h?.params?.smoothSeconds ?? Math.max(2, Math.min(12, (n - 1) / fps / 10));
+        const velocity = h?.params?.velocitySeconds ?? Math.max(0.4, Math.min(5, duration * 5 / 12));
+        rows.push({source: "Horizontal constant speed maneuvers", roles: ["Altitude selection"],
+            status: "active", method: "Moving average and centered speed",
+            duration: `${seconds(duration)} position average; ${seconds(velocity)} speed baseline`,
+            durationSeconds: duration,
+            detail: "Each candidate level track is broadly averaged before its horizontal speed variation is scored. Heading changes are retained; edge samples outside the full averaging window are omitted."});
+    }
     if (keys.has("gfKalman")) rows.push({source: "Kalman smoother", roles: ["Candidate trajectory"], status: "active",
         method: "Forward filter + backward smoother", duration: `Full ${seconds((n - 1) / fps)} analysis window`,
         durationSeconds: (n - 1) / fps, detail: `No fixed averaging duration. Process noise ${kalman.processNoise ?? "as configured"}; measurement noise ${kalman.measurementNoise ?? "as configured"}.`});

@@ -41,6 +41,7 @@ import {assessBoundPins} from "./BoundedFit";
 import {metricSmoothingWindow, trajectorySmoothingSettings} from "./SmoothingPolicy";
 import {gpuDifferentialEvolution, resolveGpuBudget} from "./gpu/GpuDifferentialEvolution";
 import {buildAircraftKernel, GPU_AIRCRAFT_BUDGET} from "./gpu/AircraftCostKernel";
+import {RollingAveragePolyEdge} from "./smoothing";
 
 export const KNOTS_TO_MS = 0.514444;
 export const METERS_PER_NM = 1852;
@@ -759,6 +760,185 @@ export function fitConstAltitude(dataset, options = {}) {
         boundaryLimited: boundarySide !== null,
         boundarySide,
         metrics: summarizeMetrics(trackMetrics(dataset, best.smooth)),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Horizontal constant-speed manoeuvres
+// ---------------------------------------------------------------------------
+
+/**
+ * Broadly smooth a constant-altitude ray-intersection track, then measure how
+ * nearly its horizontal speed stays constant. This deliberately allows turns:
+ * heading can change freely, while speed magnitude is the fitted invariant.
+ *
+ * The defaults reproduce the diagnostic that exposed the altitude valley on
+ * 120-second drone clips: a 12-second moving average and a 5-second velocity
+ * baseline. Short clips scale both durations down with the clip length.
+ */
+export function horizontalConstantSpeedScore(dataset, track, options = {}) {
+    const {n, fps} = dataset;
+    if (!track || n < 20 || !(fps > 0)) return null;
+    const duration = (n - 1) / fps;
+    const smoothSeconds = options.smoothSeconds ?? Math.max(2, Math.min(12, duration / 10));
+    const velocitySeconds = options.velocitySeconds
+        ?? Math.max(0.4, Math.min(5, smoothSeconds * 5 / 12));
+    let window = Math.max(5, Math.round(smoothSeconds * fps));
+    window = Math.min(window, n - 3);
+    const xs = new Array(n), ys = new Array(n), zs = new Array(n);
+    for (let f = 0; f < n; f++) {
+        xs[f] = track[f * 3];
+        ys[f] = track[f * 3 + 1];
+        zs[f] = track[f * 3 + 2];
+    }
+    const sx = RollingAveragePolyEdge(xs, window, 1, 2, window);
+    const sy = RollingAveragePolyEdge(ys, window, 1, 2, window);
+    const sz = RollingAveragePolyEdge(zs, window, 1, 2, window);
+    const smoothed = new Float64Array(n * 3);
+    for (let f = 0; f < n; f++) {
+        smoothed[f * 3] = sx[f];
+        smoothed[f * 3 + 1] = sy[f];
+        smoothed[f * 3 + 2] = sz[f];
+    }
+
+    const h = Math.max(1, Math.round(velocitySeconds * fps / 2));
+    // Both endpoints of the centered velocity baseline must themselves have a
+    // complete position-average window. Otherwise the first/last h samples are
+    // dominated by polynomial edge extrapolation and can move or erase the
+    // broad altitude valley.
+    const trim = Math.max(Math.floor(window / 2) + h, h + 2);
+    const speeds = [];
+    const dt = 2 * h / fps;
+    for (let f = trim; f < n - trim; f++) {
+        const x0 = sx[f - h], y0 = sy[f - h];
+        const vx = (sx[f + h] - x0) / dt;
+        const vy = (sy[f + h] - y0) / dt;
+        const speed = Math.hypot(vx, vy);
+        if (Number.isFinite(speed)) speeds.push(speed);
+    }
+    if (speeds.length < 10) return null;
+    const ordered = speeds.slice().sort((a, b) => a - b);
+    const medianSpeed = ordered[Math.floor(ordered.length / 2)];
+    if (!(medianSpeed > 0.05)) return null;
+    let sum = 0, sum2 = 0;
+    for (const speed of speeds) {
+        sum += speed;
+        const d = speed - medianSpeed;
+        sum2 += d * d;
+    }
+    return {
+        score: Math.sqrt(sum2 / speeds.length) / medianSpeed,
+        meanSpeed: sum / speeds.length,
+        medianSpeed,
+        smoothSeconds,
+        velocitySeconds,
+        samples: speeds.length,
+        track: smoothed,
+    };
+}
+
+/**
+ * Solve for a level target that may turn and manoeuvre but holds horizontal
+ * speed. For each altitude, intersect every LOS with that constant-geodetic-
+ * altitude shell and score the broad variation of horizontal speed.
+ *
+ * A false global minimum always exists at platform altitude: the intersections
+ * collapse onto the platform's own usually-smooth track. The upper 20% of the
+ * ground-to-platform band is therefore excluded, and only INTERIOR score
+ * valleys are eligible. No interior valley means the altitude is unresolved.
+ */
+export function fitHorizontalConstantSpeed(dataset, options = {}) {
+    const {n, S, D} = dataset;
+    const groundAltitude = options.groundAltitude ?? dataset.groundLevelM ?? 0;
+    const platformAltitudes = [];
+    const down = [];
+    for (let f = 0; f < n; f++) {
+        const x = S[f * 3], y = S[f * 3 + 1];
+        platformAltitudes.push(S[f * 3 + 2] + (x * x + y * y) / (2 * EARTH_RADIUS_M));
+        down.push(D[f * 3 + 2]);
+    }
+    platformAltitudes.sort((a, b) => a - b);
+    down.sort((a, b) => a - b);
+    const platformAltitude = platformAltitudes[Math.floor(platformAltitudes.length / 2)];
+    const medianDown = down[Math.floor(down.length / 2)];
+    const platformGuard = options.platformGuard ?? 0.20;
+    const altitudeMin = options.altitudeMin ?? groundAltitude;
+    const altitudeMax = options.altitudeMax
+        ?? groundAltitude + (platformAltitude - groundAltitude) * (1 - platformGuard);
+    const samples = Math.max(25, Math.round(options.samples ?? 161));
+    const failed = (reason, extra = {}) => ({
+        failed: true, failureReason: reason, altitudeMin, altitudeMax,
+        platformAltitude, platformGuard, ...extra,
+    });
+    if (n < 20) return failed("too few frames");
+    if (!(altitudeMax > altitudeMin)) return failed("no altitude band below the platform");
+    if (!(medianDown < -1e-4)) return failed("the median sightline is not looking down");
+
+    const evalAltitude = (altitude) => {
+        const exact = traverseConstAltitude(dataset, altitude);
+        if (exact.badFrames > 0.02 * n) return {altitude, score: Infinity, exact};
+        const speed = horizontalConstantSpeedScore(dataset, exact.track, options);
+        return speed ? {altitude, score: speed.score, exact, speed} : {altitude, score: Infinity, exact};
+    };
+    const grid = new Array(samples);
+    for (let i = 0; i < samples; i++) {
+        grid[i] = evalAltitude(altitudeMin + (altitudeMax - altitudeMin) * i / (samples - 1));
+    }
+    const minima = [];
+    // Keep one full grid interval between a candidate and either search edge.
+    // A one-cell dip beside ground or the platform guard is still an endpoint
+    // solution at this resolution, not a resolved interior valley.
+    for (let i = 2; i < samples - 2; i++) {
+        if (grid[i].score < grid[i - 1].score && grid[i].score <= grid[i + 1].score) minima.push(i);
+    }
+    if (!minima.length) return failed("no interior constant-speed altitude valley");
+    let chosen = minima.reduce((best, i) => grid[i].score < grid[best].score ? i : best, minima[0]);
+
+    // Golden-section refinement stays inside the selected grid valley. It cannot
+    // jump to the platform collapse or another local minimum.
+    let lo = grid[chosen - 1].altitude, hi = grid[chosen + 1].altitude;
+    const phi = (Math.sqrt(5) - 1) / 2;
+    let x1 = hi - phi * (hi - lo), x2 = lo + phi * (hi - lo);
+    let r1 = evalAltitude(x1), r2 = evalAltitude(x2);
+    for (let pass = 0; pass < 12; pass++) {
+        if (r1.score <= r2.score) {
+            hi = x2; x2 = x1; r2 = r1;
+            x1 = hi - phi * (hi - lo); r1 = evalAltitude(x1);
+        } else {
+            lo = x1; x1 = x2; r1 = r2;
+            x2 = lo + phi * (hi - lo); r2 = evalAltitude(x2);
+        }
+    }
+    let best = grid[chosen];
+    for (const candidate of [r1, r2, evalAltitude((lo + hi) / 2)]) {
+        if (candidate.score < best.score) best = candidate;
+    }
+    const startDist = Math.hypot(
+        best.exact.track[0] - S[0],
+        best.exact.track[1] - S[1],
+        best.exact.track[2] - S[2]);
+    const otherScores = minima.filter(i => i !== chosen).map(i => grid[i].score).sort((a, b) => a - b);
+    return {
+        failed: false,
+        altZ: best.altitude,
+        startDist,
+        track: best.speed.track,
+        trackExact: best.exact.track,
+        errDeg: meanAngularError(dataset, best.speed.track) * 180 / Math.PI,
+        score: best.score,
+        meanSpeed: best.speed.meanSpeed,
+        medianSpeed: best.speed.medianSpeed,
+        smoothSeconds: best.speed.smoothSeconds,
+        velocitySeconds: best.speed.velocitySeconds,
+        speedSamples: best.speed.samples,
+        badFrames: best.exact.badFrames,
+        altitudeMin,
+        altitudeMax,
+        platformAltitude,
+        platformGuard,
+        localMinima: minima.map(i => ({altitude: grid[i].altitude, score: grid[i].score})),
+        alternativeScore: otherScores[0] ?? null,
+        metrics: summarizeMetrics(trackMetrics(dataset, best.speed.track)),
     };
 }
 

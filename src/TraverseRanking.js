@@ -309,7 +309,7 @@ export function settledButUnidentifiable(optimizer, allowedWideNames, requireMin
     return `objective settled; ${wide.join(", ")} unconstrained by this clip `
         + `(not measured — an identifiability limit, not an optimizer failure)`;
 }
-const RAY_KEYS = new Set(["constAir", "constAlt", "plausible", "saddle", "groundVehicle"]);
+const RAY_KEYS = new Set(["constAir", "constAlt", "horizontalSpeed", "plausible", "saddle", "groundVehicle"]);
 const GEOMETRIC_KEYS = new Set(["fixedPoint", "ground"]);
 
 export function hypothesisCategory(h) {

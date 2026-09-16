@@ -4,7 +4,7 @@
  * This is the sequence of fits that turns a dataset into a ranked hypothesis set:
  *
  *   constant-air-speed sweep -> fast/slow range profiles -> fixed-wing fit ->
- *   constant-altitude -> least-manoeuvring -> Kalman seed -> balloon (free wind,
+ *   constant-altitude -> horizontal constant-speed -> least-manoeuvring -> Kalman seed -> balloon (free wind,
  *   and optionally wind-pinned) -> quadcopter -> drone control inputs ->
  *   range bands -> polynomial-order sweep -> satellite -> buildHypotheses ->
  *   executive verdict
@@ -54,6 +54,7 @@
 import {
     fitAircraft,
     fitConstAltitude,
+    fitHorizontalConstantSpeed,
     fitPlausibleBestRange,
     isRangeUnobservable,
     KNOTS_TO_MS,
@@ -589,6 +590,16 @@ export async function runTraverseBattery({
         return fitConstAltitude(dataset, {rangeMin: caRangeMin, rangeMax: caRangeMax});
     });
 
+    const horizontalSpeed = await runUnit("horizontalSpeed", async (unitFailures) => {
+        await at(0.78, 0.01, "Fitting horizontal constant-speed manoeuvres...")(0);
+        const fit = fitHorizontalConstantSpeed(dataset);
+        if (fit.failed) {
+            unitFailures.push({method: "Horizontal Constant Speed Maneuvers",
+                error: fit.failureReason ?? "fit failed"});
+        }
+        return fit;
+    });
+
     const plausible = await runUnit("plausible", async () => {
         await at(0.79, 0.02, "Fitting least-maneuvering path...")(0);
         return fitPlausibleBestRange(dataset, {
@@ -990,7 +1001,7 @@ export async function runTraverseBattery({
     }
 
     const hypotheses = buildHypotheses({
-        dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
+        dataset, sweep, ca, horizontalSpeed, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
         slowProfile, slowOpts,
         originLat, originLon,
         provenance, failures, windPrior, mcSweep, monteCarlo, droneCtl, kalman,
@@ -1040,7 +1051,7 @@ export async function runTraverseBattery({
 
     return {
         sweep, resolvedRanges, fastProfile, slowProfile, slowOpts,
-        aircraft, ca, plausible, seedTrack, seedSource,
+        aircraft, ca, horizontalSpeed, plausible, seedTrack, seedSource,
         lantern, lanternMeasured, quad, droneCtl, kalman,
         families, mcSweep, polySweep, monteCarlo, missingGpuSolvers, satellite,
         hypotheses, executiveAssessment,

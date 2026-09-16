@@ -204,14 +204,15 @@ responsive as a short one. Exports, the summary and the charts still read every 
 
 ### Choosing the solvers
 
-A run starts with a dialog listing the twenty-two solvers, one checkbox each,
+A run starts with a dialog listing the twenty-three solvers, one checkbox each,
 grouped as the candidates are: the sightline fits (Constant Air Speed,
-Constant Altitude, Minimum Acceleration, Minimum Speed), the object models
+Constant Altitude, Horizontal Constant Speed Maneuvers, Minimum Acceleration,
+Minimum Speed), the object models
 (Fixed-Wing Aircraft, Sky Lantern / Balloon, Quadcopter, Drone with flown
 inputs), the geometry checks (Ground Object, the stationary point), and the
 curve fits (the Kalman smoother and the five polynomial orders), plus six
-GPU Monte Carlo presets. The original sixteen solvers are selected initially;
-the GPU Monte Carlo presets can be selected individually or with **All**.
+GPU Monte Carlo presets. The seventeen solvers outside that GPU group are
+selected initially; the GPU Monte Carlo presets can be selected individually or with **All**.
 The last choice is remembered, so the usual answer is one click.
 
 **Monte Carlo (GPU)** offers `mc_50k`, `mc_100k`, `mc_150k`, `mc_200k`,
@@ -572,8 +573,8 @@ code. So:
 - a new build never fits again what it can show it reproduces.
 
 The stored units are the constant-air-speed sweep, the two range profiles,
-the fixed-wing, constant-altitude and minimum-acceleration fits, the Kalman
-smoother, the balloon, quadcopter and drone-control fits, the polynomial
+the fixed-wing, constant-altitude, horizontal-constant-speed and
+minimum-acceleration fits, the Kalman smoother, the balloon, quadcopter and drone-control fits, the polynomial
 sweep, and the range bands when that option is on. The Ground Object and the
 stationary point are closed-form fits made while the candidates are built and
 need nothing stored. Each unit is a blob of its own, self-describing, and
@@ -629,9 +630,9 @@ on demand.
 
 A cache written before fits were stored per unit (one blob per file holding
 the whole battery) is still read. The first run over such a folder splits each
-old blob into the units it holds, fits the four cheap units it does not (the
-constant-altitude fit, the smoother, the drone control fit and the polynomial
-sweep, about three percent of a file's time), writes them all as units, and
+old blob into the units it holds, fits the five cheap units it does not (the
+constant-altitude fit, the horizontal-constant-speed fit, the smoother, the
+drone control fit and the polynomial sweep, about three percent of a file's time), writes them all as units, and
 removes the old blob. Nothing that took hours is fitted again on account of
 the change of layout. A folder opened read-only is read the same way, and
 nothing is written.

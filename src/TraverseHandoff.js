@@ -106,6 +106,7 @@ export const HANDOFF_TRACK_LINE_WIDTH_SCALE = 2;
 export const HANDOFF_TRACK_SLUGS = {
     constAir:      "constant_air_speed",
     constAlt:      "constant_altitude",
+    horizontalSpeed: "horizontal_speed",
     plausible:     "minimum_acceleration",
     saddle:        "minimum_speed",
     aircraft:      "fixed_wing_aircraft",

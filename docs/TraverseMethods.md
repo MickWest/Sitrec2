@@ -64,6 +64,7 @@ Check Fit Diagnostics before quoting any range from one — see "Fit conditionin
 | **Monte Carlo 1** ⚠ | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Randomly samples points along perturbed LOS rays (using a CV fit for focused per-frame range estimates), fits polynomials, and keeps the best trial. Robust to outliers. | Polynomial motion of the order you chose, and that your LOS Uncertainty matches the real pointing error | The range (CV-seeded). **This is not a posterior** — it keeps the single best trial, so the spread of trials is a function of your guessed uncertainty, not of the data |
 | **Monte Carlo 2** ⚠ | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Least-squares variant: perturbs all frames each trial and fits an overdetermined polynomial, giving more stable results at higher polynomial orders. | As above | As above |
 | **Physics** | 2 | Physics Model, Make/Model, Max Iterations, Wind, Initial Range | RK4 integration of a physical dynamics model — Sky Lantern (wind-drift kinematics with a rise/decay/sink life cycle), Fixed Wing Aircraft, or Quadcopter (hover-capable multirotor), chosen with the Physics Model selector — fit with differential evolution plus Nelder-Mead polish. Fixed-wing and quadcopter offer a make/model sub-selector (AUTO reports the closest match). | That the chosen model's dynamics apply, within the search bounds | **That the object was that thing.** A good residual means the sightlines are *compatible* with that model, not that the object is one. A fit that hits a bound is incomplete, not an exclusion |
+| **Horizontal Constant Speed Maneuvers** | 20 | (none) | Intersects the sightlines with candidate level surfaces and finds an interior altitude where the broadly smoothed horizontal speed varies least. The target may turn. | Level flight at nearly constant ground speed, a downward view, and enough platform motion to form a distinct altitude valley | The altitude when the score has no interior valley. The solver excludes the upper 20% of the ground-to-platform band because solutions collapse toward the platform track there. Treat it as speculative and inspect the speed graph |
 | **Minimum Acceleration** | 2 | Target Speed, Min/Max Dist limits | Finds the acceleration-minimizing path that follows the rays. Finds its own range — purely from geometry when the sensor's own motion pins it, falling back to Target Speed as a soft tiebreaker on narrow-baseline scenes. (Formerly "Plausible"; saved sitches still serialize the menu key "Global Fit: Plausible".) See [Traverse Analysis](TraverseAnalysis.md). | A smooth range profile; on flat geometry, a speed prior | The range **whenever the speed prior is doing the work** — the indicator tells you which case you are in. When it is, the range is a consequence of your Target Speed and must be reported that way |
 | **Minimum Speed** | 2 | (none) | Finds the slowest object consistent with the sightlines — the drifting-lantern / near-static reading. See [Traverse Analysis](TraverseAnalysis.md). | Nothing about the object type | That the object *was* slow. This is the **lower bound** of the family by construction, not an estimate |
 | **Stationary Point** | 2 | (none) | The single fixed world position that best fits every sightline (closed-form least squares). The object simply does not move — the live method behind the analysis gallery's "Stationary Point in Space" tile. No on-ray traverse can represent this: walking the rays at speed 0 still moves by the rays' closest-approach distance each frame, drifting and flagging over-speed (white) segments. | That the object did not move | That it was stationary — only how well a stationary object would fit |
@@ -208,6 +209,25 @@ Intersects each LOS ray with loaded terrain mesh geometry using Three.js raycast
 ### Global Fits
 
 All global fits operate in a local East-North-Up (ENU) coordinate system centered on the mean sensor position. The conversion from ECEF to ENU keeps numbers small and the flat-earth approximation valid for typical analysis scenes (< 100 km extent). Results are converted back to ECEF for display.
+
+#### Horizontal Constant Speed Maneuvers
+
+This speculative fit is intended for a level target that can turn while keeping
+roughly the same horizontal ground speed. It tests 161 candidate geodetic
+altitudes between the local ground and 80% of the way to the platform. At each
+altitude it intersects every sightline with the level surface, averages the
+position over 12 seconds on a 120-second clip, and measures horizontal speed
+over a 5-second baseline. Short clips scale those durations down. The selected
+answer is the lowest **interior** minimum of speed variation, refined between
+the neighboring samples.
+
+The interior-minimum and upper-band rules matter. As the candidate altitude
+approaches platform altitude, every intersection collapses toward the usually
+smooth platform track and can produce a false low score. A monotonic score with
+no interior valley therefore reports failure instead of returning an endpoint.
+The result is only meaningful when level, constant-speed motion is a justified
+assumption. Inspect the resulting speed graph and compare other interpretations
+before using the altitude.
 
 Unlike sequential traversals, global fits have no start distance parameter: every sightline in the window takes part in determining the whole trajectory. CV, CA and the polynomial fits solve all frames in one step; the Kalman Smoother propagates state frame to frame but is seeded from the all-frame CV fit and smoothed backward, so its output also depends on every frame.
 

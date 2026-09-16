@@ -55,6 +55,7 @@ import {MONTE_CARLO_IDS} from "./MonteCarloLOS";
 import {CNodeLOSFitPhysics} from "./nodes/CNodeLOSFitPhysics";
 import {CNodeLOSFitPlausible} from "./nodes/CNodeLOSFitPlausible";
 import {CNodeLOSFitMinSpeed} from "./nodes/CNodeLOSFitMinSpeed";
+import {CNodeLOSFitHorizontalConstantSpeed} from "./nodes/CNodeLOSFitHorizontalConstantSpeed";
 import {CNodeLOSFitWindTracer} from "./nodes/CNodeLOSFitWindTracer";
 import {CNodeLOSFitStationaryPoint} from "./nodes/CNodeLOSFitStationaryPoint";
 import {CNodeLOSFitGroundVehicle} from "./nodes/CNodeLOSFitGroundVehicle";
@@ -1072,6 +1073,13 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
         };
         if (NodeMan.exists("targetWind")) minSpeedDef.wind = "targetWind";
         new CNodeLOSFitMinSpeed(minSpeedDef);
+    }
+
+    if (!NodeMan.exists("LOSFitHorizontalConstantSpeed"+idExtra)) {
+        new CNodeLOSFitHorizontalConstantSpeed({
+            id: "LOSFitHorizontalConstantSpeed"+idExtra,
+            LOS: los,
+        });
     }
 
     // Stationary-point family — live counterparts of the analysis gallery's

@@ -15,6 +15,7 @@ import {
     traverseConstSpeed,
     traverseConstAltitude,
     fitConstAltitude,
+    fitHorizontalConstantSpeed,
     fitFixedPoint,
     fitFixedDirection,
     traversePlausible,
@@ -295,6 +296,60 @@ describe("TraverseAnalysis core", () => {
         const fit = fitConstAltitude(dataset, {rangeMin: 500, rangeMax: 1500, samples: 16});
         expect(fit.boundaryLimited).toBe(true);
         expect(["lo", "hi"]).toContain(fit.boundarySide);
+    });
+
+    test("fitHorizontalConstantSpeed recovers a turning level target below the platform", () => {
+        const n = 1201, fps = 10, earthRadius = 6371000;
+        const S = new Float64Array(n * 3);
+        const D = new Float64Array(n * 3);
+        const W = new Float64Array(n * 3);
+        const targetAltitude = 600;
+        for (let f = 0; f < n; f++) {
+            const t = f / fps;
+            const sa = 0.012 * t;
+            const sx = 3500 * Math.cos(sa), sy = 3500 * Math.sin(sa);
+            S[f * 3] = sx;
+            S[f * 3 + 1] = sy;
+            S[f * 3 + 2] = 4500 - (sx * sx + sy * sy) / (2 * earthRadius);
+
+            const ta = 0.0215 * t;
+            const tx = 8000 + 1200 * Math.cos(ta), ty = 7000 + 1200 * Math.sin(ta);
+            const tz = targetAltitude - (tx * tx + ty * ty) / (2 * earthRadius);
+            let dx = tx - sx, dy = ty - sy, dz = tz - S[f * 3 + 2];
+            let dl = Math.hypot(dx, dy, dz);
+            dx /= dl; dy /= dl; dz /= dl;
+
+            // Deterministic sub-degree pointing noise in two directions normal
+            // to the true ray. Broad averaging should expose the large-scale
+            // altitude valley underneath it.
+            let px = -dy, py = dx, pz = 0;
+            const pl = Math.hypot(px, py) || 1;
+            px /= pl; py /= pl;
+            const qx = dy * pz - dz * py;
+            const qy = dz * px - dx * pz;
+            const qz = dx * py - dy * px;
+            const noise = 0.0012;
+            const a = noise * Math.sin(1.31 * f), b = noise * Math.cos(0.83 * f);
+            dx += a * px + b * qx;
+            dy += a * py + b * qy;
+            dz += a * pz + b * qz;
+            dl = Math.hypot(dx, dy, dz);
+            D[f * 3] = dx / dl;
+            D[f * 3 + 1] = dy / dl;
+            D[f * 3 + 2] = dz / dl;
+        }
+        const fit = fitHorizontalConstantSpeed({n, fps, S, D, W, groundLevelM: 0});
+        expect(fit.failed).toBe(false);
+        expect(Math.abs(fit.altZ - targetAltitude)).toBeLessThan(100);
+        expect(fit.altitudeMax).toBeCloseTo(3600, -1);
+        expect(fit.localMinima.length).toBeGreaterThan(0);
+    });
+
+    test("fitHorizontalConstantSpeed refuses sightlines that look upward", () => {
+        const {dataset} = makeDataset();
+        const fit = fitHorizontalConstantSpeed(dataset, {groundAltitude: 0});
+        expect(fit.failed).toBe(true);
+        expect(fit.failureReason).toContain("not looking down");
     });
 
     test("rangeProfile marks a supported family that reaches an edge", async () => {

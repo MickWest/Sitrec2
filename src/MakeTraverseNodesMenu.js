@@ -28,6 +28,7 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
     traverseInputs2["Global Fit: Physics"] = "LOSFitPhysics" + idExtra;
     traverseInputs2["Global Fit: Plausible"] = "LOSFitPlausible" + idExtra;
     traverseInputs2["Global Fit: Minimum Speed"] = "LOSFitMinSpeed" + idExtra;
+    traverseInputs2["Horizontal Constant Speed Maneuvers"] = "LOSFitHorizontalConstantSpeed" + idExtra;
     // Wind Tracer: a passive drifter fitted with the operator's boresight
     // motion modelled rather than believed (src/WindTracerFit.js).
     traverseInputs2["Global Fit: Wind Tracer"] = "LOSFitWindTracer" + idExtra;

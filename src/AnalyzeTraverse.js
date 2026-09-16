@@ -2353,6 +2353,15 @@ async function runTraverseAnalysisWithCurrentAngles() {
         overlay.setStatus("Building LOS dataset...");
         await yieldToDOM();
         const {dataset, originLat, originLon} = buildAnalysisDataset(losNode, analysisWindNode, anchorDist, analysisFrames);
+        // The horizontal constant-speed altitude search needs the lower end of
+        // its search band before the battery runs. Freeze the same local terrain
+        // sample used by the scene-bound ground fits; headless BOTBench callers
+        // set this field while ingesting their flat-plane records.
+        try {
+            dataset.groundLevelM = localGroundZ(dataset, originLat, originLon);
+        } catch (e) {
+            dataset.groundLevelM = 0;
+        }
         const inputFiltering = captureLiveInputFiltering(losNode, analysisFrames);
         const outputFiltering = captureInputFiltering([
             {node: NodeMan.get("traverseSmoothedTrack", false), role: "Live traverse output", shallow: true},
@@ -3579,6 +3588,21 @@ function detailProse(h, r, ss) {
                       `${g.toFixed(2)} g.`
                     : `The displayed and applied snapshot misses the rays by ${err.toFixed(3)}° after smoothing.`,
             };
+        case "horizontalSpeed":
+            return {
+                lead: `A level target at about ${ft0(p.altZ)} ft, holding about `
+                    + `${kt1(p.medianSpeed)} kt horizontal speed while its heading changes.`,
+                derived: `The solver intersects every sightline with candidate horizontal surfaces from the `
+                    + `local ground to below the platform. It averages each candidate track over `
+                    + `${Number(p.smoothSeconds).toFixed(1)} s, measures speed over a `
+                    + `${Number(p.velocitySeconds).toFixed(1)} s baseline, and selects an interior minimum in `
+                    + `relative speed variation. Best altitude ≈ ${ft0(p.altZ)} ft.`,
+                constraint: `This is a speculative solver for level targets that may turn but do not change `
+                    + `horizontal speed. The upper ${(100 * p.platformGuard).toFixed(0)}% of the altitude band is `
+                    + `excluded because intersections collapse toward the platform track there. The displayed `
+                    + `smoothed path misses the raw sightlines by ${err.toFixed(3)}°; verify the speed graph and `
+                    + `the altitude valley before treating the altitude as measured.`,
+            };
         case "plausible":
             return {
                 lead: p.usedSpeedTarget
@@ -3812,7 +3836,8 @@ function solutionSpaceHTML(h, ss) {
     // Ray-following methods carry a small honest smoothing residual now, so
     // classify them by key, not by errDeg === 0.
     const onRay = (h.errDeg || 0) < 1e-3
-        || h.key === "constAir" || h.key === "constAlt" || h.key === "plausible";
+        || h.key === "constAir" || h.key === "constAlt" || h.key === "horizontalSpeed"
+        || h.key === "plausible";
     const conv = ss.conv, geo = ss.geo;
     const cTxt = conv && isFinite(conv.contrast) ? conv.contrast.toFixed(2) : "—";
     const bandTxt = conv ? `${conv.loNM.toFixed(0)}–${conv.hiNM.toFixed(0)} NM` : "the searched band";
@@ -5621,6 +5646,9 @@ function applyHypothesis(hyp) {
             // a separate startAltitude slider we don't set here.)
             setBig("startDistance", hyp.params.range);
             if (!canApplySnapshot) applied = selectFirst(["Constant Altitude"]);
+            break;
+        case "horizontalSpeed":
+            if (!canApplySnapshot) applied = selectFirst(["Horizontal Constant Speed Maneuvers"]);
             break;
         case "plausible":
             if (!canApplySnapshot) applied = selectFirst(["Global Fit: Plausible"]);
