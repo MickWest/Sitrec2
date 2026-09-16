@@ -613,22 +613,33 @@ const hollowNote = (measure) => (measure.marksBlind
 export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks()} = {}) {
     const durations = durationsOf(rows);
     const rungs = rungGroups(rows, rungsWanted);
+    const presentRungs = [...new Set(rows.map((r) => r.d_errorDeg).filter(fin))].sort((a, b) => a - b);
+    const groups = rungs.map((rung) => ({rung, key: `${rung}deg`, label: `${rungLabel(rung)} pointing error`, pooled: false}));
+    // The named rows remain useful reference slices, while this final row answers
+    // the broader question with every finite pointing-error level in the loaded
+    // result set. Do not duplicate a run that contains only one level.
+    if (presentRungs.length > 1) {
+        groups.push({rung: null, key: "all", label: "All Pointing Errors", pooled: true});
+    }
     // One clip length is one box per panel, which compares nothing. The
     // by-class figures below cover that case.
-    if (durations.length < 2 || !rungs.length) return null;
+    if (durations.length < 2 || !groups.length) return null;
     const floor = measure.floor;
 
     const data = [];
     const titles = [];
     let drawn = 0, missing = 0, floored = 0, peak = floor;
     const medians = {};
-    for (const rung of rungs) {
+    for (const group of groups) {
         for (const cls of CLASSES) {
             const i = titles.length;
             const suffix = i === 0 ? "" : String(i + 1);
             const stats = [], points = [], hollow = [];
             for (let d = 0; d < durations.length; d++) {
-                const here = cell(rows, cls, durations[d], rung);
+                const here = group.pooled
+                    ? rows.filter((r) => r.d_class === cls
+                        && same(r.d_durationSeconds, durations[d]) && fin(r.d_errorDeg))
+                    : cell(rows, cls, durations[d], group.rung);
                 const values = here.map(measure.value).filter(fin);
                 missing += here.length - values.length;
                 drawn += values.length;
@@ -642,16 +653,16 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
                         .push({x: d, y: atLeast(v, floor), id: r.rowIndex ?? null, label: errorDotLabel(r, measure), ...marks.style(r, 5, CLASS_HUE[cls])});
                 }
                 const box = stats[stats.length - 1];
-                if (box) medians[`${rung}deg/${cls}/${durations[d]}`] = box.median;
+                if (box) medians[`${group.key}/${cls}/${durations[d]}`] = box.median;
             }
             data.push(boxTrace(durations.map((unused, d) => d), stats, CLASS_HUE[cls], {axis: suffix, floor}));
             data.push(stripTrace(points, CLASS_HUE[cls], {axis: suffix}));
             if (hollow.length) data.push(stripTrace(hollow, CLASS_HUE[cls], {axis: suffix, hollow: true, seed: 806}));
-            titles.push(`${CLASS_LABEL[cls]}, ${rungLabel(rung)} pointing error`);
+            titles.push(`${CLASS_LABEL[cls]}, ${group.label}`);
         }
     }
     const layout = gridLayout({
-        rows: rungs.length, cols: 3, titles,
+        rows: groups.length, cols: 3, titles,
         xTitle: "Clip length (s)",
         yTitle: measure.axisTitle,
         tickvals: durations.map((unused, d) => d),
@@ -662,11 +673,11 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
 
     const first = durations[0], last = durations[durations.length - 1];
     const parts = [];
-    for (const rung of rungs) {
+    for (const group of groups) {
         for (const cls of CLASSES) {
-            const a = medians[`${rung}deg/${cls}/${first}`], b = medians[`${rung}deg/${cls}/${last}`];
+            const a = medians[`${group.key}/${cls}/${first}`], b = medians[`${group.key}/${cls}/${last}`];
             if (fin(a) && fin(b)) {
-                parts.push(`${CLASS_LABEL[cls]} ${rungLabel(rung)}: ${measure.format(a)} at ${first} s, `
+                parts.push(`${CLASS_LABEL[cls]} ${group.label}: ${measure.format(a)} at ${first} s, `
                     + `${measure.format(b)} at ${last} s`);
             }
         }
@@ -678,10 +689,13 @@ export function figErrorByLength(rows, {rungsWanted = [0, 0.2], measure = makeMe
         data,
         layout: pageLayout(layout, {
             title,
-            height: 420 * rungs.length + 190,
-            caption: `${drawn} tracks drawn (${missing} with no value for the ${measure.who} are not drawn); 100 tracks per `
-                + `class at every length and rung, the same 300 tracks at every length, so a longer clip extends the same `
-                + `track. Box: quartiles and median on the raw values. ${measure.fenceNote} ${hollowNote(measure)}`
+            height: 420 * groups.length + 190,
+            caption: `${drawn} track values drawn across the panels (${missing} with no value for the ${measure.who} are not drawn). `
+                + `Each individual-error row uses one pointing-error level. `
+                + (presentRungs.length > 1
+                    ? `All Pointing Errors pools all ${presentRungs.length} available levels at each clip length. ` : "")
+                + `Within one level, the same tracks recur at every length, so a longer clip extends the same track. `
+                + `Box: quartiles and median on the raw values. ${measure.fenceNote} ${hollowNote(measure)}`
                 + `${measure.floorNote(floored)}${parts.join("; ")}.`,
         }),
         config: BASE_CONFIG,

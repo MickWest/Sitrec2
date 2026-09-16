@@ -6,8 +6,9 @@
 // gets a by-class figure that would quietly pool its rungs together.
 
 import {
-    buildAllFigures, rungGroups, durationGroups, isSingleCell, cellDescription, rungLabel, CLASSES,
-    figErrorByClass, figOutcomeByClass, figErrorByTrueDistance, figAbsoluteErrorVsTrueRange, ABSOLUTE_ERROR_FLOOR_M, makeMeasure,
+    buildAllFigures, rungGroups, durationGroups, isSingleCell, cellDescription, rungLabel, CLASSES, CLASS_LABEL,
+    figErrorByClass, figErrorByLength, figOutcomeByClass, figErrorByTrueDistance, figAbsoluteErrorVsTrueRange,
+    ABSOLUTE_ERROR_FLOOR_M, makeMeasure,
 } from "../src/analysis/charts/RockV3ChartSpecs";
 import {median} from "../src/analysis/charts/ChartStats";
 
@@ -340,6 +341,29 @@ describe("a sweep", () => {
         for (const key of ["errorByLength", "errorByRung", "withinByRung", "withinByLength", "classOutcome"]) {
             expect(keys).toContain(key);
         }
+    });
+});
+
+describe("error by clip length across all pointing errors", () => {
+    const rows = makeRows({rungs: [0, 0.1, 0.2, 0.5], durations: [20, 120], perClass: 8, sidecar: true});
+    const figure = figErrorByLength(rows);
+
+    test("adds one final panel row that pools every available error level", () => {
+        for (const cls of CLASSES) {
+            expect(figure.layout.annotations.some((a) =>
+                a.text === `${CLASS_LABEL[cls]}, All Pointing Errors`)).toBe(true);
+            const values = rows.filter((r) => r.d_class === cls && r.d_durationSeconds === 20)
+                .map((r) => r.r_topRelSep);
+            expect(figure.stats[`all/${cls}/20`]).toBeCloseTo(median(values), 12);
+        }
+        expect(figure.layout.annotations.at(-1).text.replace(/<br>/g, " "))
+            .toContain("All Pointing Errors pools all 4 available levels");
+    });
+
+    test("does not duplicate a data set with only one error level", () => {
+        const one = figErrorByLength(makeRows({rungs: [0.2], durations: [20, 120], perClass: 8, sidecar: true}));
+        expect(one.layout.annotations.some((a) => String(a.text).includes("All Pointing Errors"))).toBe(false);
+        expect(Object.keys(one.stats).some((key) => key.startsWith("all/"))).toBe(false);
     });
 });
 
