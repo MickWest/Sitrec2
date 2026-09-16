@@ -88,6 +88,13 @@ describe("summarizeTrackFile", () => {
         expect(summary.spanM).toBeCloseTo(5000 + TRUTH_NORTH, -2);
     });
 
+    test("truth range reports the truth track's horizontal box diagonal and altitude span", () => {
+        expect(summary.truthHorizontalRangeM).toBeCloseTo(TRUTH_NORTH, -1);
+        expect(summary.truthVerticalRangeM).toBeGreaterThanOrEqual(0);
+        expect(summary.truthVerticalRangeM).toBeLessThan(0.1);
+        expect(summary.truthMaxG).toBeLessThan(0.001);
+    });
+
     test("altitudes come through per track, above the scenario ground elevation", () => {
         const [sensor, truth] = summary.tracks;
         expect(sensor.altMinM).toBeGreaterThan(3000);
@@ -199,4 +206,53 @@ describe("a track crossing the antimeridian", () => {
         const signs = new Set(lons.filter(Number.isFinite).map(l => Math.sign(l)));
         expect(signs.size).toBe(2);
     });
+});
+
+test("truth range includes extrema skipped by thumbnail sampling", () => {
+    const misb = [0, 0.001, 0.01, 0.002, 0.003].map((lon, i) => {
+        const row = [];
+        row[MISB.SensorLatitude] = 0;
+        row[MISB.SensorLongitude] = lon;
+        row[MISB.SensorTrueAltitude] = [100, 101, 110, 102, 103][i];
+        row[MISB.UnixTimeStamp] = i * 1000;
+        return row;
+    });
+    const truthFile = {
+        getTrackCount: () => 1,
+        doesContainTrack: () => true,
+        toMISB: () => misb,
+        getShortName: () => "Truth",
+        trackRoleHint: () => "target",
+        isGroundTruthTrack: () => true,
+    };
+
+    const summary = summarizeTrackFile(truthFile, "truth.csv", {maxPoints: 2});
+    expect(summary.tracks[0].points).toBeLessThan(misb.length);
+    expect(summary.truthHorizontalRangeM).toBeCloseTo(1113.19, 0);
+    expect(summary.truthVerticalRangeM).toBe(10);
+});
+
+test("truth g-force uses filtered timestamped motion", () => {
+    const fps = 20, acceleration = 0.25 * 9.81;
+    const misb = Array.from({length: 61}, (_, i) => {
+        const t = i / fps;
+        const x = 0.5 * acceleration * t * t;
+        const row = [];
+        row[MISB.SensorLatitude] = 0;
+        row[MISB.SensorLongitude] = x / 111319.4907932736;
+        row[MISB.SensorTrueAltitude] = 100;
+        row[MISB.UnixTimeStamp] = t * 1000;
+        return row;
+    });
+    const truthFile = {
+        getTrackCount: () => 1,
+        doesContainTrack: () => true,
+        toMISB: () => misb,
+        getShortName: () => "Truth",
+        trackRoleHint: () => "target",
+        isGroundTruthTrack: () => true,
+    };
+
+    const summary = summarizeTrackFile(truthFile, "truth.csv");
+    expect(summary.truthMaxG).toBeCloseTo(0.25, 5);
 });

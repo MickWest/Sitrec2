@@ -66,6 +66,9 @@ import {
     unitVersionsFor,
 } from "./BotBenchSolvers";
 import {
+    chooseSolverSelection, loadStoredSolvers, solverButtonText, storeSolvers,
+} from "./BotBenchSolverDialog";
+import {
     adoptRecord,
     CACHE_BLOB_DIR,
     CACHE_FILENAME,
@@ -1233,7 +1236,7 @@ async function removeBlob(rec, name) {
 // run releases once a row is done and a remembered row never rebuilds, so they are
 // taken while the analysis exists and stored with the row. Bump the version whenever
 // what is taken changes: a row stored with another version is rebuilt once.
-const CHART_DATA_VERSION = 2;
+const CHART_DATA_VERSION = 4;
 
 /** Take the chart facts from an entry's analysis, while it still has one. */
 function captureChartData(entry) {
@@ -1612,7 +1615,7 @@ function makeThrottle(fn, intervalMs) {
 // `adopted: true` forever after, so a cache carried across builds never passes
 // itself off as a fresh one.
 const CACHE_ADOPT_MIN_FILES = 20;
-const CACHE_ADOPT_SAMPLE = 10;
+const CACHE_ADOPT_SAMPLE = 5;
 
 /**
  * Candidates for the compatibility sample, selected from index metadata only.
@@ -1645,7 +1648,7 @@ export async function findVersionStaleEntries(state, found, options, plan) {
                     units.push(unitId);
                 }
             }
-            // Do not retain hit or dirCache.data here: only ten candidates will
+            // Do not retain hit or dirCache.data here: only five candidates will
             // be sampled, and keeping all their indexes can cost hundreds of MB.
             if (units.length) stale.push({source, units,
                 appVersion: hit.units?.[units[0]]?.appVersion ?? hit.appVersion});
@@ -2175,6 +2178,10 @@ function createDialog() {
     }
 
     const overlay = document.createElement("div");
+    // This modal owns a native scroll container. Without this marker the global
+    // InteractionRouter treats wheel input as 3D-view zoom and prevents the
+    // results table from scrolling (the Result Charts window uses the same fix).
+    overlay.dataset.interactionNative = "true";
     overlay.style.cssText = `
         position: fixed; top: 0; left: 0; width: 100%; height: 100%;
         background: rgba(0, 0, 0, 0.5); z-index: 10000;
@@ -2232,8 +2239,8 @@ function createDialog() {
         "Add the two Monte Carlo curve-fit strategies across polynomial orders. A method "
         + "diagnostic; adds 10 candidates per file and is the bulk of the sweep's cost.", false);
     const gpuSearch = labelledCheckbox("GPU search",
-        "Search the fixed-wing and balloon fits on the graphics card (WebGPU): far more candidate "
-        + "solutions in less time, which can find better fits than the normal search. The final "
+        "Search the fixed-wing, balloon and quadcopter fits on the graphics card (WebGPU): far more "
+        + "candidate solutions in less time for the model searches. The final "
         + "numbers are still computed on the CPU at full precision. Results can differ from a CPU "
         + "run, so these fits are cached separately. Where WebGPU is unavailable the fits run on the "
         + "CPU; the searchBackend column and the summary say where each file's searches ran.", true);
@@ -3340,24 +3347,8 @@ function loadStoredWorkerLimit() {
     return DEFAULT_WORKER_LIMIT;
 }
 
-const SOLVERS_STORAGE_KEY = "botbench.solvers";
-
-function loadStoredSolvers() {
-    try {
-        const raw = localStorage.getItem(SOLVERS_STORAGE_KEY);
-        const ids = raw ? JSON.parse(raw) : null;
-        return normalizeSolvers(ids);
-    } catch (e) {
-        return normalizeSolvers(null);
-    }
-}
-
-function storeSolvers(ids) {
-    try { localStorage.setItem(SOLVERS_STORAGE_KEY, JSON.stringify(ids)); } catch (e) { /* private mode */ }
-}
-
 function refreshSolversButton(state) {
-    state.solversButton.textContent = `Solvers: ${describeSolvers(state.solvers)}`;
+    state.solversButton.textContent = solverButtonText(state.solvers);
 }
 
 /**
@@ -3366,96 +3357,13 @@ function refreshSolversButton(state) {
  * chosen ids, or null when the user backs out. With `fileCount` the confirm button
  * starts the run; without it the choice is kept for the next run.
  */
-function chooseSolvers(state, {fileCount = 0} = {}) {
-    return new Promise((resolve) => {
-        const overlay = document.createElement("div");
-        overlay.style.cssText = `
-            position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 10002;
-            display: flex; align-items: center; justify-content: center;
-        `;
-        const panel = document.createElement("div");
-        panel.style.cssText = `
-            background: #fff; color: #222; border-radius: 8px; padding: 16px 18px; width: min(680px, 94vw);
-            max-height: 92vh; overflow: auto; box-shadow: 0 8px 40px rgba(0,0,0,0.4);
-            font-family: Arial, sans-serif; font-size: 13px;
-        `;
-        const title = document.createElement("h3");
-        title.textContent = fileCount ? `Solvers for this run of ${fileCount} file(s)` : "Solvers for the next run";
-        title.style.cssText = "margin: 0 0 6px; color: #1976d2; font-size: 16px;";
-        const note = document.createElement("p");
-        note.style.cssText = "margin: 0 0 10px; color: #52514e; line-height: 1.45;";
-        note.textContent = "Only the ticked solvers are fitted, and only their candidates are ranked, so the "
-            + "top candidate and the verdict are those of this selection. Fits are stored per solver in the "
-            + "folder: a later run with more solvers reuses these fits and fits only the missing ones, and a "
-            + "run with fewer reads what it needs. Monte Carlo GPU presets require WebGPU and use order 1 with 0.1° uncertainty; "
-            + "the separate GPU search checkbox controls the aircraft and balloon models.";
-        panel.append(title, note);
-
-        const boxes = new Map();
-        const chosen = new Set(normalizeSolvers(state.solvers));
-        const groups = [...new Set(SOLVERS.map((s) => s.group))];
-        const grid = document.createElement("div");
-        grid.style.cssText = "display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 18px;";
-        for (const group of groups) {
-            const head = document.createElement("div");
-            head.textContent = group;
-            head.style.cssText = "grid-column: 1 / -1; margin: 8px 0 2px; font-weight: 700; color: #4a5b6b; "
-                + "font-size: 11px; letter-spacing: .04em; text-transform: uppercase;";
-            grid.appendChild(head);
-            for (const solver of SOLVERS.filter((s) => s.group === group)) {
-                const label = document.createElement("label");
-                label.style.cssText = "display: flex; align-items: flex-start; gap: 6px; cursor: pointer; line-height: 1.35;";
-                if (solver.note) label.title = solver.note;
-                const box = document.createElement("input");
-                box.type = "checkbox";
-                box.checked = chosen.has(solver.id);
-                box.style.marginTop = "2px";
-                boxes.set(solver.id, box);
-                label.append(box, document.createTextNode(solver.name));
-                grid.appendChild(label);
-            }
-        }
-        panel.appendChild(grid);
-
-        const buttons = document.createElement("div");
-        buttons.style.cssText = "display: flex; gap: 8px; align-items: center; margin-top: 14px; flex-wrap: wrap;";
-        const allButton = makeButton("All", "#757575", "Tick every solver.");
-        const noneButton = makeButton("None", "#757575", "Untick every solver.");
-        const count = document.createElement("span");
-        count.style.cssText = "color: #52514e; margin-left: auto;";
-        const okButton = makeButton(fileCount ? "Run" : "Use these", "#1976d2");
-        const cancelButton = makeButton("Cancel", "#757575");
-        const refresh = () => {
-            const n = [...boxes.values()].filter((b) => b.checked).length;
-            count.textContent = `${n} of ${SOLVERS.length} selected`;
-            setButtonDisabled(okButton, n === 0);
-            okButton.textContent = fileCount ? `Run with ${n} solver(s)` : `Use ${n} solver(s)`;
-        };
-        for (const box of boxes.values()) box.addEventListener("change", refresh);
-        allButton.addEventListener("click", () => { for (const b of boxes.values()) b.checked = true; refresh(); });
-        noneButton.addEventListener("click", () => { for (const b of boxes.values()) b.checked = false; refresh(); });
-        refresh();
-        buttons.append(allButton, noneButton, count, okButton, cancelButton);
-        panel.appendChild(buttons);
-        overlay.appendChild(panel);
-        document.body.appendChild(overlay);
-
-        const finish = (ids) => {
-            if (overlay.parentNode) document.body.removeChild(overlay);
-            if (ids) {
-                state.solvers = ids;
-                storeSolvers(ids);
-                refreshSolversButton(state);
-            }
-            resolve(ids);
-        };
-        okButton.addEventListener("click", () => {
-            const ids = normalizeSolvers([...boxes.entries()].filter(([, b]) => b.checked).map(([id]) => id));
-            finish(ids);
-        });
-        cancelButton.addEventListener("click", () => finish(null));
-        overlay.addEventListener("click", (event) => { if (event.target === overlay) finish(null); });
-    });
+async function chooseSolvers(state, {fileCount = 0} = {}) {
+    const ids = await chooseSolverSelection(state.solvers, {fileCount});
+    if (ids) {
+        state.solvers = storeSolvers(ids);
+        refreshSolversButton(state);
+    }
+    return ids;
 }
 
 // A macrotask yield that background-tab throttling does not clamp (unlike
@@ -4038,7 +3946,13 @@ export function openBotBenchDialog() {
         saveAs(new Blob([resultsToCsv(state.entries)], {type: "text/csv;charset=utf-8"}),
             "sitrec-botbench.csv");
     };
-    state.chartsButton.onclick = () => openResultChartsForEntries(state.entries);
+    state.chartsButton.onclick = () => openResultChartsForEntries(state.entries, {
+        selectedSolvers: state.solvers,
+        onSolversChanged: (ids) => {
+            state.solvers = normalizeSolvers(ids);
+            refreshSolversButton(state);
+        },
+    });
     state.summaryButton.onclick = () => {
         showTimingAnalysis(buildSummaryReport(state.entries, runOptions(state)),
             "sitrec-botbench-summary.txt", "BOTBench Run Summary");

@@ -213,7 +213,8 @@ describe("mean absolute error vs. mean true range", () => {
 
 describe("log Error choice", () => {
     const errorKeys = ["errorByClass", "errorByLength", "errorByTrueDistance", "absoluteErrorVsTrueRange",
-        "errorByRung", "errorByLengthAndTurn", "errorByTurn", "errorBySolver", "errorVsGeometry", "rankingCost"];
+        "errorByRung", "errorByLengthAndTurn", "errorByTurn", "errorBySolver", "errorBySolverSorted",
+        "errorVsGeometry", "rankingCost"];
     const rows = [0, 20].flatMap((turn) => makeRows({rungs: [0, 0.2], durations: [20, 120], perClass: 6})
         .map((r) => ({...r, d_turnDeg: turn, r_topSepM: r.r_topRelSep * 1000, r_bestSepM: r.r_bestRelSep * 1000,
             r_bestName: r.r_topName,
@@ -486,6 +487,36 @@ describe("whose error, and in what unit", () => {
         const dots = figure.data.find((t) => t.type === "scattergl");
         expect(dots.customdata.every((id) => Number.isInteger(id))).toBe(true);
     });
+    test("the sorted solver figure follows each panel's median error and leaves the ordinary order unchanged", () => {
+        const ordered = rows.map((r, i) => ({...r, r_candidates: [
+            {name: "First", relSep: 0.3 + i / 10000},
+            {name: "Best median", relSep: 0.01 + i / 100000},
+            {name: "Middle", relSep: 0.1 + i / 10000},
+        ]}));
+        const plain = figErrorBySolver(ordered);
+        const sorted = figErrorBySolver(ordered, {sortByMedian: true});
+        expect(plain.stats.solvers).toEqual(["First", "Best median", "Middle"]);
+        expect(sorted.stats.solvers).toEqual(["Best median", "Middle", "First"]);
+        expect(sorted.key).toBe("errorBySolverSorted");
+        expect(sorted.layout.xaxis.ticktext).toEqual(["Best median", "Middle", "First"]);
+    });
+    test("the sorted solver figure orders each panel from the medians drawn in that panel", () => {
+        const panelRows = [
+            {base: "balloon-a", rowIndex: 0, d_class: "balloon", d_errorDeg: 0,
+                r_candidates: [{name: "A", relSep: 0.01}, {name: "B", relSep: 0.1}]},
+            {base: "balloon-b", rowIndex: 1, d_class: "balloon", d_errorDeg: 0,
+                r_candidates: [{name: "A", relSep: 0.02}, {name: "B", relSep: 0.2}]},
+            {base: "drone-a", rowIndex: 2, d_class: "drone", d_errorDeg: 0,
+                r_candidates: [{name: "A", relSep: 0.3}, {name: "B", relSep: 0.03}]},
+            {base: "drone-b", rowIndex: 3, d_class: "drone", d_errorDeg: 0,
+                r_candidates: [{name: "A", relSep: 0.4}, {name: "B", relSep: 0.04}]},
+        ];
+        const sorted = figErrorBySolver(panelRows, {sortByMedian: true});
+        expect(sorted.layout.xaxis.ticktext).toEqual(["A", "B"]);
+        expect(sorted.layout.xaxis2.ticktext).toEqual(["B", "A"]);
+        expect(sorted.stats.solverOrders[0]).toEqual(["A", "B"]);
+        expect(sorted.stats.solverOrders[1]).toEqual(["B", "A"]);
+    });
     test("the registry hands the choice to every error figure, and to no other", () => {
         const measure = makeMeasure({metric: "sepM", subject: "Quadcopter"});
         const statsOf = (figures) => Object.fromEntries(figures.filter((f) => !f.error)
@@ -493,7 +524,7 @@ describe("whose error, and in what unit", () => {
         const plain = statsOf(buildAllFigures(rows));
         const chosen = statsOf(buildAllFigures(rows, {measure}));
         const errorKeys = ["errorByLength", "errorByTrueDistance", "errorByRung", "withinByLength", "withinByRung", "errorBySolver",
-            "absoluteErrorVsTrueRange", "errorVsGeometry", "rankingCost"];
+            "errorBySolverSorted", "absoluteErrorVsTrueRange", "errorVsGeometry", "rankingCost"];
         expect(Object.keys(plain)).toEqual(expect.arrayContaining(["errorByLength", "withinByRung", "verdictMix"]));
         for (const key of Object.keys(plain)) {
             expect([key, plain[key] === chosen[key]]).toEqual([key, !errorKeys.includes(key)]);
@@ -539,7 +570,7 @@ describe("whose error, and in what unit", () => {
                     trace.customdata.forEach((id, i) => {
                         const row = varied[id];
                         const name = subject === "top" ? row.r_topName : subject === "best" ? row.r_bestName : subject;
-                        if (figure.key === "errorBySolver") {
+                        if (figure.key === "errorBySolver" || figure.key === "errorBySolverSorted") {
                             expect(row.r_candidates.some((c) => trace.text[i] === `${row.base}<br>Solver: ${c.name}`)).toBe(true);
                         } else {
                             expect(trace.text[i]).toContain(`${row.base}<br>Solver: ${name}`);
@@ -550,7 +581,7 @@ describe("whose error, and in what unit", () => {
             }
         }
         expect([...seen]).toEqual(expect.arrayContaining(["errorByClass", "errorByLength", "errorByTrueDistance",
-            "absoluteErrorVsTrueRange", "errorByRung", "errorVsGeometry", "errorBySolver"]));
+            "absoluteErrorVsTrueRange", "errorByRung", "errorVsGeometry", "errorBySolver", "errorBySolverSorted"]));
     });
 });
 

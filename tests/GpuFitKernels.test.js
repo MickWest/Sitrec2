@@ -13,9 +13,11 @@ import {aircraftCostErrDeg, cumulativeWind, fitAircraft, EARTH_RADIUS_M, KNOTS_T
     from "../src/TraverseAnalysis";
 import {fitPhysicsModel} from "../src/LOSFitting";
 import {SkyLanternModel} from "../src/SkyLanternModel";
+import {QuadcopterModel} from "../src/QuadcopterModel";
 import {integrateRK4} from "../src/PhysicsModel";
 import {aircraftKernelCostF64, buildAircraftKernel, AIRCRAFT_KERNEL_DIM} from "../src/gpu/AircraftCostKernel";
 import {buildLanternKernel, lanternKernelCostF64} from "../src/gpu/LanternCostKernel";
+import {buildQuadcopterKernel, quadcopterKernelCostF64} from "../src/gpu/QuadcopterCostKernel";
 import {composeDifferentialEvolutionWGSL, resolveGpuBudget} from "../src/gpu/GpuDifferentialEvolution";
 import {getComputeDevice, webgpuAvailable} from "../src/gpu/WebGPUCompute";
 import {mulberry32} from "../src/DifferentialEvolution";
@@ -139,6 +141,57 @@ describe("lantern kernel mirror matches the fitPhysicsModel objective", () => {
     });
 });
 
+describe("quadcopter kernel mirror matches the fitPhysicsModel objective", () => {
+    const scene = traverseScene({n: 600, fps: 10});
+    const times = Float64Array.from({length: scene.n}, (_, f) => f / scene.fps);
+    const dataset = {sensorPos: scene.S, losDir: scene.D, times, count: scene.n};
+    const costFrames = [];
+    for (let f = 0; f < scene.n; f += 5) costFrames.push(f);
+    if (costFrames[costFrames.length - 1] !== scene.n - 1) costFrames.push(scene.n - 1);
+    const costTimes = costFrames.map((f) => times[f]);
+    const T = times[scene.n - 1];
+    const errSigma = 0.02;
+    const cpuObjective = (model, p) => {
+        const states = integrateRK4(model, model.getInitialState(p, dataset), p, costTimes,
+            {maxDt: 0.5, checkDivergence: true});
+        let err = 0;
+        costFrames.forEach((fi, index) => {
+            const state = states[index], b = fi * 3;
+            const r = [state[0] - scene.S[b], state[1] - scene.S[b + 1], state[2] - scene.S[b + 2]];
+            const cross = [r[1] * scene.D[b + 2] - r[2] * scene.D[b + 1],
+                r[2] * scene.D[b] - r[0] * scene.D[b + 2],
+                r[0] * scene.D[b + 1] - r[1] * scene.D[b]];
+            err += Math.atan2(Math.hypot(...cross),
+                r[0] * scene.D[b] + r[1] * scene.D[b + 1] + r[2] * scene.D[b + 2]);
+        });
+        return (err / costFrames.length * 180 / Math.PI) / errSigma + model.extraCost(p, dataset, T);
+    };
+
+    test.each([null, [4, -2]])("wind prior %j", (windPrior) => {
+        const model = new QuadcopterModel();
+        if (windPrior) [model.windPriorE, model.windPriorN] = windPrior;
+        const kernel = buildQuadcopterKernel({
+            model, dataset, costFrames, costTimes, T, errSigma, maxDt: 0.5,
+        });
+        expect(kernel).not.toBeNull();
+        const defs = model.getParameterDefs();
+        const rng = mulberry32(17);
+        for (let i = 0; i < 60; i++) {
+            const p = defs.map((definition) => definition.min + rng() * (definition.max - definition.min));
+            const cpu = cpuObjective(model, p);
+            const mirror = quadcopterKernelCostF64(kernel, p);
+            expect(Math.abs(mirror - cpu)).toBeLessThan(0.02 + 1e-5 * Math.abs(cpu));
+        }
+    });
+
+    test("does not cover a ground prior or another model", () => {
+        const model = new QuadcopterModel();
+        const args = {model, dataset, costFrames, costTimes, T, errSigma, maxDt: 0.5};
+        expect(buildQuadcopterKernel({...args, groundPrior: {startZ: 0}})).toBeNull();
+        expect(buildQuadcopterKernel({...args, model: {maxDt: 0.5}})).toBeNull();
+    });
+});
+
 describe("without WebGPU, gpu: true is the CPU search", () => {
     test("no device here", async () => {
         expect(webgpuAvailable()).toBe(false);
@@ -162,6 +215,18 @@ describe("without WebGPU, gpu: true is the CPU search", () => {
         const make = () => { const m = new SkyLanternModel(); m.clipDuration = 19.9; return m; };
         const cpu = await fitPhysicsModel(dataset, new Set(), make(), opts);
         const gpu = await fitPhysicsModel(dataset, new Set(), make(), {...opts, gpu: true});
+        expect(gpu).toEqual(cpu);
+        expect(gpu.params.optimizer.de.backend).toBeUndefined();
+    });
+
+    test("fitPhysicsModel (Quadcopter)", async () => {
+        const scene = traverseScene({n: 120, fps: 10});
+        const times = Float64Array.from({length: scene.n}, (_, f) => f / scene.fps);
+        const dataset = {sensorPos: scene.S, losDir: scene.D, times, count: scene.n};
+        const opts = {optimizer: "de", dePop: 12, deGens: 8, maxIter: 100,
+            sampleStride: 5, fitMaxDt: 0.5};
+        const cpu = await fitPhysicsModel(dataset, new Set(), new QuadcopterModel(), opts);
+        const gpu = await fitPhysicsModel(dataset, new Set(), new QuadcopterModel(), {...opts, gpu: true});
         expect(gpu).toEqual(cpu);
         expect(gpu.params.optimizer.de.backend).toBeUndefined();
     });

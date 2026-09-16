@@ -471,6 +471,7 @@ export function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, win
 export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible, aircraft, lantern, lanternMeasured,
     quad, satellite, slowProfile, slowOpts, originLat, originLon, provenance = null,
     failures = null, windPrior = null, mcSweep = null, monteCarlo = null, droneCtl = null,
+    constantVelocity = null, constantAcceleration = null,
     // The Kalman smoother fit the battery seeds the physics models from. It
     // becomes a candidate of its own only when `kalmanCandidate` is set: the live
     // analysis already reads that candidate off its Kalman method node, and a
@@ -685,7 +686,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
         const track = horizontalSpeed.track;
         list.push({
             key: "horizontalSpeed",
-            name: "Horizontal Constant Speed Maneuvers",
+            name: "Horizontal Speed Valley",
             subtitle: "Level flight; turns allowed, horizontal speed held",
             color: "#ef9b45",
             track,
@@ -741,7 +742,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
     } else {
         list.push({
             key: "horizontalSpeed",
-            name: "Horizontal Constant Speed Maneuvers",
+            name: "Horizontal Speed Valley",
             subtitle: "Level flight; turns allowed, horizontal speed held",
             color: "#ef9b45",
             track: null,
@@ -1206,10 +1207,67 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
         });
     }
 
+    // ---- Direct global curve fits -----------------------------------------
+    // These are the direct pseudo-linear batch least-squares CV/CA algorithms
+    // used by the live traverse nodes. Keeping them in the battery makes the
+    // live analysis and BOTBench use one implementation and one candidate
+    // shape. They minimize perpendicular distance in metres, so they carry the
+    // same range-conditioning and collapse warnings as the Kalman seed.
+    const addDirectCurveFit = (fit, {
+        key, name, subtitle, color, methodLabel, motion,
+    }) => {
+        if (!has(key) || !fit?.positions) return;
+        const track = Float64Array.from(fit.positions);
+        const metricsFull = trackMetrics(dataset, track);
+        const errDeg = meanAngularError(dataset, track) * 180 / Math.PI;
+        const nonPhysical = !isFinite(metricsFull.airSpeed.mean)
+            || metricsFull.airSpeed.mean / KNOTS_TO_MS > 20000 || !(metricsFull.gLoad.max < 2000);
+        const ranges = new Float64Array(dataset.n);
+        for (let f = 0; f < dataset.n; f++) {
+            ranges[f] = Math.hypot(track[f * 3] - S[f * 3],
+                track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
+        }
+        const sortedR = Array.from(ranges).sort((a, b) => a - b);
+        const linearConditioning = assessLinearFitConditioning(dataset, {positions: track});
+        const collapsedNote = !linearConditioning?.collapse ? ""
+            : linearConditioning.collapseReason === "near-camera-weak-geometry"
+                ? " CAUTION: near-camera result under poor CV-family conditioning — "
+                    + "high artifact risk; treat its range and speed as unreliable."
+                : " CAUTION: this fit has collapsed onto the sensor path — its "
+                    + "range and speed are artifacts, not measurements.";
+        list.push({
+            key, name, subtitle, color,
+            track, metricsFull, errDeg, nonPhysical, linearConditioning,
+            params: {
+                range: sortedR[Math.floor(dataset.n / 2)], methodLabel,
+                activeCount: fit.activeCount ?? null, errFloor,
+            },
+            notes: `A direct least-squares fit of ${motion} to all sightlines. It minimizes the `
+                + "perpendicular distance from the fitted trajectory to each LOS ray. The fit has no "
+                + "independent range measurement, so weak viewing geometry can make its distance "
+                + "unstable or collapse the result toward the sensor. Read it as a fitting-method "
+                + "comparison, not as an object hypothesis." + collapsedNote,
+        });
+    };
+    addDirectCurveFit(constantVelocity, {
+        key: "gfCV", name: "Global Fit: Constant Velocity",
+        subtitle: "Least-squares constant-velocity fit", color: "#8bd17c",
+        methodLabel: "Global Fit: Constant Velocity",
+        motion: "one 3D position and one constant 3D velocity",
+    });
+    addDirectCurveFit(constantAcceleration, {
+        key: "gfCA", name: "Global Fit: Constant Acceleration",
+        subtitle: "Least-squares constant-acceleration fit", color: "#67b89a",
+        // This is the serialized live switch-input key; the visible label uses
+        // the full word "Constant Acceleration".
+        methodLabel: "Global Fit: Const Acceleration",
+        motion: "one 3D position, velocity, and constant acceleration",
+    });
+
     // ---- Scene-coupled hypotheses ----------------------------------------
-    // Sections 8 and 9 (astronomical catalogue searches) and the user's live
-    // LOS-fit method nodes need the node graph, so they live in
-    // AnalyzeTraverse.js and are spliced in here, where they used to be.
+    // Sections 8 and 9 (astronomical catalogue searches) and the remaining
+    // live method nodes need the node graph, so they live in AnalyzeTraverse.js
+    // and are spliced in here, where they used to be.
     if (extraHypotheses) {
         for (const h of extraHypotheses({
             dataset, originLat, originLon, sweep, globalFrame, dateForDatasetFrame,

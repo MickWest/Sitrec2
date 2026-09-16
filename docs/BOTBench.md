@@ -140,8 +140,9 @@ group.
   polynomial fits are to their order), adds ten candidates per file, and is the
   bulk of the sweep's cost. Leave it off unless you are studying the methods
   themselves.
-- **GPU search** — enabled by default. Search the fixed-wing and balloon fits on the graphics card
-  (WebGPU), as the live analysis's *GPU search (WebGPU)* option does: many
+- **GPU search** — enabled by default. Search the fixed-wing, balloon and
+  quadcopter fits on the graphics card (WebGPU), as the live analysis's *GPU
+  search (WebGPU)* option does: many
   independent searches with large populations, testing hundreds of times more
   candidate solutions, with the final numbers still computed on the CPU at full
   precision. It can find better fits than the normal search, so results can
@@ -204,14 +205,15 @@ responsive as a short one. Exports, the summary and the charts still read every 
 
 ### Choosing the solvers
 
-A run starts with a dialog listing the twenty-three solvers, one checkbox each,
+A run starts with a dialog listing the twenty-five solvers, one checkbox each,
 grouped as the candidates are: the sightline fits (Constant Air Speed,
-Constant Altitude, Horizontal Constant Speed Maneuvers, Minimum Acceleration,
+Constant Altitude, Horizontal Speed Valley, Minimum Acceleration,
 Minimum Speed), the object models
 (Fixed-Wing Aircraft, Sky Lantern / Balloon, Quadcopter, Drone with flown
 inputs), the geometry checks (Ground Object, the stationary point), and the
-curve fits (the Kalman smoother and the five polynomial orders), plus six
-GPU Monte Carlo presets. The seventeen solvers outside that GPU group are
+curve fits (direct Constant Velocity and Constant Acceleration, the Kalman
+smoother, and the five polynomial orders), plus six GPU Monte Carlo presets.
+The nineteen solvers outside that GPU group are
 selected initially; the GPU Monte Carlo presets can be selected individually or with **All**.
 The last choice is remembered, so the usual answer is one click.
 
@@ -588,14 +590,14 @@ blobs.
 
 A stored unit is used only when the input hashes, the unit's version and the
 options that shape it (the range anchor, and its own option where it has
-one) all match. The fixed-wing, balloon and range-band units also carry the
+one) all match. The fixed-wing, balloon, quadcopter and range-band units also carry the
 **GPU search** option when it is on, so GPU and CPU fits of the same file are
 stored side by side and never stand in for each other. A GPU run whose fit ran on
 the CPU instead (no WebGPU, or a GPU error) is not stored, and neither is its
 row, so a later run with WebGPU fits it again. Every new build of Sitrec has a new app version, and fitting
 code can change without its unit version being bumped, so on a run of more
 than 20 files whose stored units come from another build, BOTBench first
-fits 10 of those files for real and compares each unit with its stored copy.
+fits 5 of those files for real and compares each unit with its stored copy.
 A unit that reproduces on every sampled file is reused everywhere; one that
 differs is fitted again for every file, and the others are still reused. The
 comparison allows floating-point noise: a fit is deterministic, but the same

@@ -7,7 +7,7 @@
 // the sidecar, when every row already carried it.
 
 import {
-    rowsFromBotBenchEntries, rowsFromJsonl, apertureFromPositions, classOf, classCorrectFor,
+    rowsFromBotBenchEntries, rowsFromJsonl, apertureFromPositions, classOf, classCorrectFor, filterRowsToSolvers,
 } from "../src/analysis/charts/BotBenchChartRows";
 
 function entry({name, relativePath = name, sidecar = null, labels = null, quality = {}, row = {}, results = null}) {
@@ -139,9 +139,9 @@ describe("every candidate's error, for the solver figure", () => {
         ]});
         expect(errors).toEqual([
             {key: "lantern", name: "Sky Lantern / Balloon", relSep: 0.01, sepM: 50, angDeg: null, losDeg: null,
-                headingDeg: null, velocityMS: null},
+                headingDeg: null, velocityMS: null, blindRank: null, rangeBlind: false},
             {key: "constAlt", name: "Constant Altitude", relSep: 0.1, sepM: 500, angDeg: null, losDeg: null,
-                headingDeg: null, velocityMS: null},
+                headingDeg: null, velocityMS: null, blindRank: null, rangeBlind: false},
         ]);
     });
     test("with positions and a frame rate, adds the heading and velocity errors", () => {
@@ -214,6 +214,42 @@ describe("every candidate's error, for the solver figure", () => {
         expect(row.entry).toBe(source);
         expect(Object.keys(row)).not.toContain("entry");
         expect(JSON.stringify(row)).not.toContain("labelsText");
+    });
+});
+
+describe("the Selected Solvers chart filter", () => {
+    const row = {
+        base: "drone_001",
+        r_topKey: "lantern", r_topName: "Sky Lantern / Balloon", r_topRelSep: 0.4, r_topSepM: 400,
+        r_bestName: "Constant Altitude", r_bestRelSep: 0.01, r_bestSepM: 10,
+        r_candidates: [
+            {key: "lantern", name: "Sky Lantern / Balloon", relSep: 0.4, sepM: 400,
+                losDeg: 0.02, blindRank: 0, rangeBlind: false},
+            {key: "constAlt", name: "Constant Altitude", relSep: 0.01, sepM: 10,
+                losDeg: 0.03, blindRank: 2, rangeBlind: false},
+            {key: "gfKalman", name: "Global Fit: Kalman Smoother", relSep: 0.08, sepM: 80,
+                losDeg: 0.001, blindRank: 1, rangeBlind: true},
+        ],
+    };
+
+    test("removes unselected candidates and recalculates top and best within the subset", () => {
+        const [filtered] = filterRowsToSolvers([row], ["constAlt", "gfKalman"]);
+        expect(filtered.r_candidates.map((candidate) => candidate.key)).toEqual(["constAlt", "gfKalman"]);
+        expect([filtered.r_topKey, filtered.r_topName, filtered.r_topRelSep, filtered.r_topSepM])
+            .toEqual(["gfKalman", "Global Fit: Kalman Smoother", 0.08, 80]);
+        expect(filtered.r_topBlind).toBe(1);
+        expect([filtered.r_bestName, filtered.r_bestRelSep, filtered.r_bestSepM])
+            .toEqual(["Constant Altitude", 0.01, 10]);
+        expect(row.r_candidates).toHaveLength(3);
+    });
+
+    test("does not invent a new blind ranking for old chart data", () => {
+        const old = {...row, r_topKey: "lantern", r_candidates: row.r_candidates.map(({blindRank, ...candidate}) => candidate)};
+        const [kept] = filterRowsToSolvers([old], ["lantern", "constAlt"]);
+        expect(kept.r_topKey).toBe("lantern");
+        const [unknown] = filterRowsToSolvers([old], ["constAlt"]);
+        expect(unknown.r_topKey).toBeNull();
+        expect(unknown.r_bestName).toBe("Constant Altitude");
     });
 });
 

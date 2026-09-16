@@ -59,6 +59,7 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
             "Global Fit: Const Acceleration": "Global Fit: Constant Acceleration",
             // "Plausible" claimed a result; the algorithm minimizes acceleration.
             "Global Fit: Plausible": "Global Fit: Minimum Acceleration",
+            "Horizontal Constant Speed Maneuvers": "Horizontal Speed Valley",
             "Analysis Result Snapshot": "Analysis Snapshot (created by Analyze)",
         },
 

@@ -29,7 +29,6 @@ import {showError} from "./showError";
 import {t} from "./i18n";
 import {abFrameRange, buildAnalysisDataset, trimHeldFrames, unpackTrackToECEF} from "./TraverseAnalysisData";
 import {captureInputFiltering, captureAnalysisFiltering, filteringSummaryHTML} from "./AnalysisFiltering";
-import {metricSmoothingWindow} from "./SmoothingPolicy";
 import {withUnfilteredAnalysisAngles} from "./AnalysisAngleSmoothing";
 import {getPointBelow, calculateAltitude} from "./threeExt";
 // The fit battery moved to TraverseBattery.js, and with it every solver this
@@ -46,6 +45,7 @@ import {
     meanAngularError,
     METERS_PER_NM,
     trackMetrics,
+    trackMetricsForValidRun,
     traverseMinSpeed,
     traversePlausible,
 } from "./TraverseAnalysis";
@@ -695,15 +695,10 @@ function buildSceneCoupledHypotheses({dataset, originLat, originLon, sweep,
     // Every OTHER selectable traverse method, read straight off its live node so
     // it competes on the same footing and "Use" re-selects exactly it. (Constant
     // Speed/Altitude, Minimum Acceleration, Physics and Minimum Speed above
-    // already map to their methods; these are the global statistical fits and
-    // the straight line. Monte Carlo uses a fixed seed, so it is a stable,
-    // reproducible contender.)
+    // already map to their methods; direct CV/CA now come from the shared
+    // battery; these are the remaining statistical fit and the straight line.)
     const sel = resolveTraverseSelect();
     const extraMethods = [
-        {key: "gfCV", label: "Global Fit: Constant Velocity", subtitle: "Least-squares constant-velocity fit", color: "#8bd17c"},
-        // label = the switch-inputs KEY (never renamed, saved sitches store it);
-        // display = what the user sees, matching the menu's display label.
-        {key: "gfCA", label: "Global Fit: Const Acceleration", display: "Global Fit: Constant Acceleration", subtitle: "Least-squares constant-acceleration fit", color: "#67b89a"},
         {key: "gfKalman", label: "Global Fit: Kalman Smoother", subtitle: "Kalman-smoothed LOS fit", color: "#57a8c6"},
         // Monte Carlo 1/2 are NOT read off their live nodes here — they are
         // swept over polynomial order below (see the MC sweep block).
@@ -1698,9 +1693,9 @@ export function addAnalyzeTweaks(traverseMenu) {
     }
     const cbGpu = folder.add(analyzeTweaks, "gpuSearch").name("GPU search (WebGPU)");
     if (cbGpu.tooltip) {
-        cbGpu.tooltip("Search the fixed-wing and balloon fits on the graphics card: " +
-            "hundreds of times more candidate solutions in less time, which can find better fits than the " +
-            "normal search. The final parameters, residuals and tracks are still computed on the CPU at " +
+        cbGpu.tooltip("Search the fixed-wing, balloon and quadcopter fits on the graphics card: the physics " +
+            "models test far more candidate solutions in less time. The final parameters, residuals and " +
+            "tracks are still computed on the CPU at " +
             "full precision. Results can differ from a CPU run and between graphics cards. Uses the CPU " +
             "search when this browser has no WebGPU.");
     }
@@ -3116,7 +3111,7 @@ function headingStatRow(m) {
 // full report). Each row is [label, text] or [label, text, html]: the optional
 // html is the same value with a highlight, already escaped, and renderers use
 // it in place of escaping the text.
-function hypothesisStats(h, dataset = null) {
+function hypothesisStats(h, dataset = null, truthMaxG = null) {
     const m = h.metricsFull;
     // Always show the raw residual. The old "≤ reference fit" replacement hid
     // the very number used to grade forward models (GoFast Balloon: 0.297°),
@@ -3132,8 +3127,8 @@ function hypothesisStats(h, dataset = null) {
         headingStatRow(m),
         ["Altitude (geodetic)", `${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft`],
         ["Climb", `${fpm0(m.verticalSpeed.mean)} fpm`],
-        [dataset ? `Max kinematic accel (${(4 * metricSmoothingWindow(dataset.n, dataset.fps) / dataset.fps).toFixed(2)}\u00a0s)`
-            : "Max kinematic accel (filtered)", `${m.gLoad.max.toFixed(2)} g`],
+        ["Max g-Force", `${m.gLoad.max.toFixed(2)} g`
+            + (Number.isFinite(truthMaxG) ? ` · Truth=${truthMaxG.toFixed(2)}g` : "")],
         [errLabel, losErr],
     ];
     // HOW ORDINARY IS THIS? Disclosure only — it does not move the ranking (see
@@ -4058,7 +4053,7 @@ function windProfileComparisonHTML(h) {
 
 function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = false) {
     const {ss} = ctx;
-    const stats = hypothesisStats(h, ctx?.dataset);
+    const stats = hypothesisStats(h, ctx?.dataset, ctx?.truthMaxG);
     const statsHTML = stats.map(([k, v, html]) =>
         `<div class="tg-d-st"><div class="tg-d-stk">${escapeHtml(k)}</div>` +
         `<div class="tg-d-stv">${html ?? escapeHtml(v)}</div></div>`).join("");
@@ -4191,6 +4186,10 @@ function showResultGallery(results, uiState = null) {
     // comparisons were computed during the run and ride on the hypotheses.
     const truthAvailable = !!(results.truth && results.truth.usable);
     const useTruth = truthAvailable && (uiState?.useTruth ?? false);
+    const truthMetrics = truthAvailable
+        ? trackMetricsForValidRun(dataset, results.truth.track, results.truth.valid)
+        : null;
+    const truthMaxG = Number.isFinite(truthMetrics?.gLoad?.max) ? truthMetrics.gLoad.max : null;
 
     // One flat, best-first ordering. Each tile carries its category as a
     // coloured corner label rather than sitting under a section heading, so the
@@ -5061,7 +5060,7 @@ function showResultGallery(results, uiState = null) {
     }
 
     // shared solution-space context for every Details pane
-    const ctx = {dataset, ss: analyzeSolutionSpace(results), useTruth};
+    const ctx = {dataset, ss: analyzeSolutionSpace(results), useTruth, truthMaxG};
 
     if (tiles.length === 0) {
         const empty = document.createElement("div");
@@ -5427,7 +5426,7 @@ function showResultGallery(results, uiState = null) {
         const badges = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r), ...windEvidenceBadges(h)];
         const badgesHTML = badges.map((badge) =>
             `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
-        const statsHTML = hypothesisStats(h, dataset).map(([k, v, html]) =>
+        const statsHTML = hypothesisStats(h, dataset, truthMaxG).map(([k, v, html]) =>
             `<div class="tg-st"><div class="tg-stk">${escapeHtml(k)}</div>` +
             `<div class="tg-stv">${html ?? escapeHtml(v)}</div></div>`).join("");
         const tieText = tied ? " · display-score tie" : "";
@@ -6447,9 +6446,9 @@ function minRegion(profile, factor = 1.5) {
     return {best: profile[bi], loM: profile[lo].startDist, hiM: profile[hi].startDist};
 }
 
-function buildReportHypothesisDetails(dataset, rankedHyps, ss) {
+function buildReportHypothesisDetails(dataset, rankedHyps, ss, truthMaxG = null) {
     return rankedHyps.map(({h, r, tied, category, groupIndex, groupSize}) => {
-        const statsHTML = hypothesisStats(h, dataset).map(([k, v, html]) =>
+        const statsHTML = hypothesisStats(h, dataset, truthMaxG).map(([k, v, html]) =>
             `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
             `<div class="stv">${html ?? escapeHtml(v)}</div></div>`).join("");
         const prose = detailProse(h, r, ss);
@@ -6553,6 +6552,8 @@ function buildReportHTML(ctx) {
     const truthUnusableLabel = (_truth && !_truth.usable) ? _truth.label : null;
     const truthUnusableFrames = (_truth && !_truth.usable) ? (_truth.validCount || 0) : 0;
     const truth = (_truth && _truth.usable) ? _truth : null;
+    const truthMetrics = truth ? trackMetricsForValidRun(dataset, truth.track, truth.valid) : null;
+    const truthMaxG = Number.isFinite(truthMetrics?.gLoad?.max) ? truthMetrics.gLoad.max : null;
     const {n, fps, D} = dataset;
     const globalFrame0 = dataset.frame0 ?? 0;
     const globalFrame1 = dataset.frame1 ?? (globalFrame0 + n - 1);
@@ -6737,7 +6738,7 @@ function buildReportHTML(ctx) {
     const cardsHTML = rankedGroups.map((group) => {
         const cards = group.items.map(({h, r, tied, groupIndex, groupSize}) => {
             const thumb = hypothesisThumbnail(dataset, h);
-            const statsHTML = hypothesisStats(h, dataset).map(([k, v, html]) =>
+            const statsHTML = hypothesisStats(h, dataset, truthMaxG).map(([k, v, html]) =>
                 `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
                 `<div class="stv">${html ?? escapeHtml(v)}</div></div>`).join("");
             const badgesHTML = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r)].map((badge) =>
@@ -6838,7 +6839,7 @@ function buildReportHTML(ctx) {
     ${escapeHtml(ea.notModelled.join("; "))}.</p>
 </section>` : "";
     const reportSS = analyzeSolutionSpace({dataset, fastProfile});
-    const solutionDetailsHTML = buildReportHypothesisDetails(dataset, rankedHyps, reportSS);
+    const solutionDetailsHTML = buildReportHypothesisDetails(dataset, rankedHyps, reportSS, truthMaxG);
 
     // ---- tables ----
     const sweepRows = top.map((r, i) => `

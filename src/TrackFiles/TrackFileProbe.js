@@ -27,6 +27,8 @@ import {getFileExtension} from "../utils";
 import {parseXml} from "../parseXml";
 import csv from "../utils/CSVParser";
 import {detectCSVType, trackFileFromCSVType} from "./TrackCSV";
+import {metricSmoothingWindow} from "../SmoothingPolicy";
+import {RLLAToECEF_radii} from "../LLA-ECEF-ENU";
 
 // Extensions worth opening during a folder sweep. Everything here is text (or a
 // zip of text) and parses in single-digit milliseconds for a typical track.
@@ -37,6 +39,63 @@ const PROBE_EXTENSIONS = new Set([
 // Metres per degree of latitude, and of longitude at the equator. The thumbnail
 // projection below is a local equirectangular one, so one constant is enough.
 const M_PER_DEG = 111319.4907932736;
+const G_ACCEL = 9.81;
+
+/**
+ * Maximum filtered kinematic acceleration for one timestamped path, in g.
+ *
+ * This mirrors Traverse Analysis: positions first produce velocity over the
+ * shared physical-time smoothing window, then those velocities produce
+ * acceleration over the same window. Actual timestamps keep the result valid
+ * for tracks whose sample rate is not exactly an integer.
+ */
+function maxKinematicG(samples) {
+    const n = samples.length;
+    if (n < 7) return null;
+
+    const stepsMS = [];
+    for (let i = 1; i < n; i++) {
+        const dt = samples[i].t - samples[i - 1].t;
+        if (Number.isFinite(dt) && dt > 0) stepsMS.push(dt);
+    }
+    if (!stepsMS.length) return null;
+    stepsMS.sort((a, b) => a - b);
+    const fps = 1000 / stepsMS[Math.floor(stepsMS.length / 2)];
+    if (!Number.isFinite(fps) || fps <= 0) return null;
+
+    const h = metricSmoothingWindow(n, fps);
+    const vx = new Float64Array(n), vy = new Float64Array(n), vz = new Float64Array(n);
+    const hasVZ = new Uint8Array(n);
+    for (let f = 0; f < n; f++) {
+        const f0 = Math.max(0, f - h), f1 = Math.min(n - 1, f + h);
+        const dt = (samples[f1].t - samples[f0].t) / 1000;
+        if (!(dt > 0)) {
+            vx[f] = NaN;
+            vy[f] = NaN;
+            continue;
+        }
+        vx[f] = (samples[f1].x - samples[f0].x) / dt;
+        vy[f] = (samples[f1].y - samples[f0].y) / dt;
+        if (Number.isFinite(samples[f0].z) && Number.isFinite(samples[f1].z)) {
+            vz[f] = (samples[f1].z - samples[f0].z) / dt;
+            hasVZ[f] = 1;
+        }
+    }
+
+    let maxG = -Infinity;
+    const lo = Math.min(h + 2, n >> 1), hi = Math.max(n - h - 2, n >> 1);
+    for (let f = lo; f < hi; f++) {
+        const f0 = Math.max(0, f - h), f1 = Math.min(n - 1, f + h);
+        const dt = (samples[f1].t - samples[f0].t) / 1000;
+        if (!(dt > 0) || !Number.isFinite(vx[f0]) || !Number.isFinite(vx[f1])) continue;
+        const ax = (vx[f1] - vx[f0]) / dt;
+        const ay = (vy[f1] - vy[f0]) / dt;
+        const az = hasVZ[f0] && hasVZ[f1] ? (vz[f1] - vz[f0]) / dt : 0;
+        const g = Math.hypot(ax, ay, az) / G_ACCEL;
+        if (g > maxG) maxG = g;
+    }
+    return Number.isFinite(maxG) ? maxG : null;
+}
 
 /**
  * Longitude difference, wrapped into [-180, 180].
@@ -270,22 +329,32 @@ export function summarizeTrackFile(probed, filename, {maxPoints = 500} = {}) {
         const stride = Math.max(1, Math.ceil(misb.length / maxPoints));
         const xy = [];
         let altMinM = Infinity, altMaxM = -Infinity;
+        let trackMinX = Infinity, trackMaxX = -Infinity, trackMinY = Infinity, trackMaxY = -Infinity;
         let trackStart = Infinity, trackEnd = -Infinity;
+        const role = safeCall(trackFile, "trackRoleHint", trackIndex) ?? null;
+        const isTruth = safeCall(trackFile, "isGroundTruthTrack", trackIndex) === true;
+        const kinematicSamples = isTruth ? [] : null;
 
         for (let r = 0; r < misb.length; r++) {
-            // Always keep the LAST row, whatever the stride lands on — a track
-            // whose final leg is clipped reads as a different shape.
-            if (r % stride !== 0 && r !== misb.length - 1) continue;
             const row = misb[r];
             const lat = row[MISB.SensorLatitude], lon = row[MISB.SensorLongitude];
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
             const x = lonDeltaDeg(lon, originLon) * M_PER_DEG * cosLat;
             const y = (lat - originLat) * M_PER_DEG;
-            xy.push(x, y);
+
+            // Draw only the stride samples, but measure bounds from EVERY point.
+            // A short excursion between thumbnail samples still belongs in the
+            // reported truth range. Always draw the last row so the visible path
+            // does not lose its final leg.
+            if (r % stride === 0 || r === misb.length - 1) xy.push(x, y);
             if (x < minX) minX = x;
             if (x > maxX) maxX = x;
             if (y < minY) minY = y;
             if (y > maxY) maxY = y;
+            if (x < trackMinX) trackMinX = x;
+            if (x > trackMaxX) trackMaxX = x;
+            if (y < trackMinY) trackMinY = y;
+            if (y > trackMaxY) trackMaxY = y;
 
             const alt = row[MISB.SensorTrueAltitude];
             if (Number.isFinite(alt)) {
@@ -296,6 +365,15 @@ export function summarizeTrackFile(probed, filename, {maxPoints = 500} = {}) {
             if (Number.isFinite(t)) {
                 if (t < trackStart) trackStart = t;
                 if (t > trackEnd) trackEnd = t;
+                if (isTruth && Number.isFinite(alt)) {
+                    // A fixed ECEF frame is a rigid transform of Sitrec's local
+                    // ENU frame, so acceleration magnitude is identical. It
+                    // also exactly reconstructs BOT's tangent-plane positions;
+                    // using latitude/longitude as a flat map would add
+                    // projection curvature to long, fast tracks.
+                    const ecef = RLLAToECEF_radii(lat * Math.PI / 180, lon * Math.PI / 180, alt);
+                    kinematicSamples.push({x: ecef.x, y: ecef.y, z: ecef.z, t});
+                }
             }
         }
         if (xy.length < 2) continue;
@@ -306,16 +384,34 @@ export function summarizeTrackFile(probed, filename, {maxPoints = 500} = {}) {
         tracks.push({
             index,
             name: safeShortName(trackFile, trackIndex, filename),
-            role: safeCall(trackFile, "trackRoleHint", trackIndex) ?? null,
-            isTruth: safeCall(trackFile, "isGroundTruthTrack", trackIndex) === true,
+            role,
+            isTruth,
             points: xy.length / 2,
             samples: misb.length,
             xy: Float32Array.from(xy),
+            minX: trackMinX,
+            maxX: trackMaxX,
+            minY: trackMinY,
+            maxY: trackMaxY,
             altMinM: altMinM === Infinity ? null : altMinM,
             altMaxM: altMaxM === -Infinity ? null : altMaxM,
+            maxG: isTruth ? maxKinematicG(kinematicSamples) : null,
         });
     }
     if (!tracks.length) return null;
+
+    // These describe the TRUTH PATH'S own size, not its separation from the
+    // observing platform. Horizontal size is the diagonal of its north/east
+    // bounding box; vertical size is its altitude span.
+    const truth = tracks.find(track => track.isTruth);
+    const truthHorizontalRangeM = truth
+        ? Math.hypot(truth.maxX - truth.minX, truth.maxY - truth.minY)
+        : null;
+    const truthVerticalRangeM = truth
+        && Number.isFinite(truth.altMinM) && Number.isFinite(truth.altMaxM)
+        ? truth.altMaxM - truth.altMinM
+        : null;
+    const truthMaxG = Number.isFinite(truth?.maxG) ? truth.maxG : null;
 
     return {
         filename,
@@ -326,6 +422,9 @@ export function summarizeTrackFile(probed, filename, {maxPoints = 500} = {}) {
         durationS: (endMS > startMS) ? (endMS - startMS) / 1000 : null,
         startMS: Number.isFinite(startMS) ? startMS : null,
         originLat, originLon,
+        truthHorizontalRangeM,
+        truthVerticalRangeM,
+        truthMaxG,
     };
 }
 

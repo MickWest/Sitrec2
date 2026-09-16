@@ -40,7 +40,7 @@ export class CNodeLOSFitHorizontalConstantSpeed extends CNodeTrack {
         const fit = fitHorizontalConstantSpeed(dataset, {groundAltitude});
         this.solved = fit;
         if (fit.failed || !fit.track) {
-            console.warn(`Horizontal Constant Speed Maneuvers fit failed: ${fit.failureReason ?? "unknown reason"}`);
+            console.warn(`Horizontal Speed Valley fit failed: ${fit.failureReason ?? "unknown reason"}`);
             return;
         }
 

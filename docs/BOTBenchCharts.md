@@ -57,6 +57,7 @@ rung figures. The figures that compare clip lengths need at least two.
 | Within tolerance, by length | Share of tracks inside 5% and 1% of true range, against clip length, with exact 95% intervals |
 | Within tolerance, by pointing error | The same shares against the pointing-error rung |
 | Error by solver | Every candidate's error against truth, one box per solver, for each class and pointing-error rung, whether or not the ranking chose it |
+| Error by solver (Sorted) | The same solver comparison, with each panel's X axis ordered from lowest to highest median error in that panel |
 | Error against geometry | Error against parallax aperture and against true range, with a median trend line over equal-count bins |
 | What the verdict says about the class | True class viable, only other classes viable, or nothing viable |
 | Verdict code | The executive verdict by rung, ordered by how far it narrows the answer |
@@ -114,6 +115,15 @@ from a JSONL file offer the top and best candidates only, in a share of range or
 metres. A run cached before these units existed rebuilds its rows once, from the
 stored fits, to add them.
 
+**Selected Solvers** limits candidate-backed charts to the solvers ticked in the
+adjacent **Solvers: N of 25 solvers** button. The selector is the same one used by
+BOTBench and remembers the same choice. Within the selected subset, the charts
+recalculate the truth-free top candidate and the closest-to-truth best candidate;
+the two solver comparison figures omit every unticked solver. Uncheck it to show
+all candidates present in the result. Verdict and class-outcome figures continue
+to show the conclusion stored by the original analysis run, because changing a
+chart filter does not run the solvers or executive assessment again.
+
 **Turn level** appears above the figure when the rows hold more than one
 sensor-turn level, as rock_v3 does. Choosing one level limits every figure to it,
 and the figure's title and exported file name say which level it shows. The two
@@ -156,7 +166,7 @@ hollow dot means the top candidate came from the range-blind polynomial family.
 drawn at it so the axis stays readable, and each caption says how many were
 moved. The statistics behind the box never see the floor.
 
-The solver figure also has a **drawing ceiling**: a thousand times the mean true
+The two solver figures also have a **drawing ceiling**: a thousand times the mean true
 range, 10,000 km in metres, or 180 degrees. A candidate past it is drawn at the
 ceiling, the caption counts it, and its hover label gives the value itself. So one
 runaway fit cannot stretch the axis to 10^59.
@@ -174,8 +184,8 @@ tolerance rather than being dropped.
 
 **Full size** shows the figure on its own, drawn to fill the browser window.
 The panels grow with the window and the caption re-wraps to its width; the
-title, legend and caption keep their size. The toolbar keeps only the choices
-the figure reads: the candidate and the unit on the error figures, the
+title, legend and caption keep their size. The toolbar keeps the solver filter
+and only the other choices the figure reads: the candidate and the unit on the error figures, the
 candidate alone on the tolerance figures (which always use a share of range),
 the sensor-turn level on the figures that take one, and the dot marks on the
 figures whose points are tracks. The figure picker and the file loader are

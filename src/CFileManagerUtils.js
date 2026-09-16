@@ -93,6 +93,8 @@ export function showLocalFolderAccessUnsupportedMessage() {
  * @param {FileSystemDirectoryHandle} directoryHandle
  * @param {object} options
  * @param {(name: string) => boolean} [options.accept] - keep the file when true; keep all when omitted
+ * @param {(name: string, relativePath: string, handle: FileSystemDirectoryHandle) => boolean} [options.skipDirectory]
+ *        do not enter the directory when true
  * @param {boolean} [options.recursive]
  * @param {string} [options.basePath] - internal, the path accumulated so far
  * @param {(entry: object) => void} [options.onFound] - progress callback, fired per kept file
@@ -100,7 +102,7 @@ export function showLocalFolderAccessUnsupportedMessage() {
  */
 export async function walkDirectoryForFiles(directoryHandle,
                                             {accept = null, recursive = false, basePath = "", onFound = null,
-                                                parentHandle = null} = {}) {
+                                                parentHandle = null, skipDirectory = null} = {}) {
     const files = [];
     for await (const [name, handle] of directoryHandle.entries()) {
         const relativePath = basePath ? `${basePath}/${name}` : name;
@@ -118,9 +120,9 @@ export async function walkDirectoryForFiles(directoryHandle,
                 files.push(entry);
                 onFound?.(entry);
             }
-        } else if (recursive && handle.kind === "directory") {
+        } else if (recursive && handle.kind === "directory" && !skipDirectory?.(name, relativePath, handle)) {
             files.push(...await walkDirectoryForFiles(handle,
-                {accept, recursive, basePath: relativePath, onFound, parentHandle: directoryHandle}));
+                {accept, recursive, basePath: relativePath, onFound, parentHandle: directoryHandle, skipDirectory}));
         }
     }
     return files;

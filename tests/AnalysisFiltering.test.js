@@ -82,7 +82,7 @@ test("summary reports actual finite-difference and spline spans and escapes sour
     expect(metrics.accelerationDurationSeconds).toBe(4 * metricSmoothingWindow(301, 30) / 30);
     const K = trajectorySmoothingSettings(301, 30).K;
     expect(result.rows.find(x => x.source === "Constant altitude").detail).toContain(`${K} control points`);
-    expect(result.rows.find(x => x.source === "Horizontal constant speed maneuvers").duration)
+    expect(result.rows.find(x => x.source === "Horizontal speed valley").duration)
         .toContain("12 s position average");
     expect(result.rows.find(x => x.source === "Kalman smoother").durationSeconds).toBe(10);
     const html = filteringSummaryHTML(result);

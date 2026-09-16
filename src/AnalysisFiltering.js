@@ -204,7 +204,7 @@ export function captureAnalysisFiltering(dataset, hypotheses = [], inputFilters 
         const h = hypotheses.find(x => x.key === "horizontalSpeed");
         const duration = h?.params?.smoothSeconds ?? Math.max(2, Math.min(12, (n - 1) / fps / 10));
         const velocity = h?.params?.velocitySeconds ?? Math.max(0.4, Math.min(5, duration * 5 / 12));
-        rows.push({source: "Horizontal constant speed maneuvers", roles: ["Altitude selection"],
+        rows.push({source: "Horizontal speed valley", roles: ["Altitude selection"],
             status: "active", method: "Multi-scale speed consensus, dominant mode, block bootstrap",
             duration: `${seconds(duration)} position average; ${seconds(velocity)} speed baseline`,
             durationSeconds: duration,

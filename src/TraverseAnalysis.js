@@ -59,6 +59,28 @@ const HEADING_MIN_HORIZ_SPEED = 0.05;
 // Mean Earth radius for the tangent-plane curvature corrections (the exact
 // local radius differs <0.4%, negligible relative to the correction itself).
 export const EARTH_RADIUS_M = 6371000;
+const TRACK_METRICS_WORKSPACE = Symbol("track metrics workspace");
+const _trackMetricsSupport = new WeakMap();
+
+function trackMetricsSupport(dataset, h) {
+    const prior = _trackMetricsSupport.get(dataset);
+    if (prior && prior.n === dataset.n && prior.fps === dataset.fps && prior.h === h && prior.W === dataset.W) return prior;
+    const {n, fps, W} = dataset;
+    const f0 = new Int32Array(n), f1 = new Int32Array(n), dt = new Float64Array(n);
+    const wind = new Float64Array(n * 3);
+    let wx = 0, wy = 0, wz = 0;
+    for (let f = 0; f < n; f++) {
+        f0[f] = Math.max(0, f - h);
+        f1[f] = Math.min(n - 1, f + h);
+        dt[f] = (f1[f] - f0[f]) / fps;
+        const b = f * 3;
+        wind[b] = wx; wind[b + 1] = wy; wind[b + 2] = wz;
+        wx += W[b]; wy += W[b + 1]; wz += W[b + 2];
+    }
+    const support = {n, fps, h, W, f0, f1, dt, wind};
+    _trackMetricsSupport.set(dataset, support);
+    return support;
+}
 
 // ---------------------------------------------------------------------------
 // Metrics
@@ -72,19 +94,27 @@ export const EARTH_RADIUS_M = 6371000;
  * air mass); heading/turn rate are computed on the air track.
  */
 export function trackMetrics(dataset, track, options = {}) {
-    const {n, fps, W, S} = dataset;
+    const {n, fps, S} = dataset;
     // Differentiate over a physical-time window, not a fixed frame count.  A
     // fixed 15-frame window made the same continuous trajectory produce
     // different g/turn metrics (and therefore a different rank) at 15, 30 and
     // 60 fps.  Preserve the historical ~0.5 s window at 30 fps.
 
-    const air = new Float64Array(n * 3);
-    let cwx = 0, cwy = 0, cwz = 0;
+    const h = metricSmoothingWindow(n, fps, options);
+    const support = trackMetricsSupport(dataset, h);
+    const workspace = options[TRACK_METRICS_WORKSPACE];
+    const scratch = (name, length) => {
+        if (!workspace) return new Float64Array(length);
+        const value = workspace[name];
+        if (value?.length === length) return value;
+        return (workspace[name] = new Float64Array(length));
+    };
+    const air = scratch("air", n * 3);
     for (let f = 0; f < n; f++) {
-        air[f * 3] = track[f * 3] - cwx;
-        air[f * 3 + 1] = track[f * 3 + 1] - cwy;
-        air[f * 3 + 2] = track[f * 3 + 2] - cwz;
-        cwx += W[f * 3]; cwy += W[f * 3 + 1]; cwz += W[f * 3 + 2];
+        const b = f * 3;
+        air[b] = track[b] - support.wind[b];
+        air[b + 1] = track[b + 1] - support.wind[b + 1];
+        air[b + 2] = track[b + 2] - support.wind[b + 2];
     }
 
     // Clamp the half-window so short (but supported, >=10-frame) A-B windows
@@ -93,25 +123,27 @@ export function trackMetrics(dataset, track, options = {}) {
     // violent trajectory "passed the broad screen" at 0 kt / 0.00 g. Short
     // windows now differentiate over the longest window that still leaves
     // interior samples.
-    const h = metricSmoothingWindow(n, fps, options);
-    const vel = (arr, f) => {
-        const f0 = Math.max(0, f - h), f1 = Math.min(n - 1, f + h);
-        const dt = (f1 - f0) / fps;
-        return [
-            (arr[f1 * 3] - arr[f0 * 3]) / dt,
-            (arr[f1 * 3 + 1] - arr[f0 * 3 + 1]) / dt,
-            (arr[f1 * 3 + 2] - arr[f0 * 3 + 2]) / dt,
-        ];
-    };
-
-    const groundSpeed = new Float64Array(n), airSpeed = new Float64Array(n);
-    const heading = new Float64Array(n), verticalSpeed = new Float64Array(n);
-    const groundHeading = new Float64Array(n);
-    const altitude = new Float64Array(n), range = new Float64Array(n);
+    const groundSpeed = scratch("groundSpeed", n), airSpeed = scratch("airSpeed", n);
+    const heading = scratch("heading", n), verticalSpeed = scratch("verticalSpeed", n);
+    const groundHeading = scratch("groundHeading", n);
+    const altitude = scratch("altitude", n), range = scratch("range", n);
+    // G-load differentiates the already-smoothed air velocity below. Keep that
+    // velocity from this first pass instead of evaluating the same central
+    // differences twice more for every frame. The constant-air sweep calls
+    // trackMetrics thousands of times, so those duplicate reads and temporary
+    // vector arrays were several seconds of a long-track run.
+    const airVX = scratch("airVX", n), airVY = scratch("airVY", n), airVZ = scratch("airVZ", n);
     for (let f = 0; f < n; f++) {
-        const vg = vel(track, f), va = vel(air, f);
-        groundSpeed[f] = Math.hypot(vg[0], vg[1], vg[2]);
-        airSpeed[f] = Math.hypot(va[0], va[1], va[2]);
+        const f0 = support.f0[f], f1 = support.f1[f], dt = support.dt[f];
+        const vg0 = (track[f1 * 3] - track[f0 * 3]) / dt;
+        const vg1 = (track[f1 * 3 + 1] - track[f0 * 3 + 1]) / dt;
+        const vg2 = (track[f1 * 3 + 2] - track[f0 * 3 + 2]) / dt;
+        const va0 = (air[f1 * 3] - air[f0 * 3]) / dt;
+        const va1 = (air[f1 * 3 + 1] - air[f0 * 3 + 1]) / dt;
+        const va2 = (air[f1 * 3 + 2] - air[f0 * 3 + 2]) / dt;
+        airVX[f] = va0; airVY[f] = va1; airVZ[f] = va2;
+        groundSpeed[f] = Math.hypot(vg0, vg1, vg2);
+        airSpeed[f] = Math.hypot(va0, va1, va2);
         // Heading is undefined when there is no horizontal motion to have a
         // heading in: atan2 of two near-zero components returns whatever the
         // numerical noise happens to point at, and since turnRate below is the
@@ -126,18 +158,18 @@ export function trackMetrics(dataset, track, options = {}) {
         // straight — which flatters slow candidates, the exact bias this review
         // is guarding against. 0.05 m/s sits below any real wander and above
         // the numerical floor. NaN (not 0) so stat() skips these frames.
-        const horizAir = Math.hypot(va[0], va[1]);
+        const horizAir = Math.hypot(va0, va1);
         heading[f] = horizAir > HEADING_MIN_HORIZ_SPEED
-            ? Math.atan2(va[0], va[1]) * 180 / Math.PI
+            ? Math.atan2(va0, va1) * 180 / Math.PI
             : NaN;
         // The same direction over the ground: the object's absolute horizontal
         // motion, wind included. This is the True heading the analysis
         // reports, because a wind drifter (a balloon) has no heading through
         // the air but a clear one over the ground. Display only: turn rate,
         // and so the search objective, stays on the air heading above.
-        const horizGround = Math.hypot(vg[0], vg[1]);
+        const horizGround = Math.hypot(vg0, vg1);
         groundHeading[f] = horizGround > HEADING_MIN_HORIZ_SPEED
-            ? Math.atan2(vg[0], vg[1]) * 180 / Math.PI
+            ? Math.atan2(vg0, vg1) * 180 / Math.PI
             : NaN;
         const x = track[f * 3], y = track[f * 3 + 1];
         // Geodetic altitude, not raw ENU z: the tangent plane sits ABOVE the
@@ -146,7 +178,7 @@ export function trackMetrics(dataset, track, options = {}) {
         // centimetres at these ranges). Raw z understated altitude by ~90 ft at
         // 19 km and ~780 ft at 55 km. Vertical speed is the matching derivative.
         altitude[f] = track[f * 3 + 2] + (x * x + y * y) / (2 * EARTH_RADIUS_M);
-        verticalSpeed[f] = vg[2] + (x * vg[0] + y * vg[1]) / EARTH_RADIUS_M;
+        verticalSpeed[f] = vg2 + (x * vg0 + y * vg1) / EARTH_RADIUS_M;
         range[f] = Math.hypot(
             track[f * 3] - S[f * 3],
             track[f * 3 + 1] - S[f * 3 + 1],
@@ -154,15 +186,14 @@ export function trackMetrics(dataset, track, options = {}) {
     }
 
     // maneuvering g from the change in smoothed air velocity
-    const gLoad = new Float64Array(n);
+    const gLoad = scratch("gLoad", n);
     for (let f = 0; f < n; f++) {
-        const f0 = Math.max(0, f - h), f1 = Math.min(n - 1, f + h);
-        const dt = (f1 - f0) / fps;
-        const v0 = vel(air, f0), v1 = vel(air, f1);
-        gLoad[f] = Math.hypot(v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]) / dt / G_ACCEL;
+        const f0 = support.f0[f], f1 = support.f1[f], dt = support.dt[f];
+        gLoad[f] = Math.hypot(airVX[f1] - airVX[f0], airVY[f1] - airVY[f0], airVZ[f1] - airVZ[f0])
+            / dt / G_ACCEL;
     }
 
-    const turnRate = new Float64Array(n);
+    const turnRate = scratch("turnRate", n);
     for (let f = 1; f < n; f++) {
         // Both endpoints must have a defined heading, or the difference is
         // meaningless. NaN propagates naturally and stat() skips it.
@@ -218,6 +249,52 @@ export function trackMetrics(dataset, track, options = {}) {
         range: stat(range, lo, hi),
         series: {groundSpeed, airSpeed, heading, groundHeading, verticalSpeed, gLoad, turnRate, altitude, range},
     };
+}
+
+/**
+ * Track metrics over the longest contiguous run selected by `valid`.
+ *
+ * Truth tracks can cover only part of the analysis window. Their nodes hold a
+ * position outside that interval, so measuring the full array would invent
+ * zero-speed ends and acceleration spikes at the validity boundaries. Slice
+ * both the evidence and the track to the real overlap before applying the same
+ * filtering used for candidate metrics.
+ */
+export function trackMetricsForValidRun(dataset, track, valid, options = {}) {
+    if (!dataset || !track || !valid || valid.length < dataset.n) return null;
+
+    let bestLo = -1, bestHi = -1, bestLength = 0, runLo = -1;
+    for (let f = 0; f <= dataset.n; f++) {
+        if (f < dataset.n && valid[f]) {
+            if (runLo < 0) runLo = f;
+            continue;
+        }
+        if (runLo >= 0 && f - runLo > bestLength) {
+            bestLo = runLo;
+            bestHi = f - 1;
+            bestLength = f - runLo;
+        }
+        runLo = -1;
+    }
+    // trackMetrics needs an interior sample after trimming both filtering
+    // windows. Seven frames is the smallest run that provides one.
+    if (bestLo < 0 || bestHi - bestLo + 1 < 7) return null;
+    if (bestLo === 0 && bestHi === dataset.n - 1) return trackMetrics(dataset, track, options);
+
+    const n = bestHi - bestLo + 1;
+    const copy3 = (src) => {
+        const out = new Float64Array(n * 3);
+        for (let i = 0; i < n * 3; i++) out[i] = src[bestLo * 3 + i];
+        return out;
+    };
+    const slicedDataset = {
+        ...dataset,
+        n,
+        S: copy3(dataset.S),
+        D: copy3(dataset.D),
+        W: copy3(dataset.W),
+    };
+    return trackMetrics(slicedDataset, copy3(track), options);
 }
 
 /**
@@ -1061,7 +1138,8 @@ function bootstrapSpeedBasin(grid, scoreValues, minima, chosen, mode, modeWeight
  * ground-to-platform band is therefore excluded, and only INTERIOR score
  * valleys are eligible. No interior valley means the altitude is unresolved.
  */
-export function fitHorizontalConstantSpeed(dataset, options = {}) {
+/** Resolve the altitude search band shared by the CPU and WebGPU paths. */
+export function horizontalConstantSpeedSetup(dataset, options = {}) {
     const {n, S, D} = dataset;
     const groundAltitude = options.groundAltitude ?? dataset.groundLevelM ?? 0;
     const platformAltitudes = [];
@@ -1080,63 +1158,76 @@ export function fitHorizontalConstantSpeed(dataset, options = {}) {
     const altitudeMax = options.altitudeMax
         ?? groundAltitude + (platformAltitude - groundAltitude) * (1 - platformGuard);
     const samples = Math.max(25, Math.round(options.samples ?? 161));
-    const failed = (reason, extra = {}) => ({
+    const base = {altitudeMin, altitudeMax, platformAltitude, platformGuard, samples};
+    const failed = (reason) => ({
         failed: true, failureReason: reason, altitudeMin, altitudeMax,
-        platformAltitude, platformGuard, ...extra,
+        platformAltitude, platformGuard,
+        ...(options.computeBackend ? {backend: options.computeBackend} : {}),
     });
     if (n < 20) return failed("too few frames");
     if (!(altitudeMax > altitudeMin)) return failed("no altitude band below the platform");
     if (!(medianDown < -1e-4)) return failed("the median sightline is not looking down");
+    return {failed: false, ...base};
+}
 
-    const evalAltitudeRaw = (altitude) => {
-        const exact = traverseConstAltitude(dataset, altitude);
-        if (exact.badFrames > 0.02 * n) return {altitude, score: Infinity, exact};
-        const speed = horizontalConstantSpeedScore(dataset, exact.track, options);
-        if (!speed) return {altitude, score: Infinity, exact};
-        const duration = (n - 1) / dataset.fps;
-        const requestedScales = options.consensusSmoothSeconds ?? [
-            Math.max(1, speed.smoothSeconds / 2),
-            speed.smoothSeconds,
-            Math.min(Math.max(2, duration / 6), speed.smoothSeconds * 5 / 3),
-        ];
-        const scales = [...new Set(requestedScales.map(value => Number(value.toFixed(6))))];
-        const scaleScores = [];
-        for (const smoothSeconds of scales) {
-            if (Math.abs(smoothSeconds - speed.smoothSeconds) < 1e-6) {
-                scaleScores.push(speed.rmsScore);
-                continue;
-            }
-            const atScale = horizontalConstantSpeedScore(dataset, exact.track, {
-                ...options,
-                smoothSeconds,
-                velocitySeconds: speed.velocitySeconds,
-                includeTrack: false,
-            });
-            if (atScale) scaleScores.push(atScale.rmsScore);
+/** Score one altitude in the CPU path and during final GPU-result refinement. */
+export function horizontalConstantSpeedCandidate(dataset, altitude, options = {}) {
+    const exact = traverseConstAltitude(dataset, altitude);
+    if (exact.badFrames > 0.02 * dataset.n) return {altitude, score: Infinity, exact};
+    const speed = horizontalConstantSpeedScore(dataset, exact.track, options);
+    if (!speed) return {altitude, score: Infinity, exact};
+    const duration = (dataset.n - 1) / dataset.fps;
+    const requestedScales = options.consensusSmoothSeconds ?? [
+        Math.max(1, speed.smoothSeconds / 2),
+        speed.smoothSeconds,
+        Math.min(Math.max(2, duration / 6), speed.smoothSeconds * 5 / 3),
+    ];
+    const scales = [...new Set(requestedScales.map(value => Number(value.toFixed(6))))];
+    const scaleScores = [];
+    for (const smoothSeconds of scales) {
+        if (Math.abs(smoothSeconds - speed.smoothSeconds) < 1e-6) {
+            scaleScores.push(speed.rmsScore);
+            continue;
         }
-        const multiscaleScore = scaleScores.length
-            ? scaleScores.reduce((sum, value) => sum + value, 0) / scaleScores.length
-            : speed.rmsScore;
-        return {
-            altitude,
-            score: speed.score,
-            exact,
-            speed,
-            waveform: normalizedSpeedWaveform(speed),
-            components: {
-                rms: speed.rmsScore,
-                mad: speed.madScore,
-                block: speed.blockMedianScore,
-                multiscale: multiscaleScore,
-            },
-            scaleScores,
-            smoothScales: scales,
-        };
-    };
-    const grid = new Array(samples);
-    for (let i = 0; i < samples; i++) {
-        grid[i] = evalAltitudeRaw(altitudeMin + (altitudeMax - altitudeMin) * i / (samples - 1));
+        const atScale = horizontalConstantSpeedScore(dataset, exact.track, {
+            ...options,
+            smoothSeconds,
+            velocitySeconds: speed.velocitySeconds,
+            includeTrack: false,
+        });
+        if (atScale) scaleScores.push(atScale.rmsScore);
     }
+    const multiscaleScore = scaleScores.length
+        ? scaleScores.reduce((sum, value) => sum + value, 0) / scaleScores.length
+        : speed.rmsScore;
+    return {
+        altitude,
+        score: speed.score,
+        exact,
+        speed,
+        waveform: normalizedSpeedWaveform(speed),
+        components: {
+            rms: speed.rmsScore,
+            mad: speed.madScore,
+            block: speed.blockMedianScore,
+            multiscale: multiscaleScore,
+        },
+        scaleScores,
+        smoothScales: scales,
+    };
+}
+
+/** Complete selection, bootstrap, and f64 refinement from an altitude score grid. */
+export function finishHorizontalConstantSpeedFit(dataset, options, setup, grid) {
+    if (setup.failed) return setup;
+    const {S} = dataset;
+    const {altitudeMin, altitudeMax, platformAltitude, platformGuard} = setup;
+    const failed = (reason) => ({
+        failed: true, failureReason: reason, altitudeMin, altitudeMax,
+        platformAltitude, platformGuard,
+        ...(options.computeBackend ? {backend: options.computeBackend} : {}),
+    });
+    const evalAltitudeRaw = altitude => horizontalConstantSpeedCandidate(dataset, altitude, options);
     const componentKeys = ["rms", "mad", "block", "multiscale"];
     const componentNorms = {};
     for (const key of componentKeys) {
@@ -1203,7 +1294,7 @@ export function fitHorizontalConstantSpeed(dataset, options = {}) {
             x2 = lo + phi * (hi - lo); r2 = evalAltitude(x2);
         }
     }
-    let best = grid[chosen];
+    let best = evalAltitude(grid[chosen].altitude);
     for (const candidate of [r1, r2, evalAltitude((lo + hi) / 2)]) {
         if (candidate.score < best.score) best = candidate;
     }
@@ -1258,6 +1349,7 @@ export function fitHorizontalConstantSpeed(dataset, options = {}) {
         altitudeMax,
         platformAltitude,
         platformGuard,
+        ...(options.computeBackend ? {backend: options.computeBackend} : {}),
         localMinima: minima.map(i => ({
             altitude: grid[i].altitude,
             score: grid[i].score,
@@ -1267,6 +1359,18 @@ export function fitHorizontalConstantSpeed(dataset, options = {}) {
         alternativeScore: otherScores[0] ?? null,
         metrics: summarizeMetrics(trackMetrics(dataset, best.speed.track)),
     };
+}
+
+export function fitHorizontalConstantSpeed(dataset, options = {}) {
+    const setup = horizontalConstantSpeedSetup(dataset, options);
+    if (setup.failed) return setup;
+    const {altitudeMin, altitudeMax, samples} = setup;
+    const grid = new Array(samples);
+    for (let i = 0; i < samples; i++) {
+        const altitude = altitudeMin + (altitudeMax - altitudeMin) * i / (samples - 1);
+        grid[i] = horizontalConstantSpeedCandidate(dataset, altitude, options);
+    }
+    return finishHorizontalConstantSpeedFit(dataset, options, setup, grid);
 }
 
 // ---------------------------------------------------------------------------
@@ -1598,6 +1702,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
     const results = [];
 
     const workspace = {};
+    const metricsWorkspace = {};
     const sweepRanges = async (rangeList, progressBase, progressSpan) => {
         for (let ri = 0; ri < rangeList.length; ri++) {
             for (const speedMs of speeds) {
@@ -1615,7 +1720,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
                 const {track} = traversePlausible(ds, rangeList[ri],
                     {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true, [PLAUSIBLE_WORKSPACE]: workspace});
                 const sm = smoothTrackBspline(track, ds.n, smoothK, curvature);
-                const m = trackMetrics(ds, sm);
+                const m = trackMetrics(ds, sm, {[TRACK_METRICS_WORKSPACE]: metricsWorkspace});
                 let score = straightFlightScore(m, 0);
                 if (speedTarget !== null) {
                     score += 0.2 * ((speedMs - speedTarget) / speedSigma) ** 2;
@@ -1632,10 +1737,11 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
                 });
             }
             if (options.progress) {
+                // The dataset is the fit's immutable snapshot. Keep the
+                // acceleration normal equations across the UI yield as well as
+                // across cells; rebuilding them once per range row was a large
+                // fraction of this sweep's CPU time.
                 await options.progress(progressBase + progressSpan * (ri + 1) / rangeList.length);
-                // Progress callbacks may edit observations. Reuse only across
-                // synchronous cells, never across an external yield.
-                workspace.acceleration = null;
             }
         }
     };

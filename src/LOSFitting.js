@@ -130,6 +130,7 @@ import {integrateRK4} from "./PhysicsModel";
 import {assessBoundPins} from "./BoundedFit";
 import {gpuDifferentialEvolution, resolveGpuBudget} from "./gpu/GpuDifferentialEvolution";
 import {buildLanternKernel, GPU_PHYSICS_BUDGET} from "./gpu/LanternCostKernel";
+import {buildQuadcopterKernel} from "./gpu/QuadcopterCostKernel";
 
 // ---------------------------------------------------------------------------
 // Linear algebra helpers
@@ -1676,16 +1677,17 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
 
     // GPU SEARCH (opt-in, options.gpu = true or {instances, pop, gens}): replaces
     // the CPU differential evolution for models that have a WGSL cost kernel
-    // (currently SkyLanternModel without a ground prior). Independent instances,
+    // (currently SkyLanternModel and QuadcopterModel without a ground prior). Independent instances,
     // each seeded with x0, run on the GPU in f32; every instance's best is then
     // re-scored here in f64 and the lowest f64 cost goes to the same Nelder-Mead
     // polish as the CPU path. dePop/deGens do not apply to it. Returns null — use
     // the CPU search — when no kernel covers the model or WebGPU is unavailable.
     const gpuPhysicsSearch = async () => {
-        const kernel = buildLanternKernel({
+        const kernelArgs = {
             model, dataset, costFrames, costTimes, T, errSigma, groundPrior,
             maxDt: fitMaxDt ?? model.maxDt ?? 0.02,
-        });
+        };
+        const kernel = buildLanternKernel(kernelArgs) ?? buildQuadcopterKernel(kernelArgs);
         if (!kernel) return null;
         const budget = resolveGpuBudget(options.gpu, GPU_PHYSICS_BUDGET);
         const instLo = lo.slice(), instHi = hi.slice();

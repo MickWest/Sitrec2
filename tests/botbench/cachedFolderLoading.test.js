@@ -101,7 +101,7 @@ function cachedFolder(name, count, version = appVersion) {
                 quality: {frames: 2}, fileSha256: hashes, elapsedMs: 100,
                 displayName: source.name, top: {errDeg: 0.1}},
             appVersion: version, unitVersions: {kalman: UNIT_VERSIONS.kalman},
-            chartData: {version: 2, apertureDeg: 1, sensorTurnDeg: 0, candidateErrors: []}}}};
+            chartData: {version: 4, apertureDeg: 1, sensorTurnDeg: 0, candidateErrors: []}}}};
     }
     let text = JSON.stringify({schema: 3, results});
     const writes = [];

@@ -65,6 +65,7 @@ import {
 import {
     assessLinearFitConditioning,
     fitAlternatingLSQ,
+    fitConstantAcceleration,
     fitConstantVelocity,
     fitKalmanFilter,
     fitMonteCarlo,
@@ -439,10 +440,11 @@ export async function runTraverseBattery({
     solutionFamilies = false, mcOrderSweep = false,
     // Independent blind-range GPU solvers, selected explicitly by the live UI.
     // BOTBench instead selects their individual units in its plan.
-    mcGpuPresets = [], monteCarloData = null,
-    // Search the fixed-wing and balloon fits on the GPU (WebGPU) when available.
+    mcGpuPresets = [], monteCarloData = null, directFitData = null,
+    // Search the fixed-wing, balloon, and quadcopter fits on the GPU (WebGPU)
+    // when available.
     // Opt-in: a GPU search finds different basins, so it changes results. The
-    // quadcopter, drone-control and range-band fits stay on the CPU.
+    // final reported tracks and local refinements still use double precision.
     gpu = false,
 
     // Injected environment — see the module header. All optional but buildHypotheses.
@@ -591,10 +593,10 @@ export async function runTraverseBattery({
     });
 
     const horizontalSpeed = await runUnit("horizontalSpeed", async (unitFailures) => {
-        await at(0.78, 0.01, "Fitting horizontal constant-speed manoeuvres...")(0);
+        await at(0.78, 0.01, "Fitting horizontal speed valley...")(0);
         const fit = fitHorizontalConstantSpeed(dataset);
         if (fit.failed) {
-            unitFailures.push({method: "Horizontal Constant Speed Maneuvers",
+            unitFailures.push({method: "Horizontal Speed Valley",
                 error: fit.failureReason ?? "fit failed"});
         }
         return fit;
@@ -636,6 +638,37 @@ export async function runTraverseBattery({
         sensorPos: dataset.S, losDir: dataset.D, times: physicsTimes,
         count: dataset.n, maxRange: null,
     };
+    // CV and CA are the direct batch least-squares fits used by the live
+    // traverse nodes. BOTBench can replace the uniform analysis clock and add
+    // its per-observation MaxRange values through directFitData; the sensor and
+    // LOS arrays always come from this analysis dataset.
+    const directDS = {
+        ...physicsDS,
+        ...(directFitData?.times ? {times: directFitData.times} : {}),
+        ...(directFitData?.maxRange ? {maxRange: directFitData.maxRange} : {}),
+    };
+    const constantVelocity = await runUnit("gfCV", (unitFailures) => {
+        try {
+            const fit = fitConstantVelocity(directDS, new Set());
+            if (!fit) unitFailures.push({method: "Global Fit: Constant Velocity", error: "fit returned no solution"});
+            return fit;
+        } catch (e) {
+            rethrowIfCancelled(e);
+            unitFailures.push({method: "Global Fit: Constant Velocity", error: (e && e.message) || "fit failed"});
+            return null;
+        }
+    });
+    const constantAcceleration = await runUnit("gfCA", (unitFailures) => {
+        try {
+            const fit = fitConstantAcceleration(directDS, new Set());
+            if (!fit) unitFailures.push({method: "Global Fit: Constant Acceleration", error: "fit returned no solution"});
+            return fit;
+        } catch (e) {
+            rethrowIfCancelled(e);
+            unitFailures.push({method: "Global Fit: Constant Acceleration", error: (e && e.message) || "fit failed"});
+            return null;
+        }
+    });
     const clipDurationSec = (dataset.n - 1) / dataset.fps;
     const physicsOpts = {
         optimizer: "de", sampleStride: 5, dePop: 48, deGens: 120,
@@ -819,8 +852,9 @@ export async function runTraverseBattery({
             // ~20k RK4 substeps per DE evaluation and made this the slowest phase of
             // the whole analysis (TA-25). The final full-resolution trajectory still
             // integrates at the model's own maxDt.
+            const quadOptions = {...physicsOpts, fitMaxDt: 0.5};
             fit = await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(),
-                {...physicsOpts, fitMaxDt: 0.5});
+                gpu ? {...quadOptions, gpu} : quadOptions);
         } catch (e) {
             rethrowIfCancelled(e);
             unitFailures.push({method: "Quadcopter", error: (e && e.message) || "fit failed"});
@@ -1005,6 +1039,7 @@ export async function runTraverseBattery({
         slowProfile, slowOpts,
         originLat, originLon,
         provenance, failures, windPrior, mcSweep, monteCarlo, droneCtl, kalman,
+        constantVelocity, constantAcceleration,
     });
 
     // Attach the range bands AFTER the hypothesis set is built, keyed by the
@@ -1051,7 +1086,8 @@ export async function runTraverseBattery({
 
     return {
         sweep, resolvedRanges, fastProfile, slowProfile, slowOpts,
-        aircraft, ca, horizontalSpeed, plausible, seedTrack, seedSource,
+        aircraft, ca, horizontalSpeed, plausible, constantVelocity, constantAcceleration,
+        seedTrack, seedSource,
         lantern, lanternMeasured, quad, droneCtl, kalman,
         families, mcSweep, polySweep, monteCarlo, missingGpuSolvers, satellite,
         hypotheses, executiveAssessment,

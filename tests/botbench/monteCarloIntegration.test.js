@@ -9,6 +9,7 @@ import {fitBotBenchRecord, cacheableBotBenchBattery, searchBackendOf} from "../.
 import {packForCache, unpackFromCache} from "../../src/analysis/BotBenchCacheCodec";
 import {rowMemoStorable} from "../../src/analysis/BotBenchSolvers";
 import {hypothesisCategory} from "../../src/TraverseRanking";
+import {fitConstantAcceleration, fitConstantVelocity} from "../../src/LOSFitting";
 import {openBotBenchDialog} from "../../src/analysis/BotBenchUI";
 import {ingestBotCSV} from "../../src/analysis/BotBenchIngest";
 
@@ -29,6 +30,12 @@ beforeEach(() => {
 test("GPU search starts enabled in the BOTBench dialog", () => {
     const state = openBotBenchDialog();
     expect(state.gpuSearchInput.checked).toBe(true);
+    state.closeButton.onclick();
+});
+
+test("the BOTBench results dialog leaves wheel scrolling native", () => {
+    const state = openBotBenchDialog();
+    expect(state.overlay.dataset.interactionNative).toBe("true");
     state.closeButton.onclick();
 });
 
@@ -61,6 +68,32 @@ test("selected presets alone produce separate curve-fit candidates and replay ex
     fitMonteCarloGPU.mockClear();
     const replay = await fitBotBenchRecord(record, {solvers, units: {cached}});
     expect(fitMonteCarloGPU).not.toHaveBeenCalled();
+    expect(packForCache(cacheableBotBenchBattery(replay)))
+        .toEqual(packForCache(cacheableBotBenchBattery(fresh)));
+});
+
+test("direct CV and CA use the observation clock and range limits and replay from cache", async () => {
+    const solvers = ["gfCV", "gfCA"];
+    const fresh = await fitBotBenchRecord(record, {solvers});
+    expect(Object.keys(fresh.units)).toEqual(solvers);
+    expect(fresh.hypotheses.map(h => h.key)).toEqual(solvers);
+
+    const directDataset = {
+        sensorPos: record.dataset.S,
+        losDir: record.dataset.D,
+        count: record.dataset.n,
+        ...record.losSamples,
+    };
+    const expectedCV = fitConstantVelocity(directDataset, new Set());
+    const expectedCA = fitConstantAcceleration(directDataset, new Set());
+    expect(Array.from(fresh.units.gfCV.result.positions)).toEqual(Array.from(expectedCV.positions));
+    expect(Array.from(fresh.units.gfCA.result.positions)).toEqual(Array.from(expectedCA.positions));
+    expect(fresh.hypotheses[0].params.methodLabel).toBe("Global Fit: Constant Velocity");
+    expect(fresh.hypotheses[1].params.methodLabel).toBe("Global Fit: Const Acceleration");
+
+    const cached = unpackFromCache(packForCache(fresh.units));
+    const replay = await fitBotBenchRecord(record, {solvers, units: {cached}});
+    expect(replay.units).toEqual({});
     expect(packForCache(cacheableBotBenchBattery(replay)))
         .toEqual(packForCache(cacheableBotBenchBattery(fresh)));
 });

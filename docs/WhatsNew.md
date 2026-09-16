@@ -13,7 +13,8 @@ lockstep with docs/WhatsNew-Details.md.
 
 ### New Features
 
-- **Horizontal Constant Speed Maneuvers** (Traverse → *LOS Traverse Method*, Traverse → **Analyze Traverse Methods...**, and the **Solvers…** list in File → File Analysis → **BOTBench...**): a speculative new fit for a level object that may turn but keeps about the same ground speed. It finds the altitude where that speed stays most steady, shows in the analysis how stable that answer is, and reports a failure instead of guessing when there is no clear answer. BOTBench ticks it by default unless you have already saved a solver choice.
+- **Direct Constant Velocity and Constant Acceleration fits in BOTBench** (File → File Analysis → **BOTBench...** → **Solvers…**): run the same all-sightline least-squares CV and CA algorithms offered by the live Traverse menu. Both are selected by default and use each BOT observation's original time and maximum-range value.
+- **Horizontal Speed Valley** (Traverse → *LOS Traverse Method*, Traverse → **Analyze Traverse Methods...**, and the **Solvers…** list in File → File Analysis → **BOTBench...**): a speculative new fit for a level object that may turn but keeps about the same ground speed. It finds the altitude where that speed stays most steady, shows in the analysis how stable that answer is, and reports a failure instead of guessing when there is no clear answer. BOTBench ticks it by default unless you have already saved a solver choice.
 - **Fraction** (File → File Analysis → **BOTBench...**): analyze only every nth file (3 analyzes files 3, 6, 9 and so on), while the rest are marked skipped and left out of Charts and screenshots. It does not change or invalidate anything already stored in a folder's cache.
 
 ## Version 2.161.0 (2026-09-15)

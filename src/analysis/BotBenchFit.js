@@ -66,6 +66,7 @@ export function searchBackendOf(battery) {
     const used = [];
     if (battery?.aircraft) used.push(battery.aircraft.runs?.[0]?.de?.backend === "webgpu");
     if (battery?.lantern) used.push(battery.lantern.params?.optimizer?.de?.backend === "webgpu");
+    if (battery?.quad) used.push(battery.quad.params?.optimizer?.de?.backend === "webgpu");
     for (const fit of Object.values(battery?.monteCarlo ?? {})) {
         if (fit) used.push(fit.params?.backend === "webgpu");
     }
@@ -93,6 +94,7 @@ function markGpuFallbacksUncacheable(units) {
     };
     check("aircraft", (fit) => fit.runs?.[0]?.de?.backend === "webgpu");
     check("lantern", (fit) => fit.params?.optimizer?.de?.backend === "webgpu");
+    check("quadcopter", (fit) => fit.params?.optimizer?.de?.backend === "webgpu");
     if (fellBack && units.families) units.families.cacheable = false;
 }
 
@@ -114,7 +116,7 @@ export function validateBotBenchRecord({dataset}) {
 
 export async function fitBotBenchRecord(record, {
     anchorM = DEFAULT_ANCHOR_M, solutionFamilies = false, mcOrderSweep = false,
-    // Search the fixed-wing and balloon fits on the GPU where WebGPU exists
+    // Search the supported object-model fits on the GPU where WebGPU exists
     // (TraverseBattery `gpu`). Changes those fits, so their units are stored apart.
     gpuSearch = false,
     // The solvers wanted (BotBenchSolvers ids; null for the default set) and, optionally,
@@ -226,6 +228,8 @@ export async function fitBotBenchRecord(record, {
         mcOrderSweep,
         monteCarloData: record.losSamples ?? (record.meta?.maxRangeM > 0
             ? {maxRange: new Float64Array(dataset.n).fill(record.meta.maxRangeM)} : null),
+        directFitData: record.losSamples ?? (record.meta?.maxRangeM > 0
+            ? {maxRange: new Float64Array(dataset.n).fill(record.meta.maxRangeM)} : null),
         gpu: gpuSearch,
         familyScreen: makeFlatFamilyScreen(dataset, originLat, originLon, groundZ),
         buildHypotheses: (args) => buildCoreHypotheses({
@@ -277,5 +281,7 @@ export function cacheableBotBenchBattery(battery) {
         // represent, so if one of these ever stops being plain data the write
         // fails loudly instead of storing a lie.
         plausible: battery.plausible, lantern: battery.lantern, quad: battery.quad,
+        constantVelocity: battery.constantVelocity,
+        constantAcceleration: battery.constantAcceleration,
     };
 }

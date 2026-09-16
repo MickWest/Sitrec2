@@ -197,16 +197,17 @@ cannot determine:
   makes supported runs repeatable for the same code and inputs; it does not
   prove that a retained basin is the global optimum.
 - **GPU search**: *Traverse Analysis Tweaks → GPU search (WebGPU)* is enabled
-  by default. When the browser supports WebGPU, the fixed-wing and balloon
-  fits search on the graphics card. Many independent searches with large
+  by default. When the browser supports WebGPU, the fixed-wing, balloon and
+  quadcopter fits search on the graphics card. Many independent searches with large
   populations run at once, and they test hundreds of times more candidate
   solutions than the normal search, in less time. The graphics card scores
   candidates in single precision. The best candidates are then refined on the
   CPU, and every reported number (parameters, residual, track, bound checks)
   is computed there in double precision, as it is without this option. A larger
   search can find a better-fitting basin than the normal search, so results can
-  differ from a CPU run, and they can differ slightly between graphics cards. The
-  quadcopter, drone-control and range-band fits still use the CPU. Without
+  differ from a CPU run, and they can differ slightly between graphics cards.
+  The drone-control fit still uses the CPU. Range bands use the selected model
+  fits as their starting points. Without
   WebGPU, or if the graphics card reports an error, the analysis uses the normal
   search. The report's run audit records which search each fixed-wing run used.
 - **GPU Monte Carlo presets**: *Traverse Analysis Tweaks → Monte Carlo GPU*

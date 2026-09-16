@@ -1750,7 +1750,8 @@ export function shortSolverName(name) {
  * builds only from rows carrying every candidate's error (r_candidates), which a
  * BOTBench run keeps; a joined JSONL without them gets no figure.
  */
-export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks()} = {}) {
+export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMeasure(), marks = makeMarks(),
+    sortByMedian = false} = {}) {
     const scored = rows.filter((r) => Array.isArray(r.r_candidates) && r.r_candidates.length);
     if (!scored.length) return null;
     const rungs = rungGroups(scored, rungsWanted);
@@ -1760,7 +1761,11 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
     const dotSize = marks.sizeByLength ? 4 : 3;
     const nameOf = (c) => c.name ?? c.key ?? "?";
 
-    // One order for every panel: by median error over all the rows, best first.
+    // The ordinary figure preserves the solver order carried by the candidate
+    // lists. The sorted companion derives EACH panel's order from the same
+    // values used to build that panel's boxes. Sorting a separate pooled list
+    // can put a solver with a visibly lower box to the right in a particular
+    // panel, which defeats the purpose of the sorted view.
     const pooled = new Map();
     for (const r of scored) {
         for (const c of r.r_candidates) {
@@ -1770,29 +1775,46 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
             pooled.get(nameOf(c)).push(v);
         }
     }
-    const solvers = [...pooled.entries()]
-        .map(([name, values]) => ({name, median: median(values)}))
-        .sort((a, b) => a.median - b.median)
-        .map((s) => s.name);
+    const solvers = [...pooled.keys()];
     if (!solvers.length) return null;
-    const slot = new Map(solvers.map((name, s) => [name, s]));
 
     const data = [], titles = [];
     const medians = {};
+    const solverOrders = [];
     const lowest = [];
     let drawn = 0, floored = 0, capped = 0, peak = floor;
     for (const cls of CLASSES) {
         for (const rung of rungs) {
             const i = titles.length;
             const suffix = i === 0 ? "" : String(i + 1);
-            const values = solvers.map(() => []);
+            const here = cell(scored, cls, null, rung);
+            const valuesBySolver = new Map(solvers.map((name) => [name, []]));
+            for (const r of here) {
+                for (const c of r.r_candidates) {
+                    const v = measure.candidate(c);
+                    if (fin(v) && valuesBySolver.has(nameOf(c))) valuesBySolver.get(nameOf(c)).push(v);
+                }
+            }
+            const panelSolvers = solvers.slice();
+            if (sortByMedian) {
+                panelSolvers.sort((a, b) => {
+                    const ma = median(valuesBySolver.get(a));
+                    const mb = median(valuesBySolver.get(b));
+                    if (fin(ma) && fin(mb)) return ma - mb || a.localeCompare(b);
+                    if (fin(ma)) return -1;
+                    if (fin(mb)) return 1;
+                    return a.localeCompare(b);
+                });
+            }
+            solverOrders.push(panelSolvers);
+            const slot = new Map(panelSolvers.map((name, s) => [name, s]));
+            const values = panelSolvers.map((name) => valuesBySolver.get(name));
             const points = [];
-            for (const r of cell(scored, cls, null, rung)) {
+            for (const r of here) {
                 for (const c of r.r_candidates) {
                     const s = slot.get(nameOf(c));
                     const v = measure.candidate(c);
                     if (s === undefined || !fin(v)) continue;
-                    values[s].push(v);
                     points.push({x: s, y: Math.min(atLeast(v, floor), ceiling), id: r.rowIndex ?? null, ...marks.style(r, dotSize, CLASS_HUE[cls]),
                         label: solverLabel(r, nameOf(c))});
                     // A value past the ceiling is drawn at it; its label keeps the value itself.
@@ -1805,14 +1827,14 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
                     drawn++;
                 }
             }
-            const stats = solvers.map((name, s) => {
+            const stats = panelSolvers.map((name, s) => {
                 const box = measure.boxStats(values[s]);
                 if (box) medians[`${rung}deg/${cls}/${name}`] = box.median;
                 return box;
             });
-            data.push(boxTrace(solvers.map((unused, s) => s), stats, CLASS_HUE[cls], {axis: suffix, floor, ceiling}));
+            data.push(boxTrace(panelSolvers.map((unused, s) => s), stats, CLASS_HUE[cls], {axis: suffix, floor, ceiling}));
             if (points.length) data.push(stripTrace(points, CLASS_HUE[cls], {axis: suffix, size: dotSize, opacity: 0.35}));
-            const best = solvers.map((name) => [name, medians[`${rung}deg/${cls}/${name}`]])
+            const best = panelSolvers.map((name) => [name, medians[`${rung}deg/${cls}/${name}`]])
                 .filter(([, m]) => fin(m)).sort((a, b) => a[1] - b[1])[0];
             if (best) {
                 lowest.push(`${CLASS_LABEL[cls]} ${rungLabel(rung)}: ${shortSolverName(best[0])} ${measure.format(best[1])}`);
@@ -1823,26 +1845,33 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
     const layout = gridLayout({
         rows: CLASSES.length, cols: rungs.length, titles,
         xTitle: "", yTitle: `Candidate ${measure.noun}`,
-        tickvals: solvers.map((unused, s) => s),
-        ticktext: solvers.map(shortSolverName),
         vGap: 0.14, bottomPad: 0.1,
         yRange: measure.yRange(peak), logY: !measure.axis, yAxis: measure.axis,
     });
     for (let i = 0; i < titles.length; i++) {
         const suffix = i === 0 ? "" : String(i + 1);
-        Object.assign(layout[`xaxis${suffix}`], {tickangle: -35, tickfont: {size: 10, color: INK2}});
+        const panelSolvers = solverOrders[i];
+        Object.assign(layout[`xaxis${suffix}`], {
+            tickvals: panelSolvers.map((unused, s) => s),
+            ticktext: panelSolvers.map(shortSolverName),
+            tickangle: -35, tickfont: {size: 10, color: INK2},
+        });
     }
     addTolerance(layout, titles.length, measure);
-    const title = `rock_v3: every candidate's error, by solver${unitSuffix(measure)}`;
+    const title = `rock_v3: every candidate's error, by solver${sortByMedian ? ", sorted by median" : ""}`
+        + unitSuffix(measure);
     return {
-        key: "errorBySolver", title, data,
+        key: sortByMedian ? "errorBySolverSorted" : "errorBySolver", title, data,
         layout: pageLayout(layout, {
             title, height: 560 * CLASSES.length + 200,
             caption: `${drawn} candidate errors from ${scored.length} tracks, all clip lengths pooled. One box per solver: `
                 + `every candidate that solver produced, scored against truth whether or not the blind ranking put it `
                 + `first. A solver with a low box can find the answer; set it beside the blind top candidate's error in `
-                + `the clip-length figure to see what the ranking passed over. Solvers are ordered by their median error `
-                + `over every panel, best first. Box, whiskers and dots as in the clip-length figure`
+                + `the clip-length figure to see what the ranking passed over. `
+                + (sortByMedian
+                    ? `Each panel's solvers are ordered by that panel's median error, best first. `
+                    : `Solvers keep the order supplied by the analysis. `)
+                + `Box, whiskers and dots as in the clip-length figure`
                 + (measure.axis ? "" : `; ${floored} values below ${measure.format(floor)} are drawn at the floor`)
                 + (capped ? `${measure.axis ? ";" : ", and"} ${capped} above ${measure.ceilingLabel} at the ceiling, where the `
                     + "hover label gives the value itself" : "")
@@ -1850,7 +1879,7 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
                 + (measure.subject === SUBJECT_TOP ? "" : " The candidate choice does not apply here: every candidate is shown."),
         }),
         config: BASE_CONFIG,
-        stats: {solvers, medians},
+        stats: {solvers: sortByMedian ? solverOrders[0] : solvers, solverOrders, medians},
     };
 }
 
@@ -1905,6 +1934,9 @@ export const FIGURES = [
         measure: "full", build: (rows, {measure} = {}) => figErrorByTurn(rows, {across: "turn", measure})},
     {key: "errorBySolver", name: "Error by solver", group: "Accuracy",
         dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorBySolver(rows, {measure, marks})},
+    {key: "errorBySolverSorted", name: "Error by solver (Sorted)", group: "Accuracy",
+        dots: true, measure: "full",
+        build: (rows, {measure, marks} = {}) => figErrorBySolver(rows, {measure, marks, sortByMedian: true})},
     {key: "errorVsGeometry", name: "Error against geometry", group: "Geometry",
         dots: true, measure: "full", build: (rows, {measure, marks} = {}) => figErrorVsGeometry(rows, {measure, marks})},
     {key: "classOutcome", name: "What the verdict says about the class", group: "Interpretation",

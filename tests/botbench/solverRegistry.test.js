@@ -11,9 +11,11 @@ import {MONTE_CARLO_IDS, MONTE_CARLO_PRESETS, MONTE_CARLO_SEED} from "../../src/
 
 describe("the solver list", () => {
     test("names the default candidates and six independent GPU Monte Carlo presets", () => {
-        expect(SOLVERS).toHaveLength(23);
-        expect(defaultSolverIds()).toHaveLength(17);
+        expect(SOLVERS).toHaveLength(25);
+        expect(defaultSolverIds()).toHaveLength(19);
         expect(allSolverIds().filter(id => id.startsWith("mc_"))).toEqual(MONTE_CARLO_IDS);
+        expect(solverById("gfCV").name).toBe("Global Fit: Constant Velocity");
+        expect(solverById("gfCA").name).toBe("Global Fit: Constant Acceleration");
         expect(allSolverIds()).toContain("gfKalman");
         expect(solverById("gfKalman").name).toBe("Global Fit: Kalman Smoother");
         expect(allSolverIds().filter((id) => id.startsWith("gfPolyALS:"))).toEqual(
@@ -39,14 +41,20 @@ describe("the solver list", () => {
         expect(isEverySolver(null)).toBe(false);
         expect(isEverySolver(allSolverIds())).toBe(true);
         expect(isEverySolver(["gfKalman"])).toBe(false);
-        expect(describeSolvers(["gfKalman"])).toBe("1 of 23 solvers");
-        expect(describeSolvers(null)).toBe("17 of 23 solvers");
+        expect(describeSolvers(["gfKalman"])).toBe("1 of 25 solvers");
+        expect(describeSolvers(null)).toBe("19 of 25 solvers");
     });
 });
 
 describe("the unit plan", () => {
     test("the Kalman smoother alone needs one unit and no sweep", () => {
         expect(planUnits(["gfKalman"])).toEqual(["kalman"]);
+    });
+
+    test("the direct CV and CA fits each need only their own cheap unit", () => {
+        expect(planUnits(["gfCV"])).toEqual(["gfCV"]);
+        expect(planUnits(["gfCA"])).toEqual(["gfCA"]);
+        expect(planUnits(["gfCA", "gfCV"])).toEqual(["gfCV", "gfCA"]);
     });
 
     test("a range-bounded fit pulls in the constant-air sweep it searches inside", () => {
@@ -109,11 +117,11 @@ describe("options and keys", () => {
         // CPU runs keep exactly the records and keys stored before the option existed.
         expect(unitOptions("aircraft", cpu)).toEqual({anchorM: 37040});
         expect(selectionKey(null, cpu)).not.toMatch(/g=/);
-        for (const unit of ["aircraft", "lantern", "families"]) {
+        for (const unit of ["aircraft", "lantern", "quadcopter", "families"]) {
             expect(unitOptions(unit, gpu).gpuSearch).toBe(true);
             expect(sameOptions(unitOptions(unit, gpu), unitOptions(unit, cpu))).toBe(false);
         }
-        for (const unit of ["constAir", "profiles", "kalman", "quadcopter", "droneControl", "polySweep"]) {
+        for (const unit of ["constAir", "profiles", "horizontalSpeed", "gfCV", "gfCA", "kalman", "droneControl", "polySweep"]) {
             expect(sameOptions(unitOptions(unit, gpu), unitOptions(unit, cpu))).toBe(true);
         }
         expect(selectionKey(null, gpu)).toMatch(/\|g=1$/);

@@ -238,8 +238,8 @@ describe("a row built from stored units equals a fresh one", () => {
         fromUnits = await runBotBenchAnalysis(ingest(), {units: {cached}, elapsedMs: fresh.elapsedMs});
 
         // A schema-2 blob: the whole battery through JSON, split into the units it
-        // holds; the rest (constant altitude, the smoother, drone control, the
-        // polynomial sweep) is fitted again from those.
+        // holds; the rest (constant altitude, direct CV/CA, the smoother,
+        // drone control, and the polynomial sweep) is fitted again from those.
         const legacyText = JSON.stringify(packForCache(fresh.battery));
         const legacy = unitsFromTexts({plan: planUnits(null), cached: {}, legacy: legacyText,
             legacyUnits: ["constAir", "profiles", "aircraft", "plausible", "lantern", "quadcopter", "families"],
@@ -269,7 +269,7 @@ describe("a row built from stored units equals a fresh one", () => {
     });
 
     test("a schema-2 blob split into units gives the same row, with the cheap units refitted", () => {
-        expect(Object.keys(fromLegacy.units).sort()).toEqual(["constAlt", "droneControl", "horizontalSpeed", "kalman", "polySweep"]);
+        expect(Object.keys(fromLegacy.units).sort()).toEqual(["constAlt", "droneControl", "gfCA", "gfCV", "horizontalSpeed", "kalman", "polySweep"]);
         expect(diff(fresh.row, fromLegacy.row, "row")).toBeNull();
         for (let i = 0; i < fresh.results.hypotheses.length; i++) {
             expect(diff(fresh.results.hypotheses[i], fromLegacy.results.hypotheses[i],

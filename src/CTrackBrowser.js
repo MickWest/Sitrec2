@@ -36,6 +36,8 @@ import {
 } from "./CFileManagerUtils";
 import {isProbeableTrackName, probeTrackFile, summarizeTrackFile, trackFileTrackCount} from "./TrackFiles/TrackFileProbe";
 import {botBenchExplicitFileRole, botBenchScenarioBase} from "./analysis/BotBenchIngest";
+import {CACHE_BLOB_DIR} from "./analysis/BotBenchCacheIndex";
+import {putFileHandoff} from "./FileHandoff";
 import {VIZ} from "./TraverseHypotheses";
 import {openBotBenchWithEntries} from "./analysis/BotBenchUI";
 import {imageDirFor, imageNameFor, IMAGE_DIR} from "./analysis/BotBenchImageCapture";
@@ -86,6 +88,20 @@ function formatDuration(s) {
     const mins = Math.floor(s / 60);
     const secs = Math.round(s % 60);
     return `${mins}m ${secs}s`;
+}
+
+function formatTruthRange(summary) {
+    const parts = [];
+    if (Number.isFinite(summary?.truthHorizontalRangeM)) {
+        parts.push(`h:${Math.round(summary.truthHorizontalRangeM)}m`);
+    }
+    if (Number.isFinite(summary?.truthVerticalRangeM)) {
+        parts.push(`v:${Math.round(summary.truthVerticalRangeM)}m`);
+    }
+    if (Number.isFinite(summary?.truthMaxG)) {
+        parts.push(`g:${summary.truthMaxG.toFixed(2)}`);
+    }
+    return parts.length ? `Truth ${parts.join(", ")}` : "";
 }
 
 /**
@@ -212,7 +228,7 @@ export class CTrackBrowser {
         this.skippedCount = 0;      // probed, but fewer than two tracks
         this.errorCount = 0;
         this.searchText = "";
-        this.sortKey = "path";
+        this.sortKey = "name";
         this.sortAsc = true;
         // selectedKey is the FOCUSED entry — the one the preview shows and the
         // arrow keys move. `selection` is what the buttons act on. They are
@@ -294,6 +310,7 @@ export class CTrackBrowser {
             candidates = await walkDirectoryForFiles(this.directoryHandle, {
                 accept: isProbeableTrackName,
                 recursive: this.recursive,
+                skipDirectory: (name) => name === CACHE_BLOB_DIR,
                 onFound: () => {
                     if (token === this._scanToken) this._setStatus(`Walking folder… ${++walked} candidate file(s)`);
                 },
@@ -410,6 +427,9 @@ export class CTrackBrowser {
         const value = (e) => {
             switch (this.sortKey) {
                 case "name": return e.name.toLowerCase();
+                case "g": return e.summary.truthMaxG;
+                case "truthHorizontal": return e.summary.truthHorizontalRangeM;
+                case "truthVertical": return e.summary.truthVerticalRangeM;
                 case "span": return e.summary.spanM;
                 case "duration": return e.summary.durationS ?? 0;
                 case "tracks": return e.summary.trackCount;
@@ -418,6 +438,10 @@ export class CTrackBrowser {
         };
         this.filtered.sort((a, b) => {
             const va = value(a), vb = value(b);
+            if (this.sortKey === "g" || this.sortKey === "truthHorizontal" || this.sortKey === "truthVertical") {
+                const aValid = Number.isFinite(va), bValid = Number.isFinite(vb);
+                if (aValid !== bValid) return aValid ? -1 : 1;
+            }
             if (va < vb) return -dir;
             if (va > vb) return dir;
             return a.relativePath.localeCompare(b.relativePath);
@@ -464,27 +488,42 @@ export class CTrackBrowser {
         DragDropHandler.uploadDroppedFiles(files);
     }
 
-    /**
-     * Import the focused file into a FRESH sitch, discarding the current scene.
-     *
-     * Single file only. A benchmark scenario re-times the sitch to its own length
-     * and claims the camera and target switches, so two of them in one new sitch
-     * would each undo the other's setup — which is the same reason CTrackFileBOT
-     * refuses to load several scenarios from one file. Importing several INTO AN
-     * EXISTING scene is still available: that is what Import does.
-     */
+    /** Open the focused file in a fresh custom sitch in a new browser tab. */
     async openAsNewSitch() {
         const entry = this.filtered.find(e => e.key === this.selectedKey);
         if (!entry) return;
-        let file;
-        try {
-            file = await entry.getFile();
-        } catch (error) {
-            showError(error);
+
+        // Claim the window while the click's transient activation is still live.
+        // Reading the file and writing IndexedDB are asynchronous, and calling
+        // window.open after either await is commonly blocked as a popup.
+        const newTab = window.open("", "_blank");
+        if (!newTab) {
+            showError("The new Sitrec tab was blocked by the browser's popup blocker. "
+                + "Allow popups for this site and try again.");
             return;
         }
-        this.close();
-        DragDropHandler.uploadFilesIntoNewSitch([file]);
+        newTab.document.open();
+        newTab.document.write("<!doctype html><meta charset=\"utf-8\">"
+            + "<title>Opening in Sitrec…</title>"
+            + "<body style=\"font:14px system-ui;padding:24px;background:#12161c;color:#cfd8e3\">"
+            + "Handing the track to a new Sitrec tab…");
+
+        try {
+            const file = await entry.getFile();
+            const key = await putFileHandoff([file], {
+                source: "track-browser",
+                relativePath: entry.relativePath,
+            });
+            const url = new URL(window.location.href);
+            url.hash = "";
+            url.search = "";
+            url.searchParams.set("action", "new");
+            url.searchParams.set("handoff", key);
+            newTab.location.href = url.toString();
+        } catch (error) {
+            try { newTab.close(); } catch (_) { /* already closed */ }
+            showError(error);
+        }
     }
 
     /**
@@ -652,9 +691,8 @@ export class CTrackBrowser {
         folderBar.appendChild(this._importBtn);
 
         this._newSitchBtn = this._makeButton("Open as New Sitch", "#1a73e8");
-        this._newSitchBtn.title = "Discard the current scene and open this file in a fresh "
-            + "custom sitch. One file at a time — a scenario re-times the sitch and claims "
-            + "the camera and target tracks, so two would undo each other.";
+        this._newSitchBtn.title = "Open this file in a fresh custom sitch in a new tab. "
+            + "The Track Browser and current scene stay open in this tab.";
         this._newSitchBtn.addEventListener("click", () => this.openAsNewSitch());
         folderBar.appendChild(this._newSitchBtn);
 
@@ -718,9 +756,11 @@ export class CTrackBrowser {
 
         viewBar.appendChild(this._makeLabel("Sort:"));
         viewBar.appendChild(this._makeSelect([
-            ["path_asc", "Path (A-Z)"],
-            ["path_desc", "Path (Z-A)"],
             ["name_asc", "Name (A-Z)"],
+            ["g_desc", "g-force (highest)"],
+            ["g_asc", "g-force (lowest)"],
+            ["truthHorizontal_desc", "Truth Extent (Horizontal)"],
+            ["truthVertical_desc", "Truth Extent (Vertical)"],
             ["tracks_desc", "Tracks (most)"],
             ["span_desc", "Extent (largest)"],
             ["duration_desc", "Duration (longest)"],
@@ -769,7 +809,7 @@ export class CTrackBrowser {
         Object.assign(this._grid.style, {
             display: "grid",
             gridTemplateColumns: `repeat(${this._effectiveColumns()}, 1fr)`,
-            gap: "16px",
+            gap: "3px",
         });
         this._scroll.appendChild(this._grid);
         pane.appendChild(this._scroll);
@@ -925,9 +965,8 @@ export class CTrackBrowser {
     /**
      * Sort what the scan appended, and repaint ONLY if the sort moved something.
      *
-     * With the default path ordering the walk already delivered the files in
-     * sorted order, so this is a no-op and the finished grid is the one that was
-     * built incrementally — no final flash either.
+     * When the selected ordering already matches discovery order, this is a
+     * no-op and the finished grid remains the one built incrementally.
      */
     _finishScanRender() {
         const displayed = Array.from(this._grid?.children ?? []).map(c => c._key).filter(Boolean);
@@ -1067,16 +1106,16 @@ export class CTrackBrowser {
         card._entry = entry;
         card._drawn = false;
         Object.assign(card.style, {
-            backgroundColor: "#22222e", border: "2px solid #2f2f42",
-            borderRadius: "8px", padding: "8px", cursor: "pointer",
-            display: "flex", flexDirection: "column", gap: "6px", overflow: "hidden",
+            backgroundColor: "#22222e", border: "1px solid #2f2f42",
+            borderRadius: "0", padding: "3px", cursor: "pointer", boxSizing: "border-box",
+            minWidth: "0", display: "flex", flexDirection: "column", gap: "3px", overflow: "hidden",
         });
 
         const canvas = document.createElement("canvas");
         card._canvas = canvas;
         Object.assign(canvas.style, {
             width: "100%", aspectRatio: "4/3", backgroundColor: "#12121c",
-            borderRadius: "4px", display: "block",
+            borderRadius: "0", display: "block",
         });
         card.appendChild(canvas);
 
@@ -1085,16 +1124,20 @@ export class CTrackBrowser {
             fontSize: "11px", color: "#ccc", lineHeight: "1.35",
             wordBreak: "break-all", maxHeight: "2.7em", overflow: "hidden",
         });
-        label.textContent = entry.name;
+        // The basename alone is ambiguous in benchmark trees where every
+        // category contains files such as drone_001.all.csv. Show the complete
+        // path within the folder the user selected.
+        label.textContent = entry.relativePath;
         const fullPath = this._fullPath(entry);
         label.title = fullPath;
         card.title = fullPath;
         card.appendChild(label);
 
         const meta = document.createElement("div");
-        Object.assign(meta.style, {fontSize: "10px", color: "#7a7a94"});
-        meta.textContent = `${entry.summary.trackCount} tracks · `
-            + `${formatDistance(entry.summary.spanM)} · ${formatDuration(entry.summary.durationS)}`;
+        Object.assign(meta.style, {fontSize: "10px", color: "#ccc"});
+        meta.textContent = `${formatDistance(entry.summary.spanM)} · ${formatDuration(entry.summary.durationS)}`;
+        const truthRange = formatTruthRange(entry.summary);
+        if (truthRange) meta.textContent += ` · ${truthRange}`;
         card.appendChild(meta);
 
         card.addEventListener("click", (e) => this._handleCardClick(e, entry.key));
@@ -1195,8 +1238,8 @@ export class CTrackBrowser {
         }
 
         const summary = entry.summary;
-        this._previewName.textContent = entry.name;
-        this._previewPath.textContent = entry.relativePath;
+        this._previewName.textContent = entry.relativePath;
+        this._previewPath.textContent = this.folderName ? `Folder: ${this.folderName}` : "";
         this._previewPath.title = this._fullPath(entry);
         this._refreshActionButtons();
 

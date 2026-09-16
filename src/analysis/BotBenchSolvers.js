@@ -36,6 +36,8 @@ export const BATTERY_UNITS = Object.freeze({
     constAlt: {needs: ["constAir"]},
     horizontalSpeed: {needs: []},
     plausible: {needs: ["constAir"]},
+    gfCV: {needs: []},
+    gfCA: {needs: []},
     kalman: {needs: []},
     lantern: {needs: ["kalman"]},
     quadcopter: {needs: []},
@@ -61,9 +63,11 @@ export const UNIT_VERSIONS = Object.freeze({
     constAlt: 1,
     horizontalSpeed: 1,
     plausible: 1,
+    gfCV: 1,
+    gfCA: 1,
     kalman: 1,
     lantern: 1,
-    quadcopter: 1,
+    quadcopter: 2,
     droneControl: 1,
     families: 1,
     polySweep: 1,
@@ -83,7 +87,7 @@ export const SOLVERS = Object.freeze([
         note: "The smoothest ray-following path at a fixed air speed; needs the sweep and the slow range profile."},
     {id: "constAlt", name: "Constant Altitude", group: "Sightline fits", units: ["constAlt"],
         note: "Level flight at a fixed height."},
-    {id: "horizontalSpeed", name: "Horizontal Constant Speed Maneuvers", group: "Sightline fits",
+    {id: "horizontalSpeed", name: "Horizontal Speed Valley", group: "Sightline fits",
         units: ["horizontalSpeed"],
         note: "Speculative level-flight solver: combines multi-scale speed consistency, cancellation of the dominant altitude-dependent speed waveform, and block-bootstrap basin confidence while heading may change."},
     {id: "plausible", name: "Minimum Acceleration", group: "Sightline fits", units: ["plausible"],
@@ -102,6 +106,10 @@ export const SOLVERS = Object.freeze([
         note: "A fixed light on the surface; a closed-form fit, no unit to cache."},
     {id: "fixedPoint", name: "Stationary Point / Fixed Point in the Sky", group: "Geometry checks", units: [],
         note: "A stationary object, or a fixed direction at infinity; closed-form."},
+    {id: "gfCV", name: "Global Fit: Constant Velocity", group: "Curve fits", units: ["gfCV"],
+        note: "Direct least-squares constant-velocity fit to all sightlines. Cheap."},
+    {id: "gfCA", name: "Global Fit: Constant Acceleration", group: "Curve fits", units: ["gfCA"],
+        note: "Direct least-squares constant-acceleration fit to all sightlines. Cheap."},
     {id: "gfKalman", name: "Global Fit: Kalman Smoother", group: "Curve fits", units: ["kalman"],
         note: "The Kalman-smoothed sightline fit, as the live analysis offers it. Cheap."},
     ...POLY_ORDERS.map((order) => ({
@@ -182,10 +190,10 @@ export function planUnits(ids, {solutionFamilies = false} = {}) {
 }
 
 /**
- * The units whose fit changes under the GPU search option: the fixed-wing and
- * balloon searches run on the GPU, and the range bands start from those two fits.
+ * The units whose fit changes under the GPU search option. Range bands start
+ * from the GPU-supported object-model fits, so that unit changes with them.
  */
-export const GPU_SEARCH_UNITS = Object.freeze(["aircraft", "lantern", "families"]);
+export const GPU_SEARCH_UNITS = Object.freeze(["aircraft", "lantern", "quadcopter", "families"]);
 
 /**
  * The run options one unit's fit depends on. Every unit searches inside the bracket
@@ -227,7 +235,7 @@ export function selectionKey(ids, options = {}) {
 
 /**
  * Whether a finished row may be remembered under its selection key. A row made under
- * the GPU search option whose fixed-wing or balloon search ran on the CPU instead (no
+ * the GPU search option whose supported search ran on the CPU instead (no
  * WebGPU, or a GPU error) is a CPU row: remembered under the GPU key, it would be shown
  * to later GPU runs, which would then never fit. Its fits are not stored either
  * (BotBenchFit `markGpuFallbacksUncacheable`). A row with neither search is unaffected.

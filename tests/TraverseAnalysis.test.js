@@ -10,6 +10,7 @@
 import {
     compareTrackToTruth,
     trackMetrics,
+    trackMetricsForValidRun,
     headingStats,
     meanAngularError,
     traverseConstSpeed,
@@ -178,6 +179,23 @@ describe("TraverseAnalysis core", () => {
         }
         expect(Math.abs(m15.gLoad.mean - m60.gLoad.mean)).toBeLessThan(0.02);
         expect(Math.abs(m30.turnRate.mean - m60.turnRate.mean)).toBeLessThan(0.05);
+    });
+
+    test("truth metrics exclude positions outside the valid time span", () => {
+        const fps = 20, n = 81;
+        const {dataset} = makeDataset({n, fps, windMs: [0, 0, 0]});
+        const track = new Float64Array(n * 3);
+        const valid = new Uint8Array(n);
+        for (let f = 0; f < n; f++) {
+            const t = f / fps;
+            track[f * 3] = 0.5 * 9.81 * t * t;
+            track[f * 3 + 2] = 1000;
+            if (f >= 10 && f <= 70) valid[f] = 1;
+            else track[f * 3] = (f % 2 ? 1 : -1) * 1e6;
+        }
+
+        const metrics = trackMetricsForValidRun(dataset, track, valid);
+        expect(metrics.gLoad.max).toBeCloseTo(1, 5);
     });
 
     test("traverseConstSpeed with true range and speed reproduces the target track", () => {

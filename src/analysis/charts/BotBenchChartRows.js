@@ -15,6 +15,8 @@
 // leaves its uncertainty column blank, so without the sidecar the rung is unknown.
 // It is left null, and the figures say "unstated" rather than guess.
 
+import {rankAllHypotheses} from "../../TraverseRanking";
+
 const DEG = 180 / Math.PI;
 const fin = (v) => typeof v === "number" && Number.isFinite(v);
 
@@ -142,7 +144,10 @@ export function sensorTurnFromPositions(S, {minStepM = 0.5} = {}) {
  *   velocityMS  mean magnitude of the difference between the candidate's and the
  *               truth's 3D velocity, metres per second
  *
- * @returns {Array<{key, name, relSep, sepM, angDeg, losDeg, headingDeg, velocityMS}>|null}
+ * `blindRank` records the result's truth-free ranking so the chart window can
+ * recompute its top candidate after applying a Selected Solvers filter.
+ *
+ * @returns {Array<{key, name, relSep, sepM, angDeg, losDeg, headingDeg, velocityMS, blindRank, rangeBlind}>|null}
  */
 export function candidateErrorsFrom(results) {
     const S = results?.dataset?.S;
@@ -150,6 +155,8 @@ export function candidateErrorsFrom(results) {
     const T = results?.truth?.track;
     const valid = results?.truth?.valid ?? null;
     const out = [];
+    const blindRanks = new Map(rankAllHypotheses(results?.hypotheses, {useTruth: false})
+        .map((item, index) => [item.h, index]));
     for (const h of results?.hypotheses ?? []) {
         const c = h?.truthComparison;
         if (!c || !c.comparable || !fin(c.score) || !(c.meanTruthRange > 0)) continue;
@@ -163,9 +170,49 @@ export function candidateErrorsFrom(results) {
             losDeg: fin(h.errDeg) ? h.errDeg : null,
             headingDeg: motion.headingDeg,
             velocityMS: motion.velocityMS,
+            blindRank: blindRanks.get(h) ?? null,
+            rangeBlind: String(h.key ?? "").startsWith("gf") || String(h.key ?? "").startsWith("mc_"),
         });
     }
     return out.length ? out : null;
+}
+
+/**
+ * Restrict candidate-backed chart values to a solver selection. The selected
+ * top is the highest truth-free ranked candidate and the selected best is the
+ * candidate closest to truth. Verdict fields remain the result of the run that
+ * produced the row; changing a chart filter does not re-run the analysis.
+ */
+export function filterRowsToSolvers(rows, solverIds) {
+    const selected = new Set(solverIds ?? []);
+    return (rows ?? []).map((row) => {
+        const candidates = (row.r_candidates ?? []).filter((candidate) => selected.has(candidate?.key));
+        const ranked = candidates.filter((candidate) => Number.isFinite(candidate.blindRank))
+            .sort((a, b) => a.blindRank - b.blindRank);
+        // Older joined JSONL may have candidate errors but no blind ranks. It is
+        // safe to retain the original top only when that exact candidate remains;
+        // inventing a new top from file order would falsely call generation order
+        // a ranking.
+        const top = ranked[0] ?? candidates.find((candidate) => candidate.key === row.r_topKey) ?? null;
+        const best = candidates.filter((candidate) => fin(candidate.relSep))
+            .reduce((winner, candidate) => !winner || candidate.relSep < winner.relSep ? candidate : winner, null);
+        const filtered = {
+            ...row,
+            r_candidates: candidates,
+            r_topKey: top?.key ?? null,
+            r_topName: top?.name ?? null,
+            r_topErr: fin(top?.losDeg) ? top.losDeg : null,
+            r_topRange: null,
+            r_topBlind: top ? (top.rangeBlind ? 1 : 0) : 0,
+            r_topRelSep: fin(top?.relSep) ? top.relSep : null,
+            r_topSepM: fin(top?.sepM) ? top.sepM : null,
+            r_bestName: best?.name ?? null,
+            r_bestRelSep: fin(best?.relSep) ? best.relSep : null,
+            r_bestSepM: fin(best?.sepM) ? best.sepM : null,
+        };
+        if (row.entry) Object.defineProperty(filtered, "entry", {value: row.entry, enumerable: false});
+        return filtered;
+    });
 }
 
 /**

@@ -92,7 +92,7 @@ export async function runBotBenchAnalysis(record, {
     anchorM = DEFAULT_ANCHOR_M,
     solutionFamilies = false,
     mcOrderSweep = false,
-    // Search the fixed-wing and balloon fits on the GPU where WebGPU exists.
+    // Search the supported object-model fits on the GPU where WebGPU exists.
     gpuSearch = false,
     // The solvers to run, as BotBenchSolvers names them; null for the default set.
     solvers = null,
@@ -707,7 +707,7 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
         separability,
         candidates: results.hypotheses.length,
         rangeUnobservable: !!results.provenance.rangeUnobservable,
-        // Where the fixed-wing and balloon searches actually ran. Asking for the GPU
+        // Where the GPU-supported searches actually ran. Asking for the GPU
         // search does not guarantee it: without WebGPU the same fits run on the CPU.
         searchBackend: searchBackendOf(battery),
         missingGpuSolvers: battery.missingGpuSolvers ?? [],

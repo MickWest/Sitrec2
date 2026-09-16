@@ -31,9 +31,11 @@ import {drawFigure, purgeFigure, figureToImage, loadPlotly} from "./PlotlyLoader
 import {showError} from "../../showError";
 import {isLocal} from "../../configUtils";
 import {imageDirFor, imageNameFor} from "../BotBenchImageCapture";
+import {chooseSolverSelection, loadStoredSolvers, solverButtonText, storeSolvers} from "../BotBenchSolverDialog";
+import {normalizeSolvers} from "../BotBenchSolvers";
 // The adapter is pure data, kept apart so it can be tested without a DOM. Re-exported
 // for anything that imported it from here.
-import {rowsFromBotBenchEntries, rowsFromJsonl} from "./BotBenchChartRows";
+import {filterRowsToSolvers, rowsFromBotBenchEntries, rowsFromJsonl} from "./BotBenchChartRows";
 export {rowsFromBotBenchEntries, rowsFromJsonl};
 
 let activeWindow = null;
@@ -215,7 +217,7 @@ function wireHoverImages(state, chart) {
 
     chart.on("plotly_hover", async (event) => {
         const id = event?.points?.[0]?.customdata;
-        const row = Number.isInteger(id) ? state.rows[id] : null;
+        const row = Number.isInteger(id) ? state.chartRows[id] : null;
         const mine = ++pending;
         if (event?.event) lastPointer = {clientX: event.event.clientX, clientY: event.event.clientY};
         const url = row ? await hoverImageUrl(state, row) : null;
@@ -235,7 +237,7 @@ function wireHoverImages(state, chart) {
     });
 }
 
-export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
+export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers = null, onSolversChanged = null} = {}) {
     if (activeWindow?.overlay?.parentNode) {
         document.body.removeChild(activeWindow.overlay);
         activeWindow = null;
@@ -302,11 +304,17 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     const straightToggle = makeToggle("Straight as black squares",
         "Draw a track whose sensor flew straight (turn level 0, or a turn under 1 degree) as a black square "
         + "with the same area as a circle.");
+    const selectedToggle = makeToggle("Selected Solvers",
+        "Limit candidate-backed chart values to the solvers ticked in the adjacent selector. "
+        + "The selected top and best candidates are recalculated within that subset.");
+    const initialSolvers = normalizeSolvers(selectedSolvers ?? loadStoredSolvers());
+    const solversButton = makeButton(solverButtonText(initialSolvers), "#5c6bc0");
+    solversButton.title = "Choose the solvers included when Selected Solvers is checked.";
     const fullButton = makeButton("Full size", "#455a64");
     fullButton.title = "Show this figure alone, drawn to fill the browser window, with only the choices it reads. "
         + "Exports are unchanged.";
     bar.append(picker, subjectPicker, metricPicker, logToggle.label, turnPicker, lengthToggle.label, straightToggle.label,
-        fullButton, loadButton, svgButton, pngButton, closeButton, status);
+        selectedToggle.label, solversButton, fullButton, loadButton, svgButton, pngButton, closeButton, status);
     modal.appendChild(bar);
 
     // plot area
@@ -317,9 +325,10 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     plot.appendChild(chart);
 
     const state = {
-        overlay, rows: rows ?? [], figures: [], current: null, sourceLabel,
+        overlay, rows: rows ?? [], chartRows: rows ?? [], figures: [], current: null, sourceLabel,
         imageUrls: new Map(), measure: makeMeasure(), turnDeg: null, turnLevels: [],
         marks: {sizeByLength: false, markStraight: false},
+        selectedSolvers: initialSolvers, selectedOnly: false, onSolversChanged,
         fullSize: false,
     };
     const currentMeasure = () => {
@@ -345,9 +354,9 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         hide(picker, full);
         hide(loadButton, full);
         const usesMeasure = !full || !!meta?.measure;
-        hide(subjectPicker, !state.rows.length || !usesMeasure);
-        hide(metricPicker, !state.rows.length || !usesMeasure || !!meta?.fixedMetric || (full && meta?.measure !== "full"));
-        hide(logToggle.label, !state.rows.length || (full && !canChooseErrorScale()));
+        hide(subjectPicker, !state.chartRows.length || !usesMeasure);
+        hide(metricPicker, !state.chartRows.length || !usesMeasure || !!meta?.fixedMetric || (full && meta?.measure !== "full"));
+        hide(logToggle.label, !state.chartRows.length || (full && !canChooseErrorScale()));
         logToggle.box.disabled = !canChooseErrorScale();
         hide(turnPicker, state.turnLevels.length < 2 || (full && !!meta?.allTurnLevels));
         hide(lengthToggle.label, full && !meta?.dots);
@@ -373,7 +382,8 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     const setStatus = (text) => { status.textContent = text; };
     const sourceText = () => {
         const measure = currentMeasure();
-        return `${state.rows.length} rows${state.sourceLabel ? ` from ${state.sourceLabel}` : ""}`
+        return `${state.chartRows.length} rows${state.sourceLabel ? ` from ${state.sourceLabel}` : ""}`
+            + (state.selectedOnly ? ` — ${solverButtonText(state.selectedSolvers).replace("Solvers: ", "")}` : "")
             + (measure.isDefault ? "" : ` — ${measure.who}, ${measure.label.toLowerCase()}`)
             + (state.turnLevels.length < 2 ? ""
                 : Number.isFinite(state.turnDeg) ? ` — sensor turn ${state.turnDeg}°`
@@ -383,7 +393,7 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     // The choices, filled from what the rows can support. A choice that is no
     // longer offered falls back to the default rather than drawing empty figures.
     const fillChoices = () => {
-        const names = candidateNames(state.rows);
+        const names = candidateNames(state.chartRows);
         const subjects = [
             [SUBJECT_TOP, "Top candidate (blind ranking)"],
             [SUBJECT_BEST, "Best candidate (oracle)"],
@@ -412,11 +422,11 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
         const keepMetric = metricPicker.querySelector(`option[value="${state.measure.metric}"]:not([disabled])`)
             ? state.measure.metric : "relSep";
         metricPicker.value = keepMetric;
-        subjectPicker.style.display = state.rows.length ? "" : "none";
-        metricPicker.style.display = state.rows.length ? "" : "none";
+        subjectPicker.style.display = state.chartRows.length ? "" : "none";
+        metricPicker.style.display = state.chartRows.length ? "" : "none";
         state.measure = makeMeasure({metric: keepMetric, subject: keepSubject, logError: logToggle.box.checked});
         // A sensor-turn level, offered only when the rows hold more than one.
-        state.turnLevels = [...new Set(state.rows.map((r) => r.d_turnDeg).filter(Number.isFinite))]
+        state.turnLevels = [...new Set(state.chartRows.map((r) => r.d_turnDeg).filter(Number.isFinite))]
             .sort((a, b) => a - b);
         const keepTurn = state.turnLevels.includes(state.turnDeg) ? state.turnDeg : null;
         turnPicker.innerHTML = "";
@@ -436,20 +446,22 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     const rebuild = async () => {
         const keepKey = state.current?.key ?? null;
         picker.innerHTML = "";
+        state.chartRows = state.selectedOnly
+            ? filterRowsToSolvers(state.rows, state.selectedSolvers) : state.rows;
         // Every row's index, which the figures put on each dot so the hover can find
         // the row again (see wireHoverImages).
-        state.rows.forEach((row, i) => { row.rowIndex = i; });
+        state.chartRows.forEach((row, i) => { row.rowIndex = i; });
         fillChoices();
-        state.figures = buildAllFigures(state.rows, {measure: state.measure, turnDeg: state.turnDeg, marks: state.marks});
-        const rungKnown = state.rows.some((r) => Number.isFinite(r.d_errorDeg));
-        const unpaired = state.rows.some((r) => r.in_sidecarPaired === false);
-        state.note = state.rows.length && !rungKnown
+        state.figures = buildAllFigures(state.chartRows, {measure: state.measure, turnDeg: state.turnDeg, marks: state.marks});
+        const rungKnown = state.chartRows.some((r) => Number.isFinite(r.d_errorDeg));
+        const unpaired = state.chartRows.some((r) => r.in_sidecarPaired === false);
+        state.note = state.chartRows.length && !rungKnown
             ? ` — pointing error unstated${unpaired ? " (no scenario sidecars paired)" : ""}` : "";
         if (!state.figures.length) {
             state.current = null;
-            setStatus(`${state.rows.length} row(s), no figure`);
+            setStatus(`${state.chartRows.length} row(s), no figure`);
             chart.innerHTML = `<div style='padding:40px;color:#444;max-width:60em;line-height:1.6'>`
-                + `<b>Nothing to draw from these ${state.rows.length} row(s).</b>${describeGap(state.rows)}</div>`;
+                + `<b>Nothing to draw from these ${state.chartRows.length} row(s).</b>${describeGap(state.chartRows)}</div>`;
             return;
         }
         for (const figure of state.figures) {
@@ -505,6 +517,18 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
     turnPicker.addEventListener("change", onChoice);
     lengthToggle.box.addEventListener("change", onChoice);
     straightToggle.box.addEventListener("change", onChoice);
+    selectedToggle.box.addEventListener("change", () => {
+        state.selectedOnly = selectedToggle.box.checked;
+        rebuild();
+    });
+    solversButton.addEventListener("click", async () => {
+        const ids = await chooseSolverSelection(state.selectedSolvers, {charts: true});
+        if (!ids) return;
+        state.selectedSolvers = storeSolvers(ids);
+        solversButton.textContent = solverButtonText(state.selectedSolvers);
+        state.onSolversChanged?.(state.selectedSolvers);
+        if (state.selectedOnly) rebuild();
+    });
 
     const exportAs = async (format) => {
         if (!state.current) return;
@@ -585,9 +609,9 @@ export function openResultCharts(rows = null, {sourceLabel = ""} = {}) {
 }
 
 /** Open the window on the entries of a BOT Bench run that has just finished. */
-export function openResultChartsForEntries(entries) {
+export function openResultChartsForEntries(entries, options = {}) {
     const rows = rowsFromBotBenchEntries(entries.filter((e) => e.status === "done"));
-    return openResultCharts(rows, {sourceLabel: "this BOTBench run"});
+    return openResultCharts(rows, {sourceLabel: "this BOTBench run", ...options});
 }
 
 /** Add "Result Charts..." to the File Analysis folder. Idempotent. */
