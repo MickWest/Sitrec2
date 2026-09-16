@@ -3588,21 +3588,33 @@ function detailProse(h, r, ss) {
                       `${g.toFixed(2)} g.`
                     : `The displayed and applied snapshot misses the rays by ${err.toFixed(3)}° after smoothing.`,
             };
-        case "horizontalSpeed":
+        case "horizontalSpeed": {
+            const confidence = Number.isFinite(p.bootstrapConfidence)
+                ? `${(100 * p.bootstrapConfidence).toFixed(0)}%`
+                : "unavailable";
+            const bootstrapBand = Number.isFinite(p.bootstrapAltitudeP10)
+                && Number.isFinite(p.bootstrapAltitudeP90)
+                ? `${ft0(p.bootstrapAltitudeP10)}–${ft0(p.bootstrapAltitudeP90)} ft`
+                : "unavailable";
             return {
                 lead: `A level target at about ${ft0(p.altZ)} ft, holding about `
                     + `${kt1(p.medianSpeed)} kt horizontal speed while its heading changes.`,
                 derived: `The solver intersects every sightline with candidate horizontal surfaces from the `
-                    + `local ground to below the platform. It averages each candidate track over `
-                    + `${Number(p.smoothSeconds).toFixed(1)} s, measures speed over a `
-                    + `${Number(p.velocitySeconds).toFixed(1)} s baseline, and selects an interior minimum in `
-                    + `relative speed variation. Best altitude ≈ ${ft0(p.altZ)} ft.`,
+                    + `local ground to below the platform. It combines relative speed variation at several `
+                    + `smoothing scales with the zero of the dominant altitude-dependent speed waveform. `
+                    + `The primary position average is ${Number(p.smoothSeconds).toFixed(1)} s and speed is `
+                    + `measured over ${Number(p.velocitySeconds).toFixed(1)} s. Best altitude ≈ `
+                    + `${ft0(p.altZ)} ft; moving-block bootstrap basin confidence is ${confidence}, with a `
+                    + `10–90% selected-altitude band of ${bootstrapBand}.`,
                 constraint: `This is a speculative solver for level targets that may turn but do not change `
                     + `horizontal speed. The upper ${(100 * p.platformGuard).toFixed(0)}% of the altitude band is `
                     + `excluded because intersections collapse toward the platform track there. The displayed `
                     + `smoothed path misses the raw sightlines by ${err.toFixed(3)}°; verify the speed graph and `
-                    + `the altitude valley before treating the altitude as measured.`,
+                    + `the altitude valley before treating the altitude as measured. Bootstrap confidence `
+                    + `measures temporal stability inside this model; it does not prove that the target was `
+                    + `level or held constant speed.`,
             };
+        }
         case "plausible":
             return {
                 lead: p.usedSpeedTarget

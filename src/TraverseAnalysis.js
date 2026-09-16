@@ -768,9 +768,10 @@ export function fitConstAltitude(dataset, options = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Broadly smooth a constant-altitude ray-intersection track, then measure how
- * nearly its horizontal speed stays constant. This deliberately allows turns:
- * heading can change freely, while speed magnitude is the fitted invariant.
+ * Broadly smooth a constant-altitude ray-intersection track, then measure its
+ * horizontal-speed consistency with RMS, robust, and temporal-block scores.
+ * This deliberately allows turns: heading can change freely, while speed
+ * magnitude is the fitted invariant.
  *
  * The defaults reproduce the diagnostic that exposed the altitude valley on
  * 120-second drone clips: a 12-second moving average and a 5-second velocity
@@ -793,12 +794,16 @@ export function horizontalConstantSpeedScore(dataset, track, options = {}) {
     }
     const sx = RollingAveragePolyEdge(xs, window, 1, 2, window);
     const sy = RollingAveragePolyEdge(ys, window, 1, 2, window);
-    const sz = RollingAveragePolyEdge(zs, window, 1, 2, window);
-    const smoothed = new Float64Array(n * 3);
-    for (let f = 0; f < n; f++) {
-        smoothed[f * 3] = sx[f];
-        smoothed[f * 3 + 1] = sy[f];
-        smoothed[f * 3 + 2] = sz[f];
+    const includeTrack = options.includeTrack ?? true;
+    const sz = includeTrack ? RollingAveragePolyEdge(zs, window, 1, 2, window) : null;
+    let smoothed = null;
+    if (includeTrack) {
+        smoothed = new Float64Array(n * 3);
+        for (let f = 0; f < n; f++) {
+            smoothed[f * 3] = sx[f];
+            smoothed[f * 3 + 1] = sy[f];
+            smoothed[f * 3 + 2] = sz[f];
+        }
     }
 
     const h = Math.max(1, Math.round(velocitySeconds * fps / 2));
@@ -821,26 +826,235 @@ export function horizontalConstantSpeedScore(dataset, track, options = {}) {
     const medianSpeed = ordered[Math.floor(ordered.length / 2)];
     if (!(medianSpeed > 0.05)) return null;
     let sum = 0, sum2 = 0;
-    for (const speed of speeds) {
+    const deviations = new Array(speeds.length);
+    for (let i = 0; i < speeds.length; i++) {
+        const speed = speeds[i];
         sum += speed;
         const d = speed - medianSpeed;
         sum2 += d * d;
+        deviations[i] = Math.abs(d);
     }
+    deviations.sort((a, b) => a - b);
+    const madScore = deviations[Math.floor(deviations.length / 2)] / medianSpeed;
+    const blockCount = Math.min(8, Math.max(2, Math.floor(speeds.length / 10)));
+    const blockMedians = [];
+    for (let block = 0; block < blockCount; block++) {
+        const lo = Math.floor(block * speeds.length / blockCount);
+        const hi = Math.floor((block + 1) * speeds.length / blockCount);
+        const values = speeds.slice(lo, hi).sort((a, b) => a - b);
+        blockMedians.push(values[Math.floor(values.length / 2)]);
+    }
+    const orderedBlocks = blockMedians.slice().sort((a, b) => a - b);
+    const medianBlock = orderedBlocks[Math.floor(orderedBlocks.length / 2)];
+    let blockSum2 = 0;
+    for (const value of blockMedians) blockSum2 += (value - medianBlock) ** 2;
+    const blockMedianScore = Math.sqrt(blockSum2 / blockMedians.length)
+        / Math.max(Math.abs(medianBlock), 1e-9);
+    const rmsScore = Math.sqrt(sum2 / speeds.length) / medianSpeed;
     return {
-        score: Math.sqrt(sum2 / speeds.length) / medianSpeed,
+        score: rmsScore,
+        rmsScore,
+        madScore,
+        blockMedianScore,
         meanSpeed: sum / speeds.length,
         medianSpeed,
         smoothSeconds,
         velocitySeconds,
         samples: speeds.length,
+        speeds: Float64Array.from(speeds),
         track: smoothed,
+    };
+}
+
+function medianFinite(values, fallback = 1) {
+    const finite = values.filter(Number.isFinite).sort((a, b) => a - b);
+    if (!finite.length) return fallback;
+    const value = finite[Math.floor(finite.length / 2)];
+    return value > 1e-12 ? value : fallback;
+}
+
+function normalizedSpeedWaveform(speed) {
+    const row = new Float64Array(speed.speeds.length);
+    for (let i = 0; i < row.length; i++) row[i] = speed.speeds[i] / speed.medianSpeed - 1;
+    return row;
+}
+
+// Leading right-singular vector of the altitude-by-time speed matrix. A full
+// SVD would be excessive for this one component; power iteration performs the
+// same multiplication by Y'Y without ever constructing that large matrix.
+function dominantSpeedMode(rows) {
+    if (!rows.length || !rows[0]?.length) return null;
+    const width = rows[0].length;
+    let vector = new Float64Array(width);
+    let seedRow = rows[0], seedEnergy = -1;
+    for (const row of rows) {
+        let energy = 0;
+        for (let t = 0; t < width; t++) energy += row[t] * row[t];
+        if (energy > seedEnergy) { seedEnergy = energy; seedRow = row; }
+    }
+    vector.set(seedRow);
+    const normalize = (v) => {
+        let norm2 = 0;
+        for (let t = 0; t < v.length; t++) norm2 += v[t] * v[t];
+        const norm = Math.sqrt(norm2);
+        if (!(norm > 1e-12)) return false;
+        for (let t = 0; t < v.length; t++) v[t] /= norm;
+        return true;
+    };
+    if (!normalize(vector)) return null;
+    const coefficients = new Float64Array(rows.length);
+    for (let pass = 0; pass < 10; pass++) {
+        const next = new Float64Array(width);
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            let coefficient = 0;
+            for (let t = 0; t < width; t++) coefficient += row[t] * vector[t];
+            coefficients[i] = coefficient;
+            for (let t = 0; t < width; t++) next[t] += coefficient * row[t];
+        }
+        if (!normalize(next)) return null;
+        vector = next;
+    }
+    let projectedEnergy = 0, totalEnergy = 0;
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        let coefficient = 0;
+        for (let t = 0; t < width; t++) {
+            coefficient += row[t] * vector[t];
+            totalEnergy += row[t] * row[t];
+        }
+        coefficients[i] = coefficient;
+        projectedEnergy += coefficient * coefficient;
+    }
+    return {
+        vector,
+        coefficients,
+        explainedFraction: totalEnergy > 0 ? projectedEnergy / totalEnergy : 0,
+    };
+}
+
+function interiorLocalMinima(values) {
+    const minima = [];
+    for (let i = 2; i < values.length - 2; i++) {
+        if (Number.isFinite(values[i - 1]) && Number.isFinite(values[i]) && Number.isFinite(values[i + 1])
+            && values[i] < values[i - 1] && values[i] <= values[i + 1]) minima.push(i);
+    }
+    return minima;
+}
+
+function lowestMinimum(values, minima = interiorLocalMinima(values)) {
+    if (!minima.length) return null;
+    return minima.reduce((best, i) => values[i] < values[best] ? i : best, minima[0]);
+}
+
+function minimumBasin(values, minima, chosen) {
+    const prior = minima.filter(i => i < chosen);
+    const previous = prior.length ? prior[prior.length - 1] : undefined;
+    const next = minima.find(i => i > chosen);
+    const peak = (lo, hi) => {
+        let best = lo;
+        for (let i = lo + 1; i <= hi; i++) if (values[i] > values[best]) best = i;
+        return best;
+    };
+    const lo = previous === undefined ? 2 : peak(previous, chosen);
+    const hi = next === undefined ? values.length - 3 : peak(chosen, next);
+    const prominence = Math.max(0, Math.min(values[lo], values[hi]) - values[chosen]);
+    const halfProminence = values[chosen] + prominence / 2;
+    let coreLo = chosen, coreHi = chosen;
+    while (coreLo > lo && values[coreLo - 1] <= halfProminence) coreLo--;
+    while (coreHi < hi && values[coreHi + 1] <= halfProminence) coreHi++;
+    // A sampled minimum represents at least its immediate grid cell even when
+    // one side of the score curve is nearly flat at machine precision.
+    coreLo = Math.max(lo, Math.min(coreLo, chosen - 1));
+    coreHi = Math.min(hi, Math.max(coreHi, chosen + 1));
+    return {lo, hi, coreLo, coreHi, prominence};
+}
+
+function xorshift32(state) {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return state >>> 0;
+}
+
+// Moving-block bootstrap of the two signals that determine the basin: broad
+// relative speed variation and the dominant altitude-dependent speed mode.
+// The same sampled time blocks are used at every altitude, preserving their
+// paired comparison. The result is deterministic so reloads and BOTBench cache
+// replays report the same confidence.
+function bootstrapSpeedBasin(grid, scoreValues, minima, chosen, mode, modeWeight, options, fps) {
+    const trials = Math.max(0, Math.round(options.bootstrapTrials ?? 24));
+    const rows = grid.map(candidate => candidate.waveform);
+    const width = rows[0]?.length ?? 0;
+    if (!trials || !width || !mode) return {
+        trials, resolvedTrials: 0, confidence: null, altitudes: [],
+    };
+    const basin = minimumBasin(scoreValues, minima, chosen);
+    const seconds = options.bootstrapBlockSeconds ?? 5;
+    const block = Math.max(4, Math.min(width, Math.round(seconds * fps)));
+    let state = (options.bootstrapSeed ?? 0x6d2b79f5) >>> 0;
+    let hits = 0, resolvedTrials = 0;
+    const altitudes = [];
+    for (let trial = 0; trial < trials; trial++) {
+        const indices = new Int32Array(width);
+        let used = 0;
+        while (used < width) {
+            state = xorshift32(state);
+            const start = Math.floor((state / 0x100000000) * Math.max(1, width - block + 1));
+            for (let k = 0; k < block && used < width; k++) indices[used++] = start + k;
+        }
+        const rms = new Float64Array(grid.length);
+        const projection = new Float64Array(grid.length);
+        for (let i = 0; i < grid.length; i++) {
+            let sum2 = 0, dot = 0;
+            const row = rows[i];
+            for (let k = 0; k < width; k++) {
+                const t = indices[k];
+                sum2 += row[t] * row[t];
+                dot += row[t] * mode.vector[t];
+            }
+            rms[i] = Math.sqrt(sum2 / width);
+            projection[i] = Math.abs(dot);
+        }
+        const rmsScale = medianFinite(Array.from(rms));
+        const modeScale = medianFinite(Array.from(projection));
+        const scores = new Float64Array(grid.length);
+        for (let i = 0; i < grid.length; i++) {
+            scores[i] = (1 - modeWeight) * rms[i] / rmsScale
+                + modeWeight * projection[i] / modeScale;
+        }
+        const picked = lowestMinimum(scores, interiorLocalMinima(scores));
+        if (picked === null) continue;
+        resolvedTrials++;
+        altitudes.push(grid[picked].altitude);
+        if (picked >= basin.coreLo && picked <= basin.coreHi) hits++;
+    }
+    altitudes.sort((a, b) => a - b);
+    const quantile = (p) => altitudes.length
+        ? altitudes[Math.min(altitudes.length - 1, Math.floor(p * altitudes.length))] : null;
+    return {
+        trials,
+        resolvedTrials,
+        confidence: trials ? hits / trials : null,
+        basinLoIndex: basin.lo,
+        basinHiIndex: basin.hi,
+        basinCoreLoIndex: basin.coreLo,
+        basinCoreHiIndex: basin.coreHi,
+        altitudes,
+        altitudeP10: quantile(0.10),
+        altitudeMedian: quantile(0.50),
+        altitudeP90: quantile(0.90),
+        blockSeconds: seconds,
     };
 }
 
 /**
  * Solve for a level target that may turn and manoeuvre but holds horizontal
  * speed. For each altitude, intersect every LOS with that constant-geodetic-
- * altitude shell and score the broad variation of horizontal speed.
+ * altitude shell. Combine speed-consistency scores across smoothing scales
+ * with the zero crossing of the leading altitude-dependent speed waveform.
+ * A moving-block bootstrap measures whether the selected basin survives when
+ * different portions of the observed motion receive more weight.
  *
  * A false global minimum always exists at platform altitude: the intersections
  * collapse onto the platform's own usually-smooth track. The upper 20% of the
@@ -874,30 +1088,110 @@ export function fitHorizontalConstantSpeed(dataset, options = {}) {
     if (!(altitudeMax > altitudeMin)) return failed("no altitude band below the platform");
     if (!(medianDown < -1e-4)) return failed("the median sightline is not looking down");
 
-    const evalAltitude = (altitude) => {
+    const evalAltitudeRaw = (altitude) => {
         const exact = traverseConstAltitude(dataset, altitude);
         if (exact.badFrames > 0.02 * n) return {altitude, score: Infinity, exact};
         const speed = horizontalConstantSpeedScore(dataset, exact.track, options);
-        return speed ? {altitude, score: speed.score, exact, speed} : {altitude, score: Infinity, exact};
+        if (!speed) return {altitude, score: Infinity, exact};
+        const duration = (n - 1) / dataset.fps;
+        const requestedScales = options.consensusSmoothSeconds ?? [
+            Math.max(1, speed.smoothSeconds / 2),
+            speed.smoothSeconds,
+            Math.min(Math.max(2, duration / 6), speed.smoothSeconds * 5 / 3),
+        ];
+        const scales = [...new Set(requestedScales.map(value => Number(value.toFixed(6))))];
+        const scaleScores = [];
+        for (const smoothSeconds of scales) {
+            if (Math.abs(smoothSeconds - speed.smoothSeconds) < 1e-6) {
+                scaleScores.push(speed.rmsScore);
+                continue;
+            }
+            const atScale = horizontalConstantSpeedScore(dataset, exact.track, {
+                ...options,
+                smoothSeconds,
+                velocitySeconds: speed.velocitySeconds,
+                includeTrack: false,
+            });
+            if (atScale) scaleScores.push(atScale.rmsScore);
+        }
+        const multiscaleScore = scaleScores.length
+            ? scaleScores.reduce((sum, value) => sum + value, 0) / scaleScores.length
+            : speed.rmsScore;
+        return {
+            altitude,
+            score: speed.score,
+            exact,
+            speed,
+            waveform: normalizedSpeedWaveform(speed),
+            components: {
+                rms: speed.rmsScore,
+                mad: speed.madScore,
+                block: speed.blockMedianScore,
+                multiscale: multiscaleScore,
+            },
+            scaleScores,
+            smoothScales: scales,
+        };
     };
     const grid = new Array(samples);
     for (let i = 0; i < samples; i++) {
-        grid[i] = evalAltitude(altitudeMin + (altitudeMax - altitudeMin) * i / (samples - 1));
+        grid[i] = evalAltitudeRaw(altitudeMin + (altitudeMax - altitudeMin) * i / (samples - 1));
     }
-    const minima = [];
-    // Keep one full grid interval between a candidate and either search edge.
-    // A one-cell dip beside ground or the platform guard is still an endpoint
-    // solution at this resolution, not a resolved interior valley.
-    for (let i = 2; i < samples - 2; i++) {
-        if (grid[i].score < grid[i - 1].score && grid[i].score <= grid[i + 1].score) minima.push(i);
+    const componentKeys = ["rms", "mad", "block", "multiscale"];
+    const componentNorms = {};
+    for (const key of componentKeys) {
+        componentNorms[key] = medianFinite(grid.map(candidate => candidate.components?.[key]));
     }
+    for (const candidate of grid) {
+        if (!candidate.components) { candidate.consensusScore = Infinity; continue; }
+        candidate.consensusScore = componentKeys.reduce((sum, key) =>
+            sum + candidate.components[key] / componentNorms[key], 0) / componentKeys.length;
+    }
+
+    const finiteGrid = grid.filter(candidate => candidate.waveform);
+    const mode = dominantSpeedMode(finiteGrid.map(candidate => candidate.waveform));
+    if (!mode || finiteGrid.length !== grid.length) {
+        return failed("the altitude speed waveforms are not finite");
+    }
+    const modeScale = medianFinite(Array.from(mode.coefficients, Math.abs));
+    const modeWeight = Math.max(0, Math.min(1, options.modeWeight ?? 0.20));
+    const selectionMode = options.selectionMode ?? "combined";
+    const scoreCandidate = (candidate) => {
+        if (!candidate?.components || !candidate.waveform) return candidate;
+        candidate.consensusScore = componentKeys.reduce((sum, key) =>
+            sum + candidate.components[key] / componentNorms[key], 0) / componentKeys.length;
+        let coefficient = 0;
+        for (let t = 0; t < candidate.waveform.length; t++) {
+            coefficient += candidate.waveform[t] * mode.vector[t];
+        }
+        candidate.modeCoefficient = coefficient;
+        candidate.modeScore = Math.abs(coefficient) / modeScale;
+        if (selectionMode === "rms") candidate.score = candidate.components.rms;
+        else if (selectionMode === "consensus") candidate.score = candidate.consensusScore;
+        else if (selectionMode === "mode") candidate.score = candidate.modeScore;
+        else candidate.score = (1 - modeWeight) * candidate.consensusScore + modeWeight * candidate.modeScore;
+        return candidate;
+    };
+    for (const candidate of grid) scoreCandidate(candidate);
+
+    const scoreValues = grid.map(candidate => candidate.score);
+    const consensusValues = grid.map(candidate => candidate.consensusScore);
+    const modeValues = grid.map(candidate => candidate.modeScore);
+    const minima = interiorLocalMinima(scoreValues);
     if (!minima.length) return failed("no interior constant-speed altitude valley");
-    let chosen = minima.reduce((best, i) => grid[i].score < grid[best].score ? i : best, minima[0]);
+    const chosen = lowestMinimum(scoreValues, minima);
+    const consensusMinima = interiorLocalMinima(consensusValues);
+    const modeMinima = interiorLocalMinima(modeValues);
+    const consensusChosen = lowestMinimum(consensusValues, consensusMinima);
+    const modeChosen = lowestMinimum(modeValues, modeMinima);
+    const bootstrap = bootstrapSpeedBasin(
+        grid, scoreValues, minima, chosen, mode, modeWeight, options, dataset.fps);
 
     // Golden-section refinement stays inside the selected grid valley. It cannot
     // jump to the platform collapse or another local minimum.
     let lo = grid[chosen - 1].altitude, hi = grid[chosen + 1].altitude;
     const phi = (Math.sqrt(5) - 1) / 2;
+    const evalAltitude = altitude => scoreCandidate(evalAltitudeRaw(altitude));
     let x1 = hi - phi * (hi - lo), x2 = lo + phi * (hi - lo);
     let r1 = evalAltitude(x1), r2 = evalAltitude(x2);
     for (let pass = 0; pass < 12; pass++) {
@@ -918,6 +1212,10 @@ export function fitHorizontalConstantSpeed(dataset, options = {}) {
         best.exact.track[1] - S[1],
         best.exact.track[2] - S[2]);
     const otherScores = minima.filter(i => i !== chosen).map(i => grid[i].score).sort((a, b) => a - b);
+    const basin = minimumBasin(scoreValues, minima, chosen);
+    const basinLowAltitude = grid[basin.coreLo].altitude;
+    const basinHighAltitude = grid[basin.coreHi].altitude;
+    const valleyProminence = basin.prominence;
     return {
         failed: false,
         altZ: best.altitude,
@@ -926,6 +1224,30 @@ export function fitHorizontalConstantSpeed(dataset, options = {}) {
         trackExact: best.exact.track,
         errDeg: meanAngularError(dataset, best.speed.track) * 180 / Math.PI,
         score: best.score,
+        rmsScore: best.components.rms,
+        madScore: best.components.mad,
+        blockMedianScore: best.components.block,
+        multiscaleScore: best.components.multiscale,
+        consensusScore: best.consensusScore,
+        modeScore: best.modeScore,
+        modeCoefficient: best.modeCoefficient,
+        modeWeight,
+        selectionMode,
+        dominantModeExplainedFraction: mode.explainedFraction,
+        consensusAltitude: consensusChosen === null ? null : grid[consensusChosen].altitude,
+        modeAltitude: modeChosen === null ? null : grid[modeChosen].altitude,
+        modeAgreementM: consensusChosen === null || modeChosen === null ? null
+            : Math.abs(grid[consensusChosen].altitude - grid[modeChosen].altitude),
+        valleyProminence,
+        basinLowAltitude,
+        basinHighAltitude,
+        bootstrapConfidence: bootstrap.confidence,
+        bootstrapTrials: bootstrap.trials,
+        bootstrapResolvedTrials: bootstrap.resolvedTrials,
+        bootstrapAltitudeP10: bootstrap.altitudeP10,
+        bootstrapAltitudeMedian: bootstrap.altitudeMedian,
+        bootstrapAltitudeP90: bootstrap.altitudeP90,
+        bootstrapBlockSeconds: bootstrap.blockSeconds,
         meanSpeed: best.speed.meanSpeed,
         medianSpeed: best.speed.medianSpeed,
         smoothSeconds: best.speed.smoothSeconds,
@@ -936,7 +1258,12 @@ export function fitHorizontalConstantSpeed(dataset, options = {}) {
         altitudeMax,
         platformAltitude,
         platformGuard,
-        localMinima: minima.map(i => ({altitude: grid[i].altitude, score: grid[i].score})),
+        localMinima: minima.map(i => ({
+            altitude: grid[i].altitude,
+            score: grid[i].score,
+            consensusScore: grid[i].consensusScore,
+            modeScore: grid[i].modeScore,
+        })),
         alternativeScore: otherScores[0] ?? null,
         metrics: summarizeMetrics(trackMetrics(dataset, best.speed.track)),
     };

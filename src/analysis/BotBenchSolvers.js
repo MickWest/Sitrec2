@@ -85,7 +85,7 @@ export const SOLVERS = Object.freeze([
         note: "Level flight at a fixed height."},
     {id: "horizontalSpeed", name: "Horizontal Constant Speed Maneuvers", group: "Sightline fits",
         units: ["horizontalSpeed"],
-        note: "Speculative level-flight solver: finds an interior altitude valley where broadly smoothed horizontal speed varies least while heading may change."},
+        note: "Speculative level-flight solver: combines multi-scale speed consistency, cancellation of the dominant altitude-dependent speed waveform, and block-bootstrap basin confidence while heading may change."},
     {id: "plausible", name: "Minimum Acceleration", group: "Sightline fits", units: ["plausible"],
         note: "The acceleration-minimizing path at any range."},
     {id: "saddle", name: "Minimum Speed", group: "Sightline fits", units: ["profiles"],

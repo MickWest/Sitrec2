@@ -343,6 +343,18 @@ describe("TraverseAnalysis core", () => {
         expect(Math.abs(fit.altZ - targetAltitude)).toBeLessThan(100);
         expect(fit.altitudeMax).toBeCloseTo(3600, -1);
         expect(fit.localMinima.length).toBeGreaterThan(0);
+        expect(fit.selectionMode).toBe("combined");
+        expect(fit.modeWeight).toBeCloseTo(0.2, 9);
+        expect(fit.consensusScore).toBeGreaterThanOrEqual(0);
+        expect(fit.modeScore).toBeGreaterThanOrEqual(0);
+        expect(fit.dominantModeExplainedFraction).toBeGreaterThan(0);
+        expect(fit.bootstrapTrials).toBe(24);
+        expect(fit.bootstrapResolvedTrials).toBeGreaterThan(0);
+        expect(fit.bootstrapConfidence).toBeGreaterThanOrEqual(0);
+        expect(fit.bootstrapConfidence).toBeLessThanOrEqual(1);
+        expect(fit.bootstrapAltitudeP10).toBeLessThanOrEqual(fit.bootstrapAltitudeP90);
+        expect(fit.basinLowAltitude).toBeLessThan(fit.altZ);
+        expect(fit.basinHighAltitude).toBeGreaterThan(fit.altZ);
     });
 
     test("fitHorizontalConstantSpeed refuses sightlines that look upward", () => {

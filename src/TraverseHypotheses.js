@@ -695,6 +695,27 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 range: horizontalSpeed.startDist,
                 altZ: horizontalSpeed.altZ,
                 score: horizontalSpeed.score,
+                rmsScore: horizontalSpeed.rmsScore,
+                madScore: horizontalSpeed.madScore,
+                blockMedianScore: horizontalSpeed.blockMedianScore,
+                multiscaleScore: horizontalSpeed.multiscaleScore,
+                consensusScore: horizontalSpeed.consensusScore,
+                modeScore: horizontalSpeed.modeScore,
+                modeWeight: horizontalSpeed.modeWeight,
+                dominantModeExplainedFraction: horizontalSpeed.dominantModeExplainedFraction,
+                consensusAltitude: horizontalSpeed.consensusAltitude,
+                modeAltitude: horizontalSpeed.modeAltitude,
+                modeAgreementM: horizontalSpeed.modeAgreementM,
+                valleyProminence: horizontalSpeed.valleyProminence,
+                basinLowAltitude: horizontalSpeed.basinLowAltitude,
+                basinHighAltitude: horizontalSpeed.basinHighAltitude,
+                bootstrapConfidence: horizontalSpeed.bootstrapConfidence,
+                bootstrapTrials: horizontalSpeed.bootstrapTrials,
+                bootstrapResolvedTrials: horizontalSpeed.bootstrapResolvedTrials,
+                bootstrapAltitudeP10: horizontalSpeed.bootstrapAltitudeP10,
+                bootstrapAltitudeMedian: horizontalSpeed.bootstrapAltitudeMedian,
+                bootstrapAltitudeP90: horizontalSpeed.bootstrapAltitudeP90,
+                bootstrapBlockSeconds: horizontalSpeed.bootstrapBlockSeconds,
                 meanSpeed: horizontalSpeed.meanSpeed,
                 medianSpeed: horizontalSpeed.medianSpeed,
                 smoothSeconds: horizontalSpeed.smoothSeconds,
@@ -709,10 +730,13 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 motionFrame: "ground",
             },
             notes: `Speculative altitude inference for a level target whose horizontal speed stays constant `
-                + `while it turns. It selects an interior minimum of broadly smoothed speed variation at `
+                + `while it turns. It combines persistent speed-variation minima with cancellation of the `
+                + `dominant altitude-dependent speed waveform, selecting an interior valley at `
                 + `${horizontalSpeed.altZ.toFixed(0)} m; the upper ${(100 * horizontalSpeed.platformGuard).toFixed(0)}% `
                 + `of the ground-to-platform altitude band is excluded to reject the mathematical collapse `
-                + `onto the platform track.`,
+                + `onto the platform track. Moving-block bootstrap basin confidence is `
+                + `${Number.isFinite(horizontalSpeed.bootstrapConfidence)
+                    ? `${(100 * horizontalSpeed.bootstrapConfidence).toFixed(0)}%` : "unavailable"}.`,
         });
     } else {
         list.push({
