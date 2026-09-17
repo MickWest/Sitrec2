@@ -1985,6 +1985,7 @@ export async function describeEntrySource(entries, {folderName = null} = {}) {
 
     if (absolute) {
         return {text: absolute, exact: true,
+            datasetLabel: folderName || absolute.split(/[/\\]/).filter(Boolean).pop(),
             title: `The folder these ${count} file(s) were read from.`};
     }
 
@@ -2007,6 +2008,7 @@ export async function describeEntrySource(entries, {folderName = null} = {}) {
     const text = shown ? `${shown}/  \u2014 chosen folder` : `${count} file(s), no folder`;
     return {
         text, exact: false,
+        datasetLabel: folderName || common[0] || null,
         title: `The chosen folder and the deepest sub-folder all ${count} file(s) share.\n`
             + "This is not the full path: a browser will not tell a web page where on disk a "
             + "folder you picked actually is, only its own name. The desktop build shows the "
@@ -2017,6 +2019,7 @@ export async function describeEntrySource(entries, {folderName = null} = {}) {
 /** Put a source description under the dialog title. */
 export function setDialogSource(state, description) {
     if (!state?.sourceLine || !description) return;
+    state.datasetLabel = description.datasetLabel ?? null;
     state.sourceLine.textContent = description.text;
     state.sourceLine.title = description.title || description.text;
     state.sourceLine.style.color = description.exact ? "#3a6b3a" : "#52514e";
@@ -3932,6 +3935,7 @@ export function openBotBenchDialog() {
             "sitrec-botbench.csv");
     };
     state.chartsButton.onclick = () => openResultChartsForEntries(state.entries, {
+        datasetLabel: state.datasetLabel,
         selectedSolvers: state.solvers,
         onSolversChanged: (ids) => {
             state.solvers = normalizeSolvers(ids);

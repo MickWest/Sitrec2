@@ -20,6 +20,20 @@ import {rankAllHypotheses} from "../../TraverseRanking";
 const DEG = 180 / Math.PI;
 const fin = (v) => typeof v === "number" && Number.isFinite(v);
 
+/** A dataset name when supplied by the picker, otherwise a recognizable path root. */
+export function datasetLabelOf(rows) {
+    const explicit = rows.find((row) => row.datasetLabel)?.datasetLabel;
+    if (explicit) return explicit;
+    const roots = new Set();
+    for (const row of rows) {
+        const root = String(row.set || (row.path?.includes("/") ? row.path : "") || "")
+            .replace(/\\/g, "/").split("/")[0];
+        // These describe a slice of a dataset, not its name.
+        if (root && !/^(?:batch_\d+(?:sec|s)|\d+(?:\.\d+)?deg|All|Input|Truth|meta)$/i.test(root)) roots.add(root);
+    }
+    return roots.size === 1 ? [...roots][0] : "This run";
+}
+
 /** The requested duration encoded by a batch_<N>sec (or older batch_<N>s) folder. */
 export function batchDurationSeconds(row) {
     if (fin(row?.d_batchDurationSeconds)) return row.d_batchDurationSeconds;
@@ -306,7 +320,7 @@ export function meanAngleToTruth(S, track, T, valid = null) {
  * Each row also carries its entry, as a property that is not enumerable, so JSON and
  * exports never see it. The chart window uses it to find the scenario's screenshot.
  */
-export function rowsFromBotBenchEntries(entries) {
+export function rowsFromBotBenchEntries(entries, {datasetLabel = null} = {}) {
     const out = [];
     for (const entry of entries ?? []) {
         const row = entry?.row;
@@ -329,7 +343,7 @@ export function rowsFromBotBenchEntries(entries) {
         // sidecar supplies. On a wobble rung that sigma IS the amplitude, and it is
         // 0 on the clean rung, so a finite zero must survive. Without the sidecar
         // neither exists and the rung is left unknown.
-        const rungFromPath = Number(path.match(/(\d+(?:\.\d+)?)deg/)?.[1]);
+        const rungFromPath = Number(path.match(/(?:^|\/)(\d+(?:\.\d+)?)deg(?:\/|$)/)?.[1]);
         const declared = quality.declaredLosSigmaDeg;
         const rung = fin(rungFromPath) ? rungFromPath : (fin(declared) ? declared : null);
 
@@ -346,6 +360,7 @@ export function rowsFromBotBenchEntries(entries) {
             // The file's path under the folder that was scanned, for the charts' hover labels.
             path: path || null,
             set: path.includes("/") ? path.split("/")[0] : null,
+            datasetLabel,
             d_class: cls,
             d_durationSeconds: duration,
             // Keep the requested batch duration distinct from the measured clip

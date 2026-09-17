@@ -21,7 +21,8 @@ import {EventManager} from "./CEventManager";
 import {GraphDataManager} from "./CGraphDataManager";
 import {CNodeCustomGraphView} from "./nodes/CNodeCustomGraphView";
 import {CNodeDisplayLOS} from "./nodes/CNodeDisplayLOS";
-import {trackHeading} from "./trackUtils";
+import {shortObjectName} from "./nodes/CNode3DObject";
+import {trackGForce, trackHeading} from "./trackUtils";
 import {getLocalUpVector} from "./SphericalMath";
 import {getCelestialDirection} from "./CelestialMath";
 import {getHorizonExtractor} from "./CHorizonExtractor";
@@ -468,8 +469,8 @@ class CCustomGraphManager {
     }
 
     // Re-register variable-cardinality sources (OSD series, tracks). Called from
-    // refreshSources; each has its own membership guard so the registry version
-    // only bumps when the set of keys actually changes.
+    // refreshSources; each has its own guard so the registry version only bumps
+    // when the available sources or their labels change.
     refreshSources(force = false) {
         const now = Date.now();
         if (!force && now - this._lastSourceRefresh < 150) return;
@@ -575,17 +576,21 @@ class CCustomGraphManager {
     }
 
     reregisterTracks() {
-        const ids = [];
-        TrackManager.iterate((id, ob) => { if (ob.trackNode) ids.push(id); });
-        const sig = ids.join("|");
-        if (sig === this._trackIdSig) return;   // membership unchanged; data read live
+        const tracks = [];
+        TrackManager.iterate((id, ob) => {
+            if (!ob.trackNode) return;
+            const sn = ob.displayTargetSphere?.menuName
+                ?? shortObjectName(ob.menuText ?? ob.trackNode.shortName ?? id);
+            tracks.push({id, node: ob.trackNode, sn});
+        });
+        // Objects may finish loading after the track sources are registered.
+        // Refresh labels too, without changing the serialized series keys.
+        const sig = JSON.stringify(tracks.map(({id, sn}) => [id, sn]));
+        if (sig === this._trackIdSig) return;
         this._trackIdSig = sig;
 
         GraphDataManager.unregisterGroup("track.");
-        TrackManager.iterate((id, ob) => {
-            const node = ob.trackNode;
-            if (!node) return;
-            const sn = ob.menuText ?? node.shortName ?? id;
+        for (const {id, node, sn} of tracks) {
             GraphDataManager.register("track." + id + ".heading", {
                 label: sn + " heading", group: "Tracks", units: "deg", min: -180, max: 180,
                 getValue: f => { const h = trackHeading(node, f); return Number.isFinite(h) ? h : NaN; },
@@ -605,7 +610,11 @@ class CCustomGraphManager {
                     return v.length() * Sit.fps / (Sit.simSpeed ?? 1) * (Units ? Units.m2Speed : 1);
                 },
             });
-        });
+            GraphDataManager.register("track." + id + ".gforce", {
+                label: sn + " g-force", group: "Tracks", units: "g",
+                getValue: f => trackGForce(TrackManager.get(id, false)?.trackNode, f),
+            });
+        }
     }
 
     reregisterOSD() {

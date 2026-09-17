@@ -47,6 +47,89 @@ const BY_CLASS = ["errorByClass", "withinByClass", "outcomeByClass", "verdictByC
 const SWEEP_ONLY = ["errorByLength", "errorByDuration", "errorByRung", "withinByRung", "withinByLength", "classOutcome",
     "verdictMix", "topCandidateMix"];
 
+describe("datasets without target classes or a standard folder layout", () => {
+    const rows = makeRows({durations: [20, 60, 120, 300], rungs: [0, 0.2, 0.37], perClass: 2})
+        .map((row, rowIndex) => ({...row, rowIndex, datasetLabel: "botset_anomalies",
+            d_class: null, d_classCorrect: null,
+            r_candidates: [{key: "lantern", name: "Sky Lantern / Balloon", relSep: row.r_topRelSep}],
+        }));
+    const pointsOf = (figure) => figure.data.filter((trace) => trace.type === "scattergl")
+        .flatMap((trace) => trace.customdata ?? []);
+
+    test("every supported figure draws the anomaly rows and uses their dataset name", () => {
+        const figures = buildAllFigures(rows);
+        expect(figures.map((figure) => figure.key)).toEqual(expect.arrayContaining([
+            "errorByLength", "errorByDuration", "errorByRung", "errorBySolver", "errorBySolverSorted",
+            "errorBySolverCustom", "withinByLength", "withinByRung", "verdictMix", "topCandidateMix", "rankingCost",
+        ]));
+        expect(figures.some((figure) => figure.key === "classOutcome")).toBe(false);
+        for (const figure of figures) {
+            expect(figure.error).toBeUndefined();
+            expect(figure.title.startsWith("botset_anomalies:")).toBe(true);
+            expect(figure.data.some((trace) => trace.x?.length)).toBe(true);
+        }
+        const length = figures.find((figure) => figure.key === "errorByLength");
+        expect(length.layout.xaxis.domain[1]).toBeLessThan(1 / 3);
+        expect(length.layout.yaxis.domain).toEqual(length.layout.yaxis2.domain);
+        expect(length.layout.yaxis.domain).toEqual(length.layout.yaxis3.domain);
+        expect(length.layout.xaxis4).toBeUndefined();
+        expect(length.layout.height).toBe(610);
+        const solver = figures.find((figure) => figure.key === "errorBySolver");
+        expect(solver.layout.yaxis.domain).toEqual(solver.layout.yaxis3.domain);
+        expect(solver.layout.height).toBe(456);
+        expect(length.layout.annotations[0].text).toBe("botset_anomalies, 0° pointing error");
+        // The pooled pointing-error panel retains every row, including a nonstandard rung.
+        expect(new Set(pointsOf(length))).toEqual(new Set(rows.map((row) => row.rowIndex)));
+        const rung = figures.find((figure) => figure.key === "errorByRung");
+        expect(rung.layout.xaxis.ticktext).toEqual(["0°", "0.2°", "0.37°"]);
+    });
+
+    test("a flat run with no class, duration or pointing-error metadata still draws its scores", () => {
+        const flat = rows.slice(0, 6).map((row) => ({...row,
+            d_durationSeconds: null, d_batchDurationSeconds: null, d_errorDeg: null,
+        }));
+        const figures = buildAllFigures(flat);
+        const error = figures.find((figure) => figure.key === "errorByClass");
+        expect(error.title).toContain("error by dataset");
+        expect(error.layout.xaxis.ticktext).toEqual(["botset_anomalies"]);
+        expect(new Set(pointsOf(error))).toEqual(new Set(flat.map((row) => row.rowIndex)));
+        expect(error.data.find((trace) => trace.type === "box").median[0])
+            .toBeCloseTo(median(flat.map((row) => row.r_topRelSep)), 12);
+        expect(figures.some((figure) => ["classOutcome", "outcomeByClass"].includes(figure.key))).toBe(false);
+    });
+
+    test("an error ladder without clip lengths uses a pooled, honestly labelled panel", () => {
+        const figures = buildAllFigures(rows.map((row) => ({...row,
+            d_durationSeconds: null, d_batchDurationSeconds: null,
+        })), {only: ["errorByRung"]});
+        expect(figures).toHaveLength(1);
+        expect(figures[0].layout.annotations[0].text).toBe("botset_anomalies, clip length unstated");
+        expect(figures[0].layout.annotations.at(-1).text).not.toContain("null s");
+        expect(figures[0].layout.xaxis.domain[1]).toBeLessThan(1 / 3);
+        expect(figures[0].layout.xaxis2).toBeUndefined();
+        expect(new Set(pointsOf(figures[0]))).toEqual(new Set(rows.map((row) => row.rowIndex)));
+    });
+
+    test("known and missing classes coexist without losing tracks or duplicating groups", () => {
+        const mixed = rows.slice(0, 6).map((row, i) => ({...row, d_class: i % 2 ? "drone" : null}));
+        const figure = figErrorByClass(mixed);
+        expect(figure.layout.xaxis.ticktext).toEqual(["Fixed-wing drone", "botset_anomalies"]);
+        expect(pointsOf(figure).sort()).toEqual(mixed.map((row) => row.rowIndex).sort());
+    });
+
+    test("rock_v3 keeps its three panels, labels and scores", () => {
+        const rock = makeRows({durations: [20, 120], rungs: [0, 0.2]})
+            .map((row) => ({...row, set: "rock_v3"}));
+        const figure = figErrorByLength(rock);
+        expect(figure.title).toBe("rock_v3: blind top candidate error by clip length, three target classes");
+        expect(figure.layout.annotations.slice(0, 3).map((a) => a.text))
+            .toEqual(CLASSES.map((cls) => `${CLASS_LABEL[cls]}, 0° pointing error`));
+        expect(figure.stats["0deg/drone/20"])
+            .toBeCloseTo(median(rock.filter((row) => row.d_class === "drone" && row.d_durationSeconds === 20
+                && row.d_errorDeg === 0).map((row) => row.r_topRelSep)), 12);
+    });
+});
+
 describe("error by true distance", () => {
     const distances = [1000, 1000, 1000, 2000, 3000, 4000, 5000, 6000, 7000];
     const rows = distances.map((distance, i) => ({
@@ -440,8 +523,9 @@ describe("durationGroups", () => {
     test("otherwise the first two lengths the rows carry", () => {
         expect(durationGroups([...at(60), ...at(40), ...at(300)], [20, 120])).toEqual([40, 60]);
     });
-    test("and none when no row carries a length", () => {
-        expect(durationGroups([{d_durationSeconds: null}], [20, 120])).toEqual([]);
+    test("pools unstated lengths, but returns no groups for an empty set", () => {
+        expect(durationGroups([{d_durationSeconds: null}], [20, 120])).toEqual([null]);
+        expect(durationGroups([], [20, 120])).toEqual([]);
     });
 });
 

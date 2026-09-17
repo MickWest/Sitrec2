@@ -70,7 +70,13 @@ class CGraphDataManager {
         const o = includeNone ? { "None": "None" } : {};
         const arr = [...this.series.values()].sort((a, b) =>
             (a.group || "").localeCompare(b.group || "") || a.label.localeCompare(b.label));
-        for (const d of arr) o[d.label] = d.key;
+        for (const d of arr) {
+            // Short display names can coincide; keep every source selectable.
+            let label = d.label;
+            let suffix = 2;
+            while (Object.hasOwn(o, label)) label = `${d.label} (${suffix++})`;
+            o[label] = d.key;
+        }
         return o;
     }
 

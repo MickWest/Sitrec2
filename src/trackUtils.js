@@ -46,6 +46,23 @@ export function trackAcceleration(source, f) {
     return fwd
 }
 
+// Total 3D acceleration in g, matching CNodeGForce (no gravity offset).
+// Keep its end-of-track clamp: the last position is often unreliable.
+export function trackGForce(source, f) {
+    if (!source) return NaN;
+    const frames = source.frames || Sit.frames;
+    const fps = (source.fps ?? Sit.fps) / (Sit.simSpeed ?? 1);
+    if (frames < 3 || !Number.isFinite(fps) || fps <= 0) return NaN;
+    const frame = Math.max(0, Math.min(f, Math.max(0, frames - 4)));
+    const p0 = source.p(frame);
+    const p1 = source.p(frame + 1);
+    const p2 = source.p(frame + 2);
+    if (!p0 || !p1 || !p2) return NaN;
+    const v0 = p1.clone().sub(p0);
+    const v1 = p2.clone().sub(p1);
+    return v1.sub(v0).length() * fps * fps / 9.81;
+}
+
 // this is the chan
 export function closingSpeed(jet, target, f) {
     const d1 = jet.p(f).sub(target.p(f)).length()

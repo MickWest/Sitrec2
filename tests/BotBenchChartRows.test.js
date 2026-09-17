@@ -8,7 +8,7 @@
 
 import {
     rowsFromBotBenchEntries, rowsFromJsonl, apertureFromPositions, classOf, classCorrectFor, filterRowsToSolvers,
-    batchDurationSeconds,
+    batchDurationSeconds, datasetLabelOf,
 } from "../src/analysis/charts/BotBenchChartRows";
 
 function entry({name, relativePath = name, sidecar = null, labels = null, quality = {}, row = {}, results = null}) {
@@ -61,6 +61,22 @@ describe("a run over an All folder chosen on its own, with no sidecars", () => {
 });
 
 describe("where the length and rung come from when they are available", () => {
+    test("a filename's wobble suffix is not mistaken for a numeric folder rung", () => {
+        const [row] = rowsFromBotBenchEntries([entry({
+            name: "anom-zigzag_wobble0p01deg_s801.all.csv", quality: {declaredLosSigmaDeg: 0.01},
+        })], {datasetLabel: "botset_anomalies"});
+        expect(row.d_errorDeg).toBe(0.01);
+        expect(row.d_class).toBeNull();
+        expect(datasetLabelOf([row])).toBe("botset_anomalies");
+    });
+    test("dataset labels fall back to the path root, without treating slice folders as dataset names", () => {
+        expect(datasetLabelOf([{path: "rock_v3/batch_120sec/All/a.csv"}])).toBe("rock_v3");
+        expect(datasetLabelOf([{set: "botset_anomalies"}])).toBe("botset_anomalies");
+        for (const root of ["batch_120sec", "batch_120s", "0.2deg", "All"]) {
+            expect(datasetLabelOf([{set: root, path: `${root}/a.csv`}])).toBe("This run");
+        }
+        expect(datasetLabelOf([{base: "a"}])).toBe("This run");
+    });
     test("the folder names win", () => {
         const [r] = rowsFromBotBenchEntries([entry({
             name: "drone_001.all.csv", relativePath: "batch_120sec/0.2deg/All/drone_001.all.csv",

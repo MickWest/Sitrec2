@@ -25,7 +25,7 @@
 // figure at its own layout size.
 
 import {
-    buildAllFigures, FIGURES, CLASSES, ERROR_METRICS, SUBJECT_BEST, SUBJECT_TOP, makeMeasure, wrapText,
+    buildAllFigures, FIGURES, ERROR_METRICS, SUBJECT_BEST, SUBJECT_TOP, makeMeasure, wrapText,
 } from "./RockV3ChartSpecs";
 import {drawFigure, purgeFigure, figureToImage, loadPlotly} from "./PlotlyLoader";
 import {showError} from "../../showError";
@@ -75,20 +75,14 @@ function describeGap(rows) {
         return " Load a joined results JSONL, or run BOTBench over a folder of scenarios and press Charts.";
     }
     const scored = rows.filter((r) => Number.isFinite(r.r_topRelSep)).length;
-    const classes = [...new Set(rows.map((r) => r.d_class).filter((c) => CLASSES.includes(c)))];
     const parts = [];
     if (!scored) {
-        parts.push("<br><br>None of them has a score against truth, and every figure plots error against "
-            + "truth. BOTBench scores a file only when it carries the true target positions.");
-    }
-    if (!classes.length) {
-        parts.push("<br><br>No target class could be worked out for any of them. The figures group by class, "
-            + "which comes from the answer-key sidecar or from a file named by class "
-            + `(${CLASSES.map((c) => `${c}_001`).join(", ")}).`);
+        parts.push("<br><br>None of them has a score against truth for the top candidate. "
+            + "BOTBench scores a file only when it carries the true target positions.");
     }
     if (!parts.length) {
-        parts.push(`<br><br>${scored} of ${rows.length} are scored and ${classes.length} class(es) were found, `
-            + "so a figure should have been drawn. That is a fault in the charts, not in the data.");
+        parts.push(`<br><br>${scored} of ${rows.length} have top-candidate scores. `
+            + "The current candidate, error measure or selection has no values that these figures can draw.");
     }
     return parts.join("");
 }
@@ -575,7 +569,9 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
             const option = document.createElement("option");
             option.value = figure.key;
             const meta = FIGURES.find((f) => f.key === figure.key);
-            option.textContent = meta ? `${meta.group}: ${meta.name}` : figure.key;
+            const name = state.chartRows.some((row) => row.d_class) ? meta?.name
+                : meta?.name.replace(/target class/g, "dataset").replace(/by class/g, "by dataset");
+            option.textContent = meta ? `${meta.group}: ${name}` : figure.key;
             picker.appendChild(option);
         }
         // Stay on the figure being read when a choice changes, if it still builds.
@@ -747,8 +743,8 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
 
 /** Open the window on the entries of a BOT Bench run that has just finished. */
 export function openResultChartsForEntries(entries, options = {}) {
-    const rows = rowsFromBotBenchEntries(entries.filter((e) => e.status === "done"));
-    return openResultCharts(rows, {sourceLabel: "this BOTBench run", ...options});
+    const rows = rowsFromBotBenchEntries(entries.filter((e) => e.status === "done"), options);
+    return openResultCharts(rows, {sourceLabel: options.datasetLabel || "this BOTBench run", ...options});
 }
 
 /** Add "Result Charts..." to the File Analysis folder. Idempotent. */
