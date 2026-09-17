@@ -2368,6 +2368,9 @@ class CTrackManager extends CManager {
      * @param {number} options.lineWidth - Track line width (default: 1)
      * @param {number} options.startFrame - Frame number for the initial point (default: 0)
      * @param {boolean} options.showInLook - Whether the track should also render in the look view (default: false)
+     * @param {boolean} options.constantSpeed - Start in constant-speed mode (default: false)
+     * @param {number} options.altitudeLock - Start with the altitude locked to this height in meters,
+     *        above the ground (default: unlocked)
      * @returns {Object} The created track object
      */
     addSyntheticTrack(options) {
@@ -2617,6 +2620,10 @@ class CTrackManager extends CManager {
             }
         });
         
+        if (options.constantSpeed !== undefined) {
+            splineEditorNode.constantSpeed = options.constantSpeed;
+        }
+
         // Sync constantSpeed from splineEditorNode (in case it was loaded from saved data)
         if (splineEditorNode.constantSpeed !== undefined) {
             trackOb.constantSpeed = splineEditorNode.constantSpeed;
@@ -2674,7 +2681,7 @@ class CTrackManager extends CManager {
         }, guiFolder);
 
         trackOb.altitudeLock = -1;
-        new CNodeGUIValue({
+        const altLockNode = new CNodeGUIValue({
             id: trackID + "_altitudeLock",
             value: -1,
             start: -1,
@@ -2697,7 +2704,13 @@ class CTrackManager extends CManager {
         guiFolder.add(trackOb, 'altitudeLockAGL').name(t("trackManager.altLockAGL")).listen().onChange((value) => {
             splineEditorNode.setAltitudeLockAGL(value);
         });
-        
+
+        // Set through the slider rather than the fields: the slider holds display units,
+        // and its onChange is what conforms the control points to the lock.
+        if (options.altitudeLock !== undefined) {
+            altLockNode.setValueWithUnits(options.altitudeLock, "metric", "small");
+        }
+
         // Set initial edit mode state
         if (editMode) {
             splineEditor.setEnable(true);

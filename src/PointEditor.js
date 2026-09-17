@@ -62,19 +62,28 @@ export class PointEditor {
             if (event.value) {
                 // Drag started - capture state
                 this.stateBeforeDrag = this.captureState();
+                // An up/down drag on an altitude-locked track moves the lock itself (see
+                // CNodeSplineEditor.conformDraggedControlPoint), so undo needs it too.
+                this.altitudeLockBeforeDrag = this.parentNode?.altitudeLock;
             } else {
                 // Drag ended - create undo action if state changed
                 if (this.stateBeforeDrag && UndoManager) {
                     const stateAfterDrag = this.captureState();
                     const stateBefore = this.stateBeforeDrag;
-                    const stateChanged = JSON.stringify(stateBefore) !== JSON.stringify(stateAfterDrag);
-                    
+                    const lockBefore = this.altitudeLockBeforeDrag;
+                    const lockAfter = this.parentNode?.altitudeLock;
+                    const lockChanged = lockBefore !== lockAfter;
+                    const stateChanged = lockChanged
+                        || JSON.stringify(stateBefore) !== JSON.stringify(stateAfterDrag);
+
                     if (stateChanged) {
                         UndoManager.add({
                             undo: () => {
+                                if (lockChanged) this.parentNode.setAltitudeLockFromDrag(lockBefore);
                                 this.restoreState(stateBefore);
                             },
                             redo: () => {
+                                if (lockChanged) this.parentNode.setAltitudeLockFromDrag(lockAfter);
                                 this.restoreState(stateAfterDrag);
                             },
                             description: "Move track control point"
@@ -136,7 +145,12 @@ export class PointEditor {
         this.measureAltitude.group.visible = false;
 
         this.transformControl.rollbackEdit = () => {
-            if (this.stateBeforeDrag) this.restoreState(this.stateBeforeDrag);
+            if (this.stateBeforeDrag) {
+                if (this.parentNode && this.parentNode.altitudeLock !== this.altitudeLockBeforeDrag) {
+                    this.parentNode.setAltitudeLockFromDrag(this.altitudeLockBeforeDrag);
+                }
+                this.restoreState(this.stateBeforeDrag);
+            }
             this.stateBeforeDrag = null;
         };
         this.unregisterInteraction = registerEditorInteraction(this, {
@@ -157,6 +171,8 @@ export class PointEditor {
 
         this.transformControl.addEventListener('objectChange',  () => {
             this.snapPointByIndex(this.editingIndex)
+            // A track with its altitude locked sets the height of the point itself
+            this.parentNode?.conformDraggedControlPoint?.(this.transformControl, this.altitudeLockBeforeDrag);
             this.updatePointEditorGraphics();
             if (this.onChange) this.onChange();
         });

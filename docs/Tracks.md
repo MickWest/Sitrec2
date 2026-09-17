@@ -429,6 +429,14 @@ Contrails simulate the visual appearance of condensation trails behind aircraft,
 | **Alt Lock** | -1 to 100,000 ft | Force a fixed altitude (-1 = off). Shown in your display units; stored in metres |
 | **Alt Lock AGL** | on/off | On: the lock is height above the ground below. **Off: the lock is HAE** (height above the WGS84 ellipsoid), *not* MSL |
 
+> **Dragging a locked hand-drawn track.** When a hand-drawn track has its altitude locked, the
+> lock sets the height of all of its keyframes. Drag a keyframe's up/down arrows, or the object
+> that rides the track, and you change the **Alt Lock** value: the full track moves up or down
+> as one, and no keyframe is added. A sideways drag keeps the keyframe at the lock height. The
+> lock does not go below 0. Right-click the ground → **Create In->Out Obj Track** to make such a
+> track: an object on a straight track from the clicked point, with keyframes at the In and
+> Out frames, **Constant Speed** on, and the altitude locked at ground level.
+
 > **The altitude lock is HAE, not MSL.** Locking an object to "10,000 ft" with *Alt Lock AGL*
 > off puts it at 10,000 ft above the ellipsoid, which in Los Angeles is about 10,115 ft above
 > sea level. In the continental US the difference is 20–40 m almost everywhere; see

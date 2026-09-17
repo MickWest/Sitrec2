@@ -49,6 +49,7 @@ import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {getLocalUpVector} from "./SphericalMath";
 import {getPointBelow} from "./threeExt";
 import {undoManager as UndoManager} from "./UndoManager";
+import {isAltitudeLockActive} from "./AltitudeLock";
 
 // How close the cursor has to get, in screen pixels, before the widget appears. The
 // widget's own disc is 40px and its arrows 30px, so this is a little wider than the
@@ -109,6 +110,7 @@ class CObjectMoveWidget {
         this.dragging = false;
         this.dragPrepared = false;
         this.dragAnchor = new Vector3();
+        this.lockDragStart = null;  // altitude lock at the start of an up/down drag that moves it
 
         this.savedMaterials = null; // Map material -> {opacity, transparent, depthWrite}
         this.savedIgnorePick = undefined;
@@ -694,6 +696,16 @@ class CObjectMoveWidget {
         let index = splineEditor.frameNumbers.indexOf(frame);
 
         this.insertedFrame = null;
+
+        // Up/down on a track with its altitude locked moves the lock, which carries the
+        // whole track with it — so no control point is needed at this frame.
+        this.lockDragStart = null;
+        if (isAltitudeLockActive(this.target.node) && this.widget.activeDragMode === "vertical") {
+            this.lockDragStart = this.target.node.altitudeLock;
+            this.undoStateBefore = splineEditor.captureState();
+            return true;
+        }
+
         if (index < 0) {
             // Between control points: split the track here first, at the position the
             // track already has, so the drag that follows is an ordinary point move.
@@ -712,13 +724,23 @@ class CObjectMoveWidget {
     }
 
     applySplineDrag(delta) {
-        const splineEditor = this.target.node.splineEditor;
+        const node = this.target.node;
+        const splineEditor = node.splineEditor;
+
+        if (this.lockDragStart !== null) {
+            node.setAltitudeLockFromDrag(this.lockDragStart + delta.dot(getLocalUpVector(this.dragAnchor)));
+            if (splineEditor.onChange) splineEditor.onChange();
+            return;
+        }
+
         const index = this.dragIndex;
         if (index >= splineEditor.numPoints) return;
 
         // positions[i] IS splineHelperObjects[i].position, so the control cube moves too.
         splineEditor.positions[index].copy(this.dragStartPoint).add(delta);
         splineEditor.snapPointByIndex(index);
+        // A locked track keeps the moved point at the lock height (no-op when unlocked).
+        node.syncControlPointsToAltitudeLock();
         splineEditor.updatePointEditorGraphics();
         if (splineEditor.onChange) splineEditor.onChange();
     }
@@ -750,7 +772,10 @@ class CObjectMoveWidget {
                 if (this.insertedFrame !== null) {
                     const index = editor.frameNumbers.indexOf(this.insertedFrame);
                     if (index >= 0) editor.removePointByIndex(index);
-                } else if (this.undoStateBefore) editor.restoreState(this.undoStateBefore);
+                } else if (this.undoStateBefore) {
+                    if (this.lockDragStart !== null) this.target.node.setAltitudeLockFromDrag(this.lockDragStart);
+                    editor.restoreState(this.undoStateBefore);
+                }
             }
         }
         this.dragPrepared = false;
@@ -768,6 +793,7 @@ class CObjectMoveWidget {
         this.dragPrepared = false;
         this.undoStateBefore = null;
         this.insertedFrame = null;
+        this.lockDragStart = null;
     }
 
     recordUndo() {
@@ -812,11 +838,21 @@ class CObjectMoveWidget {
         if (!this.undoStateBefore) return;
         const before = this.undoStateBefore;
         const after = splineEditor.captureState();
-        if (JSON.stringify(before) === JSON.stringify(after)) return;
+        const node = this.target.node;
+        const lockBefore = this.lockDragStart;
+        const lockAfter = node.altitudeLock;
+        const lockMoved = lockBefore !== null && lockBefore !== lockAfter;
+        if (!lockMoved && JSON.stringify(before) === JSON.stringify(after)) return;
         UndoManager.add({
             description,
-            undo: () => splineEditor.restoreState(before),
-            redo: () => splineEditor.restoreState(after),
+            undo: () => {
+                if (lockMoved) node.setAltitudeLockFromDrag(lockBefore);
+                splineEditor.restoreState(before);
+            },
+            redo: () => {
+                if (lockMoved) node.setAltitudeLockFromDrag(lockAfter);
+                splineEditor.restoreState(after);
+            },
         });
     }
 }

@@ -88,7 +88,9 @@ import {
     gimbalStepTrackLOSNodes,
     gimbalStepTraverse,
 } from "./GimbalCustomSetup";
-import {Color} from "three";
+import {Color, Vector3} from "three";
+import {getLocalUpVector} from "./SphericalMath";
+import {abFrameRange} from "./TraverseAnalysisData";
 
 export const menuMethods = {
     /**
@@ -395,6 +397,22 @@ export const menuMethods = {
             `${altMSL.toFixed(1)}m MSL<br>` +
             `${altHAE.toFixed(1)}m WGS84 HAE (${geoidOffset.toFixed(1)}m)`;
 
+        // The object the "... with Object" track items put on their new track: a grey 5m
+        // sphere with phong material. The timestamped id goes through UniqueName (see
+        // createObjectFromInput for why).
+        const createTrackObject = () => {
+            const objectID = NodeMan.UniqueName(`syntheticObject_${Date.now()}`);
+            new CNode3DObject({
+                id: objectID,
+                geometry: "sphere",
+                radius: 5, // 5 meters
+                color: 0x808080, // grey
+                material: "phong",
+                position: groundPoint,
+            });
+            return objectID;
+        };
+
         // Create an object to hold the menu actions
         const menuData = {
             setCameraAbove: () => {
@@ -555,20 +573,7 @@ export const menuMethods = {
             },
 
             createTrackWithObject: () => {
-                // Create a 3D object at the clicked point (see createObjectFromInput
-                // for why the timestamped ids go through UniqueName)
-                const objectID = NodeMan.UniqueName(`syntheticObject_${Date.now()}`);
-                const trackID = NodeMan.UniqueName(`syntheticTrack_${Date.now()}`);
-
-                // Create a simple grey sphere object (5m radius) with phong material
-                const objectNode = new CNode3DObject({
-                    id: objectID,
-                    geometry: "sphere",
-                    radius: 5, // 5 meters
-                    color: 0x808080, // grey
-                    material: "phong",
-                    position: groundPoint,
-                });
+                const objectID = createTrackObject();
 
                 // Create track and associate with object using TrackManager
                 // Controllers (TrackPosition and ObjectTilt) are added automatically by addSyntheticTrack
@@ -585,6 +590,45 @@ export const menuMethods = {
 
 
                 console.log(`Created object ${objectID} with track at ${lat}, ${lon}, ${alt}m`);
+                this.groundContextMenu = null;
+                menu.destroy();
+            },
+            // A straight track across the In/Out range at a steady speed and height, with an
+            // object riding it: two keyframes, constant speed on, and the altitude locked
+            // at ground level, so dragging the object or a keyframe up raises all of it.
+            //
+            // The In keyframe is where the ground was clicked. The Out keyframe is level
+            // with it, 200 screen pixels to its right in the view that was clicked, so both
+            // ends are on screen and grabbable at any zoom — and left to right matches In to
+            // Out on the frame slider. The two cannot share a place: a constant-speed track
+            // of zero length divides by zero.
+            createInOutObjectTrack: () => {
+                const objectID = createTrackObject();
+
+                // minCount 2: two keyframes at the same frame would make one replace the other
+                const {frame0, frame1} = abFrameRange(Sit.frames, 2);
+
+                const view = NodeMan.get(sourceViewID ?? "mainView");
+                const up = getLocalUpVector(groundPoint);
+                const right = new Vector3().setFromMatrixColumn(view.camera.matrixWorld, 0);
+                right.addScaledVector(up, -right.dot(up)).normalize();
+                const outPoint = groundPoint.clone().addScaledVector(right, view.pixelsToMeters(groundPoint, 200));
+
+                TrackManager.addSyntheticTrack({
+                    initialPoints: [
+                        [frame0, groundPoint.x, groundPoint.y, groundPoint.z],
+                        [frame1, outPoint.x, outPoint.y, outPoint.z],
+                    ],
+                    name: `Object Track`,
+                    objectID: objectID,
+                    editMode: true,
+                    color: 0x808080, // grey
+                    constantSpeed: true,
+                    altitudeLock: 0,
+                    showInLook: sourceViewID === "lookView",
+                });
+
+                console.log(`Created object ${objectID} with In->Out track from ${lat}, ${lon}, frames ${frame0}-${frame1}`);
                 this.groundContextMenu = null;
                 menu.destroy();
             },
@@ -856,6 +900,7 @@ export const menuMethods = {
         // Add synthetic track options
         menu.add(menuData, "addFixedObject").name(t("custom.contextMenu.addFixedObject"));
         menu.add(menuData, "createTrackWithObject").name(t("custom.contextMenu.createTrackWithObject"));
+        menu.add(menuData, "createInOutObjectTrack").name(t("custom.contextMenu.createInOutObjectTrack"));
         menu.add(menuData, "createSyntheticTrack").name(t("custom.contextMenu.createTrackNoObject"));
 
         // Add simulated balloon target
