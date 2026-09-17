@@ -9,6 +9,27 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.164.0 (2026-09-17)
+
+### New Features
+
+- **MISB TS (H.264) video export** (Video → Video Render & Export → **Video Format**, or **Container / codec** in the render dialog): save a video with MISB metadata on every frame for the camera's position, orientation, field of view and time, plus the target track and the **Truth Track** chosen in Traverse → Traverse Analysis Tweaks when they are available; Sitrec recognizes the truth track when you open the file.
+- **Create In->Out Obj Track** (right-click the ground → *Create In->Out Obj Track*): add an object on a straight track with keyframes at the In and Out frames, **Constant Speed** on, and the altitude locked at ground level.
+- **Flip X Axis** (File → File Analysis → **Result Charts...**): reverse every X axis in the current chart, also in **Full size** and in SVG and PNG exports; the choice stays while the window is open.
+- **Track g-force in custom graphs** (Show → Graphs → *Add Custom Graph*): each track now offers a g-force series beside its heading and speed.
+
+### Improvements
+
+- **Dragging an altitude-locked track** (a hand-drawn track with **Alt Lock** set): an up or down drag on a keyframe's arrows, or on the object that rides the track, now changes the lock height and moves the whole track; a sideways drag keeps the keyframe at the lock height, and undo restores both.
+- **Custom graph window menu** (the menu in each custom graph window's header): now has the same controls as that graph's entry in Show → Graphs, including X, Y1, Y2, Y3 and Remove.
+- **Custom graph names** (Show → Graphs → *Add Custom Graph*): track series use the short names from the Objects menu, sources with the same name get a number so each one can be selected, and saved graphs keep their selections.
+- **Result Charts for more datasets** (File → File Analysis → **Result Charts...**): tracks without a target class are now drawn, grouped and titled by the dataset's folder name, panels fill rows of three, and every pointing-error level in the data is shown.
+
+### Bug Fixes
+
+- Fixed BOTBench **Charts** putting a file at the wrong pointing-error level when its file name contained a value such as 0p01deg.
+- Fixed a sideways keyframe drag on a track whose altitude lock has **Alt Lock AGL** off leaving the keyframe at the lock height above the ground instead of above the WGS84 ellipsoid.
+
 ## Version 2.163.0 (2026-09-16)
 
 ### New Features
@@ -18,7 +39,6 @@ lockstep with docs/WhatsNew-Details.md.
 - **Selected Solvers** (File → File Analysis → **Result Charts...**): limit the charts to the solvers ticked in the Solvers button beside it, which shares its choice with BOTBench; the top and best candidates are chosen again from those solvers, while verdicts stay as the run made them.
 - **Error by Duration** (File → File Analysis → **Result Charts...** → *Accuracy: Error by Duration*): compare accuracy across the requested batch durations of 20 to 300 seconds, read from the batch folder names and kept separate from the measured clip length.
 - **Height** (File → File Analysis → **Result Charts...**): scale a chart from 50% to 200% of its designed height; the setting stays while the window is open and also applies to SVG and PNG exports.
-- **Flip X Axis** (File → File Analysis → **Result Charts...**): reverse every X axis in the regular and **Full size** views and in SVG and PNG exports; it starts unchecked, stays set as you switch charts while the window is open, redraws the whole figure when toggled, and adds `flipx` to export filenames.
 - **Box, Whisker and Fence** (File → File Analysis → **Result Charts...**): set the percentage each box covers and how far its whiskers reach; on logarithmic charts the whiskers are now calculated on the raw values by default, as standard plotting tools do, and **Fence: Axis space** gives the earlier log-scale whiskers.
 - **Open BOTBench directly**: add ?action=botbench to the Sitrec address to start on the default custom sitch and open BOTBench without the sitch browser.
 - **Truth metrics in the Track Browser** (File → File Analysis → **Browse Track Folder...**): files with a ground-truth track show the truth path's horizontal and vertical extent and its peak g-force, and you can sort by each of them.
