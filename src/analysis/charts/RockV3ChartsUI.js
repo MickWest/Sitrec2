@@ -129,6 +129,21 @@ export function scaleFigureHeight(figure, percent = 100) {
     return fitFigureTo(figure, Number(figure.layout.width) || LAYOUT_WIDTH, Math.round(baseHeight * scale));
 }
 
+/** Return a copy with every X axis drawn in the opposite direction. */
+export function flipFigureXAxis(figure, flipped = false) {
+    if (!flipped || !figure?.layout) return figure;
+    const layout = {...figure.layout};
+    for (const [name, axis] of Object.entries(figure.layout)) {
+        if (!/^xaxis\d*$/.test(name) || !axis || typeof axis !== "object") continue;
+        if (Array.isArray(axis.range) && axis.range.length >= 2) {
+            layout[name] = {...axis, range: [...axis.range].reverse()};
+        } else {
+            layout[name] = {...axis, autorange: axis.autorange === "reversed" ? true : "reversed"};
+        }
+    }
+    return {...figure, layout};
+}
+
 /** The solver names the rows' candidate lists hold, in order of first appearance. */
 function candidateNames(rows) {
     const names = [];
@@ -353,6 +368,8 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
     const straightToggle = makeToggle("Straight as black squares",
         "Draw a track whose sensor flew straight (turn level 0, or a turn under 1 degree) as a black square "
         + "with the same area as a circle.");
+    const flipXToggle = makeToggle("Flip X Axis",
+        "Reverse the direction of every X axis in the current chart and in SVG and PNG exports.");
     const selectedToggle = makeToggle("Selected Solvers",
         "Limit candidate-backed chart values to the solvers ticked in the adjacent selector. "
         + "The selected top and best candidates are recalculated within that subset.");
@@ -380,7 +397,8 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
     heightControl.append("Height", heightInput, heightValue);
     bar.append(picker, subjectPicker, metricPicker, logToggle.label, boxControl.label, whiskerControl.label,
         whiskerSpaceControl, turnPicker, lengthToggle.label, straightToggle.label,
-        selectedToggle.label, solversButton, heightControl, fullButton, loadButton, svgButton, pngButton, closeButton, status);
+        selectedToggle.label, solversButton, flipXToggle.label, heightControl, fullButton,
+        loadButton, svgButton, pngButton, closeButton, status);
     modal.appendChild(bar);
 
     // plot area
@@ -395,6 +413,7 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
         imageUrls: new Map(), measure: makeMeasure(), turnDeg: null, turnLevels: [],
         marks: {sizeByLength: false, markStraight: false},
         selectedSolvers: initialSolvers, selectedOnly: false, onSolversChanged,
+        flipX: false,
         heightPercent: 100, heightInput, heightValue, boxControl, whiskerControl, whiskerSpacePicker, fullSize: false,
     };
     const currentMeasure = () => {
@@ -440,13 +459,14 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
     // edge of the results window instead of retaining its 1500 px export width.
     // Normal mode keeps the authored/slider height; full size also fills height.
     const figureToDraw = (figure) => {
+        const oriented = flipFigureXAxis(figure, state.flipX);
         const width = Math.max(320, plot.clientWidth - 2);
         if (!state.fullSize) {
-            const scaled = scaleFigureHeight(figure, state.heightPercent);
+            const scaled = scaleFigureHeight(oriented, state.heightPercent);
             return fitFigureTo(scaled, width, scaled.layout.height);
         }
         const height = Math.max(240, plot.clientHeight - 2);
-        return fitFigureTo(figure, width, height);
+        return fitFigureTo(oriented, width, height);
     };
     let resizeTimer = null;
     const onResize = () => {
@@ -471,6 +491,7 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
             + (state.turnLevels.length < 2 ? ""
                 : Number.isFinite(state.turnDeg) ? ` — sensor turn ${state.turnDeg}°`
                 : ` — ${state.turnLevels.length} sensor-turn levels pooled`)
+            + (state.flipX ? " — X axis flipped" : "")
             + boxSettingsSuffix();
     };
 
@@ -611,6 +632,13 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
     turnPicker.addEventListener("change", onChoice);
     lengthToggle.box.addEventListener("change", onChoice);
     straightToggle.box.addEventListener("change", onChoice);
+    flipXToggle.box.addEventListener("change", () => {
+        state.flipX = flipXToggle.box.checked;
+        // Rebuild the figure list as well as changing the displayed layout. This
+        // gives Plotly a fresh specification and forces the axis direction to be
+        // redrawn immediately, including after an interactive zoom or pan.
+        rebuild();
+    });
     let boxTimer = null;
     const onBoxInput = () => {
         boxControl.update();
@@ -638,7 +666,8 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
         if (!state.current) return;
         setStatus(`Rendering ${format.toUpperCase()}…`);
         try {
-            const url = await figureToImage(scaleFigureHeight(state.current, state.heightPercent), {format});
+            const exportFigure = flipFigureXAxis(scaleFigureHeight(state.current, state.heightPercent), state.flipX);
+            const url = await figureToImage(exportFigure, {format});
             const link = document.createElement("a");
             link.href = url;
             // The choice goes in the name, so two exports of one figure do not collide.
@@ -650,6 +679,7 @@ export function openResultCharts(rows = null, {sourceLabel = "", selectedSolvers
                 + (Number.isFinite(state.turnDeg) && !FIGURES.find((f) => f.key === state.current.key)?.allTurnLevels
                     ? `-turn${state.turnDeg}` : "")
                 + (state.marks.sizeByLength ? "-area" : "") + (state.marks.markStraight ? "-straight" : "")
+                + (state.flipX ? "-flipx" : "")
                 + boxSettingsSuffix("-").replace(/[ .×%]+/g, "_");
             link.download = `${state.current.key}${choice}.${format}`;
             document.body.appendChild(link);
@@ -729,6 +759,7 @@ export function addResultChartsMenu(fileAnalysisFolder) {
         window._botCharts = {
             open: openResultCharts, openForEntries: openResultChartsForEntries,
             rowsFromJsonl, rowsFromBotBenchEntries, buildAllFigures, makeMeasure, fitFigureTo, scaleFigureHeight,
+            flipFigureXAxis,
             get active() { return activeWindow; },
         };
     }

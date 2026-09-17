@@ -169,6 +169,10 @@ It starts at 100%, remains set while the charts window is open, and applies when
 you switch figures. SVG and PNG exports use the selected height. **Full size**
 continues to fit the figure to the browser window.
 
+**Flip X Axis** reverses every X axis in the current chart. It starts unchecked,
+remains set while the charts window is open, and applies when you switch figures.
+SVG and PNG exports use the same direction and add `flipx` to the file name.
+
 ## How to read a box
 
 The boxes are drawn from statistics computed before the chart is built, not by
@@ -232,8 +236,9 @@ tolerance rather than being dropped.
 **Full size** shows the figure on its own, drawn to fill the browser window.
 The panels grow with the window and the caption re-wraps to its width; the
 title, legend and caption keep their size. The toolbar keeps the solver filter
-and only the other choices the figure reads: the candidate and the unit on the error figures, the
-candidate alone on the tolerance figures (which always use a share of range),
+and the X-axis direction, plus only the other choices the figure reads: the
+candidate and the unit on the error figures, the candidate alone on the tolerance
+figures (which always use a share of range),
 the sensor-turn level on the figures that take one, and the dot marks on the
 figures whose points are tracks. The figure picker and the file loader are
 hidden until **Exit full size**. Resizing the window redraws the figure, and
