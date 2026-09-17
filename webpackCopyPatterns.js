@@ -228,10 +228,16 @@ patterns.push({
     to: `./libs/plotly-cartesian-${plotlyVersion}.min.js`
 });
 
-// Copy MediabunnyExporter for tools/flowgen.html
+// Copy MediabunnyExporter for tools/flowgen.html, with the modules it imports statically.
+// These are served unbundled, so a static import that is not copied too stops the whole
+// tool loading (tests/driftChecks.test.js checks this).
 patterns.push({
     from: './src/MediabunnyExporter.js',
     to: './tools/src/MediabunnyExporter.js'
+});
+patterns.push({
+    from: './src/H264Utils.js',
+    to: './tools/src/H264Utils.js'
 });
 
 // Copy mediabunny bundle for tools

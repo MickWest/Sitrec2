@@ -53,6 +53,7 @@ import {
 import {disableScroll, f2m, stripComments, updateDocumentTitle} from './utils'
 import {CSituation} from "./CSituation";
 import {helpDocs, DOC_SECTIONS, getDocsForMenu} from "./docsRegistry";
+import {EXTRA_TOOLS} from "./extraTools";
 import {parseFromAppParams, buildFromAppSitch, finishFromApp} from "./fromApp.js";
 import {par, resetPar} from "./par";
 
@@ -2284,6 +2285,19 @@ async function initializeOnce() {
         par.toolSelect = unselectedText;
     })
         .tooltip(t("menus.main.legacyTools.tooltip"));
+
+    // Extra Tools: a link to each public standalone tool, opened in a new tab.
+    // The list lives in src/extraTools.js. The folder AND each link need perm(),
+    // or a sitch change removes them.
+    const extraToolsFolder = _gui.addFolder(t("menus.main.extraTools.label"))
+        .tooltip(t("menus.main.extraTools.tooltip"))
+        .close()
+        .perm();
+    for (const tool of EXTRA_TOOLS) {
+        const base = tool.perBuild ? SITREC_APP : SITREC_SHARE_APP;
+        extraToolsFolder.addExternalLink(t(`menus.main.extraTools.tools.${tool.key}.label`), base + "tools/" + tool.path).perm()
+            .tooltip(t(`menus.main.extraTools.tools.${tool.key}.tooltip`));
+    }
 
 
 

@@ -1,5 +1,5 @@
 /**
- * botset-maneuvers.bench.test.js — generate the two maneuver botsets: the full
+ * botset-maneuvers.bench.test.js — generate the maneuver botsets: the full
  * thirteen-type taxonomy (23 parameter variants), partitioned by anomaly, at
  * four clip durations and nine operator pointing-error rungs:
  *
@@ -10,7 +10,7 @@
  *     npm run bench-bot-maneuvers        # sequential (this file)
  *     npm run bench-bot-maneuvers-par    # worker_threads driver, same output tree
  *
- * (15 anomalous + 8 mundane) x 4 durations x 9 error rungs = 828 scenarios.
+ * (15 anomalous + 8 mundane + 15 Anomalies2) x 4 durations x 9 rungs = 1368 scenarios.
  * The error rung changes ONLY spec.observation, which is outside the truth key,
  * so the nine rungs of a variant are the same flight observed nine ways.
  * Batch generation and its integrity checks live in
@@ -40,7 +40,8 @@ describe("botset maneuver generation", () => {
     });
 
     test("the two sets partition the taxonomy with nothing lost or shared", () => {
-        const seen = BOTSET_MANEUVER_SETS.flatMap((s) => botsetManeuverVariants(s.key));
+        const seen = BOTSET_MANEUVER_SETS.filter(s => !s.viewMix)
+            .flatMap((s) => botsetManeuverVariants(s.key));
         expect(seen.length).toBe(BOTSET_MANEUVER_VARIANTS.length);
         expect(new Set(seen).size).toBe(BOTSET_MANEUVER_VARIANTS.length);
         expect(botsetManeuverVariants("anomalies").every((v) => v.anomalous)).toBe(true);
@@ -98,7 +99,7 @@ describe("botset maneuver generation", () => {
         }
 
         const scenarios = timing.reduce((s, t) => s + t.scenarios, 0);
-        expect(scenarios).toBe(BOTSET_MANEUVER_VARIANTS.length
+        expect(scenarios).toBe(BOTSET_MANEUVER_SETS.reduce((n, s) => n + botsetManeuverVariants(s.key).length, 0)
             * BOTSET_MANEUVER_DURATIONS_SECONDS.length
             * BOTSET_MANEUVER_ERROR_LEVELS.length);
         expect(filesTotal).toBe(scenarios * FILES_PER_SCENARIO);

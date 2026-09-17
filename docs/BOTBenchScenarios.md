@@ -43,14 +43,15 @@ degenerate (a short straight pass), and declared noise ranges from white jitter
 to correlated wobble, so the table exercises every grade the Src column can
 produce.
 
-## The botsets — seven swept grids
+## The botsets — eight swept grids
 
-Three commands write seven [**botsets**](BOTBench.md#botset), 3672 scenario
+The commands below write eight [**botsets**](BOTBench.md#botset), 4212 scenario
 files in all, at 10 Hz:
 
 ```bash
-npm run bench-bot-maneuvers        # the two maneuver sets, sequentially
+npm run bench-bot-maneuvers        # all three maneuver sets, sequentially
 npm run bench-bot-maneuvers-par    # the same tree, one worker thread per batch
+npm run bench-bot-anomalies2       # only Anomalies2, with a 7000 m sensor
 npm run bench-bot-balloons         # the three balloon sets
 npm run bench-bot-platform         # the two depth-along-a-sightline sets
 ```
@@ -58,6 +59,7 @@ npm run bench-bot-platform         # the two depth-along-a-sightline sets
 | Set | Scenarios | Swept over |
 |---|---|---|
 | `botset_anomalies` | 540 | 15 anomalous variants × 4 durations × 9 error rungs |
+| `Anomalies2` | 540 | The same 15 anomaly variants; 80% start looking 45° or 75° down from a 7000 m sensor |
 | `botset_mundane` | 288 | 8 mundane variants × 4 durations × 9 error rungs |
 | `botset_balloons_straight` | 180 | 20 balloon variants × 20 s × 9 error rungs |
 | `botset_balloons_curve` | 180 | the same, sensor in a gentle constant bank |
@@ -90,7 +92,7 @@ Five design decisions are worth knowing before reading any numbers off these
 sets:
 
 - **The maneuver taxonomy is partitioned by anomaly, not by shape.** One
-  thirteen-kind table of track types is published as two sets purely on the
+  thirteen-kind table of track types was originally published as two sets purely on the
   `anomalous` flag, so that *"did we find the mundane answer"* and *"did we
   correctly report an anomaly"* stop being one mixed number over one mixed
   folder. They are different questions and a mixed set answers neither cleanly.
@@ -136,6 +138,29 @@ sets:
   bound on what [parallax](BOTBench.md#parallax) can buy. The twenty variants are five
   buoyant behaviours (rising, level, sinking, slow drift, fast drift) at four
   ranges (2, 8, 20 and 50 statute miles).
+
+### Anomalies2 — a higher sensor and steeper starting views
+
+`npm run bench-bot-anomalies2` generates only
+`benchmarks/botbench/results/Anomalies2/`, leaving the original sets alone.
+It uses the same 15 anomaly variants, four clip lengths (20, 60, 120 and
+300 seconds), and nine pointing-error rungs: 540 scenarios in the usual
+`Input/`, `Truth/`, `All/` and `meta/` layout. In BOTBench, select that folder
+with **Recursive** enabled.
+
+The sensor orbits at 70 m/s and **7000 m above the site's ground**. Six variants
+start looking 45° down and six start at 75° down, for an 80% downward-view mix.
+Their initial horizontal ranges are derived from the height difference and
+angle (about 1.1–5 km). The three hypersonic variants retain their 100 km
+starting range and high target altitude. The field of view for the downward
+cases uses initial slant range, and the CSVs include the angular-size bound.
+
+These are **starting angles**: a fast target can move into a shallow view
+during a long clip. Each batch manifest records the initial, minimum, median
+and maximum clean depression angle, plus the fraction of frames at least
+45° down. The sensor follows the existing ground orbit; its path does not
+follow the target's maneuvers. The geometry and target truth remain identical
+across pointing-error rungs.
 
 ### The platform sets — one sightline, four depths
 

@@ -17,7 +17,7 @@ question with something better than an impression.
 
 ## The short version
 
-1. Open the **Diffraction PSF Studio** at `tools/psf/` (linked from the Tools index).
+1. Open the **Diffraction PSF Studio** from **Sitrec ▸ Extra Tools**. It is at `tools/psf/`.
 2. Pick a preset, or build the aperture: outer shape, central obstruction, spider vanes.
 3. Press **Download .psf.json**.
 4. In Sitrec: **Camera ▸ Camera Tweaks ▸ Diffraction Glare ▸ Import PSF…**

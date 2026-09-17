@@ -2,6 +2,24 @@
 
 This directory contains standalone tools for working with Sitrec data.
 
+## Adding or Removing a Public Tool
+
+A public tool is one with a card on the Tools index page, `tools/index.html`. Each public
+tool also has a link in the **Sitrec ▸ Extra Tools** menu, which opens it in a new tab.
+When you add, rename or remove a public tool, change all three of these together:
+
+1. **`tools/index.html`**: the tool's card. Its main link is a plain `<a href="...">` with
+   no other attributes. Give any secondary link on the card a `class`.
+2. **`src/extraTools.js`**: one entry with a `key` and a `path` relative to `tools/`. Name
+   the page itself (`mytool/index.html`), not a bare directory. Set `perBuild: true` only
+   if the release packaging copies the tool into every frontend build (see
+   `docs/dev/ReleaseChannels.md`).
+3. **`src/i18n/en.js`**: a `label` and a `tooltip` under
+   `menus.main.extraTools.tools.<key>`.
+
+`tests/extraTools.test.js` fails if these disagree. Development and test pages (for
+example `px4-test.html`) get no card and no menu entry.
+
 ## Tile Download Scripts
 
 ### ESRI World Imagery Downloader

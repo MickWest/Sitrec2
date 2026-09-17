@@ -285,3 +285,57 @@ describe('Serverless data directory whitelist', () => {
         expect(missing).toEqual([]);
     });
 });
+
+// ============================================================
+// 8. Modules copied unbundled to tools/src — their static imports must be there too
+// ============================================================
+
+describe('Modules copied unbundled to tools/src', () => {
+    // A tool page loads these files as plain ES modules, not through webpack. A static
+    // import that is not also copied, or that leaves off its .js extension, 404s in the
+    // browser, and the whole tool then fails to load. That happened to tools/flowgen.html
+    // and went unnoticed for months. Dynamic import() is not checked: it fails only on
+    // the code path that reaches it.
+    let copied;
+
+    beforeAll(() => {
+        let patterns;
+        const previous = process.env.IS_SERVERLESS_BUILD;
+        jest.isolateModules(() => {
+            // The patterns read this checkout's install configuration and, outside a
+            // serverless build, its server files. Neither affects these copies.
+            jest.doMock("../config/config-install", () => ({dev_path: "/nonexistent"}), {virtual: true});
+            process.env.IS_SERVERLESS_BUILD = "true";
+            try {
+                patterns = require("../webpackCopyPatterns");
+            } finally {
+                if (previous === undefined) delete process.env.IS_SERVERLESS_BUILD;
+                else process.env.IS_SERVERLESS_BUILD = previous;
+            }
+        });
+        copied = patterns
+            .filter(p => typeof p.from === 'string' && /^\.\/src\/[^*]+\.js$/.test(p.from)
+                && String(p.to).startsWith('./tools/src/'))
+            .map(p => ({from: path.normalize(p.from), to: path.normalize(p.to)}));
+    });
+
+    test('the copy patterns still name at least one module', () => {
+        expect(copied.length).toBeGreaterThan(0);
+    });
+
+    test('every static relative import resolves to a copied file', () => {
+        const copiedTo = new Set(copied.map(c => c.to));
+        const problems = [];
+        for (const {from, to} of copied) {
+            const source = fs.readFileSync(path.join(ROOT, from), 'utf-8');
+            for (const match of source.matchAll(/^\s*import\s[^'"]*?from\s*['"](\.{1,2}\/[^'"]+)['"]/gm)) {
+                const target = path.normalize(path.join(path.dirname(to), match[1]));
+                // tools/src also holds files that live there in the repo, copied by the tools/ pattern.
+                if (!copiedTo.has(target) && !fs.existsSync(path.join(ROOT, target))) {
+                    problems.push(`${from} imports "${match[1]}", but nothing is copied to ${target}`);
+                }
+            }
+        }
+        expect(problems).toEqual([]);
+    });
+});

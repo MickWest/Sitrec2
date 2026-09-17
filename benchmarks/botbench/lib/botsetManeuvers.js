@@ -1,11 +1,12 @@
 // botsetManeuvers.js — the maneuver taxonomy: thirteen track types with their
 // parameter variants, swept over clip duration and operator error.
 //
-// The table is ONE taxonomy, published as TWO sets, partitioned by the
+// The table is ONE taxonomy, originally published as TWO sets, partitioned by the
 // `anomalous` flag:
 //
 //   botset_anomalies   15 variants — no conventional model should fit
 //   botset_mundane      8 variants — a conventional model exists and must be found
+//   Anomalies2        15 anomalous variants with a 7000 m sensor and steeper views
 //
 // The partition is a publishing decision, not a modelling one. The variants
 // share a spec builder, a seed, a duration ladder and an error ladder, so a
@@ -48,6 +49,7 @@
 import {DEFAULT_SITE} from "./generateScenario";
 import {MANEUVER_DIAMETER_M, fovForFraction} from "./angularSize";
 import {BOTSET_ERROR_LEVELS} from "./botsetErrors";
+import {anomalies2Depression, anomalies2Spec} from "./anomalies2";
 
 const ORBIT = {kind: "orbit-point", speedMS: 70, altitudeAGL: 3000};
 
@@ -85,15 +87,16 @@ export const BOTSET_MANEUVER_VARIANTS = [
 ];
 
 /**
- * The two published sets. `anomalous` is the partition predicate, so adding a
- * variant to the table above puts it in exactly one set automatically and
- * neither set can silently lose a row.
+ * The original two sets partition the taxonomy by `anomalous`. Anomalies2
+ * repeats the anomalous side with different observation geometry.
  */
 export const BOTSET_MANEUVER_SETS = [
     {key: "anomalies", dirName: "botset_anomalies", anomalous: true,
         blurb: "no conventional model should fit"},
     {key: "mundane", dirName: "botset_mundane", anomalous: false,
         blurb: "a conventional model exists and must be found"},
+    {key: "anomalies2", dirName: "Anomalies2", anomalous: true, viewMix: true,
+        blurb: "80% downward starting views from 7000 m, 20% long-range hypersonic cases"},
 ];
 
 export function botsetManeuverSet(key) {
@@ -104,8 +107,9 @@ export function botsetManeuverSet(key) {
 
 /** The variants belonging to one published set. */
 export function botsetManeuverVariants(key) {
-    return BOTSET_MANEUVER_VARIANTS.filter(
-        (v) => v.anomalous === botsetManeuverSet(key).anomalous);
+    const set = botsetManeuverSet(key);
+    const variants = BOTSET_MANEUVER_VARIANTS.filter(v => v.anomalous === set.anomalous);
+    return set.viewMix ? variants.map(v => ({...v, depressionDeg: anomalies2Depression(v)})) : variants;
 }
 
 /** The field of view that frames this variant's object at its nominal range. */
@@ -115,7 +119,7 @@ export function botsetManeuverFov(v) {
 
 export function botsetManeuverSpec(v, durationSeconds, errorLevel) {
     const fovFullDeg = botsetManeuverFov(v);
-    return {
+    const spec = {
         epochISO: "2025-02-01T20:00:00Z",   // noon PST: daylight at the site
         durationSeconds, fps: 10,
         initialHorizontalRangeM: v.rangeM,
@@ -139,4 +143,5 @@ export function botsetManeuverSpec(v, durationSeconds, errorLevel) {
         // field returned by botsetManeuverFov.
         observation: errorLevel.observation(fovFullDeg),
     };
+    return v.depressionDeg !== undefined ? anomalies2Spec(spec, v.depressionDeg, errorLevel) : spec;
 }

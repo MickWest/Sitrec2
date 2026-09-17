@@ -1,4 +1,6 @@
-import { sanitizeAvcDescription } from "./H264Utils";
+// The .js extension is needed: this file is also copied unbundled to tools/src/ for
+// tools/flowgen.html, and a browser does not add a missing extension the way webpack does.
+import { sanitizeAvcDescription } from "./H264Utils.js";
 
 export class MediabunnyExporter {
     constructor(options = {}) {

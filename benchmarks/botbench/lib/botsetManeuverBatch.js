@@ -11,6 +11,7 @@ import path from "path";
 import {generateScenario} from "./generateScenario";
 import {writeInterchange} from "./exportInterchange";
 import {botsetBatchLabel} from "./botsetErrors";
+import {anomalyViewStats} from "./anomalies2";
 import {
     BOTSET_MANEUVER_ERROR_LEVELS, botsetManeuverSet, botsetManeuverVariants,
     botsetManeuverFov, botsetManeuverSpec,
@@ -34,7 +35,7 @@ const round5 = (x) => Math.round(x * 1e5) / 1e5;
  * missing event window, filename collision, wrong-set variant) — a runner
  * treats any throw as a failed batch.
  *
- * @param setKey           "anomalies" | "mundane"
+ * @param setKey           "anomalies" | "mundane" | "anomalies2"
  * @param durationSeconds  clip length for every scenario in the cell
  * @param errorLabel       a BOTSET_MANEUVER_ERROR_LEVELS label ("0.0deg" | "0.01deg" | ... | "2.0deg")
  * @param outRoot          the results root that holds every botset_* directory
@@ -59,6 +60,10 @@ export function generateBotsetManeuverBatch({setKey, durationSeconds, errorLabel
         const spec = botsetManeuverSpec(v, durationSeconds, err);
         const scenario = generateScenario(spec, {scenarioSeed: BOTSET_MANEUVER_SEED});
         const profile = scenario.target.profile;
+        const view = set.viewMix ? anomalyViewStats(scenario) : null;
+        if (v.depressionDeg != null && !(Math.abs(view.initialDeg - v.depressionDeg) < 1e-6)) {
+            throw new Error(`Anomalies2: ${v.kind}/${v.variant} misses its ${v.depressionDeg} degree starting view`);
+        }
 
         // The set a variant lands in IS its anomalous flag, so a mismatch here
         // would publish an anomaly inside botset_mundane — the one error this
@@ -108,10 +113,13 @@ export function generateBotsetManeuverBatch({setKey, durationSeconds, errorLabel
         manifest.push({set: setKey, kind: v.kind, variant: v.variant,
             anomalous: v.anomalous, basename: out.basename,
             scenarioId: scenario.scenarioId, profile,
-            rangeM: v.rangeM, durationSeconds,
+            rangeM: spec.initialHorizontalRangeM, durationSeconds,
             errorLevel: err.label, errorDeg: err.deg,
             fovFullDeg: spec.observation.fovFullDeg,
-            familyFovFullDeg: botsetManeuverFov(v),
+            familyFovFullDeg: set.viewMix
+                ? botsetManeuverSpec(v, durationSeconds, BOTSET_MANEUVER_ERROR_LEVELS[0]).observation.fovFullDeg
+                : botsetManeuverFov(v),
+            ...(view ? {view: {requestedInitialDeg: v.depressionDeg, ...view}, platform: spec.platform} : {}),
             realizedRmsDeg: round5(scenario.observation.realizedRmsDegAllFrames),
             realizedMaxDeg: round5(scenario.observation.realizedMaxDeg),
             outOfFrameFraction: scenario.observation.outOfFrameFraction});

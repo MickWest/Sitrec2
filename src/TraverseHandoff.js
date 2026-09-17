@@ -590,8 +590,11 @@ export function candidateNotes(candidates) {
  *                    only known once the tracks have been built.
  * @param urlFor      (key) => string — the destination. The bench sends a fresh
  *                    custom sitch; the gallery sends the current one.
+ * @param ready       optional promise for queued gallery actions to finish.
+ *                    Claim the window immediately, then wait before selecting
+ *                    tracks so a set-aside animation cannot race the handoff.
  */
-export function openHandoffWindow({buildFiles, urlFor, onDone}) {
+export function openHandoffWindow({buildFiles, urlFor, onDone, ready}) {
     const w = window.open("", "_blank");
     if (!w) {
         showError("The new Sitrec window was blocked by the browser's popup blocker. "
@@ -607,6 +610,7 @@ export function openHandoffWindow({buildFiles, urlFor, onDone}) {
 
     (async () => {
         try {
+            if (ready) await ready;
             const {files, meta = {}} = await buildFiles();
             if (!files?.length) throw new Error("there is nothing to send");
             const key = await putFileHandoff(files, {

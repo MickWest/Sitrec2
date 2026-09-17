@@ -5335,6 +5335,10 @@ function showResultGallery(results, uiState = null) {
         btn.textContent = "opening…";
         btn.disabled = true;
         openHandoffWindow({
+            // The set-aside state changes between animation beats. Wait for
+            // every action queued before this click, for BOTH handoff buttons.
+            // openHandoffWindow still claims its popup synchronously.
+            ready: animQueue,
             buildFiles: async () => {
                 // A LIVE analysis works in the loaded sitch's true local
                 // tangent frame, so the full 3-D conversion is right here and

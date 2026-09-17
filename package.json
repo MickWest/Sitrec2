@@ -100,6 +100,7 @@
     "bench-bot-maneuver": "npx jest benchmarks/botbench/maneuver.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-maneuvers": "npx jest benchmarks/botbench/botset-maneuvers.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-maneuvers-par": "node benchmarks/botbench/run-botset-maneuvers.mjs",
+    "bench-bot-anomalies2": "node benchmarks/botbench/run-botset-maneuvers.mjs --sets anomalies2",
     "bench-bot-balloons": "npx jest benchmarks/botbench/botset-balloons.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-folder": "node benchmarks/botbench/run-folder-performance.mjs",
     "bench-bot-platform": "npx jest benchmarks/botbench/botset-platform.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",

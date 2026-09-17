@@ -12,6 +12,40 @@ const en = {
                 label: "Legacy Tools",
                 tooltip: "Tools are special sitches that are used for custom setups like Starlink or with user tracks, and for testing, debugging, or other special purposes. Select one to load it.",
             },
+            extraTools: {
+                label: "Extra Tools",
+                tooltip: "Standalone tools that work alongside Sitrec. Each one opens in a new tab.",
+                tools: {
+                    losViewer: {
+                        label: "LOS CSV Viewer",
+                        tooltip: "Show line of sight (LOS) CSV data exported from Sitrec in 3D",
+                    },
+                    flowGen: {
+                        label: "FlowGen",
+                        tooltip: "Make synthetic videos with a known motion, to test optical flow and motion tracking",
+                    },
+                    px4Viewer: {
+                        label: "PX4 ULog Viewer",
+                        tooltip: "Show PX4 flight logs (ULog files) in 3D, and export them to CSV",
+                    },
+                    irBalloon: {
+                        label: "IR Balloon",
+                        tooltip: "Simulate how a mylar balloon looks to a mid-wave infrared (MWIR) thermal camera",
+                    },
+                    compass: {
+                        label: "Compass & Elevation",
+                        tooltip: "Measure compass heading and elevation angle with the orientation sensors of a phone",
+                    },
+                    shf: {
+                        label: "Starlink Flare Predictor",
+                        tooltip: "Predict the times and sky directions of Starlink horizon flares, for a place or along a flight",
+                    },
+                    psfStudio: {
+                        label: "Diffraction PSF Studio",
+                        tooltip: "Make the diffraction point spread function (PSF) of a camera aperture, and export it for Camera > Camera Tweaks > Diffraction Glare",
+                    },
+                },
+            },
             selectPlaceholder: "-Select-",
         },
         file: {

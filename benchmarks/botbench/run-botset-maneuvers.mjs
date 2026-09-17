@@ -5,7 +5,7 @@
  *     npm run bench-bot-maneuvers-par
  *     node benchmarks/botbench/run-botset-maneuvers.mjs [--concurrency N]
  *
- * The 72 batch folders (2 sets x 4 durations x 9 error rungs) are independent
+ * The batch folders (selected sets x 4 durations x 9 error rungs) are independent
  * — no two touch the same file — so each runs in its own worker thread. Batch
  * generation lives in lib/botsetManeuverBatch.js, shared verbatim with the
  * sequential bench (botset-maneuvers.bench.test.js), and generation is
@@ -37,6 +37,7 @@ const ENTRY = path.join(__dirname, "lib", "botsetManeuverWorker.js");
 // ---- args -------------------------------------------------------------------
 const argv = process.argv.slice(2);
 let conc = null;
+let selectedSets = null;
 for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--concurrency") {
         const v = argv[++i];
@@ -49,9 +50,12 @@ for (let i = 0; i < argv.length; i++) {
             console.error("--concurrency out of range (1..32)");
             process.exit(1);
         }
+    } else if (argv[i] === "--sets") {
+        selectedSets = (argv[++i] ?? "").split(",").filter(Boolean);
+        if (!selectedSets.length) throw new Error("--sets needs at least one set key");
     } else {
         console.error(`unknown option: ${argv[i]}\n`
-            + "usage: run-botset-maneuvers.mjs [--concurrency N]");
+            + "usage: run-botset-maneuvers.mjs [--concurrency N] [--sets anomalies,mundane,anomalies2]");
         process.exit(1);
     }
 }
@@ -116,8 +120,13 @@ async function main() {
     // only runs a batch when parentPort exists), so the task list can never
     // drift from lib/botsetManeuvers.js.
     const {AXES} = require(bundle);
+    if (selectedSets?.some(key => !AXES.sets.some(s => s.key === key))) {
+        fs.unlinkSync(bundle);
+        throw new Error(`Unknown set in --sets ${selectedSets.join(",")}`);
+    }
+    const sets = AXES.sets.filter(s => !selectedSets || selectedSets.includes(s.key));
     const tasks = [];
-    for (const set of AXES.sets) {
+    for (const set of sets) {
         for (const durationSeconds of AXES.durations) {
             for (const errorLabel of AXES.errorLabels) {
                 tasks.push({setKey: set.key, durationSeconds, errorLabel,
@@ -134,7 +143,7 @@ async function main() {
     // Same clean-slate rule as the bench: names encode variant and flags, so a
     // rename would leave stale files behind. Only the botset directories go —
     // results/ holds many other generated trees.
-    for (const set of AXES.sets) {
+    for (const set of sets) {
         fs.rmSync(path.join(RESULTS, set.dirName), {recursive: true, force: true});
     }
 
@@ -164,7 +173,7 @@ async function main() {
     const filesTotal = results.reduce((s, r) => s + r.files, 0);
     // Per-SET timing files, matching the sequential bench: the set directory is
     // what vizBotBench takes, so its timing belongs inside it.
-    for (const set of AXES.sets) {
+    for (const set of sets) {
         const mine = results.filter((r) => r.set === set.key);
         if (!mine.length) continue;
         fs.writeFileSync(path.join(RESULTS, set.dirName, "timing.json"), JSON.stringify({
@@ -177,7 +186,9 @@ async function main() {
             batches: mine.map((r) => ({batch: r.batch, scenarios: r.scenarios, ms: r.ms})),
         }, null, 2));
     }
-    fs.writeFileSync(path.join(RESULTS, "botset_maneuvers-timing.json"), JSON.stringify({
+    fs.writeFileSync(path.join(RESULTS, selectedSets
+        ? `botset_maneuvers-${sets.map(s => s.key).join("-")}-timing.json`
+        : "botset_maneuvers-timing.json"), JSON.stringify({
         generatedAt: new Date().toISOString(),
         scenarios: results.reduce((s, r) => s + r.scenarios, 0),
         files: filesTotal,

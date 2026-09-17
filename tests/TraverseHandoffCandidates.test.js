@@ -119,6 +119,22 @@ test("no hypotheses at all still sends nothing, rather than throwing", () => {
     expect(handoffCandidateCSVs(null, opts)).toEqual([]);
 });
 
+test.each([false, true])("set-aside candidates are excluded with includeWeak=%s", includeWeak => {
+    const consistent = hypothesis("plane");
+    const weak = hypothesis("lantern", {offset: 50, boundaryLimited: true});
+    const kept = hypothesis("gfCV", {offset: 100});
+    const r = results([consistent, weak, kept]);
+    const sent = consistentTrackCSVs(r, {...opts, includeWeak, exclude: new Set([consistent, weak])});
+    expect(sent).toHaveLength(1);
+    expect(sent[0].hypothesis).toBe(kept.name);
+    expect(sent[0].text).not.toContain("sky_lantern_balloon");
+});
+
+test("the weak fallback cannot bring back set-aside candidates", () => {
+    const h = hypothesis("lantern", {boundaryLimited: true});
+    expect(handoffCandidateCSVs(results([h]), {...opts, exclude: new Set([h])})).toEqual([]);
+});
+
 // ---------------------------------------------------------------------------
 // Track NAMES: readable labels, kept separate from the hypothesis KEYS.
 // ---------------------------------------------------------------------------
