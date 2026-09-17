@@ -1194,7 +1194,7 @@ const en = {
             tooltip: "Override mobile auto-disable. Shadows are expensive; expect reduced frame rate.",
         },
         startXR: { label: "Start VR/XR", tooltip: "Start WebXR session for testing (works with Immersive Web Emulator)" },
-        effects: { label: "Effects", tooltip: "Enable/Disable All Effects" },
+        effects: { label: "Rendering Effects", tooltip: "Enable/Disable Rendering Effects" },
         focusTrack: { label: "Focus Track", tooltip: "Select a track to make the camera look at it and rotate around it" },
         lockTrack: { label: "Lock Track", tooltip: "Select a track to lock the camera to it, so it moves with the track" },
         debug: {

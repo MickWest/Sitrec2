@@ -429,7 +429,10 @@ class CNode {
                 // Try the string as-is first (camelCase keys like
                 // "gimbalAnalysis" must round-trip), then fall back to
                 // lowercase for legacy "Physics"/"Wind"/"Camera" capitalization.
-                this.gui = guiMenus[_gui] ?? guiMenus[_gui.toLowerCase()];
+                // Old sitches place rendering-effect sliders directly in Effects.
+                // Route those definitions into the new folder without changing saves.
+                this.gui = (_gui.toLowerCase() === "effects" ? guiMenus.renderingEffects : null)
+                    ?? guiMenus[_gui] ?? guiMenus[_gui.toLowerCase()];
                 assert(this.gui !== undefined, "Unknown gui type: " + _gui)
             } else {
                 // otherwise, it's a gui object passed in the parameters

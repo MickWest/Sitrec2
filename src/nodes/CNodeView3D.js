@@ -89,6 +89,7 @@ import * as LAYER from "../LayerMasks";
 import {globalProfiler} from "../VisualProfiler";
 import {fixXRLayerMasks, renderCelestialScene, renderFullscreenQuadStereo} from "../CXRRenderer";
 import {waitForExportFrameSettled} from "../ExportFrameSettler";
+import {createVideoFormatExportLayer, getVideoFormatExportSettings} from "../videoFilters/VideoFormatLayer";
 import {t} from "../i18n";
 import {mouseMethods} from "./CNodeView3DMouse";
 import {cloneTerrainDayNightMaterialForView} from "../js/map33/material/TerrainDayNightMaterial";
@@ -450,7 +451,10 @@ export class CNodeView3D extends CNodeViewCanvas {
         const startFrame = Sit.aFrame;
         const endFrame = Sit.bFrame;
         const width = this.canvas.width;
-        const height = this.canvas.height;
+        // The format layer includes the whole view rectangle, including letterboxing.
+        const height = getVideoFormatExportSettings(this)
+            ? Math.max(2, Math.round(width * this.heightPx / this.widthPx / 2) * 2)
+            : this.canvas.height;
         let plan = options.plan;
         if (!plan) {
             let duplicateFrameSet = null;
@@ -550,7 +554,9 @@ export class CNodeView3D extends CNodeViewCanvas {
             if (fadeOverlay.canvas) fadeOverlay.canvas.style.opacity = alpha;
         };
 
+        let formatLayer = null;
         try {
+            formatLayer = await createVideoFormatExportLayer(this, {width, height, fps: plan.fps});
             const exporter = await createVideoExporter(formatId, {
                 width,
                 height,
@@ -654,8 +660,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         }
                     });
 
-                    drawVideoWatermark(compositeCtx, width);
-                    drawAttributionOnCanvas(compositeCtx, width, height);
+                    formatLayer?.capture();
                 };
 
                 await renderSingleViewFrame();
@@ -669,6 +674,9 @@ export class CNodeView3D extends CNodeViewCanvas {
                     });
                 }
                 
+                formatLayer?.draw(compositeCtx, 0, 0, width, height);
+                drawVideoWatermark(compositeCtx, width);
+                drawAttributionOnCanvas(compositeCtx, width, height);
                 await exporter.addFrame(compositeCanvas, i);
                 
                 if (i % 10 === 0) {
@@ -700,6 +708,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             console.error('Export failed:', e);
             alert('Video export failed: ' + e.message);
         } finally {
+            formatLayer?.dispose();
             progress.remove();
             par.frame = savedFrame;
             par.paused = savedPaused;
@@ -3114,7 +3123,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             if (this.effectsEnabled === undefined) {
                 this.effectsEnabled = !(Sit?.isCustom ?? false);
             }
-            guiTweaks.add(this, "effectsEnabled").name(t("view3d.effects.label")).onChange(() => {
+            (guiMenus.renderingEffects ?? guiTweaks).add(this, "effectsEnabled").name(t("view3d.effects.label")).onChange(() => {
                 setRenderOne(true)
             }).tooltip(t("view3d.effects.tooltip"))
 

@@ -2,7 +2,7 @@
 import {Globals, guiMenus} from "../src/Globals";
 import {
     deserializeVideoFormatEffects, disposeVideoFormatLayer, getVideoFormatLayerSettings,
-    serializeVideoFormatEffects, setupVideoFormatEffectsMenu,
+    getVideoFormatExportSettings, serializeVideoFormatEffects, setupVideoFormatEffectsMenu,
 } from "../src/videoFilters/VideoFormatLayer";
 
 jest.mock('../src/VideoExporter', () => ({getCanvasDisplayRect: jest.fn()}));
@@ -48,6 +48,22 @@ test('partial saves fill format defaults and missing enabled remains off', () =>
     deserializeVideoFormatEffects({signal: {format: 'rs170'}});
     expect(getVideoFormatLayerSettings().signal.lumaMHz).toBe(4.5);
     expect(getVideoFormatLayerSettings().enabled).toBe(false);
+});
+
+test('exports snapshot active Look view effects without inheriting disabled or other-view settings', () => {
+    const look = {id: 'lookView'};
+    deserializeVideoFormatEffects({enabled: true, signal: {format: 'rs170', jitter: .23},
+        screen: {enabled: true, preset: 'tripod', zoom: .86}});
+    const snapshot = getVideoFormatExportSettings(look);
+    expect(snapshot.signal.format).toBe('rs170');
+    expect(snapshot.screen.zoom).toBe(.86);
+    expect(getVideoFormatExportSettings({id: 'mainView'})).toBeNull();
+    getVideoFormatLayerSettings().screen.zoom = 2;
+    expect(snapshot.screen.zoom).toBe(.86);
+    getVideoFormatLayerSettings().enabled = false;
+    expect(getVideoFormatExportSettings(look)).toBeNull();
+    deserializeVideoFormatEffects({enabled: true});
+    expect(getVideoFormatExportSettings(look)).toBeNull();
 });
 
 test('restore refreshes all permanent controllers and editing marks the sitch dirty', () => {

@@ -30,6 +30,7 @@ import {
     viewMenuKey,
 } from "../src/ViewUIBarMenus";
 import {CUIBar} from "../src/CUIBar";
+import {CustomManager, setCustomManager} from "../src/Globals";
 import en from "../src/i18n/en";
 
 const SRC_DIR = path.resolve(__dirname, "..", "src");
@@ -401,6 +402,27 @@ describe("populateViewUIBarIcons", () => {
         const view = fakeBar("someGraphView");
         expect(populateViewUIBarIcons(view)).toBe(0);
         expect(view.uiBar.bar.querySelector("button.view-uibar-icon")).toBe(null);
+    });
+
+    test.each(['mainView', 'lookView', 'video'])('%s camera icon renders its own view', async id => {
+        const previous = CustomManager;
+        const renderSingleViewVideo = jest.fn();
+        try {
+            const view = fakeBar(id);
+            populateViewUIBarIcons(view);
+            // Export setup happens after the view's header is created.
+            setCustomManager({videoExportManager: {renderSingleViewVideo}});
+            const button = view.uiBar.bar.querySelector('[data-uibar-action="render-video"]');
+            expect(button.querySelector('svg')).not.toBeNull();
+            expect(button.getAttribute('aria-label')).toContain('Render Single View Video');
+            expect(view.uiBar.left.contains(button)).toBe(true);
+            button.click();
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(renderSingleViewVideo).toHaveBeenCalledWith(id);
+            expect(renderSingleViewVideo).toHaveBeenCalledTimes(1);
+        } finally {
+            setCustomManager(previous);
+        }
     });
 
     test("an icon stays hidden until its control is published, then appears", () => {

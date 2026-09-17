@@ -70,7 +70,7 @@ export class CNodeEffect extends CNode {
 
     constructor(v) {
 
-        Globals.defaultGui = guiTweaks;
+        Globals.defaultGui = guiMenus.renderingEffects ?? guiTweaks;
 
         if (guiOnOffFolder === null) {
             guiOnOffFolder = Globals.defaultGui.addFolder("Effects On/Off").close().perm();
@@ -93,7 +93,7 @@ export class CNodeEffect extends CNode {
         this.filter  = v.filter  ?? "Nearest"; // filter for the source RenderBuffer texture
 
         // Optional named GUI destination for the enabled checkbox (e.g.
-        // enabledGUI: "thermalNV" puts the flag in Effects > Thermal/NV);
+        // enabledGUI: "thermalNV" puts the flag in Rendering Effects > Thermal/NV);
         // defaults to the shared "Effects On/Off" folder.
         const flagFolder = (v.enabledGUI && guiMenus[v.enabledGUI]) ? guiMenus[v.enabledGUI] : guiOnOffFolder;
         this.enabledController = this._addEnabledToggle(flagFolder);

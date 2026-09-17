@@ -2052,11 +2052,12 @@ async function initializeOnce() {
         .tooltip(t("menus.showHide.graphs.tooltip"));
     const _guiTweaks = addTranslatedGUIMenu("effects", "menus.effects.title", {closeFolders: true})
         .tooltip(t("menus.effects.tooltip"));
+    addGUIFolder("renderingEffects", "Rendering Effects", "effects");
     // Permanent sub-folder that groups the sensor-look simulations: the
     // FLIRShader/Thermal/NightVision enable flags plus their parameter
     // sliders (routed in per sitch via gui: "thermalNV" / enabledGUI).
     // Hidden when a sitch leaves it empty — see showFolderIfPopulated.
-    addGUIFolder("thermalNV", "Thermal/NV", "effects");
+    addGUIFolder("thermalNV", "Thermal/NV", "renderingEffects");
     // Live analog / off-a-screen video format simulation. Permanent, like the folder
     // above, and populated once at init rather than per sitch - it is not a node.
     addGUIFolder("videoFormat", "Video Format Effects", "effects");
@@ -2685,7 +2686,7 @@ async function setupFunctions() {
     };
     const updateCameraFolders = () =>
         ["cameraLocation", "cameraHeading", "cameraFOV", "cameraLens", "cameraTweaks",
-            "thermalNV"]   // Effects > Thermal/NV — populated only by sitches with the sensor-look effects
+            "thermalNV"]   // Populated only by sitches with the sensor-look effects
             .forEach(showFolderIfPopulated);
     updateCameraFolders();
     setTimeout(updateCameraFolders, 0);

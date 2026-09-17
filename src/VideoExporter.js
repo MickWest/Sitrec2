@@ -576,26 +576,45 @@ export class VideoExportManager {
     // Every user-facing render opens this first: signal format, the recorded-off-a-screen
     // simulation and the compression settings, over a live preview of a real frame.
     // Returns null when the user cancels, in which case the export must not start.
-    async promptExportSettings(title) {
+    async promptExportSettings(title, {viewId = this.videoExportView} = {}) {
         const { ViewMan } = await import("./CViewManager");
         const { par } = await import("./par");
         const { showVideoFilterDialog } = await import("./videoFilters/VideoFilterDialog");
+        const {createVideoFormatExportLayer, videoFormatOSDViews} = await import("./videoFilters/VideoFormatLayer");
 
         // Snapshot a frame for the preview. The view renderers do not set
         // preserveDrawingBuffer, so the canvas has to be re-rendered and copied within
         // the same task or it reads back empty.
         let previewCanvas = null;
-        const view = ViewMan.get(this.videoExportView, false) ?? ViewMan.get("lookView", false);
+        let sceneEffectsIncluded = false;
+        const view = ViewMan.get(viewId, false) ?? ViewMan.get("lookView", false);
         if (view && view.canvas && view.canvas.width > 0 && view.canvas.height > 0) {
+            let formatLayer = null;
             try {
-                view.renderCanvas(Math.floor(par.frame));
+                formatLayer = await createVideoFormatExportLayer(view, {
+                    width: view.canvas.width,
+                    height: Math.max(2, Math.round(view.canvas.width * view.heightPx / view.widthPx / 2) * 2),
+                    fps: 30,
+                });
+                const frame = Math.floor(par.frame);
+                view.renderCanvas(frame);
                 previewCanvas = document.createElement("canvas");
                 previewCanvas.width = view.canvas.width;
-                previewCanvas.height = view.canvas.height;
-                previewCanvas.getContext("2d").drawImage(view.canvas, 0, 0);
+                previewCanvas.height = formatLayer?.source.height ?? view.canvas.height;
+                const ctx = previewCanvas.getContext("2d");
+                if (formatLayer) {
+                    for (const child of videoFormatOSDViews(view)) child.renderCanvas(frame);
+                    formatLayer.capture();
+                    formatLayer.draw(ctx, 0, 0, previewCanvas.width, previewCanvas.height);
+                    sceneEffectsIncluded = true;
+                } else {
+                    ctx.drawImage(view.canvas, 0, 0);
+                }
             } catch (e) {
                 // No preview frame available; the dialog falls back to colour bars.
                 previewCanvas = null;
+            } finally {
+                formatLayer?.dispose();
             }
         }
 
@@ -605,9 +624,32 @@ export class VideoExportManager {
             formatOptions: getFilteredVideoFormatOptions(encodingSupport),
             formatId: this.videoFormat,
             getPreviewCanvas: () => previewCanvas,
+            sceneEffectsIncluded,
         });
         if (settings?.encoding?.formatId) this.videoFormat = settings.encoding.formatId;
         return settings;
+    }
+
+    // Used by the Video menu and each view's camera icon. Keep the target local
+    // so opening or cancelling a toolbar render cannot change the menu selection.
+    async renderSingleViewVideo(viewId = this.videoExportView) {
+        const {ViewMan} = await import("./CViewManager");
+        const view = ViewMan.get(viewId, false);
+        if (!view?.canvas) return;
+        const title = `${t("videoExport.renderSingleVideo.label")} — ${view.uiBar?.titleMenu?._title ?? viewId}`;
+        const videoFilter = await this.promptExportSettings(title, {viewId});
+        if (!videoFilter) return;
+        if (view.exportVideo) {
+            return view.exportVideo(this.videoFormat, this.exportAudio, this.waitForBackgroundLoading, {
+                loops: this.videoExportLoops,
+                uniqueFramesOnly: this.uniqueFramesOnly,
+                uniqueFrameMeanAbsDiffThreshold: this.uniqueFrameMeanAbsDiffThreshold,
+                videoFilter,
+            });
+        }
+        // Video panes use the canvas compositor, preserving the displayed crop,
+        // adjustments and overlays rather than exporting the original source.
+        return this.exportViewportVideo({viewId, videoFilter});
     }
 
     async setupMenu(parentFolder, options = {}) {
@@ -617,7 +659,7 @@ export class VideoExportManager {
         const getExportableViews = () => {
             const views = [];
             ViewMan.iterate((id, view) => {
-                if (!view.overlayView && view.exportVideo) {
+                if (!view.overlayView && (view.exportVideo || view.drawAdjustedSourceFrame)) {
                     views.push(id);
                 }
             });
@@ -651,19 +693,7 @@ export class VideoExportManager {
                 .tooltip(t("videoExport.renderView.tooltip"));
 
             this.renderVideoFolder.add({
-                exportVideo: async () => {
-                    const view = ViewMan.get(this.videoExportView, false);
-                    if (!view || !view.exportVideo) return;
-                    const videoFilter = await this.promptExportSettings(t("videoExport.renderSingleVideo.label"));
-                    if (!videoFilter) return;
-                    // Keep single-view export behavior in sync with viewport export toggle semantics.
-                    view.exportVideo(this.videoFormat, this.exportAudio, this.waitForBackgroundLoading, {
-                        loops: this.videoExportLoops,
-                        uniqueFramesOnly: this.uniqueFramesOnly,
-                        uniqueFrameMeanAbsDiffThreshold: this.uniqueFrameMeanAbsDiffThreshold,
-                        videoFilter,
-                    });
-                }
+                exportVideo: () => this.renderSingleViewVideo(),
             }, "exportVideo").name(t("videoExport.renderSingleVideo.label"))
                 .tooltip(t("videoExport.renderSingleVideo.tooltip"));
         }
@@ -680,7 +710,7 @@ export class VideoExportManager {
 
         this.renderVideoFolder.add({
             exportSourceVideo: async () => {
-                const videoFilter = await this.promptExportSettings(t("videoExport.renderSource.label"));
+                const videoFilter = await this.promptExportSettings(t("videoExport.renderSource.label"), {viewId: "video"});
                 if (videoFilter) this.exportSourceVideo(videoFilter);
             }
         }, "exportSourceVideo").name(t("videoExport.renderSource.label"))
@@ -1072,7 +1102,8 @@ export class VideoExportManager {
     // being downloaded, and errors are rethrown instead of shown in an alert().
     // options.plan supplies a pre-built frame plan (Render Fade) instead of the A-B one, and
     // options.fadeOverlay is the video overlay whose opacity that plan animates.
-    async exportViewportVideo({ download = true, plan: injectedPlan = null, fadeOverlay = null, includeAudio = null, videoFilter = null } = {}) {
+    async exportViewportVideo({ download = true, plan: injectedPlan = null, fadeOverlay = null, includeAudio = null,
+        videoFilter = null, viewId = null } = {}) {
         const { ViewMan } = await import("./CViewManager");
         const { GlobalDateTimeNode, NodeMan, Sit, Globals, setRenderOne } = await import("./Globals");
         const { par } = await import("./par");
@@ -1083,6 +1114,7 @@ export class VideoExportManager {
         const { drawAttributionOnCanvas } = await import("./AttributionOverlay");
         const { getMotionAnalysisOverlays } = await import("./CMotionAnalysisUI");
         const { CNodeView3D } = await import("./nodes/CNodeView3D");
+        const {createVideoFormatExportLayer} = await import("./videoFilters/VideoFormatLayer");
 
         const startFrame = Sit.aFrame;
         const endFrame = Sit.bFrame;
@@ -1091,9 +1123,14 @@ export class VideoExportManager {
         // transition / menu-bar hide may still be animating when we get here).
         await waitForStableViewportLayout(ViewMan, updateSize);
 
+        const exportView = viewId === null ? null : ViewMan.get(viewId);
+        const originX = exportView?.leftPx ?? 0;
+        const originY = exportView?.topPx ?? ViewMan.topPx;
         const scale = this.retinaExport ? (window.devicePixelRatio || 1) : 1;
-        const width = Math.round(ViewMan.widthPx * scale);
-        const height = Math.round(ViewMan.heightPx * scale);
+        const width = Math.round((exportView?.widthPx ?? ViewMan.widthPx) * scale);
+        const height = Math.round((exportView?.heightPx ?? ViewMan.heightPx) * scale);
+        const includesView = view => !exportView || view === exportView || view.overlayView === exportView
+            || view.in?.relativeTo === exportView;
         let plan = injectedPlan;
         if (!plan) {
             const duplicateFrameSet = await this.buildDuplicateFrameSetForExport(findFirstVideoData(NodeMan), startFrame, endFrame);
@@ -1181,7 +1218,16 @@ export class VideoExportManager {
             console.log("Audio export skipped: playback speed, A-B pingpong, loops, or unique-frame export would desync from video");
         }
 
+        let formatLayer = null;
         try {
+            const host = ViewMan.get("lookView", false);
+            if (host?.widthPx > 0 && host?.heightPx > 0 && includesView(host)) {
+                formatLayer = await createVideoFormatExportLayer(host, {
+                    width: Math.max(2, Math.round(host.widthPx * scale / 2) * 2),
+                    height: Math.max(2, Math.round(host.heightPx * scale / 2) * 2),
+                    fps: plan.fps,
+                });
+            }
             const exporter = await createVideoExporter(formatId, {
                 width,
                 height,
@@ -1189,6 +1235,8 @@ export class VideoExportManager {
                 bitrate: 8_000_000 * scale * scale,
                 keyFrameInterval: 30,
                 videoFilter,
+                misbView: exportView,
+                misbSourceVideo: !!exportView?.videoData,
                 videoStartDate,
                 audioBuffer,
                 audioStartTime,
@@ -1234,7 +1282,7 @@ export class VideoExportManager {
                 ViewMan.computeEffectiveVisibility();
 
                 ViewMan.iterate((id, view) => {
-                    if (view._effectivelyVisible) {
+                    if (view._effectivelyVisible && includesView(view)) {
                         if (view.overlayView) {
                             // An overlay composites onto its parent's rectangle. A
                             // separateVisibility overlay (e.g. annotateOverlay) can be
@@ -1287,8 +1335,8 @@ export class VideoExportManager {
                     // Skip 0-sized canvases (drawImage throws InvalidStateError on them).
                     if (view.canvas && view.canvas.width > 0 && view.canvas.height > 0) {
                         const parentView = view.overlayView;
-                        const x = parentView.leftPx * scale;
-                        const y = (parentView.topPx - ViewMan.topPx) * scale;
+                        const x = (parentView.leftPx - originX) * scale;
+                        const y = (parentView.topPx - originY) * scale;
                         compositeCtx.globalAlpha = alpha;
                         compositeCtx.drawImage(view.canvas, x, y, parentView.widthPx * scale, parentView.heightPx * scale);
                         compositeCtx.globalAlpha = 1;
@@ -1318,8 +1366,8 @@ export class VideoExportManager {
                         // export, where the composite is the canvas and the overlays move. Either
                         // way the sim and the video overlay must land in the same rectangle.
                         const rect = getCanvasDisplayRect(view);
-                        const x = (view.leftPx + rect.x) * scale;
-                        const y = (view.topPx + rect.y - ViewMan.topPx) * scale;
+                        const x = (view.leftPx + rect.x - originX) * scale;
+                        const y = (view.topPx + rect.y - originY) * scale;
                         compositeCtx.drawImage(view.canvas, x, y, rect.width * scale, rect.height * scale);
                     }
                     // An overlay canvas lives inside its parent's div, so on screen it
@@ -1332,11 +1380,21 @@ export class VideoExportManager {
                     }
                 }
 
+                formatLayer?.capture(nonOverlays.flatMap(view =>
+                    [view, ...overlays.filter(overlay => overlay.overlayView === view)]));
+            };
+
+            const finishCompositeFrame = () => {
+                if (formatLayer) {
+                    const host = formatLayer.host;
+                    formatLayer.draw(compositeCtx, (host.leftPx - originX) * scale, (host.topPx - originY) * scale,
+                        host.widthPx * scale, host.heightPx * scale);
+                }
                 const motionOverlays = getMotionAnalysisOverlays();
-                if (motionOverlays && motionOverlays.videoView) {
+                if (motionOverlays?.videoView && includesView(motionOverlays.videoView)) {
                     const vv = motionOverlays.videoView;
-                    const x = vv.leftPx * scale;
-                    const y = (vv.topPx - ViewMan.topPx) * scale;
+                    const x = (vv.leftPx - originX) * scale;
+                    const y = (vv.topPx - originY) * scale;
                     if (motionOverlays.overlay) {
                         compositeCtx.drawImage(motionOverlays.overlay, x, y, vv.widthPx * scale, vv.heightPx * scale);
                     }
@@ -1381,6 +1439,7 @@ export class VideoExportManager {
                     });
                 }
 
+                finishCompositeFrame();
                 await exporter.addFrame(compositeCanvas, frame);
 
                 if (i % 10 === 0) {
@@ -1396,7 +1455,7 @@ export class VideoExportManager {
                 );
 
                 const { getExportPrefix } = await import("./utils");
-                const filename = `${getExportPrefix()}_viewport${getVideoExportSpeedSuffix(plan)}${videoFilterFilenameSuffix(videoFilter)}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
+                const filename = `${getExportPrefix()}_${exportView?.id ?? "viewport"}${getVideoExportSpeedSuffix(plan)}${videoFilterFilenameSuffix(videoFilter)}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
                 exportResult = { filename, size: blob.size, totalFrames: plan.totalFrames };
                 if (download) {
                     const url = URL.createObjectURL(blob);
@@ -1417,6 +1476,7 @@ export class VideoExportManager {
             if (!download) throw e;
             alert('Viewport video export failed: ' + e.message);
         } finally {
+            formatLayer?.dispose();
             progress.remove();
             par.frame = savedFrame;
             par.paused = savedPaused;

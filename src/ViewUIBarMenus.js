@@ -30,6 +30,7 @@
 
 import "./MenuMirror";       // installs Controller.shareAs / GUI.addMirror
 import {t} from "./i18n";
+import {CustomManager} from "./Globals";
 
 // Mirror key for one slot of one view. Namespaced so view-menu keys can never collide with the
 // hand-written keys used elsewhere (e.g. "chatModel").
@@ -200,6 +201,12 @@ const ICON_LOS = `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="t
 const ICON_FRUSTUM = `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
     <path d="M1.9 8 L14.1 1.7 L14.1 14.3 Z" fill="none" stroke="#3fd8e8" stroke-width="1.5"
           stroke-linejoin="round"/></svg>`;
+
+const ICON_RENDER_VIDEO = `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+    <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+        <rect x="1.5" y="4" width="8.5" height="8" rx="1.5"/>
+        <path d="M10 6.2 L14.5 3.8 V12.2 L10 9.8 Z"/>
+    </g></svg>`;
 
 // A struck-through eye: the one glyph everybody already reads as "hide this". Lit means the
 // view IS decluttered, which is what the eye being crossed out says.
@@ -489,7 +496,15 @@ export function populateViewUIBarIcons(view) {
             left: true,
         });
     }
-    return items.length;
+    // A one-shot action, independent of the mirrored display toggles above.
+    // Resolve the manager at click time: headers are built before export setup.
+    bar.addIcon(ICON_RENDER_VIDEO, async () => {
+        const {VideoExportManager} = await import("./VideoExporter");
+        const manager = CustomManager?.videoExportManager ?? new VideoExportManager();
+        await manager.renderSingleViewVideo(view.id);
+    }, `${t("videoExport.renderSingleVideo.label")} — ${FRIENDLY_VIEW_NAMES[view.id] ?? view.id}`,
+    "render-video", true);
+    return items.length + 1;
 }
 
 // The mirror keys for a group button's targets, in this view: the slots the view actually has a

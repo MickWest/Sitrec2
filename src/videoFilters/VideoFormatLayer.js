@@ -98,6 +98,21 @@ export function serializeVideoFormatEffects() {
     return JSON.parse(JSON.stringify(getVideoFormatLayerSettings()));
 }
 
+// Exports take their own settings and filter state. The live layer keeps running
+// while an export waits for tiles/encoding and must not drive its frame counter.
+export function getVideoFormatExportSettings(view) {
+    const current = getVideoFormatLayerSettings();
+    if (view?.id !== HOST_VIEW_ID || !current.enabled || !isVideoFilterActive(current)) return null;
+    return serializeVideoFormatEffects();
+}
+
+export async function createVideoFormatExportLayer(host, {width, height, fps}) {
+    const snapshot = getVideoFormatExportSettings(host);
+    if (!snapshot) return null;
+    const {VideoFormatExportLayer} = await import("./VideoFormatExportLayer");
+    return new VideoFormatExportLayer(host, {width, height, fps, settings: snapshot});
+}
+
 export function deserializeVideoFormatEffects(saved) {
     const restored = saved ? resolveVideoFilterSettings(saved) : loadSettings();
     const current = getVideoFormatLayerSettings();
@@ -131,7 +146,7 @@ function hostView() {
 // the HUD, the compass, annotations - are separate views that either overlay the host or
 // are positioned relative to it, which is the same pair of tests the single-view export
 // uses to decide what belongs to a view.
-function osdViewsFor(host) {
+export function videoFormatOSDViews(host) {
     const overlays = [];
     for (const entry of Object.values(NodeMan.list)) {
         const view = entry.data;
@@ -190,14 +205,13 @@ function buildLayer(host, width, height) {
 }
 
 // Draw the host view and its OSD into one canvas, laid out exactly as they sit on screen.
-function compositeHost(host) {
-    const ctx = layer.compositeCtx;
-    layer.osdViews = osdViewsFor(host);
-    const scaleX = layer.width / host.widthPx;
-    const scaleY = layer.height / host.heightPx;
+export function compositeVideoFormatHost(host, canvas, osdViews = videoFormatOSDViews(host)) {
+    const ctx = canvas.getContext("2d");
+    const scaleX = canvas.width / host.widthPx;
+    const scaleY = canvas.height / host.heightPx;
 
     ctx.fillStyle = "#000000";
-    ctx.fillRect(0, 0, layer.width, layer.height);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // The 3D canvas is letterboxed inside its div when the view matches a video's aspect,
     // so it goes into that sub-rect rather than filling the frame.
@@ -205,7 +219,7 @@ function compositeHost(host) {
     ctx.drawImage(host.canvas, rect.x * scaleX, rect.y * scaleY,
         rect.width * scaleX, rect.height * scaleY);
 
-    for (const view of layer.osdViews) {
+    for (const view of osdViews) {
         const alpha = view.transparency !== undefined ? view.transparency : 1;
         if (alpha <= 0) continue;
         ctx.globalAlpha = alpha;
@@ -253,7 +267,8 @@ export function updateVideoFormatLayer() {
     }
 
     try {
-        compositeHost(host);
+        layer.osdViews = videoFormatOSDViews(host);
+        compositeVideoFormatHost(host, layer.composite, layer.osdViews);
         layer.filter.filterFrame(layer.composite);
     } catch (e) {
         console.error("Video format layer failed, switching it off:", e);

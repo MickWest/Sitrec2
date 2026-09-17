@@ -233,7 +233,8 @@ function buildSourceCanvas(getPreviewCanvas, useBars) {
  * @param {object} [options.formatOptions]      {displayName: formatId} of usable containers
  * @returns {Promise<object|null>} the settings, or null if the export was cancelled
  */
-export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas = null, formatOptions = null, formatId = null} = {}) {
+export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas = null, formatOptions = null, formatId = null,
+    sceneEffectsIncluded = false} = {}) {
     const settings = loadSavedSettings();
     if (formatId && (!formatOptions || Object.values(formatOptions).includes(formatId))) {
         settings.encoding.formatId = formatId;
@@ -270,6 +271,10 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
 
         const heading = element("h3", "margin: 0 0 10px 0; font-size: 18px; flex-shrink: 0;", dialog);
         heading.textContent = title;
+        if (sceneEffectsIncluded) {
+            const note = element("div", "margin-bottom: 10px; font-size: 12px; color: #bbb;", dialog);
+            note.textContent = "The scene's Video Format Effects are included. Settings below add further effects.";
+        }
 
         const body = element("div", `
             display: flex; flex-direction: ${twoColumn ? "row" : "column"};

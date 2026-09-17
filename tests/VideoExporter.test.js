@@ -4,7 +4,54 @@ import {
     createVideoExportFramePlan,
     findFadeOverlayView,
     getCanvasDisplayRect,
+    VideoExportManager,
 } from "../src/VideoExporter";
+import {ViewMan} from "../src/CViewManager";
+
+jest.mock('../src/CViewManager', () => ({ViewMan: {get: jest.fn()}}));
+
+describe('per-view render dialog', () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    test('uses the clicked view and the shared export options without changing the selected view', async () => {
+        const manager = new VideoExportManager();
+        manager.videoExportView = 'lookView';
+        manager.videoFormat = 'mp4-h264';
+        manager.videoExportLoops = 3;
+        manager.uniqueFramesOnly = true;
+        manager.waitForBackgroundLoading = true;
+        const view = {canvas: {}, exportVideo: jest.fn()};
+        ViewMan.get.mockReturnValue(view);
+        const videoFilter = {signal: {format: 'rs170'}};
+        jest.spyOn(manager, 'promptExportSettings').mockResolvedValue(videoFilter);
+        await manager.renderSingleViewVideo('mainView');
+        expect(ViewMan.get).toHaveBeenCalledWith('mainView', false);
+        expect(manager.promptExportSettings).toHaveBeenCalledWith(expect.stringContaining('mainView'), {viewId: 'mainView'});
+        expect(view.exportVideo).toHaveBeenCalledWith('mp4-h264', true, true, {
+            loops: 3, uniqueFramesOnly: true, uniqueFrameMeanAbsDiffThreshold: 1, videoFilter,
+        });
+        expect(manager.videoExportView).toBe('lookView');
+    });
+
+    test('cancelling the dialog does not start an export', async () => {
+        const manager = new VideoExportManager();
+        const view = {canvas: {}, exportVideo: jest.fn()};
+        ViewMan.get.mockReturnValue(view);
+        jest.spyOn(manager, 'promptExportSettings').mockResolvedValue(null);
+        await manager.renderSingleViewVideo('lookView');
+        expect(view.exportVideo).not.toHaveBeenCalled();
+    });
+
+    test('the Video pane exports only its displayed viewport', async () => {
+        const manager = new VideoExportManager();
+        ViewMan.get.mockReturnValue({canvas: {}});
+        const videoFilter = {signal: {format: 'digital'}};
+        jest.spyOn(manager, 'promptExportSettings').mockResolvedValue(videoFilter);
+        jest.spyOn(manager, 'exportViewportVideo').mockResolvedValue({});
+        await manager.renderSingleViewVideo('video');
+        expect(manager.exportViewportVideo).toHaveBeenCalledWith({viewId: 'video', videoFilter});
+    });
+});
 
 describe("createVideoExportFramePlan", () => {
     test("builds a repeated A-B pingpong sequence", () => {
