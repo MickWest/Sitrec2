@@ -1,5 +1,6 @@
 import {CTrackFile} from "./CTrackFile";
 import {MISB, MISBFields} from "../MISBFields";
+import {MISB_TRUTH_MISSION} from "../MISBEncoder";
 
 export class CTrackFileMISB extends CTrackFile {
     constructor(data) {
@@ -222,6 +223,7 @@ export class CTrackFileMISB extends CTrackFile {
      * whether it is the reference the scene is judged against.
      */
     trackIsTruth(trackIndex) {
+        if (trackIndex === 0 && this.data?.[0]?.[MISB.MissionID] === MISB_TRUTH_MISSION) return true;
         return this._derivedTrackTypes()[trackIndex - 1] === "Truth";
     }
 
@@ -430,6 +432,7 @@ export class CTrackFileMISB extends CTrackFile {
     // single-aircraft file with a co-located FrameCenter track has a
     // supplementary index-1 entry (which keeps the default behaviour).
     isSupplementaryTrack(trackIndex) {
+        if (this.trackIsTruth(trackIndex)) return true;
         if (this._getUniqueTrackIDs()) return false;
         return super.isSupplementaryTrack(trackIndex);
     }

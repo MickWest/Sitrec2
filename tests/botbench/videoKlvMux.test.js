@@ -94,6 +94,23 @@ test("missing metadata and unsupported input fail instead of producing a partial
     expect(() => muxVideoKlv(Buffer.alloc(189), [])).toThrow();
 });
 
+test("camera and sparse truth metadata use distinct synchronous streams without disturbing audio", async () => {
+    const records = [0, 1, 2].map(f => ({klv: encodeMISBLocalSet({2: 1000000 + f * 33333, 13: 37, 14: -120})}));
+    const truth = records.map((r, i) => i === 1 ? null : r);
+    const input = fixture(90000, true);
+    const ts = muxVideoKlv(input, records, 30, {klvPID: 0x1e0, allowAudio: true,
+        additionalStreams: [{pid: 0x1e1, records: truth}]});
+    const scan = await scanTransportStreamForMetadata(ts);
+    expect(scan.metadataStreams).toHaveLength(2);
+    expect(scan.metadataStreams[0].pesEntries.map(p => p.ptsUs)).toEqual([1000000, 1000000 + 100000 / 3, 1000000 + 200000 / 3]);
+    expect(scan.metadataStreams[1].pesEntries).toHaveLength(2);
+    const stream = scan.metadataStreams[1];
+    expect(new Uint8Array(stream.data)[0]).toBe(1); // independent metadata service
+    expect(stream.pesEntries.map(p => p.ptsUs)).toEqual([1000000, 1000000 + 200000 / 3]);
+    expect(() => muxVideoKlv(input, records, 30, {klvPID: 0x1e0, allowAudio: true,
+        additionalStreams: [{pid: 0x1e0, records: truth}]})).toThrow("Invalid metadata streams");
+});
+
 test("normal file import retains the final complete TS packet, including metadata at EOF", async () => {
     const records = [0, 1, 2].map(f => ({klv: encodeMISBLocalSet({2: 1000000 + Math.round(f * 1e6 / 30)})}));
     const ts = muxVideoKlv(fixture(), records);

@@ -155,12 +155,24 @@ can encode instead.
 | Option | Container | Codec |
 |---|---|---|
 | **MP4 (H.264)** | `.mp4` | AVC — the default, and the one to use unless you have a reason not to |
+| **MISB TS (H.264)** | `.ts` | AVC video with frame-synchronized MISB camera and track metadata |
 | **WebM (VP8)** | `.webm` | VP8 — the default on Firefox |
 
-The dropdown only appears if your browser supports **both**. If it supports only one, that one
+The dropdown appears when your browser supports more than one option. If it supports only one, that one
 is used and the control is hidden. Support is probed by asking the browser's video encoder
-whether it can handle each configuration. If neither works, the folder is replaced by a
+whether it can handle each configuration. If none work, the folder is replaced by a
 disabled *Video Export Not Available* row.
+
+Choose **MISB TS (H.264)** in **Video → Video Render & Export → Video Format**, or in the
+render dialog's **Container / codec** selector. The file includes camera position, orientation,
+field of view, and the source frame's UTC time. The selected target track is included when
+available. A selected **Truth Track** in the traverse analysis controls is included as a separate
+metadata stream and is recognized as truth when the file is opened in Sitrec.
+
+For **Render Single View Video**, metadata describes that view's camera. Source-video and
+combined-view exports use the look camera. A combined-view export therefore describes the
+look camera, rather than every panel in the image.
+Metadata describes the camera before image cropping, rotation, and simulated lens or screen effects.
 
 ## Settings
 

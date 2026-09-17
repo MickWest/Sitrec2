@@ -1517,7 +1517,7 @@ function refreshTruthTrackOptions() {
 }
 
 // Resolve the selected truth track to its live nodes, or null if none/gone.
-function resolveTruthTrack() {
+export function resolveTruthTrack() {
     const id = analyzeTweaks.truthTrack;
     if (!id || id === TRUTH_NONE || !NodeMan.exists(id)) return null;
     let found = null;

@@ -20,3 +20,24 @@ test.each([30, 30000 / 1001])("video timestamps stay on the absolute %s fps cloc
         expect(frames.at(-1).timestamp + frames.at(-1).duration).toBe(Math.round(3000 * 1e6 / fps));
     } finally { global.VideoFrame = oldFrame; }
 });
+
+test("MISB samples follow captured source frames while encoded timestamps remain sequential", async () => {
+    const oldFrame = global.VideoFrame;
+    const timings = [];
+    global.VideoFrame = class {
+        constructor(canvas, timing) { timings.push(timing); }
+        close() {}
+    };
+    try {
+        let sourceFrame = 0;
+        const exporter = new MediabunnyExporter({fps: 30, sampleMISB: () => ({sourceFrame})});
+        exporter.encodedWidth = 640; exporter.encodedHeight = 480;
+        exporter.encoder = {encode() {}, encodeQueueSize: 0};
+        const sourceFrames = [100, 102, 104, 102, 100];
+        for (sourceFrame of sourceFrames) {
+            await exporter.addFrame({width: 640, height: 480}, sourceFrame);
+        }
+        expect(exporter.misbRecords.map(record => record.sourceFrame)).toEqual(sourceFrames);
+        expect(timings.map(t => t.timestamp)).toEqual([0, 33333, 66667, 100000, 133333]);
+    } finally { global.VideoFrame = oldFrame; }
+});

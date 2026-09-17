@@ -558,6 +558,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 bitrate: 5_000_000,
                 keyFrameInterval: 30,
                 videoFilter: options.videoFilter ?? null,
+                misbView: this,
                 videoStartDate,
                 audioBuffer,
                 audioStartTime,

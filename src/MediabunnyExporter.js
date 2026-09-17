@@ -15,6 +15,8 @@ export class MediabunnyExporter {
         this.audioStartTime = options.audioStartTime || 0;
         this.audioDuration = options.audioDuration || null;
         this.originalFps = options.originalFps || this.fps;
+        this.sampleMISB = options.sampleMISB;
+        this.misbRecords = [];
 
         this.output = null;
         this.videoSource = null;
@@ -29,6 +31,7 @@ export class MediabunnyExporter {
             Output,
             Mp4OutputFormat,
             WebMOutputFormat,
+            MpegTsOutputFormat,
             BufferTarget,
             EncodedVideoPacketSource,
             EncodedPacket,
@@ -40,7 +43,7 @@ export class MediabunnyExporter {
         const encodedWidth = Math.ceil(this.width / 2) * 2;
         const encodedHeight = Math.ceil(this.height / 2) * 2;
 
-        const formatOptions = this.format === 'mp4'
+        const formatOptions = this.format === 'mpegts' ? new MpegTsOutputFormat() : this.format === 'mp4'
             ? new Mp4OutputFormat({ fastStart: 'in-memory' })
             : new WebMOutputFormat();
 
@@ -56,7 +59,7 @@ export class MediabunnyExporter {
         });
 
         if (this.audioBuffer) {
-            const audioCodec = this.format === 'mp4' ? 'aac' : 'opus';
+            const audioCodec = this.format === 'webm' ? 'opus' : 'aac';
             this.audioSource = new AudioBufferSource({
                 codec: audioCodec,
                 bitrate: 128_000,
@@ -150,6 +153,9 @@ export class MediabunnyExporter {
 
     async addFrame(canvas, frameIndex) {
         if (this.error) throw this.error;
+        // Read before any encoder backpressure yields: par.frame and the camera
+        // still describe this source frame, including skipped/repeated frames.
+        const metadata = this.sampleMISB?.();
 
         // Round absolute frame boundaries: accumulating a rounded 33333 us
         // period drifts away from 30p (and from frame-synchronous metadata).
@@ -175,6 +181,7 @@ export class MediabunnyExporter {
         const isKeyFrame = frameIndex % this.keyFrameInterval === 0;
         this.encoder.encode(videoFrame, { keyFrame: isKeyFrame });
         videoFrame.close();
+        if (metadata) this.misbRecords.push(metadata);
 
         // Backpressure: limit encoder queue to prevent unbounded memory growth.
         // Without this, frames queue faster than encoding, causing massive memory use
@@ -193,6 +200,7 @@ export class MediabunnyExporter {
         }
 
         await this.encoder.flush();
+        if (this.error) throw this.error;
         this.encoder.close();
         this.videoSource.close();
 
@@ -263,8 +271,17 @@ export class MediabunnyExporter {
         await this.output.finalize();
         this.finalized = true;
 
-        const buffer = this.target.buffer;
-        const mimeType = this.format === 'mp4' ? 'video/mp4' : 'video/webm';
+        let buffer = this.target.buffer;
+        if (this.format === 'mpegts') {
+            if (this.misbRecords.length !== this.frameCount) throw new Error("Missing MISB frame metadata");
+            const {muxVideoKlv} = await import("./MISBTSMuxer");
+            const truth = this.misbRecords.map(r => r.truth);
+            buffer = muxVideoKlv(new Uint8Array(buffer), this.misbRecords.map(r => r.camera), this.fps, {
+                klvPID: 0x1e0, allowAudio: true,
+                additionalStreams: truth.some(Boolean) ? [{pid: 0x1e1, records: truth}] : [],
+            });
+        }
+        const mimeType = this.format === 'mpegts' ? 'video/MP2T' : this.format === 'mp4' ? 'video/mp4' : 'video/webm';
 
         return new Blob([buffer], { type: mimeType });
     }

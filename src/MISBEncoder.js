@@ -1,6 +1,8 @@
 // Binary ST 0601 local sets. Values are in the same units as MISBFields:
 // degrees, metres, and integer microseconds since the Unix epoch.
 const KEY = Uint8Array.from([6,14,43,52,2,11,1,1,14,1,3,1,1,0,0,0]);
+// Application marker for a separate position-only truth metadata stream.
+export const MISB_TRUTH_MISSION = "Sitrec Truth";
 const TEXT_FIELDS = new Set([3, 4, 10, 11, 12]);
 const FIELDS = {
     5: [2, 0, 360], 6: [2, -20, 20], 7: [2, -50, 50],

@@ -19,6 +19,7 @@ import {par} from "./par";
 import {t} from "./i18n";
 import {EventManager} from "./CEventManager";
 import {GraphDataManager} from "./CGraphDataManager";
+import {viewMenuKey} from "./ViewUIBarMenus";
 import {CNodeCustomGraphView} from "./nodes/CNodeCustomGraphView";
 import {CNodeDisplayLOS} from "./nodes/CNodeDisplayLOS";
 import {shortObjectName} from "./nodes/CNode3DObject";
@@ -50,6 +51,7 @@ class CCustomGraph {
         // GUI-bound display fields (may fall back to None/frames while invalid).
         this._gs = { x: "frames", y1: "None", y2: "None", y3: "None" };
         this._xCtrl = this._y1Ctrl = this._y2Ctrl = this._y3Ctrl = this._removeCtrl = null;
+        this._tabMirrorKeys = new Set();
         this._lastSeriesSig = null;
         this._cachedVersion = -1;
         this._lastRefresh = 0;
@@ -94,6 +96,22 @@ class CCustomGraph {
         this._y3Ctrl = f.add(this._gs, "y3", yOptions).name(t("graphControls.y3Axis")).onChange(onChange);
         this._removeCtrl = f.add({ remove: () => CustomGraphManager.removeGraph(this.id) }, 'remove')
             .name(t("graphControls.remove"));
+        this.mirrorControlsToTabMenu();
+    }
+
+    mirrorControlsToTabMenu() {
+        const menu = this.view?.tabMenu;
+        if (!menu || !this.folder) return;
+        for (const controller of this.folder.controllers) {
+            const key = viewMenuKey(this.id, `graph:${controller.property}`);
+            // Publishing replacement dropdowns rebuilds their existing mirrors.
+            // Subscribe once so refreshing the sources never duplicates rows.
+            controller.shareAs(key);
+            if (!this._tabMirrorKeys.has(key)) {
+                menu.addMirror(key);
+                this._tabMirrorKeys.add(key);
+            }
+        }
     }
 
     maybeRebuild() {

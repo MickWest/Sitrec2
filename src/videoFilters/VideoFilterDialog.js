@@ -233,8 +233,11 @@ function buildSourceCanvas(getPreviewCanvas, useBars) {
  * @param {object} [options.formatOptions]      {displayName: formatId} of usable containers
  * @returns {Promise<object|null>} the settings, or null if the export was cancelled
  */
-export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas = null, formatOptions = null} = {}) {
+export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas = null, formatOptions = null, formatId = null} = {}) {
     const settings = loadSavedSettings();
+    if (formatId && (!formatOptions || Object.values(formatOptions).includes(formatId))) {
+        settings.encoding.formatId = formatId;
+    }
 
     // No user to answer in a validation or regression run: take the saved settings and
     // let the export proceed unattended, the way the other Sitrec dialogs do.

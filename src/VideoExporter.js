@@ -21,6 +21,12 @@ const DUPLICATE_MEAN_ABS_DIFF = 0.15;
 const DEFAULT_UNIQUE_FRAME_MEAN_ABS_DIFF_THRESHOLD = 1.0;
 
 export const VideoFormats = {
+    'misb-ts-h264': {
+        name: 'MISB TS (H.264)',
+        extension: 'ts',
+        format: 'mpegts',
+        codec: 'avc',
+    },
     'mp4-h264': {
         name: 'MP4 (H.264)',
         extension: 'mp4',
@@ -49,6 +55,12 @@ export async function createVideoExporter(formatId, options) {
         codec: format.codec,
         hardwareAcceleration: options.hardwareAcceleration,
     };
+    if (format.format === 'mpegts') {
+        const {createMISBExportSampler} = await import("./MISBExportMetadata");
+        exporterOptions.sampleMISB = options.sampleMISB ?? await createMISBExportSampler({
+            view: options.misbView, sourceVideo: options.misbSourceVideo,
+        });
+    }
 
     // options.videoFilter holds the analog / recorded-off-a-screen settings, either
     // chosen in the render dialog or supplied as plain data by a caller such as the
@@ -143,6 +155,7 @@ export function getFilteredVideoFormatOptions(encodingSupport) {
     const options = {};
     if (encodingSupport.h264) {
         options[VideoFormats['mp4-h264'].name] = 'mp4-h264';
+        options[VideoFormats['misb-ts-h264'].name] = 'misb-ts-h264';
     }
     if (encodingSupport.vp8) {
         options[VideoFormats['webm-vp8'].name] = 'webm-vp8';
@@ -171,7 +184,10 @@ export async function checkCodecAtResolution(formatId, width, height) {
     }
     
     try {
-        const { Mp4OutputFormat, WebMOutputFormat } = await import('mediabunny');
+        const { Mp4OutputFormat, WebMOutputFormat, MpegTsOutputFormat } = await import('mediabunny');
+        if (format.format === 'mpegts' && typeof MpegTsOutputFormat !== 'function') {
+            return { supported: false, reason: 'MPEG-TS muxer not available' };
+        }
         if (format.format === 'mp4' && typeof Mp4OutputFormat !== 'function') {
             return { supported: false, reason: 'MP4 muxer not available' };
         }
@@ -225,6 +241,8 @@ export async function getBestFormatForResolution(preferredFormat, width, height)
         };
     }
     
+    // A plain-video fallback would silently discard the requested metadata.
+    if (preferredFormat === 'misb-ts-h264') return {formatId: null, fallback: false, reason: preferred.reason};
     const fallbackId = preferredFormat === 'mp4-h264' ? 'webm-vp8' : 'mp4-h264';
     const fallback = await checkCodecAtResolution(fallbackId, width, height);
     if (fallback.supported) {
@@ -585,6 +603,7 @@ export class VideoExportManager {
         const settings = await showVideoFilterDialog({
             title,
             formatOptions: getFilteredVideoFormatOptions(encodingSupport),
+            formatId: this.videoFormat,
             getPreviewCanvas: () => previewCanvas,
         });
         if (settings?.encoding?.formatId) this.videoFormat = settings.encoding.formatId;
@@ -650,7 +669,7 @@ export class VideoExportManager {
         }
 
         if (Object.keys(formatOptions).length > 1) {
-            this.renderVideoFolder.add(this, "videoFormat", formatOptions)
+            this.renderVideoFolder.add(this, "videoFormat", formatOptions).listen()
                 .name(t("videoExport.videoFormat.label"))
                 .tooltip(t("videoExport.videoFormat.tooltip"));
         }
@@ -939,6 +958,7 @@ export class VideoExportManager {
                 fps: plan.fps,
                 bitrate: 10_000_000,
                 keyFrameInterval: Math.max(1, Math.round(plan.fps)),
+                misbSourceVideo: true,
                 videoFilter,
                 videoStartDate,
                 audioBuffer,
