@@ -11,6 +11,7 @@ import {conformControlPointsToAltitudeLock} from "./trackElevationUtils";
 import {isAGLLockActive, isAltitudeLockActive} from "../AltitudeLock";
 import {makeSplineJSON} from "../SplineInterchange";
 import {saveAs} from "file-saver";
+import {getLocalUpVector} from "../SphericalMath";
 
 // a node wrapper for varioius spline editors
 export class CNodeSplineEditor extends CNodeTrack {
@@ -265,6 +266,40 @@ export class CNodeSplineEditor extends CNodeTrack {
             this.splineEditor.transformControl.setAltitudeLocked(this.altitudeLock >= 0, this.altitudeLock);
         }
         this.syncControlPointsToAltitudeLock();
+    }
+
+    // Set the lock height, in meters, from a DRAG rather than from the Alt Lock slider: an
+    // up/down drag on a control point, or on an object riding this track. Every control
+    // point moves to the new height, so the whole track rises and falls as one.
+    //
+    // Never below zero, because -1 is what switches the lock off. The slider is updated
+    // quietly, in the display units it holds, because the caller is mid-drag and does
+    // the one recalculation itself.
+    setAltitudeLockFromDrag(meters) {
+        this.altitudeLock = Math.max(0, meters);
+        const trackID = this.id.replace(/_unsmoothed$/, "");
+        const trackOb = TrackManager.get(trackID, false);
+        if (trackOb) trackOb.altitudeLock = this.altitudeLock;
+        NodeMan.get(trackID + "_altitudeLock", false)
+            ?.setValueWithUnits(this.altitudeLock, "metric", "small", true);
+        this.updateAltitudeLock();
+    }
+
+    // Called by the spline editor on each move of a control-point drag, before it
+    // recalculates. While the altitude is locked, the lock owns the height of every
+    // control point: an up/down drag moves the lock itself, and a sideways drag puts the
+    // point back at the lock height (the widget's own clamp knows only the AGL form).
+    conformDraggedControlPoint(widget, lockAtDragStart) {
+        if (!isAltitudeLockActive(this)) return;
+        if (widget.activeDragMode === "vertical") {
+            const rise = widget.object.position.clone().sub(widget.dragStartWorld)
+                .dot(getLocalUpVector(widget.dragStartWorld));
+            this.setAltitudeLockFromDrag(lockAtDragStart + rise);
+        } else {
+            this.syncControlPointsToAltitudeLock();
+        }
+        // The dragged point may have moved to the lock height; keep the handles on it.
+        widget.group.position.copy(widget.object.position);
     }
 
     setAltitudeOffset(value) {

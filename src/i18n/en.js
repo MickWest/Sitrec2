@@ -1157,6 +1157,7 @@ const en = {
             dropPin: "Drop Pin",
             addFixedObject: "Add 3D Object",
             createTrackWithObject: "Create Track with Object",
+            createInOutObjectTrack: "Create In->Out Obj Track",
             createTrackNoObject: "Create Track (No Object)",
             addBalloon: "Add Balloon",
             addBuilding: "Add Building",

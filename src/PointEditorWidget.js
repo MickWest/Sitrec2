@@ -301,8 +301,7 @@ export class PointEditorWidget extends EventDispatcher {
     }
 
     pickHandle() {
-        const objects = [this.handles.disc];
-        if (!this.altitudeLocked) objects.push(this.handles.arrowUp, this.handles.arrowDown);
+        const objects = [this.handles.disc, this.handles.arrowUp, this.handles.arrowDown];
         const hits = this.raycaster.intersectObjects(objects, true);
         // Resolve screen overlap by operation, not by which mesh is nearer.
         // Hover and pointer-down share this ordering, including touch padding.
@@ -513,15 +512,11 @@ export class PointEditorWidget extends EventDispatcher {
         return this.raycaster;
     }
     
+    // The up/down arrows stay while locked: on a track, dragging them moves the lock
+    // height itself (CNodeSplineEditor.conformDraggedControlPoint).
     setAltitudeLocked(locked, altitudeValue = 0) {
         this.altitudeLocked = locked;
         this.altitudeLockValue = altitudeValue;
-        if (this.handles.arrowUp) {
-            this.handles.arrowUp.visible = !locked;
-        }
-        if (this.handles.arrowDown) {
-            this.handles.arrowDown.visible = !locked;
-        }
     }
     
     dispose() {
