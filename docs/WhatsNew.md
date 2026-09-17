@@ -9,29 +9,42 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.163.0 (2026-09-16)
+
+### New Features
+
+- **Constant Velocity and Constant Acceleration solvers** (File → File Analysis → **BOTBench...** → **Solvers…**): BOTBench can now run the same direct least-squares fits as the live Traverse methods, using each BOT observation's own time and maximum range; both are ticked by default unless you have already saved a solver choice.
+- **Error by solver (Sorted)** and **Error by solver (Custom)** (File → File Analysis → **Result Charts...**): Sorted orders each panel by its own median error, and Custom puts CA, CV, Kalman and the Monte Carlo budgets first, with a fixed axis when errors are shown in metres; the original Error by solver chart now keeps the analysis order instead of sorting.
+- **Selected Solvers** (File → File Analysis → **Result Charts...**): limit the charts to the solvers ticked in the Solvers button beside it, which shares its choice with BOTBench; the top and best candidates are chosen again from those solvers, while verdicts stay as the run made them.
+- **Error by Duration** (File → File Analysis → **Result Charts...** → *Accuracy: Error by Duration*): compare accuracy across the requested batch durations of 20 to 300 seconds, read from the batch folder names and kept separate from the measured clip length.
+- **Height** (File → File Analysis → **Result Charts...**): scale a chart from 50% to 200% of its designed height; the setting stays while the window is open and also applies to SVG and PNG exports.
+- **Box, Whisker and Fence** (File → File Analysis → **Result Charts...**): set the percentage each box covers and how far its whiskers reach; on logarithmic charts the whiskers are now calculated on the raw values by default, as standard plotting tools do, and **Fence: Axis space** gives the earlier log-scale whiskers.
+- **Open BOTBench directly**: add ?action=botbench to the Sitrec address to start on the default custom sitch and open BOTBench without the sitch browser.
+- **Truth metrics in the Track Browser** (File → File Analysis → **Browse Track Folder...**): files with a ground-truth track show the truth path's horizontal and vertical extent and its peak g-force, and you can sort by each of them.
+
+### Improvements
+
+- **Horizontal Speed Valley** (Traverse → *LOS Traverse Method*, Traverse → **Analyze Traverse Methods...**, and BOTBench **Solvers…**): the new name for Horizontal Constant Speed Maneuvers; saved sitches that use it still load.
+- **GPU search** (Traverse → Traverse Analysis Tweaks, and the BOTBench **GPU search** checkbox): now also searches the Quadcopter fit on the graphics card; BOTBench fits each stored Quadcopter result again once.
+- **Monte Carlo (GPU)** (Traverse → *LOS Traverse Method*, Traverse → Traverse Analysis Tweaks, and BOTBench **Solvers…**): now offers 50k, 100k, 250k, 500k and 1M trials; the 150k and 200k choices are removed.
+- **BOTBench cache reuse** (File → File Analysis → **BOTBench...**): for a large folder cached by an earlier build, BOTBench now checks 5 files instead of 10 and reuses the fits that match without asking; use **Flush Cache** first to force every fit to run again.
+- **Error by solver charts** (File → File Analysis → **Result Charts...**): the three target classes now run across the page, with one row per pointing error plus an **All Pointing Errors** row; solvers have short names such as *ca*, *cv* and *kf* (hover a dot for the full name), and the boxes and dots are darker.
+- **Error by clip length** (File → File Analysis → **Result Charts...**): adds an **All Pointing Errors** row that combines every pointing-error level when there is more than one.
+- **Result Charts window** (File → File Analysis → **Result Charts...**): charts fill the window width and redraw when you resize it, SVG and PNG exports keep their designed width, and the tolerance label reads **5%** instead of **5% of range**.
+- **Max g-Force** (Traverse → **Analyze Traverse Methods...** results and report, and the BOTBench **Gallery** and **Report**): the maximum-acceleration row has a new name and, when a ground-truth track is available, also shows the truth track's value.
+- **Track Browser** (File → File Analysis → **Browse Track Folder...**): **Open as New Sitch** now opens the file in a new tab and leaves this tab as it was; cards show each file's path inside the folder, the grid is denser, sorting starts by name (the path sorts are removed), the extent includes every point, and BOTBench cache folders are skipped.
+
+### Bug Fixes
+
+- Fixed the BOTBench results table not scrolling with the mouse wheel.
+- Fixed pointing-error values such as 0.020000000000000004° in Result Charts titles and captions; they now show as 0.02°.
+
 ## Version 2.162.0 (2026-09-16)
 
 ### New Features
 
-- **Direct Constant Velocity and Constant Acceleration fits in BOTBench** (File → File Analysis → **BOTBench...** → **Solvers…**): run the same all-sightline least-squares CV and CA algorithms offered by the live Traverse menu. Both are selected by default and use each BOT observation's original time and maximum-range value.
-- **Horizontal Speed Valley** (Traverse → *LOS Traverse Method*, Traverse → **Analyze Traverse Methods...**, and the **Solvers…** list in File → File Analysis → **BOTBench...**): a speculative new fit for a level object that may turn but keeps about the same ground speed. It finds the altitude where that speed stays most steady, shows in the analysis how stable that answer is, and reports a failure instead of guessing when there is no clear answer. BOTBench ticks it by default unless you have already saved a solver choice.
+- **Horizontal Constant Speed Maneuvers** (Traverse → *LOS Traverse Method*, Traverse → **Analyze Traverse Methods...**, and the **Solvers…** list in File → File Analysis → **BOTBench...**): a speculative new fit for a level object that may turn but keeps about the same ground speed. It finds the altitude where that speed stays most steady, shows in the analysis how stable that answer is, and reports a failure instead of guessing when there is no clear answer. BOTBench ticks it by default unless you have already saved a solver choice.
 - **Fraction** (File → File Analysis → **BOTBench...**): analyze only every nth file (3 analyzes files 3, 6, 9 and so on), while the rest are marked skipped and left out of Charts and screenshots. It does not change or invalidate anything already stored in a folder's cache.
-- **Direct BOTBench startup** (`?action=botbench`): start with the neutral custom sitch and open BOTBench as soon as setup finishes, without opening the sitch browser first.
-- **Solver comparison charts** (File → File Analysis → **Result Charts...** → *Accuracy: Error by solver*): compare the three target classes across columns and pointing-error groups down rows, including a pooled **All Pointing Errors** row; the **Sorted** version orders every panel by its own median, while the new **Custom** version puts CA, CV, Kalman, MC 100k, MC 1M, MC 250k, MC 500k and MC 50k before the other selected solvers, fixes the metre-error scale from 10^0.5 m to 10^6.2 m, and leaves more room for its rotated solver labels.
-- **Error by Duration** (File → File Analysis → **Result Charts...** → *Accuracy: Error by Duration*): compare accuracy by the requested `batch_20sec`, `batch_40sec`, `batch_60sec`, `batch_120sec`, `batch_180sec`, `batch_240sec` and `batch_300sec` duration, kept separate from the measured clip length.
-- **Height** (File → File Analysis → **Result Charts...**): scale every chart from 50% to 200% of its designed height, starting at 100%; the choice remains as you switch figures while the window is open and applies to SVG and PNG exports, while **Full size** continues to fit the chart to the browser window.
-- **Box, Whisker and Fence** (File → File Analysis → **Result Charts...**): choose a centered 20%–90% interval and a whisker fence from 0–3 times its span for every box chart, starting with the conventional middle-50% box and 1.5×IQR whiskers; logarithmic charts default to the ordinary Matplotlib, Plotly and base-R **Raw values** rule, with the visually symmetric **Axis space** rule available as an option, and nondefault choices appear in captions, status and export filenames.
-
-### Improvements
-
-- **Monte Carlo (GPU)** (Traverse → *LOS Traverse Method* and File → File Analysis → **BOTBench...** → **Solvers…**) now offers five trial budgets: 50k, 100k, 250k, 500k and 1M. The 150k and 200k choices are removed, the 500k choice is added, and BOTBench now has 24 solvers in total with 19 selected by default.
-- **BOTBench cache reuse** (File → File Analysis → **BOTBench...**): after the five-file compatibility check, automatically reuse each earlier-build fit unit that reproduces and fit again every unit that differs, without asking for confirmation; use **Flush Cache** before a run to force every fit to be recomputed.
-- **Error by solver chart labels** (File → File Analysis → **Result Charts...**): all three solver comparisons use compact names such as *ca*, *cv*, *kf*, *mc_100k*, *fixed_wing* and *flown_drone*, with wider, darker boxes and dots, thin black outlines and 45° labels; hover a dot to see the full solver name.
-- **Result Charts presentation** (File → File Analysis → **Result Charts...**): charts in the regular window fill its available width and redraw when the window is resized, while SVG and PNG exports keep their designed width; the tolerance-line label at the right edge is shortened from **5% of range** to **5%**.
-
-### Bug Fixes
-
-- Fixed pointing-error values such as 0.020000000000000004° appearing in Result Charts titles; labels now show 0.02°, and a tiny negative value that rounds to zero displays as 0°.
 
 ## Version 2.161.0 (2026-09-15)
 
