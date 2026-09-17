@@ -9,6 +9,61 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.164.1 (2026-09-17)
+
+### New Features
+
+- **Render button on view headers** (a video camera button in the Main, Look and Video view header bars; `74bde2a2`, `ICON_RENDER_VIDEO` and `populateViewUIBarIcons` in `src/ViewUIBarMenus.js`, `VideoExportManager.renderSingleViewVideo` in `src/VideoExporter.js`, `tests/ViewUIBarMenus.test.js`, `tests/VideoExporter.test.js`).
+  - **Button.** `populateViewUIBarIcons` now adds a one-shot `CUIBar.addIcon` button (action `render-video`, left section, after the mirrored display toggles) to every view with a `VIEW_UIBAR_ICONS` entry: `mainView`, `lookView` and `video`. Its tooltip is "Render Single View Video — Main", "— Look" or "— Video" (i18n `videoExport.renderSingleVideo.label` plus `FRIENDLY_VIEW_NAMES`). It is not a mirrored control. The function now returns `items.length + 1`.
+  - **Click.** The click imports `VideoExporter` lazily and calls `renderSingleViewVideo(view.id)` on `CustomManager.videoExportManager`. It looks up the manager at click time because headers are built before export setup. If there is no manager, it uses a new `VideoExportManager`.
+  - **Shared path.** `renderSingleViewVideo(viewId = this.videoExportView)` is now the one path for the button and for Video → Video Render & Export → **Render Single View Video**.
+    - It returns early if the view has no canvas.
+    - It opens the render dialog with the title "Render Single View Video — <the view's header title>" and a preview of that view (`promptExportSettings(title, {viewId})`). Cancel starts nothing.
+    - It uses the menu's shared export settings but never writes `videoExportView`, so a toolbar render leaves the **Render Video View** selection unchanged.
+- **Render the Video view by itself** (Video → Video Render & Export → **Render Video View** and **Render Single View Video**, or the Video view's render button; `74bde2a2`, `getExportableViews`, `renderSingleViewVideo` and `exportViewportVideo` in `src/VideoExporter.js`).
+  - **Dropdown.** `getExportableViews` now also lists non-overlay views that have `drawAdjustedSourceFrame` (`CNodeVideoView`), so video views appear in the **Render Video View** dropdown. Before, only views with `exportVideo` (3D views) appeared.
+  - **Rendering.** A view without `exportVideo` renders through `exportViewportVideo({viewId, videoFilter})`, the canvas compositor, not from the source file. The output therefore keeps the displayed zoom, video adjustments and overlays.
+    - With the new `viewId` option, the output size is that view's `widthPx` × `heightPx` (times the retina scale), measured from the view's `leftPx`/`topPx`.
+    - `includesView` keeps only the view, its overlays (`overlayView`) and views positioned `relativeTo` it. Motion-analysis overlays are drawn only when their video view is included.
+    - The file is named `<prefix>_<viewId>_…` instead of `<prefix>_viewport_…`.
+  - **MISB.** The same path passes `misbView` (the view) and `misbSourceVideo` (true when the view has `videoData`) to `createVideoExporter`. A **MISB TS (H.264)** render of the Video view therefore samples the look camera the same way as **Render Source Video**. A whole-viewport render passes no view, as before.
+
+### Improvements
+
+- **Video Format Effects in rendered videos** (Effects → Video Format Effects; Video → Video Render & Export; `74bde2a2`, new `src/videoFilters/VideoFormatExportLayer.js`, `getVideoFormatExportSettings`, `createVideoFormatExportLayer`, `videoFormatOSDViews` (was `osdViewsFor`) and `compositeVideoFormatHost` (was `compositeHost`) in `src/videoFilters/VideoFormatLayer.js`, `promptExportSettings` and `exportViewportVideo` in `src/VideoExporter.js`, `CNodeView3D.exportVideo`, `showVideoFilterDialog` in `src/videoFilters/VideoFilterDialog.js`, new `tests/VideoFormatExportLayer.test.js`, `tests/VideoFormatPersistence.test.js`). The live effect is a separate canvas drawn over the look view after all views render, so exports that copied view canvases did not include it.
+  - **When it applies.** `getVideoFormatExportSettings(view)` returns a deep copy of the settings (`serializeVideoFormatEffects`) only when:
+    - the view is the host view (`lookView`),
+    - the effect is enabled,
+    - and `isVideoFilterActive` is true.
+
+    Otherwise `createVideoFormatExportLayer` returns null and the export behaves as before. The Main view, **Render Source Video** and video views never get this effect.
+  - **Own filter state.** Each export makes its own `VideoFormatExportLayer` and `AnalogVideoFilter` at the export's frame rate (`plan.fps`).
+    - `capture()` composites the host and its on-screen display views (HUD, compass, annotations) into a source canvas. It can run many times while a frame settles.
+    - `draw()` calls `filterFrame` exactly once per encoded frame.
+    - The live layer keeps running on its own and does not advance the export's filter.
+    - `dispose()` runs in each export's `finally`.
+  - **Single view.** `CNodeView3D.exportVideo` on the look view captures after each render and draws the filtered frame just before `addFrame`. **Render Fade** uses this path when it renders the look view.
+    - With the effect active, the output height covers the whole view rectangle (width × `heightPx`/`widthPx`, rounded to an even number), so any letterbox bars are included.
+    - The watermark and attribution are now drawn after the filter, once per encoded frame, instead of inside `renderSingleViewFrame`.
+  - **Viewport.** `exportViewportVideo` covers **Render Viewport Video**, **Render Fullscreen Video** and whole-viewport **Render Fade**.
+    - It creates the layer only when `lookView` is visible and included.
+    - The new `finishCompositeFrame` draws the filtered picture over the look view's rectangle.
+    - `capture(orderedViews)` copies views with a higher z-index than the look view and its on-screen display into a foreground canvas, then redraws them on top, so the stacking order stays the same.
+    - Motion-analysis overlays, the watermark and the attribution moved into `finishCompositeFrame`, which runs after the frame settles.
+  - **Preview.** `promptExportSettings(title, {viewId})` builds a short-lived layer (30 fps) for the preview frame. When the preview view is the look view with the effect active:
+    - the preview shows the filtered look view and its on-screen display;
+    - `showVideoFilterDialog` receives `sceneEffectsIncluded: true` and shows "The scene's Video Format Effects are included. Settings below add further effects." This note is hard-coded, not in i18n.
+
+    The dialog's own settings are still applied on top by `createVideoExporter`.
+- **Rendering Effects folder** (Effects → Rendering Effects; `74bde2a2`, `src/index.js`, `gui` routing in `src/nodes/CNode.js`, `CNodeEffect` constructor, `CNodeView3D` effects toggle, i18n `view3d.effects`).
+  - **Folder.** `index.js` adds a permanent `renderingEffects` folder under Effects (`addGUIFolder("renderingEffects", "Rendering Effects", "effects")`) and moves `thermalNV` (**Thermal/NV**) into it. **Video Format Effects** and **Ray-traced Refraction** stay directly under Effects.
+  - **Contents.** `CNodeEffect` sets `Globals.defaultGui` to `guiMenus.renderingEffects` (falling back to `guiTweaks`), so the **Effects On/Off** folder and effect parameters now go in the new folder. The view's `effectsEnabled` checkbox goes there too. Its i18n label changes from "Effects" to "Rendering Effects", and its tooltip from "Enable/Disable All Effects" to "Enable/Disable Rendering Effects".
+  - **Old definitions.** `CNode` sends a string `gui` of "effects", in any letter case, to `guiMenus.renderingEffects`. Existing sitch definitions, such as SitCustom's **Defocus** and **Resolution** sliders, therefore appear in the new folder without any change to the definitions or to saved sitches.
+
+### Bug Fixes
+
+- **Fixed the Render Source Video dialog previewing the wrong view** (Video → Video Render & Export → **Render Source Video**; `74bde2a2`, `promptExportSettings` in `src/VideoExporter.js`). The preview frame came from `videoExportView`, which before this release could only be a 3D view, so the dialog showed a Main or Look view frame. The menu entry now passes `{viewId: "video"}`, so the preview is a frame of the Video view. It falls back to `lookView` only when there is no `video` view.
+
 ## Version 2.164.0 (2026-09-17)
 
 ### New Features

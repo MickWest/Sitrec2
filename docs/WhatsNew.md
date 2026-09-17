@@ -9,6 +9,22 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.164.1 (2026-09-17)
+
+### New Features
+
+- **Render button on view headers** (the video camera button in the Main, Look and Video view header bars): opens the render dialog for that view and renders it as a video, without changing the view chosen in Video → Video Render & Export → **Render Video View**.
+- **Render the Video view** (Video → Video Render & Export → **Render Video View**, or the Video view's render button): **Render Single View Video** can now render the Video view by itself, keeping its displayed zoom, video adjustments and overlays.
+
+### Improvements
+
+- **Video Format Effects in rendered videos** (Effects → Video Format Effects): **Render Single View Video** of the Look view, **Render Viewport Video**, **Render Fullscreen Video** and **Render Fade** now include the effects shown on the Look view and its on-screen display; when the render dialog previews the Look view, the preview shows them and a note says the dialog's settings add further effects.
+- **Rendering Effects folder** (Effects → Rendering Effects): the effect sliders, **Effects On/Off**, **Thermal/NV** and the switch that turns them on and off (now labeled **Rendering Effects**) are grouped in one folder; **Video Format Effects** and **Ray-traced Refraction** stay directly under Effects.
+
+### Bug Fixes
+
+- Fixed the **Render Source Video** dialog previewing a frame of a 3D view instead of the Video view.
+
 ## Version 2.164.0 (2026-09-17)
 
 ### New Features
