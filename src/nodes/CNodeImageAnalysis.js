@@ -132,7 +132,8 @@ export class CNodeImageAnalysis extends CNodeImageView {
         this.columns = Array(1000).fill(0)
 
         this.region = new CRegionSelector();
-        this.unregisterRegionInteraction = registerSurfaceInteraction(this.canvas, {
+        // CNodeViewUI makes the canvas ignore pointer events; the containing div receives them.
+        this.unregisterRegionInteraction = registerSurfaceInteraction(this.div, {
             profile: "adjustments",
             view: this, model: this,
             begin: e => this.onMouseDown(e, e.clientX, e.clientY),
@@ -260,11 +261,12 @@ export class CNodeImageAnalysis extends CNodeImageView {
 
 
     c2ix(x) {
-        return parseInt(x * this.image.width / this.canvas.width)
+        // Region coordinates use display pixels, not the high-DPI canvas backing size.
+        return parseInt(x * this.image.width / this.widthPx)
     }
 
     c2iy(y) {
-        return parseInt(y * this.image.height / this.canvas.height)
+        return parseInt(y * this.image.height / this.heightPx)
     }
 
 

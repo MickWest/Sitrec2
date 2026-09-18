@@ -9,6 +9,196 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.165.0 (2026-09-18)
+
+### New Features
+
+- **Extra Tools menu** (Sitrec → **Extra Tools**; `0fb80868`; new `src/extraTools.js`, `src/index.js`, i18n `menus.main.extraTools` in `src/i18n/en.js`, new `tests/extraTools.test.js`, `tools/README.md`, `docs/DiffractionGlare.md`).
+  - **Menu.** `initializeOnce` adds a permanent (`perm()`) folder after **Legacy Tools**. It starts closed and its tooltip is "Standalone tools that work alongside Sitrec. Each one opens in a new tab." Each entry is an `addExternalLink`, which calls `window.open(url, "_blank")`.
+  - **Tools.** `EXTRA_TOOLS` lists seven pages under `tools/`. Labels and tooltips come from `menus.main.extraTools.tools.<key>`:
+    - **LOS CSV Viewer** (`los-viewer.html`)
+    - **FlowGen** (`flowgen.html`)
+    - **PX4 ULog Viewer** (`px4-viewer.html`)
+    - **IR Balloon** (`IRBalloon/index.html`)
+    - **Compass & Elevation** (`compass/index.html`)
+    - **Starlink Flare Predictor** (`shf/index.html`)
+    - **Diffraction PSF Studio** (`psf/index.html`)
+
+    Each path names the page, not a directory, so a link does not depend on the server's directory index.
+  - **Base URL.** Only the Starlink Flare Predictor is marked `perBuild`. It links from `SITREC_APP`, the build's own asset base, so a Beta user gets the Beta copy. The other tools ship only with a full release, so they link from `SITREC_SHARE_APP`, the channel-neutral application entry.
+  - **Drift check.** `tests/extraTools.test.js` fails if `EXTRA_TOOLS`, the cards in `tools/index.html` and the i18n entries disagree. `tools/README.md` gains "Adding or Removing a Public Tool". `docs/DiffractionGlare.md` now points readers to **Sitrec ▸ Extra Tools**. Only `en.js` has the new strings.
+- **Compare leaders** (the **Compare leaders** button in the Traverse → **Analyze Traverse Methods...** results toolbar; `110df8a3`; new `src/TraverseComparison.js`, `openComparison` / `closeComparison` / `comparisonPool` in `showResultGallery` in `src/AnalyzeTraverse.js`, `botScoreBreakdown` and `BROAD_SCREEN_LIMITS` in `src/TraverseRanking.js`, `MOTION_SCORE_WEIGHTS` in `src/TraverseAnalysis.js`, `UNDERGROUND_MIN_FRACTION` in `src/TraverseHypotheses.js`, `docs/TraverseAnalysis.md`, new `tests/TraverseComparison.test.js`). A read-only comparison of two finite trajectories, side by side, that does not use truth.
+  - **Pool.** `comparisonCandidates` ranks the tiles still in play with `rankAllHypotheses(..., {useTruth: false})`. It drops the angular-only kinds (`identity`, `directional-geometry`), because their scores use different units.
+    - The panel starts with the first two candidates. The **Left candidate** and **Right candidate** selectors choose any other pair, and one candidate cannot be on both sides.
+    - The button is disabled when fewer than two candidates remain.
+    - The panel uses the ranking without truth even when the gallery is ordered by truth.
+  - **BOT Score table.** `botScoreBreakdown(h)` gives each weighted term with its input:
+    - typical (RMS) acceleration × 4
+    - peak acceleration × 1
+    - turn-rate variation × 0.05
+    - mean climb/descent speed above 5 m/s × 0.02
+    - mean LOS error ÷ 0.05°
+    - camera-motion adjustment (significant mirrored share × 6)
+
+    A Difference column shows right − left; a positive value favors the left candidate. The row with the largest difference is highlighted. `straightFlightScore` and the panel now share the weights in `MOTION_SCORE_WEIGHTS`, with the same values as before.
+  - **Gates table** (`comparisonGates`). Each gate shows the measured value, the limit and the margin. The gates are:
+    - path validity
+    - terrain clearance
+    - ground-contact mode
+    - mean LOS error against the close-fit limit
+    - peak acceleration against 1.5 g
+    - peak speed against 650 kt
+    - camera-motion mirroring
+    - active model limits
+    - search boundary
+    - search completion
+
+    A check that could not run is marked **Unassessed**.
+  - **Physical compatibility table.** Both paths are checked against the same class limits from `physicalClassChecks`. A class that passes with inputs missing shows, for example, **Passes measured checks · size unknown**.
+  - **Navigation.** **← Results**, the corner **X** or **Escape** returns to the gallery, and its selection and chart settings stay the same. While the panel is open, the **X** is titled "Back to analysis results". Tab focus stays inside the panel.
+- **Camera view in the traverse result graphs** (the camera button on each graph in the Traverse → **Analyze Traverse Methods...** results; `a8e4c134`, `3c94c290`; new `src/CameraTrackView.js`, `sampleAnalysisCameraPose` in `src/TraverseAnalysisData.js`, `setCameraView` / `_drawCameraView` in `src/Chart3D.js`, `CHART_OVERLAY_BUTTONS_HTML` / `syncOverlayButtons` in `src/AnalyzeTraverse.js`, new `tests/CameraTrackView.test.js`).
+  - **Pose.** `sampleAnalysisCameraPose` reads `JetLOSCameraCenter` at the analysis frame. It converts the camera's position, heading, right and up vectors to the analysis ENU frame, so the view keeps the camera's roll. It does not rebuild an upright view from the target sightline.
+  - **Projection.** `cameraTrackProjection` projects the candidate and truth paths in perspective. It then applies one uniform image-plane crop and zoom so the paths fill 86% of the graph. This does not move or re-aim the camera. The crop uses every frame of both paths, including a hidden truth path, so pressing **T** does not shift the view.
+  - **Slider.** A frame slider, labelled "Frame N · t s", covers the analyzed A–B frames and starts at the current frame. A filled dot marks the candidate at the exact frame, and a larger ring marks truth. The slider does not move the main playhead or refit anything. Rotation and the zoom button are disabled in camera view.
+  - **Availability.** The button is disabled for direction-only (at-infinity) results. It is also disabled for bulk results such as the BOTBench gallery, which have no scene camera pose; a bulk result never borrows the camera of the sitch behind the gallery.
+  - **Synchronization.** The camera setting and frame are the same in the thumbnails, the detail graph and fullscreen. They are kept when **Use Truth Track** shows the gallery again.
+- **T and g buttons on the traverse result graphs** (Traverse → **Analyze Traverse Methods...** results; `a8e4c134`, `3c94c290`; `setOverlays` / `_drawPeakLabels` in `src/Chart3D.js`, `accelerationPeaks` / `accelerationAtFrame` in new `src/TraverseMotion.js`, `sampleWindow` in `trackMetrics` / `trackMetricsForValidRun` in `src/TraverseAnalysis.js`, `docs/TraverseAnalysis.md`, `tests/Chart3D.test.js`, `tests/TraverseMotion.test.js`). Both buttons act on all the thumbnails, the detail graph and fullscreen together. They do not change scores or ranking.
+  - **T** is on at start, and disabled when the graph has no truth path. It hides or shows the truth path and its labels, and the graph's scale stays the same.
+  - **g** is off at start. It labels acceleration peaks in the path's color, to two decimal places (for example **4.30g**).
+    - `accelerationPeaks` finds local maxima of the smoothed g series over the same trimmed samples as **Max g-Force**. `trackMetrics` now returns a `sampleWindow`, and `trackMetricsForValidRun` offsets it so the truth path uses its valid overlap.
+    - A flat peak becomes one peak at its midpoint. Peaks must be at least one second or 5% of the interval apart, whichever is greater.
+    - `_drawPeakLabels` keeps at most three peaks per path (candidate, truth and sensor). They must be at least 48 screen pixels apart, and a label that would overlap another is not drawn.
+  - **g in camera view.** With **g** on, camera view labels only the current point on each visible track, with the g-force at that frame (`accelerationAtFrame`). The label changes as the slider moves. No label is drawn when there is no value.
+  - **Report.** The report's constant-air-speed sweep table also shows its RMS and maximum g to two decimal places.
+
+### Improvements
+
+- **One BOT Score for every traverse solver** (Traverse → **Analyze Traverse Methods...**, and BOTBench, which uses the same ranking; `a8e4c134`, `3c94c290`; `rankingDecision`, `scoreBasis`, `makeComparator`, `effectiveErrDeg` and `plausibilityRating` in `src/TraverseRanking.js`, `docs/TraverseAnalysis.md`, `docs/TraverseConcepts.md`, `docs/docimages/traverse-concepts-03-residual.svg`, `docs/docimages/traverse-concepts-09-verdict.svg`, `tests/TraverseRanking.test.js`). Some results can change order.
+  - **No method-group priority.** Before, the flat comparator broke ties by category priority before it used the secondary score, because that score was treated as not comparable across groups. The priority order was *Physically based* → *LOS Constrained* → *Geometric* → *Geometric Approximations* → *Known Object*. `CATEGORY_PRIORITY` is removed. The keys are now applied in this order:
+    1. truth, when truth ranking is on
+    2. screen pass
+    3. eligibility
+    4. completeness
+    5. tier
+    6. active-limit count
+    7. the new `scoreBasis` key, which puts finite trajectories before angular-only checks (whose score is in degrees)
+    8. the secondary score, now named the **BOT Score**
+    9. the raw LOS residual
+
+    Categories still label the tiles and group the report sections.
+  - **No solver allowance.** `RAY_SOLVER_ALLOWANCE_DEG` (0.05°) is removed, and `effectiveErrDeg` returns the raw residual for every solver. The ray-constrained fits (`constAir`, `constAlt`, `horizontalSpeed`, `plausible`, `saddle`, `groundVehicle`) are now graded for fit tier and scored on the same residual as the other fits.
+  - **No balloon adjustment.** `BALLOON_CONSISTENCY_NUDGE` is removed from `secondaryScore`. It was ±6 score units, up to ±0.3° of residual-equivalent. Balloon consistency (now `balloonMotion` / `balloonConsistency` in new `src/TraverseMotion.js`) is still reported as a diagnostic, and its text says that it does not change the BOT Score.
+  - **The score.** BOT Score = 4 × RMS g + peak g + 0.05 × turn-rate standard deviation + 0.02 × (mean climb/descent speed above 5 m/s) + LOS error ÷ 0.05°. The existing platform-mirroring demotion is added to this. Lower is better. The score is not a probability and does not use truth.
+  - **Decision record.** `rankingDecision(a, b)` returns the key that decided a pair. The comparator and the placement text use it.
+- **Traverse result cards explain their place** (Traverse → **Analyze Traverse Methods...** results, and the BOTBench **Gallery**; `a8e4c134`, `3c94c290`; `rankingPlacementExplanation`, `botScoreTooltip` and `rankingExplanation({scoreBreakdown})` in `src/TraverseRanking.js`; `placementHTML`, `rankingTextHTML` and `buildDetailHTML` in `src/AnalyzeTraverse.js`).
+  - **Placement.** `rankingPlacementExplanation` names the first key that decides a card's place, against a named neighbor:
+    - the first card is compared with the second;
+    - every other card is compared with the card before it;
+    - a repeated polynomial-order tile (*Extra polynomial order*) is compared with the best tile of its strategy.
+
+    Naming the neighbor keeps the text true when tiles are set aside.
+  - **Card line.** Each card and the detail pane show a short line: "Passed all gates" (or the tier label when the card is not eligible) · "BOT Score: 2.905". For angular-only checks the second part is "Angular score: x°".
+    - Hovering over the status shows the placement text.
+    - Hovering over **BOT Score** shows `botScoreTooltip`, with each term's value and contribution.
+    - When truth ranking decides the place, the card shows the full "Why here: Distance from truth" or "Why here: Search completion" block instead.
+  - **Card layout.** The name, badges and placement line are now above the graph.
+    - The headline measurements come first: slant range, speed, **Mean LOS error**, **Max g-Force** and **Physical compatibility**, plus **Truth Δ** when truth ranking is on.
+    - Then come the criteria ribbon and the other measurements.
+    - The explanations and the score components are in a collapsed **Explanations and BOT Score calculation** section.
+  - **Detail pane.** The detail pane has three collapsed sections: *What the LOS error means*, *Physical compatibility: limits and exclusions* and *Screening details and score calculation*.
+- **Physical compatibility replaces Ordinariness** (Traverse → **Analyze Traverse Methods...** results, report and assessment; `a8e4c134`, `3c94c290`, `d5c93d2a`; `physicalClassChecks`, `mundanenessCost`, `mundanenessSummary` and `physicalCompatibilityDetails` in `src/TraverseMundaneness.js`, new `src/PhysicalEnvelopes.js`, `judgingClass` / `candidateCriteria` in `src/TraverseCriteria.js`, `assessPathCompatibility` / `assessExecutiveVerdict` in `src/TraverseRanking.js`, `horizontalAirSpeed` in `trackMetrics`, `src/QuadcopterModel.js`, `src/VehicleModels.js`, `src/TraverseHypotheses.js`, `src/TraverseBattery.js`, `tests/TraverseMundaneness.test.js`, new `tests/TraverseCompatibility.test.js`, `tests/ExecutiveVerdict.test.js`). It is shown for information only and does not change the ranking.
+  - **All classes.** `physicalClassChecks` checks every class and returns them all: balloon, bird, multirotor, small fixed-wing, light aircraft, jet and airliner.
+    - It also returns an `unknown` list: size, speed, acceleration and drift shape.
+    - The old single-class line could name a balloon only because the balloon was first among the classes with zero cost.
+    - It returns nothing for catalogue, at-infinity, non-physical, underground and ground-mismatched candidates.
+  - **Speed.** Speed is now checked at its minimum and maximum air speed, not its mean. A speed of exactly zero now counts as outside a class whose band starts above zero.
+  - **Balloon drift.** A balloon is excluded when the path travels at least 20 m horizontally and its net displacement is less than 45% of the distance travelled, that is, when it circles or doubles back. This applies even when its numeric cost is zero.
+  - **Lines.** The **Ordinariness** stat (a cost and "consistent with an ordinary X") becomes **Physical compatibility**. It reads either "Within tested limits: balloon, bird, multirotor." or "No class is within all tested limits. Closest envelope: X; N× outside on speed.". A balloon drift failure and any unmeasured inputs are added. **Physical compatibility details** gives the limiting quantities for each class.
+  - **Criteria ribbon.** The **S** (speed) square shows the minimum–maximum speed range. The class it is judged against is now one that the drift check has not excluded, if there is one. Its text says "one of the closest tested class envelopes" instead of "the most ordinary class that admits it".
+  - **Shared multirotor limits.** `PHYSICAL_ENVELOPES` holds the class envelopes in m/s. `MULTIROTOR_LIMITS` (60 m/s horizontal, 30 m/s ascent and 30 m/s descent) is used by:
+    - the compatibility check
+    - the Quadcopter fit's default envelope
+    - the "Auto (any multirotor)" model
+    - the derived-speed limit pin
+
+    The multirotor band therefore changes from 0–60 kt of total air speed to 0–60 m/s (about 117 kt) of horizontal air speed. The horizontal speed is `horizontalAirSpeed`, which is new in `trackMetrics`. The other bands are unchanged.
+  - **Assessment.** `assessPathCompatibility` collects the classes met by completed, close-fitting paths from every solver, separately from the completed forward-model fits. A balloon whose drift shape is unknown is not counted. `runTraverseBattery` now passes the dataset to `assessExecutiveVerdict`, which records the result as `pathCompatibility`.
+    - The detail text adds "Within tested limits: … These are path compatibility checks, not additional forward-model fits or identifications.", and any unmeasured inputs.
+    - When one class fits but several classes are compatible, the headline becomes "Object type unresolved — close-fitting paths meet several physical class limits."
+    - When no class fits but some are compatible, the unresolved headline becomes "Object type unresolved — close-fitting paths meet tested physical class limits."
+  - **Class limits only** (`d5c93d2a`). A path no longer has to pass the broad motion screen (1.5 g, 650 kt, platform mirroring) to count. It must still be complete and close-fitting, and each class applies its own limits. For example, a 1.64 g path fails the broad 1.5 g gate but is within the multirotor's 2.0 g limit.
+- **Mean LOS error** (Traverse → **Analyze Traverse Methods...** results and report; `a8e4c134`; `formatRawLosResidual` and new `losResidualExplanation` in `src/TraverseRanking.js`, `hypothesisStats` in `src/AnalyzeTraverse.js`).
+  - **Label and precision.** The stat is renamed **Mean LOS error** (**Mean LOS offset** for catalogue objects and satellites). Values below 1° show five decimal places and larger values show three, so close fits can be told apart. The report's comparison table uses the same format.
+  - **Explanation.** The ratio that followed the value moves into a separate explanation, *What the LOS error means*. The explanation gives the mean angle between the observed sightline and the direction from the camera to the candidate. It then gives the candidate/truth ratio, or the ratio to the generic constant-acceleration reference fit.
+  - **Truth residual.** The truth track's residual is now called a measured reference, not "the X° a perfect answer scores", because a fit that follows the measurement noise can score below it.
+- **Traverse report ranks without truth first** (Traverse → **Analyze Traverse Methods...** → **Open Full Report**; `a8e4c134`; `buildReportHTML`, new `buildScreeningSummaryHTML`, `buildTruthSummaryHTML` and `buildVerdict` in `src/AnalyzeTraverse.js`).
+  - **Ranking without truth.** A new first table ranks every result with `rankAllHypotheses(..., {useTruth: false})`. Its columns are #, Interpretation, Method group, Screen, Search, Score and "Why this order".
+  - **Ranking with truth.** When there is a usable reference track, a separate section follows. It shows the same paths, not fitted again, ordered by search completion and then by mean 3D distance. It has a new Search column.
+  - **No truth in the other sections.**
+    - "Executive summary" becomes "Analysis without truth" and always shows the measurement summary.
+    - The frozen assessment is now shown in truth mode too.
+    - The candidate sections are titled "— ranking without truth" and use "Rank basis without truth:".
+    - "Comparison" becomes "Measurements in ranking order without truth". It uses the flat order and has no Truth Δ column.
+    - The truth banner is removed.
+    - The verdict is built without truth. It now starts "The first-ranked path is not an object identification." instead of "No global object winner is computed."
+- **Traverse results window closing** (Traverse → **Analyze Traverse Methods...** results; `a8e4c134`, `3168b532`, `110df8a3`; `syncCloseButton` in `showResultGallery` in `src/AnalyzeTraverse.js`, `docs/TraverseAnalysis.md`).
+  - **X button.** The **X** moves from the scrolling title row to a fixed button in the top-right corner of the screen, above a fullscreen graph.
+    - In an expanded graph or the comparison panel, it is titled "Back to analysis results" and returns to the results.
+    - Otherwise it is titled "Close traverse analysis" and closes the results.
+
+    **Escape** works in the same order. The fullscreen and zoom buttons of an expanded graph move down to make room.
+  - **Background.** A click on the dark background no longer closes the results. Use the **X**, **Close** or **Escape**.
+- **Magenta is reserved for the truth track** (Traverse → **Analyze Traverse Methods...** results; `a8e4c134`; `VIZ.constAlt` and `VIZ.straightLine` in `src/TraverseHypotheses.js`, `buildSceneCoupledHypotheses` in `src/AnalyzeTraverse.js`, `tests/trackRoleColors.test.js`).
+  - **Colors.** **Constant Altitude** changes from `#d05fb0` to `#d6cf62`, and **Straight Line** changes from `#cf8fae` to `#a4c78a`. No solution path now looks like the pink dashed truth path.
+  - **Truth note.** The truth note above the gallery is shorter. It says "Truth ranking ON" or "Truth ranking OFF", followed by "Pink dashed line = truth." or "Truth path hidden (T)."
+- **BOTBench summary counts** (File → File Analysis → **BOTBench...**; `d5c93d2a`; new `src/analysis/BotBenchOutcome.js`, `updateSummary`, `SUMMARY_TOOLTIPS`, `CSV_COLUMNS` and `rowToCsvRecord` in `src/analysis/BotBenchUI.js`, `summarizeRun` in `src/analysis/BotBenchRunner.js`, `rowsFromBotBenchEntries` in `src/analysis/charts/BotBenchChartRows.js`).
+  - **Tiles.** **Resolved** is removed. It counted files whose verdict was not unresolved, less those whose top candidate broke the file's MaxRange. `summarizeOutcomeCounts` gives these tiles instead:
+    - **Model fits**: files with at least one tested class that passes its fit and completion checks, out of the files that have this assessment.
+    - **Compatible paths**: files with at least one completed, close-fitting path inside a class's limits, out of the files that have this assessment.
+    - **Insufficient evidence**.
+    - **MaxRange conflicts**, shown only when the count is not zero.
+  - **Renamed tile and tooltips.** **Range unobservable** becomes **Range warning**. The **Best candidate** and **Ranking cost** tooltips are rewritten to say that truth selects the closest candidate after the fact.
+  - **Data.** Each row stores `pathCompatibleClasses` and `pathCompatibilityUnknown`, which are null for rows made before this release. The CSV export adds both as JSON arrays, and leaves them blank when they were not recorded. Chart rows carry `r_pathCompatibleClasses` and `r_pathCompatibilityUnknown`.
+- **BOTBench expected residual and row rebuild** (File → File Analysis → **BOTBench...**; `3c94c290`, `d5c93d2a`; new `residualNoiseReference` in `src/analysis/BotBenchRunner.js`, `paintResultCells` / `buildSummaryReport` in `src/analysis/BotBenchUI.js`, `ROW_ASSESSMENT_REVISION` / `rowMemoUsable` / `recordRowMemo` in `src/analysis/BotBenchCacheIndex.js`, `tests/botbench/noiseFloor.test.js`, `tests/botbench/cacheIndex.test.js`).
+  - **Expected residual.** The value after the slash in **|err|** is the declared per-axis sigma × 1.2533.
+    - Before, it was called a noise floor. A top residual below it was colored orange and described as fitting the noise.
+    - It is now the expected residual of a perfect track under independent Gaussian pointing errors. This is an average, not a lower bound. The orange marking and the "fitting the noise" text are removed.
+    - It is computed only when the file declares its errors uncorrelated (`losErrorCorrelated === false`). Before, a file that did not declare this was treated as uncorrelated.
+    - In the text summary report, the section becomes "RESIDUAL AGAINST THE EXPECTED NOISE RESIDUAL" and the column becomes **expect**.
+  - **Row rebuild.** Each remembered row now stores `assessmentRevision` (`ROW_ASSESSMENT_REVISION`, "3:1" in this release, which includes `PHYSICAL_ENVELOPE_REVISION`). `rowMemoUsable` rejects a row whose revision is different, so rows from earlier builds are built again from the cached fits. The fits keep their own unit versions and do not run again.
+
+### Bug Fixes
+
+- **Fixed FlowGen not loading** (Sitrec → Extra Tools → **FlowGen**; `0fb80868`; `src/MediabunnyExporter.js`, `webpackCopyPatterns.js`, `tests/driftChecks.test.js`).
+  - **Cause.** `tools/flowgen.html` loads `tools/src/MediabunnyExporter.js` as an unbundled ES module. Since `8fa1f47c` (2.67.0), that file imported `./H264Utils` without an extension, and `H264Utils.js` was not copied to `tools/src/`. The browser could not load the import, so the whole page failed.
+  - **Fix.** The import now has its `.js` extension, and `webpackCopyPatterns.js` copies `src/H264Utils.js` to `tools/src/`.
+  - **Drift check.** A new test in `tests/driftChecks.test.js` fails if a module copied to `tools/src/` has a static relative import that is not also copied.
+- **Fixed Open Consistent sending the wrong candidates during a set-aside animation** (**Open Consistent** and **Open Consistent+Weak** in the Traverse → **Analyze Traverse Methods...** results; `0fb80868`; `openHandoffWindow` in `src/TraverseHandoff.js`, `wireOpenButton` in `src/AnalyzeTraverse.js`, new `tests/TraverseHandoffQueue.test.js`).
+  - **Cause.** Setting a tile aside or restoring it runs as a queued animation (`animQueue`), and the set-aside state changes between its steps. A click during the animation built the tracks from the partly updated state. It could send a candidate that had just been set aside, or leave out one that had just been restored.
+  - **Fix.** `openHandoffWindow` takes a new `ready` promise. It still opens the new window at once, inside the click, so a popup blocker allows it. It then waits for every queued action before it builds and sends the tracks.
+- **Fixed a Quadcopter fit that stopped at its iteration limit counting as a complete search** (Traverse → **Analyze Traverse Methods...**; `3c94c290`; `buildHypotheses` in `src/TraverseHypotheses.js`).
+  - **Cause.** The Quadcopter hypothesis was marked incomplete only when an inward bound probe improved the fit.
+  - **Fix.** It now adds `localFitCompletionWarnings(quad.params.optimizer)` to its optimizer warnings and keeps `params.optimizer`, as the other local fits do. A fit whose local refinement used all its iterations while the simplex was still open is now marked incomplete. It can no longer lead a completed alternative.
+- **Fixed box selection in the image analysis view** (**RGB Profile** and **Line Detector** in Sitrec → **Legacy Tools**; the release commit; `CNodeImageAnalysis` in `src/nodes/CNodeImageAnalysis.js`, new `tests/ImageAnalysisInteraction.test.js`).
+  - **Drag.** Since `6d7beb85` (2.153.0), the region drag was registered with `registerSurfaceInteraction` on the view's canvas. `CNodeViewUI` makes that canvas ignore pointer events, so a box drag did nothing. The drag is now registered on the view's `div`.
+  - **High-DPI.** `c2ix` / `c2iy` changed region coordinates to image pixels by dividing by `canvas.width` / `canvas.height`. On a high-DPI screen that is the display size × `devicePixelRatio`. They now divide by `widthPx` / `heightPx`, so the analyzed pixels match the selected box.
+  - **Test.** The new test drags a box at pixel ratios 1 and 2.
+
+### Documentation
+
+- **BOT Bench: Anomalies2, an eighth botset with a higher sensor and steeper starting views** (developer-side, no app UI; `0fb80868`; new `benchmarks/botbench/lib/anomalies2.js`, `botsetManeuvers.js`, `botsetManeuverBatch.js`, `botset-maneuvers.bench.test.js`, `run-botset-maneuvers.mjs`, `npm run bench-bot-anomalies2`, `docs/BOTBenchScenarios.md`, new `tests/botbench/anomalies2.test.js`).
+  - **Set.** A third entry in `BOTSET_MANEUVER_SETS` (key `anomalies2`, directory `Anomalies2`, `viewMix: true`) repeats the 15 anomalous maneuver variants. It uses the same four clip lengths (20, 60, 120 and 300 s) and nine pointing-error rungs, which gives 540 scenarios. There are now eight botsets, with 4212 scenario files.
+  - **Geometry.** The sensor orbits at 70 m/s, 7000 m above the site's ground.
+    - `anomalies2Depression` starts six variants looking 45° down. It starts six at 75° down: the zigzag, sine-wave, figure-eight, high-g turn without lead-in, and too-slow vertical loop variants.
+    - The three hypersonic-glide variants keep their original 100 km range.
+    - `anomalies2Spec` calculates the starting horizontal range from the height difference and the angle (about 1.1–5 km). It sets the target altitude explicitly, and sizes the field of view from the initial slant range.
+  - **Checks.** `generateBotsetManeuverBatch` throws an error if a scenario does not start at its requested angle. Each manifest row records the platform, and these clean depression-angle values from `anomalyViewStats`:
+    - the starting, minimum, median and maximum angle
+    - the fraction of frames at least 45° down
+
+    These are starting angles: in a long clip, a fast target can move into a shallow view.
+  - **Commands.** `run-botset-maneuvers.mjs` accepts `--sets anomalies,mundane,anomalies2`. It clears only the selected set directories and names its timing file after them. `npm run bench-bot-anomalies2` generates only `benchmarks/botbench/results/Anomalies2/`. In BOTBench, select that folder with **Recursive** on.
+
 ## Version 2.164.1 (2026-09-17)
 
 ### New Features

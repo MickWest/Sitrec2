@@ -21,6 +21,7 @@ import {
     combinedHash,
     packUnitBlob,
     recordUnit,
+    ROW_ASSESSMENT_REVISION,
     unitBlobName,
     unitRecord
 } from "../../src/analysis/BotBenchCacheIndex";
@@ -101,6 +102,7 @@ function cachedFolder(name, count, version = appVersion) {
                 quality: {frames: 2}, fileSha256: hashes, elapsedMs: 100,
                 displayName: source.name, top: {errDeg: 0.1}},
             appVersion: version, unitVersions: {kalman: UNIT_VERSIONS.kalman},
+            assessmentRevision: ROW_ASSESSMENT_REVISION,
             chartData: {version: 4, apertureDeg: 1, sensorTurnDeg: 0, candidateErrors: []}}}};
     }
     let text = JSON.stringify({schema: 3, results});

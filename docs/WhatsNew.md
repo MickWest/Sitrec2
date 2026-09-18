@@ -9,6 +9,34 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.165.0 (2026-09-18)
+
+### New Features
+
+- **Extra Tools** (Sitrec → Extra Tools): open the standalone tools in a new tab from the Sitrec menu. The tools are LOS CSV Viewer, FlowGen, PX4 ULog Viewer, IR Balloon, Compass & Elevation, Starlink Flare Predictor and Diffraction PSF Studio.
+- **Compare leaders** (Traverse → **Analyze Traverse Methods...** results): compare two trajectories side by side, starting with the two leaders in the ranking without truth. See each part of their BOT Scores, their gate values against the limits, and their physical class checks. Choose any other pair with the selectors.
+- **Camera view in the result graphs** (Traverse → **Analyze Traverse Methods...** results, the camera button on a graph): see the candidate and truth paths from the camera's position, heading and roll. Move through the analyzed frames with a slider; it does not change the main playhead.
+- **T and g buttons on the result graphs** (Traverse → **Analyze Traverse Methods...** results): **T** hides or shows the truth path in all graphs. **g** labels up to three acceleration peaks on each path; in camera view, it shows the g-force at the current point.
+
+### Improvements
+
+- **One BOT Score for every solver** (Traverse → **Analyze Traverse Methods...**): results that tie on the screening checks are now ordered by the same BOT Score, whichever method made them, so some results change order. There is no longer a preference for a method group, a 0.05° error allowance for solvers that follow the sightlines, or a score change for balloon-like drift.
+- **Result cards explain their place** (Traverse → **Analyze Traverse Methods...** results): each card shows a line such as *Passed all gates · BOT Score: 2.905*. Hover over the status to see why the card is in its place, and over **BOT Score** to see how the score is calculated.
+- **Physical compatibility** (Traverse → **Analyze Traverse Methods...** results and report): replaces *Ordinariness*. It lists every object class whose size, speed and acceleration limits the path meets, and names any missing measurements. A balloon is excluded when the path circles or doubles back. The multirotor limit is now a horizontal speed of 60 m/s, the same as the Quadcopter fit.
+- **Mean LOS error** (Traverse → **Analyze Traverse Methods...** results): shows five decimal places below 1°, so close results can be told apart. An expandable note explains what it measures.
+- **Traverse report** (Traverse → **Analyze Traverse Methods...** → **Open Full Report**): starts with *Ranking without truth*, which says why each result is in its place. When a reference track is available, a separate *Ranking with truth* follows. The assessment and the candidate sections always use the ranking without truth.
+- **Traverse results window** (Traverse → **Analyze Traverse Methods...** results): the close button stays in the top-right corner. From an expanded graph or the comparison, it returns to the results. A click on the background no longer closes the results.
+- **Truth track color** (Traverse → **Analyze Traverse Methods...** results): magenta is now used only for the truth track, so the Constant Altitude and Straight Line results have new colors.
+- **BOTBench summary** (File → File Analysis → **BOTBench...**): *Resolved* is replaced by separate *Model fits*, *Compatible paths* and *Insufficient evidence* counts, plus *MaxRange conflicts* when there are any. *Range unobservable* is now *Range warning*, and the CSV export has new path compatibility columns.
+- **BOTBench expected residual** (File → File Analysis → **BOTBench...**, the **|err|** column): the value after the slash is now the expected residual. It is shown only for files that declare uncorrelated pointing errors, and it no longer marks a result as fitting the noise. Stored result rows are built again from the saved fits, without fitting again.
+
+### Bug Fixes
+
+- Fixed the **FlowGen** tool (Sitrec → Extra Tools) not loading.
+- Fixed **Open Consistent** and **Open Consistent+Weak** (Traverse → **Analyze Traverse Methods...** results) sending the wrong candidates when clicked during a set-aside or restore animation. They could include a candidate just set aside, or leave out one just restored.
+- Fixed a Quadcopter fit that ran out of iterations before it converged counting as a complete search (Traverse → **Analyze Traverse Methods...**).
+- Fixed box selection in the image analysis view of **RGB Profile** and **Line Detector** (Sitrec → Legacy Tools): dragging a box did nothing, and on high-DPI screens the analyzed pixels did not match the box.
+
 ## Version 2.164.1 (2026-09-17)
 
 ### New Features
