@@ -153,6 +153,9 @@ positioned camera it ascends.
 | `Delete` / `Backspace` | Delete the keyframe under the mouse | Point Track |
 | `J` / `K` | Previous / next keyframe | Horizon Extractor |
 | `\`, `PageUp`/`PageDown` | Cycle OSD track / step keyframe | OSD Tracker |
+| `←` / `→` | Previous / next result, in tile order; wraps at the ends | Traverse analysis results |
+| `↑` / `↓` | Result above / below in the grid | Traverse analysis results |
+| `Enter` | Expand the selected result's graph; again to return to the list | Traverse analysis results |
 | `Esc` | Abort the recording | *Record Browser Window* only — the other renders use the **Abort** button on the progress panel |
 | `Enter` | Stop early and keep what has recorded | *Record Browser Window* only — the other renders use the **Enough** button |
 

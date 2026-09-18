@@ -377,7 +377,7 @@ speed/range assumptions used by the next run.
 Each interactive graph has two display controls below the magnifier. **T**
 shows or hides the truth path and starts on. **g** shows acceleration peaks
 and starts off. Both controls apply to thumbnails, the detail graph and
-fullscreen together; they do not change scores or ranking. Hiding truth also
+the expanded graph together; they do not change scores or ranking. Hiding truth also
 hides its peak labels and preserves the graph's scale.
 Magenta is reserved for truth; solution paths use other colours.
 
@@ -403,12 +403,46 @@ update as you scrub; peak labels return in the rotatable 3D view. No value is
 shown when acceleration is unavailable for the current frame.
 
 Camera mode, the slider, T and g stay synchronized across thumbnails, detail
-and fullscreen. Press the **camera icon** again to restore the rotatable 3D view.
+and the expanded graph. Press the **camera icon** again to restore the rotatable 3D view.
 Camera mode is unavailable for direction-only hypotheses and bulk results
 that have no scene camera pose.
 
-The top-right **X** in an expanded graph returns to the results. The **X**
-on the results page closes the analysis. **Escape** follows the same order.
+The expand button (the top-right button on each graph) enlarges that graph to
+fill the left side of the results page, in place of the list of results. The
+details panel stays on the right and shows the same result, even if a different
+result was selected before. The expanded graph does not scroll. **Enter**
+expands the graph of the selected result, and pressing it again returns to the
+list. You can also return with the expand button, the top-right **X**, or
+**Escape**. The
+**X** on the results page closes the analysis, and **Escape** follows the same
+order.
+
+The **Left** and **Right** arrow keys select the previous or next result in the
+order the tiles are shown, with set-aside results last, and wrap at the ends.
+The **Up** and **Down** arrow keys select the result above or below in the grid
+(the nearest one in that row), and stop at the top and bottom rows. While a
+graph is expanded, the arrow keys step the expanded graph and the details panel
+together, and the list is at the same result when you return to it. They do
+nothing while a slider or other field has focus, or while the comparison is
+open. If you have scrolled down the details
+panel, a new selection keeps its frame-by-frame graphs at the same position on
+the screen, so you can step through the results and compare the graphs in place.
+
+The frame-by-frame graphs (**Kinematic acceleration**, **Speed** and **LOS fit
+error**) can have two scales. The left scale starts at zero and its top rounds up to
+a whole step, with a minimum: 2 g in steps of 1 g, 40 kt in steps of 10 kt, and
+0.5° in steps of 0.5°. Graphs of different results therefore usually share a
+scale, and a small value draws as a small line. The left scale's numbers are in
+the result's color, like the lines that use it. A grey copy of the main line
+(g-force, air speed or LOS error), drawn behind it, uses the **Fine scale** on
+the right, which has grey numbers. The Fine scale fits the main line's own
+range, but never spans less than one hundredth of the left minimum (0.02 g,
+0.4 kt, 0.005°), so it shows the detail without making numerical noise look
+like motion. A graph shows the Fine scale only when its span is less than 20%
+of the left scale's; otherwise the grey line would only repeat the main line,
+and the graph has one scale. Secondary lines, such as ground speed and the
+generic-fit reference, are dashed and use the left scale only. The legend is in
+the title row of each graph.
 
 The report starts with **Ranking without truth**, using the same screening
 order as the gallery with **Use Truth Track** off. If a usable reference track
