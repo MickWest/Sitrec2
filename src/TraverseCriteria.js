@@ -50,7 +50,7 @@
  */
 
 import {KNOTS_TO_MS} from "./TraverseAnalysis";
-import {MUNDANE_CLASSES, impliedDiameter} from "./TraverseMundaneness";
+import {physicalClassChecks} from "./TraverseMundaneness";
 
 export const CRITERION_COLORS = {
     pass: "#3fae72",
@@ -76,14 +76,6 @@ const DECLARED_CLASSES = {
     aircraft: ["smallUAS", "lightAir", "jet", "airliner"],
 };
 
-/** How far x sits outside [lo, hi], in decades. Zero inside the band. */
-function decadesOutside(x, [lo, hi]) {
-    if (!Number.isFinite(x) || x <= 0) return 0;
-    if (x < lo) return Math.log10(lo / x);
-    if (x > hi) return Math.log10(x / hi);
-    return 0;
-}
-
 function statusForDecades(d) {
     if (!(d > CAUTION_DECADES)) return "pass";
     return d >= FAIL_DECADES ? "fail" : "caution";
@@ -102,32 +94,14 @@ function worst(a, b) {
  * Returns null when there are no metrics to judge.
  */
 export function judgingClass(h, dataset = null) {
-    const m = h?.metricsFull;
-    if (!m) return null;
+    const checks = physicalClassChecks(dataset, h);
+    if (!checks) return null;
     const declaredKeys = DECLARED_CLASSES[h?.key];
-    const pool = declaredKeys
-        ? MUNDANE_CLASSES.filter((c) => declaredKeys.includes(c.key))
-        : MUNDANE_CLASSES;
-    if (!pool.length) return null;
-    const speedKt = Number.isFinite(m.airSpeed?.mean) ? m.airSpeed.mean / KNOTS_TO_MS : NaN;
-    const gMax = m.gLoad?.max;
-    const implied = impliedDiameter(m.range?.mean, dataset?.angularDiameterMaxDeg,
-        dataset?.fovFullDeg, dataset?.pixelsAcross);
-    let best = null;
-    for (const c of pool) {
-        const sizeCost = implied
-            ? decadesOutside(Math.max(implied.lo, Math.min(implied.hi, c.sizeM[0])), c.sizeM) : 0;
-        const speedCost = decadesOutside(speedKt, c.speedKt);
-        const gCost = Number.isFinite(gMax) && gMax > c.gMax ? Math.log10(gMax / c.gMax) : 0;
-        const total = sizeCost + speedCost + gCost;
-        if (!best || total < best.total) {
-            best = {total, cls: c, sizeCost, speedCost, gCost, implied};
-        }
-    }
-    // A declared class is a claim the model is making, and it holds even when
-    // the numbers embarrass it — that is the point of grading against it. Only
-    // an undeclared candidate is "the most ordinary class that admits it".
-    return {...best, declared: !!declaredKeys};
+    const pool = checks.classes.filter(c => !declaredKeys || declaredKeys.includes(c.key));
+    const best = pool.reduce((best, c) => !best
+        || Number(c.motionRejected) < Number(best.motionRejected)
+        || (c.motionRejected === best.motionRejected && c.total < best.total) ? c : best, null);
+    return best ? {...best, implied: best.impliedM, declared: !!declaredKeys} : null;
 }
 
 function fmtBand([lo, hi], unit) {
@@ -148,7 +122,7 @@ export function candidateCriteria(h, rating, {dataset = null, useTruth = true} =
     const jc = judgingClass(h, dataset);
     const clsName = jc ? jc.cls.label : null;
     const how = jc && jc.declared ? "the class this model claims to be"
-        : "the most ordinary class that admits it";
+        : "one of the closest tested class envelopes";
 
     // --- validity, first, because a rejection outranks every other square ---
     //
@@ -201,14 +175,15 @@ export function candidateCriteria(h, rating, {dataset = null, useTruth = true} =
         out.push({key: "accel", label: "Acceleration", letter: "A", status: "na", value: "—",
             why: "no metrics to judge."});
     } else {
-        const speedKt = m.airSpeed?.mean / KNOTS_TO_MS;
+        const speedMinKt = (m.airSpeed?.min ?? m.airSpeed?.mean) / KNOTS_TO_MS;
+        const speedMaxKt = (m.airSpeed?.max ?? m.airSpeed?.mean) / KNOTS_TO_MS;
         const speedStatus = worst(statusForDecades(jc.speedCost),
             m.airSpeed?.max / KNOTS_TO_MS > 900 ? "fail"
                 : m.airSpeed?.max / KNOTS_TO_MS > 650 ? "caution" : "pass");
         out.push({
             key: "speed", label: "Speed", letter: "S", status: speedStatus,
-            value: `${speedKt.toFixed(1)} kt`,
-            why: `Mean air speed ${speedKt.toFixed(1)} kt against a ${clsName}'s `
+            value: `${speedMinKt.toFixed(1)}–${speedMaxKt.toFixed(1)} kt`,
+            why: `Air speed ${speedMinKt.toFixed(1)}–${speedMaxKt.toFixed(1)} kt against a ${clsName}'s `
                 + `${fmtBand(jc.cls.speedKt, "kt")} — ${how}.`
                 + (jc.speedCost > 0
                     ? ` Outside it by a factor of ${Math.pow(10, jc.speedCost).toFixed(1)}.`

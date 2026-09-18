@@ -1,3 +1,5 @@
+import {accelerationPeaks} from "../src/TraverseMotion";
+
 /**
  * Tests for the pure-math traverse analysis core (src/TraverseAnalysis.js).
  *
@@ -196,6 +198,14 @@ describe("TraverseAnalysis core", () => {
 
         const metrics = trackMetricsForValidRun(dataset, track, valid);
         expect(metrics.gLoad.max).toBeCloseTo(1, 5);
+        expect(metrics.sampleWindow.frameOffset).toBe(10);
+        const peaks = accelerationPeaks(metrics, fps);
+        expect(peaks[0].value).toBe(metrics.gLoad.max);
+        for (const peak of peaks) {
+            expect(peak.frame).toBeGreaterThanOrEqual(10 + metrics.sampleWindow.lo);
+            expect(peak.frame).toBeLessThan(10 + metrics.sampleWindow.hi);
+            expect(metrics.series.gLoad[peak.frame - 10]).toBe(peak.value);
+        }
     });
 
     test("traverseConstSpeed with true range and speed reproduces the target track", () => {

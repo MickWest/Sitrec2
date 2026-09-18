@@ -3,11 +3,14 @@ import {
     completenessBadges,
     effectiveErrDeg,
     formatRawLosResidual,
+    losResidualExplanation,
     groupAndRankHypotheses,
     hypothesisCategory,
     localFitCompletionWarnings,
     plausibilityRating,
     rankingExplanation,
+    rankingDecision,
+    rankingPlacementExplanation,
     rankAllHypotheses,
     rankHypotheses,
     rankTieScore,
@@ -50,6 +53,123 @@ function hypothesis(key, opts = {}) {
     };
 }
 
+describe("Traverse placement explanations", () => {
+    const opts = {useTruth: false};
+    const sceneHypothesis = (key, additions = {}) => ({
+        ...hypothesis(key, {errDeg: 0.079, metrics: metrics({gMax: 0.27})}),
+        fitScaleDeg: 45.625, // This run's generic reference is clamped to 0.20°.
+        ...additions,
+    });
+
+    test("HSV can lead a physical-model result on the common BOT Score", () => {
+        const drone = sceneHypothesis("quadcopter", {
+            name: "Quadcopter", metricsFull: metrics({gMax: 1.4, gRms: 1}),
+            truthComparison: {comparable: true, score: 86.502},
+        });
+        const horizontal = sceneHypothesis("horizontalSpeed", {
+            name: "Horizontal Speed Valley", truthComparison: {comparable: true, score: 21.276},
+        });
+        const items = rankAllHypotheses([horizontal, drone], opts);
+        expect(items.map(x => x.h)).toEqual([horizontal, drone]);
+        expect(items[0].r.secondaryScore).toBeLessThan(items[1].r.secondaryScore);
+        expect(items.every(x => x.r.coLeader)).toBe(true);
+        expect(rankingDecision(...items, opts).key).toBe("score");
+        const first = rankingPlacementExplanation(items[0], items[1], {...opts, first: true});
+        const second = rankingPlacementExplanation(items[1], items[0], opts);
+        expect(first.label).toContain("Joint leader");
+        expect(second.text).toContain("The solver category gives no preference");
+        expect(second.text).toContain("BOT Score:");
+
+        const truthItems = rankAllHypotheses([horizontal, drone]);
+        expect(truthItems.map(x => x.h)).toEqual([horizontal, drone]);
+        const why = rankingPlacementExplanation(truthItems[0], truthItems[1], {first: true});
+        expect(why.key).toBe("truth");
+        expect(why.text).toContain("21.3 m versus 86.5 m");
+        expect(why.label).not.toContain("Joint leader");
+    });
+
+    test("the polynomial follows the leaders because of its clamped scene-relative LOS screen", () => {
+        const items = rankAllHypotheses([
+            sceneHypothesis("gfPolyALS", {errDeg: 0.351339, params: {mcOrder: 5}}),
+            sceneHypothesis("horizontalSpeed"),
+        ], opts);
+        const why = rankingPlacementExplanation(items[1], items[0], opts);
+        expect(why.key).toBe("eligible");
+        expect(why.text).toContain("0.351° exceeds the 0.240° close-fit limit");
+        expect(why.text).not.toContain("category");
+    });
+
+    test("mirroring explains demotion despite the lower LOS error", () => {
+        const items = rankAllHypotheses([
+            sceneHypothesis("constAlt", {errDeg: 0.053704, platformMirror: {
+                share: 0.995415, beta: 0.934539, mirroredM: 236.34, independentM: 16.04,
+                rmsPlatform: 252.89, rmsTrack: 236.88, snr: 236.34,
+            }}),
+            sceneHypothesis("gfPolyALS", {errDeg: 0.351339}),
+        ], opts);
+        expect(items[0].h.key).toBe("gfPolyALS");
+        const why = rankingPlacementExplanation(items[1], items[0], opts);
+        expect(why.key).toBe("tier");
+        expect(why.text).toContain("99.5% of manoeuvring mirrors the camera platform");
+    });
+
+    test("truth completion decides before a smaller distance", () => {
+        const complete = sceneHypothesis("quadcopter", {truthComparison: {comparable: true, score: 87}});
+        const pending = sceneHypothesis("droneControl", {
+            optimizerWarnings: ["iteration budget reached"], truthComparison: {comparable: true, score: 1},
+        });
+        const items = rankAllHypotheses([pending, complete]);
+        const why = rankingPlacementExplanation(items[1], items[0]);
+        expect(why.key).toBe("truthCompletion");
+        expect(why.text).toContain("stopped before convergence");
+        expect(why.text).toContain("Completion is checked before distance from truth");
+    });
+
+    test("within-category score explains its components and the ray allowance", () => {
+        const items = rankAllHypotheses([
+            sceneHypothesis("horizontalSpeed", {metricsFull: metrics({gMax: 1.43, gRms: 0.4, turnStd: 7})}),
+            sceneHypothesis("constAlt"),
+        ], opts);
+        expect(rankingPlacementExplanation(items[1], items[0], opts).key).toBe("score");
+        const text = rankingExplanation(items[1].h, items[1].r, {...opts, scoreBreakdown: true});
+        expect(text).toContain("4 × RMS acceleration = 1.600");
+        expect(text).toContain("peak acceleration = 1.430");
+        expect(text).toContain("scored LOS error / 0.05° = 0.580");
+        expect(text).toContain("subtracts the 0.05° solver allowance");
+    });
+
+    test("equal unavailable scores do not invent a deciding criterion", () => {
+        const items = rankAllHypotheses([
+            sceneHypothesis("gfCV", {nonPhysical: true}),
+            sceneHypothesis("gfCA", {nonPhysical: true}),
+        ], opts);
+        expect(rankingDecision(...items, opts)).toEqual({key: "tie", delta: 0});
+        expect(rankingPlacementExplanation(items[1], items[0], opts).key).toBe("tie");
+        expect(rankingPlacementExplanation(items[0], null, opts).key).toBe("only");
+    });
+});
+
+describe("LOS residual presentation", () => {
+    test("nearby residuals stay distinct and the truth ratio names its measured reference", () => {
+        const truthResidualDeg = 0.053452421236010406;
+        const quad = {key: "quadcopter", errDeg: 0.07948797641946397, truthResidualDeg};
+        const hsv = {key: "horizontalSpeed", errDeg: 0.07926159001819864, truthResidualDeg};
+        expect(formatRawLosResidual(quad)).toBe("0.07949°");
+        expect(formatRawLosResidual(hsv)).toBe("0.07926°");
+        expect(losResidualExplanation(quad)).toContain("0.07949° / 0.05345° = 1.49×");
+        expect(losResidualExplanation(hsv)).toContain("0.07926° / 0.05345° = 1.48×");
+        expect(losResidualExplanation(quad)).toContain("not a guaranteed minimum or a confidence score");
+        expect(losResidualExplanation(quad)).not.toContain("perfect answer");
+    });
+
+    test("a zero truth residual supplies context without dividing by zero", () => {
+        const explanation = losResidualExplanation({errDeg: 0.04, truthResidualDeg: 0});
+        expect(explanation).toContain("truth track's mean LOS error is 0°");
+        expect(explanation).not.toMatch(/Infinity|NaN|×/);
+        expect(losResidualExplanation({errDeg: NaN})).toContain("unavailable");
+    });
+});
+
 describe("Traverse ranking", () => {
     test("GoFast Constant Altitude passes the broad screen without using the generic reference as noise", () => {
         const h = hypothesis("constAlt", {
@@ -61,7 +181,7 @@ describe("Traverse ranking", () => {
         const first = plausibilityRating(h);
         expect(first.rank).toBe(3);
         expect(effectiveErrDeg(h)).toBeCloseTo(0.0209515043, 9);
-        expect(formatRawLosResidual(h)).toContain("0.071°");
+        expect(formatRawLosResidual(h)).toBe("0.07095°");
 
         // The generic CA residual is context only: changing it cannot alter the
         // screened residual, tier, or order score.
@@ -86,7 +206,9 @@ describe("Traverse ranking", () => {
         expect(r.rank).toBe(1);                    // raw 0.297° > the 0.15° Low threshold
         expect(r.scoredErrDeg).toBeCloseTo(0.2973009753, 9);
         expect(rankTieScore(h)).toBeCloseTo(0.2973009753 / 0.05, 3);
-        expect(formatRawLosResidual(h)).toBe("0.30° (0.61× generic reference 0.49°)");
+        expect(formatRawLosResidual(h)).toBe("0.29730°");
+        expect(losResidualExplanation(h)).toContain("0.61× that residual");
+        expect(losResidualExplanation(h)).toContain("not a measured noise level");
         expect(rankingExplanation(h, r)).toContain("raw LOS residual 0.30°");
         expect(rankingExplanation(h, r)).toContain("vSink (max)");
     });
@@ -233,9 +355,8 @@ describe("Traverse ranking", () => {
             hypothesis("gfCA", {name: "Global CA", errDeg: 0.4,
                 metrics: metrics({gMax: 5})}),
         ]);
-        expect(items.map((x) => x.h.name)).toEqual(["Balloon", "Constant Altitude", "Global CA"]);
-        // Each tile still reports its standing WITHIN its own category, which is
-        // the only place a score comparison is sound.
+        expect(items.map((x) => x.h.name)).toEqual(["Constant Altitude", "Balloon", "Global CA"]);
+        // Each tile still reports its standing within its own category.
         expect(items.map((x) => `${x.groupIndex + 1}/${x.groupSize}`)).toEqual(["1/1", "1/1", "1/1"]);
     });
 
@@ -244,7 +365,7 @@ describe("Traverse ranking", () => {
         // composite (straightFlightScore + err/0.05) for a forward model. Sorted
         // on that number directly, the satellite's 0.05 beats the balloon's
         // larger composite and a planet would head the gallery on units alone.
-        // Category priority must break the tie before secondaryScore is reached.
+        // Score basis must break the tie before secondaryScore is reached.
         const items = rankAllHypotheses([
             hypothesis("satellite", {name: "Satellite", errDeg: 0.05,
                 params: {satellite: "X", sunlit: true}, identity: true}),
@@ -258,7 +379,7 @@ describe("Traverse ranking", () => {
         expect(sat.r.secondaryScore).toBeLessThan(balloon.r.secondaryScore);
     });
 
-    test("a truth track overrides category priority in the flat order", () => {
+    test("a truth track orders the candidates across categories", () => {
         // Truth separation in metres IS comparable across categories, so it
         // must beat the priority tiebreak: a closer LOS-constrained fit outranks
         // a more distant physical one.

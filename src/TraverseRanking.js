@@ -14,11 +14,15 @@
  * is that it is decided by keys which ARE comparable across categories (truth
  * separation when a truth track is selected; otherwise screen pass,
  * eligibility, completeness, tier, bound-pin count) before it ever reaches a
- * score that is not. See makeComparator.
+ * score that is not. Finite trajectories share the BOT Score regardless
+ * of solver category; angular-only checks use a separate score basis.
  *
  * Each item still reports its standing WITHIN its own category
- * (groupIndex/groupSize), which is the only place a score comparison is sound.
+ * (groupIndex/groupSize). Category membership does not favour a trajectory.
  */
+
+import {balloonConsistency} from "./TraverseMotion";
+export {balloonConsistency} from "./TraverseMotion";
 
 import {KNOTS_TO_MS, METERS_PER_NM, straightFlightScore} from "./TraverseAnalysis";
 import {
@@ -97,16 +101,8 @@ const COLORS = {
     invalid: "#8a5a2b",
 };
 
-// The comparison categories, IN DISPLAY-PRIORITY ORDER. Array order is the
-// tiebreak used when two candidates are otherwise equally rated, so
-// "Physically based" leading is deliberate: an answer like "looks like a
-// balloon" is what an analyst is actually after, and it should not sit below a
-// mathematical curve that merely threads the same sightlines.
-//
-// These are NOT ranked classes of truth — a Geometric fit is not "worse
-// evidence" than a physical model. They answer different questions, and the
-// colour label on each tile exists so the reader can see which question a tile
-// is answering at a glance.
+// Categories describe the method that produced a candidate. Their order is
+// used for report sections, never to prefer one finite trajectory to another.
 export const RANKING_CATEGORIES = [
     {
         key: "forward",
@@ -147,10 +143,6 @@ export const RANKING_CATEGORIES = [
 
 const CATEGORY_BY_KEY = Object.fromEntries(RANKING_CATEGORIES.map((c) => [c.key, c]));
 
-// Display priority of a category, used only as a tiebreak between otherwise
-// equally-rated candidates.
-const CATEGORY_PRIORITY = Object.fromEntries(RANKING_CATEGORIES.map((c, i) => [c.key, i]));
-
 // Object-conditioned forward models. "droneControl" is the control-input drone
 // fit — same object class as "quadcopter" but asking whether a FLOWN path fits,
 // not whether any path inside the envelope does, so the two belong in the same
@@ -171,48 +163,6 @@ const BUOYANT_KEYS = new Set(["lantern"]);
 // only consulted once the tier (rank) ties — so this can reorder a balloon and a
 // drone that fit about equally, never lift a balloon over a clearly-better fit.
 const BALLOON_CONSISTENCY_NUDGE = 6;
-
-// Balloon kinematic signature. A passive wind tracer moves on a SINGLE steady
-// vertical trend — rising (constant lift), level (neutral buoyancy) or descending
-// (leak/cooling) — and drifts in essentially ONE direction (the wind, which may
-// slowly veer with altitude). Vertical oscillation (up then down) and circling
-// are strong evidence AGAINST a balloon; a drone can do either, a balloon cannot.
-//
-// Returns C in [0,1]: 1 = textbook balloon motion, 0 = the opposite. Measured
-// self-contained from the solved track as net displacement / path length per
-// axis group — 1 when monotonic/straight, → 0 when the path doubles back on
-// itself. Complements straightFlightScore (already in secondaryScore), which
-// prices horizontal manoeuvring but NOT vertical monotonicity — the distinctive
-// balloon tell. A near-level or near-hovering axis is treated as neutral, not
-// penalised: calm-wind and neutrally-buoyant balloons are ordinary.
-export function balloonConsistency(track) {
-    if (!track || track.length < 6) return 0.5;
-    const n = Math.floor(track.length / 3);
-    let vPath = 0, hPath = 0;
-    let prevX = track[0], prevY = track[1], prevZ = track[2];
-    for (let f = 1; f < n; f++) {
-        const x = track[f * 3], y = track[f * 3 + 1], z = track[f * 3 + 2];
-        vPath += Math.abs(z - prevZ);
-        hPath += Math.hypot(x - prevX, y - prevY);
-        prevX = x; prevY = y; prevZ = z;
-    }
-    const vNet = Math.abs(track[(n - 1) * 3 + 2] - track[2]);
-    const hNet = Math.hypot(track[(n - 1) * 3] - track[0], track[(n - 1) * 3 + 1] - track[1]);
-    // Below this total travel an axis has essentially not moved: level flight,
-    // or a hover. Neither is un-balloon-like, so score it neutral rather than
-    // letting 0/0 noise decide. The vertical threshold scales with the horizontal
-    // extent (min 20 m) so a 19 m vs 21 m path does not straddle a fixed boundary
-    // and a long, far-drifting clip is judged on the same relative footing (TA-18);
-    // a true hover (tiny horizontal travel) still uses the absolute floor.
-    const LEVEL_EPS = 20; // metres — absolute floor
-    const vLevelEps = Math.max(LEVEL_EPS, 0.02 * hPath);
-    const vDir = vPath < vLevelEps ? 1.0 : vNet / vPath;     // level or monotonic → 1
-    const hDir = hPath < LEVEL_EPS ? 0.5 : hNet / hPath;     // straight drift → 1, circling → 0
-    // A balloon needs BOTH: a steady vertical trend AND a one-direction drift.
-    // Take the weaker of the two, not their average — a monotonic climb does not
-    // excuse a circling ground track, nor a straight drift a vertical yo-yo.
-    return Math.max(0, Math.min(1, Math.min(vDir, hDir)));
-}
 
 // A capped local optimizer may return a useful provisional path, but reaching
 // its iteration budget is not convergence. Keep that path visible while making
@@ -410,6 +360,34 @@ export function rankTieScore(h) {
     if (!h?.metricsFull) return Infinity;
     const score = straightFlightScore(h?.metricsFull) + effectiveErrDeg(h) / 0.05;
     return Number.isFinite(score) ? score : Infinity;
+}
+
+export function botScoreTooltip(h, rating) {
+    const m = h?.metricsFull;
+    const intro = "BOT Score adds weighted motion and line-of-sight (LOS) error terms. It orders results that have the same screening outcomes. The truth track is not used in this score.\n\n"
+        + "Lower is better: less demanding motion, a closer match to the observed directions, or both. Higher means more demanding motion, a larger direction error, or both. This score has no pass/fail limit. It is not a probability.\n\n";
+    if (!m || !Number.isFinite(rating?.secondaryScore) || !Number.isFinite(rating?.scoredErrDeg)) {
+        return intro + "The score is unavailable for this result.";
+    }
+    const terms = [
+        `4 × typical acceleration = ${(4 * m.gLoad.rms).toFixed(3)}`,
+        `Peak acceleration = ${m.gLoad.max.toFixed(3)}`,
+        `0.05 × variation in turn rate = ${(0.05 * Math.abs(m.turnRate.std)).toFixed(3)}`,
+        `0.02 × mean climb/descent speed above 5 m/s = ${(0.02 * Math.max(0, Math.abs(m.verticalSpeed.mean) - 5)).toFixed(3)}`,
+        `Scored LOS error ${rating.scoredErrDeg.toFixed(5)}° ÷ 0.05° = ${(rating.scoredErrDeg / 0.05).toFixed(3)}`,
+    ];
+    if (Number.isFinite(rating.balloonConsistency)) {
+        terms.push(`Balloon drift adjustment: 6 × (1 − 2 × ${rating.balloonConsistency.toFixed(3)}) = ${(BALLOON_CONSISTENCY_NUDGE * (1 - 2 * rating.balloonConsistency)).toFixed(3)}. Steady drift reduces the score; motion that reverses increases it`);
+    }
+    if (platformMirrorSignificant(h.platformMirror)) {
+        terms.push(`Camera-motion adjustment: 6 × ${(h.platformMirror.share).toFixed(3)} = ${(PLATFORM_MIRROR_NUDGE * h.platformMirror.share).toFixed(3)}. Motion shared with the camera increases the score`);
+    }
+    return intro + `For ${h.name}, add:\n${terms.join("\n")}\nTotal = ${rating.secondaryScore.toFixed(3)}. Values are rounded.\n\n`
+        + "Acceleration is in g. Typical acceleration is the root mean square: square the values, take their mean, then take the square root. Turn-rate variation measures the spread around the mean (standard deviation, in degrees per second).\n\n"
+        + "LOS error is the mean angle between the observed and predicted directions. "
+        + (rating.kind === "ray-constrained"
+            ? `This fit follows the sightlines and smooths the path. It gets a ${RAY_SOLVER_ALLOWANCE_DEG.toFixed(2)}° allowance: subtract it from the raw LOS error, with a minimum of zero.`
+            : "This result uses the raw LOS error without an allowance.");
 }
 
 export function plausibilityRating(h) {
@@ -956,72 +934,163 @@ function truthSortScore(x, useTruth = true) {
     return tc.comparable && Number.isFinite(tc.score) ? tc.score : Infinity;
 }
 
-// Ordering comparator shared by the per-category ranking and the flat gallery
-// ordering. `crossCategory` inserts the category-priority tiebreak, which must
-// NOT apply when sorting within a single category (there it would be a no-op
-// anyway) and which exists to keep the flat order sound — see rankAllHypotheses.
-function makeComparator(crossCategory, useTruth = true) {
-    return (a, b) => {
-        // With a truth track selected, closeness to it IS the score — it
-        // overrides the screening tiers; they remain the tiebreak. This is the
-        // one key that IS soundly comparable across every category, which is
-        // why truth mode gives a genuinely quality-led flat order.
-        const ta = truthSortScore(a, useTruth), tb = truthSortScore(b, useTruth);
-        if (ta !== null || tb !== null) {
-            // Truth separation compares completed solutions. A provisional fit
-            // that stopped before convergence must not lead merely because its
-            // current iterate happens to sit closer to the known answer.
-            const completeness = Number(a.r.incomplete) - Number(b.r.incomplete);
-            if (completeness) return completeness;
-            const va = ta ?? Infinity, vb = tb ?? Infinity;
-            if (va !== vb) return va - vb;
-        }
-        // Failing the broad screen outright is decided BEFORE completeness;
-        // everything finer is decided after it.
-        //
-        // Completeness leading is deliberate and mostly right: a search that
-        // ran off its own edge has not demonstrated its optimum, so its
-        // residual should not be led with. But taken absolutely it inverts
-        // in one damaging case — a candidate the screen rated *Implausible*
-        // (900 kt, 12 g) that merely finished cleanly would outrank a
-        // kinematically mild candidate whose only flaw is honestly
-        // reporting that its family touched a search edge. That penalises
-        // honesty hardest exactly where the mundane answer lives, because
-        // broad, weakly-constrained slow families are the ones that reach
-        // search edges. Gating on "passed the screen at all" fixes that case
-        // without disturbing the finer ordering the design intends (an
-        // incomplete Moderate still sorts behind a complete Low). The effect
-        // is symmetric: the far/fast Minimum Acceleration tile gains equally.
-        const passedScreen = (x) => (x.r.rank >= 1 ? 1 : 0);
-        // Category priority sits ABOVE secondaryScore, and only in the flat
-        // ordering. secondaryScore is not commensurable across fit kinds:
-        // rankTieScore returns raw DEGREES for identity/directional hypotheses
-        // but straightFlightScore + err/0.05 (a composite, typically an order of
-        // magnitude larger) for everything else. Compared directly, a catalogued
-        // planet at 0.5 would outrank every physical model on the board purely
-        // because its score is measured in different units. Everything above
-        // this line — screen pass, eligibility, completeness, tier, pin count —
-        // IS comparable across categories, so the flat order is decided by
-        // those first and is genuinely quality-led; category only breaks
-        // what would otherwise be an unsound comparison.
-        const priority = (x) => CATEGORY_PRIORITY[hypothesisCategory(x.h).key] ?? 99;
-        return passedScreen(b) - passedScreen(a)
-            || Number(b.r.eligible) - Number(a.r.eligible)
-            || Number(a.r.incomplete) - Number(b.r.incomplete)
-            || b.r.rank - a.r.rank
-            || (a.r.activePins?.length || 0) - (b.r.activePins?.length || 0)
-            || (crossCategory ? priority(a) - priority(b) : 0)
-            || a.r.secondaryScore - b.r.secondaryScore
-            || (Number.isFinite(a.h.errDeg) ? a.h.errDeg : Infinity)
-                - (Number.isFinite(b.h.errDeg) ? b.h.errDeg : Infinity);
-    };
+// Angular-only candidates have a residual in degrees. Finite trajectories have
+// a BOT Score combining motion and LOS error. Keep these bases separate; among trajectories, the
+// generating method is never a ranking key.
+function scoreBasis(h) {
+    const kind = hypothesisFitKind(h);
+    return kind === "identity" || kind === "directional-geometry" ? "angular" : "trajectory";
 }
 
-const compareWithinCategory = makeComparator(false);
-const compareAcrossCategories = makeComparator(true);
+export function rankingDecision(a, b, {useTruth = true} = {}) {
+    // With a truth track selected, closeness to it IS the score — it
+    // overrides the screening tiers; they remain the tiebreak. This is the
+    // one key that IS soundly comparable across every category, which is
+    // why truth mode gives a genuinely quality-led flat order.
+    const ta = truthSortScore(a, useTruth), tb = truthSortScore(b, useTruth);
+    if (ta !== null || tb !== null) {
+        // Truth separation compares completed solutions. A provisional fit
+        // that stopped before convergence must not lead merely because its
+        // current iterate happens to sit closer to the known answer.
+        const completeness = Number(a.r.incomplete) - Number(b.r.incomplete);
+        if (completeness) return {key: "truthCompletion", delta: completeness};
+        const va = ta ?? Infinity, vb = tb ?? Infinity;
+        if (va !== vb) return {key: "truth", delta: va - vb};
+    }
+    // Failing the broad screen outright is decided BEFORE completeness;
+    // everything finer is decided after it.
+    //
+    // Completeness leading is deliberate and mostly right: a search that
+    // ran off its own edge has not demonstrated its optimum, so its
+    // residual should not be led with. But taken absolutely it inverts
+    // in one damaging case — a candidate the screen rated *Implausible*
+    // (900 kt, 12 g) that merely finished cleanly would outrank a
+    // kinematically mild candidate whose only flaw is honestly
+    // reporting that its family touched a search edge. That penalises
+    // honesty hardest exactly where the mundane answer lives, because
+    // broad, weakly-constrained slow families are the ones that reach
+    // search edges. Gating on "passed the screen at all" fixes that case
+    // without disturbing the finer ordering the design intends (an
+    // incomplete Moderate still sorts behind a complete Low). The effect
+    // is symmetric: the far/fast Minimum Acceleration tile gains equally.
+    const passedScreen = (x) => (x.r.rank >= 1 ? 1 : 0);
+    const basis = x => scoreBasis(x.h) === "trajectory" ? 0 : 1;
+    const decisions = [
+        ["screen", passedScreen(b) - passedScreen(a)],
+        ["eligible", Number(b.r.eligible) - Number(a.r.eligible)],
+        ["completion", Number(a.r.incomplete) - Number(b.r.incomplete)],
+        ["tier", b.r.rank - a.r.rank],
+        ["pins", (a.r.activePins?.length || 0) - (b.r.activePins?.length || 0)],
+        ["scoreBasis", basis(a) - basis(b)],
+        ["score", a.r.secondaryScore - b.r.secondaryScore],
+        ["residual", (Number.isFinite(a.h.errDeg) ? a.h.errDeg : Infinity)
+            - (Number.isFinite(b.h.errDeg) ? b.h.errDeg : Infinity)],
+    ];
+    // Infinity - Infinity is NaN: like the original comparator's || chain,
+    // skip it and let the next key decide. A complete tie keeps input order.
+    const decision = decisions.find(([, delta]) => delta);
+    return decision ? {key: decision[0], delta: decision[1]} : {key: "tie", delta: 0};
+}
+
+function makeComparator(useTruth = true) {
+    return (a, b) => rankingDecision(a, b, {useTruth}).delta;
+}
+
+const compareWithinCategory = makeComparator();
+const compareAcrossCategories = makeComparator();
 // Blind variants: identical except that a truth comparison never decides order.
-const compareWithinCategoryBlind = makeComparator(false, false);
-const compareAcrossCategoriesBlind = makeComparator(true, false);
+const compareWithinCategoryBlind = makeComparator(false);
+const compareAcrossCategoriesBlind = makeComparator(false);
+
+// Concise evidence for a screening limitation, using the same rating and
+// thresholds as the comparator. This is separate from the full diagnostic prose.
+function screeningLimitations({h, r}) {
+    if (r.rank < 0) return `${r.label}: ${r.reasons[0]}`;
+    const parts = [];
+    if (r.fitRank != null && r.fitRank < 3) {
+        const limit = r.fitScaleDeg === null ? 0.05 : r.fitScaleDeg * FIT_SCALE_TIERS[0];
+        parts.push(`scored LOS error ${r.scoredErrDeg.toFixed(3)}° exceeds the ${limit.toFixed(3)}° close-fit limit`);
+    }
+    if (r.kinematicRank != null && r.kinematicRank < 3) {
+        if (h.metricsFull.gLoad.max > 1.5) parts.push(`peak acceleration ${h.metricsFull.gLoad.max.toFixed(2)} g exceeds 1.50 g`);
+        const kt = h.metricsFull.airSpeed.max / KNOTS_TO_MS;
+        if (kt > 650) parts.push(`peak air speed ${kt.toFixed(0)} kt exceeds 650 kt`);
+    }
+    if (r.mirrorRank != null && r.mirrorRank < 3) {
+        parts.push(`${(100 * r.platformMirror.share).toFixed(1)}% of manoeuvring mirrors the camera platform`);
+    }
+    if (r.activePins?.length) parts.push(`${r.activePins.length} load-bearing model limit(s) reached`);
+    if (r.optimizerWarnings?.length) parts.push("optimizer stopped before convergence");
+    if (r.boundaryLimited) parts.push("solution family reaches the search boundary");
+    return parts.join("; ") || r.reasons[0];
+}
+
+/** Explain the FIRST deciding key, not just a candidate's individual rating.
+ * The first tile compares with its successor; other tiles name their preceding
+ * candidate. Naming the peer keeps the statement true when tiles are set aside.
+ */
+export function rankingPlacementExplanation(item, peer, {useTruth = true, first = false} = {}) {
+    if (!peer) return {key: "only", label: "Only candidate", text: "No other candidate is available to compare."};
+    const a = first ? item : peer, b = first ? peer : item;
+    const {key} = rankingDecision(a, b, {useTruth});
+    const joint = a.r.coLeader && b.r.coLeader;
+    const num = (v) => Number.isFinite(v) ? v.toFixed(3) : "unavailable";
+    let label, text;
+    switch (key) {
+        case "scoreBasis":
+            label = "Different score bases";
+            text = `${a.h.name} is a finite trajectory; ${b.h.name} is an angular-only check. `
+                + "Their scores use different units, so trajectories are displayed first when the screening keys tie.";
+            break;
+        case "truth": {
+            label = "Distance from truth";
+            const ta = truthSortScore(a), tb = truthSortScore(b);
+            text = `${a.h.name} comes first: mean 3D distance from truth ${Number.isFinite(ta) ? `${ta.toFixed(1)} m` : "unavailable"}`
+                + ` versus ${Number.isFinite(tb) ? `${tb.toFixed(1)} m` : "no comparable truth track"} for ${b.h.name}.`;
+            break;
+        }
+        case "truthCompletion":
+        case "completion":
+            label = "Search completion";
+            text = `${a.h.name} has a complete search; ${b.h.name} is incomplete (${screeningLimitations(b)}). `
+                + (key === "truthCompletion" ? "Completion is checked before distance from truth." : "Completion decides before the finer screening tier or score.");
+            break;
+        case "eligible":
+            label = first ? "Complete fit clears all screens" : "Below a complete, top-tier fit";
+            text = `${a.h.name} clears all screens with a complete search. ${b.h.name}: ${screeningLimitations(b)}.`;
+            break;
+        case "screen":
+        case "tier":
+            label = first ? "Higher screening tier" : "Lower screening tier";
+            text = `${a.h.name} has the higher screening tier (${a.r.label} versus ${b.r.label}). ${b.h.name}: ${screeningLimitations(b)}.`;
+            break;
+        case "pins":
+            label = "Fewer model limits reached";
+            text = `Earlier screening checks tie. ${a.h.name} reaches ${a.r.activePins.length} load-bearing model limit(s); `
+                + `${b.h.name} reaches ${b.r.activePins.length}.`;
+            break;
+        case "score":
+            label = scoreBasis(a.h) === "trajectory"
+                ? (joint ? "Joint leader · BOT Score tie-break" : "BOT Score — lower is better")
+                : (joint ? "Joint leader · angular tie-break" : "Angular score");
+            text = (a.r.eligible && b.r.eligible
+                ? "Both pass the broad screening gates with complete searches. "
+                : "Both have the same screening grade, search status and number of active model limits. ")
+                + `${a.h.name} has the lower ${scoreBasis(a.h) === "trajectory" ? "BOT Score" : "angular score"}: `
+                + `${num(a.r.secondaryScore)} versus ${num(b.r.secondaryScore)} for ${b.h.name}. `
+                + "The solver category gives no preference; this is a heuristic tie-break.";
+            break;
+        case "residual":
+            label = "LOS error tie-break";
+            text = `Screening and scores tie. ${a.h.name} has the lower raw LOS error: `
+                + `${num(a.h.errDeg)}° versus ${num(b.h.errDeg)}° for ${b.h.name}.`;
+            break;
+        default:
+            label = "Equal ranking keys";
+            text = `All ranking keys tie with ${peer.h.name}; the original candidate order is preserved.`;
+    }
+    return {key, label: `Why here: ${label}`, text};
+}
 
 export function rankHypotheses(hypotheses, {useTruth = true} = {}) {
     const ranked = (hypotheses || [])
@@ -1062,7 +1131,7 @@ export function rankHypotheses(hypotheses, {useTruth = true} = {}) {
  * WITHIN its own category, so a tile can still say "#1 of 4 physically based"
  * even though its neighbours on screen come from other categories. Those
  * ordinals are computed from the per-category sort, which is the only place a
- * within-category score comparison is sound.
+ * category standing remains available as context.
  */
 export function rankAllHypotheses(hypotheses, opts = {}) {
     const items = [];
@@ -1076,8 +1145,7 @@ export function rankAllHypotheses(hypotheses, opts = {}) {
 // CO-LEADERS. Everything the flat comparator decides ABOVE the tie-breakers
 // — screen pass, eligibility, completeness, fit tier, bound-pin count — is
 // sound and comparable across categories. Everything BELOW that line is
-// heuristic: category priority, a secondaryScore that is not commensurable
-// across fit kinds, raw residual. So a candidate that matches the leader on
+// heuristic: score basis, secondaryScore, raw residual. So a candidate that matches the leader on
 // every discrete key is not "second place" — the analysis genuinely cannot
 // order it against the leader, and BOT Bench measured what treating the
 // first tile as the answer costs (the blind ranking picked the closest
@@ -1141,26 +1209,33 @@ export function formatRawLosResidual(h) {
     const err = h?.errDeg;
     if (!Number.isFinite(err)) return "unavailable";
     const kind = hypothesisFitKind(h);
-    const raw = err < 0.1 ? `${err.toFixed(3)}°` : `${err.toFixed(2)}°`;
     if (!(err > 0)) return kind === "ray-constrained" ? "0° (constrained to LOS)" : "0°";
-    // Prefer the MEASURED floor when a truth track is loaded: the residual the
-    // truth track itself scores against these rays is what a perfect answer
-    // gets. The "generic reference" below is only a free constant-acceleration
-    // fit — not a floor, and routinely beaten (a balloon reaches 0.61× of it on
-    // GoFast) or far worse than achievable (0.58° where truth scores 0.051°).
-    // Quoting it can make a 10x-off fit read as "0.93× reference".
+    // Preserve small differences between close fits. Extra digits distinguish
+    // computed residuals; they do not establish the measurement's accuracy.
+    return `${err.toFixed(err < 1 ? 5 : 3)}°`;
+}
+
+export function losResidualExplanation(h) {
+    const err = h?.errDeg;
+    if (!Number.isFinite(err)) return "LOS error is unavailable for this candidate.";
+    const meaning = "Mean angular separation between the observed sightline and the direction from the camera to this candidate, averaged over the analyzed frames. "
+        + "Lower means closer to the observed directions; it does not measure 3D position error. Extra digits distinguish computed results, not measurement accuracy.";
+    // The selected truth track is an independently specified reference, not a
+    // mathematical lower bound: fitting noisy rays can beat its residual.
     const truthRes = h?.truthResidualDeg;
     if (Number.isFinite(truthRes) && truthRes >= 0) {
-        const shown = truthRes < 0.1 ? truthRes.toFixed(3) : truthRes.toFixed(2);
-        const ratio = truthRes > 0 ? `${(err / truthRes).toFixed(1)}× ` : "";
-        return `${raw} (${ratio}the ${shown}° a perfect answer scores)`;
+        const reference = formatRawLosResidual({errDeg: truthRes});
+        const ratio = truthRes > 0
+            ? ` Candidate / truth residual = ${formatRawLosResidual(h)} / ${reference} = ${(err / truthRes).toFixed(2)}×.` : "";
+        return `${meaning} The selected truth track's mean LOS error is ${reference}.${ratio} `
+            + "This is a reference comparison, not a guaranteed minimum or a confidence score; a fit can follow measurement noise and score below the truth track.";
     }
     const ref = h?.params?.errFloor;
     if (Number.isFinite(ref) && ref >= 0.02) {
-        const shownRef = ref < 0.1 ? ref.toFixed(3) : ref.toFixed(2);
-        return `${raw} (${(err / ref).toFixed(2)}× generic reference ${shownRef}°)`;
+        return `${meaning} The generic constant-acceleration reference fit scores ${formatRawLosResidual({errDeg: ref})}; `
+            + `this candidate scores ${(err / ref).toFixed(2)}× that residual. The reference fit is not a measured noise level or a minimum achievable error.`;
     }
-    return raw;
+    return meaning;
 }
 
 // --- Truth-track comparison prose ------------------------------------------
@@ -1235,10 +1310,30 @@ export function truthComparisonSummary(tc) {
     return text;
 }
 
-export function rankingExplanation(h, rating = plausibilityRating(h), {useTruth = true} = {}) {
-    const score = Number.isFinite(rating.secondaryScore)
-        ? ` Within-group score ${rating.secondaryScore.toFixed(2)} (lower is better within this category).`
+export function rankingExplanation(h, rating = plausibilityRating(h), {useTruth = true, scoreBreakdown = false} = {}) {
+    let score = Number.isFinite(rating.secondaryScore)
+        ? ` ${scoreBasis(h) === "trajectory" ? "BOT Score" : "Angular score"} ${rating.secondaryScore.toFixed(2)} (lower is better on the same score basis).`
         : "";
+    if (scoreBreakdown && score && rating.kind !== "identity" && rating.kind !== "directional-geometry") {
+        const m = h.metricsFull;
+        const components = [
+            `4 × RMS acceleration = ${(4 * m.gLoad.rms).toFixed(3)}`,
+            `peak acceleration = ${m.gLoad.max.toFixed(3)}`,
+            `0.05 × turn-rate variation = ${(0.05 * Math.abs(m.turnRate.std)).toFixed(3)}`,
+            `climb penalty = ${(0.02 * Math.max(0, Math.abs(m.verticalSpeed.mean) - 5)).toFixed(3)}`,
+            `scored LOS error / 0.05° = ${(rating.scoredErrDeg / 0.05).toFixed(3)}`,
+        ];
+        if (Number.isFinite(rating.balloonConsistency)) {
+            components.push(`balloon adjustment = ${(BALLOON_CONSISTENCY_NUDGE * (1 - 2 * rating.balloonConsistency)).toFixed(3)}`);
+        }
+        if (platformMirrorSignificant(h.platformMirror)) {
+            components.push(`platform-mirroring penalty = ${(PLATFORM_MIRROR_NUDGE * h.platformMirror.share).toFixed(3)}`);
+        }
+        score += ` Score components (added): ${components.join("; ")}.`;
+        if (rating.kind === "ray-constrained") {
+            score += ` The scored LOS error subtracts the ${RAY_SOLVER_ALLOWANCE_DEG.toFixed(2)}° solver allowance, floored at zero.`;
+        }
+    }
     const inactive = rating.inactivePins?.length
         ? ` Parameters at bounds but not locally load-bearing: ${rating.inactivePins.join(", ")}.`
         : "";

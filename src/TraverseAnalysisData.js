@@ -13,6 +13,21 @@ import {Vector3} from "three";
 import {ECEF2ENU_radii, ECEFToLLA_radii, ENU2ECEF_radii} from "./LLA-ECEF-ENU";
 import {Sit} from "./Globals";
 
+// Camera boresight data includes the image's right/up axes, so retain roll
+// instead of reconstructing an arbitrary upright view from the target LOS.
+export function sampleAnalysisCameraPose(cameraLOSNode, frame, originLat, originLon) {
+    const source = cameraLOSNode?.v(frame);
+    if (!source || ![source.position, source.heading, source.right, source.up]
+        .every(v => v && [v.x, v.y, v.z].every(Number.isFinite))) return null;
+    const convert = (v, direction) => {
+        const enu = ECEF2ENU_radii(v, originLat, originLon, direction);
+        if (direction) enu.normalize();
+        return [enu.x, enu.y, enu.z];
+    };
+    return {position: convert(source.position, false), forward: convert(source.heading, true),
+        right: convert(source.right, true), up: convert(source.up, true)};
+}
+
 /**
  * Pack an LOS node into a TraverseAnalysis dataset (local ENU frame at the
  * mean sensor position).

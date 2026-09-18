@@ -41,6 +41,8 @@ export const VIZ = {
     grid: "#262b33",
     axis: "#3c434c",
     constAir: "#3987e5",   // constant-air-speed traverse (sweep best)
+    constAlt: "#d6cf62",   // constant-altitude solution; magenta is reserved for truth
+    straightLine: "#a4c78a", // straight-line solution
     aircraft: "#199e70",   // parametric aircraft fit
     slowObj: "#c98500",    // slow-object plausible trajectory / profile
     fastObj: "#9085e9",    // fast-object plausible profile
@@ -654,7 +656,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
             key: "constAlt",
             name: "Constant Altitude",
             subtitle: "Level flight at a fixed height",
-            color: "#d05fb0",
+            color: VIZ.constAlt,
             track,
             metricsFull: trackMetrics(dataset, track),
             errDeg: ca.errDeg ?? 0,
@@ -668,7 +670,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
             key: "constAlt",
             name: "Constant Altitude",
             subtitle: "Level flight at a fixed height",
-            color: "#d05fb0",
+            color: VIZ.constAlt,
             track: null,
             metricsFull: null,
             errDeg: NaN,

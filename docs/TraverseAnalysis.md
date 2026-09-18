@@ -253,11 +253,9 @@ cannot determine:
   categories (with a usable truth track — at least five overlapping frames:
   completeness, then closeness to that track; otherwise broad-screen pass,
   eligibility, completeness, tier, and
-  bound-pin count) *before* it ever reaches
-  a within-category score that is not — so a trajectory construction cannot
-  outrank a balloon or satellite as though those were comparable object
-  probabilities, and category order only breaks what would otherwise be an
-  unsound tie. Each tile still reports its standing within its own category
+  bound-pin count) before the common BOT Score. Finite trajectories
+  use this score regardless of the method that produced them. Angular-only
+  checks use different units and are displayed after tied trajectories. Each tile still reports its standing within its own category
   ("#1 of 4 physically based").
 - **Fit quality, ordinariness and platform mirroring are separate judgements**:
   a tile's tier is the worst of the three, but the **badge names whichever one
@@ -279,8 +277,9 @@ cannot determine:
   tested rather than measured and found wanting (a fit that pins *and* fits
   poorly keeps the stronger "Poor fit"). **Co-leader** marks tiles that tie on
   every comparable key (screen pass, eligibility, completeness, tier, pin
-  count), so the one shown first leads only by category priority; with a truth
-  track selected, truth separation breaks the tie instead.
+  count). Their remaining order is a heuristic BOT Score tie-break, not a
+  finding that one object type is more likely. Applying a truth track orders
+  them by truth separation instead.
 - **The criteria ribbon**: a row of small squares under each tile's heading, one
   per criterion, each carrying one white letter — **P** physically admissible,
   **L** line-of-sight fit, **S** speed, **A** acceleration, **Z** size,
@@ -375,6 +374,43 @@ report is built on demand. **Use exact result** installs the analyzed
 trajectory as a frozen Analysis Snapshot; it does not silently rewrite the
 speed/range assumptions used by the next run.
 
+Each interactive graph has two display controls below the magnifier. **T**
+shows or hides the truth path and starts on. **g** shows acceleration peaks
+and starts off. Both controls apply to thumbnails, the detail graph and
+fullscreen together; they do not change scores or ranking. Hiding truth also
+hides its peak labels and preserves the graph's scale.
+Magenta is reserved for truth; solution paths use other colours.
+
+Peak labels are numbers such as **4.3g**, in the path's colour. They use the
+same smoothed acceleration and trimmed time interval as **Max g-Force**,
+including the valid overlap interval for truth. These are kinematic
+accelerations, not total load including gravity. The candidate, truth and
+sensor paths can each show up to three local maxima. Maxima must be at least
+one second or 5% of the measured interval apart, whichever is greater, and
+at least 48 screen pixels apart. Labels that would overlap are omitted.
+
+The **camera icon** switches the graphs to perspective views from the scene camera's
+position, heading and roll at the selected frame. The projected candidate and
+truth paths are magnified to fit each graph: this is an image-plane crop, not
+a change of camera position. The slider scrubs the camera and current track
+positions together across the analyzed A–B interval. A filled point marks the
+candidate; a larger ring marks truth, so coincident positions remain visible.
+The markers use the exact frame's track samples. The slider is local to the
+gallery and does not change the main playhead or refit anything.
+
+Camera mode, the slider, T and g stay synchronized across thumbnails, detail
+and fullscreen. Press the **camera icon** again to restore the rotatable 3D view.
+Camera mode is unavailable for direction-only hypotheses and bulk results
+that have no scene camera pose.
+
+The report starts with **Ranking without truth**, using the same screening
+order as the gallery with **Use Truth Track** off. If a usable reference track
+is available, **Ranking with truth** follows: the same paths are ordered by
+search completion, then mean 3D distance from the reference. No candidate is
+refitted. Both sections appear regardless of the gallery toggle. The report's
+assessment, candidate cards and detailed rank explanations use the ranking
+without truth; any reference measurements there are comparison only.
+
 Expand **Filtering and interpolation** at the top of the gallery to see every
 filter on the selected input paths, the filters used by the candidate fits and
 metrics, and the live traverse output filter. The same summary appears in the
@@ -466,12 +502,21 @@ Notes on the gallery tiles:
   **category** and its rank within that category ("#1 of 4 physically based").
   The order is decided first by keys comparable across categories — screen pass,
   eligibility, completeness, broad-screen tier, unique active model constraints —
-  and only then by a within-category secondary score (which is not comparable
-  across categories), with category priority breaking otherwise-equal ties. The
+  and only then by the common BOT Score for finite trajectories. Solver
+  category gives no preference. Angular-only checks use a separate score basis. The
   0.05 display-tie threshold is a formatting convention, not a statistical claim.
-- The **raw LOS residual is always shown**. A flexible constant-acceleration
-  reference is displayed separately as context and never substituted for the
-  raw value or used as a noise estimate. Ray-constrained smoothing residuals
+- **Mean LOS error** is the mean angular separation between the observed
+  sightline and the camera-to-candidate direction, over the analyzed frames.
+  It measures agreement in direction, not 3D position error. Small residuals
+  show five decimal places to distinguish close results; those extra digits
+  do not establish measurement accuracy. Expand the measurement details for
+  the reference comparison. When a truth track covers the clip, the ratio is
+  **candidate mean LOS error / truth-track mean LOS error**. The truth residual
+  is a measured reference, not a guaranteed minimum or a confidence score:
+  a fit that follows measurement noise can score below the truth track.
+  Otherwise a generic constant-acceleration fit provides context; it is not
+  a noise estimate. Neither reference replaces the raw value.
+  Ray-constrained smoothing residuals
   receive one fixed 0.05° solver-fidelity allowance; changing the generic
   reference cannot change rank.
 - `Max kinematic acceleration (g)` is the change in smoothed air-relative
@@ -506,13 +551,13 @@ Notes on the gallery tiles:
 - The flexible constant-acceleration residual shown for scale is a
   **model-reference residual**, not an estimate of sensor noise. It must not be
   used to make statistical confidence or likelihood claims.
-- **Ordinariness** and **Implied object size** are disclosure lines, not
-  ranking inputs. Ordinariness measures how far the candidate's required size,
-  speed and acceleration sit outside the envelope of the nearest ordinary
-  object class (bird, balloon, quadcopter, fixed-wing), judged on all the
-  quantities together: 0.00 means some ordinary class contains it, and a high
-  value is a positive statement about the object, never a failure to explain
-  it. Implied object size converts the file's angular-size bound to metres at
+- **Physical compatibility** and **Implied object size** are disclosure lines,
+  not ranking inputs. Compatibility lists all classes within the tested size,
+  speed and acceleration limits, and checks steady drift for balloons. It
+  replaces the old single-class Ordinariness label, which could pick a balloon
+  just because it appeared first among zero-cost classes. Expanded details
+  explain exclusions and missing measurements. These checks do not establish
+  an object identity. Implied object size converts the file's angular-size bound to metres at
   the candidate's range; a sub-pixel target gives an upper bound only, and the
   line says so rather than printing a fictitious lower end. Neither line moves
   the order of the tiles — the **Platform mirroring** line, which appears only
@@ -589,7 +634,41 @@ tighter band does not sort higher, because "the more determined model wins"
 would be exactly the calibrated object-probability claim this analysis
 declines to make.
 
+### Physical compatibility
+
+Every finite candidate receives the same physical-class checks, regardless of
+whether it came from a physical-model fit, HSV, or a geometric curve. The
+**Physical compatibility** line lists every class within the tested limits,
+instead of choosing whichever class happens to be first in a zero-score tie.
+It checks minimum and peak air speed, peak manoeuvring acceleration, and size
+when measured. Missing size or motion information is stated explicitly.
+
+The balloon check also requires a steady-drift path. Once horizontal travel
+exceeds 20 m, net displacement below 45% of distance travelled flags circling
+or backtracking. This is a heuristic check of the steady-drift interpretation,
+not a claim that no changing wind field could produce a curved balloon path.
+A changing-wind explanation needs separate support. Low g alone is insufficient.
+
+These are capability screens, not fits of every object's full dynamics to the
+recovered path, and not identifications. For example, a circling HSV result can
+fit the multirotor speed and acceleration envelope without being representable
+by the Quadcopter solver's particular constant-acceleration, smoothly varying
+turn model. Expanded details name each class's limiting quantities. These
+class checks are diagnostic and do not themselves alter the ranking.
+
 ### How the tiles are ranked
+
+Each card names the first rule that decides its placement against a named
+neighbour. The first card compares with the next one. When the screening
+criteria tie, the card reports the **BOT Score** comparison. The score
+is a weighted sum of motion and sightline-fit terms. **Lower is better.** It
+compares finite paths regardless of solver category and does not use truth. It
+is not an object probability. Hover over **BOT Score** for the calculation,
+including the numeric contribution of each term for that result.
+All measurements and the screening indicators remain visible above
+**Explanations and BOT Score calculation**, which expands the LOS and physical
+compatibility explanations and the numeric components of the BOT Score. The selected card's
+explanation also appears above its large graph.
 
 The gallery mixes unlike questions — object models, LOS-constrained
 trajectory families, fixed-geometry checks, curve fits, catalogue matches —
@@ -598,7 +677,7 @@ object probabilities. The flat best-first order is instead decided
 **lexicographically**, by a cascade of keys that *are* comparable across
 categories, before anything model-specific is consulted:
 
-1. **Truth separation** (only when a truth track is selected): completed fits
+1. **Truth separation** (only when **Use Truth Track** is on): completed fits
    first, then mean 3D separation from the truth in metres — the one score
    that is soundly comparable across every category.
 2. **Broad-screen pass** — anything rated *Kinematically extreme* / *Poor
@@ -610,16 +689,13 @@ categories, before anything model-specific is consulted:
 3. **Eligibility** — complete *and* top tier.
 4. **Completeness** — no search-boundary or optimizer-incomplete flags.
 5. **Tier** (see below), then the count of locally load-bearing model limits.
-6. **Category priority** — *Physically based* → *LOS Constrained* →
-   *Geometric* → *Geometric Approximations* → *Known Object*. Used only in
-   the flat ordering, and only here, because the next key is not
-   commensurable across categories (catalogue and at-infinity tiles score
-   raw degrees; the rest a smoothness composite roughly an order of
-   magnitude larger).
-   An object model leading a curve fit that answers no object question is the
-   intended effect.
-7. **Within-category secondary score**, then raw LOS residual as the final
-   tie-break.
+6. **Score basis** — finite trajectories use the BOT Score;
+   angular-only checks use raw degrees. When all earlier keys tie, finite
+   trajectories are displayed first to avoid comparing numbers with different
+   units. This is a display convention, not a preference for an object type.
+7. **BOT Score** for finite paths, or angular score for angular-only
+   checks, then raw LOS residual. A physical-model solver gets no priority over
+   an LOS-constrained or geometric solver.
 
 Three worked examples. A *Minimum Acceleration* path that threads the rays
 at 0.03° but needs 6 g is rated *Low*, so a complete balloon fit at 0.04°
@@ -634,8 +710,7 @@ the top catalogue grade) ties a passing drone fit on every key down
 through tier and pin count — but its secondary score is 0.08 (raw
 degrees) while the drone's smoothness-plus-residual composite is several
 units. Compared directly the planet would "win" purely on units, so
-category priority decides that pair and the unsound comparison is never
-made.
+score basis separates that pair and those different units are never compared.
 
 **The tier** for trajectory tiles is the worst of three independent 0–3
 grades, and the badge names whichever one is binding.

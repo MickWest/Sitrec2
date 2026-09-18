@@ -7,7 +7,7 @@
 
 import {Vector3} from "three";
 import {setSit, Sit} from "../src/Globals";
-import {abFrameRange, buildAnalysisDataset, expandWindowedTrack} from "../src/TraverseAnalysisData";
+import {abFrameRange, buildAnalysisDataset, expandWindowedTrack, sampleAnalysisCameraPose} from "../src/TraverseAnalysisData";
 
 // Minimal LOS node near lat/lon 0: sensor on the ellipsoid surface looking east.
 function makeLOSNode(frames = 100) {
@@ -21,6 +21,20 @@ function makeLOSNode(frames = 100) {
         },
     };
 }
+
+test("camera sampling preserves the requested frame and rolled image axes in ENU", () => {
+    const source = {v: jest.fn(frame => ({
+        position: new Vector3(6378137, frame, 0),
+        heading: new Vector3(0, 1, 0), right: new Vector3(1, 0, 0), up: new Vector3(0, 0, -1),
+    }))};
+    const pose = sampleAnalysisCameraPose(source, 45, 0, 0);
+    expect(source.v).toHaveBeenCalledWith(45);
+    expect(pose.position[0]).toBeCloseTo(45, 9);
+    expect(pose.forward).toEqual([1, 0, 0]);
+    expect(pose.right).toEqual([0, 0, 1]);
+    expect(pose.up[1]).toBe(-1);
+    expect(sampleAnalysisCameraPose(makeLOSNode(), 0, 0, 0)).toBeNull();
+});
 
 describe("buildAnalysisDataset", () => {
     test("effective fps is Sit.fps / simSpeed (physical time)", () => {

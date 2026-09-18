@@ -3,12 +3,76 @@
 // containment. These are what keep the LOS rays drawn INSIDE the zoomed volume
 // instead of spilling across the page.
 
-import {clipSegmentToBounds, boundsContainPoint, niceTicks} from "../src/Chart3D";
+import {Chart3D, clipSegmentToBounds, boundsContainPoint, niceTicks} from "../src/Chart3D";
+import {cameraTrackProjection} from "../src/CameraTrackView";
 
 const BOX = {minX: 0, maxX: 10, minY: 0, maxY: 10, minZ: 0, maxZ: 10};
 
 const close = (a, b) => expect(a).toBeCloseTo(b, 9);
 const closePt = (p, q) => { close(p[0], q[0]); close(p[1], q[1]); close(p[2], q[2]); };
+
+describe("track overlays", () => {
+    const project = ([x, y]) => ({x, y});
+    const peak = (x, y, value) => ({pos: [x, y, 0], value});
+    function labels(series, {showTruth = true, clip = null} = {}) {
+        const drawn = [];
+        const ctx = {
+            save() {}, restore() {}, strokeText() {},
+            measureText: text => ({width: text.length * 7}),
+            fillText(text, x, y) { drawn.push({text, x, y, color: this.fillStyle}); },
+        };
+        Chart3D.prototype._drawPeakLabels.call({scene: {series}, showTruth, w: 340, h: 260, labelInsetRight: 44},
+            ctx, project, clip);
+        return drawn;
+    }
+
+    test("labels the three highest separated visible peaks in the path colour", () => {
+        const drawn = labels([{color: "cyan", peaks: [peak(30, 50, 10), peak(35, 52, 9),
+            peak(100, 80, 8), peak(180, 110, 7), peak(250, 140, 6)]}]);
+        expect(drawn.map(d => d.text)).toEqual(["10.0g", "8.0g", "7.0g"]);
+        expect(drawn.every(d => d.color === "cyan")).toBe(true);
+    });
+
+    test("hidden truth and peaks outside the zoom bounds have no labels", () => {
+        const series = [
+            {color: "cyan", peaks: [peak(80, 80, 4.3), peak(250, 80, 9)]},
+            {role: "truth", color: "pink", peaks: [peak(160, 160, 2.1)]},
+        ];
+        const clip = {minX: 0, maxX: 200, minY: 0, maxY: 200, minZ: -1, maxZ: 1};
+        expect(labels(series, {showTruth: false, clip}).map(d => d.text)).toEqual(["4.3g"]);
+        expect(labels(series, {clip}).map(d => d.color)).toEqual(["cyan", "pink"]);
+    });
+
+    test("truth visibility removes the path itself without removing other paths", () => {
+        const ctx = {beginPath() {}, fill() {}, arc: jest.fn()};
+        const series = [
+            {type: "points", role: "truth", color: "pink", pts: [[10, 10, 0]]},
+            {type: "points", color: "cyan", pts: [[20, 20, 0]]},
+        ];
+        Chart3D.prototype._drawSeries.call({scene: {series}, showTruth: false}, ctx, project);
+        expect(ctx.arc).toHaveBeenCalledTimes(1);
+        expect(ctx.arc.mock.calls[0].slice(0, 2)).toEqual([20, 20]);
+    });
+});
+
+test("camera current markers use the exact frame and omit unavailable truth positions", () => {
+    const pose = {position: [0, 0, 0], forward: [0, 0, 1], right: [1, 0, 0], up: [0, 1, 0]};
+    const points = [[0, 0, 10], [2, 1, 10], [4, 0, 10]];
+    const candidate = {cameraPath: true, pts: [points[0], points[2]], color: "cyan",
+        frameCount: 3, positionAt: f => points[f]};
+    const truth = {cameraPath: true, role: "truth", pts: [[1, 0, 10], [3, 0, 10]], color: "pink",
+        frameCount: 3, positionAt: f => f === 1 ? null : [f + 1, 0, 10]};
+    const scene = {camera: {poseAt: () => pose}, series: [candidate, truth]};
+    const ctx = {save() {}, restore() {}, fillText() {}, beginPath() {}, rect() {}, clip() {},
+        setLineDash() {}, moveTo() {}, lineTo() {}, stroke() {}, fill() {}, arc: jest.fn()};
+    const fake = {scene, cameraFrame: 1, showTruth: true, showPeaks: false, w: 340, h: 260};
+    Chart3D.prototype._drawCameraView.call(fake, ctx);
+    const project = cameraTrackProjection(scene.series, pose, {left: 14, top: 28, width: 274, height: 162});
+    const expected = project(points[1]);
+    expect(ctx.arc).toHaveBeenCalledTimes(1);
+    expect(ctx.arc.mock.calls[0][0]).toBeCloseTo(expected.x, 9);
+    expect(ctx.arc.mock.calls[0][1]).toBeCloseTo(expected.y, 9);
+});
 
 describe("niceTicks", () => {
     test("an un-snapped terrain floor still gets nice ticks above it", () => {

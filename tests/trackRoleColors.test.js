@@ -28,7 +28,7 @@ function distance(hexA, hexB) {
 // Under about 0.4 reads as a collision at a glance; 0.6 is comfortable.
 const COMFORTABLE = 0.6;
 
-const HYPOTHESIS_KEYS = ["constAir", "aircraft", "slowObj", "fastObj"];
+const HYPOTHESIS_KEYS = ["constAir", "constAlt", "straightLine", "aircraft", "slowObj", "fastObj"];
 
 describe("track role palette", () => {
 

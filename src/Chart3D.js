@@ -1,4 +1,5 @@
 import {registerSurfaceInteraction} from "./SurfaceInteraction";
+import {cameraTrackProjection} from "./CameraTrackView";
 // Lightweight interactive 3D data cube for the traverse gallery.
 //
 // Renders a rotatable 3D volume (a box with three labelled axes and grids on the
@@ -16,7 +17,8 @@ import {registerSurfaceInteraction} from "./SurfaceInteraction";
 //     bounds: {minX,maxX, minY,maxY, minZ,maxZ},   // X=East, Y=North, Z=Alt
 //     zoomBounds: {…} | null,   // optional tighter box for setZoom(true)
 //     series: [
-//       {type:'line',  pts:[[x,y,z],...], color, width, alpha, startDot, endRing},
+//       {type:'line',  pts:[[x,y,z],...], color, width, alpha, startDot, endRing,
+//        role, peaks:[{pos:[x,y,z], value}]},
 //       {type:'rays',  segs:[[x0,y0,z0, x1,y1,z1],...], color, alpha, width},
 //       {type:'points',pts:[[x,y,z],...], color, size},
 //     ],
@@ -240,6 +242,11 @@ export class Chart3D {
         this.pad = opts.pad ?? 0.14;          // fraction of the canvas kept as margin
         this.scaleBoost = opts.scaleBoost ?? 1.625;
         this.zoomed = false;                  // when true, draw scene.zoomBounds (clipped)
+        this.showTruth = true;
+        this.showPeaks = false;
+        this.labelInsetRight = opts.labelInsetRight ?? 8;
+        this.cameraView = false;
+        this.cameraFrame = 0;
         group.add(this);
         this._bindPointer();
         this.resize();
@@ -279,6 +286,7 @@ export class Chart3D {
             return [x, y, Math.sqrt(1 - d2)];
         };
         const down = (e) => {
+            if (this.cameraView) return;
             dragging = true;
             startVec = trackballVec(e);
             startMatrix = this.group.orientationFor(this).slice();
@@ -286,6 +294,7 @@ export class Chart3D {
             e.preventDefault(); e.stopPropagation();
         };
         const move = (e) => {
+            if (this.cameraView) return;
             if (!dragging) return;
             const currentVec = trackballVec(e);
             const dragMatrix = quatToMatrix(quatFromTo(startVec, currentVec));
@@ -337,6 +346,19 @@ export class Chart3D {
         this.draw();
     }
 
+    setOverlays({showTruth = this.showTruth, showPeaks = this.showPeaks} = {}) {
+        this.showTruth = showTruth;
+        this.showPeaks = showPeaks;
+        this.draw();
+    }
+
+    setCameraView(on, frame = this.cameraFrame) {
+        this.cameraView = !!(on && this.scene.camera);
+        this.cameraFrame = Math.max(0, Math.min((this.scene.camera?.frameCount ?? 1) - 1, Math.round(frame)));
+        this.canvas.style.cursor = this.cameraView ? "default" : "grab";
+        this.draw();
+    }
+
     activeBounds() {
         if (this.zoomed && this.scene.zoomBounds) {
             const zb = this.scene.zoomBounds;
@@ -363,6 +385,11 @@ export class Chart3D {
         if (!W || !H) return;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, W, H);
+
+        if (this.cameraView) {
+            this._drawCameraView(ctx);
+            return;
+        }
 
         const b = this.activeBounds();
         const orientation = this.group.orientationFor(this);
@@ -395,6 +422,7 @@ export class Chart3D {
 
         this._drawFrame(ctx, b, projN, orientation, hx, hy, hz);
         this._drawSeries(ctx, proj, this.zoomed ? b : null);
+        if (this.showPeaks) this._drawPeakLabels(ctx, proj, this.zoomed ? b : null);
     }
 
     // The box: three back-plane grids, the 12 wireframe edges, axis ticks+labels.
@@ -538,6 +566,7 @@ export class Chart3D {
     _drawSeries(ctx, proj, clipB = null) {
         const inClip = (p) => !clipB || boundsContainPoint(clipB, p);
         for (const s of this.scene.series) {
+            if (s.role === "truth" && this.showTruth === false) continue;
             if (s.type === "rays") {
                 ctx.strokeStyle = s.color; ctx.globalAlpha = s.alpha ?? 0.5; ctx.lineWidth = s.width ?? 1;
                 ctx.beginPath();
@@ -603,5 +632,114 @@ export class Chart3D {
                 }
             }
         }
+    }
+
+    _drawPeakLabels(ctx, proj, clipB = null, series = this.scene.series) {
+        const candidates = [];
+        for (const s of series) {
+            if (s.role === "truth" && !this.showTruth) continue;
+            for (const peak of s.peaks ?? []) {
+                if (!peak.pos.every(Number.isFinite) || !Number.isFinite(peak.value)) continue;
+                if (clipB && !boundsContainPoint(clipB, peak.pos)) continue;
+                const point = proj(peak.pos);
+                if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) candidates.push({s, peak, point});
+            }
+        }
+        candidates.sort((a, b) => b.peak.value - a.peak.value);
+        const placed = [], perPath = new Map();
+        ctx.save();
+        ctx.font = "600 12px system-ui, -apple-system, sans-serif";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = 3;
+        ctx.lineJoin = "round";
+        ctx.strokeStyle = "#0c0e11";
+        for (const {s, peak, point: p} of candidates) {
+            if (p.x < 0 || p.x > this.w || p.y < 0 || p.y > this.h) continue;
+            const selected = perPath.get(s) ?? [];
+            if (selected.length >= 3 || selected.some(q => Math.hypot(q.x - p.x, q.y - p.y) < 48)) continue;
+            const text = `${peak.value.toFixed(1)}g`;
+            const width = ctx.measureText(text).width, height = 14;
+            // Try both sides of the point, above and below. Keep the number
+            // close to its peak, clear of the buttons and other peak labels.
+            const positions = [[p.x + 6, p.y - height - 4], [p.x - width - 6, p.y - height - 4],
+                [p.x + 6, p.y + 4], [p.x - width - 6, p.y + 4]];
+            const position = positions.find(([x, y]) => x >= 4 && y >= 4
+                && x + width <= this.w - this.labelInsetRight && y + height <= this.h - 4
+                && placed.every(r => x + width + 4 < r.x || x > r.x + r.width + 4
+                    || y + height + 4 < r.y || y > r.y + r.height + 4));
+            if (!position) continue;
+            const [x, y] = position;
+            ctx.fillStyle = s.color;
+            ctx.strokeText(text, x, y);
+            ctx.fillText(text, x, y);
+            placed.push({x, y, width, height});
+            selected.push(p);
+            perPath.set(s, selected);
+        }
+        ctx.restore();
+    }
+
+    _drawCameraView(ctx) {
+        const camera = this.scene.camera;
+        const frame = this.cameraFrame;
+        const pose = camera.poseAt(frame);
+        const series = this.scene.series.filter(s => s.cameraPath);
+        const viewport = {left: 14, top: 28, width: Math.max(30, this.w - 66), height: Math.max(30, this.h - 98)};
+        // Include truth in the crop even when hidden, just as the 3D view
+        // keeps its bounds when T changes. Visibility must not shift the view.
+        const proj = pose && cameraTrackProjection(series, pose, viewport);
+        ctx.save();
+        ctx.font = "11px system-ui, -apple-system, sans-serif";
+        ctx.fillStyle = "#b8c0ca";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText("Camera perspective", 14, this.h - 58);
+        if (!proj) {
+            ctx.fillText(pose ? "No track points in front of the camera" : "Camera pose unavailable at this frame", 10, 34);
+            ctx.restore();
+            return;
+        }
+        ctx.beginPath();
+        ctx.rect(viewport.left, viewport.top, viewport.width, viewport.height);
+        ctx.clip();
+        for (const s of series) {
+            if (s.role === "truth" && !this.showTruth) continue;
+            ctx.strokeStyle = s.color;
+            ctx.lineWidth = s.width ?? 2;
+            ctx.globalAlpha = s.alpha ?? 1;
+            ctx.setLineDash(s.dash ?? []);
+            ctx.beginPath();
+            let connected = false;
+            for (const point of s.pts) {
+                const p = proj(point);
+                if (!p) { connected = false; continue; }
+                if (connected) ctx.lineTo(p.x, p.y);
+                else ctx.moveTo(p.x, p.y);
+                connected = true;
+            }
+            ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        if (this.showPeaks) this._drawPeakLabels(ctx, proj, null, series);
+        // Truth is an outer ring, candidate a filled dot: coincident current
+        // positions remain visible. Read the exact frame, never a line sample.
+        const markers = series.filter(s => s.positionAt).sort((a, b) => Number(b.role === "truth") - Number(a.role === "truth"));
+        for (const s of markers) {
+            if (s.role === "truth" && !this.showTruth) continue;
+            const point = s.positionAt(frame);
+            const p = point && proj(point);
+            if (!p) continue;
+            ctx.strokeStyle = s.role === "truth" ? s.color : "#0c0e11";
+            ctx.fillStyle = s.color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, s.role === "truth" ? 7 : 4.5, 0, Math.PI * 2);
+            if (s.role !== "truth") ctx.fill();
+            ctx.stroke();
+        }
+        ctx.restore();
     }
 }

@@ -15,7 +15,7 @@ import {KNOTS_TO_MS} from "../src/TraverseAnalysis";
 function metrics({gMax = 0.1, speedKt = 10, rangeM = 2800} = {}) {
     return {
         gLoad: {min: 0, max: gMax, mean: gMax / 2, rms: gMax / 2, std: 0},
-        airSpeed: {min: 0, max: speedKt * KNOTS_TO_MS, mean: speedKt * KNOTS_TO_MS,
+        airSpeed: {min: speedKt * KNOTS_TO_MS, max: speedKt * KNOTS_TO_MS, mean: speedKt * KNOTS_TO_MS,
             rms: speedKt * KNOTS_TO_MS, std: 0},
         verticalSpeed: {min: 0, max: 0, mean: 0, rms: 0, std: 0},
         turnRate: {min: 0, max: 0, mean: 0, rms: 0, std: 0},

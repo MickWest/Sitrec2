@@ -24,10 +24,11 @@
 
 import {FileManager, GlobalDateTimeNode, Globals, NodeMan, Sit, TrackManager, Units, setRenderOne} from "./Globals";
 import {EventManager} from "./CEventManager";
+import {par} from "./par";
 import {addOptionToGUIMenu, removeOptionFromGUIMenu} from "./lil-gui-extras";
 import {showError} from "./showError";
 import {t} from "./i18n";
-import {abFrameRange, buildAnalysisDataset, trimHeldFrames, unpackTrackToECEF} from "./TraverseAnalysisData";
+import {abFrameRange, buildAnalysisDataset, sampleAnalysisCameraPose, trimHeldFrames, unpackTrackToECEF} from "./TraverseAnalysisData";
 import {captureInputFiltering, captureAnalysisFiltering, filteringSummaryHTML} from "./AnalysisFiltering";
 import {withUnfilteredAnalysisAngles} from "./AnalysisAngleSmoothing";
 import {getPointBelow, calculateAltitude} from "./threeExt";
@@ -67,19 +68,23 @@ import * as Astronomy from "astronomy-engine";
 import {applyRefractionECI, refractionOptsFromUniforms} from "./atmosphere/refraction";
 import {loadLEOSatrecsForDate, findBestSatellite, satelliteTrackENU, satelliteECEF, satelliteSunlit} from "./SatelliteSearch";
 import {Chart3D, Chart3DGroup} from "./Chart3D";
+import {accelerationPeaks} from "./TraverseMotion";
 import {
     balloonConsistency,
     completenessBadges,
     formatRawLosResidual,
+    losResidualExplanation,
+    botScoreTooltip,
     groupAndRankHypotheses,
     localFitCompletionWarnings,
     settledButUnidentifiable,
     rankAllHypotheses,
     rankingExplanation,
+    rankingPlacementExplanation,
     tierBadge,
     coLeaderBadge,
 } from "./TraverseRanking";
-import {mundanenessCost, mundanenessSummary} from "./TraverseMundaneness";
+import {mundanenessCost, mundanenessSummary, physicalCompatibilityDetails} from "./TraverseMundaneness";
 import {docUrl} from "./docsRegistry";
 import {platformMirrorSummary} from "./TraversePlatformMirror";
 import {candidateCriteria, criteriaSummary, CRITERION_COLORS} from "./TraverseCriteria";
@@ -702,7 +707,7 @@ function buildSceneCoupledHypotheses({dataset, originLat, originLon, sweep,
         {key: "gfKalman", label: "Global Fit: Kalman Smoother", subtitle: "Kalman-smoothed LOS fit", color: "#57a8c6"},
         // Monte Carlo 1/2 are NOT read off their live nodes here — they are
         // swept over polynomial order below (see the MC sweep block).
-        {key: "straightLine", label: "Straight Line", subtitle: "Straight constant-velocity line", color: "#cf8fae"},
+        {key: "straightLine", label: "Straight Line", subtitle: "Straight constant-velocity line", color: VIZ.straightLine},
     ];
     if (sel && sel.inputs) {
         // LOS-only signature: a method node's cached fit is stale if the LOS
@@ -1195,7 +1200,7 @@ function fmtSepMeters(v) {
 
 function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
     const withTrack = (hypotheses || []).filter((h) => h.track && h.metricsFull);
-    const groups = groupAndRankHypotheses(withTrack);
+    const groups = groupAndRankHypotheses(withTrack, {useTruth: !!truth});
 
     // The executive headline is NOT repeated here: the report leads with the
     // Assessment section (the frozen executiveAssessment record) and the
@@ -1227,7 +1232,7 @@ function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
             `Every method is measured by its mean 3D separation from the reference trajectory ` +
             `over the analysis window — smaller means it reproduces the truth more closely. Completed ` +
             `fits are ordered before incomplete searches, then by that separation. `;
-        const comparable = rankAllHypotheses(withTrack)
+        const comparable = rankAllHypotheses(withTrack, {useTruth: true})
             .filter((item) => item.h.truthComparison?.comparable);
         if (comparable.length) {
             const best = comparable[0];
@@ -1283,8 +1288,9 @@ function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
             `; independent wind evidence ${ratingText} — ${escapeHtml(bev.why)}. `;
     }
 
-    out += `<strong>No global object winner is computed.</strong> The panels answer different questions and are ` +
-        `ranked only within comparable groups. `;
+    out += `<strong>The first-ranked path is not an object identification.</strong> The order uses shared ` +
+        `screening checks and heuristic scores, not object-type probabilities. The following comparisons ` +
+        `describe the leading results within each method group. `;
     for (const group of groups) {
         const leader = group.items[0];
         if (!leader) continue;
@@ -2522,14 +2528,10 @@ async function runTraverseAnalysisWithCurrentAngles() {
         // keep the object so the gallery/report can say it was selected and why
         // it is not usable (TA-19).
         if (truth && truth.usable) {
-            // The truth track's OWN LOS residual: what a perfect answer scores
-            // against these rays. This is the real achievable floor, MEASURED
-            // rather than inferred — and it is nothing like the "generic
-            // reference" (params.errFloor), which is just a free
-            // constant-acceleration fit and can be many times worse than
-            // achievable (measured 0.58° where truth scores 0.051°). Quoting
-            // the generic reference makes a mediocre fit look respectable;
-            // where truth exists, quote truth instead.
+            // Measure the selected truth track against the observed rays.
+            // This reference can expose a poor generic constant-acceleration
+            // fit, but is not a lower bound: a candidate following measurement
+            // noise can score below the independently specified truth track.
             //
             // Only meaningful if the truth track covers essentially the whole
             // analysis window — a partially-overlapping truth would contribute
@@ -2539,7 +2541,7 @@ async function runTraverseAnalysisWithCurrentAngles() {
             validFrac /= Math.max(1, dataset.n);
             // Average the truth track's own residual over ONLY its valid frames —
             // the up-to-1% held/clamped frames outside its coverage are not part
-            // of what a perfect answer scores.
+            // of the reference comparison.
             const truthResidualDeg = validFrac > 0.99
                 ? meanAngularError(dataset, truth.track, truth.valid) * 180 / Math.PI
                 : NaN;
@@ -3118,7 +3120,7 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
     // making its Low tier inexplicable. The generic reference remains context,
     // never a substitute or a noise estimate.
     const losErr = formatRawLosResidual(h);
-    const errLabel = (h.params && (h.params.object || h.params.satellite)) ? "LOS offset" : "LOS error";
+    const errLabel = (h.params && (h.params.object || h.params.satellite)) ? "Mean LOS offset" : "Mean LOS error";
     const stats = [
         // slant range over the clip, not an uncertainty interval — label it so
         ["Slant range (min–max)", `${nm1(m.range.min)}–${nm1(m.range.max)} NM`],
@@ -3130,6 +3132,7 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
         ["Max g-Force", `${m.gLoad.max.toFixed(2)} g`
             + (Number.isFinite(truthMaxG) ? ` · Truth=${truthMaxG.toFixed(2)}g` : "")],
         [errLabel, losErr],
+        ["LOS error explained", losResidualExplanation(h)],
     ];
     // HOW ORDINARY IS THIS? Disclosure only — it does not move the ranking (see
     // TraverseMundaneness.js). Reported as the nearest real object class and how
@@ -3139,7 +3142,8 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
     const mund = mundanenessCost(dataset, h);
     if (mund) {
         const summary = mundanenessSummary(mund);
-        stats.push(["Ordinariness", `${mund.total.toFixed(2)} — ${summary}`]);
+        stats.push(["Physical compatibility", summary]);
+        stats.push(["Physical compatibility details", physicalCompatibilityDetails(mund)]);
         // The implied physical size is the part a reader can sanity-check by eye
         // against the video, so show it whenever the file carried an angular
         // measurement at all.
@@ -3308,6 +3312,9 @@ function meanLOSDirection(dataset) {
 
 function hypothesisVolumeScene(dataset, hyp, opts = {}) {
     const {n, S, D} = dataset;
+    const peakLabels = (track, metrics) => accelerationPeaks(metrics, dataset.fps)
+        .filter(({frame}) => frame >= 0 && frame < n)
+        .map(({frame, value}) => ({pos: graphPoint(track, frame), value}));
     // Real terrain floor (frozen at analysis time; ~0 for older cached
     // results and over ocean, reproducing the old altitude-0 plane).
     const groundLevel = toBigUnits(dataset.groundLevelM ?? 0);
@@ -3449,11 +3456,12 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
             }
         }
         series.push({type: "line", pts: trackPts, color: hyp.color, width: opts.compact ? 2.2 : 2.8,
-            startDot: true, endRing: true});
+            startDot: true, endRing: true, peaks: peakLabels(hyp.track, hyp.metricsFull),
+            cameraPath: true, frameCount: n, positionAt: f => graphPoint(hyp.track, f)});
     }
 
     series.push({type: "line", pts: sensorPts, color: VIZ.sensor, width: opts.compact ? 1.8 : 2.4,
-        startDot: true, endRing: false});
+        startDot: true, endRing: false, peaks: peakLabels(S, opts.sensorMetrics)});
 
     // Ground-truth reference track (dashed, fixed truth color). Only frames
     // inside the truth track's own time span are drawn; validity is a
@@ -3476,7 +3484,10 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
         if (truthPts.length > 1) {
             series.push({type: "line", pts: truthPts, color: VIZ.truth,
                 width: opts.compact ? 1.8 : 2.2, dash: [6, 4],
-                startDot: true, endRing: true});
+                startDot: true, endRing: true, role: "truth",
+                peaks: peakLabels(opts.truth.track, opts.truthMetrics),
+                cameraPath: true, frameCount: n,
+                positionAt: f => !tv || tv[f] === 1 ? graphPoint(opts.truth.track, f) : null});
         }
     }
 
@@ -3495,6 +3506,7 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
         zoomBounds: padZoomBounds(zb),
         groundZ: groundLevel,
         series,
+        camera: !hyp.atInfinity ? opts.camera : null,
         labels: {x: `East (${bigAb})`, y: `North (${bigAb})`, z: `Alt (${smallAb})`},
         // Altitude ticks are chosen and shown in the SMALL unit (nice values
         // like 5,000 ft), while the geometry stays in big units — Chart3D
@@ -3950,6 +3962,20 @@ const ZOOM_BUTTON_HTML =
     `stroke-linecap="round" aria-hidden="true">` +
     `<circle cx="10.5" cy="10.5" r="6.6"/><path d="M15.4 15.4 21 21"/></svg></button>`;
 
+const CHART_OVERLAY_BUTTONS_HTML =
+    `<button class="tg-chart-toggle tg-chart-truth on" type="button" aria-pressed="true" ` +
+    `aria-label="Hide truth track in all graphs" title="Hide truth track in all graphs. This does not change ranking.">T</button>` +
+    `<button class="tg-chart-toggle tg-chart-peaks" type="button" aria-pressed="false" ` +
+    `aria-label="Show acceleration peaks in all graphs" title="Show up to three separated acceleration peaks per path, in g.">g</button>` +
+    `<button class="tg-chart-toggle tg-chart-camera" type="button" aria-pressed="false" ` +
+    `aria-label="View tracks from the camera">` +
+    `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">` +
+    `<g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">` +
+    `<rect x="1.5" y="4" width="8.5" height="8" rx="1.5"/>` +
+    `<path d="M10 6.2 L14.5 3.8 V12.2 L10 9.8 Z"/></g></svg></button>` +
+    `<div class="tg-camera-scrub" hidden><input class="tg-camera-frame" type="range" min="0" step="1" ` +
+    `aria-label="Camera view frame"><output class="tg-camera-time"></output></div>`;
+
 // Full Details-pane HTML for one selected hypothesis: big plan view, headline
 // stats, a plain-English verdict, then progressively deeper explanation
 // (how the numbers were derived, what constrains it, where it sits in the
@@ -4051,11 +4077,26 @@ function windProfileComparisonHTML(h) {
         + evidenceHTML;
 }
 
-function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = false) {
+function rankingTextHTML(text, h, r) {
+    const escaped = escapeHtml(text);
+    if (!/BOT Score/.test(text)) return escaped;
+    const tooltip = escapeHtml(botScoreTooltip(h, r));
+    return escaped.replace(/BOT Score/g, (label) =>
+        `<span class="tg-score-help" title="${tooltip}">${label}</span>`);
+}
+
+function placementHTML(placement, h, r) {
+    return `<div class="tg-placement"><strong>${rankingTextHTML(placement.label, h, r)}</strong>`
+        + `<div>${rankingTextHTML(placement.text, h, r)}</div></div>`;
+}
+
+function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = false, placement = null) {
     const {ss} = ctx;
     const stats = hypothesisStats(h, ctx?.dataset, ctx?.truthMaxG);
-    const statsHTML = stats.map(([k, v, html]) =>
-        `<div class="tg-d-st"><div class="tg-d-stk">${escapeHtml(k)}</div>` +
+    const compatibilityDetail = stats.find(([k]) => k === "Physical compatibility details")?.[1];
+    const losDetail = stats.find(([k]) => k === "LOS error explained")?.[1];
+    const statsHTML = stats.filter(([k]) => k !== "Physical compatibility details" && k !== "LOS error explained").map(([k, v, html]) =>
+        `<div class="tg-d-st${k === "Physical compatibility" ? " tg-st-wide" : ""}"><div class="tg-d-stk">${escapeHtml(k)}</div>` +
         `<div class="tg-d-stv">${html ?? escapeHtml(v)}</div></div>`).join("");
 
     const prose = detailProse(h, r, ss);
@@ -4079,6 +4120,7 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
         </div>` : "";
 
     return `
+        ${placement ? placementHTML(placement, h, r) : ""}
         <div class="tg-chart-shell tg-d-chart-shell">
             <canvas class="tg-d-chart tg-chart-3d" data-chart-role="detail" role="img"
                 title="Drag to rotate"
@@ -4086,6 +4128,7 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
             <button class="tg-chart-fullscreen" type="button" title="Fullscreen graph"
                 aria-label="Fullscreen graph">⛶</button>
             ${ZOOM_BUTTON_HTML}
+            ${CHART_OVERLAY_BUTTONS_HTML}
         </div>
         <div class="tg-d-head">
             <span class="tg-d-name">${escapeHtml(h.name)}</span>
@@ -4094,7 +4137,9 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
         <div class="tg-d-sub">${escapeHtml(h.subtitle || "")}</div>
         <div class="tg-d-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}${escapeHtml(coText)}</div>
         <div class="tg-d-metrics">${statsHTML}</div>
-        <div class="tg-d-rank"><strong>Why it is screened and ordered here:</strong> ${escapeHtml(rankingExplanation(h, r, {useTruth: ctx.useTruth !== false}))}</div>
+        ${losDetail ? `<details class="tg-d-rank"><summary>What the LOS error means</summary>${escapeHtml(losDetail)}</details>` : ""}
+        ${compatibilityDetail ? `<details class="tg-d-rank"><summary>Physical compatibility: limits and exclusions</summary>${escapeHtml(compatibilityDetail)}</details>` : ""}
+        <details class="tg-d-rank"><summary>Screening details and score calculation</summary>${rankingTextHTML(rankingExplanation(h, r, {useTruth: ctx.useTruth !== false, scoreBreakdown: true}), h, r)}</details>
         <p class="tg-d-lead">${escapeHtml(prose.lead)}</p>
         ${seriesHTML}
         ${h.key === "lantern" ? windProfileComparisonHTML(h) : ""}
@@ -4153,8 +4198,8 @@ function familyDetailHTML(h) {
 
 /**
  * Build and show the full-screen interactive result gallery for a completed
- * analysis. Removable via the X, the Close button, Escape, or a click on the
- * dark backdrop. Does not leak listeners.
+ * analysis. Removable via the fixed X, the Close button, or Escape.
+ * Background clicks leave the gallery open. Does not leak listeners.
  */
 /**
  * @param results the analysis results
@@ -4190,6 +4235,29 @@ function showResultGallery(results, uiState = null) {
         ? trackMetricsForValidRun(dataset, results.truth.track, results.truth.valid)
         : null;
     const truthMaxG = Number.isFinite(truthMetrics?.gLoad?.max) ? truthMetrics.gLoad.max : null;
+    const sensorMetrics = trackMetrics(dataset, dataset.S);
+    // Only a live scene has its camera pose. A bulk result must never borrow
+    // the unrelated camera in the scene behind its gallery.
+    const cameraLOS = !applyDisabledReason && Number.isFinite(results.originLat) && Number.isFinite(results.originLon)
+        ? NodeMan.get("JetLOSCameraCenter", false) : null;
+    let sampledCameraFrame = -1, sampledCameraPose = null;
+    const camera = cameraLOS ? {
+        frameCount: dataset.n,
+        poseAt(frame) {
+            if (frame === sampledCameraFrame) return sampledCameraPose;
+            sampledCameraFrame = frame;
+            sampledCameraPose = null;
+            try {
+                const pose = sampleAnalysisCameraPose(cameraLOS, (dataset.frame0 ?? 0) + frame,
+                    results.originLat, results.originLon);
+                if (pose) sampledCameraPose = {...pose, position: pose.position.map(toBigUnits)};
+            } catch (e) {
+                console.warn("Camera pose unavailable for traverse graph", e);
+            }
+            return sampledCameraPose;
+        },
+    } : null;
+    const sceneOptions = {truth: results.truth, truthMetrics, sensorMetrics, camera};
 
     // One flat, best-first ordering. Each tile carries its category as a
     // coloured corner label rather than sitting under a section heading, so the
@@ -4221,6 +4289,14 @@ function showResultGallery(results, uiState = null) {
     tiles.push(...mainTiles, ...extraTiles);
     // First index of the demoted sweep tiles; tiles.length when there are none.
     const extrasStart = mainTiles.length;
+    const placements = tiles.map((tile, i) => {
+        if (i >= extrasStart) {
+            const best = mainTiles.find((t) => t.h.key === tile.h.key);
+            const why = rankingPlacementExplanation(tile, best, {useTruth});
+            return {...why, label: "Extra polynomial order", text: `Only the best-ranked order for each strategy appears in the main list. ${why.text}`};
+        }
+        return rankingPlacementExplanation(tile, mainTiles[i === 0 ? 1 : i - 1], {useTruth, first: i === 0});
+    });
 
     const overlay = document.createElement("div");
     overlay.className = "traverse-gallery-overlay";
@@ -4258,6 +4334,12 @@ function showResultGallery(results, uiState = null) {
     // (each to its own zoomBounds), like Sync Orientation / Sync Scale. New
     // charts (detail/tile/fullscreen) adopt it on creation.
     let groupZoomed = false;
+    let showTruthTrack = uiState?.showTruthTrack ?? true;
+    let showGPeaks = uiState?.showGPeaks ?? false;
+    let showCamera = uiState?.showCamera ?? false;
+    let cameraFrame = Math.max(0, Math.min(dataset.n - 1,
+        uiState?.cameraFrame ?? ((par.frame ?? 0) - (dataset.frame0 ?? 0))));
+    let cameraScrubRAF = 0;
 
     const currentChart = () => detailChart || (selected >= 0 ? tileCharts[selected] : null);
 
@@ -4310,6 +4392,9 @@ function showResultGallery(results, uiState = null) {
         liveCharts.add(chart);
         chartByCanvas.set(chart.canvas, chart);
         if (resizeObserver) resizeObserver.observe(chart.canvas);
+        chart.setCameraView(showCamera, cameraFrame);
+        chart.setOverlays({showTruth: showTruthTrack, showPeaks: showGPeaks});
+        syncOverlayButtons(chart);
         return chart;
     }
 
@@ -4328,10 +4413,54 @@ function showResultGallery(results, uiState = null) {
         const btn = shell ? shell.querySelector(".tg-chart-zoom") : null;
         if (!btn) return;
         if (!chart.scene.zoomBounds) { btn.style.display = "none"; return; }
+        btn.disabled = chart.cameraView;
         btn.classList.toggle("on", chart.zoomed);
-        btn.title = chart.zoomed ? ZOOM_TITLE_ON : ZOOM_TITLE_OFF;
+        btn.title = chart.cameraView ? "Camera view is already fitted to the tracks"
+            : chart.zoomed ? ZOOM_TITLE_ON : ZOOM_TITLE_OFF;
         btn.setAttribute("aria-label", btn.title);
         btn.setAttribute("aria-pressed", chart.zoomed ? "true" : "false");
+    }
+
+    function syncOverlayButtons(chart) {
+        const shell = chart.canvas.closest(".tg-chart-shell, .tg-chart-fullscreen-shell");
+        const truthBtn = shell?.querySelector(".tg-chart-truth");
+        const peaksBtn = shell?.querySelector(".tg-chart-peaks");
+        const cameraBtn = shell?.querySelector(".tg-chart-camera");
+        if (truthBtn) {
+            truthBtn.disabled = !chart.scene.series.some(s => s.role === "truth");
+            truthBtn.classList.toggle("on", showTruthTrack && !truthBtn.disabled);
+            truthBtn.setAttribute("aria-pressed", String(showTruthTrack && !truthBtn.disabled));
+            truthBtn.title = truthBtn.disabled ? "No truth track available in this graph."
+                : `${showTruthTrack ? "Hide" : "Show"} truth track in all graphs. This does not change ranking.`;
+            truthBtn.setAttribute("aria-label", truthBtn.title);
+        }
+        if (peaksBtn) {
+            peaksBtn.classList.toggle("on", showGPeaks);
+            peaksBtn.setAttribute("aria-pressed", String(showGPeaks));
+            peaksBtn.title = `${showGPeaks ? "Hide" : "Show"} acceleration peaks in all graphs. `
+                + "Up to three separated peaks per path, using the smoothed Max g-Force values.";
+            peaksBtn.setAttribute("aria-label", peaksBtn.title);
+        }
+        if (cameraBtn) {
+            cameraBtn.disabled = !chart.scene.camera;
+            cameraBtn.classList.toggle("on", chart.cameraView);
+            cameraBtn.setAttribute("aria-pressed", String(chart.cameraView));
+            cameraBtn.title = cameraBtn.disabled ? "Camera view needs a finite track and this scene's camera pose."
+                : chart.cameraView ? "Return to the rotatable 3D graph"
+                    : "View tracks from the camera's exact position, heading and roll, magnified to fit. Scrub to move the camera and track points.";
+            cameraBtn.setAttribute("aria-label", cameraBtn.title);
+        }
+        const scrub = shell?.querySelector(".tg-camera-scrub");
+        if (scrub) {
+            scrub.hidden = !chart.cameraView;
+            const slider = scrub.querySelector("input");
+            slider.max = String(dataset.n - 1);
+            slider.value = String(cameraFrame);
+            const frameText = `Frame ${(dataset.frame0 ?? 0) + cameraFrame} · ${(cameraFrame / dataset.fps).toFixed(1)} s`;
+            slider.setAttribute("aria-valuetext", frameText);
+            scrub.querySelector("output").textContent = frameText;
+        }
+        syncZoomButton(chart);
     }
 
     function disposeDetailChart() {
@@ -4360,6 +4489,8 @@ function showResultGallery(results, uiState = null) {
     }
 
     function disposeAllCharts() {
+        if (cameraScrubRAF) cancelAnimationFrame(cameraScrubRAF);
+        cameraScrubRAF = 0;
         closeChartFullscreen();
         if (resizeObserver) resizeObserver.disconnect();
         resizeObserver = null;
@@ -4408,12 +4539,10 @@ function showResultGallery(results, uiState = null) {
     };
     document.addEventListener("keydown", onKey, true);
 
-    // Dedicated backdrop element BEHIND the scrolling panel: clicking the dark
-    // area closes, but the panel (which owns the scrollbar) is on top, so
-    // grabbing the scrollbar never closes the gallery.
+    // Keep background clicks inside the modal without dismissing the results.
+    // Closing requires an explicit close control or Escape.
     const backdrop = document.createElement("div");
     backdrop.className = "tg-backdrop";
-    backdrop.addEventListener("click", remove);
     overlay.appendChild(backdrop);
 
     const style = document.createElement("style");
@@ -4432,9 +4561,12 @@ function showResultGallery(results, uiState = null) {
         .traverse-gallery-overlay .tg-titlerow { display:flex; align-items:center; justify-content:space-between;
             gap:16px; flex:0 0 auto; }
         .traverse-gallery-overlay .tg-title { color:#e8eaed; font-size:21px; font-weight:700; }
-        .traverse-gallery-overlay .tg-x { background:none; border:none; color:#b9bfc7; font-size:26px;
-            line-height:1; cursor:pointer; padding:2px 9px; border-radius:6px; }
-        .traverse-gallery-overlay .tg-x:hover { color:#fff; background:rgba(255,255,255,0.08); }
+        .traverse-gallery-overlay .tg-x { position:fixed; top:8px; right:8px; z-index:10003;
+            width:36px; height:36px; display:grid; place-items:center; padding:0;
+            background:#171b20; border:1px solid #596575; color:#e8eaed; font-size:28px;
+            line-height:1; cursor:pointer; border-radius:6px; }
+        .traverse-gallery-overlay .tg-x:hover { color:#fff; background:#303945; }
+        .traverse-gallery-overlay .tg-x:focus-visible { outline:2px solid #7fb0ee; outline-offset:2px; }
         .traverse-gallery-overlay .tg-explain { color:#8a9099; font-size:13px; margin:6px 0 14px 0; max-width:100ch;
             flex:0 0 auto; }
         .traverse-gallery-overlay .tg-toolbar { flex:0 0 auto; display:flex; gap:10px; align-items:center;
@@ -4502,19 +4634,33 @@ function showResultGallery(results, uiState = null) {
         .traverse-gallery-overlay .tg-thumb { width:100%; height:100%; display:block; border-radius:7px;
             border:1px solid rgba(255,255,255,0.06); background:#0c0e11; }
         .traverse-gallery-overlay .tg-chart-fullscreen,
-        .traverse-gallery-overlay .tg-chart-zoom { position:absolute; top:8px; right:8px; z-index:3;
+        .traverse-gallery-overlay .tg-chart-zoom,
+        .traverse-gallery-overlay .tg-chart-toggle { position:absolute; top:8px; right:8px; z-index:3;
             width:30px; height:30px; display:grid; place-items:center; padding:0; border-radius:7px;
             border:1px solid rgba(255,255,255,0.28); background:rgba(7,10,14,0.72);
             color:#e8eaed; font-size:17px; line-height:1; cursor:pointer; }
         .traverse-gallery-overlay .tg-chart-fullscreen:hover,
-        .traverse-gallery-overlay .tg-chart-zoom:hover { background:rgba(57,135,229,0.88);
+        .traverse-gallery-overlay .tg-chart-zoom:hover,
+        .traverse-gallery-overlay .tg-chart-toggle:hover { background:rgba(57,135,229,0.88);
             border-color:#7fb0ee; color:#fff; }
         .traverse-gallery-overlay .tg-chart-zoom { top:44px; }
+        .traverse-gallery-overlay .tg-chart-truth { top:80px; }
+        .traverse-gallery-overlay .tg-chart-peaks { top:116px; }
+        .traverse-gallery-overlay .tg-chart-toggle { font-size:16px; font-weight:600; }
+        .traverse-gallery-overlay .tg-chart-camera { top:152px; }
+        .traverse-gallery-overlay .tg-chart-toggle:disabled { opacity:0.35; cursor:default; }
+        .traverse-gallery-overlay .tg-chart-zoom:disabled { opacity:0.35; cursor:default; }
+        .traverse-gallery-overlay .tg-camera-scrub { position:absolute; bottom:6px; left:10px; right:10px;
+            z-index:3; display:flex; flex-direction:column; gap:2px; background:rgba(12,14,17,0.9); }
+        .traverse-gallery-overlay .tg-camera-scrub[hidden] { display:none; }
+        .traverse-gallery-overlay .tg-camera-frame { width:100%; margin:0; accent-color:#3987e5; cursor:ew-resize; }
+        .traverse-gallery-overlay .tg-camera-time { color:#cddbec; font-size:10px; text-align:center; }
         .traverse-gallery-overlay .tg-chart-zoom svg { width:15px; height:15px; }
-        .traverse-gallery-overlay .tg-chart-zoom.on { background:rgba(57,135,229,0.55);
+        .traverse-gallery-overlay .tg-chart-zoom.on,
+        .traverse-gallery-overlay .tg-chart-toggle.on { background:rgba(57,135,229,0.55);
             border-color:#7fb0ee; color:#fff; }
         .traverse-gallery-overlay .tg-tile-h { display:flex; align-items:center; justify-content:space-between;
-            gap:8px; margin-top:10px; }
+            gap:8px; margin-top:2px; }
         .traverse-gallery-overlay .tg-name { font-weight:700; color:#e8eaed; font-size:15px; }
         .traverse-gallery-overlay .tg-badge { display:inline-block; padding:2px 10px; border-radius:999px;
             font-size:11px; font-weight:700; color:#0d0f12; white-space:nowrap; }
@@ -4523,6 +4669,15 @@ function showResultGallery(results, uiState = null) {
         .traverse-gallery-overlay .tg-order { color:#7fb0ee; font-size:11px; margin:-4px 0 8px; }
         .traverse-gallery-overlay .tg-rank-basis { color:#b8c0ca; font-size:11.5px; line-height:1.45;
             margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.07); }
+        .traverse-gallery-overlay .tg-placement { color:#cddbec; font-size:12px; line-height:1.45;
+            background:#1a2532; border-left:3px solid #5b9bd5; border-radius:4px;
+            padding:9px 10px; margin:0 0 10px; }
+        .traverse-gallery-overlay .tg-placement strong { display:block; color:#eef6ff; margin-bottom:4px; }
+        .traverse-gallery-overlay .tg-score-help { cursor:help; text-decoration:underline dotted;
+            text-underline-offset:3px; }
+        .traverse-gallery-overlay .tg-more { color:#b8c0ca; font-size:12px; margin-top:10px; }
+        .traverse-gallery-overlay .tg-more summary,
+        .traverse-gallery-overlay .tg-d-rank summary { cursor:pointer; font-weight:600; padding:4px 0; }
         .traverse-gallery-overlay .tg-ribbon { display:flex; gap:1px; margin:8px 0 2px; flex-wrap:wrap; }
         /* The letter is what makes the ribbon readable without hovering, so it
            has to stay legible on all four fills. White measures 2.1:1 on the
@@ -4536,8 +4691,9 @@ function showResultGallery(results, uiState = null) {
             text-shadow:0 0 2px rgba(0,0,0,.75), 0 1px 1px rgba(0,0,0,.55); }
         .traverse-gallery-overlay .tg-crit.na { border-style:dashed; color:#d6dade;
             text-shadow:none; }
-        .traverse-gallery-overlay .tg-stats { display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; }
+        .traverse-gallery-overlay .tg-stats { display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; margin-top:10px; }
         .traverse-gallery-overlay .tg-st { display:flex; flex-direction:column; }
+        .traverse-gallery-overlay .tg-st-wide { grid-column:1 / -1; }
         .traverse-gallery-overlay .tg-stk { font-size:10px; color:#8a9099; text-transform:uppercase;
             letter-spacing:0.04em; }
         .traverse-gallery-overlay .tg-stv { font-size:12.5px; color:#e8eaed; font-variant-numeric:tabular-nums;
@@ -4597,12 +4753,19 @@ function showResultGallery(results, uiState = null) {
         .traverse-gallery-overlay .tg-chart-fullscreen-canvas { width:100vw; height:100vh; display:block;
             background:#0c0e11; }
         .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-fullscreen {
-            top:14px; right:14px; width:40px; height:40px; font-size:23px; background:rgba(7,10,14,0.82);
+            top:58px; right:8px; width:40px; height:40px; font-size:23px; background:rgba(7,10,14,0.82);
         }
         .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-zoom {
-            top:62px; right:14px; width:40px; height:40px; background:rgba(7,10,14,0.82);
+            top:106px; right:8px; width:40px; height:40px; background:rgba(7,10,14,0.82);
         }
         .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-zoom svg { width:20px; height:20px; }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-toggle {
+            right:8px; width:40px; height:40px; font-size:20px;
+        }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-truth { top:154px; }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-peaks { top:202px; }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-camera { top:250px; }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-camera svg { width:20px; height:20px; }
     `;
     overlay.appendChild(style);
 
@@ -4618,11 +4781,12 @@ function showResultGallery(results, uiState = null) {
                 `<button class="tg-chart-fullscreen" type="button" title="Exit fullscreen graph" ` +
                 `aria-label="Exit fullscreen graph">⛶</button>` +
                 ZOOM_BUTTON_HTML +
+                CHART_OVERLAY_BUTTONS_HTML +
             `</div>`;
         overlay.appendChild(layer);
         const canvas = layer.querySelector("canvas");
         const chart = registerChart(new Chart3D(canvas, sourceChart.scene, chartGroup,
-            {pad: sourceChart.pad ?? 0.1, scaleBoost: sourceChart.scaleBoost}));
+            {pad: sourceChart.pad ?? 0.1, scaleBoost: sourceChart.scaleBoost, labelInsetRight: 56}));
         chart.localMatrix = sourceChart.localMatrix.slice();
         if (groupZoomed && chart.scene.zoomBounds) chart.setZoom(true);
         syncZoomButton(chart);
@@ -4655,7 +4819,7 @@ function showResultGallery(results, uiState = null) {
         const shell = btn.closest(".tg-chart-shell, .tg-chart-fullscreen-shell");
         const canvas = shell ? shell.querySelector("canvas.tg-chart-3d") : null;
         const chart = canvas ? chartByCanvas.get(canvas) : null;
-        if (!chart || !chart.scene.zoomBounds) return;
+        if (!chart || !chart.scene.zoomBounds || chart.cameraView) return;
         // Toggle EVERY graph together (each to its own zoomBounds), so the
         // magnifier is a single "show tracks / show full volume" for the set.
         groupZoomed = !chart.zoomed;
@@ -4664,6 +4828,39 @@ function showResultGallery(results, uiState = null) {
             syncZoomButton(c);
         }
     }, true);
+
+    overlay.addEventListener("click", (e) => {
+        const btn = e.target.closest(".tg-chart-toggle");
+        if (!btn || !overlay.contains(btn) || btn.disabled) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (btn.classList.contains("tg-chart-truth")) showTruthTrack = !showTruthTrack;
+        else if (btn.classList.contains("tg-chart-peaks")) showGPeaks = !showGPeaks;
+        else showCamera = !showCamera;
+        for (const chart of liveCharts) {
+            chart.setCameraView(showCamera, cameraFrame);
+            chart.setOverlays({showTruth: showTruthTrack, showPeaks: showGPeaks});
+            syncOverlayButtons(chart);
+        }
+        updateTruthNote();
+    }, true);
+
+    overlay.addEventListener("click", (e) => {
+        if (e.target.closest(".tg-camera-scrub")) e.stopPropagation();
+    }, true);
+    overlay.addEventListener("input", (e) => {
+        if (!e.target.matches(".tg-camera-frame")) return;
+        e.stopPropagation();
+        cameraFrame = Math.max(0, Math.min(dataset.n - 1, Math.round(Number(e.target.value))));
+        if (cameraScrubRAF) return;
+        cameraScrubRAF = requestAnimationFrame(() => {
+            cameraScrubRAF = 0;
+            for (const chart of liveCharts) {
+                chart.setCameraView(showCamera, cameraFrame);
+                syncOverlayButtons(chart);
+            }
+        });
+    });
 
     const panel = document.createElement("div");
     panel.className = "tg-panel";
@@ -4690,7 +4887,18 @@ function showResultGallery(results, uiState = null) {
     detailsCol.className = "tg-details";
     body.appendChild(detailsCol);
 
-    // title row + close X
+    // The close X belongs to the overlay, outside both scrolling columns, so
+    // it stays at the screen corner even when a chart is fullscreen.
+    const xBtn = document.createElement("button");
+    xBtn.className = "tg-x";
+    xBtn.type = "button";
+    xBtn.textContent = "×";
+    xBtn.title = "Close traverse analysis";
+    xBtn.setAttribute("aria-label", "Close traverse analysis");
+    xBtn.addEventListener("click", remove);
+    overlay.appendChild(xBtn);
+
+    // Scrollable title row.
     const titleRow = document.createElement("div");
     titleRow.className = "tg-titlerow";
     const title = document.createElement("div");
@@ -4700,25 +4908,15 @@ function showResultGallery(results, uiState = null) {
     // to be open. The live path sets manifest.situation to Sit.name, so this
     // changes nothing there.
     title.textContent = `Traverse Analysis — ${results?.manifest?.situation ?? Sit.name ?? "unnamed sitch"}`;
-    const xBtn = document.createElement("button");
-    xBtn.className = "tg-x";
-    xBtn.textContent = "×";
-    xBtn.title = "Close";
-    xBtn.addEventListener("click", remove);
     titleRow.appendChild(title);
-    titleRow.appendChild(xBtn);
     tilesHead.appendChild(titleRow);
 
     // one-line explainer
     const explain = document.createElement("div");
     explain.className = "tg-explain";
-    explain.textContent = "Candidates are shown in one flat, best-first screening order, each labelled with the " +
-        "question it answers (physically based, LOS constrained, geometric, geometric approximation, known object). " +
-        "This is a screening order, not a calibrated 'most likely object' probability: it is decided by keys that ARE " +
-        "comparable across categories — screen pass, completeness, broad-screen tier — before any within-category " +
-        "score that is not, with category priority only breaking otherwise-equal ties. Each tile also shows its rank " +
-        "within its own category; open a tile for the exact rank basis. Repeated polynomial-order sweep fits sit " +
-        "below the Extras separator at the end — only each strategy's best-ranked order appears in the main list.";
+    explain.textContent = useTruth
+        ? "Ordered by search completion, then distance from truth. Each card names the deciding comparison."
+        : "Screening order, not object probabilities. Each card explains its placement; joint leaders share the same screening results.";
     tilesHead.appendChild(explain);
 
     const filtering = document.createElement("details");
@@ -4738,24 +4936,23 @@ function showResultGallery(results, uiState = null) {
     tilesHead.appendChild(filtering);
 
     // Truth-mode banner: ordering is by separation from the reference track
-    if (results.truth) {
-        const truthNote = document.createElement("div");
-        truthNote.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
-            "background:#3a1e2e; color:#f4a6cd; border:1px solid #7a3b5c; font-size:13px;";
+    let truthNote = null;
+    function updateTruthNote() {
+        if (!truthNote) return;
+        const visibility = showTruthTrack ? "Pink dashed line = truth." : "Truth path hidden (T).";
         truthNote.textContent = results.truth.usable
             ? (useTruth
-                ? `Truth track "${results.truth.label}" APPLIED — comparable candidates are `
-                  + "GLOBALLY ordered with complete fits first, then by mean 3D separation from it (across categories, not within), and each rank basis "
-                  + "reports where they agree or diverge (location, altitude, speed, heading). The truth track is the dashed "
-                  + "pink line in the 3D graphs."
-                : `Truth track "${results.truth.label}" is selected but NOT applied — candidates are in the `
-                  + "ordinary screening order and no rank basis uses it, so this is what the analysis concludes "
-                  + "on its own. Each tile still reports its Truth Δ, and the truth track is the dashed pink line "
-                  + "in the 3D graphs. Press \"Use Truth Track\" to re-order and re-word this page by separation "
-                  + "from it — no re-analysis, the comparisons are already computed.")
+                ? `Truth ranking ON — "${results.truth.label}". Complete searches first, then smallest mean 3D distance. ${visibility}`
+                : `Truth ranking OFF — "${results.truth.label}" is for comparison only. ${visibility} Press "Use Truth Track" to rank by distance from it.`)
             : `Truth track "${results.truth.label}" is selected but overlaps only `
               + `${results.truth.validCount || 0} frame(s) of this A-B window, so truth ordering is OFF — candidates `
               + "are shown in the ordinary screening order. Adjust the A-B range or pick a truth track that covers it.";
+    }
+    if (results.truth) {
+        truthNote = document.createElement("div");
+        truthNote.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
+            "background:#3a1e2e; color:#f4a6cd; border:1px solid #7a3b5c; font-size:13px;";
+        updateTruthNote();
         tilesHead.appendChild(truthNote);
     }
 
@@ -5027,7 +5224,7 @@ function showResultGallery(results, uiState = null) {
         // re-showing from here would pop it back open — so a gallery that is
         // already gone stays gone. Two distinct ways it goes away, and both
         // must be checked:
-        //   removed          — the reader closed it (×, Close, backdrop,
+        //   removed          — the reader closed it (×, Close,
         //                      Escape). Those paths call remove() directly
         //                      rather than going through queueAnimation.
         //   !overlay.isConnected — it was detached WITHOUT remove() (a stray
@@ -5052,6 +5249,8 @@ function showResultGallery(results, uiState = null) {
         }
         const carried = {
             useTruth: on,
+            showTruthTrack, showGPeaks,
+            showCamera, cameraFrame,
             dismissed: new Set(Array.from(dismissed, (i) => tiles[i].h)),
             selected: selected >= 0 ? tiles[selected].h : null,
         };
@@ -5090,12 +5289,12 @@ function showResultGallery(results, uiState = null) {
         tileEls.forEach((el, k) => el.classList.toggle("selected", k === i));
         const {h, r, category, groupIndex, groupSize, tied} = tiles[i];
         disposeDetailChart();
-        dContent.innerHTML = buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied);
+        dContent.innerHTML = buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied, placements[i]);
         const detailCanvas = dContent.querySelector("canvas[data-chart-role='detail']");
         if (detailCanvas) {
             detailChart = registerChart(new Chart3D(detailCanvas,
-                hypothesisVolumeScene(dataset, h, {truth: results.truth}),
-                chartGroup, {pad: 0.13}));
+                hypothesisVolumeScene(dataset, h, sceneOptions),
+                chartGroup, {pad: 0.13, labelInsetRight: 44}));
             if (chartGroup.syncScale) applySyncScale(true);
             if (groupZoomed && detailChart.scene.zoomBounds) detailChart.setZoom(true);
             syncZoomButton(detailChart);
@@ -5430,9 +5629,18 @@ function showResultGallery(results, uiState = null) {
         const badges = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r), ...windEvidenceBadges(h)];
         const badgesHTML = badges.map((badge) =>
             `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
-        const statsHTML = hypothesisStats(h, dataset, truthMaxG).map(([k, v, html]) =>
-            `<div class="tg-st"><div class="tg-stk">${escapeHtml(k)}</div>` +
-            `<div class="tg-stv">${html ?? escapeHtml(v)}</div></div>`).join("");
+        const stats = hypothesisStats(h, dataset, truthMaxG);
+        const statHTML = ([k, v, html]) =>
+            `<div class="tg-st${k.startsWith("Physical compatibility") || k === "LOS error explained" ? " tg-st-wide" : ""}"><div class="tg-stk">${escapeHtml(k)}</div>` +
+            `<div class="tg-stv">${html ?? escapeHtml(v)}</div></div>`;
+        const primary = ([k]) => k.startsWith("Slant range") || k.includes("speed (mean")
+            || k === "Mean LOS error" || k === "Mean LOS offset" || k === "Max g-Force"
+            || k === "Physical compatibility"
+            || (useTruth && k === "Truth Δ (mean 3D)");
+        const explanation = ([k]) => k === "LOS error explained" || k === "Physical compatibility details";
+        const statsHTML = stats.filter(primary).map(statHTML).join("");
+        const moreStatsHTML = stats.filter((row) => !primary(row) && !explanation(row)).map(statHTML).join("");
+        const explanationsHTML = stats.filter(explanation).map(statHTML).join("");
         const tieText = tied ? " · display-score tie" : "";
 
         const tile = document.createElement("div");
@@ -5440,6 +5648,13 @@ function showResultGallery(results, uiState = null) {
         tile.innerHTML =
             `<div class="tg-cat" style="color:${category.color}" title="${escapeHtml(category.description)}">` +
                 `${escapeHtml(category.label)}</div>` +
+            `<div class="tg-tile-h">` +
+                `<span class="tg-name">${escapeHtml(h.name)}</span>` +
+                `<span class="tg-badges">${badgesHTML}</span>` +
+            `</div>` +
+            `<div class="tg-sub">${escapeHtml(h.subtitle)}</div>` +
+            `<div class="tg-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>` +
+            placementHTML(placements[i], h, r) +
             `<div class="tg-chart-shell tg-thumb-shell">` +
                 `<button class="tg-tile-dismiss" type="button" title="Set aside — exclude from consideration" ` +
                 `aria-label="Set aside ${escapeHtml(h.name)}">✕</button>` +
@@ -5448,17 +5663,17 @@ function showResultGallery(results, uiState = null) {
                 `<button class="tg-chart-fullscreen" type="button" title="Fullscreen graph" ` +
                 `aria-label="Fullscreen graph">⛶</button>` +
                 ZOOM_BUTTON_HTML +
+                CHART_OVERLAY_BUTTONS_HTML +
             `</div>` +
-            `<div class="tg-tile-h">` +
-                `<span class="tg-name">${escapeHtml(h.name)}</span>` +
-                `<span class="tg-badges">${badgesHTML}</span>` +
-            `</div>` +
-            `<div class="tg-sub">${escapeHtml(h.subtitle)}</div>` +
-            `<div class="tg-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>` +
-            criteriaRibbonHTML(h, r, {dataset, useTruth}) +
             `<div class="tg-stats">${statsHTML}</div>` +
-            `<div class="tg-rank-basis"><strong>Rank basis:</strong> ${escapeHtml(rankingExplanation(h, r, {useTruth}))}</div>`;
+            criteriaRibbonHTML(h, r, {dataset, useTruth}) +
+            `<div class="tg-stats">${moreStatsHTML}</div>` +
+            `<details class="tg-more"><summary>Explanations and BOT Score calculation</summary>` +
+                `<div class="tg-stats">${explanationsHTML}</div>` +
+                `<div class="tg-rank-basis"><strong>Screening and score:</strong> ${rankingTextHTML(rankingExplanation(h, r, {useTruth, scoreBreakdown: true}), h, r)}</div>` +
+            `</details>`;
         tile.addEventListener("click", () => selectTile(i));
+        tile.querySelector(".tg-more").addEventListener("click", (ev) => ev.stopPropagation());
         // stopPropagation so setting a tile aside doesn't also select it
         tile.querySelector(".tg-tile-dismiss").addEventListener("click", (ev) => {
             ev.stopPropagation();
@@ -5541,8 +5756,8 @@ function showResultGallery(results, uiState = null) {
     for (const {canvas, h, i} of pendingTileCharts) {
         if (!canvas) continue;
         tileCharts[i] = registerChart(new Chart3D(canvas,
-            hypothesisVolumeScene(dataset, h, {compact: true, truth: results.truth}),
-            chartGroup, {pad: 0.14}));
+            hypothesisVolumeScene(dataset, h, {compact: true, ...sceneOptions}),
+            chartGroup, {pad: 0.14, labelInsetRight: 44}));
         if (groupZoomed && tileCharts[i].scene.zoomBounds) tileCharts[i].setZoom(true);
         syncZoomButton(tileCharts[i]);
     }
@@ -6471,7 +6686,7 @@ function buildReportHypothesisDetails(dataset, rankedHyps, ss, truthMaxG = null)
             </div>
             <div class="solution-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>
             <div class="solution-metrics">${statsHTML}</div>
-            <p class="rank-basis"><strong>Why it is screened and ordered here:</strong> ${escapeHtml(rankingExplanation(h, r))}</p>
+            <p class="rank-basis"><strong>Rank basis without truth:</strong> ${rankingTextHTML(rankingExplanation(h, r, {useTruth: false}), h, r)}</p>
             <p class="solution-lead">${escapeHtml(prose.lead)}</p>
             <h4>How these numbers were derived</h4>
             <p>${prose.derived}</p>
@@ -6483,7 +6698,30 @@ function buildReportHypothesisDetails(dataset, rankedHyps, ss, truthMaxG = null)
     }).join("");
 }
 
-// Truth-mode executive summary: completed methods first, then ranked by mean 3D
+// The report always presents the screening order first, even when hypotheses
+// carry truth comparisons. Keep the numeric reference out of this table.
+function buildScreeningSummaryHTML(rankedHyps) {
+    const rows = rankedHyps.map((item, i) => {
+        const {h, r, category} = item;
+        const peer = rankedHyps[i === 0 ? 1 : i - 1];
+        const why = rankingPlacementExplanation(item, peer, {useTruth: false, first: i === 0});
+        const angular = r.kind === "identity" || r.kind === "directional-geometry";
+        const score = Number.isFinite(r.secondaryScore)
+            ? `${r.secondaryScore.toFixed(3)}${angular ? "°" : ""}` : "—";
+        return `<tr${r.coLeader || i === 0 ? ' class="best"' : ""}>`
+            + `<td>${i + 1}</td><td>${escapeHtml(h.name)}${r.coLeader ? ' <span class="pill" style="background:#3c6d9e">Co-leader</span>' : ""}</td>`
+            + `<td>${escapeHtml(category.shortLabel)}</td>`
+            + `<td><span class="pill" style="background:${r.color}">${escapeHtml(r.label)}</span></td>`
+            + `<td>${r.incomplete ? "Incomplete" : "Complete"}</td>`
+            + `<td>${score}</td><td>${rankingTextHTML(why.text, h, r)}</td></tr>`;
+    }).join("");
+    return `<div class="tablebox"><table class="screeningtab">`
+        + `<thead><tr><th>#</th><th>Interpretation</th><th>Method group</th><th>Screen</th>`
+        + `<th>Search</th><th>Score</th><th>Why this order</th></tr></thead>`
+        + `<tbody>${rows}</tbody></table></div>`;
+}
+
+// Truth-mode comparison: completed methods first, then ranked by mean 3D
 // separation from the truth track, with the per-aspect deltas the rank bases cite.
 // Cross-group ordering is deliberate here — all methods are measured against
 // the same external reference with the same metric.
@@ -6491,13 +6729,12 @@ function buildTruthSummaryHTML(rankedHyps, truth) {
     // Report cards stay grouped for explanation, but this executive table is a
     // genuinely cross-group comparison. Reapply the flat shared comparator so
     // its completeness-before-truth order is preserved across category edges.
-    const globallyRanked = rankAllHypotheses(rankedHyps.map((item) => item.h));
+    const globallyRanked = rankAllHypotheses(rankedHyps.map((item) => item.h), {useTruth: true});
     const comparable = globallyRanked
         .filter((item) => item.h.truthComparison?.comparable);
-    const notComparable = globallyRanked.filter((item) => item.h.truthComparison
-        && !item.h.truthComparison.comparable);
+    const notComparable = globallyRanked.filter((item) => !item.h.truthComparison?.comparable);
 
-    const rows = comparable.map(({h, category}, i) => {
+    const rows = comparable.map(({h, r, category}, i) => {
         const tc = h.truthComparison;
         const altSide = Math.abs(tc.altitude.meanSigned) > 0.5 * tc.altitude.meanAbs
             ? (tc.altitude.meanSigned > 0 ? " ↑" : " ↓") : "";
@@ -6506,6 +6743,7 @@ function buildTruthSummaryHTML(rankedHyps, truth) {
             <td>${i + 1}</td>
             <td>${escapeHtml(h.name)}</td>
             <td>${escapeHtml(category.shortLabel)}</td>
+            <td>${r.incomplete ? "Incomplete" : "Complete"}</td>
             <td>${escapeHtml(fmtSepMeters(tc.sep3D.mean))}</td>
             <td>${escapeHtml(fmtSepMeters(tc.sep3D.max))}</td>
             <td>${escapeHtml(fmtSepMeters(tc.horizontal.mean))}</td>
@@ -6517,7 +6755,7 @@ function buildTruthSummaryHTML(rankedHyps, truth) {
 
     const notCompHTML = notComparable.length
         ? `<p class="sub">Not comparable against the truth track: ${notComparable.map(({h}) =>
-            `${escapeHtml(h.name)} (${escapeHtml(h.truthComparison.note || "insufficient overlap")})`).join("; ")}.</p>`
+            `${escapeHtml(h.name)} (${escapeHtml(h.truthComparison?.note || "no comparable reference")})`).join("; ")}.</p>`
         : "";
 
     return `
@@ -6525,7 +6763,7 @@ function buildTruthSummaryHTML(rankedHyps, truth) {
     <div class="tablebox">
     <table class="truthtab">
         <thead><tr>
-            <th>#</th><th>Interpretation</th><th>Group</th>
+            <th>#</th><th>Interpretation</th><th>Group</th><th>Search</th>
             <th>Mean 3D sep</th><th>Max sep</th><th>Horiz offset</th>
             <th>Alt Δ</th><th>Speed Δ (kt)</th><th>Heading Δ (°)</th>
         </tr></thead>
@@ -6737,8 +6975,10 @@ function buildReportHTML(ctx) {
         ${closeRangeHTML}`;
 
     // ---- candidate-interpretation gallery, comparison, verdict ----
-    const rankedGroups = groupAndRankHypotheses(hypotheses);
+    const rankedGroups = groupAndRankHypotheses(hypotheses, {useTruth: false});
     const rankedHyps = rankedGroups.flatMap((group) => group.items);
+    const screeningRanked = rankAllHypotheses(hypotheses, {useTruth: false});
+    const screeningSummaryHTML = buildScreeningSummaryHTML(screeningRanked);
     const cardsHTML = rankedGroups.map((group) => {
         const cards = group.items.map(({h, r, tied, groupIndex, groupSize}) => {
             const thumb = hypothesisThumbnail(dataset, h);
@@ -6758,31 +6998,25 @@ function buildReportHTML(ctx) {
                 <div class="card-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(group.shortLabel)}${escapeHtml(tieText)}</div>
                 <img class="card-thumb" src="${thumb}" alt="Overhead view of the ${escapeHtml(h.name)} trajectory">
                 <div class="card-stats">${statsHTML}</div>
-                <p class="rank-basis"><strong>Rank basis:</strong> ${escapeHtml(rankingExplanation(h, r))}</p>
+                <p class="rank-basis"><strong>Rank basis without truth:</strong> ${rankingTextHTML(rankingExplanation(h, r, {useTruth: false}), h, r)}</p>
             </div>`;
         }).join("");
         return `<div class="candidate-group"><h3>${escapeHtml(group.label)}</h3>` +
             `<p class="sub">${escapeHtml(group.description)}</p><div class="cards">${cards}</div></div>`;
     }).join("");
 
-    // Compact residual for the comparison table — the full string (with the
-    // generic-reference multiplier) is on every candidate card; repeating it
-    // here made the column, and the table, wider than the page.
+    // Use the same precision as the cards so close residuals stay distinct.
     const losErrShort = (h) => {
         const err = h?.errDeg;
         if (!Number.isFinite(err)) return "—";
-        return err < 0.1 ? `${err.toFixed(3)}°` : `${err.toFixed(2)}°`;
+        return formatRawLosResidual(h);
     };
-    const compRows = rankedHyps.map(({h, r, category, groupIndex}) => {
+    const compRows = screeningRanked.map(({h, r, category}, index) => {
         const m = h.metricsFull;
-        const tc = h.truthComparison;
-        const truthCell = truth
-            ? `<td>${tc?.comparable ? escapeHtml(fmtSepMeters(tc.sep3D.mean)) : "n/a"}</td>`
-            : "";
         return `
         <tr${r.rank >= 3 ? ' class="best"' : ""}>
             <td>${escapeHtml(category.shortLabel)}</td>
-            <td>${groupIndex + 1}</td>
+            <td>${index + 1}</td>
             <td>${escapeHtml(h.name)}</td>
             <td>${nm1(m.range.min)}–${nm1(m.range.max)}</td>
             <td>${kt1(m.airSpeed.mean)}</td>
@@ -6790,18 +7024,17 @@ function buildReportHTML(ctx) {
             <td>${fpm0(m.verticalSpeed.mean)}</td>
             <td>${m.gLoad.max.toFixed(2)}</td>
             <td>${escapeHtml(losErrShort(h))}</td>
-            ${truthCell}
             <td><span class="pill" style="background:${r.color}">${escapeHtml(r.label)}</span></td>
         </tr>`;
     }).join("");
 
-    const verdictHTML = buildVerdict(hypotheses, provenance, truth);
+    const verdictHTML = buildVerdict(hypotheses, provenance, null);
     const truthSummaryHTML = truth ? buildTruthSummaryHTML(rankedHyps, truth) : "";
 
     // Executive assessment block: the frozen headline plus the per-class
     // evidence matrix — the SAME record the gallery strip and verdict render,
-    // never a reclassification. Truth mode keeps its own reference summary.
-    const ea = (!truth && executiveAssessment) ? executiveAssessment : null;
+    // never a reclassification. Truth has a separate comparison section.
+    const ea = executiveAssessment;
     const executiveHTML = ea ? `
 <section>
     <h2>Assessment</h2>
@@ -6997,6 +7230,7 @@ footer { margin-top: 44px; color: #8a9099; font-size: 13px;
 .solution-series img { flex: 1 1 30%; min-width: 260px; max-width: 100%; height: auto;
     border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); }
 .solution-lead { color: #e0e4ea; font-size: 15px; }
+.tg-score-help { cursor:help; text-decoration:underline dotted; text-underline-offset:3px; }
 .rank-basis { color:#c7ced7; font-size:13px; line-height:1.5; padding:9px 11px;
     background:#171b20; border-left:3px solid #7fb0ee; border-radius:5px; }
 .solution-detail h4 { color: #7fb0ee; font-size: 11.5px; font-weight: 700; text-transform: uppercase;
@@ -7008,6 +7242,9 @@ td .pill { color: #0d0f12; }
 table.comp td:nth-child(3), table.comp th:nth-child(3),
 table.truthtab td:nth-child(2), table.truthtab th:nth-child(2),
 table.truthtab td:nth-child(3), table.truthtab th:nth-child(3) { text-align: left; }
+table.screeningtab td, table.screeningtab th { text-align:left; white-space:normal; }
+table.screeningtab td:nth-child(1), table.screeningtab td:nth-child(6) { text-align:right; white-space:nowrap; }
+table.screeningtab td:last-child { min-width:260px; max-width:55ch; }
 .warning { margin: 16px 0; padding: 12px 14px; border-radius: 8px;
     background: #4a3a12; color: #ffd479; border: 1px solid #8a6d2a; }
 details.manifest { background:#14161a; border:1px solid rgba(255,255,255,0.08);
@@ -7093,6 +7330,23 @@ html.light #theme-toggle { background: rgba(255,255,255,0.95); color: #23262a;
     </div>
 </header>
 
+<section id="ranking-without-truth">
+    <h2>Ranking without truth</h2>
+    <p class="sub">The reference track does not affect this order. Results are compared by screening grade,
+    search completion and active model limits, then by the BOT Score — lower is better.
+    BOT Score adds weighted motion and sightline-fit terms; hover over its name for the calculation.
+    Co-leaders pass the same screening checks; their score order is a heuristic, not a probability.
+    Scores marked ° are angular-only checks and are not compared numerically with trajectory scores.</p>
+    ${screeningSummaryHTML}
+</section>
+
+${truth ? `<section id="ranking-with-truth">
+    <h2>Ranking with truth</h2>
+    <p class="sub">The same candidate paths are now compared with the reference track. They have not been refitted.
+    This separate order does not change the ranking without truth above.</p>
+    ${truthSummaryHTML}
+</section>` : ""}
+
 ${executiveHTML}
 
 <section>
@@ -7112,16 +7366,11 @@ ${provenance?.rangeUnobservable ? `<div class="warning" style="background:#4a151
     `distance: the sightlines contain no usable parallax, every distance along them fits equally well, ` +
     `and each method's range reflects its own priors, not measurement.</div>` : ""}
 
-${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-color:#7a3b5c">` +
-    `<strong>Truth track "${escapeHtml(truth.label)}" selected.</strong> Every method is scored against ` +
-    `this reference. Within each report comparison group, complete fits are shown first and completed methods ` +
-    `are then ordered by mean 3D separation; the usual screening metrics are context only.</div>` : ""}
-
 <section class="summary">
-    <h2>Executive summary</h2>
+    <h2>Analysis without truth</h2>
     <p><strong>Overall interpretation.</strong> ${verdictHTML}</p>
     ${geometryHTML}
-    ${truth ? truthSummaryHTML : metricsSummaryHTML}
+    ${metricsSummaryHTML}
     ${failures.length ? `<p><strong>Unavailable checks:</strong> ${failures.map((f) =>
         `${escapeHtml(f.method)} (${escapeHtml(f.error)})`).join("; ")}.</p>` : ""}
     ${terrainChangedDuringRun ? `<p><strong>Terrain note:</strong> elevation data finished loading while this
@@ -7141,10 +7390,11 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
 </section>
 
 <section>
-    <h2>Candidate interpretations</h2>
+    <h2>Candidate interpretations — ranking without truth</h2>
     <p class="sub">Panels include trajectory constraints, fitting algorithms, and forward physical models;
-    they are not independent object identifications and there is no global winner. Each path is shown against the same
-    sightlines and ordered only within its comparison group. Screening pills summarize maneuvering, peak speed,
+    they are not independent object identifications. The first ranking table gives the order across groups;
+    these panels are grouped by method and ordered without truth within each group. Each path is shown against the same
+    sightlines. Any truth measurements or reference overlays are comparison only. Screening pills summarize maneuvering, peak speed,
     completeness, active model limits, and raw LOS residual under the stated assumptions.
     Every term in the &ldquo;Rank basis&rdquo; line below &mdash; the ordering keys, the three tier
     grades, the within-group score, the balloon nudge &mdash; is defined in
@@ -7154,7 +7404,7 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
 </section>
 
 <section>
-    <h2>Candidate details</h2>
+    <h2>Candidate details — ranking without truth</h2>
     <p class="sub">Expanded derivation, constraints, and solution-space notes for each candidate above.
     Repeated per-candidate charts are omitted here; the shared comparison plots and full-resolution series below
     provide the same evidence on common axes without duplicating dozens of large images.</p>
@@ -7162,23 +7412,20 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
 </section>
 
 <section>
-    <h2>Comparison</h2>
+    <h2>Measurements in ranking order without truth</h2>
     <div class="tablebox">
     <table class="comp">
         <thead><tr>
             <th>Group</th><th>#</th><th>Interpretation</th><th>Range (NM)</th><th>Air spd (kt)</th><th>Alt (kft)</th>
-            <th>Climb (fpm)</th><th>Max accel (g)</th><th>Raw LOS residual</th>${truth ? "<th>Truth Δ</th>" : ""}<th>Screen</th>
+            <th>Climb (fpm)</th><th>Max accel (g)</th><th>Raw LOS residual</th><th>Screen</th>
         </tr></thead>
         <tbody>${compRows}</tbody>
     </table>
     </div>
-    ${truth ? `<p class="sub">Grouped first, then complete fits before incomplete searches, then by mean 3D separation from the truth track
-    ("Truth Δ"); the screening tier is context only. Rows passing the
-    broad screen are highlighted. Alt and air speed are means; max accel is kinematic. The candidate cards
-    above give each LOS residual against the generic reference.</p>` : `<p class="sub">Grouped first, then ordered by completeness, broad screening tier, and within-group score.
-    No order across groups is implied. Rows passing the broad screen are highlighted. Alt and air speed are means;
+    <p class="sub">Same order as Ranking without truth above. Rows passing the broad screen are highlighted.
+    Alt and air speed are means;
     max accel is kinematic. Each candidate card above states the rank basis that actually controls its order,
-    and gives its LOS residual against the generic reference.</p>`}
+    and explains its mean LOS error and available reference comparison.</p>
 </section>
 
 <section>

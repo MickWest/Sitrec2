@@ -248,6 +248,8 @@ export function trackMetrics(dataset, track, options = {}) {
         altitude: stat(altitude, lo, hi),
         range: stat(range, lo, hi),
         series: {groundSpeed, airSpeed, heading, groundHeading, verticalSpeed, gLoad, turnRate, altitude, range},
+        // Let annotations use exactly the samples used by the summary stats.
+        sampleWindow: {lo, hi, frameOffset: 0},
     };
 }
 
@@ -294,7 +296,9 @@ export function trackMetricsForValidRun(dataset, track, valid, options = {}) {
         D: copy3(dataset.D),
         W: copy3(dataset.W),
     };
-    return trackMetrics(slicedDataset, copy3(track), options);
+    const metrics = trackMetrics(slicedDataset, copy3(track), options);
+    metrics.sampleWindow.frameOffset = bestLo;
+    return metrics;
 }
 
 /**

@@ -33,18 +33,20 @@
  * aircraft. Measured over 23 benchmark scenarios it cut 39 of 345 candidates
  * and moved the median result not at all.
  *
- * UNITS. Cost is DECADES outside an envelope, so it reads directly: 0 means
- * every quantity sits inside some real object's envelope; 1 means the best
- * available class is off by a factor of ten somewhere.
+ * UNITS. Cost is summed DECADES outside the measured size/speed/g envelope.
+ * Zero does not identify a class: all passing classes are reported, unmeasured
+ * quantities are disclosed, and a failed drift-shape check excludes a balloon
+ * from the steady-drift interpretation even when its numeric cost is zero.
  */
 
 import {KNOTS_TO_MS} from "./TraverseAnalysis";
+import {balloonMotion} from "./TraverseMotion";
 
 const DEG = 180 / Math.PI;
 
 /**
  * Object classes as ENVELOPES, not points. Sizes are overall extent in metres,
- * speeds sustained cruise in knots, gMax sustained manoeuvring load.
+ * speeds in knots, gMax manoeuvring acceleration (not structural load factor).
  *
  * Bands are deliberately GENEROUS. The score exists to identify the impossible,
  * not to enforce a preference, and a tight band would manufacture anomalies out
@@ -64,7 +66,8 @@ export const MUNDANE_CLASSES = [
 
 /** How far x sits outside [lo, hi], in decades. Zero inside the band. */
 function decadesOutside(x, [lo, hi]) {
-    if (!Number.isFinite(x) || x <= 0) return 0;    // unmeasured costs nothing
+    if (!Number.isFinite(x) || x < 0) return 0;    // unmeasured costs nothing
+    if (x === 0) return lo > 0 ? Infinity : 0;
     if (x < lo) return Math.log10(lo / x);
     if (x > hi) return Math.log10(x / hi);
     return 0;
@@ -116,24 +119,35 @@ export function impliedDiameter(rangeM, thetaMaxDeg, fovFullDeg, pixels) {
 }
 
 /**
- * The mundaneness cost of one candidate, plus the class that achieved it.
+ * Physical-class screens applied to the recovered path, regardless of solver.
  *
  * @param dataset  carries the angular measurement when the source file had one
  *                 (angularDiameterMaxDeg / fovFullDeg / pixelsAcross)
  * @param h        the hypothesis; needs metricsFull
- * @returns {{total, key, label, sizeCost, speedCost, gCost, impliedM}} or null
- *          when the candidate has no metrics to judge.
+ * Returns all class checks, motion diagnostics and unmeasured quantities.
  */
-export function mundanenessCost(dataset, h) {
+export function physicalClassChecks(dataset, h) {
     const m = h?.metricsFull;
-    if (!m) return null;
-    const speedKt = Number.isFinite(m.airSpeed?.mean) ? m.airSpeed.mean / KNOTS_TO_MS : NaN;
+    if (!m || h.identity || h.atInfinity || h.nonPhysical || h.underground || h.groundMismatch) return null;
+    const speedMinKt = (m.airSpeed?.min ?? m.airSpeed?.mean) / KNOTS_TO_MS;
+    const speedMaxKt = (m.airSpeed?.max ?? m.airSpeed?.mean) / KNOTS_TO_MS;
     const gMax = m.gLoad?.max;
     const implied = impliedDiameter(m.range?.mean, dataset?.angularDiameterMaxDeg,
         dataset?.fovFullDeg, dataset?.pixelsAcross);
+    const motion = balloonMotion(h.track);
+    // This is a steady-drift screen, not a claim that no wind field could ever
+    // carry a balloon around a bend. Substantial backtracking/circling needs a
+    // changing-wind explanation; low speed and low g alone cannot supply it.
+    // Use the same atypical-drift boundary as the existing balloon diagnostic.
+    const balloonTurnsBack = motion && motion.horizontalPathM >= 20
+        && motion.horizontalDirectness < 0.45;
+    const unknown = [];
+    if (!implied) unknown.push("size");
+    if (!Number.isFinite(speedMinKt) || !Number.isFinite(speedMaxKt)) unknown.push("speed");
+    if (!Number.isFinite(gMax)) unknown.push("acceleration");
+    if (!motion) unknown.push("drift shape");
 
-    let best = null;
-    for (const c of MUNDANE_CLASSES) {
+    const classes = MUNDANE_CLASSES.map(c => {
         // SIZE. The implied size is an interval, so it costs nothing if ANY part
         // of it overlaps the class band — the object could be anywhere inside
         // that interval, and only a fully disjoint interval is evidence. That
@@ -143,27 +157,40 @@ export function mundanenessCost(dataset, h) {
         const sizeCost = implied
             ? decadesOutside(Math.max(implied.lo, Math.min(implied.hi, c.sizeM[0])), c.sizeM)
             : 0;
-        const speedCost = decadesOutside(speedKt, c.speedKt);
+        const speedCost = Math.max(decadesOutside(speedMinKt, c.speedKt),
+            decadesOutside(speedMaxKt, c.speedKt));
         // g has no lower bound: flying gently is never suspicious.
         const gCost = Number.isFinite(gMax) && gMax > c.gMax ? Math.log10(gMax / c.gMax) : 0;
         const total = sizeCost + speedCost + gCost;
-        if (!best || total < best.total) {
-            best = {total, key: c.key, label: c.label, sizeCost, speedCost, gCost,
-                impliedM: implied};
-        }
-    }
-    return best;
+        const motionRejected = c.key === "balloon" && !!balloonTurnsBack;
+        return {total, key: c.key, label: c.label, cls: c, sizeCost, speedCost, gCost,
+            motionRejected, compatible: total === 0 && !motionRejected,
+            impliedM: implied};
+    });
+    return {classes, motion, unknown, speedMinKt, speedMaxKt, gMax, impliedM: implied};
+}
+
+export function mundanenessCost(dataset, h) {
+    const checks = physicalClassChecks(dataset, h);
+    if (!checks) return null;
+    const candidates = checks.classes.filter(c => !c.motionRejected);
+    const best = candidates.reduce((best, c) => !best || c.total < best.total ? c : best, null);
+    return {...best, ...checks, compatibleClasses: checks.classes.filter(c => c.compatible)};
 }
 
 /**
- * One line of plain English for the tile. Says what the best available ordinary
- * explanation is and, when nothing ordinary fits, WHICH quantity is the problem
- * — because "anomalous" without a reason is not a finding.
+ * Report the full compatible set, rather than assigning the first zero-cost
+ * class as though it were an identification. Name missing data and exclusions.
  */
 export function mundanenessSummary(cost) {
     if (!cost) return null;
     const c = cost.total;
-    if (c < 0.05) return `consistent with an ordinary ${cost.label}`;
+    const unknown = cost.unknown?.length ? ` ${cost.unknown.join(", ")} unmeasured.` : "";
+    const drift = cost.classes?.find(c => c.key === "balloon");
+    const balloon = drift?.motionRejected ? " Balloon fails the steady-drift check: the path circles or doubles back." : "";
+    if (cost.compatibleClasses?.length) {
+        return `Within tested limits: ${cost.compatibleClasses.map(c => c.label).join(", ")}.` + balloon + unknown;
+    }
     // Name every quantity that carries the cost, not just the largest: saying
     // "too fast" about a solution that is also impossibly small would be a
     // half-truth.
@@ -173,6 +200,21 @@ export function mundanenessSummary(cost) {
     if (cost.gCost > 0.05) parts.push("acceleration");
     const why = parts.length ? parts.join(" and ") : "its combination of size, speed and acceleration";
     const factor = Math.pow(10, c);
-    return `nearest ordinary object is a ${cost.label}, and this misses that `
-        + `envelope by ${factor < 10 ? factor.toFixed(1) : Math.round(factor)}x on ${why}`;
+    return `No class is within all tested limits. Closest envelope: ${cost.label}; `
+        + `${Number.isFinite(factor) ? (factor < 10 ? factor.toFixed(1) : Math.round(factor)) + "× outside" : "outside"} on ${why}.`
+        + balloon + unknown;
+}
+
+export function physicalCompatibilityDetails(cost) {
+    if (!cost) return "No motion metrics available.";
+    const rows = cost.classes.map(c => {
+        const reasons = [];
+        if (c.speedCost > 0) reasons.push(`speed ${cost.speedMinKt.toFixed(1)}–${cost.speedMaxKt.toFixed(1)} kt outside ${c.cls.speedKt.join("–")} kt`);
+        if (c.gCost > 0) reasons.push(`peak ${cost.gMax.toFixed(2)} g exceeds ${c.cls.gMax} g`);
+        if (c.sizeCost > 0) reasons.push(`implied size outside ${c.cls.sizeM.join("–")} m`);
+        if (c.motionRejected) reasons.push(`net horizontal displacement is only ${(100 * cost.motion.horizontalDirectness).toFixed(1)}% of distance travelled (steady-drift minimum: 45%)`);
+        return `${c.label}: ${reasons.length ? reasons.join("; ") : "within tested limits"}.`;
+    });
+    return rows.join(" ") + " These are motion/size screens applied to every trajectory, regardless of solver. "
+        + "They are not a full dynamics fit or an identification. A balloon path that fails steady drift would need a changing-wind explanation; that has not been established by this check.";
 }
