@@ -85,6 +85,7 @@ import {
     coLeaderBadge,
 } from "./TraverseRanking";
 import {mundanenessCost, mundanenessSummary, physicalCompatibilityDetails} from "./TraverseMundaneness";
+import {buildTraverseComparison, comparisonCandidates, traverseComparisonHTML} from "./TraverseComparison";
 import {docUrl} from "./docsRegistry";
 import {platformMirrorSummary} from "./TraversePlatformMirror";
 import {candidateCriteria, criteriaSummary, CRITERION_COLORS} from "./TraverseCriteria";
@@ -4342,6 +4343,7 @@ function showResultGallery(results, uiState = null) {
     let resizeObserver = null;
     let selected = -1;
     let fullscreenView = null;
+    let comparisonView = null;
     // Shared "zoom to tracks" state: the magnifier toggles ALL graphs together
     // (each to its own zoomBounds), like Sync Orientation / Sync Scale. New
     // charts (detail/tile/fullscreen) adopt it on creation.
@@ -4537,7 +4539,15 @@ function showResultGallery(results, uiState = null) {
         if (e.key === "Escape") {
             e.preventDefault();
             if (fullscreenView) closeChartFullscreen();
+            else if (comparisonView) closeComparison();
             else remove();
+        } else if (e.key === "Tab" && comparisonView) {
+            const focusable = [...comparisonView.querySelectorAll("button, select"), xBtn];
+            const index = focusable.indexOf(document.activeElement);
+            if ((e.shiftKey && index <= 0) || (!e.shiftKey && (index < 0 || index === focusable.length - 1))) {
+                e.preventDefault();
+                focusable[e.shiftKey ? focusable.length - 1 : 0].focus();
+            }
         }
     };
     const remove = () => {
@@ -4598,6 +4608,34 @@ function showResultGallery(results, uiState = null) {
         .traverse-gallery-overlay a.tg-toggle { text-decoration:none; display:inline-block; line-height:normal; }
         .traverse-gallery-overlay .tg-toggle.on { background:rgba(57,135,229,0.24);
             border-color:#3987e5; color:#eef6ff; }
+        .traverse-gallery-overlay .tc-panel { height:100%; min-height:0; display:flex; flex-direction:column;
+            background:#10151b; border:1px solid #435269; border-radius:12px; color:#e0e6ef; overflow:hidden;
+            width:100%; max-width:1200px; margin:auto; font-size:13px; }
+        .traverse-gallery-overlay .tc-head { flex:none; padding:16px 22px; border-bottom:1px solid #344354; }
+        .traverse-gallery-overlay .tc-title { display:flex; align-items:center; gap:18px; margin-bottom:10px; }
+        .traverse-gallery-overlay .tc-title h2 { font-size:20px; margin:0; }
+        .traverse-gallery-overlay .tc-choices { display:flex; gap:16px; margin-top:12px; }
+        .traverse-gallery-overlay .tc-choices label { flex:1; min-width:0; font-weight:600; }
+        .traverse-gallery-overlay .tc-choices select { display:block; width:100%; margin-top:5px; padding:8px;
+            background:#1b2531; border:1px solid #5e7188; color:#fff; border-radius:5px; font:inherit; }
+        .traverse-gallery-overlay .tc-content { overflow:auto; padding:0 22px 22px; }
+        .traverse-gallery-overlay .tc-content h3 { font-size:16px; margin:20px 0 5px; }
+        .traverse-gallery-overlay .tc-note { color:#aab6c5; line-height:1.5; margin:5px 0 10px; }
+        .traverse-gallery-overlay .tc-summary { padding:12px 14px; background:#1c3040; border-left:3px solid #74abd8; line-height:1.5; }
+        .traverse-gallery-overlay .tc-scroll { overflow-x:auto; }
+        .traverse-gallery-overlay .tc-panel table { width:100%; border-collapse:collapse; table-layout:fixed; min-width:660px; }
+        .traverse-gallery-overlay .tc-panel th, .traverse-gallery-overlay .tc-panel td { padding:9px 12px; text-align:left;
+            border-bottom:1px solid #2e3c4b; vertical-align:top; overflow-wrap:anywhere; line-height:1.45; }
+        .traverse-gallery-overlay .tc-panel thead th { color:#b7cce1; background:#192431; }
+        .traverse-gallery-overlay .tc-panel th:first-child { width:24%; }
+        .traverse-gallery-overlay .tc-panel td { font-variant-numeric:tabular-nums; }
+        .traverse-gallery-overlay .tc-panel small { display:block; color:#aab6c5; font-size:12px; font-weight:400; margin-top:3px; }
+        .traverse-gallery-overlay .tc-total { background:#20354a; font-weight:700; font-size:15px; }
+        .traverse-gallery-overlay .tc-largest { background:#243021; }
+        .traverse-gallery-overlay .tc-status { font-size:11px; font-weight:700; display:inline-block; border-radius:3px; padding:1px 5px; margin-right:3px; }
+        .traverse-gallery-overlay .tc-pass { color:#b0f0c7; background:#204732; }
+        .traverse-gallery-overlay .tc-fail { color:#ffc2bb; background:#572b2b; }
+        .traverse-gallery-overlay .tc-unknown { color:#d0d7df; background:#37414e; }
         .traverse-gallery-overlay .tg-body { flex:1 1 auto; min-height:0; display:flex; gap:18px; }
         .traverse-gallery-overlay .tg-tiles { flex:2 1 0; min-width:0; overflow-y:auto; padding-right:4px; }
         .traverse-gallery-overlay .tg-details { flex:1 1 0; min-width:360px; overflow:hidden;
@@ -4910,12 +4948,13 @@ function showResultGallery(results, uiState = null) {
     xBtn.type = "button";
     xBtn.textContent = "×";
     function syncCloseButton() {
-        xBtn.title = fullscreenView ? "Back to analysis results" : "Close traverse analysis";
+        xBtn.title = fullscreenView || comparisonView ? "Back to analysis results" : "Close traverse analysis";
         xBtn.setAttribute("aria-label", xBtn.title);
     }
     syncCloseButton();
     xBtn.addEventListener("click", () => {
         if (fullscreenView) closeChartFullscreen();
+        else if (comparisonView) closeComparison();
         else remove();
     });
     overlay.appendChild(xBtn);
@@ -5207,6 +5246,13 @@ function showResultGallery(results, uiState = null) {
     toolbar.appendChild(restoreBtn);
     toolbar.appendChild(openBtn);
     toolbar.appendChild(openWeakBtn);
+    const compareBtn = document.createElement("button");
+    compareBtn.className = "tg-toggle";
+    compareBtn.type = "button";
+    compareBtn.textContent = "Compare leaders";
+    compareBtn.title = "Compare ranking gates, BOT Score contributions and physical compatibility without truth.";
+    compareBtn.addEventListener("click", openComparison);
+    toolbar.appendChild(compareBtn);
     toolbar.appendChild(howBtn);
     // Apply / set aside the selected truth track. Shown only when a usable one
     // was computed for this run — with nothing to compare against there is
@@ -5233,6 +5279,61 @@ function showResultGallery(results, uiState = null) {
         toolbar.appendChild(useTruthBtn);
     }
     tilesHead.appendChild(toolbar);
+
+    function comparisonPool() {
+        return comparisonCandidates(tiles.filter((_, i) => !dismissed.has(i)).map(t => t.h));
+    }
+
+    function closeComparison() {
+        if (!comparisonView) return;
+        comparisonView.remove();
+        comparisonView = null;
+        body.style.display = "";
+        syncCloseButton();
+        compareBtn.focus();
+        onResize();
+    }
+
+    function openComparison() {
+        const candidates = comparisonPool();
+        if (candidates.length < 2 || comparisonView) return;
+        comparisonView = document.createElement("section");
+        comparisonView.className = "tc-panel";
+        comparisonView.setAttribute("aria-label", "Compare traverse leaders");
+        comparisonView.innerHTML = `<div class="tc-head"><div class="tc-title">`
+            + `<button type="button" class="tg-toggle tc-back">← Results</button><h2>Compare leaders</h2></div>`
+            + `<p class="tc-note">Ranking without truth. Starts with the two leading trajectories still in consideration; choose any pair below.</p>`
+            + `<div class="tc-choices"><label>Left candidate<select aria-label="Left candidate"></select></label>`
+            + `<label>Right candidate<select aria-label="Right candidate"></select></label></div></div>`
+            + `<div class="tc-content"></div>`;
+        const selects = [...comparisonView.querySelectorAll("select")];
+        selects.forEach((select, side) => {
+            candidates.forEach(({h}, index) => {
+                const option = document.createElement("option");
+                option.value = String(index);
+                option.textContent = h.name;
+                select.appendChild(option);
+            });
+            select.value = String(side);
+        });
+        const content = comparisonView.querySelector(".tc-content");
+        const render = () => {
+            selects.forEach((select, side) => {
+                for (const option of select.options) option.disabled = option.value === selects[1 - side].value;
+            });
+            content.innerHTML = traverseComparisonHTML(buildTraverseComparison(
+                candidates[Number(selects[0].value)], candidates[Number(selects[1].value)], dataset,
+                {groundMode: results.manifest?.assumptions?.groundMode}));
+            content.scrollTop = 0;
+        };
+        selects.forEach(select => { select.addEventListener("change", render); });
+        comparisonView.querySelector(".tc-back").addEventListener("click", closeComparison);
+        body.style.display = "none";
+        panel.appendChild(comparisonView);
+        render();
+        syncCloseButton();
+        comparisonView.querySelector("button").focus();
+    }
 
     // Re-present the SAME results with the truth track applied or set aside.
     // No fit is re-run: rankAllHypotheses is a sort over comparisons already
@@ -5361,6 +5462,7 @@ function showResultGallery(results, uiState = null) {
     const dismissed = new Set();
 
     const relayout = () => {
+        compareBtn.disabled = comparisonPool().length < 2;
         // Emptying the grid collapses its height for a moment, which clamps
         // the tiles column's scrollTop to 0 — so setting a tile aside yanked
         // the reader back to the top of the list. Preserve the scroll position

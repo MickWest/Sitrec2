@@ -681,6 +681,23 @@ All measurements and the screening indicators remain visible above
 compatibility explanations and the numeric components of the BOT Score. The selected card's
 explanation also appears above its large graph.
 
+**Compare leaders** opens a side-by-side comparison of the two leading finite
+trajectories still in consideration. It always uses ranking **without truth**,
+even when the gallery is ordered by truth. The selectors let you compare any
+other pair. Angular-only checks are excluded because their scores use different
+units. Set-aside candidates are excluded until restored.
+
+The panel shows each weighted BOT contribution and the difference between the
+two candidates. Positive differences favor the left candidate; negative ones
+favor the right. The largest contribution to the gap is highlighted. The gate
+table gives measured values, limits and margins, plus search-completion and
+model-limit warnings. The physical-compatibility table applies the same class
+limits to both paths and marks missing measurements as unassessed. These class
+checks do not change the BOT Score. A result that passes the available checks
+names any missing inputs, for example **Passes measured checks · size unknown**.
+**Results**, **X**, or **Escape** returns to
+the gallery with its selection and chart settings intact.
+
 The gallery mixes unlike questions — object models, LOS-constrained
 trajectory families, fixed-geometry checks, curve fits, catalogue matches —
 and there is no cross-model likelihood that could rank them as competing

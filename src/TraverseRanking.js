@@ -24,7 +24,7 @@
 import {balloonConsistency} from "./TraverseMotion";
 export {balloonConsistency} from "./TraverseMotion";
 
-import {KNOTS_TO_MS, METERS_PER_NM, straightFlightScore} from "./TraverseAnalysis";
+import {KNOTS_TO_MS, METERS_PER_NM, MOTION_SCORE_WEIGHTS, straightFlightScore} from "./TraverseAnalysis";
 import {physicalClassChecks} from "./TraverseMundaneness";
 import {
     platformMirrorRank,
@@ -70,6 +70,8 @@ export const FIT_SCALE_MIN_DEG = 0.02;
 export const FIT_SCALE_MAX_DEG = 0.20;
 // Multiples of the scale at which a fit stops being tier 3 / 2 / 1.
 export const FIT_SCALE_TIERS = [1.2, 2, 5];
+export const BROAD_SCREEN_LIMITS = Object.freeze({losDeg: 0.05, peakG: 1.5, speedKt: 650});
+const BOT_LOS_UNIT_DEG = 0.05;
 
 /**
  * The clamped per-scene residual scale for one hypothesis, or null when the
@@ -86,7 +88,7 @@ export function fitScaleDeg(h) {
 // one, else the historical absolute boundaries.
 function fitRankFor(errDeg, scaleDeg) {
     if (scaleDeg === null) {
-        return errDeg > 0.5 ? 0 : errDeg > 0.15 ? 1 : errDeg > 0.05 ? 2 : 3;
+        return errDeg > 0.5 ? 0 : errDeg > 0.15 ? 1 : errDeg > BROAD_SCREEN_LIMITS.losDeg ? 2 : 3;
     }
     const ratio = errDeg / scaleDeg;
     const [t3, t2, t1] = FIT_SCALE_TIERS;
@@ -343,8 +345,31 @@ export function rankTieScore(h) {
         return Number.isFinite(h?.errDeg) ? h.errDeg : Infinity;
     }
     if (!h?.metricsFull) return Infinity;
-    const score = straightFlightScore(h?.metricsFull) + effectiveErrDeg(h) / 0.05;
+    const score = straightFlightScore(h?.metricsFull) + effectiveErrDeg(h) / BOT_LOS_UNIT_DEG;
     return Number.isFinite(score) ? score : Infinity;
+}
+
+// Raw inputs and weighted contributions for the tooltip and comparison panel.
+// Weights are shared with the solver's motion objective; no display-only score.
+export function botScoreBreakdown(h) {
+    if (scoreBasis(h) !== "trajectory" || !h?.metricsFull) return null;
+    const m = h.metricsFull, w = MOTION_SCORE_WEIGHTS;
+    const mirror = platformMirrorSignificant(h.platformMirror) ? h.platformMirror.share : 0;
+    const terms = [
+        {key: "rmsG", label: "Typical acceleration (RMS)", value: m.gLoad?.rms, unit: "g", digits: 2,
+            formula: `× ${w.rmsG}`, contribution: w.rmsG * m.gLoad?.rms},
+        {key: "peakG", label: "Peak acceleration", value: m.gLoad?.max, unit: "g", digits: 2,
+            formula: `× ${w.peakG}`, contribution: w.peakG * m.gLoad?.max},
+        {key: "turn", label: "Turn-rate variation", value: Math.abs(m.turnRate?.std), unit: "°/s", digits: 3,
+            formula: `× ${w.turn}`, contribution: w.turn * Math.abs(m.turnRate?.std)},
+        {key: "climb", label: "Mean climb/descent speed", value: Math.abs(m.verticalSpeed?.mean), unit: "m/s", digits: 3,
+            formula: `above ${w.climbFreeMS} m/s × ${w.climb}`, contribution: w.climb * Math.max(0, Math.abs(m.verticalSpeed?.mean) - w.climbFreeMS)},
+        {key: "los", label: "Mean LOS error", value: effectiveErrDeg(h), unit: "°", digits: 5,
+            formula: `÷ ${BOT_LOS_UNIT_DEG}°`, contribution: effectiveErrDeg(h) / BOT_LOS_UNIT_DEG},
+        {key: "mirror", label: "Camera-motion adjustment", value: mirror * 100, unit: "%", digits: 1,
+            formula: `significant share × ${PLATFORM_MIRROR_NUDGE}`, contribution: PLATFORM_MIRROR_NUDGE * mirror},
+    ];
+    return {terms, total: terms.reduce((sum, term) => sum + term.contribution, 0)};
 }
 
 export function botScoreTooltip(h, rating) {
@@ -354,16 +379,9 @@ export function botScoreTooltip(h, rating) {
     if (!m || !Number.isFinite(rating?.secondaryScore) || !Number.isFinite(rating?.scoredErrDeg)) {
         return intro + "The score is unavailable for this result.";
     }
-    const terms = [
-        `4 × typical acceleration = ${(4 * m.gLoad.rms).toFixed(3)}`,
-        `Peak acceleration = ${m.gLoad.max.toFixed(3)}`,
-        `0.05 × variation in turn rate = ${(0.05 * Math.abs(m.turnRate.std)).toFixed(3)}`,
-        `0.02 × mean climb/descent speed above 5 m/s = ${(0.02 * Math.max(0, Math.abs(m.verticalSpeed.mean) - 5)).toFixed(3)}`,
-        `Scored LOS error ${rating.scoredErrDeg.toFixed(5)}° ÷ 0.05° = ${(rating.scoredErrDeg / 0.05).toFixed(3)}`,
-    ];
-    if (platformMirrorSignificant(h.platformMirror)) {
-        terms.push(`Camera-motion adjustment: 6 × ${(h.platformMirror.share).toFixed(3)} = ${(PLATFORM_MIRROR_NUDGE * h.platformMirror.share).toFixed(3)}. Motion shared with the camera increases the score`);
-    }
+    const breakdown = botScoreBreakdown(h);
+    if (!breakdown) return intro + "This result uses an angular score, not a BOT Score.";
+    const terms = breakdown.terms.map(term => `${term.label}: ${term.value.toFixed(term.digits)} ${term.unit} ${term.formula} = ${term.contribution.toFixed(3)}`);
     return intro + `For ${h.name}, add:\n${terms.join("\n")}\nTotal = ${rating.secondaryScore.toFixed(3)}. Values are rounded.\n\n`
         + "Acceleration is in g. Typical acceleration is the root mean square: square the values, take their mean, then take the square root. Turn-rate variation measures the spread around the mean (standard deviation, in degrees per second).\n\n"
         + "LOS error is the mean angle between the observed and predicted directions. "
@@ -474,8 +492,8 @@ export function plausibilityRating(h) {
         // actually binding.
         fitRank = fitRankFor(err, scaleDeg);
         kinematicRank = (gMax > 9 || speedMaxKt > 900) ? 0
-            : (gMax > 4 || speedMaxKt > 650) ? 1
-            : (gMax > 1.5) ? 2 : 3;
+            : (gMax > 4 || speedMaxKt > BROAD_SCREEN_LIMITS.speedKt) ? 1
+            : (gMax > BROAD_SCREEN_LIMITS.peakG) ? 2 : 3;
         // THE THIRD BINDING DIMENSION. Fit quality asks whether the model
         // reproduces the sightlines; kinematic ordinariness asks whether the
         // motion is extreme; this asks whether the motion is the OBSERVER's.

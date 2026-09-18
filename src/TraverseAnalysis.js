@@ -1638,12 +1638,14 @@ function solve3(A, b) {
  * Smoothness/plausibility score for an essentially-straight-flying object.
  * Lower is better. Weights chosen so ~0.1g of sustained maneuvering ≈ 0.4.
  */
+export const MOTION_SCORE_WEIGHTS = Object.freeze({rmsG: 4, peakG: 1, turn: 0.05, climb: 0.02, climbFreeMS: 5});
+
 export function straightFlightScore(metrics, badFrames = 0) {
     return (
-        4 * metrics.gLoad.rms +
-        1 * metrics.gLoad.max +
-        0.05 * Math.abs(metrics.turnRate.std) +
-        0.02 * Math.max(0, Math.abs(metrics.verticalSpeed.mean) - 5) +
+        MOTION_SCORE_WEIGHTS.rmsG * metrics.gLoad.rms +
+        MOTION_SCORE_WEIGHTS.peakG * metrics.gLoad.max +
+        MOTION_SCORE_WEIGHTS.turn * Math.abs(metrics.turnRate.std) +
+        MOTION_SCORE_WEIGHTS.climb * Math.max(0, Math.abs(metrics.verticalSpeed.mean) - MOTION_SCORE_WEIGHTS.climbFreeMS) +
         badFrames * 0.1
     );
 }

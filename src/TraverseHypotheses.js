@@ -33,6 +33,7 @@ import {solvedHorizontalWindAt} from "./TraverseWind";
 import {monteCarloName} from "./MonteCarloLOS";
 
 export const UNDERGROUND_TOL = 40;
+export const UNDERGROUND_MIN_FRACTION = 0.05;
 export const GROUND_CONTACT_TOL = 150;
 export const VIZ = {
     surface: "#14161a",
@@ -1511,7 +1512,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
             // Even ground-native solvers use an idealized curved shell sampled
             // from one terrain point. Validate them against the actual terrain;
             // otherwise a shell can pass through a ridge and still be promoted.
-            if (stats.minAGL < -UNDERGROUND_TOL && stats.fracBelow >= 0.05) {
+            if (stats.minAGL < -UNDERGROUND_TOL && stats.fracBelow >= UNDERGROUND_MIN_FRACTION) {
                 h.underground = {depth: -stats.minAGL, frac: stats.fracBelow};
                 // The tile draws the LOCAL terrain under this track, so the
                 // burial is visible even where sloped ground sits above the
