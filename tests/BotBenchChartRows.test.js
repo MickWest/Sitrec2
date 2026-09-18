@@ -28,6 +28,20 @@ function entry({name, relativePath = name, sidecar = null, labels = null, qualit
     };
 }
 
+test("chart exports keep model classes, path checks and missing assessments separate", () => {
+    const rows = rowsFromBotBenchEntries([
+        entry({name: "drone_001.all.csv", row: {viableClasses: ["multirotor"],
+            pathCompatibleClasses: ["bird", "quadcopter"], pathCompatibilityUnknown: ["size"]}}),
+        entry({name: "drone_002.all.csv", row: {pathCompatibleClasses: [], pathCompatibilityUnknown: []}}),
+        entry({name: "drone_003.all.csv"}),
+    ]);
+    expect(rows[0].r_viable).toBe("multirotor");
+    expect(rows[0].r_pathCompatibleClasses).toEqual(["bird", "quadcopter"]);
+    expect(rows[0].r_pathCompatibilityUnknown).toEqual(["size"]);
+    expect(rows[1].r_pathCompatibleClasses).toEqual([]);
+    expect(rows[2].r_pathCompatibleClasses).toBeNull();
+});
+
 describe("a run over an All folder chosen on its own, with no sidecars", () => {
     const rows = rowsFromBotBenchEntries([
         entry({name: "balloon_001.all.csv"}),

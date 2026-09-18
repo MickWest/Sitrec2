@@ -825,7 +825,13 @@ export function assessPathCompatibility(hypotheses, dataset = null) {
     const byClass = new Map();
     const unknown = new Set();
     for (const h of hypotheses || []) {
-        if (!judgeRepresentative(h).viable) continue;
+        // A generic motion preference is not a class-envelope limit. For
+        // example, a 1.64 g path fails the broad 1.50 g gate but remains inside
+        // the multirotor's 2.00 g limit. Camera mirroring is likewise a ranking
+        // caution, not a physical impossibility. Keep the existing completion
+        // and LOS requirements; each class below judges its own motion limits.
+        const judged = judgeRepresentative(h);
+        if (!judged.complete || !judged.close || judged.r.fitRank == null) continue;
         const checks = physicalClassChecks(dataset, h);
         if (!checks) continue;
         const compatible = checks.classes.filter(c => c.compatible

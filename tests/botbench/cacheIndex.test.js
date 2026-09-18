@@ -107,6 +107,26 @@ describe("a stored unit", () => {
 });
 
 describe("the index entry", () => {
+    test("row cache preserves measured compatibility, empty sets and unrecorded assessments separately", () => {
+        const index = emptyIndex();
+        const unit = unitRecord({unitId: "kalman", blob: "k.json", options, appVersion: "v1"});
+        recordUnit(index.results, "f.csv", {hash, hashes}, "kalman", unit);
+        const rows = [
+            {viableClasses: [], pathCompatibleClasses: ["quadcopter"], pathCompatibilityUnknown: ["size"]},
+            {viableClasses: ["balloon"], pathCompatibleClasses: [], pathCompatibilityUnknown: []},
+            {viableClasses: [], pathCompatibleClasses: null, pathCompatibilityUnknown: null},
+        ];
+        rows.forEach((row, i) => recordRowMemo(index.results, "f.csv", {hash, hashes}, `sel${i}`,
+            {row, appVersion: "v1", unitVersions: {kalman: UNIT_VERSIONS.kalman}}));
+        const restored = normalizeIndex(JSON.parse([...indexTextChunks(index, 64)].join("")));
+        rows.forEach((row, i) => {
+            const memo = restored.results["f.csv"].rows[`sel${i}`];
+            expect(memo.row).toEqual(row);
+            expect(rowMemoUsable(memo, {appVersion: "v1", unitVersions: memo.unitVersions})).toBe(true);
+        });
+        expect(restored.results["f.csv"].units.kalman).toEqual(unit);
+    });
+
     test("records units and rows, keeping the newest rows and starting over on a changed file", () => {
         const results = {};
         const rec = unitRecord({unitId: "kalman", blob: "k.json", options, appVersion: "v1"});

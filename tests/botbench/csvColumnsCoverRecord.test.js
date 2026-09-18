@@ -71,3 +71,17 @@ test("a row with no mundaneness leaves the fields empty rather than throwing", (
     expect(record.ordTop).toBeUndefined();
     expect(record.ordTopClass).toBe("");
 });
+
+test("path compatibility is distinct from model fits and missing legacy assessments", () => {
+    const entry = fullEntry();
+    expect(rowToCsvRecord(entry).pathCompatibleClasses).toBe("");
+    entry.row.pathCompatibleClasses = [];
+    entry.row.pathCompatibilityUnknown = [];
+    expect(rowToCsvRecord(entry).pathCompatibleClasses).toBe("[]");
+    entry.row.pathCompatibleClasses = ["bird", "quadcopter"];
+    entry.row.pathCompatibilityUnknown = ["size"];
+    const record = rowToCsvRecord(entry);
+    expect(record.viableClasses).toBe("balloon");
+    expect(JSON.parse(record.pathCompatibleClasses)).toEqual(["bird", "quadcopter"]);
+    expect(JSON.parse(record.pathCompatibilityUnknown)).toEqual(["size"]);
+});

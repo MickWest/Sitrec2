@@ -388,6 +388,8 @@ export function rowsFromBotBenchEntries(entries, {datasetLabel = null} = {}) {
                 : sensorTurnFromPositions(results?.dataset?.S),
             r_verdict: row.verdictCode ?? null,
             r_viable: (row.viableClasses ?? []).join("+"),
+            r_pathCompatibleClasses: row.pathCompatibleClasses ?? null,
+            r_pathCompatibilityUnknown: row.pathCompatibilityUnknown ?? null,
             r_topKey: row.top?.key ?? null,
             r_topName: row.top?.name ?? null,
             r_topErr: row.top?.errDeg ?? null,

@@ -664,6 +664,11 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
         verdictCode: results.executiveAssessment?.code ?? null,
         headline: results.executiveAssessment?.headline ?? null,
         viableClasses: viable,
+        // Physical checks of paths and completed forward-model fits are
+        // different facts. null means this assessment was not recorded.
+        pathCompatibleClasses: results.executiveAssessment?.pathCompatibility?.classes
+            ?.map(c => c.key) ?? null,
+        pathCompatibilityUnknown: results.executiveAssessment?.pathCompatibility?.unknown ?? null,
         mundaneness,
         top: top ? {
             key: top.h.key, name: top.h.name,

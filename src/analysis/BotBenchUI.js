@@ -49,6 +49,7 @@ import {
     srtHasPointing,
 } from "./BotBenchIngest";
 import {longestUniformRun, measureAnchorRate} from "./BotBenchClock";
+import {summarizeOutcomeCounts} from "./BotBenchOutcome";
 import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBenchRunner";
 import {botBenchConcurrency, createBotBenchYield, runBotBenchQueue} from "./BotBenchWorkerPool";
 import {BotBenchAnalysisPool} from "./BotBenchAnalysisPool";
@@ -146,13 +147,16 @@ const SUMMARY_TOOLTIPS = {
     "Analysed": "Files that produced a result.",
     "Errors": "Files that could not be ingested or analysed.",
     "Good source": "Files whose source data has no flagged degeneracy — enough frames, a real sensor baseline, a swept sightline and good Constant Velocity (CV) family conditioning.",
-    "Range unobservable": "Files where the sensor baseline is too small for any free-range method to determine distance. No fit can recover range here; that is a property of the data, not the analysis.",
-    "Resolved": "Files whose executive verdict was something other than 'unresolved' AND whose top candidate does not contradict the file's declared MaxRange. A parenthesised figure is how many were excluded for that contradiction — a verdict resting on a candidate the measurement says is impossible is not a resolution.",
+    "Range warning": "Files flagged by the current sensor-span check. This is a limited geometry warning, not a calibrated observability test. An unflagged file does not establish that range can be recovered.",
+    "Model fits": "Files with at least one tested interpretation class passing its applicable fit and completion checks / files with this assessment recorded. Counts fitting explanations, not identified objects or correct reconstructions. Evidence and MaxRange warnings are reported separately.",
+    "Compatible paths": "Files with at least one completed, close-fitting path inside a physical class's measured limits / files with path compatibility recorded. Applies the same class limits regardless of solver. Unknown inputs remain unassessed; this is not identification. Old rows may lack this assessment.",
+    "Insufficient evidence": "Files whose executive assessment says the evidence is insufficient. Fitting paths may still exist; this count is separate from model fit and path compatibility counts.",
+    "MaxRange conflicts": "Files whose selected path exceeds the file's declared MaxRange. This warning does not establish that every other candidate conflicts with that measurement.",
     "With truth": "Files whose conclusion can be scored — a TruePosition column, or a direction truth for a target that has a bearing but no finite range. The two are scored in different units and are never averaged together; the counts are shown as positional+direction.",
     "Median |err|": "Median line-of-sight (LOS) residual of the top-ranked interpretation across the run, in degrees — how far the winning candidates' tracks lie off the measured sightlines.",
     "Median rel. sep": "Median of (top interpretation's mean 3D separation from truth) / (mean true range), over the files that carry truth. Scale-free, so a 2 km and a 50 km scenario compare. Read it beside 'Best candidate': this tile scores the RANKING, that one scores the fits.",
-    "Best candidate": "The same measure for the CLOSEST candidate any method produced on each file. An ORACLE — truth picks the winner — so it is a ceiling and not a score the analysis could claim. Its distance from 'Median rel. sep' is what the ranking costs.",
-    "Ranking cost": "Median of (top interpretation's error / closest candidate's error). 1x means the ranking chose the best available answer every time. A large figure means the fits already found the object and the selection stage discarded it — a different repair from the fits missing it.",
+    "Best candidate": "Median relative separation for the closest candidate produced on each file. Truth chooses this retrospective best candidate. It measures candidate availability, not what a selector could necessarily recover from the observations. The difference between these medians is not the median paired selection penalty.",
+    "Ranking cost": "Median of (selected path's error / closest candidate's error), on rows with a positive best error. A median of 1x does not mean every selection was best. The closest candidate is chosen using truth; a gap does not prove that the observations could identify it without truth.",
 };
 
 // [label, width, tooltip, group]
@@ -437,6 +441,7 @@ export const CSV_COLUMNS = [
     "timeCv", "timeGaps", "invalidFrames", "droppedRows",
     "sourceGrade", "sourceReasons", "earthModel", "surfaceModel",
     "verdictCode", "headline", "viableClasses", "rangeUnobservable",
+    "pathCompatibleClasses", "pathCompatibilityUnknown",
     "ordTop", "ordTopClass", "ordTopSize", "ordTopSpeed", "ordTopG",
     "ordTopSizeOneSided",
     "ordMin", "ordMinClass", "ordMinName", "ordMinErrDeg",
@@ -483,6 +488,12 @@ export function rowToCsvRecord(entry) {
         earthModel: r?.earthModel ?? "", surfaceModel: r?.surfaceModel ?? "",
         verdictCode: r?.verdictCode ?? "", headline: r?.headline ?? "",
         viableClasses: (r?.viableClasses ?? []).join("+"),
+        // JSON arrays distinguish a recorded empty set ([]) from an old row
+        // where compatibility was not recorded (blank).
+        pathCompatibleClasses: Array.isArray(r?.pathCompatibleClasses)
+            ? JSON.stringify(r.pathCompatibleClasses) : "",
+        pathCompatibilityUnknown: Array.isArray(r?.pathCompatibilityUnknown)
+            ? JSON.stringify(r.pathCompatibilityUnknown) : "",
         // Mundaneness, exported so an offline study can score it. The per-term
         // breakdown is what makes a cost falsifiable — a total alone cannot say
         // whether size, speed or acceleration carried it.
@@ -2515,23 +2526,13 @@ function summaryCell(label, value) {
     return cell;
 }
 
-function updateSummary(state) {
+export function updateSummary(state) {
     const done = state.entries.filter((e) => e.status === "done" && e.row);
     const rows = done.map((e) => e.row);
     const errors = state.entries.filter((e) => e.status === "error").length;
     const good = rows.filter((r) => sourceQualityGrade(r.quality).grade === "good").length;
     const unobs = rows.filter((r) => r.rangeUnobservable).length;
-    // A verdict whose top candidate contradicts the file's own declared
-    // MaxRange is not a resolution — counting it as one advertises agreement
-    // the evidence does not support.
-    const contradicted = (r) => (r.maxRangeViolations ?? []).some((v) =>
-        v.key === r.top?.key && v.name === r.top?.name);
-    const wouldResolve = (r) => r.verdictCode && r.verdictCode !== "unresolved";
-    const resolved = rows.filter((r) => wouldResolve(r) && !contradicted(r)).length;
-    // Only the rows this actually SUBTRACTS. Counting every contradicted row
-    // included ones already unresolved for other reasons, so the parenthetical
-    // claimed to have excluded more than it did.
-    const contradictedCount = rows.filter((r) => wouldResolve(r) && contradicted(r)).length;
+    const outcomes = summarizeOutcomeCounts(rows);
     const truthRows = rows.filter((r) => r.truthScore);
     // Direction-truth rows ARE scored — in degrees rather than metres — so
     // counting only the positional ones reported Venus as unscored in the
@@ -2543,9 +2544,14 @@ function updateSummary(state) {
     state.summary.appendChild(summaryCell("Analysed", done.length));
     state.summary.appendChild(summaryCell("Errors", errors));
     state.summary.appendChild(summaryCell("Good source", good));
-    state.summary.appendChild(summaryCell("Range unobservable", unobs));
-    state.summary.appendChild(summaryCell("Resolved",
-        contradictedCount ? `${resolved} (−${contradictedCount})` : resolved));
+    state.summary.appendChild(summaryCell("Range warning", unobs));
+    state.summary.appendChild(summaryCell("Model fits", `${outcomes.modelFits}/${outcomes.modelAssessed}`));
+    state.summary.appendChild(summaryCell("Compatible paths",
+        `${outcomes.compatiblePaths}/${outcomes.compatibilityAssessed}`));
+    state.summary.appendChild(summaryCell("Insufficient evidence", outcomes.insufficient));
+    if (outcomes.maxRangeConflicts) {
+        state.summary.appendChild(summaryCell("MaxRange conflicts", outcomes.maxRangeConflicts));
+    }
     state.summary.appendChild(summaryCell("With truth",
         dirRows.length ? `${truthRows.length}+${dirRows.length}` : truthRows.length));
     state.summary.appendChild(summaryCell("Median |err|",
@@ -2553,11 +2559,9 @@ function updateSummary(state) {
     if (truthRows.length) {
         state.summary.appendChild(summaryCell("Median rel. sep",
             n3(median(truthRows.map((r) => r.truthScore.topRelSep)))));
-        // THE ORACLE, ON THE TILE ROW. "Median rel. sep" standing alone reads
-        // as a verdict on the whole analysis; beside the best any method
-        // produced it reads as what it is — a verdict on the RANKING. The two
-        // tiles differ by the ranking cost, and a large gap points at the
-        // selection stage rather than at the fits.
+        // Compare the selected result with retrospective candidate availability.
+        // Neither the difference of medians nor the oracle gap establishes what
+        // a selector could recover without truth. Compute paired ratios below.
         const bestRel = truthRows.map((r) => r.truthScore.bestRelSep).filter(Number.isFinite);
         if (bestRel.length) {
             state.summary.appendChild(summaryCell("Best candidate", n3(median(bestRel))));
