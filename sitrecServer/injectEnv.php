@@ -7,15 +7,51 @@ if (!file_exists($filename)) {
     return;
 }
 
+if (!function_exists('sitrecStripEnvComment')) {
+    // One line with its comment removed and its ends trimmed. A '#' starts a comment
+    // only outside quotes, and only at the start of the line or after whitespace, so
+    // BANNER_COLOR="#FFFFFF" and URL=https://host/page#top keep their '#'. A quote
+    // opens only at the start of the value (the apostrophe in It's is plain text), and
+    // a quote that never closes keeps the whole line. The same rule as
+    // scripts/envFile.js, which the build uses to read the same file; keep them in step.
+    function sitrecStripEnvComment($line) {
+        $len = strlen($line);
+        $start = -1; // first character of the value
+        $eq = strpos($line, '=');
+        if ($eq !== false) {
+            $start = $eq + 1;
+            while ($start < $len && ($line[$start] === ' ' || $line[$start] === "\t")) {
+                $start++;
+            }
+        }
+        $quote = null;
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $line[$i];
+            if ($quote !== null) {
+                if ($ch === '\\' && $quote === '"') {
+                    $i++; // skip the escaped character
+                } elseif ($ch === $quote) {
+                    $quote = null;
+                }
+            } elseif (($ch === '"' || $ch === "'") && $i === $start) {
+                $quote = $ch;
+            } elseif ($ch === '#' && ($i === 0 || ctype_space($line[$i - 1]))) {
+                return trim(substr($line, 0, $i));
+            }
+        }
+        return trim($line);
+    }
+}
+
 // Read the file line by line, ignoring empty lines
 $lines = file($filename, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
 
 foreach ($lines as $line) {
-    // Trim whitespace from the beginning and end of the line
-    $line = trim($line);
+    // Remove any comment and the whitespace around what is left
+    $line = sitrecStripEnvComment($line);
 
-    // Skip the line if it's a comment or empty after trimming
-    if ($line === '' || $line[0] === '#') {
+    // Skip the line if it was a comment or empty
+    if ($line === '') {
         continue;
     }
 

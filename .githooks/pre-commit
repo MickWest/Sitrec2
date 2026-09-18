@@ -10,10 +10,11 @@
 
 set -e
 
-# If config/shared.env.example is part of this commit, stamp it with a fresh
-# SHARED_ENV_VERSION (date-based) so downstream installs know their shared.env
-# needs updating — the build refuses to run against a stale version and prints
-# merge instructions (see scripts/sharedEnvVersion.js). Exit 3 = nothing to do.
+# If this commit changes a setting in config/shared.env.example, stamp it with a
+# fresh SHARED_ENV_VERSION (date-based) so downstream installs know their
+# shared.env needs updating — the build refuses to run against a stale version
+# and prints merge instructions (see scripts/sharedEnvVersion.js). Changes to
+# comments or blank lines alone are not stamped. Exit 3 = nothing to do.
 if git diff --cached --name-only --diff-filter=ACMR | grep -qx "config/shared.env.example"; then
     bump_status=0
     node scripts/sharedEnvVersion.js --bump-staged || bump_status=$?

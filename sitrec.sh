@@ -66,6 +66,46 @@ print_running() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: remove a trailing comment from $line (the bake parser's current line).
+# A '#' starts a comment only outside quotes and after whitespace, so
+# BANNER_COLOR="#FFFFFF" and URL=https://host/page#top keep their '#'. This is
+# the rule docker compose uses for the same file, and the rule Sitrec's own
+# loaders use (scripts/envFile.js, sitrecServer/injectEnv.php). A quote opens
+# only at the start of the value (the apostrophe in It's is plain text), and a
+# quote that never closes keeps the whole line. Keep in step with the copy in
+# install.sh.
+# ---------------------------------------------------------------------------
+strip_env_comment() {
+    local out="" quote="" prev=" " c i=0 n=${#line} start=-1 key
+    case "$line" in *=*)                              # a quote opens only where the value starts
+        key="${line%%=*}"; start=$(( ${#key} + 1 ))
+        while case "${line:start:1}" in " "|$'\t') true ;; *) false ;; esac; do
+            start=$((start + 1))
+        done ;;
+    esac
+    while [ "$i" -lt "$n" ]; do
+        c="${line:i:1}"
+        if [ -n "$quote" ]; then
+            if [ "$quote" = '"' ] && [ "$c" = '\' ]; then
+                out="$out$c${line:i+1:1}"; prev="x"; i=$((i + 2)); continue   # escaped character
+            fi
+            [ "$c" = "$quote" ] && quote=""
+        elif { [ "$c" = '"' ] || [ "$c" = "'" ]; } && [ "$i" -eq "$start" ]; then
+            quote="$c"
+        elif [ "$c" = "#" ]; then
+            case "$prev" in " "|$'\t')
+                while case "$out" in *" "|*$'\t') true ;; *) false ;; esac; do
+                    out="${out%?}"                            # trim the space before the '#'
+                done
+                line="$out"
+                return ;;
+            esac
+        fi
+        out="$out$c"; prev="$c"; i=$((i + 1))
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Helper: switch the image tag in docker-compose.yml
 # ---------------------------------------------------------------------------
 switch_version() {
@@ -391,6 +431,7 @@ for t in tags:
             done
             [ -z "$line" ] && continue                        # skip blank lines
             case "$line" in \#*) continue ;; esac             # skip comments
+            case "$line" in *\#*) strip_env_comment ;; esac   # drop a trailing comment
             line="${line#export }"                            # drop optional 'export '
             case "$line" in *=*) ;; *) continue ;; esac       # must contain '='
             key="${line%%=*}"

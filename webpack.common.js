@@ -6,7 +6,6 @@ const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const TerserPlugin = require("terser-webpack-plugin");
 const InstallPaths = require('./config/config-install');
 const copyPatterns = require('./webpackCopyPatterns');
-const Dotenv = require('dotenv-webpack');
 const child_process = require('child_process');
 const fs = require('fs');
 const MarkdownIt = require('markdown-it');
@@ -17,11 +16,10 @@ const WasmPackPlugin = require('@wasm-tool/wasm-pack-plugin');
 // The shared.env this build reads: config/shared.env, or the file SITREC_SHARED_ENV names
 // when building for another deployment (see scripts/buildTarget.js).
 const sharedEnvFile = require('./scripts/buildTarget').sharedEnvPath();
-const dotenv = require('dotenv');
-const result = dotenv.config({ path: sharedEnvFile });
-if (result.error) {
-    throw result.error;
-}
+// Not dotenv directly: dotenv 8 keeps a trailing "# comment" as part of the value.
+// envFile.js removes comments first, by the rule every shared.env reader uses.
+const { loadEnvIntoProcess, commentAwareDotenvPlugin } = require('./scripts/envFile');
+const sharedEnvValues = loadEnvIntoProcess(sharedEnvFile);
 
 // Stop the build when the shared.env predates config/shared.env.example
 // (compares SHARED_ENV_VERSION stamps; prints what changed and how to update).
@@ -261,7 +259,7 @@ module.exports = (env = {}) => ({
         //     }
         // },
 
-        new Dotenv({
+        commentAwareDotenvPlugin({
             path: sharedEnvFile,
         }),
         new MiniCssExtractPlugin({chunkFilename: '[name].[contenthash:8].css'}),
@@ -477,7 +475,7 @@ ${bodyContent}
             // only replaces literal process.env.X references, not dynamic key access).
             'process.env.SITREC_CUSTOM_SOURCES': JSON.stringify(JSON.stringify(
                 Object.fromEntries(
-                    Object.entries(result.parsed || {}).filter(([k]) =>
+                    Object.entries(sharedEnvValues).filter(([k]) =>
                         k.startsWith('SITREC_CUSTOM_MAP_') || k.startsWith('SITREC_CUSTOM_ELEVATION_')
                     )
                 )

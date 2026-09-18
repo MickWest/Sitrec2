@@ -7,7 +7,9 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { execFileSync, spawnSync } = require("node:child_process");
 
+const SCRIPT = path.resolve(__dirname, "..", "scripts", "sharedEnvVersion.js");
 const {
     readVersion,
     parseVersion,
@@ -15,8 +17,9 @@ const {
     nextVersion,
     setVersion,
     stripVersionLines,
+    settingLines,
     check,
-} = require(path.resolve(__dirname, "..", "scripts", "sharedEnvVersion.js"));
+} = require(SCRIPT);
 
 describe("version parsing and ordering", () => {
     test("parses bare dates and same-day sequence suffixes", () => {
@@ -80,6 +83,91 @@ describe("version line read/write", () => {
         const a = "# h\nSHARED_ENV_VERSION=2026-01-01\nFOO=1\n";
         const b = "# h\nSHARED_ENV_VERSION=2026-08-06\nFOO=1\n";
         expect(stripVersionLines(a)).toBe(stripVersionLines(b));
+    });
+});
+
+describe("settingLines (comments are stripped by scripts/envFile.js)", () => {
+    test("settingLines ignores comments, blank lines and the version line", () => {
+        const a = "# header\nSHARED_ENV_VERSION=2026-01-01\n\nFOO=1\nBAR=\"#FFF\"\n";
+        const b =
+            "# a new header\n# with a second line\nSHARED_ENV_VERSION=2026-08-06\n" +
+            "FOO=1   # now documented\n   \n\n# NEW_OPTIONAL=true\nBAR=\"#FFF\"\r\n";
+        expect(settingLines(a)).toBe("FOO=1\nBAR=\"#FFF\"");
+        expect(settingLines(b)).toBe(settingLines(a));
+    });
+
+    test("settingLines sees a changed, added, removed or moved setting", () => {
+        const base = settingLines("FOO=1\nBAR=\"#FFF\"\n");
+        expect(settingLines("FOO=2\nBAR=\"#FFF\"\n")).not.toBe(base);
+        expect(settingLines("FOO=1\nBAR=\"#000\"\n")).not.toBe(base);
+        expect(settingLines("FOO=1\nBAR=\"#FFF\"\nNEW=1\n")).not.toBe(base);
+        expect(settingLines("FOO=1\n")).not.toBe(base);
+        expect(settingLines("BAR=\"#FFF\"\nFOO=1\n")).not.toBe(base);
+        // Uncommenting an optional setting activates it.
+        expect(settingLines("FOO=1\nBAR=\"#FFF\"\n#NEW=1\n")).toBe(base);
+        expect(settingLines("FOO=1\nBAR=\"#FFF\"\nNEW=1\n")).not.toBe(base);
+    });
+});
+
+describe("commit-time stamping (--bump-staged)", () => {
+    const EXAMPLE = path.join("config", "shared.env.example");
+    const BASE = "# header\nSHARED_ENV_VERSION=2026-01-01\n\nFOO=1\nBANNER_COLOR=\"#FFFFFF\"\n";
+    let dir;
+
+    function git(...args) {
+        return execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+    }
+
+    // Stage new example content and run the hook's command against the scratch repo.
+    function stageAndBump(content) {
+        fs.writeFileSync(path.join(dir, EXAMPLE), content);
+        git("add", EXAMPLE);
+        const r = spawnSync(process.execPath, [SCRIPT, "--bump-staged"], {
+            env: { ...process.env, SHARED_ENV_ROOT: dir },
+            encoding: "utf8",
+        });
+        return { status: r.status, version: readVersion(fs.readFileSync(path.join(dir, EXAMPLE), "utf8")) };
+    }
+
+    beforeEach(() => {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-env-bump-"));
+        fs.mkdirSync(path.join(dir, "config"));
+        fs.writeFileSync(path.join(dir, EXAMPLE), BASE);
+        git("init", "-q");
+        git("add", EXAMPLE);
+        // A throwaway fixture repository: no hooks, no signing, no identity needed.
+        git("-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+            "commit", "-q", "--no-verify", "-m", "fixture");
+    });
+    afterEach(() => {
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("comment and blank-line edits do not bump", () => {
+        const r = stageAndBump(
+            "# header, reworded\n# and extended\nSHARED_ENV_VERSION=2026-01-01\n\n\n" +
+            "FOO=1   # now with a note\n# NEW_OPTIONAL=true\nBANNER_COLOR=\"#FFFFFF\" # white\n"
+        );
+        expect(r.status).toBe(3);
+        expect(r.version).toBe("2026-01-01");
+    });
+
+    test("a changed setting bumps", () => {
+        const r = stageAndBump(BASE.replace("FOO=1", "FOO=2"));
+        expect(r.status).toBe(0);
+        expect(compareVersions(r.version, "2026-01-01")).toBe(1);
+    });
+
+    test("a change after a '#' inside quotes bumps", () => {
+        const r = stageAndBump(BASE.replace("#FFFFFF", "#000000"));
+        expect(r.status).toBe(0);
+        expect(compareVersions(r.version, "2026-01-01")).toBe(1);
+    });
+
+    test("a manual bump with only comment edits is kept", () => {
+        const r = stageAndBump(BASE.replace("# header", "# new header").replace("2026-01-01", "2026-02-01"));
+        expect(r.status).toBe(3);
+        expect(r.version).toBe("2026-02-01");
     });
 });
 

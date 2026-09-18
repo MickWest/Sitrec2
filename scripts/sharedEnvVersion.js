@@ -7,10 +7,11 @@
  * Two consumers:
  *
  *   1. .githooks/pre-commit runs `--bump-staged`: when a commit changes the
- *      example's content (beyond the version line itself), the stamp is bumped
- *      to today's date, restaged, and the committer's own config/shared.env
- *      version line is synced (they authored the change, so their file is
- *      presumed current).
+ *      example's settings, the stamp is bumped to today's date, restaged, and
+ *      the committer's own config/shared.env version line is synced (they
+ *      authored the change, so their file is presumed current). Changes to
+ *      comments, blank lines or the version line alone do not bump it: a
+ *      shared.env synced to the old example works the same with the new one.
  *
  *   2. webpack.common.js calls checkOrExit() at config-load time, so EVERY
  *      build variant (dev, prod, docker, standalone, serverless) refuses to
@@ -28,6 +29,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { stripComment } = require("./envFile");
 
 // Overridable so tests can point --bump-staged / --check at a scratch repo.
 const ROOT = process.env.SHARED_ENV_ROOT || path.resolve(__dirname, "..");
@@ -289,6 +291,19 @@ function stripVersionLines(content) {
         .join("\n");
 }
 
+// The example reduced to its settings: no version line, comments or blank
+// lines. Comments are removed by the same rule every loader of shared.env
+// uses (scripts/envFile.js), so two versions that reduce to the same text
+// configure an install the same way, and a shared.env synced to one works
+// unchanged with the other.
+function settingLines(content) {
+    return stripVersionLines(content)
+        .split("\n")
+        .map(stripComment)
+        .filter(Boolean)
+        .join("\n");
+}
+
 // Keep the committer's own (gitignored) shared.env stamp current so their next
 // build doesn't trip the gate they just created — they authored the change.
 function syncLocalEnv(newVersion) {
@@ -320,8 +335,9 @@ function bumpStaged(today) {
 
     const stagedVersion = readVersion(staged);
 
-    if (stripVersionLines(staged) === stripVersionLines(head)) {
-        // Only the version line (or nothing) changed — e.g. a manual bump.
+    if (settingLines(staged) === settingLines(head)) {
+        // Only comments, blank lines or the version line changed (or nothing),
+        // so no install has to act. A manual bump is still honored.
         if (stagedVersion && stagedVersion !== readVersion(head)) syncLocalEnv(stagedVersion);
         return EXIT_NO_BUMP;
     }
@@ -382,6 +398,7 @@ module.exports = {
     nextVersion,
     setVersion,
     stripVersionLines,
+    settingLines,
     check,
     checkOrExit,
 };

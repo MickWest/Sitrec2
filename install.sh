@@ -293,6 +293,44 @@ detect_runtime() {
     fi
 }
 
+# Remove a trailing comment from $line (the bake parser's current line). A '#'
+# starts a comment only outside quotes and after whitespace, so
+# BANNER_COLOR="#FFFFFF" and URL=https://host/page#top keep their '#'. This is
+# the rule docker compose uses for the same file, and the rule Sitrec's own
+# loaders use (scripts/envFile.js, sitrecServer/injectEnv.php). A quote opens
+# only at the start of the value (the apostrophe in It's is plain text), and a
+# quote that never closes keeps the whole line. Keep in step with the copy in
+# sitrec.sh.
+strip_env_comment() {
+    local out="" quote="" prev=" " c i=0 n=${#line} start=-1 key
+    case "$line" in *=*)                              # a quote opens only where the value starts
+        key="${line%%=*}"; start=$(( ${#key} + 1 ))
+        while case "${line:start:1}" in " "|$'\t') true ;; *) false ;; esac; do
+            start=$((start + 1))
+        done ;;
+    esac
+    while [ "$i" -lt "$n" ]; do
+        c="${line:i:1}"
+        if [ -n "$quote" ]; then
+            if [ "$quote" = '"' ] && [ "$c" = '\' ]; then
+                out="$out$c${line:i+1:1}"; prev="x"; i=$((i + 2)); continue
+            fi
+            [ "$c" = "$quote" ] && quote=""
+        elif { [ "$c" = '"' ] || [ "$c" = "'" ]; } && [ "$i" -eq "$start" ]; then
+            quote="$c"
+        elif [ "$c" = "#" ]; then
+            case "$prev" in " "|$'\t')
+                while case "$out" in *" "|*$'\t') true ;; *) false ;; esac; do
+                    out="${out%?}"
+                done
+                line="$out"
+                return ;;
+            esac
+        fi
+        out="$out$c"; prev="$c"; i=$((i + 1))
+    done
+}
+
 bake_image() {
     if [ -z "$BAKE_TARGET" ]; then
         echo "[sitrec] ERROR: --bake requires a target image name."
@@ -354,6 +392,7 @@ bake_image() {
         done
         [ -z "$line" ] && continue
         case "$line" in \#*) continue ;; esac
+        case "$line" in *\#*) strip_env_comment ;; esac
         line="${line#export }"
         case "$line" in *=*) ;; *) continue ;; esac
         key="${line%%=*}"

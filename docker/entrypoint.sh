@@ -179,6 +179,24 @@ for var in $CLIENT_VARS $SERVER_VARS; do
     # Strip surrounding quotes (some compose tools pass them literally)
     val="${val#\"}" ; val="${val%\"}"
     val="${val#\'}" ; val="${val%\'}"
+    # injectEnv.php reads a '#' after whitespace, outside quotes, as the start of a
+    # comment. A value that really contains one (the env file's own comments are
+    # already gone) is written inside a quote kind it does not contain, so PHP keeps
+    # all of it. PHP removes those quotes again. A backslash is safe in either kind:
+    # PHP keeps it, and one just before the closing '"' only leaves the quote open,
+    # which keeps the whole line. Only a value holding both quote kinds cannot be
+    # written this way.
+    case "$val" in
+        *[[:space:]]\#*)
+            case "$val" in
+                *\'*)
+                    case "$val" in
+                        *\"*) echo "[entrypoint] WARNING: ${var} contains ' #' and both quote kinds; PHP will read it only up to the '#'." >&2 ;;
+                        *) val="\"${val}\"" ;;
+                    esac ;;
+                *) val="'${val}'" ;;
+            esac ;;
+    esac
     if [ -n "$val" ]; then
         echo "${var}=${val}" >> "$ENV_PHP_FILE"
     fi

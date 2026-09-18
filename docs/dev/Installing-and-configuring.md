@@ -226,7 +226,7 @@ To get the newest release:
 **Checking for new settings after an update.** Your settings live in `.env`, which
 updating never touches, so a new release can add options you never hear about. The
 reference file `shared.env.example` carries a `SHARED_ENV_VERSION` stamp near the top
-— a date that changes whenever the available settings change:
+— a date that changes whenever an active (not commented-out) setting changes:
 
 ```bash
 grep SHARED_ENV_VERSION shared.env.example
@@ -955,6 +955,23 @@ Edit the files in `config/`:
 - **`config.php`** — Server-side auth integration (XenForo, etc.). See `config.php.example`. For mutual TLS, see [Client certificate authentication](#client-certificate-authentication).
 - **`config-install.js`** — Build output paths.
 
+### Comments and quotes in shared.env
+
+A `#` starts a comment when it begins a line, or when it follows a space or tab
+outside quotes. Everything after it on that line is ignored:
+
+```bash
+LOCAL_DOCS=true                # a comment; the value is true
+BANNER_COLOR="#FFFFFF"         # the value is #FFFFFF — a # inside quotes is kept
+CUSTOM_URL=https://host/page#top   # the value keeps #top, which has no space before it
+```
+
+Quotes count only when they start the value, so in `TEXT=It's ready # note` the
+apostrophe is plain text and the value is `It's ready`. Put a value in quotes if it
+contains a space followed by `#`. The build, the PHP
+server, Docker Compose and the bake commands (`./sitrec.sh bake`,
+`install.sh --bake`) all read the file by this rule.
+
 ### Keeping shared.env up to date
 
 Your `config/shared.env` is yours — it holds your API keys and your settings, and
@@ -969,7 +986,9 @@ SHARED_ENV_VERSION=2026-09-03
 ```
 
 It is a date (with a `.1`, `.2` suffix if it changes more than once in a day), and it
-is updated automatically whenever the example file's settings change. Your
+is updated automatically whenever the example file's settings change. Changes to
+comments and blank lines do not update it — including a new optional setting that is
+added commented out — because they cannot change how your file works. Your
 `shared.env` carries the same line, recording which version of the example you are
 in sync with. **The build compares the two and refuses to build if yours is older.**
 

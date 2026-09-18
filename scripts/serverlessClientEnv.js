@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const dotenv = require("dotenv");
+const { parseEnv } = require("./envFile");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 // config/shared.env, or the file SITREC_SHARED_ENV names when building for another
@@ -36,7 +36,7 @@ function loadDotenvFile(filePath) {
         return {};
     }
 
-    return dotenv.parse(fs.readFileSync(filePath));
+    return parseEnv(fs.readFileSync(filePath, "utf8"));
 }
 
 function isSensitiveEnvKey(key) {
