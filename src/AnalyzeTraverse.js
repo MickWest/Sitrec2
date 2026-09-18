@@ -4127,9 +4127,9 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
     const seriesHTML = sc ? `
         <h4 class="tg-d-h">Frame-by-frame behaviour</h4>
         <div class="tg-d-series">
-            <img src="${sc.gURL}" alt="Kinematic acceleration over the clip, expressed in g">
-            <img src="${sc.spdURL}" alt="Speed over the clip">
-            <img src="${sc.errURL}" alt="LOS fit error over the clip">
+            <img src="${sc.gURL}" ${sc.sizeAttrs} alt="Kinematic acceleration over the clip, expressed in g">
+            <img src="${sc.spdURL}" ${sc.sizeAttrs} alt="Speed over the clip">
+            <img src="${sc.errURL}" ${sc.sizeAttrs} alt="LOS fit error over the clip">
         </div>` : "";
 
     return `
@@ -4138,8 +4138,8 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
             <canvas class="tg-d-chart tg-chart-3d" data-chart-role="detail" role="img"
                 title="Drag to rotate"
                 aria-label="3D volume view of the ${escapeHtml(h.name)} interpretation"></canvas>
-            <button class="tg-chart-fullscreen" type="button" title="Fullscreen graph"
-                aria-label="Fullscreen graph">⛶</button>
+            <button class="tg-chart-fullscreen" type="button" title="Expand graph"
+                aria-label="Expand graph">⛶</button>
             ${ZOOM_BUTTON_HTML}
             ${CHART_OVERLAY_BUTTONS_HTML}
         </div>
@@ -4209,10 +4209,23 @@ function familyDetailHTML(h) {
         + `</p>`;
 }
 
+// True when the focused element uses arrow keys itself (text, slider, select).
+function isTextEntry(el) {
+    const tag = el?.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!el?.isContentEditable;
+}
+
+// True when a button, link or <summary> has KEYBOARD focus (reached with Tab),
+// so Enter must press it. A mouse click leaves focus without :focus-visible.
+function isKeyboardFocusedControl(el) {
+    return !!el?.matches?.("button, a[href], summary") && el.matches(":focus-visible");
+}
+
 /**
  * Build and show the full-screen interactive result gallery for a completed
  * analysis. Removable via the fixed X, the Close button, or Escape.
  * Background clicks leave the gallery open. Does not leak listeners.
+ * Left/Right arrow keys step through the results.
  */
 /**
  * @param results the analysis results
@@ -4330,8 +4343,7 @@ function showResultGallery(results, uiState = null) {
     // rotate keeps working.
     overlay.dataset.interactionNative = "true";
     const _prevFocus = (typeof document !== "undefined" && document.activeElement) || null;
-    overlay.style.cssText = "position:fixed;inset:0;z-index:10000;display:flex;" +
-        "align-items:flex-start;justify-content:center;padding:24px 16px;box-sizing:border-box;" +
+    overlay.style.cssText = "position:fixed;inset:0;z-index:10000;display:flex;box-sizing:border-box;" +
         "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;";
 
     const chartGroup = new Chart3DGroup({syncScale: false});
@@ -4344,6 +4356,9 @@ function showResultGallery(results, uiState = null) {
     let selected = -1;
     let fullscreenView = null;
     let comparisonView = null;
+    // set once the tiles exist; the key handler is wired before they are
+    let stepSelection = () => {};
+    let stepRow = () => {};
     // Shared "zoom to tracks" state: the magnifier toggles ALL graphs together
     // (each to its own zoomBounds), like Sync Orientation / Sync Scale. New
     // charts (detail/tile/fullscreen) adopt it on creation.
@@ -4541,6 +4556,26 @@ function showResultGallery(results, uiState = null) {
             if (fullscreenView) closeChartFullscreen();
             else if (comparisonView) closeComparison();
             else remove();
+        } else if (e.key === "Enter" && !comparisonView
+            && !isTextEntry(document.activeElement) && !isKeyboardFocusedControl(document.activeElement)) {
+            // Enter belongs to the gallery here, so swallow auto-repeats and
+            // modified presses too: otherwise the browser clicks a button that
+            // still has focus from a mouse click (the Expand button just used)
+            // and a held Enter reopens the graph it just closed.
+            e.preventDefault();
+            const plain = !e.repeat && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+            // toggle the expanded graph of the selected result
+            if (plain && fullscreenView) closeChartFullscreen();
+            else if (plain && selected >= 0) openChartFullscreen(tileCharts[selected]);
+        } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !comparisonView
+            && !e.altKey && !e.ctrlKey && !e.metaKey && !isTextEntry(document.activeElement)) {
+            // a focused slider or field keeps its own arrow behaviour
+            e.preventDefault();
+            stepSelection(e.key === "ArrowRight" ? 1 : -1);
+        } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !comparisonView
+            && !e.altKey && !e.ctrlKey && !e.metaKey && !isTextEntry(document.activeElement)) {
+            e.preventDefault();
+            stepRow(e.key === "ArrowDown" ? 1 : -1);
         } else if (e.key === "Tab" && comparisonView) {
             const focusable = [...comparisonView.querySelectorAll("button, select"), xBtn];
             const index = focusable.indexOf(document.activeElement);
@@ -4573,8 +4608,11 @@ function showResultGallery(results, uiState = null) {
     const style = document.createElement("style");
     style.textContent = `
         .traverse-gallery-overlay .tg-backdrop { position:absolute; inset:0; background:rgba(0,0,0,0.93); }
-        .traverse-gallery-overlay .tg-panel { position:relative; z-index:1; width:96vw; max-width:1720px;
-            height:100%; display:flex; flex-direction:column; padding:20px 22px 16px 22px; box-sizing:border-box; }
+        /* The panel fills the window edge to edge. Any margin outside the two
+           scrolling columns is dead to the scroll wheel, so the spacing lives
+           INSIDE the tiles column's scroll frame instead. */
+        .traverse-gallery-overlay .tg-panel { position:relative; z-index:1; width:100%;
+            height:100%; display:flex; flex-direction:column; box-sizing:border-box; }
         /* Analysis text is evidence — it must be selectable and copyable. The
            app root disables selection globally (3D viewport, mobile long
            press); re-enable it across the gallery, then re-disable only where
@@ -4586,7 +4624,7 @@ function showResultGallery(results, uiState = null) {
         .traverse-gallery-overlay .tg-titlerow { display:flex; align-items:center; justify-content:space-between;
             gap:16px; flex:0 0 auto; }
         .traverse-gallery-overlay .tg-title { color:#e8eaed; font-size:21px; font-weight:700; }
-        .traverse-gallery-overlay .tg-x { position:fixed; top:8px; right:8px; z-index:10003;
+        .traverse-gallery-overlay .tg-x { position:fixed; top:13px; right:12px; z-index:10003;
             width:36px; height:36px; display:grid; place-items:center; padding:0;
             background:#171b20; border:1px solid #596575; color:#e8eaed; font-size:28px;
             line-height:1; cursor:pointer; border-radius:6px; }
@@ -4610,7 +4648,7 @@ function showResultGallery(results, uiState = null) {
             border-color:#3987e5; color:#eef6ff; }
         .traverse-gallery-overlay .tc-panel { height:100%; min-height:0; display:flex; flex-direction:column;
             background:#10151b; border:1px solid #435269; border-radius:12px; color:#e0e6ef; overflow:hidden;
-            width:100%; max-width:1200px; margin:auto; font-size:13px; }
+            width:100%; max-width:1200px; margin:24px auto; font-size:13px; height:calc(100% - 48px); }
         .traverse-gallery-overlay .tc-head { flex:none; padding:16px 22px; border-bottom:1px solid #344354; }
         .traverse-gallery-overlay .tc-title { display:flex; align-items:center; gap:18px; margin-bottom:10px; }
         .traverse-gallery-overlay .tc-title h2 { font-size:20px; margin:0; }
@@ -4636,10 +4674,14 @@ function showResultGallery(results, uiState = null) {
         .traverse-gallery-overlay .tc-pass { color:#b0f0c7; background:#204732; }
         .traverse-gallery-overlay .tc-fail { color:#ffc2bb; background:#572b2b; }
         .traverse-gallery-overlay .tc-unknown { color:#d0d7df; background:#37414e; }
-        .traverse-gallery-overlay .tg-body { flex:1 1 auto; min-height:0; display:flex; gap:18px; }
-        .traverse-gallery-overlay .tg-tiles { flex:2 1 0; min-width:0; overflow-y:auto; padding-right:4px; }
+        .traverse-gallery-overlay .tg-body { flex:1 1 auto; min-height:0; display:flex; }
+        /* The left pane holds the scrolling tiles column and, over it, the
+           expanded graph (which does not scroll). */
+        .traverse-gallery-overlay .tg-left { position:relative; flex:2 1 0; min-width:0; }
+        .traverse-gallery-overlay .tg-tiles { position:absolute; inset:0; overflow-y:auto;
+            padding:20px 18px 20px 22px; box-sizing:border-box; }
         .traverse-gallery-overlay .tg-details { flex:1 1 0; min-width:360px; overflow:hidden;
-            background:#101216; border:1px solid rgba(255,255,255,0.09); border-radius:12px;
+            background:#101216; border-left:1px solid rgba(255,255,255,0.09);
             display:flex; flex-direction:column; }
         .traverse-gallery-overlay .tg-grid { display:grid;
             grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
@@ -4753,7 +4795,7 @@ function showResultGallery(results, uiState = null) {
             margin-top:1px; }
         .traverse-gallery-overlay .tg-empty { color:#b9bfc7; font-size:14px; padding:26px 0; }
         /* details pane */
-        .traverse-gallery-overlay .tg-d-actions { flex:0 0 auto; padding:13px 15px;
+        .traverse-gallery-overlay .tg-d-actions { flex:0 0 auto; padding:13px 60px 13px 15px;
             border-bottom:1px solid rgba(255,255,255,0.08); display:flex; gap:10px; align-items:center;
             position:sticky; top:0; background:#101216; z-index:2; }
         .traverse-gallery-overlay .tg-use { flex:1 1 auto; padding:10px 12px; font-size:14px; font-weight:700;
@@ -4800,28 +4842,30 @@ function showResultGallery(results, uiState = null) {
             border-radius:8px; border:1px solid rgba(255,255,255,0.16); }
         .traverse-gallery-overlay .tg-btn-primary { background:#3987e5; color:#fff; border-color:#3987e5; }
         .traverse-gallery-overlay .tg-btn-ghost { background:rgba(255,255,255,0.06); color:#e8eaed; }
-        .traverse-gallery-overlay .tg-chart-fullscreen-layer { position:fixed; inset:0; z-index:10002;
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer { position:absolute; inset:0; z-index:5;
             background:#05070a; padding:0; box-sizing:border-box; display:flex; }
         .traverse-gallery-overlay .tg-chart-fullscreen-shell { position:relative; flex:1 1 auto; min-width:0; min-height:0; }
-        .traverse-gallery-overlay .tg-chart-fullscreen-canvas { width:100vw; height:100vh; display:block;
+        .traverse-gallery-overlay .tg-chart-fullscreen-canvas { width:100%; height:100%; display:block;
             background:#0c0e11; }
         .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-fullscreen {
-            top:58px; right:8px; width:40px; height:40px; font-size:23px; background:rgba(7,10,14,0.82);
+            top:8px; right:8px; width:40px; height:40px; font-size:23px; background:rgba(7,10,14,0.82);
         }
         .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-zoom {
-            top:106px; right:8px; width:40px; height:40px; background:rgba(7,10,14,0.82);
+            top:56px; right:8px; width:40px; height:40px; background:rgba(7,10,14,0.82);
         }
         .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-zoom svg { width:20px; height:20px; }
         .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-toggle {
             right:8px; width:40px; height:40px; font-size:20px;
         }
-        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-truth { top:154px; }
-        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-peaks { top:202px; }
-        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-camera { top:250px; }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-truth { top:104px; }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-peaks { top:152px; }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-camera { top:200px; }
         .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-camera svg { width:20px; height:20px; }
     `;
     overlay.appendChild(style);
 
+    // "Fullscreen" expands a graph over the LEFT pane only (the tile list), so
+    // the details of the same result stay readable beside it.
     function openChartFullscreen(sourceChart) {
         if (!sourceChart) return;
         closeChartFullscreen();
@@ -4830,13 +4874,13 @@ function showResultGallery(results, uiState = null) {
         layer.innerHTML =
             `<div class="tg-chart-fullscreen-shell">` +
                 `<canvas class="tg-chart-fullscreen-canvas tg-chart-3d" data-chart-role="fullscreen" role="img" ` +
-                `title="Drag to rotate" aria-label="Fullscreen 3D volume graph"></canvas>` +
-                `<button class="tg-chart-fullscreen" type="button" title="Exit fullscreen graph" ` +
-                `aria-label="Exit fullscreen graph">⛶</button>` +
+                `title="Drag to rotate" aria-label="Expanded 3D volume graph"></canvas>` +
+                `<button class="tg-chart-fullscreen" type="button" title="Back to results" ` +
+                `aria-label="Back to results">⛶</button>` +
                 ZOOM_BUTTON_HTML +
                 CHART_OVERLAY_BUTTONS_HTML +
             `</div>`;
-        overlay.appendChild(layer);
+        leftPane.appendChild(layer);
         const canvas = layer.querySelector("canvas");
         const chart = registerChart(new Chart3D(canvas, sourceChart.scene, chartGroup,
             {pad: sourceChart.pad ?? 0.1, scaleBoost: sourceChart.scaleBoost, labelInsetRight: 56}));
@@ -4857,6 +4901,11 @@ function showResultGallery(results, uiState = null) {
             closeChartFullscreen();
             return;
         }
+        // The capture-phase stop above keeps the tile's own click from
+        // running, so select the tile here: the details pane must describe
+        // the result whose graph is expanded, not the one selected before.
+        const tileIndex = tileEls.indexOf(btn.closest(".tg-tile"));
+        if (tileIndex >= 0 && tileIndex !== selected) selectTile(tileIndex);
         const shell = btn.closest(".tg-chart-shell");
         const canvas = shell ? shell.querySelector("canvas.tg-chart-3d") : null;
         openChartFullscreen(canvas ? chartByCanvas.get(canvas) : null);
@@ -4928,9 +4977,12 @@ function showResultGallery(results, uiState = null) {
     const body = document.createElement("div");
     body.className = "tg-body";
     panel.appendChild(body);
+    const leftPane = document.createElement("div");
+    leftPane.className = "tg-left";
+    body.appendChild(leftPane);
     const tilesCol = document.createElement("div");
     tilesCol.className = "tg-tiles";
-    body.appendChild(tilesCol);
+    leftPane.appendChild(tilesCol);
     const tilesHead = document.createElement("div");
     tilesHead.className = "tg-tiles-head";
     tilesCol.appendChild(tilesHead);
@@ -5411,6 +5463,14 @@ function showResultGallery(results, uiState = null) {
         selected = i;
         tileEls.forEach((el, k) => el.classList.toggle("selected", k === i));
         const {h, r, category, groupIndex, groupSize, tied} = tiles[i];
+        // When the reader has scrolled the details down, keep the
+        // frame-by-frame charts at the same screen position across the switch,
+        // so the new solution's charts replace the old ones in place.
+        const chartsTop = () => {
+            const el = dContent.querySelector(".tg-d-series");
+            return el ? el.getBoundingClientRect().top - dContent.getBoundingClientRect().top : null;
+        };
+        const anchor = dContent.scrollTop > 0 ? chartsTop() : null;
         disposeDetailChart();
         dContent.innerHTML = buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied, placements[i]);
         const detailCanvas = dContent.querySelector("canvas[data-chart-role='detail']");
@@ -5423,6 +5483,8 @@ function showResultGallery(results, uiState = null) {
             syncZoomButton(detailChart);
         }
         dContent.scrollTop = 0;
+        const top = anchor !== null ? chartsTop() : null;
+        if (top !== null) dContent.scrollTop = top - anchor;
         if (applyDisabledReason) {
             useBtn.textContent = "Cannot apply to this sitch";
             useBtn.title = applyDisabledReason;
@@ -5460,6 +5522,49 @@ function showResultGallery(results, uiState = null) {
     // them all back. There are no group headings: the tiles are in one flat
     // best-first order and each carries its category as a coloured corner label.
     const dismissed = new Set();
+
+    const goToTile = (next) => {
+        selectTile(next);
+        // under an expanded graph too, so the list is at this tile on return
+        tileEls[next].scrollIntoView({block: "nearest"});
+        // an expanded graph follows the selection
+        if (fullscreenView) openChartFullscreen(tileCharts[next]);
+    };
+
+    // Left/Right arrows step through the tiles in their on-screen order (the
+    // set-aside ones last, as relayout places them), wrapping at either end.
+    stepSelection = (dir) => {
+        if (tiles.length === 0) return;
+        const order = [...tiles.keys()].filter((i) => !dismissed.has(i))
+            .concat([...tiles.keys()].filter((i) => dismissed.has(i)));
+        const at = order.indexOf(selected);
+        goToTile(order[(at + dir + order.length) % order.length]);
+    };
+
+    // Up/Down move to the tile in the next grid row in that direction, the one
+    // nearest horizontally; no wrap. Rows come from the tiles' screen
+    // positions, not index arithmetic: the column count follows the window
+    // width, and the full-width Extras and Set-aside separators start new
+    // rows. (Under an expanded graph the list is covered but still laid out.)
+    stepRow = (dir) => {
+        if (selected < 0) return;
+        const cur = tileEls[selected].getBoundingClientRect();
+        const cx = cur.left + cur.width / 2;
+        const rects = tileEls.map((el) => el.getBoundingClientRect());
+        const inDir = (r) => dir > 0 ? r.top >= cur.bottom - 1 : r.bottom <= cur.top + 1;
+        let rowTop = null;
+        for (const r of rects) {
+            if (inDir(r) && (rowTop === null || (dir > 0 ? r.top < rowTop : r.top > rowTop))) rowTop = r.top;
+        }
+        if (rowTop === null) return;
+        let next = -1, bestDx = Infinity;
+        rects.forEach((r, i) => {
+            if (!inDir(r) || Math.abs(r.top - rowTop) > 1) return;
+            const dx = Math.abs(r.left + r.width / 2 - cx);
+            if (dx < bestDx) { bestDx = dx; next = i; }
+        });
+        if (next >= 0) goToTile(next);
+    };
 
     const relayout = () => {
         compareBtn.disabled = comparisonPool().length < 2;
@@ -5784,8 +5889,8 @@ function showResultGallery(results, uiState = null) {
                 `aria-label="Set aside ${escapeHtml(h.name)}">✕</button>` +
                 `<canvas class="tg-thumb tg-chart-3d" data-chart-role="tile" role="img" title="Drag to rotate" ` +
                 `aria-label="3D volume view of the ${escapeHtml(h.name)} trajectory"></canvas>` +
-                `<button class="tg-chart-fullscreen" type="button" title="Fullscreen graph" ` +
-                `aria-label="Fullscreen graph">⛶</button>` +
+                `<button class="tg-chart-fullscreen" type="button" title="Expand graph" ` +
+                `aria-label="Expand graph">⛶</button>` +
                 ZOOM_BUTTON_HTML +
                 CHART_OVERLAY_BUTTONS_HTML +
             `</div>` +
@@ -6097,8 +6202,12 @@ class CReportChart {
     px(x) { return this.m.left + (x - this.x0) / (this.x1 - this.x0) * this.plotW; }
     py(y) { return this.m.top + this.plotH - (y - this.y0) / (this.y1 - this.y0) * this.plotH; }
 
+    // o.yColor: color of the left tick numbers (default muted grey).
+    // o.right: optional second y scale {ticks, toY, fmt, color} — tick labels
+    // on the right edge, no grid; toY maps a right-scale value to a left-scale y
     axes(o = {}) {
-        const {xTicks = [], yTicks = [], xFmt = fmtNum, yFmt = fmtNum, grid = true} = o;
+        const {xTicks = [], yTicks = [], xFmt = fmtNum, yFmt = fmtNum, grid = true, right,
+            yColor = VIZ.muted} = o;
         const ctx = this.ctx;
         ctx.save();
         ctx.font = "11px system-ui, sans-serif";
@@ -6126,10 +6235,20 @@ class CReportChart {
                 ctx.lineTo(this.m.left + this.plotW, y);
                 ctx.stroke();
             }
-            ctx.fillStyle = VIZ.muted;
+            ctx.fillStyle = yColor;
             ctx.textAlign = "right";
             ctx.textBaseline = "middle";
             ctx.fillText(yFmt(ty), this.m.left - 7, y);
+        }
+        if (right) {
+            const rFmt = right.fmt ?? fmtNum;
+            ctx.fillStyle = right.color ?? VIZ.muted;
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            for (const ty of right.ticks) {
+                const y = Math.round(this.py(right.toY(ty))) + 0.5;
+                ctx.fillText(rFmt(ty), this.m.left + this.plotW + 7, y);
+            }
         }
         ctx.strokeStyle = VIZ.axis;
         ctx.strokeRect(this.m.left + 0.5, this.m.top + 0.5, this.plotW - 1, this.plotH - 1);
@@ -6151,7 +6270,8 @@ class CReportChart {
         ctx.restore();
     }
 
-    // xs/ys: array-likes (Array or Float64Array); non-finite values break the line
+    // xs/ys: array-likes (Array or Float64Array); non-finite values break the line.
+    // o: {width, alpha, dash} — dash is a canvas setLineDash pattern
     polyline(xs, ys, color, o = {}) {
         const ctx = this.ctx;
         ctx.save();
@@ -6162,6 +6282,7 @@ class CReportChart {
         ctx.lineWidth = o.width ?? 2;
         ctx.globalAlpha = o.alpha ?? 1;
         ctx.lineJoin = "round";
+        if (o.dash) ctx.setLineDash(o.dash);
         ctx.beginPath();
         let pen = false;
         for (let i = 0; i < xs.length; i++) {
@@ -6225,6 +6346,7 @@ class CReportChart {
             ctx.strokeStyle = e.color;
             ctx.lineWidth = e.width ?? 2.5;
             ctx.globalAlpha = e.alpha ?? 1;
+            ctx.setLineDash(e.dash ?? []);
             ctx.beginPath();
             ctx.moveTo(bx + pad, y);
             ctx.lineTo(bx + pad + swatch, y);
@@ -6234,6 +6356,32 @@ class CReportChart {
             ctx.textAlign = "left";
             ctx.textBaseline = "middle";
             ctx.fillText(e.label, bx + pad + swatch + 6, y);
+        });
+        ctx.restore();
+    }
+
+    // One-row legend in the title row, right-aligned, clear of the plot:
+    // entries [{color, label, width, dash}]; each label takes its line's color.
+    headerLegend(entries) {
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.font = "11px system-ui, sans-serif";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        const swatch = 16, gapIn = 5, gapOut = 12, y = 19;
+        const widths = entries.map((e) => swatch + gapIn + ctx.measureText(e.label).width);
+        let x = this.w - 12 - widths.reduce((sum, w) => sum + w, 0) - gapOut * (entries.length - 1);
+        entries.forEach((e, i) => {
+            ctx.strokeStyle = e.color;
+            ctx.lineWidth = e.width ?? 2;
+            ctx.setLineDash(e.dash ?? []);
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + swatch, y);
+            ctx.stroke();
+            ctx.fillStyle = e.color;
+            ctx.fillText(e.label, x + swatch + gapIn, y);
+            x += widths[i] + gapOut;
         });
         ctx.restore();
     }
@@ -6268,10 +6416,30 @@ function logTicks(lo, hi) {
 }
 const fmtLogTick = (v) => fmtNum(Math.pow(10, v));
 
+// The Fine scale's grey copy of the main line and its tick numbers: dim
+// enough to sit behind the main line, bright enough for 11 px numbers to read.
+const FINE_SCALE_GREY = "#6c7480";
+// The Fine scale is drawn only when its span is under this fraction of the
+// left scale's; above it, the fine line would only repeat the main line.
+const FINE_SCALE_MAX_FRACTION = 0.2;
+
 /**
  * Generic line chart -> PNG data URL.
  * o: {title, xLabel, yLabel, width, height, series: [{xs, ys, color, label,
- *     width, alpha}], logY, markers: [{x, y, color, label}], legendCorner}
+ *     width, alpha}], logY, markers: [{x, y, color, label}], legendCorner,
+ *     dualScale}
+ *
+ * dualScale: {min, step} (linear only). The left scale runs from 0 to the
+ * data maximum rounded UP to a whole `step`, and never ends below `min`, so a
+ * small value draws as a small line and similar charts share a scale. Its
+ * tick numbers take the first series' color, and the legend goes in the
+ * title row. The FIRST series is also drawn in grey behind, against the
+ * right-hand "Fine" scale (grey numbers), fitted to that series alone, whose
+ * span never shrinks below min/100 — so the detail stays visible without
+ * enlarging numerical noise (a 1e-13 g wobble) to full height. The Fine scale
+ * is left out when its span is not under FINE_SCALE_MAX_FRACTION of the left
+ * scale's. Other series (ground speed, a reference line) use the left scale
+ * only; they would stretch the Fine scale and hide the detail.
  */
 function lineChart(o) {
     const chart = new CReportChart(o);
@@ -6295,16 +6463,53 @@ function lineChart(o) {
         ? (y) => Math.log10(Math.max(y, minPos / 2))
         : (y) => y;
 
-    let ticksY, y0, y1;
+    // the plain auto scale: data range plus a margin. A zero-based scale takes
+    // its top margin from the whole span, or a near-constant line (a steady
+    // 6.9 kt) sits on the top edge of the frame.
+    const autoRange = () => {
+        if (o.zeroBased && yMin >= 0) return [0, yMax * 1.08];
+        const padY = (yMax - yMin) * 0.08 || Math.abs(yMax) * 0.1 || 1;
+        return [yMin - padY, yMax + padY];
+    };
+
+    let ticksY, y0, y1, right = null;
     if (o.logY) {
         y0 = tf(yMin); y1 = tf(yMax);
         const padY = (y1 - y0) * 0.06 || 0.1;
         y0 -= padY; y1 += padY;
         ticksY = logTicks(y0, y1);
+    } else if (o.dualScale) {
+        const {min, step} = o.dualScale;
+        y0 = Math.min(0, Math.floor(yMin / step) * step);
+        y1 = Math.max(y0 + min, Math.ceil(yMax / step - 1e-9) * step);
+        ticksY = niceTicks(y0, y1, 5);
+        // Fine scale: the first series' own range plus a margin, widened
+        // about its middle to at least min/100, and not below zero for data
+        // that never is
+        let pMin = Infinity, pMax = -Infinity;
+        for (const v of o.series[0].ys) {
+            if (!isFinite(v)) continue;
+            if (v < pMin) pMin = v;
+            if (v > pMax) pMax = v;
+        }
+        if (!isFinite(pMin)) { pMin = 0; pMax = 0; }
+        const padR = (pMax - pMin) * 0.08;
+        let r0 = pMin - padR, r1 = pMax + padR;
+        if (r1 - r0 < min / 100) {
+            const mid = (pMin + pMax) / 2;
+            r0 = mid - min / 200;
+            r1 = mid + min / 200;
+        }
+        if (pMin >= 0 && r0 < 0) { r1 -= r0; r0 = 0; }
+        if (r1 - r0 < FINE_SCALE_MAX_FRACTION * (y1 - y0)) {
+            right = {
+                ticks: niceTicks(r0, r1, 5),
+                toY: (v) => y0 + (v - r0) / (r1 - r0) * (y1 - y0),
+                color: FINE_SCALE_GREY,
+            };
+        }
     } else {
-        const padY = (yMax - yMin) * 0.08 || Math.abs(yMax) * 0.1 || 1;
-        y0 = yMin - padY; y1 = yMax + padY;
-        if (o.zeroBased && yMin >= 0) y0 = 0;
+        [y0, y1] = autoRange();
         ticksY = niceTicks(y0, y1);
     }
     chart.setRange(xMin, xMax, y0, y1);
@@ -6312,16 +6517,30 @@ function lineChart(o) {
         xTicks: niceTicks(xMin, xMax, 8),
         yTicks: ticksY,
         yFmt: o.logY ? fmtLogTick : fmtNum,
+        yColor: o.dualScale && !o.logY ? o.series[0].color : undefined,
+        right,
     });
+    if (right) {
+        // behind the main lines
+        const s = o.series[0];
+        chart.polyline(s.xs, Array.from(s.ys, right.toY), FINE_SCALE_GREY, {width: 1.5});
+    }
     for (const s of o.series) {
         chart.polyline(s.xs, Array.from(s.ys, tf), s.color,
-            {width: s.width, alpha: s.alpha});
+            {width: s.width, alpha: s.alpha, dash: s.dash});
     }
     for (const mk of o.markers ?? []) {
         chart.marker(mk.x, tf(mk.y), mk.color, mk.label);
     }
-    if (o.series.length > 1 || (o.markers ?? []).length) {
-        chart.legend(o.series.map((s) => ({color: s.color, label: s.label})),
+    if (o.dualScale && !o.logY) {
+        // in the title row: the lines sit anywhere in the plot, and the grey
+        // entry says which line uses the Fine scale
+        chart.headerLegend([
+            ...o.series.map((s) => ({color: s.color, label: s.label, width: s.width, dash: s.dash})),
+            ...(right ? [{color: FINE_SCALE_GREY, label: "Fine scale", width: 1.5}] : []),
+        ]);
+    } else if (o.series.length > 1 || (o.markers ?? []).length) {
+        chart.legend(o.series.map((s) => ({color: s.color, label: s.label, width: s.width, dash: s.dash})),
             o.legendCorner ?? "tr");
     }
     return chart.dataURL();
@@ -6385,11 +6604,14 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
     const base = {
         width: o.width ?? 560, height: o.height ?? 230,
         xLabel: "Time (s)", zeroBased: true,
-        margin: {left: 56, right: 14, top: 34, bottom: 40},
+        // right margin holds the Fine scale's tick labels (kept when a chart
+        // has no Fine scale, so the stacked charts stay aligned)
+        margin: {left: 56, right: 46, top: 34, bottom: 40},
     };
     const color = h.color || VIZ.constAir;
 
     const gURL = lineChart({...base, title: "Kinematic acceleration", yLabel: "acceleration (g)",
+        dualScale: {min: 2, step: 1},
         series: [{xs, ys: pick(m.series.gLoad), color, label: "g-force"}]});
 
     // speed: air speed always; ground speed too when the wind makes them differ
@@ -6400,9 +6622,10 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
         if (Math.abs(airKt[i] - gndKt[i]) > 1) { windMatters = true; break; }
     }
     const spdURL = lineChart({...base, title: "Speed", yLabel: "kt",
+        dualScale: {min: 40, step: 10},
         series: windMatters
             ? [{xs, ys: airKt, color, label: "air speed"},
-               {xs, ys: gndKt, color: VIZ.muted, label: "ground speed", width: 1.5}]
+               {xs, ys: gndKt, color, label: "ground speed", width: 1.5, dash: [6, 4]}]
             : [{xs, ys: airKt, color, label: "air speed"}]});
 
     // LOS error, with the flexible generic-fit residual as a reference line
@@ -6412,12 +6635,16 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
     const floor = h.params && h.params.errFloor;
     if (isFinite(floor) && floor >= 0.02) {
         errSeries.push({xs: [xs[0], xs[xs.length - 1]], ys: [floor, floor],
-            color: VIZ.muted, label: "generic-fit reference", width: 1.5, alpha: 0.9});
+            color, label: "generic-fit reference", width: 1.5, dash: [2, 4]});
     }
     const errURL = lineChart({...base, title: "LOS fit error", yLabel: "degrees",
+        dualScale: {min: 0.5, step: 0.5},
         series: errSeries});
 
-    return {gURL, spdURL, errURL};
+    // width/height attributes let the details pane reserve each image's
+    // height before its data URL decodes, so its scroll position can be set
+    // at once
+    return {gURL, spdURL, errURL, sizeAttrs: `width="${base.width}" height="${base.height}"`};
 }
 
 function heatColor(tRaw) {
