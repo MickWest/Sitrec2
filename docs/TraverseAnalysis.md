@@ -403,6 +403,9 @@ and fullscreen. Press the **camera icon** again to restore the rotatable 3D view
 Camera mode is unavailable for direction-only hypotheses and bulk results
 that have no scene camera pose.
 
+The top-right **X** in an expanded graph returns to the results. The **X**
+on the results page closes the analysis. **Escape** follows the same order.
+
 The report starts with **Ranking without truth**, using the same screening
 order as the gallery with **Use Truth Track** off. If a usable reference track
 is available, **Ranking with truth** follows: the same paths are ordered by

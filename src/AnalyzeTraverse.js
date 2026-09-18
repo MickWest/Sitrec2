@@ -4473,6 +4473,7 @@ function showResultGallery(results, uiState = null) {
         if (!fullscreenView) return;
         const {layer, chart, sourceChart} = fullscreenView;
         fullscreenView = null;
+        syncCloseButton();
         if (sourceChart && liveCharts.has(sourceChart)) {
             if (!chartGroup.syncOrientation) {
                 sourceChart.localMatrix = chart.localMatrix.slice();
@@ -4791,6 +4792,7 @@ function showResultGallery(results, uiState = null) {
         if (groupZoomed && chart.scene.zoomBounds) chart.setZoom(true);
         syncZoomButton(chart);
         fullscreenView = {layer, chart, sourceChart};
+        syncCloseButton();
         requestAnimationFrame(() => chart.resize());
     }
 
@@ -4887,15 +4889,21 @@ function showResultGallery(results, uiState = null) {
     detailsCol.className = "tg-details";
     body.appendChild(detailsCol);
 
-    // The close X belongs to the overlay, outside both scrolling columns, so
-    // it stays at the screen corner even when a chart is fullscreen.
+    // The fixed X closes the current layer: an expanded graph first, then
+    // the results once the user is back on the results page.
     const xBtn = document.createElement("button");
     xBtn.className = "tg-x";
     xBtn.type = "button";
     xBtn.textContent = "×";
-    xBtn.title = "Close traverse analysis";
-    xBtn.setAttribute("aria-label", "Close traverse analysis");
-    xBtn.addEventListener("click", remove);
+    function syncCloseButton() {
+        xBtn.title = fullscreenView ? "Back to analysis results" : "Close traverse analysis";
+        xBtn.setAttribute("aria-label", xBtn.title);
+    }
+    syncCloseButton();
+    xBtn.addEventListener("click", () => {
+        if (fullscreenView) closeChartFullscreen();
+        else remove();
+    });
     overlay.appendChild(xBtn);
 
     // Scrollable title row.
