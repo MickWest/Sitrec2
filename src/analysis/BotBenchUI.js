@@ -183,7 +183,7 @@ const TABLE_COLUMNS = [
 
     ["Verdict", "12%", "The executive assessment for this file. Shortened to fit — hover for the full headline.", "analysis"],
     ["Top interpretation", "10%", "The highest-ranked candidate, and its rank tier. Long method names are shortened — hover for the full name.", "analysis"],
-    ["|err|", "5%", "The top interpretation's mean line-of-sight residual in degrees, and after the slash the NOISE FLOOR — the residual a perfect track would score against the declared pointing error. A residual at or below the floor is fitting the noise, not the object, and cannot be read as a good answer.", "analysis"],
+    ["|err|", "5%", "The top interpretation's mean line-of-sight residual in degrees, followed by the expected residual under the declared independent pointing-noise model. The expectation is not a lower bound; falling below it alone does not establish overfitting.", "analysis"],
     ["Range", "3.5%", "Start range of the top interpretation, in nautical miles.", "analysis"],
     ["Spd (Knots)", "4%", "The top interpretation's air speed over the clip, min-max, in knots.", "analysis"],
     ["Alt (ft)", "3.5%", "The top interpretation's mean altitude, in feet.", "analysis"],
@@ -743,23 +743,15 @@ function buildSummaryReport(entries, options) {
                 && Number.isFinite(r.separability.seDeg)
                 && r.separability.marginDeg < 2 * r.separability.seDeg).length;
             L.push("");
-            L.push("  RESIDUAL AGAINST THE NOISE FLOOR");
-            L.push(`  A perfect track does not score zero. Against a declared per-axis sigma the`);
-            L.push(`  mean angular residual of TRUTH ITSELF is sigma x 1.2533 (the error is two`);
-            L.push(`  Gaussians in the tangent plane, so its magnitude is Rayleigh-distributed).`);
-            L.push(`  Median floor over ${sepRows.length} file(s): `
+            L.push("  RESIDUAL AGAINST THE EXPECTED NOISE RESIDUAL");
+            L.push("  Assuming independent Gaussian pointing errors with the declared per-axis");
+            L.push("  sigma, a perfect track has EXPECTED mean residual sigma x 1.2533.");
+            L.push(`  Median expected residual over ${sepRows.length} file(s): `
                 + `${n3(median(sepRows.map((r) => r.separability.floorDeg)))}°.`);
-            L.push(`    Top pick BELOW the floor:            ${belowFloor} / ${sepRows.length}`);
-            L.push(`    Winner's lead inside the noise:      ${insideNoise} / ${sepRows.length}`);
-            if (belowFloor) {
-                L.push("  A residual below the floor means the model fits the sightlines better than");
-                L.push("  the true trajectory does — it is fitting the pointing noise, and its low");
-                L.push("  residual is not evidence about the object.");
-            }
-            if (insideNoise) {
-                L.push("  A lead inside the noise means the residual did not separate the winner from");
-                L.push("  the runner-up; which one placed first is a property of this noise draw.");
-            }
+            L.push(`    Top pick below the expectation:      ${belowFloor} / ${sepRows.length}`);
+            L.push(`    Lead below two reference SEs:        ${insideNoise} / ${sepRows.length}`);
+            L.push("  A finite sample can be below the expectation without overfitting. These");
+            L.push("  comparisons are descriptive, not a significance test between fitted paths.");
         }
 
         const failCounts = {};
@@ -880,7 +872,7 @@ function buildSummaryReport(entries, options) {
         {h: "|err|", w: 7, get: (e) => n3(e.row?.top?.errDeg), right: true},
         // The floor beside the residual, so no reader can take a small number
         // for a good one without seeing what a perfect track would score.
-        {h: "floor", w: 7, get: (e) => n3(e.row?.separability?.floorDeg), right: true},
+        {h: "expect", w: 7, get: (e) => n3(e.row?.separability?.floorDeg), right: true},
         // HOW ORDINARY. Two columns because they are two claims: what we PICKED
         // scored, and what the data ALLOWED anywhere in the gallery. On a
         // bearings-only problem the second is routinely far lower — a different
@@ -900,8 +892,8 @@ function buildSummaryReport(entries, options) {
     L.push("");
     L.push("  * = declared anomalous, so 'unresolved' is the CORRECT outcome on that row.");
     L.push("  <> = the winner is a range-blind curve fit; its range came from the anchor.");
-    L.push("  floor = the residual a PERFECT track scores against the declared pointing");
-    L.push("          error. An |err| at or below it is fitting noise, not the object.");
+    L.push("  expect = the expected residual under the declared independent pointing-noise");
+    L.push("           model. This is not a lower bound or a test of overfitting.");
     L.push("  Best = closest candidate any method produced (ORACLE — truth picked it).");
     L.push("  Ord  = how ordinary the TOP candidate is, in decades outside the nearest");
     L.push("         real object's envelope. 0 = every quantity inside some class.");
@@ -1784,7 +1776,7 @@ function describeAdoptionProbe(probe, plan) {
     }
     const rows = probe.rows.checked
         ? (probe.rows.matched === probe.rows.checked
-            ? `Rows: all ${probe.rows.checked} remembered rows were reproduced exactly, so they are shown as they are.`
+            ? `Rows: all ${probe.rows.checked} remembered rows were reproduced exactly. Rows with current assessment rules can be reused; others are rebuilt from the fits.`
             : `Rows: ${probe.rows.checked - probe.rows.matched} of ${probe.rows.checked} remembered rows differ, so every row is rebuilt from the fits.`)
         : "Rows: none remembered for this selection; every row is built from the fits.";
     return {reuse, refit, unseen, rows,
@@ -2910,31 +2902,16 @@ function paintResultCells(state, entry, c, tr) {
         + (sep ? ` / ${n3(sep.floorDeg)}` : "");
     c[COL.err].title = `Top interpretation's mean LOS residual: ${n3(r.top?.errDeg)}°.`
         + (sep
-            ? `\n\nNoise floor ${n3(sep.floorDeg)}° — what a PERFECT track scores against the `
-                + `declared ${n3(q.declaredLosSigmaDeg)}° pointing error. (The per-frame error `
-                + `is two Gaussians in the tangent plane, so its magnitude is Rayleigh and its `
-                + `mean is sigma x 1.2533.)`
+            ? `\n\nExpected mean residual for a perfect track: ${n3(sep.floorDeg)}°, assuming `
+                + `independent Gaussian pointing errors with per-axis sigma ${n3(q.declaredLosSigmaDeg)}°. `
+                + `This is an average over possible noise samples, not a lower bound.`
                 + (sep.topBelowFloor
-                    ? `\n\nTHIS RESIDUAL IS BELOW THE FLOOR. The winning model fits the `
-                        + `sightlines better than the true trajectory does, which means it is `
-                        + `fitting the pointing noise. Its low residual is not evidence.`
-                    : "")
-                + (sep.belowFloor > 0
-                    ? `\n${sep.belowFloor} of ${sep.candidates} candidates beat the floor.` : "")
+                    ? `\n\nThis residual is below the expectation. That alone does not establish overfitting.` : "")
                 + (Number.isFinite(sep.marginDeg) && Number.isFinite(sep.seDeg)
-                    ? `\n\nThe winner led the runner-up by ${n3(sep.marginDeg)}°, against a `
-                        + `sampling error of ${n3(sep.seDeg)}° on a residual mean over `
-                        + `${q.frames} frames`
-                        + (sep.marginDeg < 2 * sep.seDeg
-                            ? ` — the lead is INSIDE the noise, so the residual did not `
-                                + `separate these two candidates.` : `.`)
-                    : "")
-            : `\n\nNo noise floor: this file declares no white pointing sigma.`);
-    if (sep && (sep.topBelowFloor
-        || (Number.isFinite(sep.marginDeg) && Number.isFinite(sep.seDeg)
-            && sep.marginDeg < 2 * sep.seDeg))) {
-        c[COL.err].style.color = "#ef6c00";
-    }
+                    ? `\n\nThe two smallest candidate residuals differ by ${n3(sep.marginDeg)}°. `
+                        + `Reference sampling error for a fixed perfect track over ${q.frames} independent frames: `
+                        + `${n3(sep.seDeg)}°. This is not a significance test between fitted candidates.` : "")
+            : `\n\nNo expected noise residual: a positive per-axis sigma and explicitly uncorrelated errors are required.`);
 
     c[COL.range].textContent = Number.isFinite(r.top?.rangeStartM)
         ? n2(r.top.rangeStartM / METERS_PER_NM) : "";
@@ -2967,7 +2944,7 @@ function paintResultCells(state, entry, c, tr) {
             + (Number.isFinite(ts.topRelSep) ? ` (${(ts.topRelSep * 100).toFixed(1)}% of the true range)` : "")
             + `.\nClosest candidate of any: ${fmtMetres(ts.bestSepM)} (${ts.bestName ?? "—"}).`
             + (Number.isFinite(ts.truthResidualDeg)
-                ? `\nTruth's own LOS residual — the achievable floor — is ${n3(ts.truthResidualDeg)}°.` : "");
+                ? `\nTruth's own LOS residual — a measured reference — is ${n3(ts.truthResidualDeg)}°.` : "");
         // Green when the analysis both picked well and landed close.
         const good = Number.isFinite(ts.topRelSep) && ts.topRelSep <= 0.10;
         c[COL.truth].style.color = good ? "#2e7d32" : (Number.isFinite(ts.topRelSep) ? "#c62828" : "");

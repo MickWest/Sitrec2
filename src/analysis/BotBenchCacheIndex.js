@@ -38,6 +38,11 @@
 
 import {UNIT_VERSIONS, sameOptions, unitOptions} from "./BotBenchSolvers";
 import {packForCache, unpackFromCache} from "./BotBenchCacheCodec";
+import {PHYSICAL_ENVELOPE_REVISION} from "../PhysicalEnvelopes";
+
+// Bump when metrics, screening, ranking, or interpretation change. Fits keep
+// their independent unit versions; a sampled adoption cannot validate old rows.
+export const ROW_ASSESSMENT_REVISION = `2:${PHYSICAL_ENVELOPE_REVISION}`;
 
 export const CACHE_SCHEMA = 3;
 export const CACHE_FILENAME = ".botbench-cache.json";
@@ -168,6 +173,7 @@ export function unitRecordUsable(record, {unitId, options, appVersion, adoptable
  */
 export function rowMemoUsable(memo, {appVersion, unitVersions, adoptable = false}) {
     if (!memo || !memo.row) return false;
+    if (memo.assessmentRevision !== ROW_ASSESSMENT_REVISION) return false;
     if ((memo.appVersion ?? null) !== appVersion && !adoptable) return false;
     const stored = memo.unitVersions ?? {};
     for (const [unitId, version] of Object.entries(unitVersions ?? {})) {
@@ -263,7 +269,7 @@ export function recordRowMemo(results, name, {hash, hashes}, key, memo, keep = R
     entry.units ??= {};
     entry.rows ??= {};
     delete entry.rows[key];
-    entry.rows[key] = {...memo, savedAt: new Date().toISOString()};
+    entry.rows[key] = {...memo, assessmentRevision: ROW_ASSESSMENT_REVISION, savedAt: new Date().toISOString()};
     const keys = Object.keys(entry.rows);
     for (const old of keys.slice(0, Math.max(0, keys.length - keep))) delete entry.rows[old];
     entry.savedAt = new Date().toISOString();

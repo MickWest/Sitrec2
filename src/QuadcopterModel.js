@@ -42,6 +42,8 @@ const EARTH_R = 6371000;
 // end without it being remarkable. See _turnEffortCost.
 const TURN_EFFORT_REF = 20;
 
+import {MULTIROTOR_LIMITS} from "./PhysicalEnvelopes";
+
 export class QuadcopterModel extends PhysicsModel {
     // Smooth kinematics: 1/30 s substeps are plenty (the 0.02 s base default is
     // for stiff drag models).
@@ -62,9 +64,9 @@ export class QuadcopterModel extends PhysicsModel {
         return "Quadcopter";
     }
 
-    _maxSpeed()   { return this.envelope ? this.envelope.maxSpeed   : 60; }
-    _maxAscent()  { return this.envelope ? this.envelope.maxAscent  : 30; }
-    _maxDescent() { return this.envelope ? this.envelope.maxDescent : 30; }
+    _maxSpeed()   { return this.envelope ? this.envelope.maxSpeed   : MULTIROTOR_LIMITS.maxSpeed; }
+    _maxAscent()  { return this.envelope ? this.envelope.maxAscent  : MULTIROTOR_LIMITS.maxAscent; }
+    _maxDescent() { return this.envelope ? this.envelope.maxDescent : MULTIROTOR_LIMITS.maxDescent; }
 
     getParameterDefs() {
         // name, min, max, default, scale (initial simplex perturbation)

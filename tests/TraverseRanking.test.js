@@ -125,7 +125,7 @@ describe("Traverse placement explanations", () => {
         expect(why.text).toContain("Completion is checked before distance from truth");
     });
 
-    test("within-category score explains its components and the ray allowance", () => {
+    test("within-category score explains its components using raw LOS error", () => {
         const items = rankAllHypotheses([
             sceneHypothesis("horizontalSpeed", {metricsFull: metrics({gMax: 1.43, gRms: 0.4, turnStd: 7})}),
             sceneHypothesis("constAlt"),
@@ -134,8 +134,8 @@ describe("Traverse placement explanations", () => {
         const text = rankingExplanation(items[1].h, items[1].r, {...opts, scoreBreakdown: true});
         expect(text).toContain("4 × RMS acceleration = 1.600");
         expect(text).toContain("peak acceleration = 1.430");
-        expect(text).toContain("scored LOS error / 0.05° = 0.580");
-        expect(text).toContain("subtracts the 0.05° solver allowance");
+        expect(text).toContain("scored LOS error / 0.05° = 1.580");
+        expect(text).toContain("Every solver uses raw LOS error without an allowance");
     });
 
     test("equal unavailable scores do not invent a deciding criterion", () => {
@@ -171,7 +171,7 @@ describe("LOS residual presentation", () => {
 });
 
 describe("Traverse ranking", () => {
-    test("GoFast Constant Altitude passes the broad screen without using the generic reference as noise", () => {
+    test("Constant Altitude uses its raw residual without using the generic reference as noise", () => {
         const h = hypothesis("constAlt", {
             errDeg: 0.0709515043,
             params: {errFloor: 0.4882653377},
@@ -179,8 +179,8 @@ describe("Traverse ranking", () => {
                 speedMeanKt: 233.6, speedMaxKt: 244.6, turnStd: 0.2359295}),
         });
         const first = plausibilityRating(h);
-        expect(first.rank).toBe(3);
-        expect(effectiveErrDeg(h)).toBeCloseTo(0.0209515043, 9);
+        expect(first.rank).toBe(2);
+        expect(effectiveErrDeg(h)).toBeCloseTo(0.0709515043, 9);
         expect(formatRawLosResidual(h)).toBe("0.07095°");
 
         // The generic CA residual is context only: changing it cannot alter the
@@ -350,12 +350,12 @@ describe("Traverse ranking", () => {
         // ordering could only ever interleave by section; the flat order must
         // put the better candidate first wherever it comes from.
         const items = rankAllHypotheses([
-            hypothesis("constAlt", {name: "Constant Altitude", errDeg: 0.01}),
+            hypothesis("constAlt", {name: "Constant Altitude", errDeg: 0.02}),
             hypothesis("lantern", {name: "Balloon", errDeg: 0.01}),
             hypothesis("gfCA", {name: "Global CA", errDeg: 0.4,
                 metrics: metrics({gMax: 5})}),
         ]);
-        expect(items.map((x) => x.h.name)).toEqual(["Constant Altitude", "Balloon", "Global CA"]);
+        expect(items.map((x) => x.h.name)).toEqual(["Balloon", "Constant Altitude", "Global CA"]);
         // Each tile still reports its standing within its own category.
         expect(items.map((x) => `${x.groupIndex + 1}/${x.groupSize}`)).toEqual(["1/1", "1/1", "1/1"]);
     });
@@ -488,14 +488,8 @@ describe("Traverse ranking", () => {
     });
 });
 
-// A balloon is physically constrained to a steady vertical trend and a
-// one-direction drift; a drone is not. When two physical fits are otherwise
-// close, that signature is evidence for the balloon, so it earns a bounded
-// promotion — and an un-balloon-like "balloon" (vertical reversal, curved drift)
-// is demoted the same amount. The nudge lives in secondaryScore, which the
-// comparator only consults after the tier ties, so it can reorder equally-good
-// fits but never lift a balloon over a clearly-better one.
-describe("balloon-consistency scoring", () => {
+// Balloon motion is a compatibility diagnostic, not a solver-label bonus.
+describe("balloon-consistency diagnostic", () => {
     // Flat [x,y,z]*n track in the shapes the metric must tell apart.
     function shapeTrack(mode, n = 80) {
         const t = new Float64Array(n * 3);
@@ -527,29 +521,26 @@ describe("balloon-consistency scoring", () => {
         expect(balloonConsistency(shapeTrack("circle"))).toBeLessThan(0.5);     // circling is not
     });
 
-    test("a balloon-like buoyant fit is promoted and an un-balloon-like one demoted, symmetrically", () => {
-        const like = plausibilityRating(buoyant("balloon", 0.3)).secondaryScore;
-        const notLike = plausibilityRating(buoyant("oscillate", 0.3)).secondaryScore;
-        // Same fit, same kinematics — only the shape differs. The promotion and
-        // demotion straddle the un-nudged base by the full nudge each way.
-        const base = plausibilityRating({...buoyant("balloon", 0.3), key: "quadcopter"}).secondaryScore;
-        expect(like).toBeLessThan(base);
-        expect(notLike).toBeGreaterThan(base);
-        // C=1 gives -6, C=0 gives +6: the two straddle the base by the full nudge.
-        expect(base - like).toBeCloseTo(6, 5);
-        expect(notLike - base).toBeCloseTo(6, 5);
+    test.each(["balloon", "oscillate", "circle"])("%s paths have the same score under every solver label", mode => {
+        const h = {...buoyant(mode, 0.079), fitScaleDeg: 0.2};
+        const ratings = ["lantern", "quadcopter", "horizontalSpeed", "constAlt", "gfCV"]
+            .map(key => plausibilityRating({...h, key}));
+        expect(new Set(ratings.map(r => r.secondaryScore)).size).toBe(1);
+        expect(new Set(ratings.map(r => r.fitRank)).size).toBe(1);
+        expect(ratings[0].scoredErrDeg).toBe(0.079);
+        expect(ratings[0].reasons.join(" ")).toContain("does not change the BOT Score");
     });
 
-    test("the nudge overturns a modest residual edge between same-tier physical fits", () => {
+    test("balloon-like motion does not overturn a residual edge for the same path", () => {
         // Balloon fits a little worse (0.42°) but its motion is textbook; the
         // drone fits better (0.22°) but both are the same fit tier. The balloon
-        // should lead once the signature is weighed.
+        // must not lead because of its solver name.
         const balloon = buoyant("balloon", 0.42);
         const drone = hypothesis("droneControl", {errDeg: 0.22, metrics: gentle()});
         drone.track = shapeTrack("balloon");   // drone flew the same path; it just isn't credited for looking like a balloon
         const order = rankAllHypotheses([drone, balloon]);
-        expect(order[0].h.key).toBe("lantern");
-        expect(order[1].h.key).toBe("droneControl");
+        expect(order[0].h.key).toBe("droneControl");
+        expect(order[1].h.key).toBe("lantern");
     });
 
     test("but it cannot lift a balloon over a drone that fits a whole tier better", () => {
@@ -884,6 +875,7 @@ describe("platform mirroring is a third binding dimension", () => {
         const h = hypothesis("constAlt", {name: "Constant Altitude", errDeg: 0.073,
             metrics: metrics({gMax: 0.48, speedMeanKt: 51, speedMaxKt: 69})});
         h.platformMirror = mirror({share: 0.959});
+        h.fitScaleDeg = 0.14;
         const r = plausibilityRating(h);
         expect(r.fitRank).toBe(3);
         expect(r.kinematicRank).toBe(3);

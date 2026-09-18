@@ -25,13 +25,13 @@ import {balloonConsistency} from "./TraverseMotion";
 export {balloonConsistency} from "./TraverseMotion";
 
 import {KNOTS_TO_MS, METERS_PER_NM, straightFlightScore} from "./TraverseAnalysis";
+import {physicalClassChecks} from "./TraverseMundaneness";
 import {
     platformMirrorRank,
     platformMirrorSignificant,
     platformMirrorSummary,
 } from "./TraversePlatformMirror";
 
-export const RAY_SOLVER_ALLOWANCE_DEG = 0.05;
 export const DISPLAY_TIE_THRESHOLD = 0.05;
 
 // --- Scene-relative fit tiers ----------------------------------------------
@@ -153,16 +153,6 @@ const FORWARD_KEYS = new Set(["aircraft", "lantern", "quadcopter", "droneControl
 // below. Both the free-wind and measured-wind Sky Lantern / Balloon variants use
 // key "lantern".
 const BUOYANT_KEYS = new Set(["lantern"]);
-
-// How far the balloon-consistency of the fitted motion may move a buoyant
-// hypothesis in secondaryScore. secondaryScore counts ~0.05° of LOS residual per
-// unit (it includes err/0.05), so 6 ≈ 0.3° of residual-equivalent: a textbook-
-// balloon motion can overcome up to ~0.3° of residual disadvantage against a
-// same-tier competitor, and an un-balloon-like "balloon" is pushed the same
-// amount the other way. It CANNOT cross a fit-quality tier — secondaryScore is
-// only consulted once the tier (rank) ties — so this can reorder a balloon and a
-// drone that fit about equally, never lift a balloon over a clearly-better fit.
-const BALLOON_CONSISTENCY_NUDGE = 6;
 
 // A capped local optimizer may return a useful provisional path, but reaching
 // its iteration budget is not convergence. Keep that path visible while making
@@ -288,14 +278,10 @@ export function hypothesisFitKind(h) {
     return "fitted-trajectory";
 }
 
-// Ray-constrained tracks carry a small smoothing/solver residual.  Give that a
-// fixed numerical allowance, not an allowance derived from the generic
-// constant-acceleration reference (which is explicitly not sensor noise).
+// Every finite path is measured against the same observations. Solver identity
+// must not change its residual, screening grade, or BOT Score.
 export function effectiveErrDeg(h) {
-    const err = Number.isFinite(h?.errDeg) ? h.errDeg : Infinity;
-    return hypothesisFitKind(h) === "ray-constrained"
-        ? Math.max(0, err - RAY_SOLVER_ALLOWANCE_DEG)
-        : err;
+    return Number.isFinite(h?.errDeg) ? h.errDeg : Infinity;
 }
 
 // Tier when ORDINARINESS is the binding judgement — these words are about the
@@ -337,9 +323,8 @@ function tierForMirrorRank(rank) {
     return {label: "Mirrors the platform", rank: 1, color: COLORS.low};
 }
 
-// How far platform mirroring may move a candidate in secondaryScore, in the
-// same residual-equivalent units as BALLOON_CONSISTENCY_NUDGE (~0.3 deg at the
-// full value). ASYMMETRIC BY DESIGN: it only ever demotes. Not mirroring the
+// How far platform mirroring may move a candidate in secondaryScore (~0.3 deg
+// of residual-equivalent at the full value). It only ever demotes. Not mirroring the
 // platform is the ordinary expectation, not an achievement to be rewarded, and
 // a promotion here would be a thumb on the scale for far solutions.
 const PLATFORM_MIRROR_NUDGE = 6;
@@ -376,18 +361,13 @@ export function botScoreTooltip(h, rating) {
         `0.02 × mean climb/descent speed above 5 m/s = ${(0.02 * Math.max(0, Math.abs(m.verticalSpeed.mean) - 5)).toFixed(3)}`,
         `Scored LOS error ${rating.scoredErrDeg.toFixed(5)}° ÷ 0.05° = ${(rating.scoredErrDeg / 0.05).toFixed(3)}`,
     ];
-    if (Number.isFinite(rating.balloonConsistency)) {
-        terms.push(`Balloon drift adjustment: 6 × (1 − 2 × ${rating.balloonConsistency.toFixed(3)}) = ${(BALLOON_CONSISTENCY_NUDGE * (1 - 2 * rating.balloonConsistency)).toFixed(3)}. Steady drift reduces the score; motion that reverses increases it`);
-    }
     if (platformMirrorSignificant(h.platformMirror)) {
         terms.push(`Camera-motion adjustment: 6 × ${(h.platformMirror.share).toFixed(3)} = ${(PLATFORM_MIRROR_NUDGE * h.platformMirror.share).toFixed(3)}. Motion shared with the camera increases the score`);
     }
     return intro + `For ${h.name}, add:\n${terms.join("\n")}\nTotal = ${rating.secondaryScore.toFixed(3)}. Values are rounded.\n\n`
         + "Acceleration is in g. Typical acceleration is the root mean square: square the values, take their mean, then take the square root. Turn-rate variation measures the spread around the mean (standard deviation, in degrees per second).\n\n"
         + "LOS error is the mean angle between the observed and predicted directions. "
-        + (rating.kind === "ray-constrained"
-            ? `This fit follows the sightlines and smooths the path. It gets a ${RAY_SOLVER_ALLOWANCE_DEG.toFixed(2)}° allowance: subtract it from the raw LOS error, with a minimum of zero.`
-            : "This result uses the raw LOS error without an allowance.");
+        + "Every solver uses the raw LOS error without an allowance. Solver names and object-class preferences do not change this score.";
 }
 
 export function plausibilityRating(h) {
@@ -570,28 +550,15 @@ export function plausibilityRating(h) {
     }
     if (modelClamps.length) reasons.push(`internal model clamp reached: ${modelClamps.join(", ")}`);
 
-    // Balloon-consistency nudge (buoyant hypotheses only). A balloon is
-    // physically constrained to a steady vertical trend and one-direction drift;
-    // when the fitted motion matches that, it is the parsimonious reading of a
-    // balloon-like path and earns a bounded promotion, and when it does NOT
-    // (vertical reversals, a curved/circling drift the model had to invoke), it
-    // is demoted the same amount — an internally strained "balloon". This only
-    // ever reorders same-tier candidates (secondaryScore is consulted after the
-    // tier ties), so a genuinely better-fitting drone still wins and nothing
-    // mundane is forced. See balloonConsistency and BALLOON_CONSISTENCY_NUDGE.
+    // Retain the balloon motion diagnostic, but do not reward or penalize the
+    // same path according to the name of the solver that produced it.
     const buoyant = BUOYANT_KEYS.has(h?.key);
     const balloonC = buoyant ? balloonConsistency(h?.track) : null;
-    const balloonAdj = balloonC === null ? 0 : BALLOON_CONSISTENCY_NUDGE * (1 - 2 * balloonC);
     if (balloonC !== null) {
-        // Disclose the nudge's MAGNITUDE in residual-equivalent (secondaryScore
-        // counts 0.05 deg of LOS residual per unit), so the reader can see exactly
-        // how strong this object-class prior is and that it only reorders within a
-        // fit-quality tier — it never crosses one (TA-18).
-        const nudgeDeg = (Math.abs(balloonAdj) * 0.05).toFixed(2);
         if (balloonC >= 0.75) {
-            reasons.push(`steady vertical trend and one-direction drift — characteristic balloon motion (consistency ${balloonC.toFixed(2)}); this promotes it by up to ${nudgeDeg}° of residual-equivalent within its fit tier, so it leads a drone or geometric fit only when they sit inside that margin`);
+            reasons.push(`steady vertical trend and one-direction drift — characteristic balloon motion (consistency ${balloonC.toFixed(2)}); this diagnostic does not change the BOT Score`);
         } else if (balloonC <= 0.45) {
-            reasons.push(`the fitted motion reverses vertically or curves back on itself — atypical for a balloon (consistency ${balloonC.toFixed(2)}); this demotes it by up to ${nudgeDeg}° of residual-equivalent within its fit tier`);
+            reasons.push(`the fitted motion reverses vertically or curves back on itself — atypical for a balloon (consistency ${balloonC.toFixed(2)}); this diagnostic does not change the BOT Score`);
         }
     }
 
@@ -626,7 +593,7 @@ export function plausibilityRating(h) {
         fitScaleDeg: scaleDeg,
         platformMirror: h?.platformMirror ?? null,
         balloonConsistency: balloonC,
-        secondaryScore: rankTieScore(h) + balloonAdj + mirrorAdj,
+        secondaryScore: rankTieScore(h) + mirrorAdj,
         reasons,
         kind,
     };
@@ -833,6 +800,28 @@ function noCorroborationReason(cls) {
         + "or a supporting wind comparison) is available for it";
 }
 
+// Keep envelope compatibility separate from completed forward-model fits.
+// Every solver contributes paths here; a compatible path is not an identity
+// or proof that the corresponding dynamics model reproduces the observations.
+export function assessPathCompatibility(hypotheses, dataset = null) {
+    const byClass = new Map();
+    const unknown = new Set();
+    for (const h of hypotheses || []) {
+        if (!judgeRepresentative(h).viable) continue;
+        const checks = physicalClassChecks(dataset, h);
+        if (!checks) continue;
+        const compatible = checks.classes.filter(c => c.compatible
+            && !(c.key === "balloon" && checks.unknown.includes("drift shape")));
+        if (!compatible.length) continue;
+        for (const value of checks.unknown) unknown.add(value);
+        for (const c of compatible) {
+            if (!byClass.has(c.key)) byClass.set(c.key, {key: c.key, label: c.label, candidates: []});
+            byClass.get(c.key).candidates.push({key: h.key, name: h.name});
+        }
+    }
+    return {classes: Array.from(byClass.values()), unknown: Array.from(unknown)};
+}
+
 /**
  * The frozen executive assessment: a verdict code, a one-sentence plain-text
  * headline, a supporting detail paragraph, and the per-class audit trail. The
@@ -849,8 +838,16 @@ function noCorroborationReason(cls) {
 export function assessExecutiveVerdict(hypotheses, context = {}) {
     const prov = context.provenance || {};
     const classes = aggregateInterpretationClasses(hypotheses);
+    const pathCompatibility = assessPathCompatibility(hypotheses, context.dataset);
+    const compatible = pathCompatibility.classes;
+    const pathDetail = compatible.length
+        ? ` Within tested limits: ${compatible.map(c => c.label).join(", ")}. `
+            + "These are path compatibility checks, not additional forward-model fits or identifications."
+            + (pathCompatibility.unknown.length
+                ? ` Unmeasured inputs: ${pathCompatibility.unknown.join(", ")}.` : "")
+        : "";
     const notRun = classes.filter((c) => !c.tested).map((c) => c.label);
-    const base = {classes, notRun, notModelled: NOT_MODELLED_DISCLOSURE,
+    const base = {classes, pathCompatibility, notRun, notModelled: NOT_MODELLED_DISCLOSURE,
         gates: {circular: !!prov.circular, rangeUnobservable: !!prov.rangeUnobservable}};
 
     if (prov.circular) {
@@ -886,9 +883,11 @@ export function assessExecutiveVerdict(hypotheses, context = {}) {
     if (viable.length === 1) {
         const c = viable[0];
         return {...base, code: "consistent-one",
-            headline: `Consistent with a ${c.label}, but not identified.`,
+            headline: compatible.length > 1
+                ? "Object type unresolved — close-fitting paths meet several physical class limits."
+                : `Consistent with a ${c.label}, but not identified.`,
             detail: `The ${c.label} interpretation gives a complete, ordinary, close fit, but `
-                + `${noCorroborationReason(c)}. The sightlines alone do not establish the object type.`};
+                + `${noCorroborationReason(c)}. The sightlines alone do not establish the object type.` + pathDetail};
     }
 
     if (viable.length >= 2) {
@@ -896,7 +895,7 @@ export function assessExecutiveVerdict(hypotheses, context = {}) {
             headline: "Consistent with several conventional interpretations.",
             detail: `Complete, ordinary, close fits were found for: ${viable.map((c) => c.label).join("; ")}. `
                 + "The available sightline and external evidence does not distinguish among them. "
-                + "No cross-category probability comparison has been made."};
+                + "No cross-category probability comparison has been made." + pathDetail};
     }
 
     // Nothing viable. This is the safety valve, not an anomaly claim.
@@ -911,10 +910,12 @@ export function assessExecutiveVerdict(hypotheses, context = {}) {
     reasons.push("the sightline noise floor is not calibrated and model envelopes were not "
         + "exhaustively excluded, so a strict exclusion audit has not been performed");
     return {...base, code: "unresolved",
-        headline: "Unresolved — no completed tested conventional model passes the current screen.",
+        headline: compatible.length
+            ? "Object type unresolved — close-fitting paths meet tested physical class limits."
+            : "Unresolved — no completed tested conventional model passes the current screen.",
         detail: "This is not, by itself, evidence of anomalous motion or an anomalous object. A "
             + "negative conventional-model conclusion is not licensed here because: "
-            + `${reasons.join("; ")}.`};
+            + `${reasons.join("; ")}.` + pathDetail};
 }
 
 // Truth-mode primary sort key: mean 3D separation from the selected truth
@@ -1323,16 +1324,11 @@ export function rankingExplanation(h, rating = plausibilityRating(h), {useTruth 
             `climb penalty = ${(0.02 * Math.max(0, Math.abs(m.verticalSpeed.mean) - 5)).toFixed(3)}`,
             `scored LOS error / 0.05° = ${(rating.scoredErrDeg / 0.05).toFixed(3)}`,
         ];
-        if (Number.isFinite(rating.balloonConsistency)) {
-            components.push(`balloon adjustment = ${(BALLOON_CONSISTENCY_NUDGE * (1 - 2 * rating.balloonConsistency)).toFixed(3)}`);
-        }
         if (platformMirrorSignificant(h.platformMirror)) {
             components.push(`platform-mirroring penalty = ${(PLATFORM_MIRROR_NUDGE * h.platformMirror.share).toFixed(3)}`);
         }
         score += ` Score components (added): ${components.join("; ")}.`;
-        if (rating.kind === "ray-constrained") {
-            score += ` The scored LOS error subtracts the ${RAY_SOLVER_ALLOWANCE_DEG.toFixed(2)}° solver allowance, floored at zero.`;
-        }
+        score += " Every solver uses raw LOS error without an allowance or object-class bonus.";
     }
     const inactive = rating.inactivePins?.length
         ? ` Parameters at bounds but not locally load-bearing: ${rating.inactivePins.join(", ")}.`

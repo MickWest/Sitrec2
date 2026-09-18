@@ -7,7 +7,7 @@
 import {
     CACHE_BLOB_DIR, CACHE_FILENAME, describeDuration, formatBytes, measureCacheOnDisk, recordedFitMs,
     DRONE_CONTROL_POSITION_TOLERANCE_M,
-    CACHE_SCHEMA, LEGACY_UNITS, adoptRecord, combinedHash, elapsedFromUnits, emptyIndex,
+    CACHE_SCHEMA, ROW_ASSESSMENT_REVISION, LEGACY_UNITS, adoptRecord, combinedHash, elapsedFromUnits, emptyIndex,
     indexTextChunks, indexWritePolicy, isReadableIndex,
     isLegacyEntry, legacyBlobName, legacyUnitsFromBattery, normalizeIndex, packUnitBlob, readUnitBlob,
     recordRowMemo, recordUnit, rowMemoUsable, sameUnitResult, unitBlobName, unitMetaFromBlob,
@@ -122,12 +122,17 @@ describe("the index entry", () => {
     });
 
     test("a remembered row is shown under its build with the same unit versions, or when adopted", () => {
-        const memo = {row: {x: 1}, appVersion: "v1", unitVersions: {kalman: UNIT_VERSIONS.kalman}};
+        const memo = {row: {x: 1}, appVersion: "v1", unitVersions: {kalman: UNIT_VERSIONS.kalman},
+            assessmentRevision: ROW_ASSESSMENT_REVISION};
         expect(rowMemoUsable(memo, {appVersion: "v1", unitVersions: {kalman: UNIT_VERSIONS.kalman}})).toBe(true);
         expect(rowMemoUsable(memo, {appVersion: "v2", unitVersions: {kalman: UNIT_VERSIONS.kalman}})).toBe(false);
         expect(rowMemoUsable(memo, {appVersion: "v2", unitVersions: {kalman: UNIT_VERSIONS.kalman}, adoptable: true})).toBe(true);
         expect(rowMemoUsable(memo, {appVersion: "v1", unitVersions: {kalman: UNIT_VERSIONS.kalman + 1}})).toBe(false);
         expect(rowMemoUsable(memo, {appVersion: "v1", unitVersions: {kalman: UNIT_VERSIONS.kalman, lantern: 1}})).toBe(false);
+        for (const assessmentRevision of [undefined, "old"]) {
+            expect(rowMemoUsable({...memo, assessmentRevision}, {appVersion: "v1",
+                unitVersions: memo.unitVersions, adoptable: true})).toBe(false);
+        }
     });
 });
 

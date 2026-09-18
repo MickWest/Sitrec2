@@ -26,6 +26,7 @@ import {
 import {unpackTrackToECEF} from "./TraverseAnalysisData";
 import {fitConstantAcceleration, assessLinearFitConditioning} from "./LOSFitting";
 import {classifyFixedWing, classifyQuadcopter} from "./VehicleModels";
+import {MULTIROTOR_LIMITS} from "./PhysicalEnvelopes";
 import {satelliteECEF, satelliteTrackENU, satelliteSunlit} from "./SatelliteSearch";
 import {localFitCompletionWarnings, settledButUnidentifiable} from "./TraverseRanking";
 import {solvedHorizontalWindAt} from "./TraverseWind";
@@ -969,7 +970,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
             (p) => p.name === "speed" ? "speedEnvelope" : p.name);
         // Acceleration can drive the derived speed beyond the model envelope
         // even when the initial-speed parameter itself is not pinned.
-        if (peakSpeed > 60 * 1.001) {
+        if (peakSpeed > MULTIROTOR_LIMITS.maxSpeed * 1.001) {
             quadSplit.active.set("speedEnvelope", "derived speed (above max)");
             quadSplit.inactive.delete("speedEnvelope");
         }
@@ -993,7 +994,10 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
             errDeg: quad.params.errDeg,
             boundPinned: quadPins,
             boundInactive: quadInactive,
-            optimizerWarnings: quadUnstable.map((w) => `inward bound probe improved ${w}`),
+            optimizerWarnings: [
+                ...quadUnstable.map((w) => `inward bound probe improved ${w}`),
+                ...localFitCompletionWarnings(quad.params.optimizer),
+            ],
             params: {
                 range: range0,
                 speed: solved.speed,
@@ -1003,6 +1007,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 windN: solved.windN,
                 closest: near ? near.name : null,
                 windPolicy: "wind fitted by this model",
+                optimizer: quad.params.optimizer,
                 // Nothing wires a wind prior into this model, so its calm-wind
                 // fallback is ALWAYS the active branch — worth showing.
                 priors: quad.params.priors,

@@ -38,10 +38,10 @@ The **residual** of a candidate track is the angle, at the camera, between
 where a ray points and where the candidate is at that frame, averaged over the
 clip, in degrees. Zero means the candidate sits on every ray. Real sightlines
 carry pointing noise, so a small residual is normal. The gallery's screen
-(section 9) counts a physics fit as *close* when its residual is still 0.05°
-or less after a 0.05° allowance for the ray solver has been taken off — about
-0.10° as measured; a catalogued satellite or star is held to a looser 0.10°
-(0.15° for a satellite) because its motion is known and is not screened. The
+(section 9) uses the same raw angular residual for every solver. Its close-fit
+threshold is 1.2 times a scene reference scale. The scale is clamped between
+0.02° and 0.20° and is not a measured noise level. A catalogued star has a 0.10°
+limit (0.15° for a satellite) and no motion screen. The
 benchmark's existence test (section 14) uses a tighter resolving floor of
 0.02°, about what the truth itself scores. Because every member of the
 exact-ray
@@ -151,19 +151,20 @@ out as a small drone, a light aircraft or an airliner, depending on the size
 and speed it implies. Some ordinary causes have no model at all — birds and
 insects, airborne debris, helicopters and rockets, reflections and glare,
 video artefacts — and the verdict lists them as *not modelled* rather than
-silently claiming to have covered them. Tiles are ranked by how well they fit
-the rays — the residual; the ordinariness cost is shown beside them and does
-not reorder them. Each tile passes or fails a **screen**: was the search
-complete, does it fit the rays (about 0.05° after the solver allowance, as
-section 3 says), is the motion ordinary (at most 1.5 g and 650 kt). That ceiling is applied to the finished
-answer, after the search, and sits far above any one class's envelope — the
-per-class limits are costed, as section 7 says — so a tile fails it only when
-no ordinary class could fly the motion. The **verdict** is simply how many of
-the five interpretation classes have a tile that passed: none is *Unresolved*
-(the safety valve, not an
-anomaly claim), one is *Consistent with one class, but not identified*, two or
-more is *Consistent with several*. The only affirmative wording, *Probably a
-wind-blown balloon*, needs an independent wind measurement to agree. Note what
+silently claiming to have covered them. Tiles first compare screening
+outcomes. When those tie, the BOT Score combines motion and raw LOS residual.
+Physical compatibility is shown separately and does not add a class preference
+to that score. Each tile passes or fails a **screen**: was the search complete,
+does it fit the rays (the same scene-relative threshold for every solver),
+and is motion within the broad limits (at most 1.5 g and 650 kt). These broad
+limits are separate from each physical class's limits.
+
+The **verdict** distinguishes complete forward-model fits from compatible
+path envelopes. A path from HSV can meet bird or multirotor limits without
+establishing that a bird or multirotor dynamics model fits. Several compatible
+classes leave the object type unresolved even if only one forward model
+passed. The affirmative wording *Probably a wind-blown balloon* still needs
+independent wind corroboration and the other balloon checks. Note what
 the verdict does not contain: a range. What each wording licenses you to say is
 in [Doing Defensible Analysis, section 7](DefensibleAnalysis.md#7-reading-the-executive-verdict-without-over-reading-it).
 

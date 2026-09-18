@@ -1,4 +1,15 @@
-import {accelerationPeaks} from "../src/TraverseMotion";
+import {accelerationAtFrame, accelerationPeaks} from "../src/TraverseMotion";
+
+test("current acceleration follows frame offsets for a partial truth track", () => {
+    const metrics = {series: {gLoad: [0, 0.27, NaN, 1.43]}, sampleWindow: {frameOffset: 20}};
+    expect(accelerationAtFrame(metrics, 19)).toBeNull();
+    expect(accelerationAtFrame(metrics, 20)).toBe(0);
+    expect(accelerationAtFrame(metrics, 21)).toBe(0.27);
+    expect(accelerationAtFrame(metrics, 22)).toBeNull();
+    expect(accelerationAtFrame(metrics, 23)).toBe(1.43);
+    expect(accelerationAtFrame(metrics, 24)).toBeNull();
+    expect(accelerationAtFrame(null, 20)).toBeNull();
+});
 
 test("acceleration peaks exclude trimmed ends and separate neighbouring maxima in time", () => {
     const gLoad = new Float64Array(100);

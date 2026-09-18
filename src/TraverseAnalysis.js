@@ -124,6 +124,7 @@ export function trackMetrics(dataset, track, options = {}) {
     // windows now differentiate over the longest window that still leaves
     // interior samples.
     const groundSpeed = scratch("groundSpeed", n), airSpeed = scratch("airSpeed", n);
+    const horizontalAirSpeed = scratch("horizontalAirSpeed", n);
     const heading = scratch("heading", n), verticalSpeed = scratch("verticalSpeed", n);
     const groundHeading = scratch("groundHeading", n);
     const altitude = scratch("altitude", n), range = scratch("range", n);
@@ -144,6 +145,7 @@ export function trackMetrics(dataset, track, options = {}) {
         airVX[f] = va0; airVY[f] = va1; airVZ[f] = va2;
         groundSpeed[f] = Math.hypot(vg0, vg1, vg2);
         airSpeed[f] = Math.hypot(va0, va1, va2);
+        horizontalAirSpeed[f] = Math.hypot(va0, va1);
         // Heading is undefined when there is no horizontal motion to have a
         // heading in: atan2 of two near-zero components returns whatever the
         // numerical noise happens to point at, and since turnRate below is the
@@ -240,6 +242,7 @@ export function trackMetrics(dataset, track, options = {}) {
     return {
         groundSpeed: stat(groundSpeed, lo, hi),
         airSpeed: stat(airSpeed, lo, hi),
+        horizontalAirSpeed: stat(horizontalAirSpeed, lo, hi),
         verticalSpeed: stat(verticalSpeed, lo, hi),
         gLoad: stat(gLoad, lo, hi),
         turnRate: turnRateStat,
@@ -3490,7 +3493,7 @@ export function isRangeUnobservable(stats, anchorDist) {
 /**
  * Regime-neutral score for a candidate ray-constrained track: the same
  * smoothness metric the gallery ranking uses (straightFlightScore) plus the
- * LOS residual beyond the ray-solver allowance, in 0.05-degree units.
+ * Raw LOS residual, in 0.05-degree units.
  * The fast sweep and the slow range profile score with different priors and
  * different smoothing/downsampling, so their internal scores must never be
  * compared directly — this is the common yardstick.

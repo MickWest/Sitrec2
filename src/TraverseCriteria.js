@@ -175,15 +175,15 @@ export function candidateCriteria(h, rating, {dataset = null, useTruth = true} =
         out.push({key: "accel", label: "Acceleration", letter: "A", status: "na", value: "—",
             why: "no metrics to judge."});
     } else {
-        const speedMinKt = (m.airSpeed?.min ?? m.airSpeed?.mean) / KNOTS_TO_MS;
-        const speedMaxKt = (m.airSpeed?.max ?? m.airSpeed?.mean) / KNOTS_TO_MS;
+        const {speedMinKt, speedMaxKt} = jc;
         const speedStatus = worst(statusForDecades(jc.speedCost),
             m.airSpeed?.max / KNOTS_TO_MS > 900 ? "fail"
                 : m.airSpeed?.max / KNOTS_TO_MS > 650 ? "caution" : "pass");
         out.push({
             key: "speed", label: "Speed", letter: "S", status: speedStatus,
             value: `${speedMinKt.toFixed(1)}–${speedMaxKt.toFixed(1)} kt`,
-            why: `Air speed ${speedMinKt.toFixed(1)}–${speedMaxKt.toFixed(1)} kt against a ${clsName}'s `
+            why: `${jc.speedBasis === "horizontal" ? "Horizontal air speed" : "Air speed"} `
+                + `${speedMinKt.toFixed(1)}–${speedMaxKt.toFixed(1)} kt against a ${clsName}'s `
                 + `${fmtBand(jc.cls.speedKt, "kt")} — ${how}.`
                 + (jc.speedCost > 0
                     ? ` Outside it by a factor of ${Math.pow(10, jc.speedCost).toFixed(1)}.`

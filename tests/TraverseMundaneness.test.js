@@ -3,6 +3,9 @@ import {mundanenessCost, mundanenessSummary, physicalClassChecks, physicalCompat
 import {balloonConsistency} from "../src/TraverseMotion";
 import {judgingClass} from "../src/TraverseCriteria";
 import {KNOTS_TO_MS} from "../src/TraverseAnalysis";
+import {MULTIROTOR_LIMITS} from "../src/PhysicalEnvelopes";
+import {QuadcopterModel} from "../src/QuadcopterModel";
+import {quadcopterById} from "../src/VehicleModels";
 
 function path(circling) {
     const track = new Float64Array(361 * 3);
@@ -51,10 +54,26 @@ test("straight drift still admits a balloon without choosing it over tied classe
 });
 
 test("peak speed and the fixed-wing minimum cannot hide behind an ordinary average", () => {
-    const cost = mundanenessCost(null, candidate("horizontalSpeed", {min: 0, max: 80, mean: 40}));
+    const cost = mundanenessCost(null, candidate("horizontalSpeed", {min: 0, max: 130, mean: 40}));
     expect(cost.classes.find(c => c.key === "quadcopter").speedCost).toBeGreaterThan(0);
     expect(cost.classes.find(c => c.key === "smallUAS").speedCost).toBe(Infinity);
     expect(cost.compatibleClasses).toHaveLength(0);
+});
+
+test("multirotor compatibility and the generic model share a speed limit in m/s", () => {
+    const h = candidate("horizontalSpeed", {min: 45 / KNOTS_TO_MS, max: 45 / KNOTS_TO_MS});
+    expect(physicalClassChecks(null, h).classes.find(c => c.key === "quadcopter").compatible).toBe(true);
+    const model = new QuadcopterModel();
+    expect(model.getParameterDefs().find(p => p.name === "speed").max).toBe(MULTIROTOR_LIMITS.maxSpeed);
+    expect(quadcopterById("auto").maxSpeed).toBe(MULTIROTOR_LIMITS.maxSpeed);
+
+    h.metricsFull.airSpeed.max = 65;
+    h.metricsFull.horizontalAirSpeed = {min: 45, max: 60, mean: 50};
+    const check = physicalClassChecks(null, h).classes.find(c => c.key === "quadcopter");
+    expect(check.compatible).toBe(true);
+    expect(check.speedBasis).toBe("horizontal");
+    h.metricsFull.horizontalAirSpeed.max = 61;
+    expect(physicalClassChecks(null, h).classes.find(c => c.key === "quadcopter").compatible).toBe(false);
 });
 
 test("missing path data is disclosed, not a demonstrated drift match", () => {

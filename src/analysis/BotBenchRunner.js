@@ -464,6 +464,30 @@ export function scoreDirectionTruth(dataset, hypotheses, directionTruth) {
     return {label: directionTruth.label, best: per[0], all: per};
 }
 
+// Reference for an explicitly uncorrelated, declared per-axis pointing sigma.
+// This is an expected residual, not a lower bound or a test of overfitting.
+export function residualNoiseReference(quality, errors, topError) {
+    const q = quality ?? {};
+    const sigma = q.declaredLosSigmaDeg;
+    const errs = errors.filter(Number.isFinite).sort((a, b) => a - b);
+    if (!(Number.isFinite(sigma) && sigma > 0)
+        || q.losErrorCorrelated !== false || !errs.length) return null;
+    const floorDeg = sigma * RAYLEIGH_MEAN;
+    const n = Number.isFinite(q.frames) && q.frames > 1 ? q.frames : null;
+    // Keep existing export field names for compatibility. The UI calls these
+    // expected residuals. This SE describes a fixed perfect track under the
+    // assumed white Gaussian model, not a paired test of fitted candidates.
+    return {
+        floorDeg,
+        seDeg: n ? sigma * RAYLEIGH_SD / Math.sqrt(n) : null,
+        belowFloor: errs.filter(e => e < floorDeg).length,
+        candidates: errs.length,
+        marginDeg: errs.length > 1 ? errs[1] - errs[0] : null,
+        leadSpreadDeg: errs.length > 1 ? errs[Math.min(4, errs.length - 1)] - errs[0] : null,
+        topBelowFloor: Number.isFinite(topError) && topError < floorDeg,
+    };
+}
+
 /**
  * One table row's worth of a completed run: what the analysis concluded, how
  * well it fitted, and — where truth exists — whether it was right.
@@ -580,47 +604,8 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
         };
     }
 
-    // SEPARABILITY. Whether the residual could legitimately have chosen the top
-    // candidate at all, which is prior to whether it chose well. Truth-free: it
-    // uses only the DECLARED pointing sigma and the candidates' own residuals,
-    // so it computes on a challenge file exactly as it does on an answers file.
-    //
-    // Correlated (operator wobble) declarations are excluded rather than
-    // approximated. Their sigma is a deadband amplitude, not a per-axis
-    // standard deviation, so the Rayleigh relation does not hold and a floor
-    // computed from it would be wrong in an unstated direction.
-    let separability = null;
-    {
-        const q = record.quality ?? {};
-        const sigma = q.declaredLosSigmaDeg;
-        const errs = results.hypotheses.map((h) => h.errDeg)
-            .filter(Number.isFinite).sort((a, b) => a - b);
-        if (Number.isFinite(sigma) && sigma > 0 && !q.losErrorCorrelated && errs.length) {
-            const floorDeg = sigma * RAYLEIGH_MEAN;
-            const n = Number.isFinite(q.frames) && q.frames > 1 ? q.frames : null;
-            separability = {
-                floorDeg,
-                // A residual MEAN over n frames has this sampling error. Two
-                // candidates closer together than about this are not being
-                // separated by the data; they are being separated by which
-                // noise realisation the clip happens to carry.
-                seDeg: n ? sigma * RAYLEIGH_SD / Math.sqrt(n) : null,
-                // Candidates that beat what a perfect track scores. Every one
-                // of them is fitting the pointing noise, by definition.
-                belowFloor: errs.filter((e) => e < floorDeg).length,
-                candidates: errs.length,
-                // How far the winner led the runner-up. Reported in degrees and
-                // as a multiple of the sampling error above.
-                marginDeg: errs.length > 1 ? errs[1] - errs[0] : null,
-                // The residual spread across the leading candidates, against
-                // the declared sigma. A spread well under 1 sigma means the
-                // whole ranking decision happened inside the noise.
-                leadSpreadDeg: errs.length > 1
-                    ? errs[Math.min(4, errs.length - 1)] - errs[0] : null,
-                topBelowFloor: Number.isFinite(top?.h?.errDeg) && top.h.errDeg < floorDeg,
-            };
-        }
-    }
+    const separability = residualNoiseReference(record.quality,
+        results.hypotheses.map(h => h.errDeg), top?.h?.errDeg);
 
     // GEOMETRY PROBE. The Minimum Acceleration fit's stage-1 gate is a cheap
     // extraction ATTEMPT: it either pinned the range from pure smoothness

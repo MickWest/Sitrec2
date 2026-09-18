@@ -14,7 +14,7 @@
 <text x="675.0" y="86.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#17202A" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">satellite or star</text>
 <text x="40.0" y="50.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the five interpretation classes the verdict counts (geometric and curve fits are screens, not classes)</text>
 <rect x="40.0" y="130.0" width="700.0" height="36.0" rx="4" fill="#F6E6D6" stroke="#C9690F" stroke-width="1"/>
-<text x="390.0" y="153.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#C9690F" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the screen: complete search? fits the rays (about 0.05° after the solver allowance)? ordinary motion (≤ 1.5 g, ≤ 650 kt)?</text>
+<text x="390.0" y="153.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#C9690F" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the screen: complete search? raw LOS error within the scene threshold? motion within broad limits?</text>
 <line x1="107.0" y1="104.0" x2="107.0" y2="128.0" stroke="#7E8893" stroke-width="1" marker-end="url(#ai)"/>
 <line x1="249.0" y1="104.0" x2="249.0" y2="128.0" stroke="#7E8893" stroke-width="1" marker-end="url(#ai)"/>
 <line x1="391.0" y1="104.0" x2="391.0" y2="128.0" stroke="#7E8893" stroke-width="1" marker-end="url(#ai)"/>

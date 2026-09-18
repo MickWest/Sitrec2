@@ -46,6 +46,14 @@ export function balloonConsistency(track) {
     return balloonMotion(track)?.consistency ?? 0.5;
 }
 
+// Frame numbers are relative to the analysis window. Truth metrics can cover
+// a shorter valid run, so its first sample may belong to a later frame.
+export function accelerationAtFrame(metrics, frame) {
+    const index = frame - (metrics?.sampleWindow?.frameOffset ?? 0);
+    const value = Number.isInteger(index) && index >= 0 ? metrics?.series?.gLoad?.[index] : null;
+    return Number.isFinite(value) ? value : null;
+}
+
 // Local acceleration maxima, largest first, using the same trimmed samples
 // as Max g-Force. Collapse a flat peak to its midpoint and suppress nearby
 // maxima so one manoeuvre cannot supply all three chart labels. The renderer

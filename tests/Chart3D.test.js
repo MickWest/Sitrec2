@@ -29,7 +29,7 @@ describe("track overlays", () => {
     test("labels the three highest separated visible peaks in the path colour", () => {
         const drawn = labels([{color: "cyan", peaks: [peak(30, 50, 10), peak(35, 52, 9),
             peak(100, 80, 8), peak(180, 110, 7), peak(250, 140, 6)]}]);
-        expect(drawn.map(d => d.text)).toEqual(["10.0g", "8.0g", "7.0g"]);
+        expect(drawn.map(d => d.text)).toEqual(["10.00g", "8.00g", "7.00g"]);
         expect(drawn.every(d => d.color === "cyan")).toBe(true);
     });
 
@@ -39,7 +39,7 @@ describe("track overlays", () => {
             {role: "truth", color: "pink", peaks: [peak(160, 160, 2.1)]},
         ];
         const clip = {minX: 0, maxX: 200, minY: 0, maxY: 200, minZ: -1, maxZ: 1};
-        expect(labels(series, {showTruth: false, clip}).map(d => d.text)).toEqual(["4.3g"]);
+        expect(labels(series, {showTruth: false, clip}).map(d => d.text)).toEqual(["4.30g"]);
         expect(labels(series, {clip}).map(d => d.color)).toEqual(["cyan", "pink"]);
     });
 
@@ -72,6 +72,38 @@ test("camera current markers use the exact frame and omit unavailable truth posi
     expect(ctx.arc).toHaveBeenCalledTimes(1);
     expect(ctx.arc.mock.calls[0][0]).toBeCloseTo(expected.x, 9);
     expect(ctx.arc.mock.calls[0][1]).toBeCloseTo(expected.y, 9);
+});
+
+test("camera g labels follow only current visible points as the slider moves", () => {
+    const pose = {position: [0, 0, 0], forward: [0, 0, 1], right: [1, 0, 0], up: [0, 1, 0]};
+    const points = [[0, 0, 10], [2, 1, 10], [4, 0, 10]];
+    const candidate = {cameraPath: true, pts: points, color: "cyan", frameCount: 3,
+        positionAt: f => points[f], gForceAt: f => [0.17, 0.27, 0.37][f],
+        peaks: [{pos: points[0], value: 8.88}]};
+    const truth = {cameraPath: true, role: "truth", pts: [[1, 0, 10], [3, 0, 10]],
+        color: "magenta", frameCount: 3, positionAt: f => f === 1 ? null : [f + 1, 0, 10],
+        gForceAt: () => 1.43, peaks: [{pos: points[0], value: 9.99}]};
+    const drawn = [];
+    const ctx = {save() {}, restore() {}, strokeText() {},
+        measureText: text => ({width: text.length * 7}),
+        fillText(text) { if (/g$/.test(text)) drawn.push({text, color: this.fillStyle}); },
+        beginPath() {}, rect() {}, clip() {}, setLineDash() {}, moveTo() {}, lineTo() {},
+        stroke() {}, fill() {}, arc() {}};
+    const chart = {scene: {camera: {poseAt: () => pose}, series: [candidate, truth]},
+        cameraFrame: 1, showTruth: true, showPeaks: true, w: 340, h: 260, labelInsetRight: 44,
+        _drawPeakLabels: Chart3D.prototype._drawPeakLabels};
+    const draw = () => {
+        drawn.length = 0;
+        Chart3D.prototype._drawCameraView.call(chart, ctx);
+        return drawn;
+    };
+    expect(draw()).toEqual([{text: "0.27g", color: "cyan"}]);
+    chart.cameraFrame = 2;
+    expect(draw()).toEqual([{text: "1.43g", color: "magenta"}, {text: "0.37g", color: "cyan"}]);
+    chart.showTruth = false;
+    expect(draw()).toEqual([{text: "0.37g", color: "cyan"}]);
+    chart.showPeaks = false;
+    expect(draw()).toEqual([]);
 });
 
 describe("niceTicks", () => {

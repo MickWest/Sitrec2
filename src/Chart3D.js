@@ -659,7 +659,7 @@ export class Chart3D {
             if (p.x < 0 || p.x > this.w || p.y < 0 || p.y > this.h) continue;
             const selected = perPath.get(s) ?? [];
             if (selected.length >= 3 || selected.some(q => Math.hypot(q.x - p.x, q.y - p.y) < 48)) continue;
-            const text = `${peak.value.toFixed(1)}g`;
+            const text = `${peak.value.toFixed(2)}g`;
             const width = ctx.measureText(text).width, height = 14;
             // Try both sides of the point, above and below. Keep the number
             // close to its peak, clear of the buttons and other peak labels.
@@ -723,10 +723,10 @@ export class Chart3D {
         }
         ctx.setLineDash([]);
         ctx.globalAlpha = 1;
-        if (this.showPeaks) this._drawPeakLabels(ctx, proj, null, series);
         // Truth is an outer ring, candidate a filled dot: coincident current
         // positions remain visible. Read the exact frame, never a line sample.
         const markers = series.filter(s => s.positionAt).sort((a, b) => Number(b.role === "truth") - Number(a.role === "truth"));
+        const currentG = [];
         for (const s of markers) {
             if (s.role === "truth" && !this.showTruth) continue;
             const point = s.positionAt(frame);
@@ -739,7 +739,12 @@ export class Chart3D {
             ctx.arc(p.x, p.y, s.role === "truth" ? 7 : 4.5, 0, Math.PI * 2);
             if (s.role !== "truth") ctx.fill();
             ctx.stroke();
+            const value = this.showPeaks ? s.gForceAt?.(frame) : null;
+            if (Number.isFinite(value)) currentG.push({...s, peaks: [{pos: point, value}]});
         }
         ctx.restore();
+        // Camera mode labels only the scrubbed points. Draw outside the path
+        // clip so text beside a marker at the viewport edge stays readable.
+        if (this.showPeaks) this._drawPeakLabels(ctx, proj, null, currentG);
     }
 }

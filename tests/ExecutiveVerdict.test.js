@@ -77,12 +77,13 @@ describe("assessExecutiveVerdict", () => {
         expect(v.detail).toContain("not from a global object-probability ranking");
     });
 
-    test("compatible wind is NOT enough — sole survivor reads 'Consistent with', not 'Probably'", () => {
+    test("compatible wind is not enough to identify the sole surviving model", () => {
         const v = assessExecutiveVerdict([supportedBalloon("compatible"), poorAircraft()],
             {provenance: {}});
         expect(v.code).toBe("consistent-one");
-        expect(v.headline).toContain("Consistent with a wind-blown balloon");
-        expect(v.headline).toContain("not identified");
+        expect(v.headline).toContain("Object type unresolved");
+        expect(v.detail).toContain("wind-blown balloon interpretation gives a complete");
+        expect(v.detail).toContain("Within tested limits: balloon, bird, multirotor");
         expect(v.detail).toContain("only compatible");
     });
 
@@ -232,4 +233,25 @@ describe("assessExecutiveVerdict", () => {
         expect(orderAfter).toEqual(orderBefore);
         expect(after).toBe(before);
     });
+});
+
+test("HSV and Quadcopter contribute the same path compatibility without inventing model fits", () => {
+    const quad = viableQuad();
+    const hsv = {...quad, key: "horizontalSpeed", name: "HSV"};
+    const q = assessExecutiveVerdict([quad]);
+    const h = assessExecutiveVerdict([hsv]);
+    expect(h.pathCompatibility.classes.map(c => c.key))
+        .toEqual(q.pathCompatibility.classes.map(c => c.key));
+    expect(h.detail).toContain("Within tested limits:");
+    expect(h.detail).toContain("not additional forward-model fits");
+    expect(h.headline).toContain("close-fitting paths meet tested physical class limits");
+    expect(h.classes.every(c => !c.viable)).toBe(true);
+    expect(q.classes.find(c => c.key === "multirotor").viable).toBe(true);
+
+    for (const change of [{optimizerWarnings: ["iteration budget reached"]},
+        {errDeg: 2}, {nonPhysical: true}, {atInfinity: true}]) {
+        expect(assessExecutiveVerdict([{...hsv, ...change}]).pathCompatibility.classes).toHaveLength(0);
+    }
+    const dataset = {angularDiameterMaxDeg: 1, fovFullDeg: 2, pixelsAcross: 2000};
+    expect(assessExecutiveVerdict([hsv], {dataset}).pathCompatibility.classes).toHaveLength(0);
 });

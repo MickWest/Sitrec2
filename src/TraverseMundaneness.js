@@ -41,6 +41,7 @@
 
 import {KNOTS_TO_MS} from "./TraverseAnalysis";
 import {balloonMotion} from "./TraverseMotion";
+import {PHYSICAL_ENVELOPES, PHYSICAL_ENVELOPE_REVISION} from "./PhysicalEnvelopes";
 
 const DEG = 180 / Math.PI;
 
@@ -52,17 +53,9 @@ const DEG = 180 / Math.PI;
  * not to enforce a preference, and a tight band would manufacture anomalies out
  * of unusual but entirely real aircraft.
  */
-export const MUNDANE_CLASSES = [
-    // The strictest and most useful case: a balloon cannot manoeuvre at all, so
-    // a "balloon" solution that turns hard is self-refuting.
-    {key: "balloon",    label: "balloon",          sizeM: [0.20, 8.0],  speedKt: [0, 80],    gMax: 0.5},
-    {key: "bird",       label: "bird",             sizeM: [0.10, 2.5],  speedKt: [0, 60],    gMax: 3.0},
-    {key: "quadcopter", label: "multirotor",       sizeM: [0.20, 2.0],  speedKt: [0, 60],    gMax: 2.0},
-    {key: "smallUAS",   label: "small fixed-wing", sizeM: [0.50, 4.0],  speedKt: [20, 120],  gMax: 4.0},
-    {key: "lightAir",   label: "light aircraft",   sizeM: [5.0,  20.0], speedKt: [60, 250],  gMax: 3.0},
-    {key: "jet",        label: "jet",              sizeM: [10.0, 25.0], speedKt: [150, 600], gMax: 9.0},
-    {key: "airliner",   label: "airliner",         sizeM: [25.0, 80.0], speedKt: [200, 500], gMax: 2.5},
-];
+export const MUNDANE_CLASSES = PHYSICAL_ENVELOPES.map(c => ({
+    ...c, speedKt: c.speedMS.map(v => v / KNOTS_TO_MS),
+}));
 
 /** How far x sits outside [lo, hi], in decades. Zero inside the band. */
 function decadesOutside(x, [lo, hi]) {
@@ -157,17 +150,26 @@ export function physicalClassChecks(dataset, h) {
         const sizeCost = implied
             ? decadesOutside(Math.max(implied.lo, Math.min(implied.hi, c.sizeM[0])), c.sizeM)
             : 0;
-        const speedCost = Math.max(decadesOutside(speedMinKt, c.speedKt),
-            decadesOutside(speedMaxKt, c.speedKt));
+        // Multirotor model speed is horizontal. Do not reject a climbing path
+        // because its total speed exceeds the horizontal model limit.
+        const horizontal = c.speedBasis === "horizontal" && m.horizontalAirSpeed;
+        const speed = horizontal || m.airSpeed;
+        const classSpeedMinKt = (speed?.min ?? speed?.mean) / KNOTS_TO_MS;
+        const classSpeedMaxKt = (speed?.max ?? speed?.mean) / KNOTS_TO_MS;
+        const speedCost = Math.max(decadesOutside(speed?.min ?? speed?.mean, c.speedMS),
+            decadesOutside(speed?.max ?? speed?.mean, c.speedMS));
         // g has no lower bound: flying gently is never suspicious.
         const gCost = Number.isFinite(gMax) && gMax > c.gMax ? Math.log10(gMax / c.gMax) : 0;
         const total = sizeCost + speedCost + gCost;
         const motionRejected = c.key === "balloon" && !!balloonTurnsBack;
         return {total, key: c.key, label: c.label, cls: c, sizeCost, speedCost, gCost,
+            speedMinKt: classSpeedMinKt, speedMaxKt: classSpeedMaxKt,
+            speedBasis: horizontal ? "horizontal" : "total",
             motionRejected, compatible: total === 0 && !motionRejected,
             impliedM: implied};
     });
-    return {classes, motion, unknown, speedMinKt, speedMaxKt, gMax, impliedM: implied};
+    return {classes, motion, unknown, speedMinKt, speedMaxKt, gMax, impliedM: implied,
+        envelopeRevision: PHYSICAL_ENVELOPE_REVISION};
 }
 
 export function mundanenessCost(dataset, h) {
@@ -209,7 +211,7 @@ export function physicalCompatibilityDetails(cost) {
     if (!cost) return "No motion metrics available.";
     const rows = cost.classes.map(c => {
         const reasons = [];
-        if (c.speedCost > 0) reasons.push(`speed ${cost.speedMinKt.toFixed(1)}–${cost.speedMaxKt.toFixed(1)} kt outside ${c.cls.speedKt.join("–")} kt`);
+        if (c.speedCost > 0) reasons.push(`${c.speedBasis} speed ${c.speedMinKt.toFixed(1)}–${c.speedMaxKt.toFixed(1)} kt outside ${c.cls.speedKt.map(v => v.toFixed(1)).join("–")} kt`);
         if (c.gCost > 0) reasons.push(`peak ${cost.gMax.toFixed(2)} g exceeds ${c.cls.gMax} g`);
         if (c.sizeCost > 0) reasons.push(`implied size outside ${c.cls.sizeM.join("–")} m`);
         if (c.motionRejected) reasons.push(`net horizontal displacement is only ${(100 * cost.motion.horizontalDirectness).toFixed(1)}% of distance travelled (steady-drift minimum: 45%)`);

@@ -1079,7 +1079,7 @@ export async function runTraverseBattery({
     // Reads ranking + wind evidence; never feeds back into ordering.
     let executiveAssessment = null;
     try {
-        executiveAssessment = assessExecutiveVerdict(hypotheses, {provenance});
+        executiveAssessment = assessExecutiveVerdict(hypotheses, {provenance, dataset});
     } catch (e) {
         console.warn("Executive assessment failed (non-fatal):", e);
     }

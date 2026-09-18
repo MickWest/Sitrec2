@@ -15,6 +15,8 @@
 // USAF/USN fact sheets + militaryfactory.com for the fixed-wing figures;
 // Cessna 172S POH and Boeing 737-800 performance tables.
 
+import {MULTIROTOR_LIMITS} from "./PhysicalEnvelopes";
+
 const KT = 0.514444;          // knots -> m/s
 const FPM = 0.00508;          // feet/min -> m/s
 const FT = 0.3048;            // feet -> m
@@ -34,7 +36,7 @@ export const QUADCOPTER_MODELS = [
     // Auto = the generic multirotor envelope: covers everything from a slow
     // camera drone to a fast FPV racer. The fit runs against THIS when the
     // dropdown is AUTO, then classifyQuadcopter() names the nearest real model.
-    {id: "auto",   name: "Auto (any multirotor)", auto: true, maxSpeed: 60, maxAscent: 30, maxDescent: 30, ceiling: 6000},
+    {id: "auto",   name: "Auto (any multirotor)", auto: true, ...MULTIROTOR_LIMITS, ceiling: 6000},
     {id: "mini4",  name: "DJI Mini 4 Pro",     maxSpeed: 16, maxAscent: 5,  maxDescent: 5,  ceiling: 4000},
     {id: "air3",   name: "DJI Air 3",          maxSpeed: 21, maxAscent: 10, maxDescent: 10, ceiling: 6000},
     {id: "mavic3", name: "DJI Mavic 3",        maxSpeed: 21, maxAscent: 8,  maxDescent: 6,  ceiling: 6000},

@@ -36,6 +36,15 @@ function hyp(key, opts = {}) {
 
 const of = (list, key) => list.find((c) => c.key === key);
 
+test("the speed ribbon displays the horizontal quantity used by the multirotor check", () => {
+    const h = hyp("quadcopter", {metrics: metrics({speedKt: 130})});
+    h.metricsFull.horizontalAirSpeed = {min: 50, max: 60, mean: 55};
+    const speed = of(candidateCriteria(h, plausibilityRating(h)), "speed");
+    expect(speed.status).toBe("pass");
+    expect(speed.value).toBe("97.2–116.6 kt");
+    expect(speed.why).toContain("Horizontal air speed");
+});
+
 describe("judgingClass", () => {
     test("a forward model is held to the class it claims to be", () => {
         // 1.2 g is inside a multirotor's envelope and outside a balloon's, so

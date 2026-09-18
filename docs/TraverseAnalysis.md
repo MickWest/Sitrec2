@@ -381,7 +381,7 @@ fullscreen together; they do not change scores or ranking. Hiding truth also
 hides its peak labels and preserves the graph's scale.
 Magenta is reserved for truth; solution paths use other colours.
 
-Peak labels are numbers such as **4.3g**, in the path's colour. They use the
+Peak labels use two decimal places, such as **4.30g**, in the path's colour. They use the
 same smoothed acceleration and trimmed time interval as **Max g-Force**,
 including the valid overlap interval for truth. These are kinematic
 accelerations, not total load including gravity. The candidate, truth and
@@ -397,6 +397,10 @@ positions together across the analyzed A–B interval. A filled point marks the
 candidate; a larger ring marks truth, so coincident positions remain visible.
 The markers use the exact frame's track samples. The slider is local to the
 gallery and does not change the main playhead or refit anything.
+With **g** enabled, camera mode labels only the current point on each visible
+track with that frame's smoothed g-force, to two decimal places. The values
+update as you scrub; peak labels return in the rotatable 3D view. No value is
+shown when acceleration is unavailable for the current frame.
 
 Camera mode, the slider, T and g stay synchronized across thumbnails, detail
 and fullscreen. Press the **camera icon** again to restore the rotatable 3D view.
@@ -519,9 +523,13 @@ Notes on the gallery tiles:
   a fit that follows measurement noise can score below the truth track.
   Otherwise a generic constant-acceleration fit provides context; it is not
   a noise estimate. Neither reference replaces the raw value.
-  Ray-constrained smoothing residuals
-  receive one fixed 0.05° solver-fidelity allowance; changing the generic
-  reference cannot change rank.
+  Every solver uses the raw residual, with no solver-specific allowance.
+  Object-class preferences do not add to or subtract from the BOT Score.
+  BOTBench shows an expected noise residual only when a positive per-axis
+  sigma and uncorrelated errors are explicitly declared. This expectation
+  is not a lower bound or a test of overfitting; unknown correlation stays
+  unknown. Cached benchmark rows are rebuilt when the assessment revision
+  changes, separately from the expensive solver results.
 - `Max kinematic acceleration (g)` is the change in smoothed air-relative
   velocity divided by gravitational acceleration. It is not aircraft load
   factor and does not include the ordinary 1 g supporting level flight.
@@ -661,10 +669,10 @@ class checks are diagnostic and do not themselves alter the ranking.
 
 ### How the tiles are ranked
 
-Each card names the first rule that decides its placement against a named
-neighbour. The first card compares with the next one. When the screening
-criteria tie, the card reports the **BOT Score** comparison. The score
-is a weighted sum of motion and sightline-fit terms. **Lower is better.** It
+Each card shows a short status and its own score, for example
+**Passed all gates · BOT Score: 2.905**. A result that does not pass shows its
+screening status instead. Hover over the status for the placement explanation.
+The BOT Score is a weighted sum of motion and sightline-fit terms. **Lower is better.** It
 compares finite paths regardless of solver category and does not use truth. It
 is not an object probability. Hover over **BOT Score** for the calculation,
 including the numeric contribution of each term for that result.
@@ -718,9 +726,8 @@ score basis separates that pair and those different units are never compared.
 **The tier** for trajectory tiles is the worst of three independent 0–3
 grades, and the badge names whichever one is binding.
 
-*Fit quality*, from the scored LOS residual (ray-constrained solutions first get
-a fixed 0.05° solver-fidelity allowance subtracted), graded **relative to the
-scene**: the boundaries are 1.2×, 2× and 5× the flexible constant-acceleration
+*Fit quality*, from the raw LOS residual for every solver, graded **relative
+to the scene**: the boundaries are 1.2×, 2× and 5× the flexible constant-acceleration
 reference residual for that clip, clamped to a scale between 0.02° and 0.20°.
 Inside 1.2× is the top grade, then *Fair fit*, *Weak fit*, and worse is a *Poor
 fit*. The scale exists because scenes do not resolve equally well: on the
@@ -773,27 +780,20 @@ proportion to the mirrored share. That term only ever demotes: not flying the
 camera's path is the ordinary expectation, not an achievement, and rewarding it
 would be a standing thumb on the scale for distant solutions.
 
-**The balloon special case.** Buoyant tiles get a bounded consistency
-nudge. A passive wind tracer is physically confined to a single steady
-vertical trend and an essentially one-direction drift, so consistency
-`C ∈ [0, 1]` is measured from the solved track as net displacement over
-path length per axis, taking the *weaker* of the vertical and horizontal
-values (a monotonic climb does not excuse a circling ground track). A
-near-level vertical axis counts as a steady trend — a neutrally-buoyant
-balloon is ordinary — and a near-hovering horizontal axis scores neutral,
-so calm-wind cases are never penalised for not moving. The
-nudge is `6·(1 − 2C)` score units — at most ±0.3° of residual-equivalent,
-symmetric: textbook balloon motion is promoted, and a "balloon" that had
-to yo-yo vertically or curve back on itself is demoted by the same
-amount. The nudge lives entirely inside the secondary score, which the
-cascade consults only for candidates that already tie on screen pass,
-eligibility, completeness, the combined tier, and load-bearing-limit
-count. Within such a group it moves the balloon's score by at most 6
-units (0.3° of residual-equivalent), so that is the most
-smoothness-plus-residual disadvantage it can overcome; any candidate
-ahead on one of the earlier keys — a better combined tier, a complete
-search where the balloon's is not, fewer load-bearing limits — is out of
-its reach.
+**Balloon motion is a separate diagnostic.** Consistency measures a steady
+vertical trend and one-direction drift. It helps assess the balloon
+interpretation but does not change the BOT Score. The same path and motion
+metrics receive the same score regardless of which solver produced them.
+
+**Physical compatibility and forward models are separate.** Close-fitting,
+complete paths from every solver, including HSV, receive the same physical
+class checks. The headline lists compatible envelopes separately from the
+forward models that fitted successfully. An envelope match is not an
+identification or a full dynamics fit. Unknown size and other missing inputs
+remain visible. The generic multirotor model and compatibility check share a
+60 m/s horizontal speed limit (about 117 kt); vertical motion does not count
+against that horizontal limit. These are broad tested envelopes, not universal
+limits on all objects in a class.
 
 ### Does it fly the camera's path?
 
@@ -963,9 +963,8 @@ fit/ordinariness split means a 12 g solution that reproduces the
 sightlines exactly is badged *Kinematically extreme* — a good fit
 describing extraordinary motion — rather than blending in among good
 fits or being dismissed as a bad one. The free Quadcopter fit is left
-unseeded as the unconstrained, anomaly-reachable search. The balloon
-nudge is tier-bounded and symmetric, so no mundane reading is ever
-forced. The platform-mirror test demotes only what it can measure — it
+unseeded as the unconstrained, anomaly-reachable search. Object-class
+preferences do not change the BOT Score. The platform-mirror test demotes only what it can measure — it
 needs a manoeuvring platform, a resolvable mirrored component, and a
 majority share before it says anything — and it never rules a tile out,
 because an object pacing the camera is a real possibility rather than an

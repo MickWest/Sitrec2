@@ -19,7 +19,7 @@ import {setSit} from "../../src/Globals";
 import {buildHypotheses, flatTerrainProbes} from "../../src/TraverseHypotheses";
 import {generateScenario} from "../../benchmarks/botbench/lib/generateScenario";
 import {toTraverseDataset} from "../../benchmarks/botbench/lib/adapters";
-import {groupAndRankHypotheses} from "../../src/TraverseRanking";
+import {groupAndRankHypotheses, plausibilityRating} from "../../src/TraverseRanking";
 import {compareTrackToTruth, sweepConstAirSpeed, fitPlausibleBestRange,
     fitConstAltitude, KNOTS_TO_MS, METERS_PER_NM} from "../../src/TraverseAnalysis";
 
@@ -89,4 +89,24 @@ test("flatTerrainProbes reports height above a flat surface", () => {
     expect(localGroundZ()).toBe(120);
     expect(signedAGL(null, 500)).toBe(380);     // ENU height minus ground
     expect(signedAGL(null, 100)).toBe(-20);     // below ground -> negative
+});
+
+test("Quadcopter retains optimizer completion through the hypothesis adapter", () => {
+    const n = 61;
+    const dataset = {n, fps: 1, S: new Float64Array(n * 3), D: new Float64Array(n * 3),
+        W: new Float64Array(n * 3)};
+    const positions = new Float64Array(n * 3);
+    for (let f = 0; f < n; f++) {
+        positions.set([5000, 10 * f, 500], f * 3);
+        const len = Math.hypot(5000, 10 * f, 500);
+        dataset.D.set([5000 / len, 10 * f / len, 500 / len], f * 3);
+    }
+    for (const stopReason of ["iteration_limit", "converged"]) {
+        const optimizer = {stopReason, iterations: 400, parameterSpread: 0.1};
+        const [h] = buildHypotheses({dataset, include: new Set(["quadcopter"]),
+            quad: {positions, params: {errDeg: 0.01, solved: {speed: 10, climb: 0}, optimizer}}});
+        expect(h.params.optimizer).toBe(optimizer);
+        expect(plausibilityRating(h).incomplete).toBe(stopReason === "iteration_limit");
+        if (stopReason === "iteration_limit") expect(h.optimizerWarnings.join(" ")).toContain("400-iteration budget");
+    }
 });

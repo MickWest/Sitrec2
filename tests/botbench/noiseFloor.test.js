@@ -1,21 +1,10 @@
 /**
- * The residual NOISE FLOOR that BotBenchRunner reports beside every |err|.
- *
- * WHY THIS EXISTS. A bulk run over ten real-track scenarios showed three files
- * tied at a 0.039 deg top residual whose separations from truth were 0.2%, 1.4%
- * and 97.5% of range. The residual had been the only quality number on the row,
- * and it cannot carry range: bearings are nearly invariant to how far along the
- * sightline a track is placed. The floor gives the residual the one honest
- * reading it does support — "is this better than a perfect answer would score,
- * i.e. is it fitting the noise?"
- *
- * The claim under test is that a PERFECT track does not score zero. Its mean
- * angular residual is sigma * sqrt(pi/2), because the per-frame pointing error
- * is two independent Gaussians in the tangent plane and the MAGNITUDE of such a
- * pair is Rayleigh-distributed. Getting this constant wrong (sigma, or
- * sigma*sqrt(2)) moves the floor by 20-40% and silently changes which rows are
- * flagged, so it is pinned here by Monte Carlo rather than by restating it.
+ * Expected residual under declared independent Gaussian pointing noise.
+ * The expectation is not a lower bound: finite realizations can fall below it.
+ * The reference sampling error is not a significance test between fitted paths.
  */
+
+import {residualNoiseReference} from "../../src/analysis/BotBenchRunner";
 
 const RAYLEIGH_MEAN = Math.sqrt(Math.PI / 2);
 const RAYLEIGH_SD = Math.sqrt(2 - Math.PI / 2);
@@ -40,7 +29,17 @@ function normalPair(rnd) {
     return [r * Math.cos(2 * Math.PI * v), r * Math.sin(2 * Math.PI * v)];
 }
 
-describe("residual noise floor", () => {
+describe("expected noise residual", () => {
+    test("unknown or correlated pointing noise does not receive a white-noise reference", () => {
+        const quality = {declaredLosSigmaDeg: 0.03, frames: 100};
+        for (const losErrorCorrelated of [undefined, null, true]) {
+            expect(residualNoiseReference({...quality, losErrorCorrelated}, [0.01, 0.02], 0.01)).toBeNull();
+        }
+        const reference = residualNoiseReference({...quality, losErrorCorrelated: false}, [0.01, 0.02], 0.01);
+        expect(reference.floorDeg).toBeCloseTo(0.03 * RAYLEIGH_MEAN);
+        expect(reference.belowFloor).toBe(2);
+        expect(residualNoiseReference({...quality, losErrorCorrelated: false, declaredLosSigmaDeg: 0}, [0.01], 0.01)).toBeNull();
+    });
     test("a perfect track's mean angular residual is sigma * 1.2533, not sigma", () => {
         const sigma = 0.03;
         const rnd = makeRandom(12345);
@@ -90,10 +89,9 @@ describe("residual noise floor", () => {
         expect(Math.abs(predicted - mean) / mean).toBeLessThan(0.025);
     });
 
-    test("the sampling error shrinks as 1/sqrt(n), so long clips separate more", () => {
-        // The report calls a winner's lead "inside the noise" when it is under
-        // 2 standard errors of a residual MEAN over n frames. That threshold is
-        // only meaningful if the standard error carries n correctly.
+    test("reference sampling error shrinks as 1/sqrt(n) for independent frames", () => {
+        // A reference mean over independent frames carries this sample count.
+        // Fitted-candidate differences need a separate paired uncertainty model.
         const sigma = 0.03;
         const se = (n) => sigma * RAYLEIGH_SD / Math.sqrt(n);
 
@@ -103,9 +101,8 @@ describe("residual noise floor", () => {
         expect(se(31)).toBeCloseTo(0.00353, 5);
         expect(se(301)).toBeCloseTo(0.00113, 5);
 
-        // The dash case, which is the reason the flag exists: the winner led by
-        // 0.0001 deg over 301 frames. That is a fourteenth of one standard
-        // error, so the ranking there was decided by the noise draw.
+        // A small candidate gap can be shown against the reference SE without
+        // claiming that this establishes how the ordering arose.
         expect(0.0001).toBeLessThan(2 * se(301));
     });
 });

@@ -68,7 +68,7 @@ import * as Astronomy from "astronomy-engine";
 import {applyRefractionECI, refractionOptsFromUniforms} from "./atmosphere/refraction";
 import {loadLEOSatrecsForDate, findBestSatellite, satelliteTrackENU, satelliteECEF, satelliteSunlit} from "./SatelliteSearch";
 import {Chart3D, Chart3DGroup} from "./Chart3D";
-import {accelerationPeaks} from "./TraverseMotion";
+import {accelerationAtFrame, accelerationPeaks} from "./TraverseMotion";
 import {
     balloonConsistency,
     completenessBadges,
@@ -3457,7 +3457,8 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
         }
         series.push({type: "line", pts: trackPts, color: hyp.color, width: opts.compact ? 2.2 : 2.8,
             startDot: true, endRing: true, peaks: peakLabels(hyp.track, hyp.metricsFull),
-            cameraPath: true, frameCount: n, positionAt: f => graphPoint(hyp.track, f)});
+            cameraPath: true, frameCount: n, positionAt: f => graphPoint(hyp.track, f),
+            gForceAt: f => accelerationAtFrame(hyp.metricsFull, f)});
     }
 
     series.push({type: "line", pts: sensorPts, color: VIZ.sensor, width: opts.compact ? 1.8 : 2.4,
@@ -3487,6 +3488,7 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
                 startDot: true, endRing: true, role: "truth",
                 peaks: peakLabels(opts.truth.track, opts.truthMetrics),
                 cameraPath: true, frameCount: n,
+                gForceAt: f => accelerationAtFrame(opts.truthMetrics, f),
                 positionAt: f => !tv || tv[f] === 1 ? graphPoint(opts.truth.track, f) : null});
         }
     }
@@ -4086,6 +4088,16 @@ function rankingTextHTML(text, h, r) {
 }
 
 function placementHTML(placement, h, r) {
+    if (placement.key !== "truth" && placement.key !== "truthCompletion") {
+        const status = r.eligible ? "Passed all gates" : r.label;
+        const angular = r.kind === "identity" || r.kind === "directional-geometry";
+        const score = Number.isFinite(r.secondaryScore)
+            ? `${r.secondaryScore.toFixed(3)}${angular ? "°" : ""}` : "unavailable";
+        return `<div class="tg-placement tg-placement-compact">`
+            + `<span title="${escapeHtml(placement.text)}">${escapeHtml(status)}</span> · `
+            + rankingTextHTML(`${angular ? "Angular score" : "BOT Score"}: ${score}`, h, r)
+            + `</div>`;
+    }
     return `<div class="tg-placement"><strong>${rankingTextHTML(placement.label, h, r)}</strong>`
         + `<div>${rankingTextHTML(placement.text, h, r)}</div></div>`;
 }
@@ -4437,8 +4449,10 @@ function showResultGallery(results, uiState = null) {
         if (peaksBtn) {
             peaksBtn.classList.toggle("on", showGPeaks);
             peaksBtn.setAttribute("aria-pressed", String(showGPeaks));
-            peaksBtn.title = `${showGPeaks ? "Hide" : "Show"} acceleration peaks in all graphs. `
-                + "Up to three separated peaks per path, using the smoothed Max g-Force values.";
+            peaksBtn.title = chart.cameraView
+                ? `${showGPeaks ? "Hide" : "Show"} g-force at the current point on each visible track. Updates as you scrub.`
+                : `${showGPeaks ? "Hide" : "Show"} acceleration peaks in all graphs. `
+                    + "Up to three separated peaks per path, using the smoothed Max g-Force values.";
             peaksBtn.setAttribute("aria-label", peaksBtn.title);
         }
         if (cameraBtn) {
@@ -7091,7 +7105,7 @@ function buildReportHTML(ctx) {
         <tr${i === 0 ? ' class="best"' : ""}>
             <td>${i + 1}</td><td>${nm1(r.startDist)}</td><td>${kt1(r.speed)}</td>
             <td>${r.score.toFixed(3)}</td>
-            <td>${r.metrics.gLoad.rms.toFixed(3)}</td><td>${r.metrics.gLoad.max.toFixed(3)}</td>
+            <td>${r.metrics.gLoad.rms.toFixed(2)}</td><td>${r.metrics.gLoad.max.toFixed(2)}</td>
             <td>${r.metrics.turnRate.std.toFixed(2)}</td>
             <td>${fpm0(r.metrics.verticalSpeed.mean)}</td>
             <td>${r.spdErr !== undefined ? kt1(r.spdErr) : "—"}</td>
