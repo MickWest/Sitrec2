@@ -103,6 +103,7 @@ import {
     materialTypes,
 } from "./CNode3DObjectGeometry";
 import {reflectionMethods} from "./CNode3DObjectReflection";
+import {ObjectFlock} from "../ObjectFlock";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
 // Map old/renamed model file paths to their current equivalents.
@@ -265,6 +266,18 @@ export class CNode3DObject extends CNode3DGroup {
 
         this.modelMenu.isCommon = true;
 
+        // "Flock": draw this object as many birds, in formation about its track, in place
+        // of the one. The birds are whatever the model or geometry is. See ObjectFlock.js.
+        this.flockEnabled = v.flock ?? false;
+        this.flock = new ObjectFlock(this, v.flockParams);
+        this.flockController = this.gui.add(this, "flockEnabled").name(t("nodes3dObject.flock.label")).listen().onChange((enabled) => {
+            this.flock.setEnabled(enabled, true);
+            setRenderOne(true)
+        })
+            .tooltip(t("nodes3dObject.flock.tooltip"));
+        this.flockController.isCommon = true;
+        this.flock.buildGUI(this.gui, t("nodes3dObject.flock.label"));
+
         // add the common parameters to the GUI
         // note we set isCommon to true to flag them as common
         // so they don't get deleted when we rebuild the GUI after object type change
@@ -358,6 +371,7 @@ export class CNode3DObject extends CNode3DGroup {
         this.reflectionArrowIds = [];
 
         this.rebuild();
+        this.flock.setEnabled(this.flockEnabled);
 
         // move the material folder to the end
         this.materialFolder.moveToEnd();
@@ -1029,6 +1043,10 @@ ${trackPlacemark}    </Document>
             common: commonCopy,
             geometryParams: this.geometryParams,
             materialParams: this.materialParams,
+            // Only once a flock has been used, so an object that never was one saves
+            // exactly as it did before.
+            ...(this.flockEnabled || !this.flock.isDefault()
+                ? {flock: this.flockEnabled, flockParams: this.flock.serialize()} : {}),
         }
     }
 
@@ -1107,6 +1125,10 @@ ${trackPlacemark}    </Document>
         // Since the type hasn't changed, params won't be reset.
         this.rebuildMaterial();
         this.rebuild();
+
+        this.flockEnabled = v.flock ?? false;
+        this.flock.deserialize(v.flockParams);
+        this.flock.setEnabled(this.flockEnabled);
 
         // Apply restored visibility to the group/label, since the base
         // modDeserialize only sets this.visible without invoking show().
@@ -1435,6 +1457,7 @@ ${trackPlacemark}    </Document>
                         this.recalculate()
                         this.applyMaterialToModel();
                         this.rebuildBoundingBox();
+                        this.flock?.rebuildMeshes();
                         console.log("ADDED TO SCENE : ", model.file);
                         this.noteShadowCasterState("model-loaded");
                         setRenderOne(true);
@@ -1449,6 +1472,7 @@ ${trackPlacemark}    </Document>
 
             this.applyMaterialToModel();
             this.rebuildBoundingBox();
+            this.flock?.rebuildMeshes();
             return;
         }
 
@@ -1546,6 +1570,7 @@ ${trackPlacemark}    </Document>
         this.recalculate()
 
         this.rebuildBoundingBox();
+        this.flock?.rebuildMeshes();
         this.noteShadowCasterState("rebuild");
 
     }
@@ -1780,6 +1805,7 @@ ${trackPlacemark}    </Document>
                     gradientHalfHeight: { value: 1.0 },
                     gradientScale: { value: this.materialParams.scale ?? 100 },
                     gradientShift: { value: 0.0 },
+                    flockPartOrigin: { value: new Vector3() },  // set per part by ObjectFlock
                     useLeadingEdge: { value: 0.0 },
                     reverseGradient: { value: this.materialParams.reverse ? 1.0 : 0.0 },
                     baseColor: { value: new Color(this.materialParams.baseColor ?? "black") },
@@ -2226,6 +2252,9 @@ ${trackPlacemark}    </Document>
             target.updateMatrixWorld(true);
         }
 
+        // After the group has its scale and rotation for this view, which the flock cancels.
+        if (this.flockEnabled) this.flock.preRender(this._viewScale ?? 1);
+
         if (this.model) {
             if (view.camera) {
                 view.camera.updateMatrixWorld(true);
@@ -2438,6 +2467,8 @@ ${trackPlacemark}    </Document>
             this.group.updateMatrix();
             this.group.updateMatrixWorld();
             this.needsUndo = false;
+            // so that a click between frames finds the birds where they were drawn
+            if (this.flockEnabled) this.flock.syncTransform();
         }
     }
 
@@ -2455,6 +2486,7 @@ ${trackPlacemark}    </Document>
             NodeMan.disposeRemove(this.modelLengthNode, true);
         }
         this.disposeCubeCamera();
+        this.flock.dispose();
         this.gui.destroy();
         this.destroyObject();
         super.dispose();
@@ -2508,6 +2540,7 @@ ${trackPlacemark}    </Document>
 
     update(f) {
         super.update(f);
+        if (this.flockEnabled) this.flock.update(f);
 
         // if (this.spriteText) {
         //     this.spriteText.position.copy(this._object.position);
