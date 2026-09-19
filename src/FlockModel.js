@@ -151,22 +151,23 @@ export const FLOCK_SPECIES = {
             groupSize: 13, spacing: 2.9, looseness: 0.2 /* j */, snaking: 0.8 /* j */, wanderPeriod: 6 /* j */,
             verticalSpread: 0.1 /* j */, placeChange: 45 /* ibis */, turnLag: 2 /* j */},
     },
+    // StarDisplay (Hildenbrandt, Carere & Hemelrijk 2010), the model of the roost at Termini
+    // in Rome, run for real: see MurmurationSim.js. Its defaults are the paper's: cruise
+    // 10 m/s and a roost of 150 m radius. Rome's flocks flew at 7 to 15 m/s with their
+    // nearest neighbors 0.7 to 1.5 m away (Ballerini et al. 2008).
+    "Starling Murmuration": {
+        about: "Wingspan 0.4 m. Use hundreds or thousands of birds: the flock is simulated, and takes a "
+            + "few seconds to work out.",
+        params: {formation: "Murmuration", spacing: 1.1, murmurationSpeed: 10, roostRadius: 150},
+    },
     // Ballerini et al. 2008 (Animal Behaviour 76: 201), ten flocks of 448 to 2631: nearest
     // neighbor 0.68 to 1.51 m whatever the size of the flock; 1 : 2.8 : 5.6 with the thin
     // axis up and the long axis unrelated to the flight; through a turn the flock "remains
     // approximately constant with respect to an absolute reference frame". Cavagna et al.
     // 2013: by their fitted curve, half of the nearest neighbors have changed in about 12 s,
     // which is one change of place per bird in 17 s. Roost flocks flew at 7 to 15 m/s.
-    // THIS IS NOT A MURMURATION: it has the measured shape and spacing, and none of the waves.
-    // StarDisplay (Hildenbrandt, Carere & Hemelrijk 2010), the model of the roost at Termini
-    // in Rome, run for real: see MurmurationSim.js. Its defaults are the paper's: cruise
-    // 10 m/s and a roost 150 m across. Rome's flocks flew at 7 to 15 m/s with their nearest
-    // neighbors 0.7 to 1.5 m away (Ballerini et al. 2008).
-    "Starling Murmuration": {
-        about: "Wingspan 0.4 m. Use hundreds or thousands of birds: the flock is simulated, and takes a "
-            + "few seconds to work out.",
-        params: {formation: "Murmuration", spacing: 1.1, murmurationSpeed: 10, roostRadius: 150},
-    },
+    // This one has the measured shape and spacing and keeps them: for a flock that moves by
+    // itself, use the murmuration above.
     "Starling": {
         about: "Wingspan 0.4 m. Flies at 7 to 15 m/s about a roost, 12 to 16 on passage.",
         params: {formation: "Cluster", elongation: 2, longAxis: 45 /* no link to the flight */, spacing: 1.1,
@@ -632,6 +633,18 @@ export class FlockModel {
         return this.isMurmuration ? (this.murmuration?.progress ?? 0) : 1;
     }
 
+    // The simulation could not be run (its worker would not load, for one). It is not tried
+    // again until a parameter changes, so that a lasting failure does not start a new worker
+    // on every frame.
+    get failed() {
+        return this.isMurmuration && !!this.murmuration?.failed;
+    }
+
+    // Whether a simulation is under way or done, as against not yet started.
+    get running() {
+        return this.isMurmuration && !!this.murmuration && !this.murmuration.failed;
+    }
+
     // How long the sitch is, in seconds. A murmuration is simulated to the end of it, and
     // again, further, if it grows. It is not started until the length is known, or asked
     // for, so that a new flock does not first simulate a length it will throw away.
@@ -654,6 +667,7 @@ export class FlockModel {
             count: p.count, spacing: p.spacing, cruiseSpeed: p.murmurationSpeed, roostRadius: p.roostRadius,
             seed: p.seed, duration: this.seconds,
         }, this.murmurationRunner, (fraction) => this.onMurmurationProgress(fraction));
+        this.onMurmurationProgress(this.murmuration.progress);
     }
 
     dispose() {

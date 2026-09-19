@@ -2116,6 +2116,7 @@ const en = {
                     + "turn back, and the flock sweeps around this area.",
             },
             simulating: "working out the flock: {{percent}}%",
+            failed: "could not work out the flock; change a setting to try again",
             seed: {
                 label: "Random Seed",
                 tooltip: "Changes the random arrangement and motion. The same seed always gives the same flock.",

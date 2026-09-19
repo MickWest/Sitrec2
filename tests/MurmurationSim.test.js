@@ -11,6 +11,7 @@
 import {
     MurmurationSim,
     MurmurationTimeline,
+    paddingSecondsFor,
     runMurmuration,
     runMurmurationHere,
     separationRadiusFor,
@@ -82,6 +83,18 @@ describe("MurmurationSim", () => {
             expect(stats.nnd).toBeLessThan(1.6);
             expect(stats.closest).toBeGreaterThan(0.1);       // birds do not fly into each other
         }
+    });
+
+    test("the neighbor search counts each bird once, however many searches have been made", () => {
+        const sim = new MurmurationSim({count: 120, spacing: 1.1, seed: 2});
+        for (let step = 0; step < 400; step++) sim.advance();
+        const cell = sim.radius.reduce((sum, r) => sum + r, 0) / sim.count;
+        sim.buildGrid(cell);
+        const found = () => Array.from({length: sim.count}, (_, i) => sim.gather(i, 3 * sim.radius[i], cell));
+        const before = found();
+        sim.searches = 2 ** 31 - 3;         // about to pass what a 32-bit stamp can hold
+        expect(found()).toEqual(before);
+        expect(found()).toEqual(before);
     });
 
     test("the same seed flies the same flight, and another seed another", () => {
@@ -157,6 +170,41 @@ describe("MurmurationTimeline", () => {
         expect(out[4]).toBeCloseTo(1, 5);
         timeline.evaluate(-1 + 0.1 * 12.5, out);
         expect(out[0]).toBeCloseTo(12.5, 5);        // straight-line samples stay straight
+    });
+
+    test("a run that fails is reported, and not taken for one that is still going", () => {
+        let told = 0;
+        const failing = (params, onChunk) => {
+            onChunk(null);
+            return () => {};
+        };
+        const timeline = new MurmurationTimeline({count: 3, duration: 1}, failing, () => told++);
+        expect(timeline.failed).toBe(true);
+        expect(timeline.ready).toBe(false);
+        expect(told).toBe(1);
+
+        const model = new FlockModel({formation: "Murmuration", count: 10}, {murmurationRunner: failing});
+        model.duration = 1;
+        expect(model.failed).toBe(true);
+        expect(model.running).toBe(false);
+        model.duration = 1;             // not tried again on every frame
+        expect(model.failed).toBe(true);
+    });
+
+    test("widely spaced samples are padded by two intervals, so the first frame is between samples", () => {
+        expect(paddingSecondsFor(0.1)).toBe(1);
+        expect(paddingSecondsFor(1.5)).toBe(3);
+        // a run whose samples start 3 s before time 0
+        const runner = (params, onChunk) => {
+            const chunk = new Float32Array(20 * 3);
+            for (let k = 0; k < 20; k++) chunk[3 * k] = k;
+            onChunk(0, chunk, {sampleSeconds: 1.5, samples: 20, padding: 3, count: 1});
+            return () => {};
+        };
+        const timeline = new MurmurationTimeline({count: 1, duration: 20}, runner);
+        const out = new Float64Array(3);
+        expect(timeline.evaluate(-3, out)[0]).toBeCloseTo(0, 6);
+        expect(timeline.evaluate(0, out)[0]).toBeCloseTo(2, 6);        // two samples in
     });
 
     test("disposing it stops the run, and a late message from the run is ignored", () => {

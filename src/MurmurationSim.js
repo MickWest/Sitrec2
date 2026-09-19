@@ -131,7 +131,7 @@ function startPositions(sim, rand) {
 export class MurmurationSim {
     constructor(params = {}) {
         const p = {...MURMURATION_DEFAULTS, ...params};
-        const n = this.count = Math.max(2, Math.round(p.count));
+        const n = this.count = Math.max(1, Math.round(p.count));
         this.spacing = p.spacing;
         this.cruise = p.cruiseSpeed;
         this.roostRadius = p.roostRadius;
@@ -214,6 +214,12 @@ export class MurmurationSim {
         // bird must not be counted twice. Birds of other cells in a bucket are far away,
         // and the distance test drops them.
         const buckets = this.buckets, stamp = this.bucketStamp;
+        // The stamps are 32-bit. A long run of a big flock would count past them, and then
+        // every bucket would look unvisited and a bird could be counted twice.
+        if (this.searches >= 0x7fffffff) {
+            stamp.fill(0);
+            this.searches = 0;
+        }
         const search = ++this.searches;
         let bucketCount = 0;
         const ci = this.cellX[i], cj = this.cellY[i], ck = this.cellZ[i];
@@ -406,8 +412,14 @@ export class MurmurationSim {
 // not the starting shape. The paper let its flocks run for minutes; this is the shortest in
 // which the tests find the spacing and the number of neighbors have settled.
 export const WARM_UP_SECONDS = 30;
-// Samples start this long before time 0, so that the first frame has samples on both sides.
+// Samples start at least this long before time 0 and run as long past the end, so that the
+// first and last frames have samples on both sides. For a big flock with widely spaced
+// samples it is two sample intervals: see paddingSecondsFor.
 export const PRE_SECONDS = 1;
+
+export function paddingSecondsFor(sampleSeconds) {
+    return Math.max(PRE_SECONDS, 2 * sampleSeconds);
+}
 
 // The time between samples: 0.1 s, or longer for a big flock over a long sitch, so that
 // the samples stay under about 50 MB.
@@ -422,9 +434,11 @@ export function sampleSecondsFor(count, duration) {
 export function runMurmuration(params, onChunk, shouldStop = () => false) {
     const sim = new MurmurationSim(params);
     const sampleSeconds = sampleSecondsFor(sim.count, params.duration);
+    const padding = paddingSecondsFor(sampleSeconds);
     const stepsPerSample = Math.round(sampleSeconds / DT);
-    const samples = Math.ceil((params.duration + 2 * PRE_SECONDS) / sampleSeconds) + 1;
-    const warmSteps = Math.round((WARM_UP_SECONDS - PRE_SECONDS) / DT);
+    const samples = Math.ceil((params.duration + 2 * padding) / sampleSeconds) + 1;
+    // Time 0 of the sitch is WARM_UP_SECONDS into the flight, or later if the padding is longer.
+    const warmSteps = Math.round(Math.max(0, WARM_UP_SECONDS - padding) / DT);
     for (let step = 0; step < warmSteps; step++) {
         sim.advance();
         if (step % 2000 === 0 && shouldStop()) return;
@@ -438,7 +452,7 @@ export function runMurmuration(params, onChunk, shouldStop = () => false) {
             if (first + k > 0) for (let s = 0; s < stepsPerSample; s++) sim.advance();
             sim.writePositions(chunk, k * sim.count * 3);
         }
-        onChunk(first, chunk, {sampleSeconds, samples, count: sim.count});
+        onChunk(first, chunk, {sampleSeconds, samples, padding, count: sim.count});
         first += size;
         if (shouldStop()) return;
     }
@@ -452,11 +466,11 @@ function catmullRom(p0, p1, p2, p3, u) {
 
 // The samples of one run, as the timeline reads them. `runner(params, onChunk)` produces
 // them: in the browser a worker, in the tests runMurmuration itself. It returns a function
-// that stops the run.
+// that stops the run, and calls onChunk(null) if the run fails.
 export class MurmurationTimeline {
     constructor(params, runner, onProgress = () => {}) {
         this.params = params;
-        this.count = Math.max(2, Math.round(params.count));
+        this.count = Math.max(1, Math.round(params.count));
         this.available = 0;
         this.samples = 0;
         this.data = null;
@@ -464,10 +478,18 @@ export class MurmurationTimeline {
         this.stop = runner(params, (first, chunk, info) => this.receive(first, chunk, info));
     }
 
+    // A chunk of samples, or null if the run failed.
     receive(first, chunk, info) {
         if (this.disposed) return;      // a message from a run that has been replaced
+        if (!chunk) {
+            this.failed = true;
+            this.onProgress(this.progress);
+            return;
+        }
         if (!this.data) {
+            this.count = info.count ?? this.count;      // the run's own count is the one that holds
             this.sampleSeconds = info.sampleSeconds;
+            this.padding = info.padding ?? PRE_SECONDS;
             this.samples = info.samples;
             this.data = new Float32Array(info.samples * this.count * 3);
         }
@@ -489,11 +511,11 @@ export class MurmurationTimeline {
     evaluate(t, out) {
         if (!this.ready) return out;
         const n = this.count, last = this.available - 1;
-        const u = Math.min(last, Math.max(0, (t + PRE_SECONDS) / this.sampleSeconds));
+        const u = Math.min(last, Math.max(0, (t + this.padding) / this.sampleSeconds));
         const k = Math.min(last, Math.floor(u)), frac = u - k;
         const k0 = Math.max(0, k - 1), k2 = Math.min(last, k + 1), k3 = Math.min(last, k + 2);
         const d = this.data, stride = 3 * n;
-        for (let i = 0; i < 3 * n; i++) {
+        for (let i = 0, end = Math.min(3 * n, out.length); i < end; i++) {
             out[i] = catmullRom(d[k0 * stride + i], d[k * stride + i], d[k2 * stride + i], d[k3 * stride + i], frac);
         }
         return out;

@@ -37,7 +37,12 @@ function runMurmurationInWorker(params, onChunk) {
         if (message.done) worker.terminate();
         else onChunk(message.first, message.chunk, message.info);
     };
-    worker.onerror = (error) => console.error("Murmuration worker failed:", error.message);
+    // Its script may not load at all: a rebuild deletes the old one from under an open tab.
+    worker.onerror = (event) => {
+        console.error("Murmuration worker failed:", event.message ?? event.type);
+        worker.terminate();
+        onChunk(null);
+    };
     worker.postMessage({params});
     return () => worker.terminate();
 }
@@ -211,12 +216,23 @@ export class ObjectFlock {
     showProgress(fraction) {
         if (!this.folder) return;
         const title = t("nodes3dObject.flock.folder");
-        this.folder.title(this.model.isMurmuration && fraction < 1
-            ? `${title} (${t("nodes3dObject.flock.simulating", {percent: Math.floor(100 * fraction)})})` : title);
+        if (this.model.failed) {
+            this.folder.title(`${title} (${t("nodes3dObject.flock.failed")})`);
+        } else if (this.model.running && fraction < 1) {
+            this.folder.title(`${title} (${t("nodes3dObject.flock.simulating", {percent: Math.floor(100 * fraction)})})`);
+        } else {
+            this.folder.title(title);
+        }
     }
 
     setEnabled(enabled, openFolder = false) {
         this.enabled = !!enabled;
+        // A murmuration being worked out for a flock no longer shown is wasted work. It is
+        // started again when the flock is.
+        if (!this.enabled) {
+            this.model.dispose();
+            this.showProgress(1);
+        }
         this.folder?.show(this.enabled);
         if (this.enabled && openFolder) this.folder?.open();
         this.rebuildMeshes();
@@ -482,8 +498,15 @@ export class ObjectFlock {
         this.model.cruiseSpeed = this.cruiseSpeed(track);
         // A murmuration is simulated to the end of the sitch (and started, if it is new).
         this.model.duration = (Sit.frames ?? 1) / this.framesPerSecond;
+        // If the flock could not be worked out, show the object itself rather than nothing.
+        this.showSingleObject(this.model.failed);
         if (!this.model.ready) {
             this.posesDirty = true;         // nothing to draw until the warm-up is done
+            // and the shadows of the birds that were there go with them
+            if (Globals.shadowsEnabled && this.lastChecksum !== undefined) {
+                markShadowCastersDirty(`${owner.id}:flock`);
+            }
+            this.lastChecksum = undefined;
             return;
         }
         for (let sample = 0; sample < 3; sample++) {
