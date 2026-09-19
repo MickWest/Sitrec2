@@ -9,6 +9,22 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.165.1 (2026-09-18)
+
+### New Features
+
+- **Keyboard navigation in the traverse results** (Traverse → **Analyze Traverse Methods...** results): **←** and **→** select the previous or next result, and **↑** and **↓** select the result above or below in the grid. **Enter** expands the graph of the selected result, and **Enter** again returns to the list.
+
+### Improvements
+
+- **Traverse results window** (Traverse → **Analyze Traverse Methods...** results): the results fill the window, and the scroll wheel works anywhere on the page. The expand button on a graph now enlarges it over the list only, so the details of the same result stay beside it. After you scroll down the details, selecting another result keeps its frame-by-frame graphs in the same place on the screen.
+- **Frame-by-frame graphs** (Traverse → **Analyze Traverse Methods...** results, details panel): the acceleration, speed and LOS error graphs now use a stepped scale with a minimum of 2 g, 40 kt or 0.5°, so very small noise no longer looks like large motion. When the line is small, a grey copy on a **Fine scale** at the right shows its detail.
+- **Fewer settings-file updates** (self-hosted servers): a change to only the comments in the settings template no longer changes its version stamp. So it no longer stops a build from your own checkout until you update your shared settings file. This release does not change the stamp, so an install that is up to date needs no change.
+
+### Bug Fixes
+
+- Fixed a comment at the end of a line in the shared settings file becoming part of that setting's value. This affected servers built from your own checkout, and images made with the Mac and Linux bake commands (*Comments and quotes in shared.env* in the Installing and Configuring guide). Docker Compose installs already read the file this way. **Note for self-hosters:** a value without quotes that contains a space followed by # (for example, banner text Build #2) is now cut at that point, so put such a value in quotes.
+
 ## Version 2.165.0 (2026-09-18)
 
 ### New Features

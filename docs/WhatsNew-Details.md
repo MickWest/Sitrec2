@@ -9,6 +9,80 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.165.1 (2026-09-18)
+
+### New Features
+
+- **Keyboard navigation in the traverse results** (Traverse → **Analyze Traverse Methods...** results; `fc803b34`; the gallery key handler with new `stepSelection`, `stepRow`, `goToTile`, `isTextEntry` and `isKeyboardFocusedControl` in `showResultGallery` in `src/AnalyzeTraverse.js`, `docs/KeyboardShortcuts.md`, `docs/TraverseAnalysis.md`).
+  - **Left / Right** (`stepSelection`) select the previous or next result in the order the tiles are shown, with set-aside results last. They wrap at the ends.
+  - **Up / Down** (`stepRow`) select the result in the next grid row up or down, the one nearest horizontally. They stop at the top and bottom rows. Rows come from the tiles' screen positions, not from index arithmetic, because the column count follows the window width and the Extras and Set-aside separators start new rows.
+  - **Enter** expands the graph of the selected result, and Enter again returns to the list.
+    - Enter is also swallowed for key repeats and modified presses. Without this, a held Enter could click an **Expand graph** button that still has focus from a mouse click, and reopen the graph it just closed.
+    - A button, link or `<summary>` with keyboard focus (`:focus-visible`, reached with Tab) keeps Enter.
+  - `goToTile` scrolls the new tile into view even under an expanded graph, so the list is at the same result when you return. An expanded graph follows the selection.
+  - The keys do nothing while the comparison panel is open, or while a text field, slider or dropdown has focus (`isTextEntry`). Arrow keys with Alt, Ctrl or Meta are not used.
+
+### Improvements
+
+- **Traverse results layout and expanded graph** (Traverse → **Analyze Traverse Methods...** results; `fc803b34`; `showResultGallery`, `openChartFullscreen` and `selectTile` in `src/AnalyzeTraverse.js`, `docs/TraverseAnalysis.md`).
+  - **Full window.** The overlay padding and the 96vw / 1720 px limit on `.tg-panel` are removed, so the results fill the window. The margins are now padding inside the `.tg-tiles` scroll frame. Before, the margins outside the two scrolling columns did not respond to the scroll wheel; now it works everywhere on the page. The details column is now a full-height pane with a left border instead of a rounded box. The comparison panel keeps a 24 px margin.
+  - **Expanded graph over the list.** The expand button (tooltip "Fullscreen graph" → "Expand graph") now opens its layer inside a new `.tg-left` pane that holds the tiles column. Before, it opened a fixed full-screen layer. The details panel stays beside the expanded graph, and the expanded graph does not scroll.
+    - Its own button is titled "Back to results" (was "Exit fullscreen graph").
+    - Its expand, zoom, **T**, **g** and camera buttons move back up, because the fixed **X** is no longer above the graph.
+  - **Same result in both panes.** Clicking a tile's expand button now also selects that tile. Before, the capture-phase handler stopped the tile's own click, so the details panel could still describe the result that was selected before.
+  - **Details position kept.** When the details panel is scrolled down, `selectTile` measures the offset of the frame-by-frame graphs before the switch and restores it after. The new result's graphs therefore appear in the same place on the screen. The three graph images get `width`/`height` attributes (`sizeAttrs`), so their height is reserved before their data URLs decode.
+- **Frame-by-frame graph scales** (the **Kinematic acceleration**, **Speed** and **LOS fit error** graphs under *Frame-by-frame behaviour* in the details panel of the Traverse → **Analyze Traverse Methods...** results; `fc803b34`; new `dualScale` option of `lineChart`, `hypothesisSeriesCharts`, `CReportChart.axes({right, yColor})`, new `CReportChart.headerLegend`, `FINE_SCALE_GREY` and `FINE_SCALE_MAX_FRACTION` in `src/AnalyzeTraverse.js`, `docs/TraverseAnalysis.md`).
+  - **Problem.** Each graph fitted its scale to its own data, so numerical noise (for example a 1e-13 g wobble) filled the graph and looked like large motion.
+  - **Left scale.** It starts at zero, or lower only for negative data. Its top rounds up to a whole step and has a minimum:
+    - 2 g, in steps of 1 g
+    - 40 kt, in steps of 10 kt
+    - 0.5°, in steps of 0.5°
+
+    Graphs of different results therefore usually share a scale, and a small value draws as a small line. The left tick numbers are in the result's color.
+  - **Fine scale.** A grey (`#6c7480`) copy of the first series (g-force, air speed or LOS error) is drawn behind it, against a right-hand scale with grey numbers.
+    - The Fine scale fits that series' own range plus 8%.
+    - It is never narrower than one hundredth of the left minimum (0.02 g, 0.4 kt, 0.005°).
+    - It does not go below zero for data that never does.
+    - It is drawn only when its span is less than 20% of the left scale's span. Otherwise the graph has one scale.
+
+    The right margin of all three graphs grows from 14 to 46 px, so the stacked graphs stay aligned.
+  - **Secondary lines.** Ground speed (drawn when wind makes it differ from air speed by more than 1 kt) and the generic-fit reference line are now dashed, in the result's color. Before, they were solid, in muted grey. They use the left scale only. The legend moves to the title row, with a "Fine scale" entry when that scale is shown. Only these three graphs use `dualScale`.
+- **The settings template's version stamp ignores comments** (self-hosted servers; `d9fdf26f`; new `settingLines` and `bumpStaged` in `scripts/sharedEnvVersion.js`, `.githooks/pre-commit`, `config/shared.env.example`, `docs/dev/Installing-and-configuring.md`, `tests/sharedEnvVersion.test.js`).
+  - **Before.** The pre-commit `--bump-staged` step compared the staged example with HEAD, removing only the version line (`stripVersionLines`). So every edit bumped `SHARED_ENV_VERSION`, comments included. Each bump makes `checkOrExit` stop every source build until the operator updates their `config/shared.env`. All five bumps since the stamp was added on 2026-08-06 were for comment changes only.
+  - **Now.** `settingLines` also removes comments (by the `stripComment` rule below) and blank lines before it compares.
+    - These do not bump the stamp: comment edits, blank lines, and a new setting that is added commented out.
+    - A setting that is added, removed, changed, moved, commented out or uncommented still bumps it.
+    - A manual bump that comes with only comment edits is still kept, and is synced to the committer's own shared.env.
+  - **This release.** `config/shared.env.example` changes only in comments: a note on the comment rule, and the description of the stamp. `SHARED_ENV_VERSION` stays `2026-09-08`, so a shared.env that is already at that version builds with no change.
+
+### Bug Fixes
+
+- **Trailing comments in shared.env were part of the value** (self-hosted servers; new section *Comments and quotes in shared.env* in `docs/dev/Installing-and-configuring.md`; `d9fdf26f`; new `scripts/envFile.js`, `webpack.common.js`, `scripts/serverlessClientEnv.js`, `sitrecServer/injectEnv.php`, `docker/entrypoint.sh`, `install.sh`, `sitrec.sh`, new `tests/envFile.test.js`).
+  - **Bug.** The build kept a comment after a setting (`FOO=1 # note`) as part of the value, because dotenv 8 has no inline comments. `sitrecServer/injectEnv.php` also kept it, because it skipped only whole-line comments. Examples:
+    - `FOO=1 # note` gave `1 # note`.
+    - `B=false # off` reached PHP as the text `false # off` instead of false.
+    - `C="#FFFFFF" # x` kept its literal quotes.
+    - The Mac/Linux bake parsers put the comment into the image's `ENV` value.
+  - **Rule** (`stripComment` in `scripts/envFile.js`).
+    - A `#` starts a comment only outside quotes, and only at the start of a line or after whitespace.
+    - A quote opens only at the first character of the value, so the apostrophe in `TEXT=It's ready # note` is plain text.
+    - An opening quote that never closes keeps the whole line.
+    - Inside double quotes, a backslash escapes the next character.
+
+    Docker Compose reads `.env` by the same rule, so `BANNER_COLOR="#FFFFFF"` and `URL=https://host/page#top` keep their `#`.
+  - **Readers.**
+    - **Build.** `webpack.common.js` reads the file with `loadEnvIntoProcess` instead of `dotenv.config`; values already in `process.env` still win. It uses `commentAwareDotenvPlugin`, a dotenv-webpack subclass whose `loadFile()` removes comments before dotenv 8 parses the text.
+      - The subclass keeps the class name `Dotenv`, because `webpack.serverless.js` and `webpack.secure.js` drop that plugin by `constructor.name`.
+      - It throws if dotenv-webpack has no `loadFile()`.
+      - `scripts/serverlessClientEnv.js` uses `parseEnv`.
+      - A dotenv upgrade alone would not fix the bundle, because dotenv-webpack reads the file through dotenv-defaults, which requires dotenv 8.
+    - **PHP.** `sitrecStripEnvComment` in `sitrecServer/injectEnv.php` is a copy of the rule, so `FOO=true # note` now gives boolean true.
+    - **Bake.** `strip_env_comment` in `install.sh` (`--bake`) and in `sitrec.sh` (`bake`), again copies of the rule.
+    - **Docker entrypoint.** Compose has already removed the env file's comments. But `docker/entrypoint.sh` writes values into `shared.env.php` without quotes, and PHP now reads a ` #` there as a comment. So a value with whitespace followed by `#` is now written inside a quote kind it does not contain, and PHP keeps all of it. A value with ` #` and both quote kinds cannot be written that way: the entrypoint prints a warning, and PHP reads the value only up to the `#`.
+  - **Behavior change.** An unquoted value with a space or tab before `#` is now cut at that point, in source builds and in the Mac/Linux bake. For example, `BANNER_TOP_TEXT=Build #2` now reads as `Build`. Docker Compose already read it that way. Put such a value in quotes: `BANNER_TOP_TEXT="Build #2"`.
+  - **Not changed.** The Windows bake parsers, in `sitrec.ps1` (`.\sitrec.cmd bake`) and `install.ps1`, still skip only whole-line comments. They still keep a trailing comment in the baked value.
+  - **Tests.** `tests/envFile.test.js` gives one set of difficult lines to every reader and requires the same values from each. The readers are `parseEnv`, the dotenv-webpack plugin, the real `injectEnv.php`, both `.sh` bake parsers, and the entrypoint through PHP. The PHP and shell cases skip where php or bash is not available.
+
 ## Version 2.165.0 (2026-09-18)
 
 ### New Features
