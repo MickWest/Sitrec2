@@ -1992,6 +1992,122 @@ const en = {
             label: "Clean Up",
             tooltip: "Remove all reflection analysis arrows from the scene",
         },
+        flock: {
+            label: "Flock",
+            tooltip: "Draw this object as a flock of birds that follows its track in formation, "
+                + "in place of the one object. Each bird is this object's model or geometry.",
+            folder: "Flock Parameters",
+            species: {
+                label: "Species",
+                tooltip: "Set the flock up as one kind of bird flies, from field measurements where there are any. "
+                    + "It is a place to start: change any control and this goes back to Custom. It does not set the "
+                    + "number of birds. It cannot set the size of a bird or the speed of the flock: those are this "
+                    + "object's geometry and its track.",
+            },
+            count: {
+                label: "Number of Birds",
+                tooltip: "How many birds are in the flock. One bird flies a wavering path about the track. "
+                    + "Push against the top of the slider to extend its range.",
+            },
+            formation: {
+                label: "Formation",
+                tooltip: "V, Echelon (one arm of a V) and Line Astern (one behind another) have a leader. "
+                    + "Line Abreast is side by side. Irregular Front is a broad, shallow band with a ragged "
+                    + "edge, as gulls, waders and ducks fly. Cluster is a rounded mass, as starlings and pigeons fly.",
+            },
+            vNess: {
+                label: "V-ness",
+                tooltip: "How closely the birds hold the lines of the formation. "
+                    + "1 is a clean formation. 0 is a loose cluster with no lines.",
+            },
+            vAngle: {
+                label: "V Angle",
+                tooltip: "Angle between the two arms of the V, in degrees. It varies widely in real flocks: "
+                    + "one radar study of 54 flocks of Canada geese measured 72 degrees, give or take 23.",
+            },
+            asymmetry: {
+                label: "Asymmetry",
+                tooltip: "How unequal the two arms are. 0 is an even V. Towards 1 the right arm is longer, "
+                    + "and towards -1 the left: a J shape. In geese the even V is the least common shape, "
+                    + "then the J, and the Echelon is the most common. "
+                    + "For an Echelon only the sign is used, to choose the side.",
+            },
+            shapeDrift: {
+                label: "Shape Drift",
+                tooltip: "How freely the flock changes shape as birds change places. At 0 the two arms keep "
+                    + "their lengths. Above 0, a leader that drops back may join the other arm, and a bird at "
+                    + "the end of one arm may cross to the other, so a V becomes a J and a J an Echelon. "
+                    + "The Asymmetry is the shape the flock keeps coming back to. Real flocks of geese do this.",
+            },
+            groupSize: {
+                label: "Birds per Formation",
+                tooltip: "The most birds in one line formation. A larger flock flies as several formations "
+                    + "near each other, as large flocks of geese do.",
+            },
+            frontDepth: {
+                label: "Front Depth",
+                tooltip: "Depth of the front from its leading edge to its trailing edge, as a fraction of its width",
+            },
+            elongation: {
+                label: "Elongation",
+                tooltip: "Length of the cluster's long horizontal axis as a multiple of its short one. "
+                    + "Starling flocks measure about 2.",
+            },
+            longAxis: {
+                label: "Long Axis (deg)",
+                tooltip: "Direction of the cluster's long axis, in degrees from the direction of flight. 0 is along "
+                    + "the flight and 90 is across it. In starling flocks it has no link to the direction of flight.",
+            },
+            spacing: {
+                label: "Spacing (m)",
+                tooltip: "Distance between neighboring birds, in meters. In a V or an Echelon it is measured across "
+                    + "the direction of flight, where birds keep about one wingspan apart. "
+                    + "The V Angle then sets how far behind each bird is.",
+            },
+            looseness: {
+                label: "Looseness",
+                tooltip: "How far each bird wanders from its place, as a fraction of the spacing",
+            },
+            snaking: {
+                label: "Snaking",
+                tooltip: "How far the line swings from side to side, as a fraction of the spacing. Each bird "
+                    + "follows the path of the bird ahead, so the swing travels down the line from front to back.",
+            },
+            wanderPeriod: {
+                label: "Wander Period (s)",
+                tooltip: "Time, in seconds, that a bird takes to wander away from its place and back",
+            },
+            verticalSpread: {
+                label: "Vertical Spread",
+                tooltip: "Height of the flock as a fraction of its shorter horizontal dimension. Real flocks are "
+                    + "thin: starling flocks measure 0.36.",
+            },
+            placeChange: {
+                label: "Change of Place (s)",
+                tooltip: "How often each bird changes place, in seconds. A bird trades places with the bird next to "
+                    + "it: in a formation with a leader, with the bird ahead of it, which is how the lead changes "
+                    + "hands. Ibises in a V were measured at once in 45 seconds. 0 means the birds never change places.",
+            },
+            wheeling: {
+                label: "Wheeling (m)",
+                tooltip: "How far the whole flock swings away from the track, in meters. "
+                    + "Over a fixed point the flock circles it. Along a moving track it weaves from side to side.",
+            },
+            wheelPeriod: {
+                label: "Wheel Period (s)",
+                tooltip: "Time, in seconds, for one full swing or circle of the wheeling",
+            },
+            turnLag: {
+                label: "Turn Lag (s)",
+                tooltip: "How long the formation takes to turn to a new direction of flight, in seconds. "
+                    + "Small for geese, whose V points where they fly. Large for starlings and pigeons, whose "
+                    + "flock keeps its arrangement through a turn, so that birds at the front come out of it on the side.",
+            },
+            seed: {
+                label: "Random Seed",
+                tooltip: "Changes the random arrangement and motion. The same seed always gives the same flock.",
+            },
+        },
     },
 
     trackingOverlay: {

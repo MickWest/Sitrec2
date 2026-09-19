@@ -522,24 +522,40 @@ export function createGradientTexture(paletteName) {
 export const gradientVertexShader = `
     uniform vec3 gradientCenter;
     uniform vec3 gradientDir;
+    uniform vec3 flockPartOrigin;
 
     varying float vGradientD;
     varying vec3 vWorldNormal;
     varying vec4 vPosition;
 
     void main() {
+        // A flock draws the object as an InstancedMesh (see ObjectFlock.js), and a
+        // ShaderMaterial gets none of three.js's instancing for free. Each bird takes
+        // the gradient about ITS OWN center, which is the object's moved to where the bird
+        // is. An instance matrix places one PART of a bird, so the bird's center is not its
+        // origin: flockPartOrigin is where the bird's center is in the part's own frame.
+        #ifdef USE_INSTANCING
+            vec4 localPos = instanceMatrix * vec4(position, 1.0);
+            vec3 localNormal = mat3(instanceMatrix) * normal;
+            vec3 center = gradientCenter + mat3(modelMatrix) * (instanceMatrix * vec4(flockPartOrigin, 1.0)).xyz;
+        #else
+            vec4 localPos = vec4(position, 1.0);
+            vec3 localNormal = normal;
+            vec3 center = gradientCenter;
+        #endif
+
         // Compute world-space position so the gradient is consistent across
         // model hierarchies with varying internal transforms.
-        vec4 worldPos = modelMatrix * vec4(position, 1.0);
-        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        vec4 worldPos = modelMatrix * localPos;
+        vWorldNormal = normalize(mat3(modelMatrix) * localNormal);
 
         // Compute the position-based gradient dot product per-vertex to avoid
         // precision loss from interpolating large ECEF coordinates as varyings.
         // The subtraction of two large ECEF values still happens in 32-bit, but
         // the small result interpolates cleanly across the triangle.
-        vGradientD = dot(worldPos.xyz - gradientCenter, gradientDir);
+        vGradientD = dot(worldPos.xyz - center, gradientDir);
 
-        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        vec4 mvPosition = modelViewMatrix * localPos;
         vPosition = applyTerrestrialRefraction_clip(mvPosition);
         gl_Position = vPosition;
     }

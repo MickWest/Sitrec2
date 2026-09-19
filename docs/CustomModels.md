@@ -39,6 +39,34 @@ The geometry specification are in meters. You can see the dimensions of the boun
 
 ![Model Viewer dimensions.jpg](docimages/Model-Viewer-dimensions.jpg)
 
+### Flocks
+
+Check "Flock" in an object's menu to draw it as a flock of birds in place of the one object. Each bird is the object's own model or geometry, so set that up first: for example, a sphere of radius 0.5 for a bird about one meter across. The flock follows the object's track, and the track runs through the middle of the flock, not through its leader. An object that is not on a track gives a flock that holds station about that one point.
+
+The "Flock Parameters" folder appears below the checkbox:
+
+- **Species**: Sets the flock up as one kind of bird flies, from field measurements where there are any: Northern Bald Ibis, Canada Goose, White Pelican, Starling, Dunlin, Pigeon and Gull. It is a place to start. Change any control and it goes back to Custom. It does not set the number of birds, and it cannot set the size of a bird or the speed of the flock, which are the object's geometry and its track: hover over the control to see the wingspan and flight speed of the species.
+- **Number of Birds**: One bird flies a wavering path about the track. Push against the top of the slider to extend its range into the thousands.
+- **Formation**: V, Echelon (one arm of a V) and Line Astern (one behind another) have a leader. Line Abreast is side by side. Irregular Front is a broad, shallow band with a ragged edge, as gulls, waders and ducks fly. Cluster is a rounded mass, as starlings and pigeons fly.
+- **V-ness**: How closely the birds hold the lines of the formation, from a loose cluster (0) to a clean formation (1).
+- **V Angle** and **Asymmetry**: The angle between the arms, and how unequal they are. Both vary widely in real flocks. One radar study of 54 flocks of Canada geese measured a V angle of 72 degrees, give or take 23. In geese the even V is the least common shape, then the J (one arm longer), and the Echelon is the most common.
+- **Shape Drift**: How freely the flock changes shape as birds change places. At 0 the two arms keep their lengths. Above 0, a leader that drops back may join the other arm, and a bird at the end of one arm may cross to the other, so a V becomes a J and a J an Echelon, as flocks of geese do. The Asymmetry is the shape the flock keeps coming back to.
+- **Birds per Formation**: A flock larger than this flies as several formations near each other, as large flocks of geese do.
+- **Front Depth**: For an Irregular Front, its depth as a fraction of its width.
+- **Elongation** and **Long Axis (deg)**: For a Cluster, the length of its long horizontal axis as a multiple of its short one, and the direction of that axis from the direction of flight (0 is along the flight, 90 is across it). Starling flocks measure about 2, and their long axis has no link to their direction of flight.
+- **Spacing (m)**: The distance between neighboring birds. In a V or an Echelon it is measured across the direction of flight, where birds keep about one wingspan apart. The V Angle then sets how far behind each bird is.
+- **Looseness** and **Wander Period (s)**: How far each bird wanders from its place, as a fraction of the spacing, and how long it takes.
+- **Snaking**: How far the line swings from side to side. Each bird follows the path of the bird ahead, so the swing travels down the line from front to back.
+- **Vertical Spread**: The height of the flock as a fraction of its shorter horizontal dimension. Real flocks are thin: starling flocks measure 0.36.
+- **Change of Place (s)**: How often each bird changes place. A bird trades places with the bird next to it: in a formation with a leader, with the bird ahead of it, which is how the lead changes hands. Ibises in a V were measured at once in 45 seconds. 0 means never.
+- **Wheeling (m)** and **Wheel Period (s)**: How far the whole flock swings away from the track. Over a fixed point the flock circles it; along a moving track it weaves.
+- **Turn Lag (s)**: How long the formation takes to turn to a new direction of flight. Keep it small for geese, whose V points where they fly. Make it large for starlings and pigeons, whose flock keeps its arrangement through a turn, so that birds at the front come out of the turn on the side.
+- **Random Seed**: Changes the random arrangement and motion. The same seed always gives the same flock, and a frame looks the same whether you play to it or jump to it.
+
+In a Cluster or an Irregular Front, a bird's nearest neighbors are beside it, not ahead of it or behind it, and the birds are a little closer together at the border of the flock than in its middle. Both were measured in real flocks. A Cluster is not a murmuration: it has the measured shape and spacing of a starling flock, and none of the waves that pass through one.
+
+Each bird points along its own direction of flight and banks into its turns. A bird cannot fly sideways, so a wander that is too large for its period is slowed down until the bird's motion within the flock is no more than about 15% of the speed of the flock.
+
 ## Supported Model Formats
 
 Sitrec supports two model file formats:
