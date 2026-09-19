@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////
 ///  DRAG AND DROP FILES?
 import {CustomManager, FileManager, Globals, markSitchDirty, NodeMan,
-    setNewSitchObject, Sit, SitchMan, Synth3DManager} from "./Globals";
+    setNewSitchObject, setRenderOne, Sit, SitchMan, Synth3DManager} from "./Globals";
 import {isSubdomain, radians} from "./utils";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {getLocalSouthVector, getLocalUpVector} from "./SphericalMath";
@@ -1263,6 +1263,9 @@ class CDragDropHandler {
     queueResult(filename, result, newStaticURL) {
         console.log("queueResult: Queuing " + filename + " for parsing")
         this.dropQueue.push({filename: filename, result: result, newStaticURL: newStaticURL});
+        // File reading can finish after the paused render loop has gone idle.
+        // Wake it now: the next tick drains this queue and frames the import.
+        setRenderOne(true);
     }
 
     // If there are loaded files in the queue, then parse them
