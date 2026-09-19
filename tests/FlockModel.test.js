@@ -8,6 +8,9 @@
  */
 
 import {armSlot, clusterPoints, FLOCK_FORMATIONS, FlockModel, lineSlots, nearestNeighbors} from "../src/FlockModel";
+
+// The formations that hold a shape. A murmuration flies itself: see MurmurationSim.test.js.
+const SHAPED_FORMATIONS = FLOCK_FORMATIONS.filter(formation => formation !== "Murmuration");
 import {mulberry32} from "../src/DifferentialEvolution";
 
 const SPEED = 15;       // m/s, a goose
@@ -193,7 +196,7 @@ describe("cluster formations", () => {
 });
 
 describe("FlockModel", () => {
-    test.each(FLOCK_FORMATIONS)("%s: a frame is the same however it was reached", (formation) => {
+    test.each(SHAPED_FORMATIONS)("%s: a frame is the same however it was reached", (formation) => {
         const params = {count: 40, formation, placeChange: 7, wheeling: 10, seed: 5};
         const played = new FlockModel(params);
         for (let t = 0; t <= 200; t += 0.5) evaluate(played, t);
@@ -244,7 +247,7 @@ describe("FlockModel", () => {
         near.forEach((v, k) => expect(far[k]).toBeCloseTo(3 * v, 9));
     });
 
-    test.each(FLOCK_FORMATIONS)("%s: no bird ever jumps, through every change of place", (formation) => {
+    test.each(SHAPED_FORMATIONS)("%s: no bird ever jumps, through every change of place", (formation) => {
         const model = new FlockModel({count: 30, formation, placeChange: 6, groupSize: 8, seed: 9});
         const dt = 1 / 30;
         let last = evaluate(model, 0);

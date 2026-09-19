@@ -58,18 +58,20 @@
 //  - The ripple along an irregular front, and the sideways swing of a bird changing
 //    place, are there to look right and have no source.
 //
+// MURMURATIONS are not made here. They come from each bird reacting to its six or seven
+// nearest neighbors (Ballerini et al., PNAS 105: 1232, 2008), which is a true simulation
+// with state: see MurmurationSim.js. The "Murmuration" formation hands over to it.
+//
 // NOT HERE
-//  - Murmurations. Those come from each bird reacting to its six or seven nearest
-//    neighbors (Ballerini et al., PNAS 105: 1232, 2008), which is a true simulation with
-//    state. It would be a second model with this same evaluate() shape, run forward from
-//    frame 0 and cached so the timeline can still be scrubbed.
 //  - Curved arms. Apart from the snaking, the arms are straight. No one has measured a
 //    curve: the search found theory (Andersson & Wallander 2004) and no field data.
 //  - The waves of gliding that pass down a line of pelicans (Weimerskirch et al. 2001).
 
 import {mulberry32} from "./DifferentialEvolution";
+import {MurmurationTimeline, runMurmurationHere} from "./MurmurationSim";
 
-export const FLOCK_FORMATIONS = ["V", "Echelon", "Line Astern", "Line Abreast", "Irregular Front", "Cluster"];
+export const FLOCK_FORMATIONS = ["V", "Echelon", "Line Astern", "Line Abreast", "Irregular Front", "Cluster",
+    "Murmuration"];
 
 // No line to hold: V-ness, V Angle and the rest do not apply.
 const CLUSTER_FORMATIONS = ["Irregular Front", "Cluster"];
@@ -99,6 +101,8 @@ export const flockDefaults = {
     wheeling: 0,            // meters the whole flock swings about the path
     wheelPeriod: 20,        // seconds
     turnLag: 2,             // seconds the formation's heading trails the flight direction
+    murmurationSpeed: 10,   // Murmuration: the birds' cruise speed, m/s
+    roostRadius: 150,       // Murmuration: how far from the object the flock ranges, meters
     seed: 1,
 };
 
@@ -154,6 +158,15 @@ export const FLOCK_SPECIES = {
     // 2013: by their fitted curve, half of the nearest neighbors have changed in about 12 s,
     // which is one change of place per bird in 17 s. Roost flocks flew at 7 to 15 m/s.
     // THIS IS NOT A MURMURATION: it has the measured shape and spacing, and none of the waves.
+    // StarDisplay (Hildenbrandt, Carere & Hemelrijk 2010), the model of the roost at Termini
+    // in Rome, run for real: see MurmurationSim.js. Its defaults are the paper's: cruise
+    // 10 m/s and a roost 150 m across. Rome's flocks flew at 7 to 15 m/s with their nearest
+    // neighbors 0.7 to 1.5 m away (Ballerini et al. 2008).
+    "Starling Murmuration": {
+        about: "Wingspan 0.4 m. Use hundreds or thousands of birds: the flock is simulated, and takes a "
+            + "few seconds to work out.",
+        params: {formation: "Murmuration", spacing: 1.1, murmurationSpeed: 10, roostRadius: 150},
+    },
     "Starling": {
         about: "Wingspan 0.4 m. Flies at 7 to 15 m/s about a roost, 12 to 16 on passage.",
         params: {formation: "Cluster", elongation: 2, longAxis: 45 /* no link to the flight */, spacing: 1.1,
@@ -553,9 +566,15 @@ export function armSlot(size, side, rank) {
 }
 
 export class FlockModel {
-    constructor(params = {}) {
+    // options.murmurationRunner runs a murmuration simulation (see MurmurationTimeline): the
+    // browser passes one that uses a worker; by default it runs here, at once, for the tests.
+    // options.onMurmurationProgress(fraction) is told as the samples come in.
+    constructor(params = {}, options = {}) {
         this.params = {...flockDefaults};
         this.layoutKey = null;
+        this.murmurationRunner = options.murmurationRunner ?? runMurmurationHere;
+        this.onMurmurationProgress = options.onMurmurationProgress ?? (() => {});
+        this.seconds = 60;          // how long the sitch is: see duration
         // How fast the flock flies on the whole, in m/s. It limits how fast the birds may
         // move about within it. It has to be ONE number for the whole path: it scales
         // rates that are multiplied by time, so a value that changed from frame to frame
@@ -597,12 +616,71 @@ export class FlockModel {
         return this.birdCount;
     }
 
+    // A murmuration flies itself: its heading comes from each bird's own velocity, and its
+    // frame is fixed to north and east, not turned to the way the object is going.
+    get isMurmuration() {
+        return this.params.formation === "Murmuration";
+    }
+
+    // Whether there is anything to draw yet. A murmuration has nothing until its warm-up
+    // has been simulated.
+    get ready() {
+        return !this.isMurmuration || !!this.murmuration?.ready;
+    }
+
+    get progress() {
+        return this.isMurmuration ? (this.murmuration?.progress ?? 0) : 1;
+    }
+
+    // How long the sitch is, in seconds. A murmuration is simulated to the end of it, and
+    // again, further, if it grows. It is not started until the length is known, or asked
+    // for, so that a new flock does not first simulate a length it will throw away.
+    set duration(seconds) {
+        if (!(seconds > 0)) return;
+        this.seconds = seconds;
+        if (this.isMurmuration && (!this.murmuration || this.murmuration.params.duration < seconds)) {
+            this.startMurmuration();
+        }
+    }
+
+    get duration() {
+        return this.seconds;
+    }
+
+    startMurmuration() {
+        const p = this.params;
+        this.murmuration?.dispose();
+        this.murmuration = new MurmurationTimeline({
+            count: p.count, spacing: p.spacing, cruiseSpeed: p.murmurationSpeed, roostRadius: p.roostRadius,
+            seed: p.seed, duration: this.seconds,
+        }, this.murmurationRunner, (fraction) => this.onMurmurationProgress(fraction));
+    }
+
+    dispose() {
+        this.murmuration?.dispose();
+        this.murmuration = null;
+    }
+
     setParams(params = {}) {
         const p = Object.assign(this.params, params);
         p.count = Math.max(1, Math.round(Number(p.count) || 1));
         p.groupSize = Math.max(2, Math.round(Number(p.groupSize) || 2));
         p.seed = Math.round(Number(p.seed) || 0);
         if (!FLOCK_FORMATIONS.includes(p.formation)) p.formation = flockDefaults.formation;
+
+        if (this.isMurmuration) {
+            this.birdCount = p.count;
+            this.groups = [];
+            this.layoutKey = null;
+            const key = [p.count, p.spacing, p.murmurationSpeed, p.roostRadius, p.seed].join("|");
+            if (key !== this.murmurationKey) {
+                this.murmurationKey = key;
+                this.dispose();         // started again when the duration is set, or asked for
+            }
+            return;
+        }
+        this.murmurationKey = null;
+        this.dispose();
 
         // Only these change WHERE the slots are, or the history of who has been in them.
         // The rest are read at evaluate time, so dragging (say) the spacing slider does
@@ -900,7 +978,7 @@ export class FlockModel {
     // the flock circles it, and along a moving path it weaves and surges.
     wheelOffset(t, out = [0, 0, 0]) {
         const p = this.params;
-        const size = p.wheeling;
+        const size = this.isMurmuration ? 0 : p.wheeling;
         if (!(size > 0)) {
             out[0] = out[1] = out[2] = 0;
             return out;
@@ -931,6 +1009,10 @@ export class FlockModel {
     // speed (m/s) is how fast the flock is flying. It sets how long ago the leader was
     // where each follower is now, which is the delay of the snaking.
     evaluate(t, speed, out) {
+        if (this.isMurmuration) {
+            if (!this.murmuration) this.startMurmuration();
+            return this.murmuration.evaluate(t, out);
+        }
         const p = this.params;
         const spacing = p.spacing;
         const vNess = Math.min(1, Math.max(0, p.vNess));

@@ -24,7 +24,23 @@ import {Globals, markShadowCastersDirty, setRenderOne, Sit} from "./Globals";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 import {patchMaterialForLinearOutput} from "./threeExt";
 import {FLOCK_FORMATIONS, FLOCK_SPECIES, flockDefaults, FlockModel} from "./FlockModel";
+import {runMurmurationHere} from "./MurmurationSim";
 import {t} from "./i18n";
+
+// A murmuration is simulated (MurmurationSim.js), which for a flock of thousands over a
+// minute of sitch is seconds of work: it is done in a worker, so the page does not freeze.
+function runMurmurationInWorker(params, onChunk) {
+    if (typeof Worker === "undefined") return runMurmurationHere(params, onChunk);
+    const worker = new Worker(new URL("./workers/MurmurationWorker.js", import.meta.url));
+    worker.onmessage = (event) => {
+        const message = event.data;
+        if (message.done) worker.terminate();
+        else onChunk(message.first, message.chunk, message.info);
+    };
+    worker.onerror = (error) => console.error("Murmuration worker failed:", error.message);
+    worker.postMessage({params});
+    return () => worker.terminate();
+}
 
 // key, min, max, step. Labels and tooltips are nodes3dObject.flock.<key> in the locale.
 const flockSliders = [
@@ -46,6 +62,8 @@ const flockSliders = [
     ["wheeling", 0, 500, 0.5],
     ["wheelPeriod", 2, 120, 0.5],
     ["turnLag", 0, 60, 0.5],
+    ["murmurationSpeed", 3, 25, 0.1],
+    ["roostRadius", 20, 1000, 1],
     ["seed", 1, 1000, 1],
 ];
 
@@ -62,7 +80,12 @@ const sliderFormations = {
     frontDepth: ["Irregular Front"],
     elongation: ["Cluster"],
     longAxis: ["Cluster"],
+    murmurationSpeed: ["Murmuration"],
+    roostRadius: ["Murmuration"],
 };
+
+// A murmuration flies itself, so of the rest only these mean anything for it.
+const MURMURATION_CONTROLS = ["species", "formation", "count", "spacing", "murmurationSpeed", "roostRadius", "seed"];
 
 // Velocity and acceleration come from positions this far either side of now.
 // Shorter, and a track sampled once a frame gives a spiky second difference.
@@ -81,7 +104,14 @@ export class ObjectFlock {
     constructor(owner, savedParams = {}) {
         this.owner = owner;
         this.params = {...flockDefaults, ...savedParams};
-        this.model = new FlockModel(this.params);
+        this.model = new FlockModel(this.params, {
+            murmurationRunner: runMurmurationInWorker,
+            onMurmurationProgress: (fraction) => {
+                this.showProgress(fraction);
+                this.posesDirty = true;
+                setRenderOne(true);
+            },
+        });
         this.enabled = false;
 
         this.group = new Group();
@@ -169,9 +199,20 @@ export class ObjectFlock {
         // tooltip says what they should be.
         const about = FLOCK_SPECIES[this.params.species]?.about;
         this.controllers.species.tooltip(t("nodes3dObject.flock.species.tooltip") + (about ? " " + about : ""));
-        for (const [key, formations] of Object.entries(sliderFormations)) {
-            this.controllers[key].show(formations.includes(this.params.formation));
+        const formation = this.params.formation;
+        for (const [key, controller] of Object.entries(this.controllers)) {
+            if (formation === "Murmuration") controller.show(MURMURATION_CONTROLS.includes(key));
+            else controller.show(!sliderFormations[key] || sliderFormations[key].includes(formation));
         }
+        this.showProgress(this.model.progress);
+    }
+
+    // A murmuration is worked out a piece at a time; the folder says how far it has got.
+    showProgress(fraction) {
+        if (!this.folder) return;
+        const title = t("nodes3dObject.flock.folder");
+        this.folder.title(this.model.isMurmuration && fraction < 1
+            ? `${title} (${t("nodes3dObject.flock.simulating", {percent: Math.floor(100 * fraction)})})` : title);
     }
 
     setEnabled(enabled, openFolder = false) {
@@ -353,6 +394,14 @@ export class ObjectFlock {
     // on the flank, as starlings and pigeons do.
     formationFrame(track, f, reference, frame) {
         const s = this.scratch;
+        // A murmuration's frame is fixed: north and east. It turns itself, and a flock
+        // keeps its orientation in the world through a turn (Ballerini et al. 2008).
+        if (this.model.isMurmuration) {
+            this.pathPoint(track, f, reference, frame.center);
+            frame.forward.copy(this.north);
+            frame.right.crossVectors(frame.forward, this.up);
+            return;
+        }
         const halfSpan = this.framesPerSecond * DERIVATIVE_SECONDS;
         const lag = this.framesPerSecond * Math.max(0, this.params.turnLag);
 
@@ -431,6 +480,12 @@ export class ObjectFlock {
         const track = owner.getSourceTrack();
         const reference = track ? track.p(f) : null;
         this.model.cruiseSpeed = this.cruiseSpeed(track);
+        // A murmuration is simulated to the end of the sitch (and started, if it is new).
+        this.model.duration = (Sit.frames ?? 1) / this.framesPerSecond;
+        if (!this.model.ready) {
+            this.posesDirty = true;         // nothing to draw until the warm-up is done
+            return;
+        }
         for (let sample = 0; sample < 3; sample++) {
             this.formationFrame(track, f + (sample - 1) * span, reference, this.frames[sample]);
         }
@@ -471,9 +526,14 @@ export class ObjectFlock {
             const velocity = p2.sub(p0).multiplyScalar(1 / (2 * seconds));
 
             // Nose along the bird's own velocity, with at least MIN_AIRSPEED of it along
-            // the way the flock is going.
-            const nose = s.z.copy(velocity)
-                .addScaledVector(heading, Math.max(0, MIN_AIRSPEED - velocity.dot(heading)));
+            // the way the flock is going. A bird of a murmuration flies itself: its
+            // velocity is its airspeed, whichever way it is going.
+            const nose = s.z.copy(velocity);
+            if (!this.model.isMurmuration) {
+                nose.addScaledVector(heading, Math.max(0, MIN_AIRSPEED - velocity.dot(heading)));
+            } else if (nose.lengthSq() < 0.25) {
+                nose.copy(heading);
+            }
             nose.normalize();
             // Object3D.lookAt() puts +Z on the target and +X to the LEFT, so a model
             // that flies correctly as a single object flies correctly here too.
@@ -520,7 +580,7 @@ export class ObjectFlock {
         s.scale.setScalar(scale);
 
         // (poses can be left over from a bigger flock until the next update())
-        const count = Math.min(this.poseCount, this.capacity);
+        const count = this.model.ready ? Math.min(this.poseCount, this.capacity) : 0;
         for (let i = 0; i < count; i++) {
             s.position.fromArray(this.positions, 3 * i);
             s.quaternion.fromArray(this.quaternions, 4 * i).multiply(s.userRotation);
@@ -546,6 +606,7 @@ export class ObjectFlock {
     }
 
     dispose() {
+        this.model.dispose();
         this.disposeMeshes();
         this.owner.group.remove(this.group);
         this.folder?.destroy();

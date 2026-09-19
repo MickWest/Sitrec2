@@ -47,7 +47,7 @@ The "Flock Parameters" folder appears below the checkbox:
 
 - **Species**: Sets the flock up as one kind of bird flies, from field measurements where there are any: Northern Bald Ibis, Canada Goose, White Pelican, Starling, Dunlin, Pigeon and Gull. It is a place to start. Change any control and it goes back to Custom. It does not set the number of birds, and it cannot set the size of a bird or the speed of the flock, which are the object's geometry and its track: hover over the control to see the wingspan and flight speed of the species.
 - **Number of Birds**: One bird flies a wavering path about the track. Push against the top of the slider to extend its range into the thousands.
-- **Formation**: V, Echelon (one arm of a V) and Line Astern (one behind another) have a leader. Line Abreast is side by side. Irregular Front is a broad, shallow band with a ragged edge, as gulls, waders and ducks fly. Cluster is a rounded mass, as starlings and pigeons fly.
+- **Formation**: V, Echelon (one arm of a V) and Line Astern (one behind another) have a leader. Line Abreast is side by side. Irregular Front is a broad, shallow band with a ragged edge, as gulls, waders and ducks fly. Cluster is a rounded mass, as starlings and pigeons fly. Murmuration is a starling flock over its roost, simulated bird by bird (see below).
 - **V-ness**: How closely the birds hold the lines of the formation, from a loose cluster (0) to a clean formation (1).
 - **V Angle** and **Asymmetry**: The angle between the arms, and how unequal they are. Both vary widely in real flocks. One radar study of 54 flocks of Canada geese measured a V angle of 72 degrees, give or take 23. In geese the even V is the least common shape, then the J (one arm longer), and the Echelon is the most common.
 - **Shape Drift**: How freely the flock changes shape as birds change places. At 0 the two arms keep their lengths. Above 0, a leader that drops back may join the other arm, and a bird at the end of one arm may cross to the other, so a V becomes a J and a J an Echelon, as flocks of geese do. The Asymmetry is the shape the flock keeps coming back to.
@@ -63,7 +63,21 @@ The "Flock Parameters" folder appears below the checkbox:
 - **Turn Lag (s)**: How long the formation takes to turn to a new direction of flight. Keep it small for geese, whose V points where they fly. Make it large for starlings and pigeons, whose flock keeps its arrangement through a turn, so that birds at the front come out of the turn on the side.
 - **Random Seed**: Changes the random arrangement and motion. The same seed always gives the same flock, and a frame looks the same whether you play to it or jump to it.
 
-In a Cluster or an Irregular Front, a bird's nearest neighbors are beside it, not ahead of it or behind it, and the birds are a little closer together at the border of the flock than in its middle. Both were measured in real flocks. A Cluster is not a murmuration: it has the measured shape and spacing of a starling flock, and none of the waves that pass through one.
+#### Murmurations
+
+The Murmuration formation is not a fixed shape. Each bird steers by its six or seven nearest neighbors and banks into its turns, and the flock turns, stretches, splits and changes shape by itself as it sweeps around a roost at the object's position. It is the StarDisplay model of Hildenbrandt, Carere and Hemelrijk (2010), which was checked against measured starling flocks over their roost in Rome. Its controls are:
+
+- **Number of Birds**: Use hundreds or thousands. Real murmurations can be far larger.
+- **Spacing (m)**: The mean distance from a bird to its nearest neighbor. The flocks measured in Rome were 0.7 to 1.5 m.
+- **Cruise Speed (m/s)**: The birds' flying speed. The flocks in Rome flew at 7 to 15 m/s.
+- **Roost Radius (m)**: How far from the object the flock ranges before it turns back.
+- **Random Seed**: A different flight.
+
+The flock is simulated from before the start of the sitch to its end, which for thousands of birds takes a few seconds. It is done in the background: the folder title shows how far it has got, and the flock appears as soon as its first seconds are ready. If the object moves along a track, the whole murmuration moves with it.
+
+The simulated flocks are a little too level: real starling flocks rise and fall more. There is no predator in the model, so there are none of the dark waves that run through a flock under attack.
+
+In a Cluster or an Irregular Front, a bird's nearest neighbors are beside it, not ahead of it or behind it, and the birds are a little closer together at the border of the flock than in its middle. Both were measured in real flocks. A Cluster is not a murmuration: it has the measured shape and spacing of a starling flock, and it keeps that shape. For a flock that moves by itself, use Murmuration.
 
 Each bird points along its own direction of flight and banks into its turns. A bird cannot fly sideways, so a wander that is too large for its period is slowed down until the bird's motion within the flock is no more than about 15% of the speed of the flock.
 

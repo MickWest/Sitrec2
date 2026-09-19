@@ -2013,7 +2013,9 @@ const en = {
                 label: "Formation",
                 tooltip: "V, Echelon (one arm of a V) and Line Astern (one behind another) have a leader. "
                     + "Line Abreast is side by side. Irregular Front is a broad, shallow band with a ragged "
-                    + "edge, as gulls, waders and ducks fly. Cluster is a rounded mass, as starlings and pigeons fly.",
+                    + "edge, as gulls, waders and ducks fly. Cluster is a rounded mass, as starlings and pigeons fly. "
+                    + "Murmuration is a starling flock over its roost, simulated bird by bird: it turns, stretches, "
+                    + "and changes shape by itself, about this object's position.",
             },
             vNess: {
                 label: "V-ness",
@@ -2103,6 +2105,17 @@ const en = {
                     + "Small for geese, whose V points where they fly. Large for starlings and pigeons, whose "
                     + "flock keeps its arrangement through a turn, so that birds at the front come out of it on the side.",
             },
+            murmurationSpeed: {
+                label: "Cruise Speed (m/s)",
+                tooltip: "Speed at which the birds of the murmuration fly. The starling flocks measured over "
+                    + "their roost in Rome flew at 7 to 15 m/s.",
+            },
+            roostRadius: {
+                label: "Roost Radius (m)",
+                tooltip: "How far from this object the murmuration ranges, in meters. Birds that fly beyond it "
+                    + "turn back, and the flock sweeps around this area.",
+            },
+            simulating: "working out the flock: {{percent}}%",
             seed: {
                 label: "Random Seed",
                 tooltip: "Changes the random arrangement and motion. The same seed always gives the same flock.",
