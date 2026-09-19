@@ -44,6 +44,9 @@ export class CNodeLOSFromCamera extends CNodeLOS {
         const cameraNode = this.in.cameraNode
         assert(cameraNode !== undefined, "CNodeLOSFromCamera missing cameraNode input");
         const oldCamera = cameraNode.camera;
+        // Controllers may have changed since the previous sample. Only a
+        // controller actually applied on this pass may supply size evidence.
+        this.dummyCamera.userData.angularSize = null;
         cameraNode._object = this.dummyCamera; // _object is the camera object
         // patch so this does not count as a controller update (recursion check)
         // applyControllersCount will be incremented by the cameraNode.update call
@@ -87,7 +90,8 @@ export class CNodeLOSFromCamera extends CNodeLOS {
             console.error("Camera position:", camera.position);
             console.error("Camera quaternion:", camera.quaternion);
         }
-        return {position: position, heading: fwd, up: up, right: right, vFOV: vFOV};
+        return {position: position, heading: fwd, up: up, right: right, vFOV: vFOV,
+            ...(camera.userData.angularSize ? {angularSize: {...camera.userData.angularSize}} : {})};
     }
 
     exportESP(inspect = false) {

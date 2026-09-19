@@ -1,3 +1,4 @@
+import {angularSizeFitEnabled, angularSizeFrames, compileAngularSizeFit, remapAngularSize} from "./AngularSize";
 /**
  * LOSFitting.js — Global LOS Trajectory Fitting Algorithms
  *
@@ -1564,6 +1565,17 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     }
     const costTimes = costFrames.map(i => times[i] - t0);
 
+    // Use every observed size frame. Sparse evidence is never interpolated.
+    const sizeFit = angularSizeFitEnabled(dataset);
+    const sizeFrames = sizeFit ? [...new Set([active[0], ...angularSizeFrames(dataset.angularSize)
+        .filter(f => !excluded.has(f))])].sort((a, b) => a - b) : [];
+    const sizeDataset = {n: sizeFrames.length, S: new Float64Array(sizeFrames.flatMap(f =>
+        Array.from(sensorPos.slice(f * 3, f * 3 + 3)))),
+        angularSize: remapAngularSize(dataset.angularSize, sizeFrames), angularSizeOptions: dataset.angularSizeOptions};
+    const sizeCost = compileAngularSizeFit(sizeDataset);
+    const sizeTimes = sizeFrames.map(f => times[f] - t0);
+    const sizeTrack = new Float64Array(sizeFrames.length * 3);
+
     const errSigma = options.errSigma ?? 0.02; // degrees of mean error per unit cost
 
     function _angularError(fx, fy, fz, sx, sy, sz, dx, dy, dz) {
@@ -1627,6 +1639,14 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         const priorCost = model.extraCost(params, dataset, T);
         if (!Number.isFinite(priorCost)) return Infinity;
         let cost = (errRad * 180 / Math.PI) / errSigma + priorCost;
+        if (sizeFit && sizeFrames.length) {
+            try {
+                const states = integrateRK4(model, model.getInitialState(params, dataset), params,
+                    sizeTimes, {maxDt: fitMaxDt, checkDivergence: true});
+                for (let k = 0; k < states.length; k++) sizeTrack.set(states[k].slice(0, 3), k * 3);
+                cost += sizeCost(sizeTrack);
+            } catch (_) { return Infinity; }
+        }
         if (groundPrior) {
             const sig = groundPrior.sigma ?? 40;
             const init = model.getInitialState(params, dataset);
@@ -1727,7 +1747,7 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
 
     let result;
     if (options.optimizer === "de") {
-        let de = options.gpu ? await gpuPhysicsSearch() : null;
+        let de = options.gpu && !sizeFit ? await gpuPhysicsSearch() : null;
         if (!de) {
             const {differentialEvolution, mulberry32} = require("./DifferentialEvolution");
             de = await differentialEvolution(searchCost, searchLo, searchHi, {

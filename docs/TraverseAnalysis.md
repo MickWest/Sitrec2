@@ -704,7 +704,9 @@ class checks are diagnostic and do not themselves alter the ranking.
 ### How the tiles are ranked
 
 Each card shows a short status and its own score, for example
-**Passed all gates · BOT Score: 2.905**. A result that does not pass shows its
+**Broad gates passed · BOT Score: 2.905**. These are the shared ranking screens;
+physical compatibility with a tested object class is reported separately.
+A result that does not pass shows its
 screening status instead. Hover over the status for the placement explanation.
 The BOT Score is a weighted sum of motion and sightline-fit terms. **Lower is better.** It
 compares finite paths regardless of solver category and does not use truth. It
@@ -1037,3 +1039,112 @@ not an anomaly claim). Exactly what each wording licenses you to say, and the
 list of causes Sitrec has no model for at all, are in
 [Reading the executive verdict without over-reading it](DefensibleAnalysis.md#7-reading-the-executive-verdict-without-over-reading-it)
 and [What a fit does and does not license](DefensibleAnalysis.md#5-what-a-fit-does-and-does-not-license).
+
+## Optional angular-size evidence
+
+Use **Angular size…** in the results browser to inspect or enter size bounds.
+Judging and fitting are separate options, both off by default. The dialog accepts
+an initial diameter, start/end diameters, sparse per-frame bounds, and relative
+size ratios. A clip-wide ratio bound applies at every frame; isolated samples
+apply only at their stated frames. Frame 0 is the start of this analysis window.
+
+**Assume constant projected physical size** is an explicit optional assumption,
+recommended when shape and orientation stay stable. It is not enabled automatically.
+Rotation, inflation, occlusion or a changing measurement axis can invalidate it.
+With this assumption off, absolute measurements still constrain the projected
+size required by a path, but relative size does not constrain its range changes.
+
+For projected extent `d`, range `R`, and angular diameter `theta`, the check uses
+`d = 2 R tan(theta / 2)`. A candidate supplies `R`; it does not supply a known
+physical size. Under the constant-size assumption, the implied diameter intervals
+must share at least one common diameter. Relative observations instead check
+`R(reference) / R(frame)` against the measured extent-ratio bounds. At small angles
+these are the usual angular-size ratios. One absolute sample alone does not fix
+range; the same proportional change in diameter and range leaves the angle unchanged.
+
+Absolute size is also checked against the existing broad object-class size
+intervals, using the same motion-compatible classes for every solver. A conflict
+means the proposed path and these assumptions do not agree. It is not an object
+identification or a proof that no other path fits. Results retain conflicting
+candidates so the reason remains inspectable. Among candidates with the same
+broad pass/fail grade, a size conflict comes before the existing completion,
+model-limit and BOT Score ordering. Unknown size checks do not count as evidence
+of compatibility. Truth comparison remains a separate, requested ordering.
+
+The **Angular size** measurement names bounds passed, conflicts or unavailable
+evidence and states the projected-size assumption. The BOT Score formula and
+reported LOS residual do not absorb this check. Reports include the options and
+observations in their run audit, and recompute their ranking from the current
+settings.
+
+### Optional fitting
+
+In a live analysis, **Also use size during supported fits** requests a new analysis
+when size inputs or fitting assumptions change. BOTBench has a separate **Fit
+angular size (experimental)** checkbox for subsequent runs. Size fitting needs
+the constant projected-size assumption and size-change evidence. A single absolute
+sample with unknown physical size adds no range-change fitting information.
+
+The supported searches are fixed-wing aircraft, balloon, quadcopter, drone control
+inputs, constant altitude, horizontal speed valley, constant air speed and minimum
+acceleration. The existing dynamics or path construction stay in use. For the last
+two, size helps select the searched range/speed; it does not add a size equation to
+the inner spline solve. The range-profile search also includes the loss. Minimum
+Speed's representative, fixed/ground points, CV, CA, polynomial, Kalman, Monte Carlo
+and sky/catalogue fits remain LOS-only during fitting. Each result states its mode.
+All finite paths can still receive the optional judging check, regardless of solver.
+
+The additional fit loss is the mean squared violation of log size intervals,
+divided by `log(1.1)^2`. For absolute samples, one unknown log diameter is fitted
+jointly to the intervals. Values inside bounds cost zero. This is a tunable
+heuristic, not a calibrated likelihood or confidence score. More correlated
+samples do not become independent evidence merely because there are more frames.
+Reported LOS error is still calculated from sightlines alone. Supported size fits
+use CPU objectives; their GPU kernels do not yet include this loss.
+Results show the final path's size loss separately. HSV's speed-only bootstrap is
+unavailable in this mode because it does not resample the size evidence. Reports
+preserve fitting inputs separately from later changes to judging settings.
+
+### Available measurement sources
+
+BOT input/all CSVs and generic MISB CSVs accept `AngularDiameterMinDeg` and
+`AngularDiameterMaxDeg`. The minimum is optional: a published maximum alone means
+`[0, maximum]`, even if camera FOV is known. Blank cells are missing observations.
+BOT imports carry these columns into the live sensor track. Truth tracks do not
+supply size observations automatically.
+
+Placed A/B points in manual video tracking supply their measured angular separation
+at those keyframes only. Their initial bounds are explicitly labelled **provisional
+±10%** and can be edited in the analysis dialog. Untouched B handles and interpolated
+frames supply no measurement. These bounds do not use the `abSize` physical-size
+setting. Recorded rows repeated over multiple scene frames are counted once.
+
+A BOT `.scenario.json` sidecar can also contain an `angularSize` observation block:
+
+```json
+{
+  "angularSize": {
+    "source": "Measured image extent",
+    "samples": [{"frame": 0, "minDeg": 0.02, "maxDeg": 0.03}],
+    "relative": [{"frame": 100, "referenceFrame": 0, "minRatio": 0.8, "maxRatio": 1.2}],
+    "relativeBound": {"referenceFrame": 0, "startFrame": 0, "endFrame": 100, "minRatio": 0.5, "maxRatio": 1.5}
+  }
+}
+```
+
+This block is added to a valid scenario sidecar; it does not replace the frame and
+timing metadata. Indices refer to original CSV data rows, starting at zero. Cropping
+remaps retained observations and drops relative pairs whose reference was removed.
+Bounds refer to projected extent, not brightness, bloom or an uncorrected pixel box.
+
+Imported sensor size bounds also follow the default **Camera Center** sightline
+when it is driven by that recorded sensor. The Angular size button shows the
+available count and whether judging is on. Open it to inspect the recorded
+samples; the blank “Add an initial/final measurement” fields are for additional
+observations. Repeated display frames do not create extra measurements.
+
+An `AngularDiameterMaxDeg` column alone contains upper bounds, not measured
+diameters or ratios. These bounds can reject physical class sizes at a
+candidate range. They do not constrain range changes on their own, so size
+fitting is unavailable until informative size-change observations are supplied.
+Neither judging nor the constant projected-size assumption is enabled automatically.

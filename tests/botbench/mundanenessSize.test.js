@@ -51,11 +51,11 @@ describe("implied size interval", () => {
         expect(d.hi).toBeCloseTo(TRUTH_RANGE_M * SUB_PIXEL_BOUND / (180 / Math.PI), 6);
     });
 
-    test("a resolved target keeps both ends", () => {
+    test("knowing sensor resolution cannot invent an unreported lower bound", () => {
         // Ten pixels across — what FRAME_FRACTION_TARGET aims for.
         const d = impliedDiameter(TRUTH_RANGE_M, 10 * IFOV, FOV, PIXELS);
-        expect(d.lo).toBeGreaterThan(0);
-        expect(d.oneSided).toBe(false);
+        expect(d.lo).toBe(0);
+        expect(d.oneSided).toBe(true);
         expect(d.lo).toBeLessThan(d.hi);
     });
 
@@ -133,4 +133,15 @@ describe("the balloon cell scores as measured", () => {
             expect(cost.total).toBe(0);
             expect(cost.key).toBe("balloon");
         });
+});
+
+test("judging off does not fall back to the legacy size column", () => {
+    const h = candidate({rangeM: 500});
+    for (const options of [undefined, {judge: false}]) {
+        const cost = mundanenessCost({...DATASET, angularSizeOptions: options,
+            angularSize: {samples: [{frame: 0, minDeg: 0, maxDeg: SUB_PIXEL_BOUND}]}}, h);
+        expect(cost.impliedM).toBeNull();
+        expect(cost.sizeCost).toBe(0);
+        expect(cost.sizeOff).toBe(true);
+    }
 });

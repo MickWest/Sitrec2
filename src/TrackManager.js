@@ -412,11 +412,10 @@ class CMetaTrack {
 // (1.0,0.5,0.75) were removed when the role colours landed: they sat 0.46 and
 // 0.43 from target red and truth pink, close enough that an unlabelled track
 // read as the target or the answer key. A reserved hue is one the open palette
-// can no longer spend.
+// can no longer spend. Magenta is also reserved for truth.
 const TRACK_PALETTE = [
     new Color(0.5, 1.0,  0.5),   // green
     new Color(0.6, 0.6,  1.0),   // periwinkle / blue
-    new Color(1.0, 0.5,  1.0),   // magenta / pink
     new Color(0.5, 1.0,  1.0),   // cyan
     new Color(1.0, 1.0,  0.5),   // light yellow
     new Color(0.7, 0.5,  1.0),   // violet
@@ -476,6 +475,7 @@ class CTrackManager extends CManager {
         palette.sort((a, b) => (a.shortName < b.shortName ? -1 : a.shortName > b.shortName ? 1 : 0));
         palette.forEach((t, rank) => {
             const col = TRACK_PALETTE[rank % TRACK_PALETTE.length];
+            const previousHex = t.trackColor.getHexString();
             t.trackColor = col;
             const drop = col.clone().multiplyScalar(0.75);
             // Colours are fed to the display tracks via these CNodeConstants; update
@@ -487,6 +487,17 @@ class CTrackManager extends CManager {
             if (ct) ct.value = new Color(col);
             if (t.trackDisplayDataNode) t.trackDisplayDataNode.dropColor = drop;
             if (t.trackDisplayNode) t.trackDisplayNode.dropColor = drop;
+            // Markers were built with the provisional import colour. Keep them
+            // with the line when a later import changes the palette order.
+            // Preserve a marker colour the user has explicitly changed.
+            const marker = t.displayTargetSphere;
+            if (marker?.modelOrGeometry === "geometry" && marker.material?.color
+                && marker.materialParams.color === "#" + previousHex) {
+                marker.color = col.clone();
+                marker.props.color = col.clone();
+                marker.materialParams.color = "#" + col.getHexString();
+                marker.material.color.copy(col);
+            }
         });
     }
 
@@ -1104,7 +1115,9 @@ class CTrackManager extends CManager {
 
                     if (trackColor === null) {
                         // Sonde tracks get white by default to distinguish from aircraft
-                        if (isSondeTrack) {
+                        if (isTruthTrack(trackOb, shortName)) {
+                            trackColor = new Color(VIZ.truth);
+                        } else if (isSondeTrack) {
                             trackColor = new Color(1, 1, 1);
                         } else if (roleHintForColor === "camera" || roleHintForColor === "target") {
                             // A declared role gets the shared role colour and is
@@ -1335,8 +1348,8 @@ class CTrackManager extends CManager {
         // primary — so without this it took the small invisible reference
         // sphere and the answer key was drawn as nothing at all. It is the one
         // track in the scene that must never be confused with a fitted
-        // candidate, so it gets a shape and a colour of its own: a lime
-        // icosahedron, unmistakable at a glance and still a single-radius
+        // candidate, so it gets an icosahedron in the truth track's colour,
+        // unmistakable at a glance and still a single-radius
         // solid, so it stays the same size as the spheres and moves with
         // Global Radius Resize.
         const isTruth = isTruthTrack(trackOb, shortName);
@@ -1353,7 +1366,7 @@ class CTrackManager extends CManager {
                 geometry: "icosahedron",
                 radius: DEFAULT_TRACK_SPHERE_RADIUS_M,
                 material: "phong",
-                color: "#32CD32",
+                color: trackColor,
                 label: shortName,
             });
         } else if (isSonde) {

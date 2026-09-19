@@ -1,3 +1,4 @@
+import {angularSizeFitSummary, angularSizeInventory} from "../AngularSize";
 /**
  * BotBenchRunner.js — run the shipping traverse analysis over one ingested file.
  *
@@ -41,7 +42,7 @@ import {
 import {
     compareTrackToTruth, meanAngularError, KNOTS_TO_MS, METERS_PER_NM,
 } from "../TraverseAnalysis";
-import {rankAllHypotheses} from "../TraverseRanking";
+import {rankAllHypotheses, assessExecutiveVerdict} from "../TraverseRanking";
 import {mundanenessCost} from "../TraverseMundaneness";
 import {BOT_DEFAULT_EPOCH_ISO, botENUToLLA} from "../TrackFiles/CTrackFileBOT";
 // RAYLEIGH_MEAN / RAYLEIGH_SD live in BotBenchIngest, beside assessSourceQuality:
@@ -92,6 +93,7 @@ export async function runBotBenchAnalysis(record, {
     anchorM = DEFAULT_ANCHOR_M,
     solutionFamilies = false,
     mcOrderSweep = false,
+    angularSizeOptions = null,
     // Search the supported object-model fits on the GPU where WebGPU exists.
     gpuSearch = false,
     // The solvers to run, as BotBenchSolvers names them; null for the default set.
@@ -116,6 +118,9 @@ export async function runBotBenchAnalysis(record, {
 } = {}) {
     const t0 = Date.now();
     const {dataset, originLat, originLon, groundZ} = record;
+    dataset.angularSizeOptions = angularSizeOptions;
+    dataset.angularSizeFittedInput = angularSizeOptions?.fit
+        ? {options: {...angularSizeOptions}, observations: dataset.angularSize ?? null} : null;
 
     // Flat-plane benchmark records know their ground exactly. Fits that use
     // an altitude band need it before the battery runs; the gallery also reads
@@ -131,12 +136,14 @@ export async function runBotBenchAnalysis(record, {
             + `is reported against the declared limit — expect them all to violate it.`);
     }
     const battery = cachedBattery ?? await fitBotBenchRecord(record, {
-        anchorM, solutionFamilies, mcOrderSweep, gpuSearch, solvers, units, onProgress, isCancelled,
+        anchorM, solutionFamilies, mcOrderSweep, gpuSearch, angularSizeOptions, solvers, units, onProgress, isCancelled,
     });
     const provenance = battery.provenance;
 
     const {hypotheses, sweep, resolvedRanges, fastProfile, slowProfile,
-        slowOpts, aircraft, families, executiveAssessment, failures} = battery;
+        slowOpts, aircraft, families, failures} = battery;
+    const executiveAssessment = angularSizeOptions?.judge
+        ? assessExecutiveVerdict(hypotheses, {dataset, provenance}) : battery.executiveAssessment;
     // A run whose solvers need no constant-air sweep has no search grid to draw
     // and no range profiles to quote. The row is built as usual; the report
     // says what it cannot show.
@@ -392,6 +399,10 @@ export async function runBotBenchAnalysis(record, {
     };
 
     const elapsedMs = cachedElapsedMs ?? (fitElapsedMs + Date.now() - t0);
+    // Rejudge these same fitted paths after a gallery evidence edit. Like
+    // buildHtml, this callback is rebuilt on replay and never stored in a fit blob.
+    results.reassessRow = () => summarizeRun(record, results, battery, elapsedMs,
+        directionScore, {declaredMaxM, maxRangeViolations});
     return {
         results,
         row: summarizeRun(record, results, battery, elapsedMs,
@@ -509,7 +520,7 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
     // OWN, and separately the closest candidate any method produced
     // (bestSepM/bestName). The gap between them is how much the RANKING costs,
     // as distinct from how well the fits did.
-    const ranked = rankAllHypotheses(results.hypotheses, {useTruth: false});
+    const ranked = rankAllHypotheses(results.hypotheses, {useTruth: false, dataset: results.dataset});
     const top = ranked.length ? ranked[0] : null;
 
     // The classes the executive assessment found viable, in its own words.
@@ -635,6 +646,13 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
 
     return {
         label: record.label,
+        angularSize: {options: results.dataset.angularSizeOptions ?? null,
+            evidence: angularSizeInventory(results.dataset.angularSize),
+            fitMode: top ? angularSizeFitSummary(results.dataset, top.h) : null,
+            observationCount: (results.dataset.angularSize?.samples?.length ?? 0)
+                + (results.dataset.angularSize?.relative?.length ?? 0)
+                + (results.dataset.angularSize?.relativeBound ? results.dataset.angularSize.relativeBound.endFrame - results.dataset.angularSize.relativeBound.startFrame + 1 : 0),
+            top: top?.r.angularSize ? {...top.r.angularSize, sizeIntervals: undefined} : null},
         // Human-meaningful scenario name from an answer-key sidecar (null on
         // challenge files); the table shows it in place of the opaque filename.
         displayName: record.meta?.descriptiveName ?? null,

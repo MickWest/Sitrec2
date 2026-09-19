@@ -991,6 +991,17 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         // x and y are in original video coordinates, which are pixels
         const [vx, vy] = this.pointsXY[f];
 
+        // Only deliberately placed B handles are size observations. Do not use
+        // abSize (a physical-size assumption) or interpolate missing B points.
+        const key = this.usePointB ? this.keyframes.find(k => k.frame === f && k.bPoint?.edited) : null;
+        if (key) {
+            const a = this.rayForVideoXY(los, vFOV, key.x, key.y);
+            const b = this.rayForVideoXY(los, vFOV, key.bPoint.x, key.bPoint.y);
+            const degrees = angleBetween(a.toArray(), b.toArray()) * 180 / Math.PI;
+            // Explicit provisional measurement bounds, editable in analysis.
+            los.angularSize = degrees > 0 ? {minDeg: degrees * .9, maxDeg: degrees * 1.1,
+                source: "Placed A/B points; provisional ±10% bounds", sourceTime: f} : null;
+        } else los.angularSize = null;
         los.heading = this.rayForVideoXY(los, vFOV, vx, vy);
 
         // up and right are no longer valid

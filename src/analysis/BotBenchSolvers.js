@@ -209,6 +209,7 @@ export function unitOptions(unit, options = {}) {
         return {...MONTE_CARLO_PRESETS[unit], seed: MONTE_CARLO_SEED, backend: "webgpu"};
     }
     const out = {anchorM: options.anchorM ?? null};
+    if (options.angularSizeOptions?.fit) out.angularSizeOptions = {fit: true, constantProjectedSize: !!options.angularSizeOptions.constantProjectedSize, revision: 1};
     if (unit === "families") out.solutionFamilies = !!options.solutionFamilies;
     if (unit === "polySweep") out.mcOrderSweep = !!options.mcOrderSweep;
     if (options.gpuSearch && GPU_SEARCH_UNITS.includes(unit)) out.gpuSearch = true;
@@ -229,7 +230,8 @@ export function sameOptions(a, b) {
 export function selectionKey(ids, options = {}) {
     // The GPU flag is appended only when on, so rows remembered by CPU runs keep their keys.
     const flags = `a=${options.anchorM ?? "-"}|f=${options.solutionFamilies ? 1 : 0}|m=${options.mcOrderSweep ? 1 : 0}`
-        + (options.gpuSearch ? "|g=1" : "");
+        + (options.gpuSearch ? "|g=1" : "")
+        + (options.angularSizeOptions ? `|as=${JSON.stringify(options.angularSizeOptions)}` : "");
     return `${normalizeSolvers(ids).join(",")}|${flags}`;
 }
 

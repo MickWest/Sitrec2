@@ -715,6 +715,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 basinLowAltitude: horizontalSpeed.basinLowAltitude,
                 basinHighAltitude: horizontalSpeed.basinHighAltitude,
                 bootstrapConfidence: horizontalSpeed.bootstrapConfidence,
+                bootstrapUnavailableReason: horizontalSpeed.bootstrapUnavailableReason,
                 bootstrapTrials: horizontalSpeed.bootstrapTrials,
                 bootstrapResolvedTrials: horizontalSpeed.bootstrapResolvedTrials,
                 bootstrapAltitudeP10: horizontalSpeed.bootstrapAltitudeP10,
@@ -741,7 +742,8 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 + `of the ground-to-platform altitude band is excluded to reject the mathematical collapse `
                 + `onto the platform track. Moving-block bootstrap basin confidence is `
                 + `${Number.isFinite(horizontalSpeed.bootstrapConfidence)
-                    ? `${(100 * horizontalSpeed.bootstrapConfidence).toFixed(0)}%` : "unavailable"}.`,
+                    ? `${(100 * horizontalSpeed.bootstrapConfidence).toFixed(0)}%` : "unavailable"}.`
+                + (horizontalSpeed.bootstrapUnavailableReason ? ` ${horizontalSpeed.bootstrapUnavailableReason}.` : ""),
         });
     } else {
         list.push({

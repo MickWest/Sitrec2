@@ -1,3 +1,4 @@
+import {angularSizeFitEnabled, compileAngularSizeFit, remapAngularSize} from "./AngularSize";
 /**
  * TraverseAnalysis.js — physically-motivated analysis of LOS traversals.
  *
@@ -790,6 +791,7 @@ export function traverseConstAltitude(dataset, altZ) {
  *          startDistance -> live-node altitude round-trip stays exact.
  */
 export function fitConstAltitude(dataset, options = {}) {
+    const sizeCost = compileAngularSizeFit(dataset);
     const {n, fps, S, D} = dataset;
     const rangeMin = options.rangeMin ?? 0.5 * METERS_PER_NM;
     const rangeMax = options.rangeMax ?? 60 * METERS_PER_NM;
@@ -813,7 +815,7 @@ export function fitConstAltitude(dataset, options = {}) {
         const smooth = smoothTrackBspline(track, n, smoothK, curvature);
         const errDeg = meanAngularError(dataset, smooth) * 180 / Math.PI;
         const score = straightFlightScore(trackMetrics(dataset, smooth), badFrames)
-            + (errDeg / sigmaLOSDeg) ** 2;
+            + (errDeg / sigmaLOSDeg) ** 2 + sizeCost(smooth);
         return {z, track, smooth, badFrames, errDeg, score};
     };
     let best = null;
@@ -1254,6 +1256,7 @@ export function finishHorizontalConstantSpeedFit(dataset, options, setup, grid) 
     const modeScale = medianFinite(Array.from(mode.coefficients, Math.abs));
     const modeWeight = Math.max(0, Math.min(1, options.modeWeight ?? 0.20));
     const selectionMode = options.selectionMode ?? "combined";
+    const sizeCost = compileAngularSizeFit(dataset);
     const scoreCandidate = (candidate) => {
         if (!candidate?.components || !candidate.waveform) return candidate;
         candidate.consensusScore = componentKeys.reduce((sum, key) =>
@@ -1268,6 +1271,7 @@ export function finishHorizontalConstantSpeedFit(dataset, options, setup, grid) 
         else if (selectionMode === "consensus") candidate.score = candidate.consensusScore;
         else if (selectionMode === "mode") candidate.score = candidate.modeScore;
         else candidate.score = (1 - modeWeight) * candidate.consensusScore + modeWeight * candidate.modeScore;
+        candidate.score += sizeCost(candidate.speed.track);
         return candidate;
     };
     for (const candidate of grid) scoreCandidate(candidate);
@@ -1282,8 +1286,13 @@ export function finishHorizontalConstantSpeedFit(dataset, options, setup, grid) 
     const modeMinima = interiorLocalMinima(modeValues);
     const consensusChosen = lowestMinimum(consensusValues, consensusMinima);
     const modeChosen = lowestMinimum(modeValues, modeMinima);
-    const bootstrap = bootstrapSpeedBasin(
-        grid, scoreValues, minima, chosen, mode, modeWeight, options, dataset.fps);
+    // This bootstrap resamples speed alone. It cannot estimate stability of
+    // the combined speed/size objective until size observations are resampled too.
+    const bootstrapUnavailableReason = angularSizeFitEnabled(dataset)
+        ? "Not assessed with angular-size fitting: the bootstrap resamples speed only" : null;
+    const bootstrap = bootstrapUnavailableReason
+        ? {confidence: null, trials: 0, resolvedTrials: 0}
+        : bootstrapSpeedBasin(grid, scoreValues, minima, chosen, mode, modeWeight, options, dataset.fps);
 
     // Golden-section refinement stays inside the selected grid valley. It cannot
     // jump to the platform collapse or another local minimum.
@@ -1340,6 +1349,7 @@ export function finishHorizontalConstantSpeedFit(dataset, options, setup, grid) 
         basinLowAltitude,
         basinHighAltitude,
         bootstrapConfidence: bootstrap.confidence,
+        bootstrapUnavailableReason,
         bootstrapTrials: bootstrap.trials,
         bootstrapResolvedTrials: bootstrap.resolvedTrials,
         bootstrapAltitudeP10: bootstrap.altitudeP10,
@@ -1671,7 +1681,8 @@ export function downsampleDataset(ds, targetN = 2500) {
             W2[b2] = wx; W2[b2 + 1] = wy; W2[b2 + 2] = wz;
         }
     }
-    return {ds: {n: n2, fps: fps / stride, S: S2, D: D2, W: W2}, stride};
+    return {ds: {...ds, n: n2, fps: fps / stride, S: S2, D: D2, W: W2,
+        angularSize: remapAngularSize(ds.angularSize, Array.from({length: n2}, (_, i) => i * stride))}, stride};
 }
 
 /**
@@ -1706,7 +1717,8 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
     const vSigma = options.vSigma ?? 3 * KNOTS_TO_MS;
     const spdFidSigma = options.spdFidSigma ?? 10 * KNOTS_TO_MS;
     const speedSigma = 250 * KNOTS_TO_MS;
-    const {ds} = downsampleDataset(dataset, options.targetN ?? 2500);
+    const {ds} = downsampleDataset(dataset, angularSizeFitEnabled(dataset) ? dataset.n : options.targetN ?? 2500);
+    const sizeCost = compileAngularSizeFit(ds);
     const {K: smoothK, curvature} = trajectorySmoothingSettings(ds.n, ds.fps);
     const results = [];
 
@@ -1730,7 +1742,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
                     {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true, [PLAUSIBLE_WORKSPACE]: workspace});
                 const sm = smoothTrackBspline(track, ds.n, smoothK, curvature);
                 const m = trackMetrics(ds, sm, {[TRACK_METRICS_WORKSPACE]: metricsWorkspace});
-                let score = straightFlightScore(m, 0);
+                let score = straightFlightScore(m, 0) + sizeCost(sm);
                 if (speedTarget !== null) {
                     score += 0.2 * ((speedMs - speedTarget) / speedSigma) ** 2;
                 }
@@ -2507,6 +2519,7 @@ export function traverseMinSpeed(dataset, options = {}) {
  * Returns [{startDist, metrics, score, track?}] (tracks omitted unless keepTracks).
  */
 export async function rangeProfile(dataset, options = {}) {
+    const sizeCost = compileAngularSizeFit(dataset);
     const ranges = (options.ranges ?? defaultRangeList(dataset)).slice().sort((a, b) => a - b);
     const vTarget = options.vTarget ?? null;
     const vSigma = options.vSigma ?? 50 * KNOTS_TO_MS;
@@ -2515,7 +2528,7 @@ export async function rangeProfile(dataset, options = {}) {
     for (let i = 0; i < ranges.length; i++) {
         const {track, lam} = traversePlausible(dataset, ranges[i], options);
         const m = trackMetrics(dataset, track);
-        let score = straightFlightScore(m);
+        let score = straightFlightScore(m) + sizeCost(track);
         if (vTarget !== null && scoreSpeedWeight > 0) {
             score += scoreSpeedWeight * ((m.airSpeed.mean - vTarget) / vSigma) ** 2;
         }
@@ -2593,6 +2606,7 @@ export function parabolicVertex(xa, fa, xb, fb, xc, fc) {
 }
 
 export function fitPlausibleBestRange(dataset, options = {}) {
+    const sizeCost = compileAngularSizeFit(dataset);
     const vTarget = options.vTarget ?? 300 * KNOTS_TO_MS;
     const vSigma = options.vSigma ?? 60 * KNOTS_TO_MS;
     const rangeMin = options.rangeMin ?? 0.5 * METERS_PER_NM;
@@ -2614,7 +2628,7 @@ export function fitPlausibleBestRange(dataset, options = {}) {
 
     const scoreAt = (R, o) => {
         const {track, floorActive} = traversePlausible(dataset, R, o);
-        return {R, score: straightFlightScore(trackMetrics(dataset, track)), track, floorActive};
+        return {R, score: straightFlightScore(trackMetrics(dataset, track)) + sizeCost(track), track, floorActive};
     };
 
     const coarseSweep = (o) => {
@@ -3118,6 +3132,8 @@ export function aircraftCostErrDeg(dataset, params, costFrames, cumW, incumbent,
  *          cost, errDeg, track, metrics, runs: [per-run summaries]}
  */
 export async function fitAircraft(dataset, options = {}) {
+    const sizeFit = angularSizeFitEnabled(dataset);
+    const sizeCost = compileAngularSizeFit(dataset);
     const tasTarget = options.tasTarget ?? 380 * KNOTS_TO_MS;
     const tasSigma = options.tasSigma ?? 150 * KNOTS_TO_MS;
     const turnSigma = options.turnSigma ?? 0.5;
@@ -3183,7 +3199,7 @@ export async function fitAircraft(dataset, options = {}) {
         if (incumbent < 1e9 && errSigma > 0 && scoreError(0, p) > incumbent) return Infinity;
         const e = aircraftCostErrDeg(dataset, p, costFrames, cumW, incumbent, errSigma, scoreError);
         if (e > 1e8) return e;
-        return scoreError(e, p);
+        return scoreError(e, p) + (sizeFit ? sizeCost(simulateAircraft(dataset, p)) : 0);
     };
 
     // Generic horizontal-speed floor. It is intentionally low enough to keep
@@ -3320,7 +3336,7 @@ export async function fitAircraft(dataset, options = {}) {
     };
 
     const ESC_RESERVE = 0.15;
-    const fromGpu = options.gpu ? await gpuRuns() : null;
+    const fromGpu = options.gpu && !sizeFit ? await gpuRuns() : null;
     if (fromGpu) {
         runs.push(...fromGpu);
     } else {

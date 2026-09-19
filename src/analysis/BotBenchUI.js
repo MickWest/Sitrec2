@@ -1,3 +1,5 @@
+import {assessExecutiveVerdict} from "../TraverseRanking";
+import {angularSizeSummary} from "../AngularSize";
 /**
  * BotBenchUI.js — the "BotBench" bulk traverse-analysis window.
  *
@@ -186,6 +188,7 @@ const TABLE_COLUMNS = [
     ["Src", "3%", "One-word triage of the columns to the left. Not a calibrated score — hover it for the specific reasons.", "source"],
 
     ["Verdict", "12%", "The executive assessment for this file. Shortened to fit — hover for the full headline.", "analysis"],
+    ["AS", "4%", "Angular-size check on the selected path. Hover for sample counts, conflicts and the projected-size assumption. Off means it did not affect ranking.", "analysis"],
     ["Top interpretation", "10%", "The highest-ranked candidate, and its rank tier. Long method names are shortened — hover for the full name.", "analysis"],
     ["|err|", "5%", "The top interpretation's mean line-of-sight residual in degrees, followed by the expected residual under the declared independent pointing-noise model. The expectation is not a lower bound; falling below it alone does not establish overfitting.", "analysis"],
     ["Range", "3.5%", "Start range of the top interpretation, in nautical miles.", "analysis"],
@@ -205,7 +208,7 @@ const TABLE_COLUMNS = [
 // table above so the two cannot drift apart.
 const COL = (() => {
     const names = ["file", "status", "target", "platform", "n", "dur", "base", "sweep",
-        "rcond", "noise", "src", "verdict", "top", "err", "range", "spd", "alt",
+        "rcond", "noise", "src", "verdict", "angularSize", "top", "err", "range", "spd", "alt",
         "truth", "best", "actions"];
     if (names.length !== TABLE_COLUMNS.length) {
         throw new Error(`BotBenchUI: ${names.length} cell names for `
@@ -449,7 +452,7 @@ export const CSV_COLUMNS = [
     "optAnchorNM", "optRangeBands", "optMcSweep", "optGpuSearch", "optSolvers", "searchBackend",
     "probeGeometryPinned", "probeSpeedOverride", "probeRangeM",
     "probeDecisiveness", "probeValleyWidthLog",
-    "topKey", "topName", "topTier", "topErrDeg", "topRangeM", "topSpeedKt",
+    "angularSizeMode", "angularSizeJudge", "angularSizeFitRequested", "angularSizeFit", "angularSizeObservationCount", "angularSizeStatus", "angularSizeMaxFactor", "angularSizeConstant", "topKey", "topName", "topTier", "topErrDeg", "topRangeM", "topSpeedKt",
     "topSpeedMinKt", "topSpeedMaxKt", "topAltM",
     "candidates", "failures",
     "targetDescription", "platformDescription", "platformMeasured", "eventDescription",
@@ -523,6 +526,14 @@ export function rowToCsvRecord(entry) {
         maxRangeViolationCount: r?.maxRangeViolations?.length ?? "",
         topViolatesMaxRange: r ? (r.maxRangeViolations ?? []).some((v) => v.key === r.top?.key
             && v.name === r.top?.name) : "",
+        angularSizeMode: r?.angularSize?.options?.fit ? "fit" : r?.angularSize?.options?.judge ? "judge" : "off",
+        angularSizeJudge: !!r?.angularSize?.options?.judge,
+        angularSizeFitRequested: !!r?.angularSize?.options?.fit,
+        angularSizeFit: r?.angularSize?.fitMode ?? "Off",
+        angularSizeObservationCount: r?.angularSize?.observationCount ?? 0,
+        angularSizeStatus: r?.angularSize?.top?.status ?? "",
+        angularSizeMaxFactor: r?.angularSize?.top?.maxFactor,
+        angularSizeConstant: r?.angularSize?.options?.constantProjectedSize ?? false,
         topKey: r?.top?.key ?? "", topName: r?.top?.name ?? "", topTier: r?.top?.tier ?? "",
         probeGeometryPinned: r?.probe ? (r.probe.geometryPinned ? 1 : 0) : "",
         probeSpeedOverride: r?.probe ? (r.probe.speedOverride ? 1 : 0) : "",
@@ -1524,8 +1535,21 @@ export async function analyseEntryWithCache(entry, ctx) {
  * table's row all the same, and a mismatch is said out loud. Concurrent requests
  * share one rebuild.
  */
+function applyAngularSizeJudgingOverride(state, entry) {
+    const evidence = entry.angularSizeJudgingOverride, results = entry.results;
+    if (!evidence || !results) return;
+    results.dataset.angularSize = evidence.observations;
+    results.dataset.angularSizeOptions = evidence.options;
+    results.executiveAssessment = assessExecutiveVerdict(results.hypotheses,
+        {dataset: results.dataset, provenance: results.provenance});
+    results.html = null;
+    if (results.reassessRow) entry.row = {...entry.row, ...results.reassessRow()};
+    fillRow(state, entry);
+}
+
 async function ensureResults(state, entry) {
     if (entry.results) {
+        applyAngularSizeJudgingOverride(state, entry);
         holdResults(state, entry);
         return entry.results;
     }
@@ -1555,7 +1579,7 @@ async function ensureResults(state, entry) {
                 // elapsedMs is left out of the comparison: it is the wall-clock time the
                 // analysis took, so no fresh fit can ever match it. sameFittedRow holds
                 // that rule for every comparison of this kind.
-                if (tableRow && !sameFittedRow(out.row, tableRow)) {
+                if (tableRow && !entry.angularSizeJudgingOverride && !sameFittedRow(out.row, tableRow)) {
                     console.warn("BotBench: rebuilding this row did not reproduce it exactly; the gallery "
                         + "may differ from the table", entry.relativePath);
                 }
@@ -1565,6 +1589,7 @@ async function ensureResults(state, entry) {
                 if (!state.running) await releaseDirCache(dirCache);
             }
             entry.results = results;
+            applyAngularSizeJudgingOverride(state, entry);
             holdResults(state, entry);
             return results;
         })().finally(() => { entry.rebuilding = null; });
@@ -2261,6 +2286,9 @@ function createDialog() {
         "Do not show a remembered row as it is: rebuild every row from the stored fits, which takes "
         + "a fraction of a second a file. The fits themselves are still reused. Use it after a change "
         + "to the candidates, the ranking or the verdict, which the cache cannot see.", false);
+    const angularSizeJudge = labelledCheckbox("Judge angular size", "Use available angular-size observations as a separate ranking check; keep LOS and BOT scores unchanged.", false);
+    const angularSizeFit = labelledCheckbox("Fit angular size (experimental)", "Adds a separate size-interval loss in supported CPU fits. Requires constant projected size and range-change evidence. Unsupported methods remain LOS-only; every result names its fitting mode.", false);
+    const angularSizeConstant = labelledCheckbox("Assume constant projected size (recommended)", "Recommended when shape and orientation stay stable. Allows relative angular size and changes in absolute size to constrain range changes. Rotation, inflation or occlusion can invalidate this assumption.", false);
     const solversButton = makeButton("Solvers…", "#5c6bc0");
 
     const workerLabel = document.createElement("label");
@@ -2330,7 +2358,7 @@ function createDialog() {
         + "or a 300 dpi PNG for a paper.");
 
     for (const el of [recursive.label, families.label, mcSweep.label, gpuSearch.label, screenshots.label,
-        rebuildRows.label,
+        rebuildRows.label, angularSizeJudge.label, angularSizeConstant.label, angularSizeFit.label,
         anchorLabel, workerLabel, fractionLabel, solversButton,
         chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
         cancelButton, clearButton,
@@ -2473,6 +2501,9 @@ function createDialog() {
         gpuSearchInput: gpuSearch.input,
         screenshotsInput: screenshots.input,
         rebuildRowsInput: rebuildRows.input,
+        angularSizeJudgeInput: angularSizeJudge.input,
+        angularSizeFitInput: angularSizeFit.input,
+        angularSizeConstantInput: angularSizeConstant.input,
         anchorInput, workerLimitInput, fractionInput,
         // The solvers the next run uses: the last choice, remembered across sessions.
         solvers: loadStoredSolvers(),
@@ -2704,7 +2735,14 @@ function paintTableRow(state, row, entry) {
     c[COL.file].title = (r?.displayName ? `${r.displayName}\n` : "") + entry.relativePath
         + "\n\nClick to open this scenario in a new Sitrec window.";
 
-    if (entry.filled && r) paintResultCells(state, entry, c, tr);
+    if (entry.filled && r) {
+        paintResultCells(state, entry, c, tr);
+        const as = r.angularSize;
+        c[COL.angularSize].textContent = as?.options?.judge ? (as.top?.status ?? "unavailable") : as?.options?.fit ? "Fit only" : as?.observationCount ? `Off (${as.observationCount})` : "No data";
+        c[COL.angularSize].title = (as?.evidence ? `${as.evidence.summary} ${as.evidence.upperOnlyNote} ` : "")
+            + (as?.options?.judge ? angularSizeSummary(as.top) : "Angular size did not affect ranking.")
+            + (as?.options?.fit ? ` Fitting: ${as.fitMode}.` : "");
+    }
 
     c[COL.status].textContent = entry.statusText ?? "Queued";
     c[COL.status].title = entry.statusTitle ?? "";
@@ -3010,7 +3048,14 @@ function paintResultCells(state, entry, c, tr) {
         const rebuilding = !entry.results;
         if (rebuilding) setRowBusy(state, entry, "gallery", true);
         try {
-            showTraverseGallery(await ensureResults(state, entry));
+            showTraverseGallery(await ensureResults(state, entry), null, results => {
+                // Session-local observation edits update the table and exports.
+                // Keep the small override when the full analysis is released;
+                // rebuilding still uses the original fit options and inputs.
+                entry.angularSizeJudgingOverride = {observations: results.dataset.angularSize,
+                    options: results.dataset.angularSizeOptions};
+                applyAngularSizeJudgingOverride(state, entry);
+            });
         } catch (e) {
             showError("Could not open the gallery for this result: " + (e && e.message), e);
         } finally {
@@ -3305,6 +3350,8 @@ function runOptions(state) {
     if (String(nm) !== state.anchorInput.value) state.anchorInput.value = String(nm);
     return {
         anchorM: nm * METERS_PER_NM,
+        ...((state.angularSizeJudgeInput?.checked || state.angularSizeFitInput?.checked) ? {angularSizeOptions: {judge: !!state.angularSizeJudgeInput?.checked, fit: !!state.angularSizeFitInput?.checked,
+            constantProjectedSize: !!state.angularSizeConstantInput?.checked}} : {}),
         solutionFamilies: state.familiesInput.checked,
         mcOrderSweep: state.mcSweepInput.checked,
         // Present only when on, so a CPU run's option set reads exactly as before.

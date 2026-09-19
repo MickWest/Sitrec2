@@ -1,3 +1,4 @@
+import {angularSizeFitEnabled} from "../AngularSize";
 /** Shared scene-independent BOTBench fitting, used by the browser and workers. */
 import {buildHypotheses as buildCoreHypotheses, flatTerrainProbes, trackGroundStats,
     UNDERGROUND_TOL} from "../TraverseHypotheses";
@@ -118,7 +119,7 @@ export async function fitBotBenchRecord(record, {
     anchorM = DEFAULT_ANCHOR_M, solutionFamilies = false, mcOrderSweep = false,
     // Search the supported object-model fits on the GPU where WebGPU exists
     // (TraverseBattery `gpu`). Changes those fits, so their units are stored apart.
-    gpuSearch = false,
+    gpuSearch = false, angularSizeOptions = null,
     // The solvers wanted (BotBenchSolvers ids; null for the default set) and, optionally,
     // stored fit units to use in place of fitting: {cached: {unitId: {result,
     // failures}}, onUnit}. The plan of units is derived from the solvers here,
@@ -128,6 +129,7 @@ export async function fitBotBenchRecord(record, {
 } = {}) {
     const {dataset, originLat, originLon, groundZ} = record;
     dataset.groundLevelM = groundZ;
+    dataset.angularSizeOptions = angularSizeOptions;
     validateBotBenchRecord(record);
     const include = includeSetFor(solvers, {mcOrderSweep});
     const plan = planUnits(solvers, {solutionFamilies});
@@ -253,7 +255,7 @@ export async function fitBotBenchRecord(record, {
         isCancelled,
         units: {plan, cached: units?.cached ?? {}, onUnit: units?.onUnit ?? null},
     });
-    if (gpuSearch) markGpuFallbacksUncacheable(battery.units);
+    if (gpuSearch && !angularSizeFitEnabled(dataset)) markGpuFallbacksUncacheable(battery.units);
     return battery;
 }
 

@@ -122,6 +122,9 @@ export const MISB = {
     TruthAltitude: 124,     // meters
     TruthHeading: 125,      // parsed but currently unused
     TruthSpeed: 126,        // parsed but currently unused
+    // Local observation extensions, angular diameter in degrees.
+    AngularDiameterMinDeg: 127,
+    AngularDiameterMaxDeg: 128,
 }
 
-export const MISBFields = 127;
+export const MISBFields = 129;

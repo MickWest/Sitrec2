@@ -124,6 +124,9 @@ export class CNodeAutoTrackLOS extends CNode {
         newHeading.applyAxisAngle(newRight, yangle);
 
         los.heading = newHeading;
+        // A tracked pixel can be a different object from the recorded
+        // centreline target. It needs its own size observation.
+        los.angularSize = null;
         // up and right are no longer valid after the tilted heading; downstream consumers only use heading.
         los.up = undefined;
         los.right = undefined;

@@ -1,3 +1,7 @@
+import {showAngularSizeDialog} from "./AngularSizeDialog";
+import {assessExecutiveVerdict} from "./TraverseRanking";
+import {angularSizeSummary, angularSizeFitSummary, angularSizeInventory} from "./AngularSize";
+import {angularSizeRankingCheck} from "./TraverseMundaneness";
 /**
  * AnalyzeTraverse.js — one-button traverse analysis with a generated HTML report.
  *
@@ -220,6 +224,13 @@ export const analyzeTweaks = {
 
 // "no truth track selected" sentinel for the Truth Track dropdown
 const TRUTH_NONE = "-";
+// Optional evidence belongs to this LOS object and this analysis window only.
+let angularSizeSettings = null;
+function currentAngularSizeSettings(losNode, range) {
+    return angularSizeSettings?.losNode === losNode
+        && angularSizeSettings.frame0 === range.frame0 && angularSizeSettings.frame1 === range.frame1
+        ? angularSizeSettings : null;
+}
 // Minimum overlapping frames for a selected truth track to drive ordering
 // (compareTrackToTruth needs >= 5). Below this, truth mode is not "usable" and
 // the banners must not claim truth ordering — see TA-19.
@@ -1199,9 +1210,9 @@ function fmtSepMeters(v) {
     return `${Math.round(v)} m`;
 }
 
-function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
+function buildVerdict(hypotheses, capturedProvenance = null, truth = null, dataset = null) {
     const withTrack = (hypotheses || []).filter((h) => h.track && h.metricsFull);
-    const groups = groupAndRankHypotheses(withTrack, {useTruth: !!truth});
+    const groups = groupAndRankHypotheses(withTrack, {useTruth: !!truth, dataset});
 
     // The executive headline is NOT repeated here: the report leads with the
     // Assessment section (the frozen executiveAssessment record) and the
@@ -1233,7 +1244,7 @@ function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
             `Every method is measured by its mean 3D separation from the reference trajectory ` +
             `over the analysis window — smaller means it reproduces the truth more closely. Completed ` +
             `fits are ordered before incomplete searches, then by that separation. `;
-        const comparable = rankAllHypotheses(withTrack, {useTruth: true})
+        const comparable = rankAllHypotheses(withTrack, {useTruth: true, dataset})
             .filter((item) => item.h.truthComparison?.comparable);
         if (comparable.length) {
             const best = comparable[0];
@@ -1794,6 +1805,8 @@ function analysisFingerprint(losNode, scalars, frame0 = 0, frame1 = (losNode.fra
         const p = l.position, d = l.heading;
         h = _mixFloat(h, p.x); h = _mixFloat(h, p.y); h = _mixFloat(h, p.z);
         h = _mixFloat(h, d.x); h = _mixFloat(h, d.y); h = _mixFloat(h, d.z);
+        h = _mixFloat(h, l.angularSize?.minDeg); h = _mixFloat(h, l.angularSize?.maxDeg);
+        h = _mixFloat(h, l.angularSize?.sourceTime);
     }
     for (const s of scalars) {
         if (typeof s === "string") h = _mixStr(h, s);
@@ -1881,6 +1894,8 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
         // Processing metadata can change even on a straight/constant track
         // whose filtered positions do not. Do not reuse a differently labelled run.
         JSON.stringify(captureLiveInputFiltering(losNode, analysisFrames)),
+        JSON.stringify(currentAngularSizeSettings(losNode, analysisFrames)?.observations ?? null),
+        JSON.stringify(currentAngularSizeSettings(losNode, analysisFrames)?.options ?? null),
         analysisFrames.frame0, analysisFrames.frame1,
         analyzeTweaks.windMode,
         ...windSeries,
@@ -2355,6 +2370,11 @@ async function runTraverseAnalysisWithCurrentAngles() {
         overlay.setStatus("Building LOS dataset...");
         await yieldToDOM();
         const {dataset, originLat, originLon} = buildAnalysisDataset(losNode, analysisWindNode, anchorDist, analysisFrames);
+        const angularSettings = currentAngularSizeSettings(losNode, analysisFrames);
+        if (angularSettings) {
+            dataset.angularSize = angularSettings.observations;
+            dataset.angularSizeOptions = angularSettings.options;
+        }
         // The horizontal constant-speed altitude search needs the lower end of
         // its search band before the battery runs. Freeze the same local terrain
         // sample used by the scene-bound ground fits; headless BOTBench callers
@@ -3140,25 +3160,19 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
     // far outside its envelope this candidate sits, because "anomalous" without
     // a named quantity is not a finding. A high value is a POSITIVE statement
     // about the object, never a failure to explain it away.
+    if (dataset?.angularSizeOptions?.judge) stats.push(["Angular size", angularSizeSummary(angularSizeRankingCheck(dataset, h))]);
+    else if (angularSizeInventory(dataset?.angularSize).count) stats.push(["Angular size", "Available; judging off"]);
+    if (dataset?.angularSizeOptions?.fit || h.angularSizeFit?.requested) stats.push(["Angular-size fitting", angularSizeFitSummary(dataset, h)]);
     const mund = mundanenessCost(dataset, h);
     if (mund) {
         const summary = mundanenessSummary(mund);
         stats.push(["Physical compatibility", summary]);
         stats.push(["Physical compatibility details", physicalCompatibilityDetails(mund)]);
-        // The implied physical size is the part a reader can sanity-check by eye
-        // against the video, so show it whenever the file carried an angular
-        // measurement at all.
-        //
-        // A SUB-PIXEL TARGET GIVES AN UPPER BOUND AND NOTHING ELSE, and it must
-        // say so. Printing "0.00–2.11 m" there reads as a measured interval when
-        // the lower half is only the absence of one — measured on the balloon
-        // set, where every scenario's bound sits at the sub-pixel floor. The
-        // upper bound is still real and still refutes a collapsed candidate, so
-        // it is reported; the fictitious lower end is not.
+        // An upper bound has no measured lower end. This does not establish
+        // whether the object is resolved or sub-pixel.
         if (mund.impliedM?.oneSided) {
             stats.push(["Implied object size",
-                `under ${mund.impliedM.hi.toFixed(2)} m at this range `
-                + `— target is sub-pixel, so there is no lower bound`]);
+                `≤ ${mund.impliedM.hi.toFixed(2)} m from size bounds; no measured lower bound`]);
         } else if (mund.impliedM) {
             stats.push(["Implied object size",
                 `${mund.impliedM.lo.toFixed(2)}–${mund.impliedM.hi.toFixed(2)} m at this range`]);
@@ -3615,7 +3629,8 @@ function detailProse(h, r, ss) {
                     + `The primary position average is ${Number(p.smoothSeconds).toFixed(1)} s and speed is `
                     + `measured over ${Number(p.velocitySeconds).toFixed(1)} s. Best altitude ≈ `
                     + `${ft0(p.altZ)} ft; moving-block bootstrap basin confidence is ${confidence}, with a `
-                    + `10–90% selected-altitude band of ${bootstrapBand}.`,
+                    + `10–90% selected-altitude band of ${bootstrapBand}.`
+                    + (p.bootstrapUnavailableReason ? ` ${p.bootstrapUnavailableReason}.` : ""),
                 constraint: `This is a speculative solver for level targets that may turn but do not change `
                     + `horizontal speed. The upper ${(100 * p.platformGuard).toFixed(0)}% of the altitude band is `
                     + `excluded because intersections collapse toward the platform track there. The displayed `
@@ -4090,7 +4105,7 @@ function rankingTextHTML(text, h, r) {
 
 function placementHTML(placement, h, r) {
     if (placement.key !== "truth" && placement.key !== "truthCompletion") {
-        const status = r.eligible ? "Passed all gates" : r.label;
+        const status = r.eligible ? "Broad gates passed" : r.label;
         const angular = r.kind === "identity" || r.kind === "directional-geometry";
         const score = Number.isFinite(r.secondaryScore)
             ? `${r.secondaryScore.toFixed(3)}${angular ? "°" : ""}` : "unavailable";
@@ -4234,7 +4249,7 @@ function isKeyboardFocusedControl(el) {
  *        selected:hypothesis}. Reader state is carried by hypothesis IDENTITY
  *        because the tile INDICES change when the ordering does.
  */
-function showResultGallery(results, uiState = null) {
+function showResultGallery(results, uiState = null, onEvidenceChange = null) {
     // APPLY IS OFF FOR A RESULT THAT IS NOT THIS SCENE'S.
     //
     // "Use exact result" installs a trajectory into the LOADED sitch — it sets
@@ -4292,7 +4307,7 @@ function showResultGallery(results, uiState = null) {
     // after, and section order used to bury it. The categories still cannot be
     // compared by a calibrated cross-model likelihood; see the comparator in
     // rankAllHypotheses for exactly which keys are and are not commensurable.
-    const tiles = rankAllHypotheses(hypotheses, {useTruth});
+    const tiles = rankAllHypotheses(hypotheses, {useTruth, dataset});
 
     // The polynomial-order sweep produces one tile per swept order per strategy
     // (5 by default, 15 with the Monte Carlo sweep on), and those tiles are a
@@ -4550,6 +4565,7 @@ function showResultGallery(results, uiState = null) {
     // the DOM; if not, it unhooks itself and lets the key through normally.
     const onKey = (e) => {
         if (!overlay.isConnected) { document.removeEventListener("keydown", onKey, true); return; }
+        if (e.target?.closest?.(".angular-size-dialog")) return;
         e.stopImmediatePropagation();
         if (e.key === "Escape") {
             e.preventDefault();
@@ -4890,6 +4906,11 @@ function showResultGallery(results, uiState = null) {
         fullscreenView = {layer, chart, sourceChart};
         syncCloseButton();
         requestAnimationFrame(() => chart.resize());
+        // Move focus off the button that opened it, now hidden under the
+        // layer. Left there, a keyboard Enter presses that hidden button again
+        // (reopening its result, even after the arrows moved on) instead of
+        // closing this graph.
+        layer.querySelector(".tg-chart-fullscreen").focus({preventScroll: true});
     }
 
     overlay.addEventListener("click", (e) => {
@@ -5306,6 +5327,33 @@ function showResultGallery(results, uiState = null) {
     compareBtn.addEventListener("click", openComparison);
     toolbar.appendChild(compareBtn);
     toolbar.appendChild(howBtn);
+    const angularBtn = document.createElement("button");
+    angularBtn.className = "tg-toggle" + (dataset.angularSizeOptions?.judge ? " on" : "");
+    const angularInventory = angularSizeInventory(dataset.angularSize);
+    angularBtn.textContent = `Angular size: ${dataset.angularSizeOptions?.judge ? "on" : "off"} (${angularInventory.count})…`;
+    angularBtn.title = angularInventory.summary + " " + angularInventory.upperOnlyNote + " Judge recorded or entered angular-size bounds. In a live analysis you can also request new fits.";
+    angularBtn.onclick = () => showAngularSizeDialog({n: dataset.n, observations: dataset.angularSize,
+        options: dataset.angularSizeOptions ?? {}, allowFit: !applyDisabledReason, onApply: (observations, options) => {
+            const refit = !applyDisabledReason && (options.fit || dataset.angularSizeOptions?.fit)
+                && JSON.stringify([observations, options.fit, options.constantProjectedSize])
+                !== JSON.stringify([dataset.angularSize, dataset.angularSizeOptions?.fit, dataset.angularSizeOptions?.constantProjectedSize]);
+            if (!applyDisabledReason) angularSizeSettings = {losNode: resolveLOSNode(),
+                frame0: dataset.frame0, frame1: dataset.frame1, observations, options};
+            if (refit) {
+                _analysisCache = null;
+                queueAnimation(() => runTraverseAnalysis().catch(error => showError(error.message)));
+                return;
+            }
+            dataset.angularSize = observations;
+            dataset.angularSizeOptions = options;
+            results.html = null;
+            results.manifest = {...results.manifest, angularSizeJudging: {observations, options}};
+            results.executiveAssessment = assessExecutiveVerdict(hypotheses, {dataset, provenance: results.provenance});
+            onEvidenceChange?.(results);
+            queueAnimation(() => rerenderWithTruth(useTruth));
+            representing = true;
+        }});
+    toolbar.appendChild(angularBtn);
     // Apply / set aside the selected truth track. Shown only when a usable one
     // was computed for this run — with nothing to compare against there is
     // nothing to toggle. rerenderWithTruth is a function declaration so this
@@ -5430,7 +5478,7 @@ function showResultGallery(results, uiState = null) {
             selected: selected >= 0 ? tiles[selected].h : null,
         };
         remove();
-        showResultGallery(results, carried);
+        showResultGallery(results, carried, onEvidenceChange);
     }
 
     // shared solution-space context for every Details pane
@@ -5864,7 +5912,7 @@ function showResultGallery(results, uiState = null) {
             `<div class="tg-stv">${html ?? escapeHtml(v)}</div></div>`;
         const primary = ([k]) => k.startsWith("Slant range") || k.includes("speed (mean")
             || k === "Mean LOS error" || k === "Mean LOS offset" || k === "Max g-Force"
-            || k === "Physical compatibility"
+            || k === "Physical compatibility" || k === "Angular size" || k === "Angular-size fitting"
             || (useTruth && k === "Truth Δ (mean 3D)");
         const explanation = ([k]) => k === "LOS error explained" || k === "Physical compatibility details";
         const statsHTML = stats.filter(primary).map(statHTML).join("");
@@ -7076,11 +7124,11 @@ function buildScreeningSummaryHTML(rankedHyps) {
 // separation from the truth track, with the per-aspect deltas the rank bases cite.
 // Cross-group ordering is deliberate here — all methods are measured against
 // the same external reference with the same metric.
-function buildTruthSummaryHTML(rankedHyps, truth) {
+function buildTruthSummaryHTML(rankedHyps, truth, dataset) {
     // Report cards stay grouped for explanation, but this executive table is a
     // genuinely cross-group comparison. Reapply the flat shared comparator so
     // its completeness-before-truth order is preserved across category edges.
-    const globallyRanked = rankAllHypotheses(rankedHyps.map((item) => item.h), {useTruth: true});
+    const globallyRanked = rankAllHypotheses(rankedHyps.map((item) => item.h), {useTruth: true, dataset});
     const comparable = globallyRanked
         .filter((item) => item.h.truthComparison?.comparable);
     const notComparable = globallyRanked.filter((item) => !item.h.truthComparison?.comparable);
@@ -7137,8 +7185,10 @@ function buildReportHTML(ctx) {
         sweepBestMetrics = ctx.bestMetrics, constAirPick = null,
         closeLoM, closeHiM, hypotheses, provenance, failures = [], manifest = {},
         truth: _truth = null, terrainChangedDuringRun = false,
-        executiveAssessment = null,
+        executiveAssessment: storedExecutiveAssessment = null,
     } = ctx;
+    const executiveAssessment = hypotheses?.length
+        ? assessExecutiveVerdict(hypotheses, {dataset, provenance}) : storedExecutiveAssessment;
     // A truth track with too little overlap does not drive ordering (TA-19):
     // treat it as no-truth for the whole report so nothing claims truth-based
     // order, and surface a note that it was selected but unusable.
@@ -7233,7 +7283,7 @@ function buildReportHTML(ctx) {
     const closeFast = bestRowInWindow(fastProfile, cLo, cHi);
     const closeSlow = bestRowInWindow(slowProfile, cLo, cHi);
     const closeLabel = `${nm1(cLo)}–${nm1(cHi)} NM`;
-    const top = sweep.sorted.slice(0, 10);
+    const top = (sweep.sorted ?? sweep.results.slice().sort((a, b) => a.score - b.score)).slice(0, 10);
     const topRangeLo = Math.min(...top.map((r) => r.startDist));
     const topRangeHi = Math.max(...top.map((r) => r.startDist));
     const topSpeedLo = Math.min(...top.map((r) => r.speed));
@@ -7326,9 +7376,9 @@ function buildReportHTML(ctx) {
         ${closeRangeHTML}`;
 
     // ---- candidate-interpretation gallery, comparison, verdict ----
-    const rankedGroups = groupAndRankHypotheses(hypotheses, {useTruth: false});
+    const rankedGroups = groupAndRankHypotheses(hypotheses, {useTruth: false, dataset});
     const rankedHyps = rankedGroups.flatMap((group) => group.items);
-    const screeningRanked = rankAllHypotheses(hypotheses, {useTruth: false});
+    const screeningRanked = rankAllHypotheses(hypotheses, {useTruth: false, dataset});
     const screeningSummaryHTML = buildScreeningSummaryHTML(screeningRanked);
     const cardsHTML = rankedGroups.map((group) => {
         const cards = group.items.map(({h, r, tied, groupIndex, groupSize}) => {
@@ -7379,8 +7429,8 @@ function buildReportHTML(ctx) {
         </tr>`;
     }).join("");
 
-    const verdictHTML = buildVerdict(hypotheses, provenance, null);
-    const truthSummaryHTML = truth ? buildTruthSummaryHTML(rankedHyps, truth) : "";
+    const verdictHTML = buildVerdict(hypotheses, provenance, null, dataset);
+    const truthSummaryHTML = truth ? buildTruthSummaryHTML(rankedHyps, truth, dataset) : "";
 
     // Executive assessment block: the frozen headline plus the per-class
     // evidence matrix — the SAME record the gallery strip and verdict render,
@@ -7450,7 +7500,10 @@ function buildReportHTML(ctx) {
             <td>${r.de?.evaluations ?? "—"}</td>
             <td>${escapeHtml(`${r.de?.stopReason ?? "unknown"} / ${r.polishStopReason ?? "unknown"}`)}</td>
         </tr>`).join("");
-    const manifestJSON = escapeHtml(JSON.stringify(manifest, null, 2));
+    const manifestJSON = escapeHtml(JSON.stringify({...manifest,
+        angularSize: {options: dataset.angularSizeOptions ?? {judge: false, fit: false, constantProjectedSize: false},
+            fittedInput: dataset.angularSizeFittedInput ?? null,
+            observations: dataset.angularSize ?? null, fittingByCandidate: hypotheses.map(h => ({name: h.name, ...h.angularSizeFit}))}, executive: executiveAssessment ?? manifest.executive}, null, 2));
 
     // ---- footer / version ----
     let version = "";
@@ -7681,9 +7734,20 @@ html.light #theme-toggle { background: rgba(255,255,255,0.95); color: #23262a;
     </div>
 </header>
 
+<section>
+    <h2>Angular-size evidence</h2>
+    <p>Judging: ${dataset.angularSizeOptions?.judge ? "on" : "off"}. Fitting: ${dataset.angularSizeOptions?.fit ? "experimental, supported methods only (CPU)" : "off"}.
+    Constant projected physical size: ${dataset.angularSizeOptions?.constantProjectedSize ? "assumed" : "not assumed"}.</p>
+    <p>${escapeHtml(angularSizeInventory(dataset.angularSize).summary)} ${escapeHtml(angularSizeInventory(dataset.angularSize).upperOnlyNote)}</p>
+    <p>${escapeHtml(dataset.angularSize?.source ?? "No recorded source label")}. ${(dataset.angularSize?.samples ?? []).length} absolute samples;
+    ${(dataset.angularSize?.relative ?? []).length} relative samples${dataset.angularSize?.relativeBound ? "; clip-wide relative bound" : ""}.
+    Absolute size is checked against broad class-size envelopes. Size-change inference requires the constant-size assumption.
+    These checks do not identify an object or change the BOT Score formula. Each candidate states whether size entered its fit.</p>
+</section>
+
 <section id="ranking-without-truth">
     <h2>Ranking without truth</h2>
-    <p class="sub">The reference track does not affect this order. Results are compared by screening grade,
+    <p class="sub">The reference track does not affect this order. Results are compared by broad screening grade, optional angular-size conflicts,
     search completion and active model limits, then by the BOT Score — lower is better.
     BOT Score adds weighted motion and sightline-fit terms; hover over its name for the calculation.
     Co-leaders pass the same screening checks; their score order is a heuristic, not a probability.

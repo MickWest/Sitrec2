@@ -44,6 +44,25 @@ jest.mock("../../src/CEventManager", () => ({
 const {Sit} = require("../../src/Globals");
 const {CNodeTrackingOverlay, CNodeVideoTrackKeyframeB} = require("../../src/nodes/CNodeTrackingOverlay.js");
 
+test("analysis receives only placed B angular measurements, independent of assumed physical size", () => {
+    const overlay = {
+        usePointB: true,
+        keyframes: [{frame: 0, x: 0, y: 0, bPoint: {x: 1, y: 0, edited: true}},
+            {frame: 2, x: 0, y: 0, bPoint: {x: 1, y: 0, edited: false}}],
+        pointsXY: [[0, 0], [0, 0], [0, 0]],
+        ensureOverlayGeometryReady: () => true,
+        rayForVideoXY: (_los, _fov, x) => new Vector3(x * .01, 0, 1).normalize(),
+        in: {cameraLOSNode: {getValueFrame: () => ({position: new Vector3(), heading: new Vector3(0, 0, 1)})},
+            fovNode: {getValueFrame: () => 30}},
+    };
+    const measured = CNodeTrackingOverlay.prototype.getValueFrame.call(overlay, 0);
+    expect(measured.angularSize.minDeg).toBeCloseTo(.9 * Math.atan(.01) * 180 / Math.PI, 8);
+    expect(CNodeTrackingOverlay.prototype.getValueFrame.call(overlay, 1).angularSize).toBeNull();
+    expect(CNodeTrackingOverlay.prototype.getValueFrame.call(overlay, 2).angularSize).toBeNull();
+    overlay.usePointB = false;
+    expect(CNodeTrackingOverlay.prototype.getValueFrame.call(overlay, 0).angularSize).toBeNull();
+});
+
 describe("CNodeTrackingOverlay no-video guards", () => {
     test("getValueFrame falls back to camera LOS when video geometry is unavailable", () => {
         const baseLOS = {

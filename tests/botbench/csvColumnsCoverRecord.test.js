@@ -13,6 +13,15 @@
 
 import {CSV_COLUMNS, rowToCsvRecord} from "../../src/analysis/BotBenchUI";
 
+test("CSV separates requested size fitting, actual fitting and judging", () => {
+    const entry = fullEntry();
+    entry.row.angularSize = {options: {fit: true, judge: false, constantProjectedSize: true},
+        fitMode: "LOS-only fit; unsupported method", observationCount: 2, top: null};
+    expect(rowToCsvRecord(entry)).toMatchObject({angularSizeJudge: false,
+        angularSizeFitRequested: true, angularSizeFit: "LOS-only fit; unsupported method",
+        angularSizeConstant: true, angularSizeObservationCount: 2, angularSizeStatus: ""});
+});
+
 /** An entry populated densely enough that every branch emits its key. */
 function fullEntry() {
     return {

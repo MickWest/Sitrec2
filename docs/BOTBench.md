@@ -695,9 +695,10 @@ same function**: three columns in the **Summary** report, and in the CSV export
 the per-term breakdown (size, speed, acceleration) beside the **Ord** total, since a
 total alone cannot say which term carried it.
 
-**It is disclosure, and it does not move the ranking.** That is deliberate: the
-score has to be judged against real files before it is allowed to decide
-anything.
+**The general envelope score is disclosure and does not move the ranking.**
+The separate, optional angular-size check described below can deprioritize a
+size-conflicting path when explicitly enabled. It does not add this envelope
+score to BOT Score.
 
 The score is **joint, never marginal**, and that is the whole point. A size test
 on its own cannot refute a solution that has collapsed toward the camera: a
@@ -739,22 +740,20 @@ which explanation it would prefer.
 
 ### Implied object size
 
-Where the file publishes an
-[angular-diameter bound](#angular-diameter-bound), each candidate also reports
-the physical size its range would imply — the part of the answer a reader can
-sanity-check by eye against the video.
+When **Judge angular size** is enabled, recorded size bounds constrain the
+physical size each candidate range would imply. The AS column shows available
+observation counts even when judging is off; its tooltip describes the bounds.
 
-When the target is **sub-pixel** the bound sits at its floor of about two
-[IFOVs](#ifov), the implied interval collapses to `[0, hi]`, and the display
-says so: *"under 2.11 m at this range — target is sub-pixel, so there is no
-lower bound"*. Printing "0.00–2.11 m" there would read as a measured interval
-when only the upper half is one. This is not an edge case: on the straight
-balloon set a 0.35 m party balloon is between 0.05 and 0.67 pixels across in
-**all twenty** scenarios.
+`AngularDiameterMaxDeg` alone supplies an upper limit, regardless of whether
+sensor resolution is known. The implied physical size is `0 ≤ D ≤ 2R tan(θmax/2)`.
+The analysis must not infer an unreported lower limit from the generator's
+formula or treat changes in the upper limit as measured size ratios.
 
-The upper bound is still real evidence, and the arithmetic behind the score is
-unchanged by the wording — it refutes any candidate that has collapsed inside
-`D_min / θ_max`, which is 611 m for the smallest class the score knows about.
+An upper bound can reject a class if even its smallest object exceeds that
+limit at the candidate range. It cannot constrain range changes for an unknown
+physical size by itself. Lower-and-upper measurements at multiple frames, or
+relative size bounds, can do so with the explicit constant projected-size
+assumption. Judging and fitting remain separate opt-in settings.
 
 ---
 
@@ -787,13 +786,13 @@ One schema, three views of the same data:
 `AngularDiameterMaxDeg` (new in v1.2) is an **upper bound** on the target's
 observed angular diameter — never the exact subtended angle. Paired with a
 *minimum plausible diameter* for an assumed object class it gives a range
-**floor**, `R ≥ D_min / θ`, and that floor is the only quantity in the whole
-format that opposes the scale degeneracy bearings-only data suffers from. It is
+**floor**, approximately `R ≥ D_min / θ` for small angles in radians. This
+uses a class-size assumption in addition to the bearings. It is
 deliberately a bound: publishing the exact `D/R` would let any consumer that
 assumes a diameter read range straight off, which would dissolve the benchmark
 rather than inform it. The bound can never be tighter than one
 [IFOV](#ifov), so a target far enough away to be sub-pixel still reports about
-one — read `sensor.pixelsAcross` in the sidecar to know what that is. Blank
+two IFOVs including the measurement margin — read `sensor.pixelsAcross` in the sidecar to know what that is. Blank
 where the scenario declares no target size, and blank for direction-only
 targets, which have no finite range.
 
@@ -1186,3 +1185,24 @@ re-compute the fingerprint and confirm the match. The sealed release uses
 this so entrants can verify the answers were fixed before they started. The
 *salt* is a secret random value mixed in so scenario identities cannot be
 guessed by brute force.
+
+## Optional angular-size judging and fitting
+
+**Judge angular size** enables the same size checks used by the traverse results
+browser. The **AS** column reports the top path's result; hover for the bounds,
+sample counts and assumptions. CSV exports include the judging/fitting mode,
+compatibility status and constant projected-size setting.
+
+**Assume constant projected size (recommended)** is optional and initially off.
+Select it when shape and orientation remain stable. Relative size changes then
+constrain relative range. Absolute measurements also test the implied physical
+size against broad class envelopes; they do not by themselves identify an object.
+
+**Fit angular size (experimental)** adds size-change information to supported CPU
+searches on the next run. Each gallery result reports whether its method used size
+or remained LOS-only. Judging changes can reuse existing fits. Fitting options have
+separate cache entries. The BOT Score formula and raw LOS residual remain unchanged.
+
+See [Optional angular-size evidence](TraverseAnalysis.md#optional-angular-size-evidence)
+for supported solvers, input columns, sparse/relative sidecar syntax, the fitting
+loss, and the limits of the constant projected-size assumption.

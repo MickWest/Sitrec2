@@ -441,7 +441,11 @@ export class CNodeControllerMatrix extends CNodeController {
 
     apply(f, objectNode) {
         const camera = objectNode.camera
-        const matrix = this.in.source.v(f).matrix;
+        const source = this.in.source.v(f);
+        const matrix = source.matrix;
+        // Preserve observations attached to the recorded sightline through
+        // the camera controller. Camera Center uses this same sightline.
+        camera.userData.angularSize = source.angularSize ?? null;
         assert(typeof matrix === "object", "CNodeControllerMatrix: worldMatrix is not an object")
 
         const worldMatrix = matrix.clone();
@@ -883,5 +887,4 @@ export class CNodeControllerHorizonFlareRegion extends CNodeController {
         objectNode.syncUIPosition();
     }
 }
-
 

@@ -1,3 +1,4 @@
+import {angularSizeFitEnabled, angularSizeFitSummary, angularSizeFitCost, angularSizeUsedInFit} from "./AngularSize";
 /**
  * TraverseBattery.js — the traverse analysis's fit battery, with the scene cut out.
  *
@@ -178,6 +179,7 @@ export function prepareSweep(dataset, overrides = null) {
     const ds = {
         sensorPos: dataset.S, losDir: dataset.D, times,
         count: dataset.n, maxRange: null,
+        angularSize: dataset.angularSize, angularSizeOptions: dataset.angularSizeOptions,
         // The closed-form fits minimise PERPENDICULAR DISTANCE IN METRES, and
         // that objective falls monotonically as a trajectory scales toward the
         // sensor — the sensor's own path is an exact zero-residual solution
@@ -472,6 +474,9 @@ export async function runTraverseBattery({
     // cached is null downstream, and the candidates that need it are absent.
     units = null,
 }) {
+    dataset.angularSizeFittedInput = dataset.angularSizeOptions?.fit
+        ? {options: {...dataset.angularSizeOptions}, observations: dataset.angularSize ?? null} : null;
+    if (angularSizeFitEnabled(dataset)) gpu = false; // CPU objectives include the optional size loss.
     const failures = [];
     const noPhase = () => async () => {};
     const at = phase ?? noPhase;
@@ -637,6 +642,7 @@ export async function runTraverseBattery({
     const physicsDS = {
         sensorPos: dataset.S, losDir: dataset.D, times: physicsTimes,
         count: dataset.n, maxRange: null,
+        angularSize: dataset.angularSize, angularSizeOptions: dataset.angularSizeOptions,
     };
     // CV and CA are the direct batch least-squares fits used by the live
     // traverse nodes. BOTBench can replace the uniform analysis clock and add
@@ -1041,6 +1047,13 @@ export async function runTraverseBattery({
         provenance, failures, windPrior, mcSweep, monteCarlo, droneCtl, kalman,
         constantVelocity, constantAcceleration,
     });
+
+    for (const h of hypotheses) h.angularSizeFit = {
+        requested: !!dataset.angularSizeOptions?.fit,
+        constantProjectedSize: !!dataset.angularSizeOptions?.constantProjectedSize,
+        summary: angularSizeFitSummary(dataset, h, {requested: true}),
+        loss: h.track && angularSizeUsedInFit(dataset, h) ? angularSizeFitCost(dataset, h.track) : null,
+    };
 
     // Attach the range bands AFTER the hypothesis set is built, keyed by the
     // same identity buildSolutionFamilies used. Attaching rather than

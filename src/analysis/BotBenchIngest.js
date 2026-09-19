@@ -36,6 +36,7 @@
  */
 
 import {ECEF2ENU_radii, ECEFToLLA_radii, LLAToECEF} from "../LLA-ECEF-ENU";
+import {angularSizeFromUpperBounds, remapAngularSize, validateAngularSize} from "../AngularSize";
 import {Globals} from "../Globals";
 import {MISB} from "../MISBFields";
 import {findColumn} from "../ParseUtils";
@@ -641,6 +642,7 @@ const BOT_COLS = {
     // only quantity in the file that opposes the scale degeneracy of
     // bearings-only geometry. Absent in v1.1 files, which is why it is optional.
     angularDiameterMax: ["AngularDiameterMaxDeg"],
+    angularDiameterMin: ["AngularDiameterMinDeg"],
     truthX: ["TruePositionX"], truthY: ["TruePositionY"], truthZ: ["TruePositionZ"],
 };
 
@@ -715,6 +717,7 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
             losSigma: idx.losUncertainty === -1 ? NaN : cell(r[idx.losUncertainty]),
             angDiaMax: idx.angularDiameterMax === -1 ? NaN
                 : cell(r[idx.angularDiameterMax]),
+            angDiaMin: idx.angularDiameterMin === -1 ? NaN : cell(r[idx.angularDiameterMin]),
         });
     }
     if (degenerateLOS) {
@@ -1027,6 +1030,19 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
     dataset.angularDiameterMaxDeg = medianAngularDiameterMax;
     dataset.fovFullDeg = sidecar?.sensor?.fovFullDeg ?? null;
     dataset.pixelsAcross = sidecar?.sensor?.pixelsAcross ?? null;
+    dataset.angularSize = angularSizeFromUpperBounds(kept.map(r => r.angDiaMax), dataset);
+    for (const sample of dataset.angularSize?.samples ?? []) {
+        const minimum = kept[sample.frame].angDiaMin;
+        if (Number.isFinite(minimum)) sample.minDeg = minimum;
+    }
+    // Sidecar observations use the ORIGINAL CSV row indices, like invalidFrames.
+    // They may contain only sparse relative information and need no absolute size.
+    if (sidecar?.angularSize) {
+        validateAngularSize(sidecar.angularSize, rows.length - 1);
+        const extra = remapAngularSize(sidecar.angularSize, kept.map(r => r.origIndex));
+        dataset.angularSize = {...extra, samples: [...(dataset.angularSize?.samples ?? []), ...extra.samples]};
+    }
+    validateAngularSize(dataset.angularSize, n);
 
     return {
         kind: "bot",
@@ -1459,6 +1475,8 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
             ? {lat: truthLat, lon: truthLon, altHAE: null, altMSL: truthAlt * 0.3048}
             : null;
         usable.push({
+            angularMin: row[MISB.AngularDiameterMinDeg],
+            angularMax: row[MISB.AngularDiameterMaxDeg],
             truthLLA,
             // Already normalized to SECONDS by epochStampSeconds — see it
             // for why per-value normalization beats any per-format label.
@@ -2132,6 +2150,12 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
     }
 
     const dataset = {n, fps, S, D, W, frame0: 0, frame1: n - 1};
+    dataset.angularSize = angularSizeFromUpperBounds(kept.map(r => r.angularMax));
+    for (const sample of dataset.angularSize?.samples ?? []) {
+        const minimum = kept[sample.frame].angularMin;
+        if (Number.isFinite(minimum)) sample.minDeg = minimum;
+    }
+    validateAngularSize(dataset.angularSize, n);
     const quality = assessSourceQuality(dataset, {
         times: haveAllTimes ? times : null,
         declaredLosSigmaDeg: null,

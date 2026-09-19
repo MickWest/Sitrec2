@@ -68,10 +68,19 @@ export function buildAnalysisDataset(losNode, windNode = null, anchorDist = 3704
     const D = new Float64Array(n * 3);
     const W = new Float64Array(n * 3);
     const anchor = new Vector3();
+    const angularSamples = [], angularTimes = new Set();
+    const previousAngular = frame0 > 0 ? losNode.v(frame0 - 1)?.angularSize : null;
+    if (previousAngular?.sourceTime !== undefined) angularTimes.add(previousAngular.sourceTime);
+    let angularSource = "Recorded angular-size bounds";
 
     for (let f = 0; f < n; f++) {
         const sourceFrame = frame0 + f;
         const los = losNode.v(sourceFrame);
+        if (los.angularSize && !angularTimes.has(los.angularSize.sourceTime ?? sourceFrame)) {
+            angularTimes.add(los.angularSize.sourceTime ?? sourceFrame);
+            angularSource = los.angularSize.source ?? angularSource;
+            angularSamples.push({frame: f, minDeg: los.angularSize.minDeg, maxDeg: los.angularSize.maxDeg});
+        }
         const posENU = ECEF2ENU_radii(los.position, originLat, originLon);
         S[f * 3] = posENU.x; S[f * 3 + 1] = posENU.y; S[f * 3 + 2] = posENU.z;
 
@@ -106,7 +115,8 @@ export function buildAnalysisDataset(losNode, windNode = null, anchorDist = 3704
     }
 
     return {
-        dataset: {n, fps, S, D, W, frame0, frame1},
+        dataset: {n, fps, S, D, W, frame0, frame1,
+            ...(angularSamples.length ? {angularSize: {samples: angularSamples, source: angularSource}} : {})},
         originLat,
         originLon,
     };

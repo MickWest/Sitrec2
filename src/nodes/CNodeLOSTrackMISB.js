@@ -24,6 +24,7 @@
 import {Vector3} from "three";
 import {misbSensorMatrix} from "../MISBSightline";
 import {CNodeLOS} from "./CNodeLOS";
+import {MISB} from "../MISBFields";
 
 export class CNodeLOSTrackMISB extends CNodeLOS {
 
@@ -63,7 +64,15 @@ export class CNodeLOSTrackMISB extends CNodeLOS {
 
             // we might need to calculate the roll angle here
             //
-            this.array.push({position: A, heading: heading, matrix: sensorMatrix.clone()})
+            const row = this.in.cameraTrack.v(f)?.misbRow;
+            const maxDeg = row?.[MISB.AngularDiameterMaxDeg];
+            const minDeg = row?.[MISB.AngularDiameterMinDeg];
+            this.array.push({position: A, heading: heading, matrix: sensorMatrix.clone(),
+                angularSize: Number.isFinite(maxDeg) && maxDeg > 0 ? {
+                    minDeg: Number.isFinite(minDeg) && minDeg >= 0 ? minDeg : 0, maxDeg,
+                    sourceTime: row[MISB.UnixTimeStamp],
+                    source: "Recorded sensor angular-size bounds",
+                } : null});
 
 
         }

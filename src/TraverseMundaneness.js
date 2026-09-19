@@ -1,10 +1,8 @@
 /**
  * TraverseMundaneness.js — how ORDINARY is a candidate trajectory?
  *
- * DISCLOSURE ONLY. Nothing here feeds the ranking. The gallery order is decided
- * by TraverseRanking's comparator exactly as before; this module produces a
- * number a reader can see beside each tile, so the score can be judged against
- * real files before it is ever allowed to move anything.
+ * Class compatibility is separate from the BOT Score. When angular-size
+ * judging is enabled, a size conflict also feeds the separate ranking check.
  *
  * WHAT IT IS NOT. This is not a search for mundane explanations at the expense
  * of anomalous ones, and it must never be presented as one. An anomalous
@@ -42,8 +40,7 @@
 import {KNOTS_TO_MS} from "./TraverseAnalysis";
 import {balloonMotion} from "./TraverseMotion";
 import {PHYSICAL_ENVELOPES, PHYSICAL_ENVELOPE_REVISION} from "./PhysicalEnvelopes";
-
-const DEG = 180 / Math.PI;
+import {assessAngularSize, angularSizeSummary, angularExtentFactor, angularSizeInventory} from "./AngularSize";
 
 /**
  * Object classes as ENVELOPES, not points. Sizes are overall extent in metres,
@@ -66,49 +63,10 @@ function decadesOutside(x, [lo, hi]) {
     return 0;
 }
 
-/**
- * Implied physical size of an object at range R, from the published angular
- * bound. TWO-SIDED: the bound is `max(theta, IFOV) + IFOV`, so the true angle
- * lies within two instantaneous fields of view below it.
- *
- * Returns null when the file carries no angular measurement, which is the
- * common case — only BOT interchange v1.2 files declare one. The size term is
- * then skipped entirely and the cost is carried by speed and acceleration.
- *
- * `oneSided` MARKS THE SUB-PIXEL CASE, and it was measured rather than assumed.
- * When the target is under a pixel the published bound sits at its floor of
- * exactly 2*IFOV, so `lo` collapses to zero and the interval becomes an UPPER
- * BOUND ONLY: the object is smaller than `hi` at this range, and nothing is
- * known about how much smaller. Measured over the 20 straight-balloon scenarios
- * (a 0.35 m party balloon at 6-81 km, 0.05-0.67 px across) the bound was at
- * that floor in all 20.
- *
- * That upper bound is still REAL EVIDENCE and still costs a collapsed candidate
- * — an object under one pixel at 500 m is under 0.082 m, which no object class
- * admits — so the cost below uses the interval exactly as it always has. What
- * changes is only what a reader is told: "0.00-2.11 m" reads as a measurement
- * and it is half of one, so the flag is carried out of here rather than leaving
- * every caller to notice that `lo === 0` means "sub-pixel".
- */
-export function impliedDiameter(rangeM, thetaMaxDeg, fovFullDeg, pixels) {
-    if (!(rangeM > 0) || !(thetaMaxDeg > 0)) return null;
-    // NO SENSOR GEOMETRY MEANS NO LOWER END. The published quantity is an UPPER
-    // bound on the angle, and without the IFOV there is no way to know how much
-    // of it is resolution rather than object. Treating it as exact would invent
-    // a lower bound — and a wrong one in both directions, since it also pins the
-    // implied size ABOVE a class ceiling that a true interval would overlap.
-    // Reachable whenever a BOT CSV is imported without its sidecar: the angular
-    // column rides on the CSV, the sensor block only on scenario.json.
-    const haveIfov = fovFullDeg > 0 && pixels > 0;
-    const ifovDeg = haveIfov ? fovFullDeg / pixels : 0;
-    const lo = haveIfov ? rangeM * Math.max(0, thetaMaxDeg - 2 * ifovDeg) / DEG : 0;
-    return {
-        lo,
-        hi: rangeM * thetaMaxDeg / DEG,
-        // A lower bound of zero is no lower bound. Equivalent to the condition
-        // theta_max <= 2*IFOV, written in the units the caller already has.
-        oneSided: !(lo > 0),
-    };
+/** Legacy scalar upper bound. Sensor resolution cannot supply an unreported lower bound. */
+export function impliedDiameter(rangeM, thetaMaxDeg) {
+    if (!(rangeM > 0) || !(thetaMaxDeg > 0) || thetaMaxDeg >= 180) return null;
+    return {lo: 0, hi: rangeM * angularExtentFactor(thetaMaxDeg), oneSided: true};
 }
 
 /**
@@ -125,8 +83,12 @@ export function physicalClassChecks(dataset, h) {
     const speedMinKt = (m.airSpeed?.min ?? m.airSpeed?.mean) / KNOTS_TO_MS;
     const speedMaxKt = (m.airSpeed?.max ?? m.airSpeed?.mean) / KNOTS_TO_MS;
     const gMax = m.gLoad?.max;
-    const implied = impliedDiameter(m.range?.mean, dataset?.angularDiameterMaxDeg,
-        dataset?.fovFullDeg, dataset?.pixelsAcross);
+    const angularSize = dataset?.angularSizeOptions?.judge
+        ? assessAngularSize(dataset, h, dataset.angularSizeOptions) : null;
+    const sizeOff = !dataset?.angularSizeOptions?.judge
+        && (angularSizeInventory(dataset?.angularSize).count > 0 || dataset?.angularSizeOptions?.judge === false);
+    const implied = angularSize ? angularSize.impliedM : sizeOff ? null
+        : impliedDiameter(m.range?.mean, dataset?.angularDiameterMaxDeg);
     const motion = balloonMotion(h.track);
     // This is a steady-drift screen, not a claim that no wind field could ever
     // carry a balloon around a bend. Substantial backtracking/circling needs a
@@ -144,12 +106,12 @@ export function physicalClassChecks(dataset, h) {
         // SIZE. The implied size is an interval, so it costs nothing if ANY part
         // of it overlaps the class band — the object could be anywhere inside
         // that interval, and only a fully disjoint interval is evidence. That
-        // holds for the one-sided (sub-pixel) interval too: it starts at zero,
+        // holds for the one-sided upper-bound interval too: it starts at zero,
         // so it overlaps every class ABOVE the break-even range and refutes
         // every class below it, which is exactly the range floor D_min/theta.
-        const sizeCost = implied
-            ? decadesOutside(Math.max(implied.lo, Math.min(implied.hi, c.sizeM[0])), c.sizeM)
-            : 0;
+        const sizeIntervals = angularSize?.sizeIntervals?.length ? angularSize.sizeIntervals : implied ? [implied] : [];
+        const sizeCost = sizeIntervals.reduce((worst, interval) => Math.max(worst,
+            decadesOutside(Math.max(interval.lo, Math.min(interval.hi, c.sizeM[0])), c.sizeM)), 0);
         // Multirotor model speed is horizontal. Do not reject a climbing path
         // because its total speed exceeds the horizontal model limit.
         const horizontal = c.speedBasis === "horizontal" && m.horizontalAirSpeed;
@@ -165,11 +127,25 @@ export function physicalClassChecks(dataset, h) {
         return {total, key: c.key, label: c.label, cls: c, sizeCost, speedCost, gCost,
             speedMinKt: classSpeedMinKt, speedMaxKt: classSpeedMaxKt,
             speedBasis: horizontal ? "horizontal" : "total",
-            motionRejected, compatible: total === 0 && !motionRejected,
+            motionRejected, compatible: total === 0 && !motionRejected && angularSize?.status !== "conflict",
             impliedM: implied};
     });
-    return {classes, motion, unknown, speedMinKt, speedMaxKt, gMax, impliedM: implied,
+    return {classes, motion, unknown, speedMinKt, speedMaxKt, gMax, impliedM: implied, angularSize, sizeOff,
         envelopeRevision: PHYSICAL_ENVELOPE_REVISION};
+}
+
+export function angularSizeRankingCheck(dataset, h) {
+    const checks = physicalClassChecks(dataset, h);
+    const check = checks?.angularSize ?? assessAngularSize(dataset, h, dataset?.angularSizeOptions);
+    if (check.status !== "compatible" || !check.absoluteCount || !checks) return check;
+    // Size can reject the motion-compatible envelopes. Do not attribute a
+    // pre-existing speed/g/drift failure to the newly supplied size evidence.
+    const motionClasses = checks.classes.filter(c => !c.speedCost && !c.gCost && !c.motionRejected);
+    if (motionClasses.length && motionClasses.every(c => c.sizeCost > 0)) {
+        return {...check, status: "conflict", reason: "Implied size is outside every motion-compatible class envelope",
+            maxFactor: Math.max(check.maxFactor ?? 1, 10 ** Math.min(...motionClasses.map(c => c.sizeCost)))};
+    }
+    return check;
 }
 
 export function mundanenessCost(dataset, h) {
@@ -186,8 +162,11 @@ export function mundanenessCost(dataset, h) {
  */
 export function mundanenessSummary(cost) {
     if (!cost) return null;
+    if (cost.angularSize?.status === "conflict") return angularSizeSummary(cost.angularSize) + ".";
     const c = cost.total;
-    const unknown = cost.unknown?.length ? ` ${cost.unknown.join(", ")} unmeasured.` : "";
+    const unmeasured = (cost.unknown ?? []).filter(k => k !== "size" || !cost.sizeOff);
+    const unknown = (unmeasured.length ? ` ${unmeasured.join(", ")} unmeasured.` : "")
+        + (cost.sizeOff ? " Size not assessed: angular-size judging is off." : "");
     const drift = cost.classes?.find(c => c.key === "balloon");
     const balloon = drift?.motionRejected ? " Balloon fails the steady-drift check: the path circles or doubles back." : "";
     if (cost.compatibleClasses?.length) {
@@ -214,6 +193,7 @@ export function physicalCompatibilityDetails(cost) {
         if (c.speedCost > 0) reasons.push(`${c.speedBasis} speed ${c.speedMinKt.toFixed(1)}–${c.speedMaxKt.toFixed(1)} kt outside ${c.cls.speedKt.map(v => v.toFixed(1)).join("–")} kt`);
         if (c.gCost > 0) reasons.push(`peak ${cost.gMax.toFixed(2)} g exceeds ${c.cls.gMax} g`);
         if (c.sizeCost > 0) reasons.push(`implied size outside ${c.cls.sizeM.join("–")} m`);
+        if (cost.angularSize?.status === "conflict") reasons.push(angularSizeSummary(cost.angularSize));
         if (c.motionRejected) reasons.push(`net horizontal displacement is only ${(100 * cost.motion.horizontalDirectness).toFixed(1)}% of distance travelled (steady-drift minimum: 45%)`);
         return `${c.label}: ${reasons.length ? reasons.join("; ") : "within tested limits"}.`;
     });

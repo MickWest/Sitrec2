@@ -104,6 +104,8 @@ const BOT_COLUMNS = {
     losZ:           ["LOSUnitVectorZ"],
     maxRange:       ["MaxRange"],
     losUncertainty: ["LOSUncertainty"],
+    angularMin: ["AngularDiameterMinDeg"],
+    angularMax: ["AngularDiameterMaxDeg"],
     truthX:         ["TruePositionX"],
     truthY:         ["TruePositionY"],
     truthZ:         ["TruePositionZ"],
@@ -247,6 +249,7 @@ export class CTrackFileBOT extends CTrackFile {
         const losCols = [col(C.losX), col(C.losY), col(C.losZ)];
         const truthCols = [col(C.truthX), col(C.truthY), col(C.truthZ)];
         const uncertaintyCol = col(C.losUncertainty);
+        const angularMinCol = col(C.angularMin), angularMaxCol = col(C.angularMax);
 
         console.log("Detected BOT interchange CSV with columns: "
             + "time=" + timeCol + ", sensor=[" + sensorCols + "], los=[" + losCols
@@ -285,6 +288,8 @@ export class CTrackFileBOT extends CTrackFile {
                 time: this.epochMS + t * 1000,
                 sensor, los, truth,
                 losUncertainty: uncertaintyCol === -1 ? NaN : cellNumber(row[uncertaintyCol]),
+                angularMin: angularMinCol === -1 ? null : cellNumber(row[angularMinCol]),
+                angularMax: angularMaxCol === -1 ? null : cellNumber(row[angularMaxCol]),
             });
         }
 
@@ -515,6 +520,8 @@ export class CTrackFileBOT extends CTrackFile {
             // so these three zeros are load-bearing, not padding: without them no
             // "<name> angles" LOS option is created at all.
             if (sub.key === "sensor" && r.los) {
+                row[MISB.AngularDiameterMinDeg] = r.angularMin;
+                row[MISB.AngularDiameterMaxDeg] = r.angularMax;
                 const {az, el} = botLOSToAzEl(r.los, lat, lon, this.origin);
                 row[MISB.PlatformHeadingAngle] = 0;
                 row[MISB.PlatformPitchAngle] = 0;

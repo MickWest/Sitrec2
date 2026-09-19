@@ -261,6 +261,8 @@ const misbTagInfo = [
     { name: "Truth Altitude", units: "Meters", isNumber: true },  // Tag 124
     { name: "Truth Heading", units: "Degrees", isNumber: true },  // Tag 125
     { name: "Truth Speed", units: "Unknown", isNumber: true },  // Tag 126
+    { name: "Angular Diameter Minimum", units: "Degrees", isNumber: true }, // Local 127
+    { name: "Angular Diameter Maximum", units: "Degrees", isNumber: true }, // Local 128
 ];
 
 

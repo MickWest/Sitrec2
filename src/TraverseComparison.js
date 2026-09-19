@@ -12,8 +12,8 @@ const number = (v, digits = 3) => Number.isFinite(v) ? v.toFixed(digits) : "unav
 const escape = text => String(text).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const cell = (status, value, detail = "") => ({status, value, detail});
 
-export function comparisonCandidates(hypotheses) {
-    return rankAllHypotheses(hypotheses, {useTruth: false}).filter(({h}) => {
+export function comparisonCandidates(hypotheses, dataset = null) {
+    return rankAllHypotheses(hypotheses, {useTruth: false, dataset}).filter(({h}) => {
         const kind = hypothesisFitKind(h);
         return kind !== "identity" && kind !== "directional-geometry";
     });
@@ -88,11 +88,12 @@ function compatibilityCells(h, dataset) {
         if (![c.speedMinKt, c.speedMaxKt].every(Number.isFinite)) unknown.push("speed");
         if (!Number.isFinite(checks.gMax)) unknown.push("acceleration");
         if (c.key === "balloon" && !checks.motion) unknown.push("drift shape");
-        const failed = c.total > 0 || c.motionRejected;
+        const sizeConflict = checks.angularSize?.status === "conflict";
+        const failed = c.total > 0 || c.motionRejected || sizeConflict;
         const details = [
             `${c.speedBasis === "horizontal" ? "Horizontal " : ""}${h.params?.motionFrame === "ground" ? "Ground" : "Air"} speed: ${number(c.speedMinKt, 1)}–${number(c.speedMaxKt, 1)} kt (allowed ${c.cls.speedKt.map(v => number(v, 1)).join("–")} kt)`,
             `Peak: ${number(checks.gMax, 2)} g (≤ ${number(c.cls.gMax, 2)} g)`,
-            c.impliedM ? `Size: ${c.impliedM.oneSided ? "≤ " : `${number(c.impliedM.lo, 2)}–`}${number(c.impliedM.hi, 2)} m (class ${c.cls.sizeM.join("–")} m; intervals must overlap)` : "Size unmeasured",
+            c.impliedM ? `Size: ${c.impliedM.oneSided ? "≤ " : `${number(c.impliedM.lo, 2)}–`}${number(c.impliedM.hi, 2)} m (class ${c.cls.sizeM.join("–")} m; intervals must overlap)` : checks.sizeOff ? "Size not assessed: angular-size judging is off" : "Size unmeasured",
         ];
         if (c.key === "balloon" && checks.motion) {
             details.push(checks.motion.horizontalPathM >= 20
@@ -100,10 +101,11 @@ function compatibilityCells(h, dataset) {
                 : "Under 20 m horizontal travel; no steady-drift rejection");
         }
         const failures = [c.speedCost > 0 && "speed", c.gCost > 0 && "acceleration", c.sizeCost > 0 && "size",
-            c.motionRejected && "steady drift"].filter(Boolean);
+            c.motionRejected && "steady drift", sizeConflict && "angular-size change"].filter(Boolean);
+        const unknownText = unknown.map(k => k === "size" && checks.sizeOff ? "size judging off" : `${k} unknown`).join(", ");
         return {key: c.key, label: c.label, cell: cell(failed ? "fail" : unknown.length ? "partial" : "pass",
             failed ? `Outside limits: ${failures.join(", ")}` : unknown.length
-                ? `Passes measured checks · ${unknown.join(", ")} unknown` : "Within tested limits",
+                ? `Passes measured checks · ${unknownText}` : "Within tested limits",
             details.join("\n") + (unknown.length ? `\nUnassessed: ${unknown.join(", ")}` : ""))};
     });
 }

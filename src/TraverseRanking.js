@@ -25,7 +25,8 @@ import {balloonConsistency} from "./TraverseMotion";
 export {balloonConsistency} from "./TraverseMotion";
 
 import {KNOTS_TO_MS, METERS_PER_NM, MOTION_SCORE_WEIGHTS, straightFlightScore} from "./TraverseAnalysis";
-import {physicalClassChecks} from "./TraverseMundaneness";
+import {physicalClassChecks, angularSizeRankingCheck} from "./TraverseMundaneness";
+import {angularSizeSummary} from "./AngularSize";
 import {
     platformMirrorRank,
     platformMirrorSignificant,
@@ -741,11 +742,21 @@ function judgeRepresentative(h) {
  * executive predicates: tested, complete/close/ordinary, viable, and (for the
  * balloon class) the independent wind evidence carried by the free fit.
  */
-export function aggregateInterpretationClasses(hypotheses) {
+export function aggregateInterpretationClasses(hypotheses, dataset = null) {
     const list = hypotheses || [];
     return INTERPRETATION_CLASS_DEFS.map((def) => {
         const reps = list.filter((h) => def.keys.includes(h.key));
-        const judged = reps.map((h) => ({h, ...judgeRepresentative(h)}));
+        const judged = reps.map((h) => {
+            const result = {h, ...judgeRepresentative(h)};
+            if (dataset?.angularSizeOptions?.judge) {
+                const check = angularSizeRankingCheck(dataset, h);
+                if (check.status === "conflict") {
+                    result.viable = false;
+                    result.blocker = angularSizeSummary(check);
+                }
+            }
+            return result;
+        });
         const viableRep = judged.find((j) => j.viable) ?? null;
         const best = viableRep ?? judged.slice().sort((a, b) =>
             (a.r.scoredErrDeg ?? Infinity) - (b.r.scoredErrDeg ?? Infinity))[0] ?? null;
@@ -861,14 +872,14 @@ export function assessPathCompatibility(hypotheses, dataset = null) {
  */
 export function assessExecutiveVerdict(hypotheses, context = {}) {
     const prov = context.provenance || {};
-    const classes = aggregateInterpretationClasses(hypotheses);
+    const classes = aggregateInterpretationClasses(hypotheses, context.dataset);
     const pathCompatibility = assessPathCompatibility(hypotheses, context.dataset);
     const compatible = pathCompatibility.classes;
     const pathDetail = compatible.length
         ? ` Within tested limits: ${compatible.map(c => c.label).join(", ")}. `
             + "These are path compatibility checks, not additional forward-model fits or identifications."
             + (pathCompatibility.unknown.length
-                ? ` Unmeasured inputs: ${pathCompatibility.unknown.join(", ")}.` : "")
+                ? ` Unassessed inputs: ${pathCompatibility.unknown.join(", ")}.` : "")
         : "";
     const notRun = classes.filter((c) => !c.tested).map((c) => c.label);
     const base = {classes, pathCompatibility, notRun, notModelled: NOT_MODELLED_DISCLOSURE,
@@ -1002,6 +1013,7 @@ export function rankingDecision(a, b, {useTruth = true} = {}) {
     const basis = x => scoreBasis(x.h) === "trajectory" ? 0 : 1;
     const decisions = [
         ["screen", passedScreen(b) - passedScreen(a)],
+        ["angularSize", Number(a.r.angularSize?.status === "conflict") - Number(b.r.angularSize?.status === "conflict")],
         ["eligible", Number(b.r.eligible) - Number(a.r.eligible)],
         ["completion", Number(a.r.incomplete) - Number(b.r.incomplete)],
         ["tier", b.r.rank - a.r.rank],
@@ -1062,6 +1074,10 @@ export function rankingPlacementExplanation(item, peer, {useTruth = true, first 
     const num = (v) => Number.isFinite(v) ? v.toFixed(3) : "unavailable";
     let label, text;
     switch (key) {
+        case "angularSize":
+            label = "Angular-size evidence";
+            text = `${b.h.name}: ${angularSizeSummary(b.r.angularSize)}. ${a.h.name}: ${angularSizeSummary(a.r.angularSize)}. BOT Scores are unchanged.`;
+            break;
         case "scoreBasis":
             label = "Different score bases";
             text = `${a.h.name} is a finite trajectory; ${b.h.name} is an angular-only check. `
@@ -1117,10 +1133,11 @@ export function rankingPlacementExplanation(item, peer, {useTruth = true, first 
     return {key, label: `Why here: ${label}`, text};
 }
 
-export function rankHypotheses(hypotheses, {useTruth = true} = {}) {
+export function rankHypotheses(hypotheses, {useTruth = true, dataset = null} = {}) {
     const ranked = (hypotheses || [])
         .filter((h) => h.track && h.metricsFull)
-        .map((h) => ({h, r: plausibilityRating(h)}))
+        .map((h) => ({h, r: {...plausibilityRating(h), ...(dataset?.angularSizeOptions?.judge
+            ? {angularSize: angularSizeRankingCheck(dataset, h)} : {})}}))
         .sort(useTruth ? compareWithinCategory : compareWithinCategoryBlind);
 
     // A display tie is intentionally narrow: same comparison category, both
@@ -1133,6 +1150,7 @@ export function rankHypotheses(hypotheses, {useTruth = true} = {}) {
         const top = ranked[0];
         for (const x of ranked) {
             x.tied = x.r.eligible && x.r.rank === top.r.rank
+                && (x.r.angularSize?.status === "conflict") === (top.r.angularSize?.status === "conflict")
                 && hypothesisCategory(x.h).key === hypothesisCategory(top.h).key
                 && hypothesisFitKind(x.h) === hypothesisFitKind(top.h)
                 && Math.abs(x.r.secondaryScore - top.r.secondaryScore) < DISPLAY_TIE_THRESHOLD;
@@ -1187,6 +1205,7 @@ export function markCoLeaders(items, opts = {}) {
     const useTruth = opts.useTruth !== false;
     const key = (x) => [
         x.r.rank >= 1 ? 1 : 0,
+        Number(x.r.angularSize?.status === "conflict"),
         Number(x.r.eligible),
         Number(x.r.incomplete),
         x.r.rank,

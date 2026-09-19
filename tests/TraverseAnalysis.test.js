@@ -383,6 +383,14 @@ describe("TraverseAnalysis core", () => {
         expect(fit.bootstrapAltitudeP10).toBeLessThanOrEqual(fit.bootstrapAltitudeP90);
         expect(fit.basinLowAltitude).toBeLessThan(fit.altZ);
         expect(fit.basinHighAltitude).toBeGreaterThan(fit.altZ);
+        const withSize = fitHorizontalConstantSpeed({n, fps, S, D, W, groundLevelM: 0,
+            angularSizeOptions: {fit: true, constantProjectedSize: true},
+            angularSize: {relative: [{frame: n - 1, referenceFrame: 0, minRatio: .0001, maxRatio: 10000}]}});
+        expect(withSize.failed).toBe(false);
+        expect(withSize.altZ).toBeCloseTo(fit.altZ, 8);
+        expect(withSize.bootstrapConfidence).toBeNull();
+        expect(withSize.bootstrapTrials).toBe(0);
+        expect(withSize.bootstrapUnavailableReason).toContain("resamples speed only");
     });
 
     test("fitHorizontalConstantSpeed refuses sightlines that look upward", () => {
